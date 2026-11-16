@@ -21,7 +21,7 @@ final class CompactGameCard12616Tests: XCTestCase {
             CompactGameCard12616.columnHeaders(
                 isScheduled: true, isLive: false, isFinished: false, isSuspended: false,
                 hasProjectedBefore: true, hasCurrentChance: true, hasPrematchChance: false, hasScore: false),
-            .init(medium: "Projected", large: "Chance")
+            .init(medium: "Proj.", large: "Chance")
         )
         // Tennis before: no projected score -> medium header omitted, Chance remains.
         XCTAssertEqual(

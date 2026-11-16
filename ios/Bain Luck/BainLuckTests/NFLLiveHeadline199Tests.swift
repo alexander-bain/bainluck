@@ -361,24 +361,20 @@ final class NFLLiveHeadline199Tests: XCTestCase {
     // MARK: - Ruling 197 Same Hue-Family Disambiguation Tests
 
     func testRuling197SameHueFamilySwitchesAwayToSecondaryElseSlateGrey() {
-        // Default `checkHueFamily == false` preserves existing callers (cards, etc.) unchanged
-        let defaultUnchanged = TeamTextContrast.cardColorHexes(
-            awayHex: "#0051ba",
-            homeHex: "#00539b"
-        )
-        XCTAssertEqual(defaultUnchanged.away, ProbabilityBarPalette.awayDefault)
-        let neDetDefault = TeamTextContrast.cardColorHexes(
+        // Default `checkHueFamily == true` applies Ruling 197 across all callers;
+        // explicit `checkHueFamily: false` preserves RGB-distance-only behaviour when requested.
+        let neDetRgbOnly = TeamTextContrast.cardColorHexes(
             awayHex: "#002244",
-            homeHex: "#0076B6"
+            homeHex: "#0076B6",
+            checkHueFamily: false
         )
-        XCTAssertEqual(neDetDefault.away, "#002244", "Callers that omit checkHueFamily keep RGB-distance-only behaviour")
+        XCTAssertEqual(neDetRgbOnly.away, "#002244", "Explicit checkHueFamily: false keeps RGB-distance-only behaviour")
 
-        // Patriots (#002244 / #C60C30) at Lions (#0076B6 / #B0B7BC): both blue -> Patriots red
+        // Patriots (#002244 / #C60C30) at Lions (#0076B6 / #B0B7BC): both blue -> Patriots red by default
         let neDet = TeamTextContrast.cardColorHexes(
             awayHex: "#002244",
             homeHex: "#0076B6",
-            awaySecondaryHex: "#C60C30",
-            checkHueFamily: true
+            awaySecondaryHex: "#C60C30"
         )
         XCTAssertEqual(neDet.away, "#C60C30")
         XCTAssertEqual(neDet.home, "#0076B6")
@@ -641,10 +637,10 @@ final class NFLLiveHeadline199Tests: XCTestCase {
             hasScore: true,
             now: fixedNow
         )
-        XCTAssertEqual(nbaProjLine, "Proj. 108-115", "NBA during-game page must retain its Game Info projection row")
+        XCTAssertNil(nbaProjLine, "Direction 199: NBA during-game carries Proj. directly in the unified headline, so Game Info suppresses duplicate Proj.")
 
-        // 2. Live Soccer match (`.soccerDuringGame` with 3-way odds + ladder projection):
-        //    Game Info MUST retain its projected-score row.
+        // 2. Live Soccer match (`.soccerDuringGame` now carries `Proj.` directly in the unified headline):
+        //    Game Info suppresses duplicate projected row.
         let soccerLive = try decodeEvent("""
         {
           "id": 919951,
@@ -674,7 +670,7 @@ final class NFLLiveHeadline199Tests: XCTestCase {
             hasScore: true,
             now: fixedNow
         )
-        XCTAssertEqual(soccerProjLine, "Proj. 1-2", "Soccer during-game page must retain its Game Info projection row")
+        XCTAssertNil(soccerProjLine, "Direction 199: Soccer during-game carries Proj. directly in the unified headline, so Game Info suppresses duplicate Proj.")
 
         // 3. Live NFL game (`.nflDuringGame` carries `Proj.` directly in the headline):
         //    Game Info suppresses the duplicate projected row.

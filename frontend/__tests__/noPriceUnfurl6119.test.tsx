@@ -526,7 +526,7 @@ describe("#6119 — the picture stops inventing 50/50 for an unquoted game", () 
     // This is the whole difference the ship makes — before it, this row fell to
     // `prematch` and printed the opening line, or nothing where the row has no
     // opening line at all.
-    expect(allText(card)).not.toContain("Pre-match");
+    expect(allText(card)).not.toContain("Pregame");
     expect(allText(card)).toContain("Bayer Leverkusen");
   });
 
@@ -549,7 +549,7 @@ describe("#6119 — the picture stops inventing 50/50 for an unquoted game", () 
     expect(barAwayWidth(card)).toBe(38);
     // Labelled as the sportsbook median it is — an unlabelled 62% in that slot
     // reads as a live call. `sportsbooks`, never a venue name (notice 33).
-    expect(allText(card)).toContain("Pre-match");
+    expect(allText(card)).toContain("Pregame");
     expect(allText(card)).not.toContain("bookmaker");
   });
 });

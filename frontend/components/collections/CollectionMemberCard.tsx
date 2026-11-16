@@ -9,7 +9,6 @@ import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { FeedFuturesData, FeedFuturesOutcome } from "@/lib/types";
 import type { CollectionMember } from "@/lib/collections";
 import MidtermsMarketCard from "./MidtermsMarketCard";
-import { SourceBadge } from "@/components/politics/atoms";
 import { MIDTERMS_PARTY_COLOR, midtermsOutcomeParty } from "@/lib/midtermsParty";
 import EntityImage from "@/components/EntityImage";
 import { cleanPersonOutcomeName, isPersonOutcomeName } from "@/lib/eventConceptDisplay";
@@ -60,7 +59,6 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
   // price or served result uses the existing verdict/format rule, never nil -> 0%.
   const card = market && (resolved || hasVerdict || missingPrices) ? (
     <Link href={member.href} className="block rounded-card border border-surface-border bg-surface-card p-4 hover:bg-surface-elevated transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand">
-      {presentation && market.source && <SourceBadge source={market.source} />}
       <h3 className="font-semibold text-text-primary mb-3">{market.name}</h3>
       {winner ? (
         <p className="flex items-center gap-2 font-semibold text-text-primary">

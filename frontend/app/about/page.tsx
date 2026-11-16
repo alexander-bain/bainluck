@@ -14,6 +14,7 @@ import {
   CASE_STUDIES,
 } from "@/lib/story-content";
 import CaseStudyCard from "@/components/story/CaseStudyCard";
+import AboutPage189 from "@/components/story/AboutPage189";
 
 /* ── Intersection Observer hook for scroll-triggered reveals ── */
 function useScrollReveal(threshold = 0.1) {
@@ -93,9 +94,16 @@ export default function AboutPage() {
     }
   }, []);
 
+  const about189Enabled = process.env.NEXT_PUBLIC_ABOUT_189 !== "false";
+
   useEffect(() => {
+    if (about189Enabled) return;
     loadProof();
-  }, [loadProof]);
+  }, [about189Enabled, loadProof]);
+
+  if (about189Enabled) {
+    return <AboutPage189 />;
+  }
 
   const categories = [
     { emoji: "\u{1F3C0}", label: "Sports", desc: "NBA, NFL, MLB, NHL, Soccer, Golf, MMA" },

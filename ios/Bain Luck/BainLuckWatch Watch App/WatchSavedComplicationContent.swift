@@ -38,13 +38,13 @@ struct WatchSavedComplicationContent: View {
     private func readingCard(_ reading: WatchRectangularReading, preferCompact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(reading.headerLine(preferCompact: preferCompact))
-                .font(.system(size: 11, weight: .semibold))
+                .font(HeadlineStyleTable199.headers(.wristTile, scaledSize: 11))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("watch.complication.rectangular.header")
             Text(reading.primaryLine(preferCompact: preferCompact, at: now))
-                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .font(HeadlineStyleTable199.secondNumbers(.wristTile, prominent: true, scaledSize: 14))
                 .foregroundStyle(
                     (reading.kind == .liveForecast || reading.kind == .scheduledForecast || reading.kind == .futureForecast)
                         ? accentColor : .primary
@@ -55,7 +55,7 @@ struct WatchSavedComplicationContent: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("watch.complication.rectangular.primary")
             Text(reading.metadataLine(at: now))
-                .font(.system(size: 10, weight: .medium))
+                .font(HeadlineStyleTable199.quietText(.wristTile))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)

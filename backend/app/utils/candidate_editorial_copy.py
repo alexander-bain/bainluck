@@ -37,7 +37,7 @@ EDITORIAL_JARGON_RE = re.compile(
     r"priced\s+at|holdovers?|recent\s+trading|verified|independent\s+markets|"
     r"mutually\s+exclusive|single-winner\s+market|frontrunner\s+chance|"
     r"matched\s+within|questions?|stale|settled|venues?|kalshi|polymarket|"
-    r"opened|big\s+game"
+    r"opened|big\s+game|domains?"
     r")\b"
     r"|within\s*±",
     re.IGNORECASE,

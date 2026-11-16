@@ -306,6 +306,26 @@ async def test_a_settled_card_with_only_in_play_readings_gets_nothing(seeded_db)
     assert not [r for r in rows if r[0] == candidates[1].id]
 
 
+@pytest.mark.parametrize("sql", [PREMATCH_PRIOR_SQL, PREMATCH_PRIOR_TOP1_SQL], ids=["lateral", "top1"])
+async def test_live_detail_reads_the_prior_not_the_live_price_and_lists_stay_settled_only(seeded_db, sql):
+    session, candidates = seeded_db
+    live, in_play_only = candidates[:2]
+    live.status = in_play_only.status = "live"
+    assert prematch_prior_binds([live, in_play_only]) is None
+
+    binds = prematch_prior_binds(
+        [live, in_play_only], live_detail=True, now=_T0 + timedelta(days=30)
+    )
+    rows = (await session.execute(text(sql), binds)).all()
+    assert _key(rows) == [
+        (live.id, "kalshi", Decimal("0.6100"), Decimal("0.3900")),
+        (live.id, "polymarket", Decimal("0.5900"), Decimal("0.4100")),
+    ]
+    # The seed has newer .92/.99/.15 in-play values and an in-play-only game.
+    # Neither can become the live headline's before-kickoff reading.
+    assert not [row for row in rows if row[0] == in_play_only.id]
+
+
 async def test_the_scheduled_card_is_never_asked_about(seeded_db):
     """It holds a pre-kickoff reading that satisfies every SQL predicate; only
     the caller's settled filter keeps it out."""

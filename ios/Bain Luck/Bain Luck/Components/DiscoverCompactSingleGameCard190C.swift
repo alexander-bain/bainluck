@@ -28,11 +28,11 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     @ScaledMetric(relativeTo: .subheadline) private var compactPregameSize: CGFloat = 15
     @ScaledMetric(relativeTo: .title3) private var compactLargeSize: CGFloat = 20
 
-    @ScaledMetric(relativeTo: .body) private var scoreColWidth: CGFloat = 46
-    @ScaledMetric(relativeTo: .subheadline) private var pregameColWidth: CGFloat = 58
-    @ScaledMetric(relativeTo: .title3) private var primaryColWidth: CGFloat = 68
+    @ScaledMetric(relativeTo: .body) private var scoreColWidth: CGFloat = 34
+    @ScaledMetric(relativeTo: .subheadline) private var pregameColWidth: CGFloat = 48
+    @ScaledMetric(relativeTo: .title3) private var primaryColWidth: CGFloat = 72
 
-    private let scoreToPregameGutter: CGFloat = 18
+    private let scoreToPregameGutter: CGFloat = 10
     private let pregameToPrimaryGap: CGFloat = 10
 
     private var shortNames: (away: String, home: String) {
@@ -71,6 +71,33 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
 
     private var gapAfterScore: CGFloat {
         model.headers.pregame != nil ? scoreToPregameGutter : pregameToPrimaryGap
+    }
+
+    private var trailingColumnsClusterWidth: CGFloat {
+        let scoreW = model.headers.score != nil ? effectiveScoreWidth : 0
+        let pregameW = model.headers.pregame != nil
+            ? effectivePregameWidth + (model.headers.score != nil ? scoreToPregameGutter : 0)
+            : 0
+        let primaryW = model.headers.primary != nil
+            ? effectivePrimaryWidth + (model.headers.pregame != nil
+                ? pregameToPrimaryGap
+                : (model.headers.score != nil ? gapAfterScore : 0))
+            : 0
+        return scoreW + pregameW + primaryW
+    }
+
+    private var sharedCompactTeamNameFontSize: CGFloat {
+        let competitorNames = model.rows
+            .filter { $0.kind != .draw }
+            .map(\.shortName)
+        let availableWidth = max(330 - 36 - 8 - trailingColumnsClusterWidth, 72)
+        return CardTeamNameSizing.sharedWordSafeFontSize(
+            names: competitorNames,
+            baseSize: min(compactNameSize, 20),
+            weight: model.isFinished ? .bold : .semibold,
+            availableWidth: availableWidth,
+            minimumScale: 0.72
+        )
     }
 
     var body: some View {
@@ -199,33 +226,30 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
 
     private var headerFont: Font {
         let cap: CGFloat = dynamicTypeSize.isAccessibilitySize ? 14.5 : 13
-        return .system(size: min(headerFontSize, cap), weight: .semibold).monospacedDigit()
+        return HeadlineStyleTable199.headers(.card, scaledSize: min(headerFontSize, cap)).monospacedDigit()
     }
 
     private var columnHeadersCluster: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             if let scoreHeader = model.headers.score {
-                Text(scoreHeader.uppercased())
+                Text(scoreHeader)
                     .font(headerFont)
-                    .tracking(0.45)
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
                     .frame(width: effectiveScoreWidth, alignment: .trailing)
             }
             if let pregameHeader = model.headers.pregame {
-                Text(pregameHeader.uppercased())
+                Text(pregameHeader)
                     .font(headerFont)
-                    .tracking(0.45)
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
                     .frame(width: effectivePregameWidth, alignment: .trailing)
                     .padding(.leading, model.headers.score != nil ? scoreToPregameGutter : 0)
             }
             if let primaryHeader = model.headers.primary {
-                Text(primaryHeader.uppercased())
+                Text(primaryHeader)
                     .font(headerFont)
-                    .tracking(0.45)
-                    .foregroundStyle(model.isLive || model.isFinished ? Color.primary.opacity(0.78) : DS.textSecondaryReadable)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
                     .frame(width: effectivePrimaryWidth, alignment: .trailing)
                     .padding(.leading, model.headers.pregame != nil
@@ -243,10 +267,10 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
             rowBadgeView(row)
 
             Text(row.shortName)
-                .font(.system(size: min(compactNameSize, 20), weight: model.isFinished ? (row.isWinner ? .bold : .medium) : .semibold))
+                .font(.system(size: sharedCompactTeamNameFontSize, weight: model.isFinished ? (row.isWinner ? .bold : .medium) : .semibold))
                 .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
                 .lineLimit(singleWord ? 1 : 2)
-                .minimumScaleFactor(singleWord ? 0.72 : 0.85)
+                .minimumScaleFactor(0.75)
                 .fixedSize(horizontal: false, vertical: !singleWord)
 
             Spacer(minLength: 8)
@@ -360,7 +384,9 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 size: size,
                 sportKey: event.sport,
                 isPhotograph: avatar.isPhotograph,
-                opponentName: event.homeTeam
+                opponentName: event.homeTeam,
+                abbreviation: event.awayTeamData?.abbreviation,
+                opponentAbbreviation: event.homeTeamData?.abbreviation
             )
         case .home:
             let avatar = event.avatar(home: true)
@@ -371,7 +397,9 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 size: size,
                 sportKey: event.sport,
                 isPhotograph: avatar.isPhotograph,
-                opponentName: event.awayTeam
+                opponentName: event.awayTeam,
+                abbreviation: event.homeTeamData?.abbreviation,
+                opponentAbbreviation: event.awayTeamData?.abbreviation
             )
         case .draw:
             ZStack {
@@ -394,6 +422,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 .font(.system(size: min(compactLargeSize, 24), weight: .bold).monospacedDigit())
                 .foregroundStyle(sideAccentColor(for: row.kind))
                 .lineLimit(1)
+                .minimumScaleFactor(0.85)
         case .won(let text):
             Text(text)
                 .font(.system(size: min(compactPregameSize, 18), weight: .bold))

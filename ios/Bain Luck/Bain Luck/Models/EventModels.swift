@@ -120,9 +120,31 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     var sourceMark: SourceMark? = nil
     var awaySourceMark: SourceMark? = nil
     /// #12472 — optional served competition name (`sport_name`, e.g. `"Premier League"`,
-    /// `"Liga MX"`) and completion timestamp (`completed_at`) for event-page headlines.
+    /// `"Liga MX"`), completion timestamp (`completed_at`), and tennis `linescore`
+    /// (`backend/app/utils/tennis_live_score.py`, carrying sets + explicit tiebreak points)
+    /// for event-page headlines.
     var sportName: String? = nil
     var completedAt: String? = nil
+    var linescore: TennisLinescoreData? = nil
+}
+
+/// Served tennis linescore object (`backend/app/utils/tennis_live_score.py` `attach_tennis_score`),
+/// carrying validated per-set game pairs (`[[homeGames, awayGames], ...]`), current point strings
+/// (`homePoints` / `awayPoints`), explicit `tiebreak` flag for numeric tiebreak points, `serving`,
+/// and optional per-set tiebreak pairs (`tiebreaks`).
+nonisolated struct TennisLinescoreData: Decodable, Equatable, Sendable {
+    let sets: [[Int]]?
+    let homeGames: Int?
+    let awayGames: Int?
+    let homeSets: Int?
+    let awaySets: Int?
+    let homePoints: String?
+    let awayPoints: String?
+    let tiebreak: Bool?
+    let serving: String?
+    let observedAt: String?
+    let source: String?
+    var tiebreaks: [[Int]?]? = nil
 }
 
 // MARK: - Standings Context

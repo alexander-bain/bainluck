@@ -22,7 +22,10 @@ THE RULE NOW (one statement, shared by both paths):
 
 The database half runs the statement against a real Postgres (temp table, so
 nothing else is touched) and is skipped where ``SEARCH_TEST_DATABASE_URL`` is
-unset, as CI's database-integration job sets it.
+unset. Only the ``database-integration`` job sets it, and that job runs each
+gate as its own named step: the "#12519 team-merge dedup" step runs this file
+and fails on any skip. (Until that step existed, the nine database tests here
+had never run in CI; the main test job collected them as skipped.)
 """
 
 from __future__ import annotations
