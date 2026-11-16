@@ -255,3 +255,11 @@ nonisolated struct BainLuckShortcuts10873: AppShortcutsProvider {
         )
     }
 }
+
+/// Ruling 208-A — tells Siri the team names its phrases may carry. Called at
+/// launch; here so the app file needs no AppIntents import.
+enum SiriPhrases208B {
+    static func refreshTeamNames() {
+        BainLuckShortcuts10873.updateAppShortcutParameters()
+    }
+}

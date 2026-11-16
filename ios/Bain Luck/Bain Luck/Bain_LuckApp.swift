@@ -64,7 +64,7 @@ struct Bain_LuckApp: App {
         AppLaunchClock.touch()
         // Ruling 208-A — Siri learns the team names its phrases may carry
         // ("Ask Bain Luck about the Patriots") from the app at launch.
-        BainLuckShortcuts10873.updateAppShortcutParameters()
+        SiriPhrases208B.refreshTeamNames()
         // Decode the last-good deck while Firebase and the window bootstrap run,
         // instead of starting disk I/O only after Discover's appearance task.
         // Detached work enters APIClient's actor; it does not touch UI or relax

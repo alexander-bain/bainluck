@@ -125,8 +125,9 @@ final class SiriTeamPhrases208BTests: XCTestCase {
         ] {
             XCTAssertFalse(source.contains(rejected), rejected)
         }
+        XCTAssertTrue(source.contains("BainLuckShortcuts10873.updateAppShortcutParameters()"))
         let app = try String(contentsOf: Self.repoFile("Bain Luck/Bain_LuckApp.swift"), encoding: .utf8)
-        XCTAssertTrue(app.contains("BainLuckShortcuts10873.updateAppShortcutParameters()"))
+        XCTAssertTrue(app.contains("SiriPhrases208B.refreshTeamNames()"))
     }
 
     func testThePinnedGamesOnlyNameTeamsAndAreReadFromTheRememberedAccount() throws {
