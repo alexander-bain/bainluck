@@ -135,6 +135,7 @@ export interface EventPageHeadline199Props {
   onPinToggle: () => void;
   animate?: boolean;
   homeProbForDataAttr?: number | null;
+  settledHero?: boolean;
   settledWinnerName?: string | null;
   displayIdentity?: HeadlineDisplayIdentity | null;
   venueSettled?: boolean;
@@ -152,6 +153,7 @@ export default function EventPageHeadline199({
   onPinToggle,
   animate = false,
   homeProbForDataAttr,
+  settledHero,
   settledWinnerName,
   displayIdentity = null,
   venueSettled = false,
@@ -169,7 +171,10 @@ export default function EventPageHeadline199({
   const primarySignature = model.rows
     .map((r) => r.cells[r.cells.length - 1] ?? "")
     .join("|");
-  const isSettledHero = model.phase === "after";
+  const isSettledHero =
+    settledHero !== undefined
+      ? settledHero
+      : event.status === "completed" || event.status === "closed";
   const homeRow = model.rows.find((r) => r.role === "home") ?? null;
   const homeProb =
     homeProbForDataAttr !== undefined
