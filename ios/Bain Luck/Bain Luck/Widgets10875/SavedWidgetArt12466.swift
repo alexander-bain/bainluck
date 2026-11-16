@@ -69,7 +69,8 @@ struct SavedWidgetArt12466: Equatable, Sendable {
     static func game(_ event: SavedWidgetEventDetail10875) -> SavedWidgetArt12466 {
         let short = TeamShortName.abbreviationPair(
             away: event.awayTeam, home: event.homeTeam,
-            awayServed: event.awayTeamData?.abbreviation, homeServed: event.homeTeamData?.abbreviation)
+            awayServed: event.awayTeamData?.abbreviation, homeServed: event.homeTeamData?.abbreviation,
+            sportKey: event.sport)
         let names = TeamShortName.shortPair(
             away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
         func side(_ data: SavedWidgetTeamData10875?, short: String) -> Side {

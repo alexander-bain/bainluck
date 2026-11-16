@@ -611,6 +611,7 @@ struct EventDetailView: View {
                                             awayTeamColor: teamColors(event).away,
                                             homeTeamLogo: event.homeTeamData?.logoSmall,
                                             awayTeamLogo: event.awayTeamData?.logoSmall,
+                                            sportKey: event.sport,
                                             lastPoint: lastPlayPoint(event: event))
                                         : nil,
                                      // #4974 — the journey only when page, view
@@ -857,6 +858,8 @@ struct EventDetailView: View {
                         // #6866 — the same crests the hero draws.
                         homeLogoURL: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
                         awayLogoURL: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
+                        homeAbbreviation: event.homeTeamData?.abbreviation,
+                        awayAbbreviation: event.awayTeamData?.abbreviation,
                         sportKey: event.sport
                     )
                 }
@@ -2667,7 +2670,9 @@ struct EventDetailView: View {
             HStack(spacing: 6) {
                 if !isAway && !adopted { Spacer(minLength: 0) }
                 TeamLogoView(url: logo, teamName: isAway ? event.awayTeam : event.homeTeam,
-                             color: color, size: 24, sportKey: event.sport, opponentName: opponent)
+                             color: color, size: 24, sportKey: event.sport, opponentName: opponent,
+                             abbreviation: isAway ? event.awayTeamData?.abbreviation : event.homeTeamData?.abbreviation,
+                             opponentAbbreviation: isAway ? event.homeTeamData?.abbreviation : event.awayTeamData?.abbreviation)
                 // One line, shrunk before it hyphenates ("Sea-hawks" at AX sizes).
                 Text(name)
                     .font(.subheadline.weight(.semibold))

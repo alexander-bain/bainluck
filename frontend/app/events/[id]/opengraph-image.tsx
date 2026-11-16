@@ -614,7 +614,7 @@ export default async function Image({ params }: { params: { id: string } }) {
                   makes the label load-bearing rather than a caveat: unlabelled,
                   96px of "54%" over "No result reported" reads as a live call. */}
               {forecastWithheld && prematch?.label && prematch.awayPercent != null && (
-                <div style={{ fontSize: 20 }}>{`Pre-match · ${prematch.label}`}</div>
+                <div style={{ fontSize: 20 }}>Pregame</div>
               )}
             </div>
             {/* #4957: the bare wordmark, matching the other three share cards. This card is

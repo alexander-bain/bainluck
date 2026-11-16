@@ -429,7 +429,9 @@ struct EventSportHeadlineCard12472: View {
                 color: tint,
                 size: crestSize,
                 sportKey: model.sportKey,
-                opponentName: row.opponentFullName
+                opponentName: row.opponentFullName,
+                abbreviation: row.abbreviation,
+                opponentAbbreviation: row.opponentAbbreviation
             )
         case .draw:
             ZStack {

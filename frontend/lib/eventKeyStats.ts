@@ -1044,7 +1044,7 @@ export function resolveProbability(
     homeProb = openingHomeProb;
     awayProb = openingAwayProb;
     if (homeProb !== null) {
-      probSourceLabel = "Pre-game odds";
+      probSourceLabel = "Pregame odds";
     } else {
       homeProb = odds?.home_probability ?? null;
       awayProb = odds?.away_probability ?? null;

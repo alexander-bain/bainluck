@@ -151,6 +151,8 @@ enum EventSportHeadlines12472 {
         let won: Bool?
         /// Per-column emphasis flags for set scores (e.g. won/current tennis set).
         var emphasizedColumns: Set<Int> = []
+        var abbreviation: String? = nil
+        var opponentAbbreviation: String? = nil
     }
 
     nonisolated enum BottomBar: Equatable, Sendable {
@@ -206,6 +208,8 @@ enum EventSportHeadlines12472 {
         var won: Bool? = nil
         var finalResultText: String? = nil
         var secondarySublineText: String? = nil
+        var abbreviation: String? = nil
+        var opponentAbbreviation: String? = nil
     }
 
     nonisolated struct Model: Equatable, Sendable {
@@ -220,13 +224,13 @@ enum EventSportHeadlines12472 {
         let liveBadgeText: String?
         let leagueLabel: String?
         let columns: [ColumnSpec]
-        let rows: [CompetitorRow]
+        var rows: [CompetitorRow]
         let bottomBar: BottomBar?
         let pregameColumnHeaders: PregameColumnHeaders?
         let liveColumnHeaders: LiveColumnHeaders?
-        let finalColumnHeaders: FinalColumnHeaders?
-        let away: TeamRowModel
-        let home: TeamRowModel
+        var finalColumnHeaders: FinalColumnHeaders? = nil
+        var away: TeamRowModel
+        var home: TeamRowModel
         let pregameAwayMarker: Double?
         let livePregameSummary: LivePregameSummary?
         let showsEkg: Bool
@@ -514,9 +518,10 @@ enum EventSportHeadlines12472 {
         let awayLogo = event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall
         let homeLogo = event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall
 
+        var model: Model
         switch resolvedPhase {
         case .before:
-            return resolveBefore(
+            model = resolveBefore(
                 kind: resolvedKind,
                 event: event,
                 sportKey: sportKey,
@@ -534,7 +539,7 @@ enum EventSportHeadlines12472 {
                 now: now
             )
         case .during:
-            return resolveDuring(
+            model = resolveDuring(
                 kind: resolvedKind,
                 event: event,
                 sportKey: sportKey,
@@ -552,7 +557,7 @@ enum EventSportHeadlines12472 {
                 now: now
             )
         case .after:
-            return resolveAfter(
+            model = resolveAfter(
                 kind: resolvedKind,
                 event: event,
                 sportKey: sportKey,
@@ -567,6 +572,27 @@ enum EventSportHeadlines12472 {
                 now: now
             )
         }
+        let awayAbbr = event.awayTeamData?.abbreviation
+        let homeAbbr = event.homeTeamData?.abbreviation
+        model.away.abbreviation = awayAbbr
+        model.away.opponentAbbreviation = homeAbbr
+        model.home.abbreviation = homeAbbr
+        model.home.opponentAbbreviation = awayAbbr
+        model.rows = model.rows.map { row in
+            var copy = row
+            switch row.role {
+            case .away:
+                copy.abbreviation = awayAbbr
+                copy.opponentAbbreviation = homeAbbr
+            case .home:
+                copy.abbreviation = homeAbbr
+                copy.opponentAbbreviation = awayAbbr
+            case .draw:
+                break
+            }
+            return copy
+        }
+        return model
     }
 
     // MARK: - Phase 1: `before` (`Proj. · Chance`)
