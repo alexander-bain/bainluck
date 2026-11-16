@@ -147,6 +147,10 @@ STEP_ENV_KEYS[("change-scope", "Extend change-scope with impacted tests for live
 }
 STEP_ENV_KEYS[("change-scope", "Record the deployed gate for the watchdog")] = {"LIVE_MODE"}
 STEP_ENV_KEYS[("change-scope", "Flaky quarantine (#12252)")] = {"GH_TOKEN"}
+# #3497 (Nov 16): each shard applies the newest master `ci-shard-durations` artifact
+# before partitioning; the token only lists and downloads that artifact.
+for _hints_job in ("backend-tests", "shard-completeness"):
+    STEP_ENV_KEYS[(_hints_job, "Newest master shard timings")] = {"GH_TOKEN"}
 STEP_ENV_KEYS[("fast-gate", "Python 3.11 syntax, smoke test and change-scope selected tests")] = {
     "SELECTED_TESTS",
 }
@@ -307,7 +311,16 @@ def _validate_current_composed_promotion(
     assert backend["steps"].index(_step(backend, "Install dependencies")) < backend[
         "steps"
     ].index(command)
-    assert len(backend["steps"]) == 11, "new source preparation needs review"
+    assert len(backend["steps"]) == 12, "new source preparation needs review"
+    # #3497 (Nov 16), the second reviewed addition: the newest master shard
+    # timings. It rewrites only `scripts/ci_shard_durations.json`, the balance
+    # hints; the partition is total and disjoint whatever the weights say
+    # (shard-completeness), so it moves files between shards but never selects
+    # or drops one. It runs no git and installs nothing.
+    hints = _step(backend, "Newest master shard timings")
+    assert hints.get("if") == RUNS
+    assert hints["run"].strip() == "python scripts/ci_shard_hints_fetch.py"
+    assert backend["steps"].index(hints) < backend["steps"].index(command)
     # #10090 attempt163, the one reviewed addition: a test binary supplied
     # outside the checkout. It runs no git and installs nothing, so it cannot
     # change the source, the dependencies or the test selection under test.
