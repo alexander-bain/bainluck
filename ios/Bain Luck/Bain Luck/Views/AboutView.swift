@@ -55,30 +55,6 @@ struct AboutView: View {
         return true
     }
 
-    static var pictureCreditsFooter: some View {
-        VStack(spacing: 0) {
-            Divider()
-            Link(destination: Self.pictureCreditsURL) {
-                HStack(spacing: 8) {
-                    Text("Picture credits")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(DS.textPrimary)
-                    Spacer()
-                    Image(systemName: "arrow.up.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(DS.textSecondaryReadable)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 13)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(DS.cardBg)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("about-picture-credits-link")
-        }
-    }
-
     var body: some View {
         // `.handOffToTheSystem` (the default, named here because it is load-
         // bearing rather than incidental): the About copy links to
@@ -86,11 +62,9 @@ struct AboutView: View {
         // mailto:bugs@bainluck.com. Left to follow in place, one tap turns a
         // screen titled "About" into a second copy of the website — which is
         // the defect #5914 is about, arriving a moment later. /discover switches
-        // natively to the Discover tab; the remaining outgoing links open in
-        // Safari and Mail.
-        //
-        // `pictureCreditsFooter` sits at the bottom of the page's own scroll
-        // content (`scrollFooter`), never pinned over the copy.
+        // natively to the Discover tab; the fine-print "Picture credits" link
+        // (/picture-credits) and remaining outgoing links open in Safari/Mail,
+        // without adding a second duplicate "Picture credits" row below the CTA.
         InAppWebView(
             url: Self.aboutURL,
             linkPolicy: .handOffToTheSystem,
@@ -100,8 +74,7 @@ struct AboutView: View {
                     navigation: navCoordinator,
                     dismiss: { dismiss() }
                 )
-            },
-            scrollFooter: AnyView(Self.pictureCreditsFooter)
+            }
         )
         .navigationTitle("About")
         #if os(iOS)

@@ -38,7 +38,6 @@ struct InAppWebView: View {
     let url: URL
     var linkPolicy: LinkPolicy = .handOffToTheSystem
     var interceptHandOff: ((URL) -> Bool)? = nil
-    var scrollFooter: AnyView? = nil
 
     #if canImport(WebKit)
     @Environment(\.openURL) private var openURL
@@ -50,7 +49,6 @@ struct InAppWebView: View {
                 url: url,
                 linkPolicy: linkPolicy,
                 isLoading: $isLoading,
-                scrollFooter: scrollFooter,
                 handOff: { candidate in
                     if interceptHandOff?(candidate) == true {
                         return
@@ -76,9 +74,6 @@ struct InAppWebView: View {
                 openURL(url)
             }
             .buttonStyle(.borderedProminent)
-            if let scrollFooter {
-                scrollFooter
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -177,7 +172,6 @@ private struct WebViewRepresentable {
     let url: URL
     let linkPolicy: InAppWebView.LinkPolicy
     @Binding var isLoading: Bool
-    var scrollFooter: AnyView? = nil
     let handOff: (URL) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -189,14 +183,6 @@ private struct WebViewRepresentable {
         private let linkPolicy: InAppWebView.LinkPolicy
         private let handOff: (URL) -> Void
         @Binding var isLoading: Bool
-        private var hasFinishedInitialLoad = false
-
-        #if !os(macOS)
-        private var footerHost: UIHostingController<AnyView>?
-        private var contentSizeObservation: NSKeyValueObservation?
-        private var boundsObservation: NSKeyValueObservation?
-        private var isLayingOutFooter = false
-        #endif
 
         init(
             url: URL,
@@ -233,10 +219,6 @@ private struct WebViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             isLoading = false
-            hasFinishedInitialLoad = true
-            #if !os(macOS)
-            layoutFooter(in: webView)
-            #endif
         }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             isLoading = false
@@ -244,95 +226,13 @@ private struct WebViewRepresentable {
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             isLoading = false
         }
-
-        #if !os(macOS)
-        func configureScrollFooter(_ footer: AnyView?, in webView: WKWebView) {
-            guard let footer else {
-                footerHost?.view.removeFromSuperview()
-                footerHost = nil
-                contentSizeObservation = nil
-                boundsObservation = nil
-                if webView.scrollView.contentInset.bottom != 0 {
-                    webView.scrollView.contentInset.bottom = 0
-                    webView.scrollView.verticalScrollIndicatorInsets.bottom = 0
-                }
-                return
-            }
-
-            if let existing = footerHost {
-                existing.rootView = footer
-                layoutFooter(in: webView)
-                return
-            }
-
-            let host = UIHostingController(rootView: footer)
-            host.view.backgroundColor = .clear
-            host.view.isHidden = true
-            host.view.accessibilityIdentifier = "in-app-webview-scroll-footer"
-            webView.scrollView.addSubview(host.view)
-            footerHost = host
-
-            contentSizeObservation = webView.scrollView.observe(\.contentSize, options: [.new]) { [weak self, weak webView] _, _ in
-                guard let self, let webView else { return }
-                self.layoutFooter(in: webView)
-            }
-            boundsObservation = webView.scrollView.observe(\.bounds, options: [.new]) { [weak self, weak webView] _, _ in
-                guard let self, let webView else { return }
-                self.layoutFooter(in: webView)
-            }
-            layoutFooter(in: webView)
-        }
-
-        func layoutFooter(in webView: WKWebView) {
-            guard !isLayingOutFooter, let host = footerHost else { return }
-            let width = max(webView.scrollView.bounds.width, webView.bounds.width)
-            let contentHeight = webView.scrollView.contentSize.height
-            guard hasFinishedInitialLoad, width > 0, contentHeight > 0 else {
-                host.view.isHidden = true
-                return
-            }
-            isLayingOutFooter = true
-            defer { isLayingOutFooter = false }
-
-            host.view.isHidden = false
-            let fitted = host.sizeThatFits(
-                in: CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
-            )
-            let footerHeight = ceil(max(fitted.height, 44))
-            if abs(webView.scrollView.contentInset.bottom - footerHeight) > 0.5 {
-                webView.scrollView.contentInset.bottom = footerHeight
-                webView.scrollView.verticalScrollIndicatorInsets.bottom = footerHeight
-            }
-            let targetFrame = CGRect(x: 0, y: contentHeight, width: width, height: footerHeight)
-            if host.view.frame != targetFrame {
-                host.view.frame = targetFrame
-            }
-        }
-        #endif
     }
 }
 
 #if os(macOS)
 extension WebViewRepresentable: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration()
-        if scrollFooter != nil {
-            let scriptSource = """
-            (function() {
-                if (document.getElementById('in-app-webview-scroll-footer')) return;
-                var row = document.createElement('a');
-                row.id = 'in-app-webview-scroll-footer';
-                row.href = 'https://www.bainluck.com/picture-credits';
-                row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-top:1px solid rgba(0,0,0,0.1);text-decoration:none;color:inherit;font-size:15px;font-weight:500;';
-                row.innerHTML = '<span>Picture credits</span><span style="opacity:0.6;font-size:12px;">↗</span>';
-                document.body.appendChild(row);
-            })();
-            """
-            config.userContentController.addUserScript(
-                WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
-            )
-        }
-        let webView = WKWebView(frame: .zero, configuration: config)
+        let webView = WKWebView()
         webView.navigationDelegate = context.coordinator
         webView.load(URLRequest(url: url))
         return webView
@@ -344,13 +244,10 @@ extension WebViewRepresentable: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let webView = WKWebView()
         webView.navigationDelegate = context.coordinator
-        context.coordinator.configureScrollFooter(scrollFooter, in: webView)
         webView.load(URLRequest(url: url))
         return webView
     }
-    func updateUIView(_ uiView: WKWebView, context: Context) {
-        context.coordinator.configureScrollFooter(scrollFooter, in: uiView)
-    }
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
 }
 #endif
 #endif
