@@ -140,6 +140,7 @@
 				Utilities/ProbabilityBarPalette.swift,
 				Utilities/RenderedPercent.swift,
 				Utilities/SportVocab.swift,
+				Utilities/HeadlineStyleTable199.swift,
 				Utilities/TeamShortName.swift,
 				Utilities/TeamTextContrast.swift,
 				Utilities/WatchTelemetryProtocol.swift,
@@ -198,6 +199,7 @@
 		A7C0000000000000000000DF /* Exceptions for "Bain Luck" folder in "BainLuckComplication" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Utilities/HeadlineStyleTable199.swift,
 			);
 			target = A7C0000000000000000000D1 /* BainLuckComplication */;
 		};
@@ -208,6 +210,7 @@
 				Utilities/GameActivityAttributes.swift,
 				Utilities/GameActivitySnapshot.swift,
 				Utilities/GameContinuation.swift,
+				Utilities/HeadlineStyleTable199.swift,
 				Utilities/RenderedPercent.swift,
 				Utilities/PeriodLabel.swift,
 				Utilities/SportVocab.swift,

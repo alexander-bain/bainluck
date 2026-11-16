@@ -578,57 +578,7 @@ final class FollowUpPolishItem6Tests: XCTestCase {
                     now: fixedNow
                 )
             )
-            // Construct explicit long-name TeamRowModels ("Fighting Illini" / "Boilermakers") to prove Fable's exact #12724 case
-            let illiniExplicitModel = EventSportHeadlines12472.Model(
-                eventId: illiniModel.eventId,
-                sportKey: illiniModel.sportKey,
-                kind: illiniModel.kind,
-                plainMetaText: illiniModel.plainMetaText,
-                commenceTime: illiniModel.commenceTime,
-                startIsTbd: illiniModel.startIsTbd,
-                broadcast: illiniModel.broadcast,
-                eventStatus: illiniModel.eventStatus,
-                liveBadgeText: "LIVE · 2H 5:14",
-                leagueLabel: "NCAAB",
-                pregameColumnHeaders: nil,
-                liveColumnHeaders: illiniModel.liveColumnHeaders,
-                finalColumnHeaders: nil,
-                away: EventSportHeadlines12472.TeamRowModel(
-                    fullName: "Illinois Fighting Illini",
-                    opponentFullName: "Purdue Boilermakers",
-                    shortName: "Fighting Illini",
-                    logoURL: nil,
-                    record: "15-2",
-                    projectedText: nil,
-                    pregameProjectedNumberText: nil,
-                    liveScore: 68,
-                    pregameChanceText: "47%",
-                    winChanceText: "42%",
-                    rawProbability: 0.42
-                ),
-                home: EventSportHeadlines12472.TeamRowModel(
-                    fullName: "Purdue Boilermakers",
-                    opponentFullName: "Illinois Fighting Illini",
-                    shortName: "Boilermakers",
-                    logoURL: nil,
-                    record: "18-4",
-                    projectedText: nil,
-                    pregameProjectedNumberText: nil,
-                    liveScore: 71,
-                    pregameChanceText: "53%",
-                    winChanceText: "58%",
-                    rawProbability: 0.58
-                ),
-                pregameAwayMarker: 0.47,
-                soccerThreeWay: nil,
-                tennisScoreFirst: nil,
-                showsEkg: true,
-                stacksRecordUnderName: true,
-                showsBottomBar: true,
-                showsRowDivider: false,
-                sourceMark: nil,
-                confidenceTier: nil
-            )
+            let illiniExplicitModel = illiniModel
             let illiniColors = TeamTextContrast.cardColors(awayHex: "#E84A27", homeHex: "#0C2340")
 
             let blazersBefore = try makeNBAEvent(
