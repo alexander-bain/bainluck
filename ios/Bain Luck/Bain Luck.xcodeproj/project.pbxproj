@@ -227,7 +227,6 @@
 				Utilities/PeriodLabel.swift,
 				Utilities/SportVocab.swift,
 				Utilities/TeamShortName.swift,
-				Utilities/ColorExtensions.swift,
 				Utilities/ComplementProbabilityDisplay.swift,
 				Utilities/EventOutcome.swift,
 				Utilities/EventState.swift,

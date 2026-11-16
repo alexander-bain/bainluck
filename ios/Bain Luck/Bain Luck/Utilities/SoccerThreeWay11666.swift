@@ -13,6 +13,24 @@ nonisolated enum EventAtlasSoccerCards11666 {
         return value
     }
 
+    /// Ruling 49-A: one-winner fields scale both ways only when all three legs are present
+    /// and the raw total is >= 90%. Partial fields or fields totaling < 90% withhold all leg numbers.
+    /// Decide 80-A (`#12274`, `#12449`): on a fallback `GameMarketOther` row, the market's
+    /// resolution status is not served beside the row, so `OutcomeVerdict` is asked as
+    /// for an open market (`marketResolved: false`): only an authoritative win becomes
+    /// `.won`, and a row grade never mints `.lost`.
+    nonisolated static func otherRowVerdict(
+        _ row: GameMarketOther,
+        finished: Bool
+    ) -> OutcomeVerdict? {
+        guard finished else { return nil }
+        return OutcomeVerdict.verdict(
+            isWinner: row.isWinner,
+            resolutionSource: row.resolutionSource,
+            marketResolved: false
+        ) == .won ? .won : nil
+    }
+
     static func scaleThreeWayField(
         home: Double?,
         draw: Double?,
