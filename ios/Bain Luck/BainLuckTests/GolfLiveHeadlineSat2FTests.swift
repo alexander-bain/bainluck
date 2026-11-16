@@ -79,6 +79,7 @@ final class GolfLiveHeadlineSat2FTests: XCTestCase {
             "status": "open",
             "source": "datagolf",
             "commence_time": "2026-11-13T13:00:00Z",
+            "created_at": "2026-11-11T12:00:00Z",
             "updated_at": freshISO,
             "outcomes": [
                 ["id": 1, "name": "Trace Crowe", "probability": 0.173, "opening_probability": 0.02, "observed_at": freshISO],

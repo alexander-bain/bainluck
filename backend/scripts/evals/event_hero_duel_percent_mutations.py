@@ -69,6 +69,7 @@ FRONTEND = REPO / "frontend"
 RESOLVER = FRONTEND / "lib/eventKeyStats.ts"
 COMPONENT = FRONTEND / "components/EventHeroProbabilityPair.tsx"
 VIEW = REPO / "ios/Bain Luck/Bain Luck/Views/EventDetailView.swift"
+HEADLINE = REPO / "ios/Bain Luck/Bain Luck/Utilities/EventSportHeadlines12472.swift"
 
 BACKUP_DIR = Path("/tmp/lat_p119_backups")
 
@@ -218,12 +219,14 @@ RESOLVER_MUTATIONS += [
 VIEW_MUTATIONS: list[dict] = [
     {
         "id": "M8-ios-hero-drops-the-override",
-        # RE-TARGETED for #10090 (ALEX item 39). The hero prints tenths through
-        # `EventHeadlineTenths10090.pair(home:away:)`, which derives the away
-        # tenth from the home one. Same mutation in substance: each side is
-        # rounded on its own, which re-opens the 100.1 / 99.9 pair.
-        "needle": "let printed = EventHeadlineTenths10090.pair(home: home, away: away)",
-        "replacement": "let printed = (home: EventHeadlineTenths10090.pair(home: home, away: nil).home, "
+        # RE-TARGETED for #10090 (ALEX item 39) and Direction 199: `nflPairedHeadline`
+        # in `EventDetailView.swift` prints tenths through
+        # `EventHeadlineTenths10090.pair(home: pair.home, away: away)`, while the
+        # unified event-page headline (`EventSportHeadlines12472.swift`) is covered
+        # by `M11-ios-unified-headline-drops-the-override` below. Same mutation in
+        # substance: each side is rounded on its own, re-opening 100.1 / 99.9.
+        "needle": "let printed = EventHeadlineTenths10090.pair(home: pair.home, away: away)",
+        "replacement": "let printed = (home: EventHeadlineTenths10090.pair(home: pair.home, away: nil).home, "
         "away: Optional(EventHeadlineTenths10090.pair(home: away, away: nil).home))",
         "why": "Native's hero goes back to rounding its own side. The Swift "
         "contract test still passes — it tests the HELPER — so only a guard "
@@ -269,7 +272,22 @@ VIEW_MUTATIONS: list[dict] = [
     },
 ]
 
-#: The three tables, paired with the target each one mutates. This is the same
+HEADLINE_MUTATIONS: list[dict] = [
+    {
+        "id": "M11-ios-unified-headline-drops-the-override",
+        # Direction 199 moved the event-page hero onto `EventSportHeadlines12472.swift`.
+        # Pin the unified headline's paired tenths call directly so `M8` does not end
+        # up guarding only `nflPairedHeadline` while the mounted hero goes unmutated.
+        "needle": "let tenths = EventHeadlineTenths10090.pair(home: home, away: away)",
+        "replacement": "let tenths = (home: EventHeadlineTenths10090.pair(home: home, away: nil).home, "
+        "away: Optional(EventHeadlineTenths10090.pair(home: away, away: nil).home))",
+        "why": "The unified event-page headline goes back to rounding each side "
+        "independently in streaming tenths.",
+        "property": "the unified iOS headline pair goes through the decided percent",
+    },
+]
+
+#: The four tables, paired with the target each one mutates. This is the same
 #: mapping `SHAPES["event_hero_duel_percent_mutations"]` declares in
 #: `scan_mutation_residue.py`; if the two ever disagree, the scanner harvests a
 #: needle against the wrong file and Pass A reports DRIFT rather than passing.
@@ -277,6 +295,7 @@ TABLES: tuple[tuple[str, list[dict], Path], ...] = (
     ("RESOLVER_MUTATIONS", RESOLVER_MUTATIONS, RESOLVER),
     ("COMPONENT_MUTATIONS", COMPONENT_MUTATIONS, COMPONENT),
     ("VIEW_MUTATIONS", VIEW_MUTATIONS, VIEW),
+    ("HEADLINE_MUTATIONS", HEADLINE_MUTATIONS, HEADLINE),
 )
 
 
@@ -301,7 +320,7 @@ def _run_oracle() -> tuple[bool, str]:
 
 
 def main() -> int:
-    for target in (RESOLVER, COMPONENT, VIEW):
+    for target in (RESOLVER, COMPONENT, VIEW, HEADLINE):
         if not target.exists():
             print(f"🔴 battery cannot run — missing target {target}")
             return 2
