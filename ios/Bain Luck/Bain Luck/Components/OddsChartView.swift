@@ -1258,27 +1258,6 @@ struct OddsChartView: View {
                                   tennis: tennis)
                     }
                     .frame(height: chartHeight)
-                    .overlay(alignment: .topLeading) {
-                        if ReleaseSurfaces.isEventPageAtlasEnabled() {
-                            EventAtlasChartHeaderView11666(
-                                selection: selection,
-                                dataPoints: dataPoints,
-                                checkpoints: checkpoints,
-                                history: history,
-                                status: status,
-                                sides: axis.sides,
-                                includesOpening: drawnRange == .all,
-                                homeName: homeTeamName ?? homeShort,
-                                primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: history.winProbSources ?? [:]),
-                                homeScore: homeScore,
-                                awayScore: awayScore,
-                                servedSettledResult: servedSettledResult,
-                                gameStart: kickoffDate
-                            )
-                            .padding(.leading, chartTeamGutterWidth)
-                            .padding(.top, 2)
-                        }
-                    }
                     // #10876 — the explore-the-chart tip, inline chart only.
                     .exploreChartTip10876(eventId: eventId, touchSurfaceInstalled: scrubSurfaces, dataPoints: dataPoints)
 
@@ -1291,9 +1270,6 @@ struct OddsChartView: View {
                     // sit flush against the bottom of the chart's own frame.
                     legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                sourcesOpen: $inlineSourcesOpen, rail: false)
-                        .padding(.leading, chartTeamGutterWidth)
-                        .padding(.top, 2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
 
                     // Indented onto the SAME left margin as the plot area and the
                     // legend, for the reason UX-P090 gives above: three rows that
@@ -2607,6 +2583,26 @@ struct OddsChartView: View {
         // `ChartScrubSurface`), so the Mac keeps the built-in selection.
         .chartXSelection(value: Binding(get: { selection.date }, set: { selection.select($0) }))
         #endif
+        .overlay(alignment: .topLeading) {
+            if sharesPageAxis, let history = vm.history, ReleaseSurfaces.isEventPageAtlasEnabled() {
+                EventAtlasChartHeaderView11666(
+                    selection: selection,
+                    dataPoints: dataPoints,
+                    checkpoints: checkpoints,
+                    history: history,
+                    status: status,
+                    sides: axis.sides,
+                    includesOpening: drawnRange == .all,
+                    homeName: homeTeamName ?? homeShort,
+                    primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: history.winProbSources ?? [:]),
+                    homeScore: homeScore,
+                    awayScore: awayScore,
+                    servedSettledResult: servedSettledResult,
+                    gameStart: kickoffDate
+                )
+                .padding(.top, 2)
+            }
+        }
     }
 
     /// #925 — the date under a finger at chart-space `x`, clamped to the plot
@@ -2715,46 +2711,57 @@ struct OddsChartView: View {
         if hasBlend {
             let open = sourcesOpen.wrappedValue && !revealable.isEmpty
             if rail {
-                let primaryKey = legendKey("aggregate", sources: sources, isPrimary: true, reading: endReading)
-                let control = railControl9483(open: open, count: revealable.count, sourcesOpen)
-                let names = ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        if open {
+                if open {
+                    let primaryKey = legendKey("aggregate", sources: sources, isPrimary: true, reading: endReading)
+                    let control = railControl9483(open: open, count: revealable.count, sourcesOpen)
+                    let names = ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
                             ForEach(revealable, id: \.self) { source in
                                 legendKey(source, sources: sources, isPrimary: false)
                             }
                         }
+                        .fixedSize(horizontal: true, vertical: false)
                     }
-                    .fixedSize(horizontal: true, vertical: false)
+                    Self.railRow9483(primaryKey: primaryKey, control: control, names: names,
+                                     readableWidth: railReadableWidth9483)
+                } else if !revealable.isEmpty {
+                    railControl9483(open: false, count: revealable.count, sourcesOpen)
                 }
-                Self.railRow9483(primaryKey: primaryKey, control: control, names: names,
-                                 readableWidth: railReadableWidth9483)
-            } else {
+            } else if open {
                 FlowLayout(spacing: 8) {
                     legendKey("aggregate", sources: sources, isPrimary: true, reading: endReading)
-                    if open {
-                        ForEach(revealable, id: \.self) { source in
-                            legendKey(source, sources: sources, isPrimary: false)
-                        }
-                        sourcesHideButton(sourcesOpen)
-                    } else if !revealable.isEmpty {
-                        sourcesShowButton(count: revealable.count, sourcesOpen)
+                    ForEach(revealable, id: \.self) { source in
+                        legendKey(source, sources: sources, isPrimary: false)
                     }
+                    sourcesHideButton(sourcesOpen)
                 }
+                .padding(.leading, chartTeamGutterWidth)
+                .padding(.top, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if !revealable.isEmpty {
+                sourcesShowButton(count: revealable.count, sourcesOpen)
+                    .padding(.leading, chartTeamGutterWidth)
+                    .padding(.top, 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
-            // Legend mirrors what is actually drawn: the fail-closed full set
-            // (L2-216), with the sportsbook consensus first as the primary line.
+            // A chart with one line has no legend: only draw a legend when more
+            // than one line is actually drawn on the plot.
             let ordered = Self.defaultVisibleSources(in: dataPoints).sorted { a, b in
                 if a == "consensus" { return true }
                 if b == "consensus" { return false }
                 return a < b
             }
-            FlowLayout(spacing: 8) {
-                ForEach(ordered, id: \.self) { source in
-                    legendKey(source, sources: sources, isPrimary: source == "consensus",
-                              reading: source == Self.primarySource(in: dataPoints) ? endReading : nil)
+            if ordered.count > 1 {
+                FlowLayout(spacing: 8) {
+                    ForEach(ordered, id: \.self) { source in
+                        legendKey(source, sources: sources, isPrimary: source == "consensus",
+                                  reading: source == Self.primarySource(in: dataPoints) ? endReading : nil)
+                    }
                 }
+                .padding(.leading, rail ? 0 : chartTeamGutterWidth)
+                .padding(.top, rail ? 0 : 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }

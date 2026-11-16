@@ -390,6 +390,8 @@ final class Ruling201ChartScaleAndHeaderTests: XCTestCase {
         let renderedTexts = collectTexts(in: host.view).joined(separator: " | ")
         XCTAssertFalse(renderedTexts.contains("Recorded reading"), "Legend 'Recorded reading' must not render")
         XCTAssertFalse(renderedTexts.contains("Tap any reading"), "Tap hint must not render")
+        XCTAssertFalse(renderedTexts.contains("Sportsbook Consensus"), "Single-line chart must not render a source legend")
+        XCTAssertFalse(renderedTexts.contains("Bain Luck"), "Single-line chart must not render a single-line legend")
 
         if let outDir = ProcessInfo.processInfo.environment["EXPORT_201_CHART_RENDERS_DIR"],
            !outDir.isEmpty {
