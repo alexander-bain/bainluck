@@ -26,7 +26,7 @@ import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastCo
 import { livePregameComparison } from "@/lib/livePregameComparison";
 import FinalForecastDetails from "@/components/event/FinalForecastDetails";
 import ProjectedFinalLine from "@/components/ProjectedFinalLine";
-import { teamTextColor } from "@/lib/teamColors";
+import { resolveMatchupTeamColors, teamTextColor } from "@/lib/teamColors";
 import { heldFrameAfter, useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
 import { createReconnectCatchup } from "@/lib/reconnectCatchup";
 import {
@@ -2771,6 +2771,15 @@ export default function EventPage({ params }: EventPageProps) {
     actualSeriesDrawn: drawsActualScore,
   });
 
+  const matchupColors = resolveMatchupTeamColors({
+    homePrimary: event.home_team_data?.primary_color,
+    awayPrimary: event.away_team_data?.primary_color,
+    homeSecondary: event.home_team_data?.secondary_color,
+    awaySecondary: event.away_team_data?.secondary_color,
+  });
+  const effectiveHomePrimary = matchupColors.home ?? event.home_team_data?.primary_color ?? undefined;
+  const effectiveAwayPrimary = matchupColors.away ?? event.away_team_data?.primary_color ?? undefined;
+
   // Score Differential Chart — only when projected/actual score data exists (L2-112 Item 4).
   const scoreDiffCard = hasScoreDiffData ? (
     <SectionErrorBoundary label="The score differential chart" resetKey={historyData}>
@@ -2795,8 +2804,9 @@ export default function EventPage({ params }: EventPageProps) {
         currentAwayScore={servedScore.away_score}
         eventStatus={event.status}
         periodBoundaries={periodBoundaries}
-        homeTeamColor={event.home_team_data?.primary_color || undefined}
-        awayTeamColor={event.away_team_data?.primary_color || undefined}
+        homeTeamColor={effectiveHomePrimary}
+        awayTeamColor={effectiveAwayPrimary}
+        awayTeamSecondaryColor={event.away_team_data?.secondary_color || undefined}
         homeTeamLogo={event.home_team_data?.logo_small || undefined}
         awayTeamLogo={event.away_team_data?.logo_small || undefined}
         homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
@@ -2829,7 +2839,11 @@ export default function EventPage({ params }: EventPageProps) {
   ) : null;
   // #9483 — the game-story cards and their reader take the page's one team-line
   // pair (#10547), and the reader's match line is the hero's own numbers.
-  const nflStrokes = projectedTeamStrokes(event.home_team_data?.primary_color, event.away_team_data?.primary_color);
+  const nflStrokes = projectedTeamStrokes(
+    event.home_team_data?.primary_color,
+    event.away_team_data?.primary_color,
+    event.away_team_data?.secondary_color,
+  );
   const nflCardTeams = {
     awayName: event.away_team,
     homeName: event.home_team,
@@ -2871,8 +2885,9 @@ export default function EventPage({ params }: EventPageProps) {
       periodBoundaries={periodBoundaries}
       homeTeam={event.home_team}
       awayTeam={event.away_team}
-      homeColor={event.home_team_data?.primary_color}
-      awayColor={event.away_team_data?.primary_color}
+      homeColor={effectiveHomePrimary}
+      awayColor={effectiveAwayPrimary}
+      awaySecondaryColor={event.away_team_data?.secondary_color}
     />
   );
 
@@ -3292,7 +3307,7 @@ export default function EventPage({ params }: EventPageProps) {
                 fallback={
               <div
                 className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"
-                style={{ backgroundColor: `${event.home_team_data?.primary_color || "#94A3B8"}15` }}
+                style={{ backgroundColor: `${effectiveHomePrimary || "#94A3B8"}15` }}
               >
                 {heroCrestImage(event.home_team_data, event.home_team, event.sport_key) ? (
                   <img
@@ -3307,7 +3322,7 @@ export default function EventPage({ params }: EventPageProps) {
                 ) : null}
                 <span
                   className={`text-sm font-extrabold ${heroCrestImage(event.home_team_data, event.home_team, event.sport_key) ? "hidden" : ""}`}
-                  style={{ color: teamTextColor(event.home_team_data?.primary_color) || "var(--text-secondary)" }}
+                  style={{ color: teamTextColor(effectiveHomePrimary) || "var(--text-secondary)" }}
                 >
                   {/* #7270 — the badge policy lives in `lib/teamShortName.ts`, which
                       owns the unshippable list. This hero used to inline its own copy
@@ -3400,8 +3415,9 @@ export default function EventPage({ params }: EventPageProps) {
                 // em-dash is a solid rectangle and `–  ▬%` reads as a number
                 // that failed to draw. See the prop's own note.
                 awayWithheld={awaySlotWithheld}
-                homeColor={event.home_team_data?.primary_color}
-                awayColor={event.away_team_data?.primary_color}
+                homeColor={effectiveHomePrimary}
+                awayColor={effectiveAwayPrimary}
+                awaySecondaryColor={event.away_team_data?.secondary_color}
                 probSourceLabel={probSourceLabel}
                 // live/034 S2 — count to the new value only when it is arriving
                 // by push. On the 32s poll a jump IS the honest rendering of
@@ -3750,7 +3766,7 @@ export default function EventPage({ params }: EventPageProps) {
                 fallback={
               <div
                 className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"
-                style={{ backgroundColor: `${event.away_team_data?.primary_color || "#64748B"}15` }}
+                style={{ backgroundColor: `${effectiveAwayPrimary || "#64748B"}15` }}
               >
                 {heroCrestImage(event.away_team_data, event.away_team, event.sport_key) ? (
                   <img
@@ -3765,7 +3781,7 @@ export default function EventPage({ params }: EventPageProps) {
                 ) : null}
                 <span
                   className={`text-sm font-extrabold ${heroCrestImage(event.away_team_data, event.away_team, event.sport_key) ? "hidden" : ""}`}
-                  style={{ color: teamTextColor(event.away_team_data?.primary_color) || "#64748B" }}
+                  style={{ color: teamTextColor(effectiveAwayPrimary) || "#64748B" }}
                 >
                   {/* #7270 — see the home tile above; same policy, same helper. */}
                   {shippableCrestBadge(
@@ -3981,8 +3997,9 @@ export default function EventPage({ params }: EventPageProps) {
               eventId={eventId}
               eventStatus={event.status}
               periodBoundaries={periodBoundaries}
-              homeTeamColor={event.home_team_data?.primary_color || undefined}
-              awayTeamColor={event.away_team_data?.primary_color || undefined}
+              homeTeamColor={effectiveHomePrimary}
+              awayTeamColor={effectiveAwayPrimary}
+              awayTeamSecondaryColor={event.away_team_data?.secondary_color || undefined}
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
               homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
@@ -4010,8 +4027,9 @@ export default function EventPage({ params }: EventPageProps) {
               activePoint={activeChartPoint}
               homeTeam={event.home_team}
               awayTeam={event.away_team}
-              homeTeamColor={event.home_team_data?.primary_color || undefined}
-              awayTeamColor={event.away_team_data?.primary_color || undefined}
+              homeTeamColor={effectiveHomePrimary}
+              awayTeamColor={effectiveAwayPrimary}
+              awayTeamSecondaryColor={event.away_team_data?.secondary_color || undefined}
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
               lastPoint={lastChartPoint}
@@ -4187,8 +4205,8 @@ export default function EventPage({ params }: EventPageProps) {
           awayTeam={event.away_team}
           homeAbbr={event.home_team_data?.abbreviation || undefined}
           awayAbbr={event.away_team_data?.abbreviation || undefined}
-          homeColor={event.home_team_data?.primary_color || undefined}
-          awayColor={event.away_team_data?.primary_color || undefined}
+          homeColor={effectiveHomePrimary}
+          awayColor={effectiveAwayPrimary}
           homeLogo={event.home_team_data?.logo_small || undefined}
           awayLogo={event.away_team_data?.logo_small || undefined}
           homeWinProb={event.current_odds?.home_probability ?? undefined}
@@ -4276,8 +4294,8 @@ export default function EventPage({ params }: EventPageProps) {
                 homeTeamAbbrev={event.home_team_data?.abbreviation}
                 awayTeamAbbrev={event.away_team_data?.abbreviation}
                 sport={event.sport_key ?? event.sport}
-                homeColor={event.home_team_data?.primary_color || undefined}
-                awayColor={event.away_team_data?.primary_color || undefined}
+                homeColor={effectiveHomePrimary}
+                awayColor={effectiveAwayPrimary}
                 boxScore={event.box_score_data}
               />
             </details>
@@ -4348,8 +4366,8 @@ export default function EventPage({ params }: EventPageProps) {
                 other: gameMarkets?.other,
                 homeTeam: event.home_team,
                 awayTeam: event.away_team,
-                homeColor: event.home_team_data?.primary_color || undefined,
-                awayColor: event.away_team_data?.primary_color || undefined,
+                homeColor: effectiveHomePrimary,
+                awayColor: effectiveAwayPrimary,
                 boxScorePlayers:
                   foldBoxScore?.players != null && foldBoxScore.players.length > 0
                     ? foldBoxScore.players
@@ -4468,8 +4486,9 @@ export default function EventPage({ params }: EventPageProps) {
             gamesToWin={gamesToWin}
             homeTeam={event.home_team}
             awayTeam={event.away_team}
-            homeTeamColor={event.home_team_data?.primary_color || undefined}
-            awayTeamColor={event.away_team_data?.primary_color || undefined}
+            homeTeamColor={effectiveHomePrimary}
+            awayTeamColor={effectiveAwayPrimary}
+            awayTeamSecondaryColor={event.away_team_data?.secondary_color || undefined}
           />
           </SectionErrorBoundary>
         );
@@ -4499,8 +4518,8 @@ export default function EventPage({ params }: EventPageProps) {
         eventId={eventId}
         homeTeam={event.home_team}
         awayTeam={event.away_team}
-        homeTeamColor={event.home_team_data?.primary_color || undefined}
-        awayTeamColor={event.away_team_data?.primary_color || undefined}
+        homeTeamColor={effectiveHomePrimary}
+        awayTeamColor={effectiveAwayPrimary}
         homeTeamLogo={event.home_team_data?.logo_small || undefined}
         awayTeamLogo={event.away_team_data?.logo_small || undefined}
         sportKey={event.sport || undefined}
@@ -4634,8 +4653,9 @@ export default function EventPage({ params }: EventPageProps) {
               eventStatus={event.status}
               fillContainer
               periodBoundaries={periodBoundaries}
-              homeTeamColor={event.home_team_data?.primary_color || undefined}
-              awayTeamColor={event.away_team_data?.primary_color || undefined}
+              homeTeamColor={effectiveHomePrimary}
+              awayTeamColor={effectiveAwayPrimary}
+              awayTeamSecondaryColor={event.away_team_data?.secondary_color || undefined}
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
               homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}

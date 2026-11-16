@@ -55,6 +55,20 @@ describe("Picture credits page (#12659 / Ruling 195-A)", () => {
       expect(html).toContain(escapeHtml(entry.license ?? ""));
       expect(html).toContain(`href="${escapeHtml(entry.source_page ?? "")}"`);
     }
+    expect(html).toContain('data-testid="tmdb-attribution-block"');
+    expect(html).toContain("not endorsed or certified by TMDB");
+  });
+
+  it("keeps backend and frontend verified art registers byte-identical", () => {
+    const backendJson = fs.readFileSync(
+      path.join(__dirname, "..", "..", "backend", "data", "discover", "verified_discover_art.json"),
+      "utf-8",
+    );
+    const frontendJson = fs.readFileSync(
+      path.join(__dirname, "..", "lib", "discover", "verifiedDiscoverArt.json"),
+      "utf-8",
+    );
+    expect(frontendJson).toBe(backendJson);
   });
 
   it("links to /picture-credits from both the website Footer and About page", () => {

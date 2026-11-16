@@ -36,6 +36,11 @@ export function hexToRgb(hex: string | null | undefined): string | undefined {
  * on the element. Pass hex colors from the Team model
  * (team.primary_color, team.secondary_color).
  *
+ * Ruling 197: when both teams carry visible colours in the same hue family (or
+ * near-identical), the away team's `--team-away-primary` switches to its own
+ * `secondary_color` (if readable and outside the home hue family) or slate grey
+ * (`SLATE_TEAM_FALLBACK`).
+ *
  * Missing colors fall through to the --team-home-primary etc.
  * defaults defined in design-tokens.css (gray).
  */
@@ -46,11 +51,17 @@ export function teamColorStyle(
   awaySecondary?: string | null
 ): CSSProperties {
   const style: Record<string, string> = {};
+  const resolved = resolveMatchupTeamColors({
+    homePrimary: homeColor,
+    awayPrimary: awayColor,
+    homeSecondary,
+    awaySecondary,
+  });
 
-  const homeRgb = hexToRgb(homeColor);
+  const homeRgb = hexToRgb(resolved.home ?? homeColor);
   if (homeRgb) style["--team-home-primary"] = homeRgb;
 
-  const awayRgb = hexToRgb(awayColor);
+  const awayRgb = hexToRgb(resolved.away ?? awayColor);
   if (awayRgb) style["--team-away-primary"] = awayRgb;
 
   const homeSecRgb = hexToRgb(homeSecondary);
@@ -158,4 +169,176 @@ export function teamColorWithOpacity(
   if (!rgb) return `rgba(107, 114, 128, ${opacity})`; // gray-500 fallback
   const [r, g, b] = rgb.split(" ");
   return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+}
+
+/**
+ * Ruling 197 — slate grey fallback (`slate-500`, 4.76:1 vs `#FFFFFF`), matching
+ * iOS `ProbabilityBarPalette.awayDefault` (`#64748B`).
+ */
+export const SLATE_TEAM_FALLBACK = "#64748B";
+
+export type HueFamily =
+  | "red"
+  | "orange"
+  | "yellow"
+  | "green"
+  | "teal"
+  | "blue"
+  | "purple"
+  | "magenta";
+
+function parseRgbTuple(hex: string | null | undefined): [number, number, number] | null {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return null;
+  const parts = rgb.split(" ").map(Number);
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return null;
+  return [parts[0], parts[1], parts[2]];
+}
+
+function normalizeValidHex(hex: string | null | undefined): string | null {
+  if (!hex || !parseRgbTuple(hex)) return null;
+  const raw = hex.trim();
+  return raw.startsWith("#") ? raw : `#${raw}`;
+}
+
+function rawRedmeanDistance(
+  a: [number, number, number],
+  b: [number, number, number]
+): number {
+  const rbar = (a[0] + b[0]) / 2;
+  const dr = a[0] - b[0];
+  const dg = a[1] - b[1];
+  const db = a[2] - b[2];
+  return Math.sqrt(
+    (2 + rbar / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rbar) / 256) * db * db
+  );
+}
+
+/**
+ * Ruling 197 — chromatic hue family of a hex colour, or `null` when absent,
+ * unparseable, or neutral/achromatic (`lightness < 6%`, `lightness > 94%`, or
+ * `saturation < 22%`, covering blacks, whites, silvers, and slate greys such as
+ * `#374151`, `#64748B`, and `#6B7280`).
+ */
+export function colorHueFamily(hex: string | null | undefined): HueFamily | null {
+  const tuple = parseRgbTuple(hex);
+  if (!tuple) return null;
+  const r = tuple[0] / 255;
+  const g = tuple[1] / 255;
+  const b = tuple[2] / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (d === 0 || l < 0.06 || l > 0.94) return null;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  if (s < 0.22) return null;
+
+  let h = 0;
+  if (max === r) {
+    h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+  } else if (max === g) {
+    h = ((b - r) / d + 2) * 60;
+  } else {
+    h = ((r - g) / d + 4) * 60;
+  }
+
+  if (h >= 335 || h < 15) return "red";
+  if (h < 38) return "orange";
+  if (h < 70) return "yellow";
+  if (h < 168) return "green";
+  if (h < 196) return "teal";
+  if (h < 245) return "blue";
+  if (h < 305) return "purple";
+  return "magenta";
+}
+
+/**
+ * Ruling 197 — true when two colours both belong to the same chromatic hue
+ * family (for example Kansas `#0051ba` and Duke `#00539b`, or Gonzaga `#041e42`
+ * and Duke `#00539b`, all in `"blue"`). Neutral greys/blacks return `false` and
+ * continue to use the near-identical distance check.
+ */
+export function sameColorFamily(
+  a: string | null | undefined,
+  b: string | null | undefined
+): boolean {
+  const fa = colorHueFamily(a);
+  const fb = colorHueFamily(b);
+  return fa !== null && fa === fb;
+}
+
+export interface MatchupTeamColorInput {
+  homePrimary?: string | null;
+  awayPrimary?: string | null;
+  homeSecondary?: string | null;
+  awaySecondary?: string | null;
+}
+
+export interface ResolvedMatchupTeamColors {
+  home: string | null;
+  away: string | null;
+  awaySwitched: boolean;
+}
+
+const MIN_VISIBLE_SURFACE_CONTRAST = 1.5;
+const MIN_NEAR_IDENTICAL_DISTANCE = 80;
+const SLATE_COLLISION_FALLBACK = "#111827";
+
+/**
+ * Ruling 197 (Alex, #12538): when both teams' main colours are near-identical
+ * or share a chromatic hue family, the home team keeps its main colour and the
+ * away team switches to its own `secondary_color` — provided we hold one that
+ * clears the card text contrast floor (`3:1`), is not near-identical to home,
+ * and is not in home's hue family. Otherwise the away team switches to slate
+ * grey (`#64748B`, or `#111827` if home itself sits near `#64748B`).
+ */
+export function resolveMatchupTeamColors({
+  homePrimary,
+  awayPrimary,
+  awaySecondary,
+}: MatchupTeamColorInput): ResolvedMatchupTeamColors {
+  const normHome = normalizeValidHex(homePrimary);
+  const normAway = normalizeValidHex(awayPrimary);
+  if (!normHome || !normAway) {
+    return { home: normHome, away: normAway, awaySwitched: false };
+  }
+
+  const homeContrast = contrastVsCardSurface(normHome);
+  const awayContrast = contrastVsCardSurface(normAway);
+  if (
+    homeContrast === null ||
+    awayContrast === null ||
+    homeContrast < MIN_VISIBLE_SURFACE_CONTRAST ||
+    awayContrast < MIN_VISIBLE_SURFACE_CONTRAST
+  ) {
+    return { home: normHome, away: normAway, awaySwitched: false };
+  }
+
+  const homeRgb = parseRgbTuple(normHome)!;
+  const awayRgb = parseRgbTuple(normAway)!;
+  const nearIdentical =
+    rawRedmeanDistance(awayRgb, homeRgb) < MIN_NEAR_IDENTICAL_DISTANCE;
+  const sharedHue = sameColorFamily(normAway, normHome);
+
+  if (!nearIdentical && !sharedHue) {
+    return { home: normHome, away: normAway, awaySwitched: false };
+  }
+
+  const normAwaySec = normalizeValidHex(awaySecondary);
+  if (normAwaySec && teamTextColor(normAwaySec)) {
+    const secRgb = parseRgbTuple(normAwaySec)!;
+    const secTooClose =
+      rawRedmeanDistance(secRgb, homeRgb) < MIN_NEAR_IDENTICAL_DISTANCE;
+    if (!secTooClose && !sameColorFamily(normAwaySec, normHome)) {
+      return { home: normHome, away: normAwaySec, awaySwitched: true };
+    }
+  }
+
+  const slateRgb = parseRgbTuple(SLATE_TEAM_FALLBACK)!;
+  const fallbackAway =
+    rawRedmeanDistance(slateRgb, homeRgb) >= MIN_NEAR_IDENTICAL_DISTANCE
+      ? SLATE_TEAM_FALLBACK
+      : SLATE_COLLISION_FALLBACK;
+  return { home: normHome, away: fallbackAway, awaySwitched: true };
 }
