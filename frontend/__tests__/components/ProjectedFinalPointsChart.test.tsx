@@ -439,12 +439,12 @@ describe("#10547 — each team keeps one colour that its line can be told apart 
     return { name, key, strokes };
   };
 
-  it("the specimen: two navies were one line (131 apart), so the home side moves and the away side keeps its own", () => {
+  it("the specimen: two navies were one line (131 apart), so the away side switches and the home side keeps its own (Ruling 197)", () => {
     expect(dist(BILLS, PATRIOTS)).toBeLessThan(MIN_LINE_PAIR_DISTANCE);
     const pair = projectedTeamStrokes(PATRIOTS, BILLS);
-    expect(pair.away).toBe(BILLS);
-    expect(pair.home).not.toBe(PATRIOTS);
-    expect(LINE_RESCUE_COLORS).toContain(pair.home);
+    expect(pair.home).toBe(PATRIOTS);
+    expect(pair.away).not.toBe(BILLS);
+    expect(LINE_RESCUE_COLORS).toContain(pair.away);
     expect(dist(pair.home, pair.away)).toBeGreaterThanOrEqual(MIN_LINE_PAIR_DISTANCE);
   });
 

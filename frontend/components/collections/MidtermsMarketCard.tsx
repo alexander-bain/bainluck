@@ -7,7 +7,6 @@ import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { MIDTERMS_PARTY_COLOR, midtermsBalanceParties, midtermsOutcomeParty, type MidtermsParty } from "@/lib/midtermsParty";
 import MarketCard from "@/components/politics/MarketCard";
-import { SourceBadge } from "@/components/politics/atoms";
 import EntityImage from "@/components/EntityImage";
 import { cleanPersonOutcomeName, isPersonOutcomeName } from "@/lib/eventConceptDisplay";
 
@@ -32,7 +31,6 @@ export default function MidtermsMarketCard({ market, presentation }: { market: F
     return <Link href={`/futures/${market.id}`} data-midterms-card="balance" className={`block rounded-card border border-surface-border bg-surface-card p-4 ${focus}`}>
       <div className="mb-3 flex items-start justify-between gap-3">
         <h3 className="text-sm font-semibold text-text-primary">{market.name}</h3>
-        <SourceBadge source={row.src} />
       </div>
       <div className="grid grid-cols-2 gap-2">
         {balance.map(({ outcome, parties }) => {
@@ -52,7 +50,7 @@ export default function MidtermsMarketCard({ market, presentation }: { market: F
   }
 
   const pair = twoLegCardPair(row);
-  if (presentation === "field" || !pair.second) return <MarketCard market={{ ...row, top_outcomes: row.top_outcomes.slice(0, 5) }} theme="congressional" forceField={presentation === "field"} forceDuel={presentation === "duel"} showLeaderHeadshot />;
+  if (presentation === "field" || !pair.second) return <MarketCard market={{ ...row, top_outcomes: row.top_outcomes.slice(0, 5) }} theme="congressional" forceField={presentation === "field"} forceDuel={presentation === "duel"} showLeaderHeadshot showSourceBadge={false} />;
   const percentages = renderedOutcomeRowPercents([pair.first.prob / 100, pair.second.prob / 100]);
   const legs = [pair.first, pair.second].map((leg, index) => {
     const source = market.top_outcomes.find(outcome => outcome.name === leg.name);
@@ -64,7 +62,6 @@ export default function MidtermsMarketCard({ market, presentation }: { market: F
   return <Link href={`/futures/${market.id}`} data-midterms-card={compact ? "race" : "governor"} className={`block p-4 hover:bg-surface-elevated ${compact ? "" : "rounded-card border border-surface-border bg-surface-card"} ${focus}`}>
     <div className="mb-3 flex items-start justify-between gap-3">
       <h3 className="text-sm font-semibold leading-snug text-text-primary">{market.name}</h3>
-      <SourceBadge source={row.src} />
     </div>
     <div className="grid grid-cols-2 gap-4">
       {legs.map((leg, index) => <div key={leg.name} data-party={leg.party ?? "unknown"} className={`min-w-0 ${index ? "text-right" : ""}`}>

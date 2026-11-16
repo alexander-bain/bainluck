@@ -798,6 +798,9 @@ PRICE_CHANGE_STAMPERS = {
     # #10022: the open-contract per-leg grader writes the settled price (1.0 /
     # 0.0) the way `backfill_winners`' Kalshi grader does, stamp included.
     "app/tasks/ws_open_contracts.py": 1,
+    # #12633's new conditional binary-child write maintains the move stamp.
+    # The pre-existing legacy poll/clear debt stays in #5192's site ledger.
+    "app/tasks/prediction_market_matching.py": 1,
 }
 
 

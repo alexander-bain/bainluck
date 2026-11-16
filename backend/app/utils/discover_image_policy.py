@@ -250,20 +250,44 @@ _MUSIC_TITLE_RE = re.compile(
     r"\b("
     r"grammys?|grammy\s+awards?|latin\s+grammys?|"
     r"song\s+of\s+the\s+year|record\s+of\s+the\s+year|album\s+of\s+the\s+year|"
+    r"best\s+original\s+song|"
     r"best\s+[a-z\s]{0,30}\s+(?:album|song|music\s+performance|rap\s+performance|pop\s+solo\s+performance|vocal\s+album)|"
-    r"billboard\s+(?:hot\s+100|200)|spotify|apple\s+music|"
+    r"billboard\s+(?:hot\s+100|200|#?\d+\s+(?:song|artist|album))|"
+    r"(?:top|most)\s+(?:u\.?s\.?\s+|global\s+)?streamed\s+(?:song|artist|album)|"
+    r"spotify\s+(?:#?\d+|top|most\s+streamed|global|u\.?s\.?|chart|daily|weekly|artist|song|album|streams)|"
+    r"apple\s+music|"
+    r"coachella|glastonbury|lollapalooza|rolling\s+loud|"
+    r"perform\s+at\s+.+|weeks\s+at\s+no\.\s*1|"
+    r"release\s+(?:a\s+)?new\s+(?:album|song|single|ep|mixtape)|"
     r"gta\s+vi:\s+the\s+album|featured\s+on\s+.*album|"
     r"eurovision|halftime\s+show\s+headliner"
     r")\b",
     re.IGNORECASE,
 )
 _FILM_TITLE_RE = re.compile(
+    r"(?:"
+    r"\b(?:oscars?|academy\s+awards?|golden\s+globes?|emmys?|bafta|cannes|tony\s+awards?|"
+    r"best\s+(?:picture|director|actor|actress|supporting\s+actor|supporting\s+actress|casting|animated\s+feature|motion\s+picture|screenplay)|"
+    r"rotten\s+tomatoes|box\s+office|opening\s+weekend|highest\s+grossing\s+movie|"
+    r"top\s+(?:global\s+|u\.?s\.?\s+)?netflix\s+(?:movie|show|series)|"
+    r"tv\s+shows?\s+cancelled|searched\s+(?:tv\s+show|movie|film)|"
+    r"(?:the\s+)?game\s+awards|game\s+of\s+the\s+year|best\s+(?:audio\s+design|narrative|independent\s+game|game\s+direction|multiplayer)|"
+    r"james\s+bond|next\s+007|marvel|star\s+wars|dc\s+studios|"
+    r"the\s+batman|spider-man|superman|jumanji|toy\s+story|avengers|hunger\s+games)\b|"
+    r"#\d+\s+(?:u\.?s\.?\s+|global\s+)?netflix\s+(?:movie|show|series)\b|"
+    r"#1\s+movie\s+on\s+netflix\b"
+    r")",
+    re.IGNORECASE,
+)
+_REALITY_COMPETITION_RE = re.compile(
     r"\b("
-    r"oscars?|academy\s+awards?|golden\s+globes?|emmys?|bafta|cannes|"
-    r"best\s+(?:picture|director|actor|actress|casting|animated\s+feature|screenplay)|"
-    r"rotten\s+tomatoes|box\s+office|opening\s+weekend|"
-    r"james\s+bond|next\s+007|marvel|star\s+wars|dc\s+studios"
+    r"dancing\s+with\s+the\s+stars|survivor|big\s+brother|love\s+island|"
+    r"bachelorette|the\s+bachelor|the\s+traitors|american\s+idol|the\s+voice|rupaul"
     r")\b",
+    re.IGNORECASE,
+)
+_PERSON_FILM_AWARD_OR_CAST_RE = re.compile(
+    r"\b(director|actor|actress|cast|moneypenny|felix\s+leiter|host)\b",
     re.IGNORECASE,
 )
 _TEAM_SPORT_CATS: frozenset[str] = frozenset(
@@ -291,29 +315,45 @@ _TICKER_RE = re.compile(r"\(([A-Z]{2,5})\)")
 _ORG_TITLE_RE = re.compile(
     r"\b("
     r"ipo|quarterly\s+earnings|beat\s+earnings|market\s+cap|"
-    r"kimi|moonshot\s+ai|bloomberg|openai|anthropic|spacex|stripe|databricks"
+    r"kimi|moonshot\s+ai|bloomberg|openai|anthropic|spacex|stripe|databricks|spotify"
     r")\b",
     re.IGNORECASE,
 )
 _PARTY_OR_BUCKET_OUTCOME_RE = re.compile(
     r"^("
-    r"yes|no|not\s+.+|none|no\s+change|no\s+head\s+of\s+state|"
-    r"before\s+.+|after\s+.+|by\s+.+|"
+    r"yes|no|not\s+.+|none|other(?:\s*\(.*\))?|no\s+change|no\s+head\s+of\s+state|"
+    r"before\s+.+|after\s+.+|by\s+.+|at\s+least\s+.+|"
     r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}.*|"
     r"above\s+.+|below\s+.+|top\s+\d+|"
-    r"[\$<>≤≥\-+\d\.%\s]+(?:\s+bps.*)?|"
+    r"\d+(?:st|nd|rd|th)(?:\s*[-–]\s*\d+(?:st|nd|rd|th))?|"
+    r"[\$<>≤≥\-+\d\.%\s]+(?:\s*(?:bps|m|b|k|\+|-.*))?|"
     r".*\([A-Z]{2,5}\)$"
     r")$",
     re.IGNORECASE,
 )
+_PERSON_TOKEN = r"(?:de|le|la|van|von|di|del|da|[IVXLCDM]{1,6}|Jr\.|Sr\.|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ\.\-']*)"
 _PERSON_HEADLINE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
-        r"^Will\s+([A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+(?:de|le|la|van|von|di|del|da|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ\.\-']*)){1,3}?)\s+"
-        r"(?:join|attend|testify|publicly\s+testify|resign|step\s+down|win|beat|divorce|leave|endorse|pardon|visit|meet)\b"
+        rf"^Will\s+([A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+{_PERSON_TOKEN}){{1,4}}?)\s+"
+        r"(?i:join|attend|testify|publicly\s+testify|resign|step\s+down|win|beat|divorce|leave|endorse|pardon|visit|meet|release|announce|confirm|perform|host|star\s+in|be\s+(?:time\s+person|named|cast|elected|appointed|impeached|arrested))\b"
     ),
     re.compile(
-        r"^([A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+(?:de|le|la|van|von|di|del|da|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ\.\-']*)){1,3}?)\s+"
-        r"(?:out\s+as|divorce|impeached|pardoned|arrested|confirmed\s+as)\b"
+        r"^Will\s+(Drake|Rihanna|Adele|Beyonc[eé]|Eminem|Madonna|Shakira|Rosal[ií]a|SZA|Usher|Cher|Bono|Future)\s+"
+        r"(?i:release|perform|headline|win|tour|drop|attend|announce)\b"
+    ),
+    re.compile(
+        rf"^([A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+{_PERSON_TOKEN}){{1,3}}?)\s+"
+        r"(?i:out\s+as|divorce|announces?|impeached|pardoned|arrested|confirmed\s+as)\b"
+    ),
+    re.compile(
+        rf"^([A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+{_PERSON_TOKEN}){{1,2}}?)\s+and\s+[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+{_PERSON_TOKEN}){{1,2}}?\s+"
+        r"(?i:engaged|married|confirm\s+relationship|break\s+up|divorce|dating)\b"
+    ),
+    re.compile(
+        rf"^([A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+{_PERSON_TOKEN}){{1,2}}?)\s+as\s+[A-Z][A-Za-z0-9\s\-']+\??$"
+    ),
+    re.compile(
+        rf"^([A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+{_PERSON_TOKEN}){{1,2}}?)(?::\s+.+\b(?i:sale\s+price)\b|['’]s\s+[“\"].+[”\"]\s+(?i:sale\s+price)\b|\s+baby:)"
     ),
     re.compile(r"\bimpeach\s+(Trump|Biden|Macron|Lula|Yoon)\b", re.IGNORECASE),
     re.compile(r"\bWill\s+(Trump|Putin|Netanyahu|Zelenskyy?|Xi\s+Jinping|Modi)\s+be\b", re.IGNORECASE),
@@ -322,7 +362,9 @@ _PERSON_ELECTION_OR_ROLE_RE = re.compile(
     r"\b("
     r"presidential\s+election|governor\s+election|mayor\s+election|"
     r"prime\s+minister|minister\s+of\s+finance|leader\s+end\s+of|"
-    r"next\s+ceo\s+of|most\s+searched\s+people|ufc\s+.*champion|mvp\s+winner"
+    r"next\s+ceo\s+of|most\s+searched\s+people|year\s+in\s+search.*#1\s+search|"
+    r"time\s+person\s+of\s+the\s+year|nobel\s+peace\s+prize|guests\s+this\s+year|"
+    r"ufc\s+.*champion|mvp\s+winner"
     r")\b",
     re.IGNORECASE,
 )
@@ -535,7 +577,8 @@ def _looks_like_person_name(text: str | None) -> bool:
         "team", "club", "hurricanes", "dodgers", "49ers", "yankees", "brewers",
         "celtics", "wild", "oilers", "devils", "avalanche", "apple", "nvidia",
         "alphabet", "microsoft", "amazon", "tesla", "google", "meta", "above",
-        "below", "before", "after", "top", "no", "yes",
+        "below", "before", "after", "top", "no", "yes", "the", "season", "episode",
+        "movie", "film", "show", "night", "with", "incumbent",
     }
     lower_tokens = {re.sub(r"[^a-z]", "", t.lower()) for t in tokens}
     if lower_tokens & bad_words:
@@ -552,14 +595,9 @@ def classify_market_visual_subject(
     cat = (category or "").strip().lower()
     lead_outcome = _first_meaningful_outcome_name(top_outcomes)
 
-    # 1. Song / music / album / chart
-    if _MUSIC_TITLE_RE.search(title):
-        subj = lead_outcome or title
-        bg, acc = _palette_for(subj, "song")
-        return VisualSubject("song", subj, compute_initials(subj, ticker_ok=False), bg, acc)
-
-    # 2. Explicit person in headline (e.g., "Will Justin Bieber attend Super Bowl LXI?",
-    #    "Jensen Huang divorce...", "Howard Lutnick out as Secretary of Commerce...")
+    # 1. Explicit person in headline (e.g., "Will Justin Bieber attend Super Bowl LXI?",
+    #    "Will Drake release a new album?", "Kim Kardashian announces...", "Mark Ruffalo as Hulk?",
+    #    "Matthew Wong: Untitled (2017; lot 5A) sale price?")
     for pat in _PERSON_HEADLINE_PATTERNS:
         m = pat.search(title)
         if m:
@@ -571,10 +609,23 @@ def classify_market_visual_subject(
             bg, acc = _palette_for(person_raw, "person")
             return VisualSubject("person", person_raw, compute_initials(person_raw, ticker_ok=False), bg, acc)
 
-    # 3. Film / TV / Screen awards (note: actor role markets with a person leader
-    #    like "Next James Bond actor?" -> Robert Pattinson resolve on the actor if present)
+    # 2. Song / music / album / chart / music festival
+    if _MUSIC_TITLE_RE.search(title):
+        subj = lead_outcome or title
+        bg, acc = _palette_for(subj, "song")
+        return VisualSubject("song", subj, compute_initials(subj, ticker_ok=False), bg, acc)
+
+    # 3. Reality competition shows (person leader -> person; show-level -> film)
+    if _REALITY_COMPETITION_RE.search(title):
+        if lead_outcome and _looks_like_person_name(lead_outcome):
+            bg, acc = _palette_for(lead_outcome, "person")
+            return VisualSubject("person", lead_outcome, compute_initials(lead_outcome, ticker_ok=False), bg, acc)
+        bg, acc = _palette_for(title, "film")
+        return VisualSubject("film", title, compute_initials(title, ticker_ok=False), bg, acc)
+
+    # 4. Film / TV / Screen & Game awards (person categories & casting resolve on the person leader)
     if _FILM_TITLE_RE.search(title) or (cat == "entertainment" and '"' in title):
-        if lead_outcome and _looks_like_person_name(lead_outcome) and "actor" in title.lower():
+        if lead_outcome and _looks_like_person_name(lead_outcome) and _PERSON_FILM_AWARD_OR_CAST_RE.search(title):
             bg, acc = _palette_for(lead_outcome, "person")
             return VisualSubject("person", lead_outcome, compute_initials(lead_outcome, ticker_ok=False), bg, acc)
         quoted = re.search(r'["“]([^"”]{2,80})["”]', title)
@@ -582,7 +633,7 @@ def classify_market_visual_subject(
         bg, acc = _palette_for(subj, "film")
         return VisualSubject("film", subj, compute_initials(subj, ticker_ok=False), bg, acc)
 
-    # 4. Sports team / club / nation championship or playoff
+    # 5. Sports team / club / nation championship or playoff
     if cat == "mma" or "ufc" in title.lower():
         subj = lead_outcome or title
         bg, acc = _palette_for(subj, "person")
@@ -595,24 +646,26 @@ def classify_market_visual_subject(
         bg, acc = _palette_for(subj, "team")
         return VisualSubject("team", subj, compute_initials(subj, ticker_ok=False), bg, acc)
 
-    # 5. Candidate / leader / CEO / Most Searched People markets whose leader is a person
+    # 6. Candidate / leader / CEO / Most Searched / TIME Person of the Year markets whose leader is a person
     if _PERSON_ELECTION_OR_ROLE_RE.search(title) and lead_outcome and _looks_like_person_name(lead_outcome):
         bg, acc = _palette_for(lead_outcome, "person")
         return VisualSubject("person", lead_outcome, compute_initials(lead_outcome, ticker_ok=False), bg, acc)
 
-    # 6. Named company / ticker / IPO
+    # 7. Named company / ticker / IPO / platform
     ticker_m = _TICKER_RE.search(title)
     if ticker_m or _ORG_TITLE_RE.search(title):
-        # Extract company name if present before ticker
-        comp_m = re.search(
-            r"(?:Will|How\s+high\s+will)\s+([A-Z][A-Za-z0-9\s\.\(\)&\-]{1,40}?\([A-Z]{2,5}\)|Kimi\s*\(Moonshot\s*AI\)|Bloomberg)",
-            title,
-        )
-        subj = comp_m.group(1).strip() if comp_m else title
+        if "spotify" in title.lower():
+            subj = "Spotify"
+        else:
+            comp_m = re.search(
+                r"(?:Will|How\s+high\s+will)\s+([A-Z][A-Za-z0-9\s\.\(\)&\-]{1,40}?\([A-Z]{2,5}\)|Kimi\s*\(Moonshot\s*AI\)|Bloomberg)",
+                title,
+            )
+            subj = comp_m.group(1).strip() if comp_m else title
         bg, acc = _palette_for(subj, "organization")
         return VisualSubject("organization", subj, compute_initials(subj, ticker_ok=True), bg, acc)
 
-    # 7. General macro / weather / geopolitics / infrastructure topic
+    # 8. General macro / weather / geopolitics / infrastructure topic
     bg, acc = _palette_for(title or cat or "Discover", "topic")
     return VisualSubject("topic", title or "Discover", compute_initials(title, ticker_ok=False), bg, acc)
 
@@ -1073,3 +1126,49 @@ def sanitize_feed_response_images(payload: dict[str, Any] | None) -> dict[str, A
         **payload,
         "items": [sanitize_discover_feed_item(it) for it in deduped],
     }
+
+
+def _sanitize_ent_node(node: Any) -> Any:
+    if isinstance(node, list):
+        return [_sanitize_ent_node(item) for item in node]
+    if isinstance(node, dict):
+        if "q" in node and "market_id" in node:
+            resolved = resolve_discover_market_image(
+                name=node.get("q"),
+                category="entertainment",
+                top_outcomes=node.get("top_outcomes"),
+                image_url=node.get("image_url"),
+            )
+            return {
+                **node,
+                "image_url": resolved["image_url"],
+                "image_presentation": resolved["image_presentation"],
+                "image_monogram": resolved["image_monogram"],
+                "image_credit": resolved.get("image_credit"),
+                "image_author": resolved.get("image_author"),
+                "image_license": resolved.get("image_license"),
+                "image_source_page": resolved.get("image_source_page"),
+            }
+        if "thresholds" in node and "title" in node:
+            resolved = resolve_discover_market_image(
+                name=f'"{node["title"]}" Rotten Tomatoes score',
+                category="entertainment",
+                top_outcomes=None,
+                image_url=node.get("image_url"),
+            )
+            return {
+                **node,
+                "image_url": resolved["image_url"],
+                "image_presentation": resolved["image_presentation"],
+                "image_monogram": resolved["image_monogram"],
+                "image_credit": resolved.get("image_credit"),
+            }
+        return {k: _sanitize_ent_node(v) for k, v in node.items()}
+    return node
+
+
+def sanitize_entertainment_response_images(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Non-mutatingly apply Discover image truth policy & credits to a cached `/api/entertainment` payload."""
+    if not isinstance(payload, dict):
+        return payload
+    return _sanitize_ent_node(payload)

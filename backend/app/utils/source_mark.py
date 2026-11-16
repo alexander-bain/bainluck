@@ -116,6 +116,26 @@ def settled_source_mark(source: str | None, result: str, at: Any = None) -> dict
     }
 
 
+def fold_prop_source_marks(marks: Iterable[Mapping[str, Any] | None]) -> dict:
+    """Preserve an identical proved grade when duplicate prop rows are folded."""
+    entries = list(marks)
+    if entries and all(isinstance(mark, Mapping) for mark in entries):
+        first = entries[0]
+        settled = first.get("settled")
+        if (
+            first.get("state") == "settled"
+            and isinstance(settled, Mapping)
+            and settled.get("result") in {"Won", "Lost"}
+            and all(mark == first for mark in entries)
+        ):
+            return {"state": "settled", "sources": [], "settled": dict(settled)}
+        if all(mark.get("state") in {"single", "blend"} for mark in entries):
+            return quote_source_mark(
+                source for mark in entries for source in mark.get("sources", [])
+            )
+    return no_source_mark("source_evidence_incomplete")
+
+
 def source_mark_on_axis(mark: dict | None, *, inverted: bool) -> dict:
     """Reorient already selected prices when a reader prints the other side."""
     if not mark:

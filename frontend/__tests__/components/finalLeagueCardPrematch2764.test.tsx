@@ -220,7 +220,7 @@ describe("#2764 — the league/team/search FINAL card", () => {
     // doing both jobs, so the test could not have caught the id being printed
     // at a reader: it was asserting exactly that. The next assertion still
     // pins the id on the attribute, where it belongs.
-    expect(testid(html, "event-card-prematch-label")).toBe(`Pre-match · ${BOOKS_LABEL}`);
+    expect(testid(html, "event-card-prematch-label")).toBe(`Pregame · ${BOOKS_LABEL}`);
     // ONE label for the pair, not one per row.
     expect(html.split('data-testid="event-card-prematch-label"')).toHaveLength(2);
   });
