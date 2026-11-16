@@ -342,9 +342,11 @@ export default function RainForecast() {
 
             <div className="mt-4 pt-3 border-t border-dashed border-surface-border text-xs text-text-muted flex items-center justify-between">
               <span>24h change shown at right</span>
-              <span className="font-mono">
-                {monthly ? `Kalshi · ${cityCount} ${cityCount === 1 ? "city" : "cities"}` : "Kalshi"}
-              </span>
+              {monthly && (
+                <span className="font-mono">
+                  {`${cityCount} ${cityCount === 1 ? "city" : "cities"}`}
+                </span>
+              )}
             </div>
           </div>
         </div>
