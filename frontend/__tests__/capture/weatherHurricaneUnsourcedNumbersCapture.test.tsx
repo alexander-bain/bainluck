@@ -176,11 +176,11 @@ describe("UX-P201 — the card did not lose its real content", () => {
     expect(printedPercents(beforeHtml).slice(8)).toHaveLength(4);
   });
 
-  it("still names the real markets and their sources", () => {
+  it("still names the real markets without venue badges on the card face", () => {
     expect(afterHtml).toContain("When will the next Atlantic hurricane form?");
     expect(afterHtml).toContain("Hurricane Marie category?");
-    expect(afterHtml).toContain("Kalshi");
-    expect(afterHtml).toContain("Polymarket");
+    expect(afterHtml).not.toContain("Kalshi");
+    expect(afterHtml).not.toContain("Polymarket");
   });
 
   it("renders every row it is given, without inventing one", () => {

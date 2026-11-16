@@ -38,6 +38,7 @@ test("the complete served collection has distinct control, balance, race and gov
   for (const m of input.members) expect(html).toContain(`href="${m.href}"`);
   expect(html).toContain("19 more");
   expect(html).not.toContain("Probability unavailable");
+  expect(html).not.toMatch(/Kalshi|Polymarket|>Both</);
   expect(html).not.toMatch(/>[^<]*\d+\.\d+%/);
   expect(JSON.stringify(input)).toBe(before);
   expect(html).toContain('data-collection-sections="true" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3');
@@ -109,8 +110,10 @@ test("partial prices and settled results keep their existing truthful branches",
   expect(partial).toContain("Adam Hamilton");
   expect(partial).toContain("color:var(--party-democratic)");
   expect(partial).not.toContain("Probability unavailable");
+  expect(partial).not.toMatch(/Kalshi|Polymarket|>Both</);
   const settled = renderCard(109085, "duel", { status: "settled", settled_winner: "Roger Marshall" });
   expect(settled).toContain("Settled - Roger Marshall");
   expect(settled).not.toContain("%");
   expect(settled).not.toContain("data-midterms-card");
+  expect(settled).not.toMatch(/Kalshi|Polymarket|>Both</);
 });
