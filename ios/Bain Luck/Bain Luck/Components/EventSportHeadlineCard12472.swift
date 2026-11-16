@@ -1422,7 +1422,9 @@ struct EventSportHeadlineCard12472: View {
             color: color,
             size: size,
             sportKey: model.sportKey,
-            opponentName: side.opponentFullName
+            opponentName: side.opponentFullName,
+            abbreviation: side.abbreviation,
+            opponentAbbreviation: side.opponentAbbreviation
         )
     }
 

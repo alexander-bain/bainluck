@@ -717,7 +717,9 @@ struct EventCardView: View {
                 isPhotograph: avatar.isPhotograph,
                 // #4720 — this card stacks both rows, so each circle is resolved
                 // against the other side rather than on its own.
-                opponentName: side == .away ? event.homeTeam : event.awayTeam
+                opponentName: side == .away ? event.homeTeam : event.awayTeam,
+                abbreviation: side == .away ? event.awayTeamData?.abbreviation : event.homeTeamData?.abbreviation,
+                opponentAbbreviation: side == .away ? event.homeTeamData?.abbreviation : event.awayTeamData?.abbreviation
             )
             HStack(spacing: 4) {
                 let singleWord = !displayName.contains(" ")
@@ -907,7 +909,10 @@ struct EventCardView: View {
     /// downward rather than squeezing the number. Same selection, rounding,
     /// withholding and colour as the single row; no number, no block.
     private func finishedAccessibilityTeamRow(name: String, avatar: ParticipantAvatar, color: Color, score: Int?, won: Bool, side: TeamSide) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        let displayLabel = TeamShortName.isCollegeSport(sportKey: event.sport)
+            ? (side == .away ? shortTeamNames.away : shortTeamNames.home)
+            : name
+        return VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .top, spacing: 8) {
                 TeamLogoView(
                     url: avatar.url,
@@ -916,9 +921,11 @@ struct EventCardView: View {
                     size: isLive ? 28 : 24,
                     sportKey: event.sport,
                     isPhotograph: avatar.isPhotograph,
-                    opponentName: side == .away ? event.homeTeam : event.awayTeam
+                    opponentName: side == .away ? event.homeTeam : event.awayTeam,
+                    abbreviation: side == .away ? event.awayTeamData?.abbreviation : event.homeTeamData?.abbreviation,
+                    opponentAbbreviation: side == .away ? event.homeTeamData?.abbreviation : event.awayTeamData?.abbreviation
                 )
-                Text(name)
+                Text(displayLabel)
                     .font(.subheadline)
                     .fontWeight(won ? .bold : .medium)
                     .foregroundStyle(won ? .primary : (isFinished && outcome != .draw ? .secondary : .primary))

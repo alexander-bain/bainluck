@@ -611,6 +611,7 @@ struct EventDetailView: View {
                                             awayTeamColor: teamColors(event).away,
                                             homeTeamLogo: event.homeTeamData?.logoSmall,
                                             awayTeamLogo: event.awayTeamData?.logoSmall,
+                                            sportKey: event.sport,
                                             lastPoint: lastPlayPoint(event: event))
                                         : nil,
                                      // #4974 — the journey only when page, view
@@ -857,6 +858,8 @@ struct EventDetailView: View {
                         // #6866 — the same crests the hero draws.
                         homeLogoURL: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
                         awayLogoURL: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
+                        homeAbbreviation: event.homeTeamData?.abbreviation,
+                        awayAbbreviation: event.awayTeamData?.abbreviation,
                         sportKey: event.sport
                     )
                 }
@@ -1826,6 +1829,9 @@ struct EventDetailView: View {
             } else {
             let hasAnyRecord = carriesContext
                 && (event.awayTeamData?.record != nil || event.homeTeamData?.record != nil)
+            let heroLabels = TeamShortName.isCollegeSport(sportKey: event.sport)
+                ? TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+                : (away: event.awayTeam, home: event.homeTeam)
             let awayColumn = stackBoundary12278 {
                 // Away team logo + score
                 VStack(spacing: 6) {
@@ -1841,11 +1847,13 @@ struct EventDetailView: View {
                         // #4720 — the hero draws BOTH circles, so the badge is
                         // resolved against the other side and cannot print the
                         // word the two clubs share.
-                        opponentName: event.homeTeam
+                        opponentName: event.homeTeam,
+                        abbreviation: event.awayTeamData?.abbreviation,
+                        opponentAbbreviation: event.homeTeamData?.abbreviation
                     )
                     ZStack {
                         if !stacked {
-                            Text(event.homeTeam)
+                            Text(heroLabels.home)
                                 .font(.caption2)
                                 .fontWeight(.semibold)
                                 .lineLimit(2)
@@ -1854,7 +1862,7 @@ struct EventDetailView: View {
                                 .hidden()
                                 .accessibilityHidden(true)
                         }
-                        Text(event.awayTeam)
+                        Text(heroLabels.away)
                             .font(.caption2)
                             .fontWeight(.semibold)
                             .lineLimit(stacked ? nil : 2)
@@ -2331,11 +2339,13 @@ struct EventDetailView: View {
                         color: colors.home,
                         size: heroLogo,
                         sportKey: event.sport,
-                        opponentName: event.awayTeam
+                        opponentName: event.awayTeam,
+                        abbreviation: event.homeTeamData?.abbreviation,
+                        opponentAbbreviation: event.awayTeamData?.abbreviation
                     )
                     ZStack {
                         if !stacked {
-                            Text(event.awayTeam)
+                            Text(heroLabels.away)
                                 .font(.caption2)
                                 .fontWeight(.semibold)
                                 .lineLimit(2)
@@ -2344,7 +2354,7 @@ struct EventDetailView: View {
                                 .hidden()
                                 .accessibilityHidden(true)
                         }
-                        Text(event.homeTeam)
+                        Text(heroLabels.home)
                             .font(.caption2)
                             .fontWeight(.semibold)
                             .lineLimit(stacked ? nil : 2)
@@ -3461,7 +3471,9 @@ struct EventDetailView: View {
             HStack(spacing: 6) {
                 if !isAway && !adopted { Spacer(minLength: 0) }
                 TeamLogoView(url: logo, teamName: isAway ? event.awayTeam : event.homeTeam,
-                             color: color, size: 24, sportKey: event.sport, opponentName: opponent)
+                             color: color, size: 24, sportKey: event.sport, opponentName: opponent,
+                             abbreviation: isAway ? event.awayTeamData?.abbreviation : event.homeTeamData?.abbreviation,
+                             opponentAbbreviation: isAway ? event.homeTeamData?.abbreviation : event.awayTeamData?.abbreviation)
                 // One line, shrunk before it hyphenates ("Sea-hawks" at AX sizes).
                 Text(name)
                     .font(.subheadline.weight(.semibold))

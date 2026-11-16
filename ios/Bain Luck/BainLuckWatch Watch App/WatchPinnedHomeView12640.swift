@@ -273,59 +273,17 @@ struct WatchPinnedHomeView12640: View {
     }
 
     private func eventPinCard(game: WatchSelectedGame, isSelected: Bool, now: Date) -> some View {
-        let awayShort = game.awayCompactIdentity?.abbreviation ?? game.awayTeam
-        let homeShort = game.homeCompactIdentity?.abbreviation ?? game.homeTeam
-        return VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(eventRowBadge(game: game, now: now))
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(game.isLive ? Color.cyan : Color.secondary)
-                Spacer(minLength: 4)
-                if isSelected {
-                    Image(systemName: "bookmark.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                }
-            }
-            Text(eventRowMatchup(game: game, awayShort: awayShort, homeShort: homeShort))
-                .font(.footnote.weight(.semibold))
-                .fixedSize(horizontal: false, vertical: true)
-
-            if game.isFinal, let hs = game.homeScore, let ascore = game.awayScore {
-                Text(hs >= ascore ? "\(homeShort) \(hs), \(awayShort) \(ascore)" : "\(awayShort) \(ascore), \(homeShort) \(hs)")
-                    .font(.body.bold())
-                    .monospacedDigit()
-            } else if let pct = game.homeProbabilityText {
-                Text("\(homeShort) \(pct)")
-                    .font(.title3.bold())
-                    .monospacedDigit()
-                    .foregroundStyle(.cyan)
+        let model = WatchWristTileModel12616.build(game.wristTileInput12616, now: now)
+        return WatchWristTileView12616(
+            model: model,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        ) {
+            if isSelected {
+                Image(systemName: "bookmark.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.orange)
             }
         }
-        .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    private func eventRowBadge(game: WatchSelectedGame, now: Date) -> String {
-        if game.isFinal { return "Final" }
-        if game.isLive {
-            if let clock = game.liveClockText, !clock.isEmpty { return "Live · \(clock)" }
-            return "Live"
-        }
-        if let start = game.commenceTime {
-            if now >= start { return "Open to update" }
-            return WatchRectangularReading.upcomingStartClock(start, now: now)
-        }
-        return game.stateLabel
-    }
-
-    private func eventRowMatchup(game: WatchSelectedGame, awayShort: String, homeShort: String) -> String {
-        let base = "\(game.awayTeam) at \(game.homeTeam)"
-        if game.isLive, let ascore = game.awayScore, let hs = game.homeScore {
-            return "\(awayShort) at \(homeShort) · \(ascore)–\(hs)"
-        }
-        return base
     }
 
     private func marketPinCard(
@@ -381,77 +339,21 @@ struct WatchPinnedHomeView12640: View {
     }
 
     private func selectedEventView(_ game: WatchSelectedGame) -> some View {
-        let homeShort = game.homeCompactIdentity?.abbreviation ?? game.homeTeam
-        let awayShort = game.awayCompactIdentity?.abbreviation ?? game.awayTeam
-        return TimelineView(.periodic(from: .now, by: 15)) { context in
+        TimelineView(.periodic(from: .now, by: 15)) { context in
             let now = context.date
-            VStack(alignment: .leading, spacing: 6) {
-                Text("\(game.awayTeam) at \(game.homeTeam)")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("watch.pins.selected.event.header")
-
-                if game.isFinal, let hs = game.homeScore, let ascore = game.awayScore {
-                    Text(hs >= ascore
-                         ? "Final · \(homeShort) \(hs), \(awayShort) \(ascore)"
-                         : "Final · \(awayShort) \(ascore), \(homeShort) \(hs)")
-                        .font(.title3.bold())
-                        .monospacedDigit()
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("watch.pins.selected.event.final")
-                    if let obs = game.scoreObservedAt,
-                       let compact = WatchRectangularReading.compactAge(observedAt: obs, now: now) {
-                        Text(compact)
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                } else if let pct = game.homeProbabilityText {
-                    Text("\(homeShort) win")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(pct)
-                        .font(dynamicTypeSize.isAccessibilitySize
-                              ? .title2.bold()
-                              : .system(size: 34, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.cyan)
-                        .accessibilityIdentifier("watch.pins.selected.event.probability")
-
-                    if game.isLive, let ascore = game.awayScore, let hs = game.homeScore {
-                        Text("\(awayShort) \(ascore) – \(homeShort) \(hs)")
-                            .font(.body.bold())
-                            .monospacedDigit()
-                            .accessibilityIdentifier("watch.pins.selected.event.score")
-                    }
-
-                    Text(selectedEventClockLine(game: game, now: now))
-                        .font(.footnote).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("watch.pins.selected.event.clock")
+            let model = WatchWristTileModel12616.build(game.wristTileInput12616, now: now)
+            VStack(alignment: .leading, spacing: 8) {
+                WatchWristTileView12616(
+                    model: model,
+                    isAccessibilitySize: dynamicTypeSize.isAccessibilitySize,
+                    identifierPrefix: "watch.pins.selected.event"
+                ) {
+                    EmptyView()
                 }
 
                 selectedActionButtons(allowsOutcomeChoice: false, outcomeCount: 0)
             }
         }
-    }
-
-    private func selectedEventClockLine(game: WatchSelectedGame, now: Date) -> String {
-        if game.isLive {
-            if let obs = game.probabilityObservedAt {
-                if now.timeIntervalSince(obs) > WatchRectangularReading.liveAgeThresholdSeconds {
-                    return "As of \(WatchRectangularReading.asOfClock(obs))"
-                }
-                if let age = WatchRectangularReading.compactAge(observedAt: obs, now: now) {
-                    return "Live · \(age)"
-                }
-            }
-            return "Live"
-        }
-        if let start = game.commenceTime {
-            if now >= start { return "Open to update" }
-            return WatchRectangularReading.upcomingStartClock(start, now: now)
-        }
-        return game.stateLabel
     }
 
     private func selectedFutureView(market: WatchFutureDetail12640, explicitOutcomeID: Int?) -> some View {
@@ -724,3 +626,36 @@ struct WatchPinsFacePreviewFixture12640: View {
     }
 }
 #endif
+
+extension WatchSelectedGame {
+    nonisolated var wristTileInput12616: WatchWristTileInput12616 {
+        WatchWristTileInput12616(
+            homeTeam: homeTeam,
+            awayTeam: awayTeam,
+            homeServedAbbreviation: homeCompactIdentity?.abbreviation,
+            awayServedAbbreviation: awayCompactIdentity?.abbreviation,
+            sportKey: sportKey,
+            isLive: isLive,
+            isFinal: isFinal,
+            homeScore: homeScore,
+            awayScore: awayScore,
+            homeProbability: homeProbability,
+            awayProbability: awayProbability,
+            drawProbability: drawProbability,
+            prematchHomeProbability: prematchHomeProbability,
+            prematchAwayProbability: prematchAwayProbability,
+            prematchDrawProbability: prematchDrawProbability,
+            projectedHomeScore: projectedHomeScore,
+            projectedAwayScore: projectedAwayScore,
+            homePrimaryColor: homePrimaryColor,
+            homeSecondaryColor: homeSecondaryColor,
+            awayPrimaryColor: awayPrimaryColor,
+            awaySecondaryColor: awaySecondaryColor,
+            commenceTime: commenceTime,
+            liveClockText: liveClockText,
+            stateLabel: stateLabel,
+            probabilityObservedAt: probabilityObservedAt,
+            scoreObservedAt: scoreObservedAt
+        )
+    }
+}
