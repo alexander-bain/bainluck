@@ -82,12 +82,39 @@ describe("#10318 — a draw-priced game's chart has no away pole and counts no f
     expect(html).toContain("recharts-line-curve");
   });
 
-  it("keeps the home pole alone: the line is the home side's chance", () => {
-    expect(poles(html)).toEqual(['data-pole="home"']);
+  it("hides both one-team poles when all three soccer lines are drawn (Ruling 211-A)", () => {
+    expect(poles(html)).toEqual([]);
     expect(html).not.toMatch(/bottom of this (axis|view) is Ternana/);
-    // #11356 — and no tick claims an away side: every tick is the home side's chance.
+    // #11356 — and no tick claims an away side: every tick is a 0–100% chance.
     expect(html).not.toContain('data-axis-tick-side="away"');
     expect(html).not.toContain("↓");
+  });
+
+  it("keeps the home pole alone when a draw-priced game has only a one-line home series", () => {
+    const oneLineHtml = renderToStaticMarkup(
+      <OddsChart
+        history={[]}
+        winProbHistory={{
+          kalshi: THREE_WAY.map(({ timestamp, home_probability }) => ({
+            timestamp,
+            home_probability,
+          })),
+        }}
+        winProbSources={{
+          kalshi: { display_name: "Kalshi", color: "#22c55e", type: "market", snapshot_count: 5 },
+        }}
+        homeTeam="Parma Calcio"
+        awayTeam="Ternana"
+        sportKey="soccer_italy_serie_a"
+        commenceTime="2026-10-03T10:30:00+00:00"
+        isLive={false}
+        eventStatus="scheduled"
+        externalTimeRange="all"
+        awayWithheld={true}
+      />,
+    );
+    expect(poles(oneLineHtml)).toEqual(['data-pole="home"']);
+    expect(oneLineHtml).not.toContain("↓");
   });
 
   it("offers no 'Odds flipped': a home 50% crossing is not the favourite changing", () => {
