@@ -47,11 +47,14 @@ final class LiveSportsCardTidy11422Tests: XCTestCase {
         XCTAssertFalse(Footer.reasonStatesTheOpening("Rising Stars leading after starting slow"))
     }
 
-    /// Stepping the caption aside never empties the footer: the reason is
-    /// content on its own, so the sentence is still drawn once.
-    func testTheFooterStillDrawsWhenTheCaptionStepsAside() {
-        XCTAssertTrue(Footer.hasContent(
+    /// Ruling 204-C: live cards draw no grey sentence in the footer; pregame
+    /// cards keep their real reason line.
+    func testScheduledCardKeepsReasonWhileLiveCardSuppressesGreyFooter204C() {
+        XCTAssertFalse(Footer.hasContent(
             reason: "New Orleans Pelicans leading after starting at 44%", isLive: true,
+            awayOpening: 0.56, homeOpening: 0.44, sport: "basketball_nba"))
+        XCTAssertTrue(Footer.hasContent(
+            reason: "Starting soon — close matchup", isLive: false,
             awayOpening: 0.56, homeOpening: 0.44, sport: "basketball_nba"))
     }
 
