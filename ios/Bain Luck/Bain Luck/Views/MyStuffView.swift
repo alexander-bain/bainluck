@@ -59,6 +59,13 @@ struct MyStuffView: View {
     static let signInMaxWidth: CGFloat = 560
     static let signedInManagePinsMaxWidth: CGFloat = 800
 
+    #if os(iOS)
+    private var myStuffTitleDisplayMode: NavigationBarItem.TitleDisplayMode {
+        if sizeClass == .regular { return .inline }
+        return .large
+    }
+    #endif
+
     var body: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
@@ -105,7 +112,7 @@ struct MyStuffView: View {
             }
             .navigationTitle("My Stuff")
             #if os(iOS)
-            .navigationBarTitleDisplayMode(sizeClass == .regular ? .inline : .large)
+            .navigationBarTitleDisplayMode(myStuffTitleDisplayMode)
             #endif
             .toolbar {
                 // Gated on being SIGNED IN and nothing else. It used to also

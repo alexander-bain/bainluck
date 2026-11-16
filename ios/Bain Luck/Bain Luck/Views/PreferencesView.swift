@@ -93,7 +93,6 @@ struct PreferencesView: View {
     @EnvironmentObject private var authManager: AuthManager
     @StateObject private var viewModel: PreferencesViewModel
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.horizontalSizeClass) private var sizeClass
 
     init() {
         _viewModel = StateObject(wrappedValue: PreferencesViewModel())
@@ -138,7 +137,7 @@ struct PreferencesView: View {
         }
         .navigationTitle("Preferences")
         #if os(iOS)
-        .navigationBarTitleDisplayMode(sizeClass == .regular ? .inline : .large)
+        .navigationBarTitleDisplayMode(.inline)
         #endif
         .task {
             await viewModel.load()
