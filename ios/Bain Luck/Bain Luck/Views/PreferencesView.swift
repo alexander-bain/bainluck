@@ -93,6 +93,7 @@ struct PreferencesView: View {
     @EnvironmentObject private var authManager: AuthManager
     @StateObject private var viewModel: PreferencesViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     init() {
         _viewModel = StateObject(wrappedValue: PreferencesViewModel())
@@ -137,7 +138,7 @@ struct PreferencesView: View {
         }
         .navigationTitle("Preferences")
         #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(preferencesTitleDisplayMode)
         #endif
         .task {
             await viewModel.load()
@@ -185,6 +186,13 @@ struct PreferencesView: View {
     // MARK: - Main Content
 
     static let readableDetailMaxWidth: CGFloat = 720
+
+    #if os(iOS)
+    private var preferencesTitleDisplayMode: NavigationBarItem.TitleDisplayMode {
+        if sizeClass == .regular { return .inline }
+        return .large
+    }
+    #endif
 
     private var preferencesContent: some View {
         ScrollView {

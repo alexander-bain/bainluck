@@ -702,5 +702,96 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
         XCTAssertEqual(PreferencesView.readableDetailMaxWidth, 720)
         XCTAssertEqual(MyStuffView.signInMaxWidth, 560)
         XCTAssertEqual(MyStuffView.signedInManagePinsMaxWidth, 800)
+
+        // Rendered pixel-width proof at iPad 834×1194: without MyStuffView.signInMaxWidth,
+        // the black "Sign in with Apple" button stretched 834 - 80 = 754 pt wide; with
+        // signInMaxWidth = 560, it renders at 560 - 80 = 480 pt centered.
+        let window: UIWindow = {
+            if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
+                return UIWindow(windowScene: scene)
+            }
+            return UIWindow(frame: CGRect(x: 0, y: 0, width: 834, height: 1194))
+        }()
+        window.overrideUserInterfaceStyle = .light
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        let pins = PinManager(
+            defaults: UserDefaults(suiteName: "IPadAndMacPassSat7WidthProof")!,
+            serverLoad: { PinsResponse(events: [], futures: []) },
+            serverSync: { _, _, _ in }
+        )
+        let myStuffIPad = NavigationStack {
+            MyStuffView()
+        }
+        .environmentObject(AuthManager())
+        .environmentObject(NavigationCoordinator())
+        .environmentObject(pins)
+        let img = captureViewport(myStuffIPad, size: CGSize(width: 834, height: 1194), scale: 1.0, window: window)
+        let cg = try XCTUnwrap(img.cgImage)
+        let data = try XCTUnwrap(cg.dataProvider?.data) as Data
+        let bpr = cg.bytesPerRow
+        var widestBlackRun = 0
+        // Scan rows y = 500..900 for the widest contiguous near-black run (the 50 pt tall Apple sign-in button)
+        for y in 500..<min(900, cg.height) {
+            var run = 0
+            for x in 0..<cg.width {
+                let off = y * bpr + x * 4
+                let r = data[off], g = data[off + 1], b = data[off + 2]
+                if r < 20 && g < 20 && b < 20 {
+                    run += 1
+                    widestBlackRun = max(widestBlackRun, run)
+                } else {
+                    run = 0
+                }
+            }
+        }
+        XCTAssertGreaterThanOrEqual(widestBlackRun, 440, "Sign in with Apple button must render at ~480 pt width")
+        XCTAssertLessThanOrEqual(
+            widestBlackRun,
+            510,
+            "Sign in with Apple button must stay bounded to ~480 pt (not 754 pt unguarded), got \(widestBlackRun) pt"
+        )
+
+        // Also export a 390×844 compact iPhone control render of PreferencesView
+        // proving the large "Preferences" title is preserved on iPhone.
+        if let outDir = ProcessInfo.processInfo.environment["EXPORT_IPAD_MAC_SHEET_DIR"], !outDir.isEmpty {
+            let prefsResp = try Self.snakeDecoder.decode(PreferencesResponse.self, from: Data("""
+            {
+              "home_location": "San Francisco, CA",
+              "sport_affinities": { "nba": 1.0, "nfl": 0.75 },
+              "onboarding_completed": true,
+              "favorites": [
+                { "team_id": 14, "team_name": "Golden State Warriors", "relation_type": "follow", "sport_key": "basketball_nba" }
+              ]
+            }
+            """.utf8))
+            let phoneView = NavigationStack { PreferencesView(loadedPrefsForTest: prefsResp) }
+                .environmentObject(AuthManager())
+                .environmentObject(NavigationCoordinator())
+                .environmentObject(pins)
+                .environment(\.horizontalSizeClass, .compact)
+                .environment(\.colorScheme, .light)
+                .frame(width: 390, height: 844)
+            let host = hostForMeasurement(phoneView, at: .large)
+            host.overrideUserInterfaceStyle = .light
+            host.traitOverrides.horizontalSizeClass = .compact
+            window.rootViewController = host
+            window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+            host.view.frame = window.bounds
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.06))
+            let fmt = UIGraphicsImageRendererFormat()
+            fmt.scale = 3.0
+            let phoneImg = UIGraphicsImageRenderer(bounds: host.view.bounds, format: fmt).image { _ in
+                _ = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+            }
+            let dirURL = URL(fileURLWithPath: outDir, isDirectory: true)
+            try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+            try phoneImg.pngData()?.write(to: dirURL.appendingPathComponent("iphone-390-preferences-control.png"))
+        }
     }
 }
