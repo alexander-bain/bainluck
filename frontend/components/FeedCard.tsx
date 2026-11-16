@@ -1108,7 +1108,7 @@ function EventFeedCard({
                   data-testid="feed-card-prematch-label"
                   data-prematch-source={prematch.source}
                 >
-                  Pre-match · {prematch.label}
+                  Pregame · {prematch.label}
                 </span>
               )}
             </div>

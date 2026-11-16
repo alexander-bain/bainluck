@@ -536,7 +536,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               {/* Alex: label it when it is not a prediction market. A books
                   median is a different claim from a prediction-market opening
                   and must not be printed as one — ux/1034 A3's lesson. */}
-              Pre-match{prematch.label ? ` · ${prematch.label}` : ""}
+              Pregame{prematch.label ? ` · ${prematch.label}` : ""}
             </span>
             <span
               className="font-mono tabular-nums text-text-muted"
