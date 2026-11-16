@@ -26,6 +26,21 @@ enum GameActivityDemo10864 {
     /// Built through the snapshot's own initializer, which applies every rule a
     /// real reading meets (a final carries no chance).
     static func snapshot(_ mode: String, now: Date = Date()) -> GameActivitySnapshot? {
+        if mode == "nfl199pre" || mode == "nfl199final" {
+            // #199 — the same game before kickoff (the page's `Chance`) and
+            // finished (the page's `Final`, winner ticked from the server's verdict).
+            let final = mode == "nfl199final"
+            return GameActivitySnapshot(
+                eventID: eventID + 1, homeTeam: "Detroit Lions", awayTeam: "New England Patriots",
+                lifecycle: final ? .final : .scheduled, homeScore: final ? 27 : nil, awayScore: final ? 20 : nil,
+                homeProbability: final ? nil : 0.614, awayProbability: final ? nil : 0.386,
+                sport: "americanfootball_nfl",
+                scoreObservedAt: final ? now : nil, probabilityObservedAt: final ? nil : now,
+                homeAbbreviation: "DET", awayAbbreviation: "NE",
+                homeColorHex: "#0076B6", awayColorHex: "#002244", periodLabel: nil,
+                servedResult: final ? "home" : nil,
+                awaySecondaryColorHex: "#C60C30")
+        }
         if mode == "nfl199" {
             // #199 — the reading #12755's page render shows (Patriots at Lions,
             // Q3 8:14, 17–21, Now 33.8% / 66.2%), so the Lock Screen and the
@@ -63,7 +78,8 @@ enum GameActivityDemo10864 {
         }
         // "pair" starts two games at once, so the island shows one compact and
         // one minimal; "nfl199" starts the #12755 page's game alone.
-        let first = mode == "nfl199" || mode == "pair" ? "nfl199" : "live"
+        let first = mode == "nfl199" || mode == "pair" ? "nfl199"
+            : (mode == "nfl199pre" || mode == "nfl199final") ? mode : "live"
         if mode == "pair", let other = snapshot("live") {
             _ = try? Activity<GameActivityAttributes>.request(
                 attributes: GameActivityAttributes(eventID: eventID),

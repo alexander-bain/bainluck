@@ -24,4 +24,19 @@ final class HeadlineStyleTable199Tests: XCTestCase {
         XCTAssertTrue(names.contains("lockScreen"))
         XCTAssertTrue(names.contains("island"))
     }
+
+    /// The Live Activity labels its columns with the page's words in each phase
+    /// (`EventSportHeadlines12472`): before `Chance`, during `Score` and `Now`,
+    /// after `Final`. No score column before kickoff.
+    func testTheLiveActivityUsesThePagesColumnWordsInEachPhase() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("BainLuckWidget/GameLiveActivity.swift")
+        let view = try String(contentsOf: url, encoding: .utf8).filter { !$0.isWhitespace }
+        XCTAssertTrue(view.contains("case.before:Text(\"Chance\")"), "before: one Chance column")
+        XCTAssertTrue(view.contains("case.during:Text(\"Score\")"), "during: Score")
+        XCTAssertTrue(view.contains("Text(\"Now\").frame(width:Self.nowWidth"), "during: Now")
+        XCTAssertTrue(view.contains("case.after:Text(\"Final\")"), "after: Final")
+        XCTAssertTrue(view.contains("ifreading.phase!=.before{Text(reading.scoreText(side))"), "no score before kickoff")
+        XCTAssertTrue(view.contains("varchanceHeader:String{phase==.before?\"Chance\":\"Now\"}"))
+    }
 }

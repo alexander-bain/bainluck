@@ -74,6 +74,27 @@ private struct GameActivityReading {
         isStale = context.isStale
     }
 
+    /// #199 — the page headline's three phases (`EventSportHeadlines12472`):
+    /// before `Chance`, during `Score · Now`, after `Final` with the winner ticked.
+    enum Phase { case before, during, after }
+    var phase: Phase {
+        if snapshot.lifecycle == .scheduled { return .before }
+        if snapshot.isFinal { return .after }
+        return .during
+    }
+    /// The page's word for the chance column in this phase.
+    var chanceHeader: String { phase == .before ? "Chance" : "Now" }
+    /// The page's green tick, only on the side the server's verdict names (a
+    /// draw ticks both, as the page does). Never inferred from the scores.
+    func ticked(_ side: Side) -> Bool {
+        guard matches, snapshot.isFinal, let result = snapshot.result else { return false }
+        switch result {
+        case .draw: return true
+        case .home: return side == .home
+        case .away: return side == .away
+        }
+    }
+
     var showsForecast: Bool {
         matches && (snapshot.lifecycle == .live || snapshot.lifecycle == .scheduled)
     }
@@ -231,7 +252,8 @@ private struct GameActivityReading {
     }
 
     func rowSpoken(_ side: Side) -> String {
-        var parts = [name(side), score(side).map { "\($0)" } ?? "score unavailable"]
+        var parts = [name(side)]
+        if phase != .before { parts.append(score(side).map { "\($0)" } ?? "score unavailable") }
         if let now = nowText(side) { parts.append("\(now) chance to win") }
         if let verdict = verdict(side) { parts.append(verdict) }
         return parts.joined(separator: ", ")
@@ -321,7 +343,9 @@ private struct GameActivityLockScreenView: View {
             }
             if reading.matches {
                 VStack(spacing: 4) {
-                    if reading.pair != nil { GameActivityColumnLabels() }
+                    if reading.matches && (reading.pair != nil || reading.phase == .after) {
+                        GameActivityColumnLabels(reading: reading)
+                    }
                     GameActivityTeamRow(reading: reading, side: .away)
                     GameActivityTeamRow(reading: reading, side: .home)
                 }
@@ -365,10 +389,12 @@ private struct GameActivityTeamRow: View {
                     .minimumScaleFactor(0.8)
             }
             Spacer(minLength: 6)
-            Text(reading.scoreText(side))
-                .font(HeadlineStyleTable199.secondNumbers(.lockScreen, prominent: true))
-                .foregroundStyle(reading.steppedBack(side) ? .secondary : .primary)
-                .frame(minWidth: GameActivityColumnLabels.scoreWidth, alignment: .trailing)
+            if reading.phase != .before {
+                Text(reading.scoreText(side))
+                    .font(HeadlineStyleTable199.secondNumbers(.lockScreen, prominent: true))
+                    .foregroundStyle(reading.steppedBack(side) ? .secondary : .primary)
+                    .frame(minWidth: GameActivityColumnLabels.scoreWidth, alignment: .trailing)
+            }
             if let now = reading.nowText(side) {
                 // #199 / 200-B — "Now" is the largest thing, in the team's colour.
                 Text(now)
@@ -378,11 +404,13 @@ private struct GameActivityTeamRow: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                     .frame(minWidth: GameActivityColumnLabels.nowWidth, alignment: .trailing)
-            } else if let verdict = reading.verdict(side) {
-                Text(verdict)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(reading.steppedBack(side) ? .secondary : .primary)
-                    .frame(minWidth: 48, alignment: .trailing)
+            } else if reading.phase == .after {
+                // The page's after phase: the winner ticked in green, no words.
+                Image(systemName: "checkmark")
+                    .font(.subheadline.weight(.heavy))
+                    .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
+                    .opacity(reading.ticked(side) ? 1 : 0)
+                    .frame(width: GameActivityColumnLabels.tickWidth, alignment: .trailing)
             }
         }
         .padding(.leading, 12)
@@ -407,12 +435,22 @@ private struct GameActivityTeamRow: View {
 private struct GameActivityColumnLabels: View {
     static let scoreWidth: CGFloat = 40
     static let nowWidth: CGFloat = 78
+    static let tickWidth: CGFloat = 18
+    let reading: GameActivityReading
 
     var body: some View {
         HStack(spacing: 8) {
             Spacer(minLength: 0)
-            Text("Score").frame(width: Self.scoreWidth, alignment: .trailing)
-            Text("Now").frame(width: Self.nowWidth, alignment: .trailing)
+            switch reading.phase {
+            case .before:
+                Text("Chance").frame(width: Self.nowWidth, alignment: .trailing)
+            case .during:
+                Text("Score").frame(width: Self.scoreWidth, alignment: .trailing)
+                Text("Now").frame(width: Self.nowWidth, alignment: .trailing)
+            case .after:
+                Text("Final").frame(width: Self.scoreWidth, alignment: .trailing)
+                Color.clear.frame(width: Self.tickWidth, height: 1)
+            }
         }
         .font(HeadlineStyleTable199.headers(.lockScreen))
         .foregroundStyle(.secondary)
@@ -490,7 +528,8 @@ private struct GameActivityExpandedSide: View {
                 if side == .home { dot }
             }
             // #199 — the score is a second number: smaller than Now below it.
-            Text(reading.scoreText(side))
+            // Before the game there is no score to show.
+            Text(reading.phase == .before ? " " : reading.scoreText(side))
                 .font(HeadlineStyleTable199.secondNumbers(.island, prominent: true))
                 .foregroundStyle(reading.steppedBack(side) ? .secondary : .primary)
         }
@@ -519,7 +558,7 @@ private struct GameActivityChanceLine: View {
                     Text(reading.nowText(.away) ?? reading.percentText(pair.away))
                         .foregroundStyle(reading.color(.away, onDark: true))
                     Spacer(minLength: 8)
-                    Text("Now").font(HeadlineStyleTable199.headers(.island)).foregroundStyle(.secondary)
+                    Text(reading.chanceHeader).font(HeadlineStyleTable199.headers(.island)).foregroundStyle(.secondary)
                     Spacer(minLength: 8)
                     Text(reading.nowText(.home) ?? reading.percentText(pair.home))
                         .foregroundStyle(reading.color(.home, onDark: true))

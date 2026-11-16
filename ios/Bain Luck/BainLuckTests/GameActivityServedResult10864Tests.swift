@@ -60,7 +60,11 @@ final class GameActivityServedResult10864Tests: XCTestCase {
         XCTAssertTrue(view.contains("guardmatches,snapshot.isFinal,letresult=snapshot.resultelse{returnnil}"),
                       "the verdict reads the server's result and nothing else")
         XCTAssertTrue(view.contains("casenil:returnlowerScoredSide"), "without a verdict the scoreboard rule stands")
-        XCTAssertTrue(view.contains("}elseifletverdict=reading.verdict(side){"), "the row prints the verdict")
+        // #199 — the row shows the page's after phase: a green tick on the side
+        // the server's verdict names, never one inferred from the scores.
+        XCTAssertTrue(view.contains("guardmatches,snapshot.isFinal,letresult=snapshot.resultelse{returnfalse}"),
+                      "the tick reads the server's result and nothing else")
+        XCTAssertTrue(view.contains(".opacity(reading.ticked(side)?1:0)"), "the row ticks the verdict's side")
     }
 
     private static func source(_ relative: String) throws -> String {
