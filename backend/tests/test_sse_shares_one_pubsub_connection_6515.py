@@ -215,7 +215,7 @@ class _TinyPubSubServer:
         With no `seconds`, the reply waits for `release_held()`. That is the
         only form a test may use to say "the client gave up first": a reply on
         a timer races the client's deadline, and a stalled event loop can let
-        the reply win (#11521's re-run, 2026-11-16).
+        the reply win (#11521's re-run, Mon Nov 16).
         """
         with self._lock:
             self._held[verb.upper()] = [seconds, times]
