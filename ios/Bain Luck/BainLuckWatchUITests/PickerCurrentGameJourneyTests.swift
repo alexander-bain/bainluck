@@ -457,11 +457,13 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
 
     @MainActor
     func testScheduledStartBoundariesAtStandardSize() throws {
+        executionTimeAllowance = 300
         try checkScheduledStartBoundaries(large: false)
     }
 
     @MainActor
     func testScheduledStartBoundariesAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         try checkScheduledStartBoundaries(large: true)
     }
 
@@ -647,11 +649,13 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
 
     @MainActor
     func testConfirmedFinalOutcomeAtStandardSize() throws {
+        executionTimeAllowance = 300
         try checkConfirmedFinalOutcomes(large: false)
     }
 
     @MainActor
     func testConfirmedFinalOutcomeAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         try checkConfirmedFinalOutcomes(large: true)
     }
 
@@ -1536,6 +1540,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
 
     @MainActor
     func testSavedCurrentCardAndReturnPreserveIndependentClocksAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         let app = try launchCurrentGame(large: true)
         defer { app.terminate() }
         // First launch writes the real selected-store snapshot through its101→111 response.

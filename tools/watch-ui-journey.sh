@@ -17,6 +17,27 @@ if [[ "$SHARD" != full ]]; then
 fi
 STAGE="${1:?Expected prepare or execute}"
 if [[ "$STAGE" != prepare && "$STAGE" != execute ]]; then exit 2; fi
+boot_until_ready() {
+  local udid="$1"
+  local attempt
+  for attempt in 1 2 3; do
+    xcrun simctl bootstatus "$udid" -b >> "$OUT/preflight.log" 2>&1
+    if xcrun simctl list devices --json 2>> "$OUT/preflight.log" | python3 -c '
+import json, sys
+target = sys.argv[1]
+for devs in json.load(sys.stdin).get("devices", {}).values():
+    for d in devs:
+        if d.get("udid") == target and d.get("state") == "Booted":
+            raise SystemExit(0)
+raise SystemExit(1)
+' "$udid"; then
+      return 0
+    fi
+    echo "bootstatus exited 0 with $udid not Booted (attempt $attempt); retrying..." >> "$OUT/preflight.log"
+    sleep 2
+  done
+  return 1
+}
 if [[ "$STAGE" == prepare ]]; then
 PHASE=preflight
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
@@ -129,10 +150,11 @@ PAIR
 # member serially; the pair-wide boot RPC timed out before reaching readiness.
 PHASE='boot and await only the new disposable companion phone'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
-xcrun simctl bootstatus "$PHONE_UDID" -b >> "$OUT/preflight.log" 2>&1
+boot_until_ready "$PHONE_UDID"
 PHASE='boot and await only the new disposable Watch'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
-xcrun simctl bootstatus "$TEST_UDID" -b >> "$OUT/preflight.log" 2>&1
+boot_until_ready "$TEST_UDID"
+boot_until_ready "$PHONE_UDID"
 # Resolve the exact devices through their available booted runtime metadata.
 # uname inside a simulator can report x86_64 on an arm64-only runtime.
 PHASE='verify exact paired simulator runtime architecture'
@@ -191,17 +213,33 @@ PHONE_UDID="$(read_state phone)"
 XCTESTRUN="$(read_state xctestrun)"
 python3 "$ROOT/tools/watch_ui_products.py" verify --repo "$ROOT" --sha "$SHA" \
   --output "$RUN/package" > "$OUT/products-verification.json"
+boot_until_ready "$PHONE_UDID"
+boot_until_ready "$TEST_UDID"
 XCODE_ARGS=(-xctestrun "$XCTESTRUN" -destination "platform=watchOS Simulator,id=$TEST_UDID" -parallel-testing-enabled NO)
 PHASE='BainLuckWatchUITests full suite from the same built products'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
-if xcodebuild test-without-building "${XCODE_ARGS[@]}" ${TEST_SELECTION[@]+"${TEST_SELECTION[@]}"} \
-  -resultBundlePath "$RESULT" -collect-test-diagnostics never \
-  -test-timeouts-enabled YES -default-test-execution-time-allowance 180 \
-  -maximum-test-execution-time-allowance 540 \
-  > "$OUT/tests.log" 2>&1; then
-  TEST_EXIT=0
-else
-  TEST_EXIT=$?
+run_xctest_suite() {
+  if xcodebuild test-without-building "${XCODE_ARGS[@]}" ${TEST_SELECTION[@]+"${TEST_SELECTION[@]}"} \
+    -resultBundlePath "$RESULT" -collect-test-diagnostics never \
+    -test-timeouts-enabled YES -default-test-execution-time-allowance 180 \
+    -maximum-test-execution-time-allowance 540 \
+    > "$OUT/tests.log" 2>&1; then
+    TEST_EXIT=0
+  else
+    TEST_EXIT=$?
+  fi
+}
+run_xctest_suite
+# Recover once if XCTRunner aborted with SIGTERM before establishing its XPC
+# connection to testmanagerd with zero test cases started (never retries any executed test).
+if [[ "$TEST_EXIT" -ne 0 ]] \
+  && grep -q 'before establishing connection' "$OUT/tests.log" \
+  && ! grep -q "Test Case '" "$OUT/tests.log"; then
+  cp "$OUT/tests.log" "$OUT/tests-preconnect-abort.log"
+  rm -rf "$RESULT"
+  boot_until_ready "$PHONE_UDID"
+  boot_until_ready "$TEST_UDID"
+  run_xctest_suite
 fi
 printf '%s\n' "$TEST_EXIT" > "$OUT/test-exit.txt"
 printf 'xcodebuild exit: %s\n' "$TEST_EXIT"

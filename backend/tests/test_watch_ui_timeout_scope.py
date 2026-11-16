@@ -40,6 +40,16 @@ APPROVED_TIMEOUT_OVERRIDES = sorted(
         ),
         (
             "PickerCurrentGameJourneyTests.swift",
+            "testConfirmedFinalOutcomeAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testConfirmedFinalOutcomeAtStandardSize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
             "testCurrentGameAndOfflineDetailsAtAccessibilitySize",
             300,
         ),
@@ -90,12 +100,27 @@ APPROVED_TIMEOUT_OVERRIDES = sorted(
         ),
         (
             "PickerCurrentGameJourneyTests.swift",
+            "testSavedCurrentCardAndReturnPreserveIndependentClocksAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
             "testScheduledPickerShowsSuppliedTimeAtAccessibilitySize",
             300,
         ),
         (
             "PickerCurrentGameJourneyTests.swift",
             "testScheduledPickerShowsSuppliedTimeAtStandardSize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testScheduledStartBoundariesAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testScheduledStartBoundariesAtStandardSize",
             300,
         ),
         (

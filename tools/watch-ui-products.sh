@@ -128,12 +128,34 @@ if pair['watch']['udid'] != watch or pair['phone']['udid'] != phone or not pair[
 PAIR
 # bootstatus -b starts an unbooted device and waits for it. Prepare each new
 # member serially; the pair-wide boot RPC timed out before reaching readiness.
+boot_until_ready() {
+  local udid="$1"
+  local attempt
+  for attempt in 1 2 3; do
+    xcrun simctl bootstatus "$udid" -b >> "$OUT/preflight.log" 2>&1
+    if xcrun simctl list devices --json 2>> "$OUT/preflight.log" | python3 -c '
+import json, sys
+target = sys.argv[1]
+for devs in json.load(sys.stdin).get("devices", {}).values():
+    for d in devs:
+        if d.get("udid") == target and d.get("state") == "Booted":
+            raise SystemExit(0)
+raise SystemExit(1)
+' "$udid"; then
+      return 0
+    fi
+    echo "bootstatus exited 0 with $udid not Booted (attempt $attempt); retrying..." >> "$OUT/preflight.log"
+    sleep 2
+  done
+  return 1
+}
 PHASE='boot and await only the new disposable companion phone'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
-xcrun simctl bootstatus "$PHONE_UDID" -b >> "$OUT/preflight.log" 2>&1
+boot_until_ready "$PHONE_UDID"
 PHASE='boot and await only the new disposable Watch'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
-xcrun simctl bootstatus "$TEST_UDID" -b >> "$OUT/preflight.log" 2>&1
+boot_until_ready "$TEST_UDID"
+boot_until_ready "$PHONE_UDID"
 # watchOS Simulator rejects simctl content_size (POSIX45). The suite separately
 # verifies default layout and a DEBUG-only accessibility5 layout stress override.
 printf '%s\n' 'Default layout plus forced accessibility5 layout stress; system preference unsupported' > "$OUT/text-size.txt"
