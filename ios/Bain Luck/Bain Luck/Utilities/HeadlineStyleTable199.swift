@@ -15,6 +15,11 @@ nonisolated enum HeadlineStyleTable199 {
         case card
         case widget
         case wristTile
+        /// The Live Activity on the Lock Screen and in the expanded Dynamic Island
+        /// (#199, Builder F). The compact and minimal island keep the system's one
+        /// caption size: there is no room there for a second size.
+        case lockScreen
+        case island
     }
 
     // MARK: - Base Point Metrics (for @ScaledMetric or direct layout measurement)
@@ -25,6 +30,8 @@ nonisolated enum HeadlineStyleTable199 {
         case .card: return 16
         case .widget: return 27
         case .wristTile: return 17
+        case .lockScreen: return 22
+        case .island: return 24
         }
     }
 
@@ -34,6 +41,8 @@ nonisolated enum HeadlineStyleTable199 {
         case .card: return prominent ? 15 : 13
         case .widget: return prominent ? 20 : 13
         case .wristTile: return prominent ? 15 : 12
+        case .lockScreen: return prominent ? 20 : 15
+        case .island: return prominent ? 20 : 15
         }
     }
 
@@ -43,6 +52,7 @@ nonisolated enum HeadlineStyleTable199 {
         case .card: return 11.5
         case .widget: return 11
         case .wristTile: return 11
+        case .lockScreen, .island: return 11
         }
     }
 
@@ -52,6 +62,7 @@ nonisolated enum HeadlineStyleTable199 {
         case .card: return 15
         case .widget: return 13
         case .wristTile: return 13
+        case .lockScreen, .island: return 15
         }
     }
 
@@ -61,6 +72,7 @@ nonisolated enum HeadlineStyleTable199 {
         case .card: return 11
         case .widget: return 10
         case .wristTile: return 10
+        case .lockScreen, .island: return 11
         }
     }
 
@@ -77,6 +89,8 @@ nonisolated enum HeadlineStyleTable199 {
             return .system(size: size, weight: .bold, design: .rounded).monospacedDigit()
         case .wristTile:
             return .title3.bold().monospacedDigit()
+        case .lockScreen, .island:
+            return .system(size: size, weight: .black, design: .rounded).monospacedDigit()
         }
     }
 
@@ -101,6 +115,9 @@ nonisolated enum HeadlineStyleTable199 {
             return .system(size: size, weight: weight, design: .rounded).monospacedDigit()
         case .wristTile:
             return (prominent ? Font.body.bold() : Font.footnote.weight(.semibold)).monospacedDigit()
+        case .lockScreen, .island:
+            let weight: Font.Weight = prominent ? .bold : .semibold
+            return .system(size: size, weight: weight, design: .rounded).monospacedDigit()
         }
     }
 
@@ -123,7 +140,7 @@ nonisolated enum HeadlineStyleTable199 {
                 base = .caption.weight(.regular)
             case .widget:
                 base = .caption2.weight(.medium)
-            case .wristTile:
+            case .wristTile, .lockScreen, .island:
                 base = .caption2.weight(.medium)
             }
         }
@@ -148,6 +165,8 @@ nonisolated enum HeadlineStyleTable199 {
             return .footnote.weight(.semibold)
         case .wristTile:
             return .footnote.weight(.semibold)
+        case .lockScreen, .island:
+            return .subheadline.weight(isLoser ? .regular : .semibold)
         }
     }
 
@@ -160,7 +179,7 @@ nonisolated enum HeadlineStyleTable199 {
         switch surface {
         case .page, .card:
             return .caption2.weight(.semibold)
-        case .widget, .wristTile:
+        case .widget, .wristTile, .lockScreen, .island:
             return .caption2.weight(.semibold)
         }
     }

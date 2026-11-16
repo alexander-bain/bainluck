@@ -366,15 +366,13 @@ private struct GameActivityTeamRow: View {
             }
             Spacer(minLength: 6)
             Text(reading.scoreText(side))
-                .font(.title3.weight(.bold))
-                .monospacedDigit()
+                .font(HeadlineStyleTable199.secondNumbers(.lockScreen, prominent: true))
                 .foregroundStyle(reading.steppedBack(side) ? .secondary : .primary)
                 .frame(minWidth: GameActivityColumnLabels.scoreWidth, alignment: .trailing)
             if let now = reading.nowText(side) {
                 // #199 / 200-B — "Now" is the largest thing, in the team's colour.
                 Text(now)
-                    .font(.system(size: 22, weight: .black))
-                    .monospacedDigit()
+                    .font(HeadlineStyleTable199.now(.lockScreen))
                     .foregroundStyle(reading.isStale ? AnyShapeStyle(.secondary)
                                                      : AnyShapeStyle(reading.color(side, onDark: scheme == .dark)))
                     .lineLimit(1)
@@ -416,7 +414,7 @@ private struct GameActivityColumnLabels: View {
             Text("Score").frame(width: Self.scoreWidth, alignment: .trailing)
             Text("Now").frame(width: Self.nowWidth, alignment: .trailing)
         }
-        .font(.caption2.weight(.medium))
+        .font(HeadlineStyleTable199.headers(.lockScreen))
         .foregroundStyle(.secondary)
         .accessibilityHidden(true)
     }
@@ -491,9 +489,9 @@ private struct GameActivityExpandedSide: View {
                 Text(reading.badge(side)).font(.subheadline.weight(.heavy))
                 if side == .home { dot }
             }
+            // #199 — the score is a second number: smaller than Now below it.
             Text(reading.scoreText(side))
-                .font(.system(size: 34, weight: .bold, design: .rounded))
-                .monospacedDigit()
+                .font(HeadlineStyleTable199.secondNumbers(.island, prominent: true))
                 .foregroundStyle(reading.steppedBack(side) ? .secondary : .primary)
         }
         .frame(maxWidth: .infinity, alignment: side == .away ? .leading : .trailing)
@@ -521,13 +519,12 @@ private struct GameActivityChanceLine: View {
                     Text(reading.nowText(.away) ?? reading.percentText(pair.away))
                         .foregroundStyle(reading.color(.away, onDark: true))
                     Spacer(minLength: 8)
-                    Text("Now").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                    Text("Now").font(HeadlineStyleTable199.headers(.island)).foregroundStyle(.secondary)
                     Spacer(minLength: 8)
                     Text(reading.nowText(.home) ?? reading.percentText(pair.home))
                         .foregroundStyle(reading.color(.home, onDark: true))
                 }
-                .font(.system(size: 20, weight: .black))
-                .monospacedDigit()
+                .font(HeadlineStyleTable199.now(.island))
                 GameActivitySplitBar(away: colors.away, home: colors.home, awayShare: Double(pair.away) / 100)
             }
             .accessibilityElement(children: .ignore)
