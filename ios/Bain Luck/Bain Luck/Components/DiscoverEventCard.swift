@@ -630,11 +630,29 @@ struct NativeEventDiscoverCard: View {
     /// `event.sport` reaches only the re-lettering, so a person gets first and last
     /// initial; the pair itself is asked exactly as before.
     private var cardBadges: (away: String, home: String) {
-        Self.cardBadges(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+        Self.cardBadges(
+            away: event.awayTeam,
+            home: event.homeTeam,
+            awayServed: event.awayTeamData?.abbreviation,
+            homeServed: event.homeTeamData?.abbreviation,
+            sportKey: event.sport
+        )
     }
 
-    static func cardBadges(away: String, home: String, sportKey: String?) -> (away: String, home: String) {
-        let pair = TeamShortName.abbreviationPair(away: away, home: home)
+    static func cardBadges(
+        away: String,
+        home: String,
+        awayServed: String? = nil,
+        homeServed: String? = nil,
+        sportKey: String?
+    ) -> (away: String, home: String) {
+        let pair = TeamShortName.abbreviationPair(
+            away: away,
+            home: home,
+            awayServed: awayServed,
+            homeServed: homeServed,
+            sportKey: TeamShortName.isCollegeSport(sportKey: sportKey) ? sportKey : nil
+        )
         return (
             TeamShortName.refusingResultWord(pair.away, name: away, sportKey: sportKey),
             TeamShortName.refusingResultWord(pair.home, name: home, sportKey: sportKey)

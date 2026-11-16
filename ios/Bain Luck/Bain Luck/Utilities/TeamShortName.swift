@@ -504,6 +504,106 @@ enum TeamShortName {
         "team", // "Once Upon A Team", "EDward Gaming Youth Team"
     ]
 
+    /// Ruling 194-A — does this sport key name a college competition, where teams
+    /// print the school ("Duke", "Alabama", "Gonzaga", "Ole Miss") rather than
+    /// the mascot ("Blue Devils", "Crimson Tide", "Bulldogs", "Rebels")?
+    static func isCollegeSport(sportKey: String?) -> Bool {
+        guard let key = sportKey?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !key.isEmpty,
+              !namesAPerson(sportKey: key) else { return false }
+        return key.contains("ncaa")
+            || key.contains("_college")
+            || key.hasPrefix("college_")
+            || key.hasPrefix("kxncaa")
+    }
+
+    /// Two-word college mascots outside `twoWordNicknames` (which holds the
+    /// FBS football set), so NCAAB/women's college sides strip both mascot words.
+    private static let extraCollegeTwoWordMascots: Set<String> = [
+        "banana slugs",
+        "big green",
+        "big red",
+        "blue hose",
+        "crimson hawks",
+        "fighting leathernecks",
+        "fighting saints",
+        "fighting scots",
+        "golden griffins",
+        "golden grizzlies",
+        "great danes",
+        "mountain hawks",
+        "purple aces",
+        "purple eagles",
+        "red flash",
+        "red foxes",
+        "red hawks",
+        "red storm",
+        "river hawks",
+        "running rebels",
+        "runnin rebels",
+        "screaming eagles",
+        "sea wolves",
+        "sky hawks",
+    ]
+
+    /// Words that legitimately end a school-only college name ("Ole Miss",
+    /// "Texas A&M", "Notre Dame", "Penn State", "North Carolina"), so passing an
+    /// already-shortened school name through `collegeSchoolName` is idempotent.
+    private static let collegeSchoolEndings: Set<String> = [
+        "state", "st", "tech", "college", "university", "am", "miss", "dame",
+        "forest", "hall", "cross", "heart", "force", "navy", "army", "point",
+        "green", "johns", "marys", "josephs", "peters", "bonaventure", "louis",
+        "thomas", "francis", "cloud", "roberts", "morris", "young", "austin",
+        "houston", "canyon", "dominion", "madison", "mason", "hopkins", "lowell",
+        "upstate", "wilmington", "greensboro", "asheville", "charlotte",
+        "arlington", "martin", "irvine", "davis", "riverside", "barbara",
+        "diego", "jose", "francisco", "clara", "bluff", "wayne", "rock",
+        "falls", "springs", "island", "beach", "valley", "harbor", "hill",
+        "hills", "park", "ridge", "mount", "view", "shore", "coast", "bay",
+        "lake", "lakes", "river", "creek", "international", "christian",
+        "methodist", "baptist", "lutheran", "catholic", "presbyterian",
+        "pacific", "atlantic", "central", "eastern", "western", "northern",
+        "southern", "michigan", "carolina", "virginia", "dakota", "mexico",
+        "hampshire", "york", "jersey", "florida", "illinois", "texas",
+        "georgia", "alabama", "tennessee", "kentucky", "indiana", "ohio",
+        "iowa", "kansas", "arkansas", "missouri", "mississippi", "louisiana",
+        "oklahoma", "nebraska", "colorado", "utah", "arizona", "nevada",
+        "oregon", "washington", "california", "idaho", "montana", "wyoming",
+        "minnesota", "wisconsin", "maryland", "delaware", "connecticut",
+        "massachusetts", "vermont", "maine", "hawaii", "alaska",
+    ]
+
+    /// Ruling 194-A — the school portion of a college team name ("Duke Blue Devils"
+    /// → "Duke", "Alabama Crimson Tide" → "Alabama", "Gonzaga Bulldogs" → "Gonzaga",
+    /// "Ole Miss Rebels" → "Ole Miss").
+    static func collegeSchoolName(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isDoublesPair(trimmed) else { return name }
+        var words = trimmed.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard words.count >= 2 else { return trimmed }
+        if words.count >= 2, bareToken(words[words.count - 1]).lowercased() == "w" {
+            words.removeLast()
+        }
+        guard words.count >= 2 else { return words.joined(separator: " ") }
+        if words.count >= 3 {
+            let tailPair = "\(nicknameKey(words[words.count - 2])) \(nicknameKey(words[words.count - 1]))"
+            let ladyMascot = nicknameKey(words[words.count - 2]) == "lady"
+                && nicknameKey(words[words.count - 3]) != "our"
+            if twoWordNicknames.contains(tailPair) || extraCollegeTwoWordMascots.contains(tailPair) || ladyMascot {
+                return words.dropLast(2).joined(separator: " ")
+            }
+        }
+        let lastWord = words[words.count - 1]
+        if lastWord.hasPrefix("(") && lastWord.hasSuffix(")") {
+            return words.joined(separator: " ")
+        }
+        let lastKey = nicknameKey(lastWord)
+        if collegeSchoolEndings.contains(lastKey) {
+            return words.joined(separator: " ")
+        }
+        return words.dropLast().joined(separator: " ")
+    }
+
     /// #5634 — a football club's label: its own name with LEADING designators
     /// dropped, never below two words. "1. FC Union Berlin" → "Union Berlin",
     /// "CA Boca Juniors" → "Boca Juniors", "1. FC Köln" → "FC Köln" (the floor);
@@ -697,6 +797,11 @@ enum TeamShortName {
                 return name
             }
         }
+        // Ruling 194-A — college teams print the school ("Duke", "Alabama",
+        // "Gonzaga", "Ole Miss"), never the mascot.
+        if isCollegeSport(sportKey: sportKey) {
+            return collegeSchoolName(name)
+        }
         let parts = name.split(separator: " ").filter { !$0.isEmpty }
         guard parts.count > 1 else { return name }
         guard let last = parts.last else { return name }
@@ -840,6 +945,9 @@ enum TeamShortName {
                 isType($0) && String($0.filter { $0.isLetter || $0.isNumber }.prefix(3)).uppercased() == sportFree
             }
             return typeBadge && !org.isEmpty ? abbreviation(org) : sportFree
+        }
+        if isCollegeSport(sportKey: sportKey) {
+            return glyphs(ofLabel: collegeSchoolName(name))
         }
         let distinctive = distinctiveTokens(name)
         guard distinctive.count >= 3 else { return shipped }
@@ -1166,10 +1274,41 @@ enum TeamShortName {
         // organisation. Growing there re-lettered `G2`/`TOP` as `G2E`/`TOP` and
         // "Hanwha Life Esports" as `LIF`. An exact badge collision still grows.
         let proxyCollides = derived && !keepsWholeOrgName(sportKey: sportKey)
+            && !isCollegeSport(sportKey: sportKey)
             && shortByRule(away) == shortByRule(home)
         guard a == h || proxyCollides else { return (a, h) }
+        if isCollegeSport(sportKey: sportKey) {
+            return disambiguatedCollegeBadges(
+                away: away,
+                home: home,
+                awayServed: awayAbbr,
+                homeServed: homeAbbr,
+                awayDefault: a,
+                homeDefault: h
+            )
+        }
         let widened = grown(away: away, home: home, byRule: true)
         return (glyphs(ofLabel: widened.away), glyphs(ofLabel: widened.home))
+    }
+
+    private static func disambiguatedCollegeBadges(
+        away: String,
+        home: String,
+        awayServed: String?,
+        homeServed: String?,
+        awayDefault: String,
+        homeDefault: String
+    ) -> (away: String, home: String) {
+        let schoolInitials: (String) -> String = { raw in
+            let school = collegeSchoolName(raw)
+            let tokens = school.components(separatedBy: tokenSeparators)
+                .compactMap { $0.first(where: { $0.isLetter || $0.isNumber }) }
+            return tokens.count >= 2 ? String(tokens.prefix(3)).uppercased() : glyphs(ofLabel: school)
+        }
+        let nextA = awayServed ?? schoolInitials(away)
+        let nextH = homeServed ?? schoolInitials(home)
+        if nextA != nextH { return (nextA, nextH) }
+        return (awayDefault, homeDefault)
     }
 
     private static func served(_ value: String?) -> String? {

@@ -18,7 +18,7 @@ enum CompactGameCard12616 {
     }
 
     /// Column headers for each game state under 161-B + Alex's Pregame-header ruling:
-    /// - Before (`isScheduled`): `Projected` (medium) · `Chance` (large)
+    /// - Before (`isScheduled`): `Proj.` (medium) · `Chance` (large)
     /// - During (`isLive && !isSuspended`): `Score` (medium) · `Pregame` (middle, when shown) · `Now` (large)
     /// - After (`isFinished`): `Pregame` (medium) · `Final` (large)
     /// - Suspended-and-started (`isSuspended`): neither (`No result reported`)
@@ -52,7 +52,7 @@ enum CompactGameCard12616 {
         }
         if isScheduled {
             return ColumnHeaders(
-                medium: hasProjectedBefore ? "Projected" : nil,
+                medium: hasProjectedBefore ? "Proj." : nil,
                 pregame: nil,
                 large: hasCurrentChance ? "Chance" : nil
             )

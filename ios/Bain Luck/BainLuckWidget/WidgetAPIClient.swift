@@ -84,10 +84,14 @@ actor WidgetAPIClient {
                 away: event.awayTeam,
                 home: event.homeTeam,
                 awayServed: event.awayTeamData?.abbreviation,
-                homeServed: event.homeTeamData?.abbreviation
+                homeServed: event.homeTeamData?.abbreviation,
+                sportKey: event.sport
             )
             let homeAbbrev = abbrevs.home
             let awayAbbrev = abbrevs.away
+            let displayTeams = TeamShortName.isCollegeSport(sportKey: event.sport)
+                ? TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+                : (away: event.awayTeam, home: event.homeTeam)
 
             // UX-P114: prefer the server's card-level percents. This widget draws
             // both sides of one question, and `awayProbability` above is
@@ -133,8 +137,8 @@ actor WidgetAPIClient {
 
             return WidgetGame(
                 id: event.id,
-                homeTeam: event.homeTeam,
-                awayTeam: event.awayTeam,
+                homeTeam: displayTeams.home,
+                awayTeam: displayTeams.away,
                 homeAbbrev: homeAbbrev,
                 awayAbbrev: awayAbbrev,
                 homeScore: event.homeScore,

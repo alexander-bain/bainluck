@@ -87,6 +87,7 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
         ("RESOLVER_MUTATIONS", "needle", "replacement", "RESOLVER"),
         ("COMPONENT_MUTATIONS", "needle", "replacement", "COMPONENT"),
         ("VIEW_MUTATIONS", "needle", "replacement", "VIEW"),
+        ("HEADLINE_MUTATIONS", "needle", "replacement", "HEADLINE"),
     ],
     "feed_personalization_roundtrip_mutations": [("MUTATIONS", 2, 3, "TARGET")],
     "feed_prewarm_absent_shape_net_mutations": [("MUTATIONS", 3, 4, 1)],

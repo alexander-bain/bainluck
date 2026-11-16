@@ -636,10 +636,12 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
             homeFullName: scheduledDetail.homeTeam,
             liveStatusText: nil,
             hasScore: false,
-            numberStreams: false
+            numberStreams: false,
+            now: ISO8601DateFormatter().date(from: "2026-11-15T12:00:00Z")!
         )
         XCTAssertEqual(discoverHeaders.primary, "Chance")
+        XCTAssertEqual(compactHeaders.medium, "Proj.")
         XCTAssertEqual(compactHeaders.large, "Chance")
-        XCTAssertEqual(headlineNFL?.pregameColumnHeaders?.chance, "Chance")
+        XCTAssertEqual(headlineNFL.pregameColumnHeaders?.chance, "Chance")
     }
 }

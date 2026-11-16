@@ -598,6 +598,9 @@ SETTLED_STATUSES: frozenset[str] = frozenset({"completed", "closed"})
 
 def settled_prematch_cutoffs(
     events: Iterable[Any],
+    *,
+    live_detail: bool = False,
+    now: Optional[datetime] = None,
 ) -> tuple[list[int], list[datetime]]:
     """The `(ids, cutoffs)` binds for :data:`PREMATCH_PRIOR_SQL`.
 
@@ -609,7 +612,8 @@ def settled_prematch_cutoffs(
 
     Two rows are dropped, both deliberately:
 
-    * anything not settled — those cards print no pre-match reading;
+    * anything not settled — those cards print no pre-match reading. The
+      event page alone opts in to live rows, after their kickoff has passed;
     * anything with no ``commence_time``. The join this replaced compared
       ``s.captured_at <= e.commence_time``, and ``x <= NULL`` is NULL, so such
       an event contributed no rows there either. Excluding it here keeps that
@@ -618,11 +622,16 @@ def settled_prematch_cutoffs(
     """
     ids: list[int] = []
     cutoffs: list[datetime] = []
+    live_now = _as_utc(now or _utcnow()) if live_detail else None
     for event in events:
-        if getattr(event, "status", None) not in SETTLED_STATUSES:
+        status = getattr(event, "status", None)
+        live = live_detail and status == "live"
+        if status not in SETTLED_STATUSES and not live:
             continue
         cutoff = getattr(event, "commence_time", None)
         if cutoff is None:
+            continue
+        if live and (not isinstance(cutoff, datetime) or _as_utc(cutoff) > live_now):
             continue
         ids.append(event.id)
         cutoffs.append(cutoff)
@@ -632,14 +641,19 @@ def settled_prematch_cutoffs(
 def prematch_prior_binds(
     events: Iterable[Any],
     sources: Sequence[str] = PREDICTION_MARKET_SOURCES,
+    *,
+    live_detail: bool = False,
+    now: Optional[datetime] = None,
 ) -> Optional[dict]:
     """Every bind :data:`PREMATCH_PRIOR_SQL` takes, or ``None`` to skip the read.
 
-    ``None`` when no candidate is settled — the read is not merely empty then,
+    By default only settled rows are asked; ``live_detail`` also admits live
+    rows whose kickoff has passed. Feed and list callers keep their default.
+    ``None`` when no candidate qualifies — the read is not merely empty then,
     it is unnecessary, and a round trip that can only return zero rows is one
     the cold build should not pay for.
     """
-    ids, cutoffs = settled_prematch_cutoffs(events)
+    ids, cutoffs = settled_prematch_cutoffs(events, live_detail=live_detail, now=now)
     if not ids:
         return None
     return {"ids": ids, "cutoffs": cutoffs, "sources": list(sources)}
