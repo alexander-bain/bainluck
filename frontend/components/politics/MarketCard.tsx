@@ -15,12 +15,14 @@ export default function MarketCard({
   forceField = false,
   forceDuel = false,
   showLeaderHeadshot = false,
+  showSourceBadge = true,
 }: {
   market: PoliticsMarketRow;
   theme: string;
   forceField?: boolean;
   forceDuel?: boolean;
   showLeaderHeadshot?: boolean;
+  showSourceBadge?: boolean;
 }) {
   const borderColor = BORDER_COLOR[theme] || "#9CA3AF";
   // #6766 — TWO LEGS IS NOT THE SAME FACT AS TWO SIDES OF ONE QUESTION.
@@ -39,19 +41,21 @@ export default function MarketCard({
   const isBinary = !forceField && ((forceDuel && market.top_outcomes.length >= 2) || (market.outcome_count <= 2 && pair.oneQuestion));
 
   if (isBinary) {
-    return <BinaryCard market={market} borderColor={borderColor} showLeaderHeadshot={showLeaderHeadshot} />;
+    return <BinaryCard market={market} borderColor={borderColor} showLeaderHeadshot={showLeaderHeadshot} showSourceBadge={showSourceBadge} />;
   }
-  return <MultiCard market={market} borderColor={borderColor} showAll={forceField} showLeaderHeadshot={showLeaderHeadshot} />;
+  return <MultiCard market={market} borderColor={borderColor} showAll={forceField} showLeaderHeadshot={showLeaderHeadshot} showSourceBadge={showSourceBadge} />;
 }
 
 function BinaryCard({
   market,
   borderColor,
   showLeaderHeadshot = false,
+  showSourceBadge = true,
 }: {
   market: PoliticsMarketRow;
   borderColor: string;
   showLeaderHeadshot?: boolean;
+  showSourceBadge?: boolean;
 }) {
   // #6766: the second number is the SERVED leg wherever the payload carries one.
   // `MarketCard` above only routes a complement pair here, so `second` is
@@ -69,7 +73,7 @@ function BinaryCard({
     <Link href={`/futures/${market.market_id}`}>
       <div className={s.marketCard} style={{ borderTop: `2px solid ${borderColor}` }}>
         <div className={s.marketCardInner}>
-          <div
+          {showSourceBadge && <div
             style={{
               display: "flex",
               alignItems: "center",
@@ -79,7 +83,7 @@ function BinaryCard({
             }}
           >
             <SourceBadge source={market.src} />
-          </div>
+          </div>}
 
           <h3
             style={{
@@ -140,11 +144,13 @@ function MultiCard({
   borderColor,
   showAll = false,
   showLeaderHeadshot = false,
+  showSourceBadge = true,
 }: {
   market: PoliticsMarketRow;
   borderColor: string;
   showAll?: boolean;
   showLeaderHeadshot?: boolean;
+  showSourceBadge?: boolean;
 }) {
   const leader = market.top_outcomes?.[0];
   if (!leader) return null;
@@ -163,7 +169,7 @@ function MultiCard({
     <Link href={`/futures/${market.market_id}`}>
       <div className={s.marketCard} style={{ borderTop: `2px solid ${borderColor}` }}>
         <div className={s.marketCardInner}>
-          <div
+          {(showSourceBadge || moreCount > 0) && <div
             style={{
               display: "flex",
               alignItems: "center",
@@ -172,7 +178,7 @@ function MultiCard({
               color: "var(--text-muted)",
             }}
           >
-            <SourceBadge source={market.src} />
+            {showSourceBadge && <SourceBadge source={market.src} />}
             {moreCount > 0 && (
               <span
                 style={{
@@ -184,7 +190,7 @@ function MultiCard({
                 +{moreCount} more
               </span>
             )}
-          </div>
+          </div>}
 
           <h3
             style={{
