@@ -161,7 +161,7 @@ XCODE_ARGS=(
   -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj"
   -scheme BainLuckWatchUITests -configuration Debug
   -destination "platform=watchOS Simulator,id=$TEST_UDID"
-  -derivedDataPath "$DERIVED" -parallel-testing-enabled NO -jobs 2
+  -derivedDataPath "$DERIVED" -parallel-testing-enabled NO -jobs 4
   -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution
   "ARCHS=$SIM_ARCH"
   CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES
@@ -177,7 +177,7 @@ python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHAS
 xcodebuild build -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
   -scheme 'Bain Luck' -configuration Debug \
   -destination "platform=iOS Simulator,id=$PHONE_UDID" \
-  -derivedDataPath "$PHONE_DERIVED" -jobs 2 \
+  -derivedDataPath "$PHONE_DERIVED" -jobs 4 \
   -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution \
   "ARCHS=$SIM_ARCH" \
   CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \

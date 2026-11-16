@@ -248,7 +248,8 @@ jobs:
     name: Build exact simulator products once for five fresh pairs
     needs: watch-mvp
     runs-on: xcode-27
-    timeout-minutes: 60
+    # Must cover watch_ui_stage.py's 75m (4500s) products budget + 7m artifact uploads.
+    timeout-minutes: 90
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
