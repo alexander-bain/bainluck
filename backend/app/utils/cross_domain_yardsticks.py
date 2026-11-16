@@ -64,7 +64,7 @@ CANDIDATE_AS_LIKELY_AS_PATH = _CANDIDATES_DIR / "roundup-as-likely-as.json"
 CANDIDATE_AS_LIKELY_AS_ROWS_PATH = _CANDIDATES_DIR / "roundup-as-likely-as-rows.json"
 
 _FORBIDDEN_COPY_RE = re.compile(
-    r"\b(?:questions?|stale|venues?|kalshi|polymarket|opened)\b",
+    r"\b(?:questions?|stale|venues?|kalshi|polymarket|opened|domains?)\b",
     re.IGNORECASE,
 )
 
@@ -393,7 +393,7 @@ def select_cross_domain_yardsticks(
         members=members,
         rows=rows,
         footer=footer,
-        count_line=f"{len(best_band)} domains at ~{best_center}%",
+        count_line=_assert_clean_copy(f"{len(best_band)} unrelated things"),
         title=_assert_clean_copy(card_title),
         kicker="PERSPECTIVE · AS LIKELY AS",
         revision_ids=contrib_ids,
