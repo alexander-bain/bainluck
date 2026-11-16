@@ -45,33 +45,29 @@ final class LiveCardDrawsOneSentence5868Tests: XCTestCase {
             "the NPB live card drew its reason sentence a second time as a pill")
     }
 
-    /// The sentence must still be SAID once — this is the half a "delete the
-    /// footer instead" mutant fails. `reason` is content on the live card, so
-    /// `footerRow` still draws it.
-    func testTheLiveSentenceSurvivesOnceInTheFooter() {
-        XCTAssertTrue(
+    /// Ruling 204-C + Direction 199: during a game, phone cards print
+    /// `Score · Proj. · Now` with NO grey line underneath (the bar's tick carries pregame).
+    func testLiveCardSuppressesRepeatingFooterSentenceUnder204C() {
+        XCTAssertFalse(
             Footer.hasContent(
                 reason: kLeagueSentence, isLive: true,
                 awayOpening: nil, homeOpening: 0.45, sport: "soccer_korea_kleague1"),
-            "the live sentence was removed from the footer as well — the card now says nothing")
+            "Ruling 204-C: live cards draw no grey sentence under the bar")
     }
 
     // MARK: - The rule removes a DIFFERENT live headline too, on purpose
 
-    /// Named rather than left implicit: the third live card carries two
-    /// different sentences and still loses its pill, because that is what the
-    /// web twin (`FeedCard.tsx:661`) already does. A future reader who thinks
-    /// this was an oversight should find it asserted.
+    /// Under Ruling 204-C, live cards omit both the top-bar pill and the grey footer sentence.
     func testALiveHeadlineThatSaysSomethingNewIsAlsoDropped() {
         XCTAssertNotEqual(kboHeadline, kboReason, "the specimen stopped being the distinct-strings case")
         XCTAssertFalse(
             Pill.isDrawn(headline: kboHeadline, isLive: true),
             "iOS kept a live pill web does not draw — the two cards disagree again")
-        XCTAssertTrue(
+        XCTAssertFalse(
             Footer.hasContent(
                 reason: kboReason, isLive: true,
                 awayOpening: 0.49, homeOpening: 0.51, sport: "baseball_kbo"),
-            "dropping the pill must not cost the card its reason line")
+            "Ruling 204-C: live cards print Score · Proj. · Now with no grey line")
     }
 
     // MARK: - Ruling 182-A: no top-bar headline/records capsule in any state

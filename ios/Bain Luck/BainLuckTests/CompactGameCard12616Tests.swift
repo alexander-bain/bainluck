@@ -30,20 +30,20 @@ final class CompactGameCard12616Tests: XCTestCase {
                 hasProjectedBefore: false, hasCurrentChance: true, hasPrematchChance: false, hasScore: false),
             .init(medium: nil, large: "Chance")
         )
-        // Live without pregame column: Score (medium) and Now (large).
+        // Live without admitted live projection: Score (medium) and Now (large), never Pregame (204-C).
         XCTAssertEqual(
             CompactGameCard12616.columnHeaders(
                 isScheduled: false, isLive: true, isFinished: false, isSuspended: false,
                 hasProjectedBefore: false, hasCurrentChance: true, hasPrematchChance: true, hasScore: true),
             .init(medium: "Score", pregame: nil, large: "Now")
         )
-        // Live with Pregame column: Score (medium), Pregame (middle), and Now (large).
+        // Live with admitted live projection (Ruling 204-C): Score · Proj. · Now, no Pregame column.
         XCTAssertEqual(
             CompactGameCard12616.columnHeaders(
                 isScheduled: false, isLive: true, isFinished: false, isSuspended: false,
                 hasProjectedBefore: false, hasCurrentChance: true, hasPrematchChance: true, hasScore: true,
-                showsLivePregameColumn: true),
-            .init(medium: "Score", pregame: "Pregame", large: "Now")
+                hasProjectedLive: true),
+            .init(medium: "Score", pregame: "Proj.", large: "Now")
         )
         // Finished: Pregame (medium) and Final (large).
         XCTAssertEqual(

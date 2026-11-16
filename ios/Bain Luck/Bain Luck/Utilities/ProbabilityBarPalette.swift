@@ -142,18 +142,17 @@ enum ProbabilityBarPalette {
     /// a pair. Deterministic: the same input always returns the same pair, so a
     /// card does not change colour between renders.
     ///
-    /// Ruling 197 (when `checkHueFamily == true`): when both primary colours are
-    /// usable and either fail `distinguishable` or share a hue family
-    /// (`sameHueFamily`), home keeps its primary colour and away switches to
-    /// `awaySecondaryHex` when usable, distinguishable from home, and outside
-    /// home's hue family; otherwise away switches to
-    /// `partner(for: home, preferring: awayDefault)` (slate grey). Callers that
-    /// omit `checkHueFamily` preserve existing RGB-distance-only behaviour.
+    /// Ruling 197 (enabled by default, `checkHueFamily == true`): when both
+    /// primary colours are usable and either fail `distinguishable` or share a
+    /// hue family (`sameHueFamily`), home keeps its primary colour and away
+    /// switches to `awaySecondaryHex` when usable, distinguishable from home,
+    /// and outside home's hue family; otherwise away switches to
+    /// `partner(for: home, preferring: awayDefault)` (slate grey).
     static func pair(
         awayHex: String?,
         homeHex: String?,
         awaySecondaryHex: String? = nil,
-        checkHueFamily: Bool = false
+        checkHueFamily: Bool = true
     ) -> (away: String, home: String) {
         let away = usable(awayHex)
         let home = usable(homeHex)
@@ -200,8 +199,18 @@ enum ProbabilityBarPalette {
     // MARK: - What the views call
 
     /// The two `Color`s, away first.
-    static func colors(awayHex: String?, homeHex: String?) -> (away: Color, home: Color) {
-        let hexes = pair(awayHex: awayHex, homeHex: homeHex)
+    static func colors(
+        awayHex: String?,
+        homeHex: String?,
+        awaySecondaryHex: String? = nil,
+        checkHueFamily: Bool = true
+    ) -> (away: Color, home: Color) {
+        let hexes = pair(
+            awayHex: awayHex,
+            homeHex: homeHex,
+            awaySecondaryHex: awaySecondaryHex,
+            checkHueFamily: checkHueFamily
+        )
         return (Color(hex: hexes.away), Color(hex: hexes.home))
     }
 }

@@ -257,8 +257,8 @@ describe("#6238 the page hands the card the same answer it gives the hero", () =
     expect(PAGE).toMatch(/const awaySlotWithheld = sportPricesADraw\(event\.sport\)/);
     // The card below the chart…
     expect(PAGE).toMatch(/<GamePlayCard[\s\S]{0,900}?awayWithheld=\{awaySlotWithheld\}/);
-    // …and BOTH chart instances: the inline one and the fullscreen one. A
-    // reader who taps the expand control must not get the old number back.
-    expect((PAGE.match(/awayWithheld=\{awaySlotWithheld\}/g) || []).length).toBe(4);
+    // …and BOTH chart instances: the inline one and the fullscreen one (`GamePlayCard` + 2 `OddsChart`s = 3;
+    // the unified Direction 199 headline reads `sportPricesADraw(event.sport)` directly in `lib/eventPageHeadline199.ts`).
+    expect((PAGE.match(/awayWithheld=\{awaySlotWithheld\}/g) || []).length).toBe(3);
   });
 });

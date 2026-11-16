@@ -648,7 +648,10 @@ except Exception:  # pragma: no cover - defensive
 #   High-frequency tasks driving user-visible live game data.
 #   Never blocked by batch jobs.
 #
-# background (Standard-1X, concurrency=2):
+# background (Standard-1X, concurrency=1 since ruling 206-b, Nov 16 2026):
+#   206-b: two children (~245 MB each) plus the parent measured ~609 MB on this
+#   512 MB dyno, so it runs ONE job at a time. The "2 x 200MB" budget and the
+#   "one slot of two" fact below were written at two and are history.
 #   Short (<300s) hourly/daily batch tasks and the merge drivers. Latency-
 #   tolerant but must still fire promptly — so it must NOT share slots with
 #   300s+ grinders. Memory budget: 2 × 200MB + ~100MB overhead ≈ 500MB, which
@@ -1607,9 +1610,12 @@ def refresh_stale_futures_prices(self, budget: int = 0):
     """
     from app.tasks.futures_price_refresh import _refresh_stale_futures_prices
 
-    kwargs = (
-        {"kalshi_budget": budget, "polymarket_budget": budget} if budget else {}
-    )
+    # Both scheduled entry points share the per-market retry marker. Leaving
+    # this caller on the old 45-minute defaults suppresses the intervening
+    # shown-market passes, even when one quiet outcome is still old (#12633).
+    kwargs = _shown_refresh_windows()
+    if budget:
+        kwargs.update(kalshi_budget=budget, polymarket_budget=budget)
     return _tracked_run(
         "futures_price_refresh", _refresh_stale_futures_prices(**kwargs)
     )
@@ -1623,10 +1629,23 @@ def refresh_stale_futures_prices(self, budget: int = 0):
 #: over 30 minutes old (#12633). This pass re-reads ONLY the identity rows (what
 #: Discover's page one, the category pages and the tournament register show,
 #: plus in-play markets) whose last read is older than this many minutes.
-SHOWN_REFRESH_MINUTES = 15
+# Ten minutes leaves four minutes of slack before the shortest (14-minute)
+# beat gap. Using the beat interval itself can skip the next pass when the
+# previous read finished late. Queue delays remain visible in task history.
+SHOWN_REFRESH_MINUTES = 10
 #: Beside the hourly :50 pass these give a re-read every 14-16 minutes, on
 #: minutes no other hourly heavy beat uses, and never beside :50.
 SHOWN_REFRESH_BEAT_MINUTES = (4, 19, 34)
+
+
+def _shown_refresh_windows() -> dict[str, int]:
+    """One identity/retry clock for the hourly and intervening passes."""
+    return {
+        "served_refresh_minutes": SHOWN_REFRESH_MINUTES,
+        "registered_refresh_minutes": SHOWN_REFRESH_MINUTES,
+        "category_page_refresh_minutes": SHOWN_REFRESH_MINUTES,
+        "in_play_refresh_minutes": SHOWN_REFRESH_MINUTES,
+    }
 
 
 @celery_app.task(
@@ -1654,9 +1673,7 @@ def refresh_shown_futures_prices(self):
         _refresh_stale_futures_prices(
             kalshi_budget=0,
             polymarket_budget=0,
-            served_refresh_minutes=SHOWN_REFRESH_MINUTES,
-            registered_refresh_minutes=SHOWN_REFRESH_MINUTES,
-            category_page_refresh_minutes=SHOWN_REFRESH_MINUTES,
+            **_shown_refresh_windows(),
             threshold_label_per_run=0,
         ),
     )

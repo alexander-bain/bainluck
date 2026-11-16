@@ -168,6 +168,7 @@ nonisolated struct WidgetCurrentOdds: Decodable {
 
 nonisolated struct WidgetTeamData: Decodable {
     let primaryColor: String?
+    let secondaryColor: String?
     let abbreviation: String?
 }
 

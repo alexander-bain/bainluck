@@ -124,7 +124,7 @@ enum TeamTextContrast {
         awayHex: String?,
         homeHex: String?,
         awaySecondaryHex: String? = nil,
-        checkHueFamily: Bool = false
+        checkHueFamily: Bool = true
     ) -> (away: String, home: String) {
         ProbabilityBarPalette.pair(
             awayHex: usableForText(awayHex),
@@ -139,7 +139,7 @@ enum TeamTextContrast {
         awayHex: String?,
         homeHex: String?,
         awaySecondaryHex: String? = nil,
-        checkHueFamily: Bool = false
+        checkHueFamily: Bool = true
     ) -> (away: Color, home: Color) {
         let hexes = cardColorHexes(
             awayHex: awayHex,

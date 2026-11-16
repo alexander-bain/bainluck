@@ -7,19 +7,20 @@ import SwiftUI
 enum CompactGameCard12616 {
 
     /// Column headers above the team rows (`medium` context on the left,
-    /// optional `pregame` column in the middle on live cards, and `large`
-    /// primary answer on the right). A blank column draws no header.
+    /// optional `Proj.` middle column on live cards under Ruling 204-C, and
+    /// `large` primary answer on the right). A blank column draws no header.
     nonisolated struct ColumnHeaders: Equatable, Sendable {
         let medium: String?
         var pregame: String? = nil
         let large: String?
 
+        var projected: String? { pregame }
         var hasAny: Bool { medium != nil || pregame != nil || large != nil }
     }
 
-    /// Column headers for each game state under 161-B + Alex's Pregame-header ruling:
+    /// Column headers for each game state under 161-B + Ruling 204-C:
     /// - Before (`isScheduled`): `Proj.` (medium) · `Chance` (large)
-    /// - During (`isLive && !isSuspended`): `Score` (medium) · `Pregame` (middle, when shown) · `Now` (large)
+    /// - During (`isLive && !isSuspended`): `Score` (medium) · `Proj.` (middle, when live projection is admitted) · `Now` (large) — NO `Pregame` column
     /// - After (`isFinished`): `Pregame` (medium) · `Final` (large)
     /// - Suspended-and-started (`isSuspended`): neither (`No result reported`)
     nonisolated static func columnHeaders(
@@ -31,7 +32,7 @@ enum CompactGameCard12616 {
         hasCurrentChance: Bool,
         hasPrematchChance: Bool,
         hasScore: Bool,
-        showsLivePregameColumn: Bool = false
+        hasProjectedLive: Bool = false
     ) -> ColumnHeaders {
         if isSuspended {
             return ColumnHeaders(medium: nil, pregame: nil, large: nil)
@@ -39,7 +40,7 @@ enum CompactGameCard12616 {
         if isLive {
             return ColumnHeaders(
                 medium: hasScore ? "Score" : nil,
-                pregame: (showsLivePregameColumn && hasPrematchChance) ? "Pregame" : nil,
+                pregame: hasProjectedLive ? "Proj." : nil,
                 large: hasCurrentChance ? "Now" : nil
             )
         }
@@ -226,6 +227,11 @@ enum CompactGameCard12616 {
         isSuspended: Bool
     ) -> Double? {
         guard !isSuspended, isLive || isFinished, let prematch else { return nil }
+        // Ruling 204-C / Direction 199: during a live game, only a served kickoff
+        // `prematch_odds` reading places a pregame tick — never `opening_odds`.
+        if isLive && !prematch.isServed {
+            return nil
+        }
         let usableDraw = usableProbability(prematchDraw)
         let threeWayBar = barShowsThreeWayDraw ?? (usableDraw != nil)
         if threeWayBar && sportPricesADraw && usableDraw == nil {
@@ -238,6 +244,29 @@ enum CompactGameCard12616 {
         let share = numerator / sum
         guard share > 0, share < 1 else { return nil }
         return share
+    }
+
+    /// Ruling 204-C — formats an admitted live in-play projected final (`LiveProjectedFinal2920.card`)
+    /// for the `Proj.` column on phone game cards, matching the game page headline
+    /// (`EventSportHeadlines12472.formatLiveProjectedColumnNumber`) and website card:
+    /// whole numbers on points sports (football, basketball) and one decimal on goals (soccer).
+    nonisolated static func liveProjectedColumnLabels(
+        printed: LiveProjectedFinalAdmission2920.Printed?,
+        awayScore: Int?,
+        homeScore: Int?
+    ) -> (away: String, home: String)? {
+        guard let printed else { return nil }
+        switch printed.admitted.provenance.unit {
+        case .points:
+            return (away: "\(printed.away)", home: "\(printed.home)")
+        case .goals:
+            let safeAway = max(printed.admitted.away, Double(awayScore ?? 0))
+            let safeHome = max(printed.admitted.home, Double(homeScore ?? 0))
+            return (
+                away: String(format: "%.1f", safeAway),
+                home: String(format: "%.1f", safeHome)
+            )
+        }
     }
 
     // MARK: - Quiet grey context line (12.5pt, #6B6B76 / DS.textSecondaryReadable)

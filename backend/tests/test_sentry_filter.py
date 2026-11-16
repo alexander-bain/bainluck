@@ -630,10 +630,10 @@ class TestFormationIsParsedNotAssumed:
 
     def test_prefork_children_each_hold_their_own_throttle_table(self):
         assert sdk_processes(FORMATION["worker-realtime"]) == 5  # parent + 4
-        assert sdk_processes(FORMATION["worker-background"]) == 3
+        assert sdk_processes(FORMATION["worker-background"]) == 2  # parent + 1 (206-b)
         assert sdk_processes(FORMATION["worker-heavy"]) == 3
         assert sdk_processes(FORMATION["web"]) == 1
-        assert STEADY_SDK_PROCESSES == 14
+        assert STEADY_SDK_PROCESSES == 13  # 206-b: background is parent + 1
 
     def test_release_is_excluded_as_transient(self):
         assert "release" in FORMATION and "release" not in STEADY_TYPES
@@ -678,8 +678,9 @@ class TestFleetVolumeCeiling:
         563 observed ``server_name`` values appear on exactly one day, i.e. ~70
         process incarnations per day, and each dyno hosts several of them."""
         result = replay(census, "dyno")
-        assert result["sent"] == 588, "policy changed — re-derive and update the report"
-        assert round(result["per_day"], 1) == 73.5
+        # 206-b (Nov 16 2026): one background child. Was 588 / 73.5 at two.
+        assert result["sent"] == 549, "policy changed — re-derive and update the report"
+        assert round(result["per_day"], 1) == 68.6
         assert result["per_day"] < DAILY_BUDGET
 
     def test_measured_volume_worst_case(self, census):
@@ -695,8 +696,8 @@ class TestFleetVolumeCeiling:
         margin is the one THERE, not the one here.
         """
         result = replay(census, "process")
-        assert result["sent"] == 1_090
-        assert round(result["per_day"], 1) == 136.2
+        assert result["sent"] == 1_051  # 206-b: one background child (was 1,090 at two)
+        assert round(result["per_day"], 1) == 131.4
         assert result["per_day"] < DAILY_BUDGET, (
             "the worst-case fleet/day ceiling must fit the quota"
         )
@@ -747,7 +748,7 @@ class TestBudgetSurvivesItsNegativeControls:
         happy path at 4 windows/day.
 
         The repair is not a bigger allowance, it is that the backstop now binds
-        first: ``1 x 2 background children`` is below the 4/day a working
+        first: ``1 x 1 background child`` (206-b; was 2) is below the 4/day a working
         cooldown allows, so the failure mode is bounded by the same number as
         the healthy one and costs nothing extra.
         """
@@ -755,7 +756,7 @@ class TestBudgetSurvivesItsNegativeControls:
             "the backstop no longer binds the watchdog — the fail-open path is "
             "unpriced again and the cooldown's happy path is back in the budget"
         )
-        assert watchdog_ceiling_per_day(BACKSTOP_PER_WINDOW) == 10
+        assert watchdog_ceiling_per_day(BACKSTOP_PER_WINDOW) == 5  # 206-b: 1 x 1 child x 5 pairs (was 10 at two)
         # And the control that would have caught the original: at the certified
         # cap the fail-open path exceeded what the model charged for it.
         assert watchdog_ceiling_per_day(3) > WATCHDOG_PAIRS_PER_DAY * WATCHDOG_COOLDOWN_WINDOWS_PER_DAY / 2
