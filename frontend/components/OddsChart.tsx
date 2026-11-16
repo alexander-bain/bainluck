@@ -4787,7 +4787,8 @@ export default function OddsChart({
         {/* Multi-source mode: Bain Luck aggregated line first (always labeled).
             #1003: gated on showBlendLine, not isMultiSource — a legend entry for a
             line the chart did not draw is the same false claim as the line. */}
-        {!hasSoccerThreeLines && showBlendLine && (
+        {showBlendLine && (
+          !hasSoccerThreeLines ? (
           <div className="flex items-center gap-1.5" style={fillContainer ? { order: -2 } : undefined}>
             <svg width="20" height="4" className="shrink-0">
               <line
@@ -4800,6 +4801,7 @@ export default function OddsChart({
               {BAIN_LUCK_CONFIG.displayName}
             </span>
           </div>
+          ) : null
         )}
 
         {/* Multi-source: the individual source lines stay collapsed behind an
