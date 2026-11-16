@@ -40,15 +40,43 @@ export function UpcomingGameCard({
   game,
   teamName,
   teamColor,
+  teamSecondaryColor,
+  opponentColor,
+  opponentSecondaryColor,
+  teamLogo,
+  opponentLogo,
+  teamAbbrev,
+  opponentAbbrev,
   gameNo,
 }: {
   game: TeamGameBrief;
   teamName: string;
   teamColor: string | null;
+  teamSecondaryColor?: string | null;
+  opponentColor?: string | null;
+  opponentSecondaryColor?: string | null;
+  teamLogo?: string | null;
+  opponentLogo?: string | null;
+  teamAbbrev?: string | null;
+  opponentAbbrev?: string | null;
   gameNo?: number;
 }) {
   if (isWebGameCard183AEnabled()) {
-    return <EventCard183A card={buildUnifiedCardFromTeamGame(game, teamColor)} surface="standard" />;
+    return (
+      <EventCard183A
+        card={buildUnifiedCardFromTeamGame(game, {
+          teamColor,
+          teamSecondaryColor,
+          opponentColor,
+          opponentSecondaryColor,
+          teamLogo,
+          opponentLogo,
+          teamAbbrev,
+          opponentAbbrev,
+        })}
+        surface="standard"
+      />
+    );
   }
   const opponent = game.opponent || (game.is_home ? game.away_team : game.home_team);
   const live = isGameLive(game);
@@ -176,13 +204,43 @@ export function UpcomingGameCard({
  */
 export function RecentGameCard({
   game,
+  teamColor = null,
+  teamSecondaryColor,
+  opponentColor,
+  opponentSecondaryColor,
+  teamLogo,
+  opponentLogo,
+  teamAbbrev,
+  opponentAbbrev,
   gameNo,
 }: {
   game: TeamGameBrief;
+  teamColor?: string | null;
+  teamSecondaryColor?: string | null;
+  opponentColor?: string | null;
+  opponentSecondaryColor?: string | null;
+  teamLogo?: string | null;
+  opponentLogo?: string | null;
+  teamAbbrev?: string | null;
+  opponentAbbrev?: string | null;
   gameNo?: number;
 }) {
   if (isWebGameCard183AEnabled()) {
-    return <EventCard183A card={buildUnifiedCardFromTeamGame(game, null)} surface="standard" />;
+    return (
+      <EventCard183A
+        card={buildUnifiedCardFromTeamGame(game, {
+          teamColor,
+          teamSecondaryColor,
+          opponentColor,
+          opponentSecondaryColor,
+          teamLogo,
+          opponentLogo,
+          teamAbbrev,
+          opponentAbbrev,
+        })}
+        surface="standard"
+      />
+    );
   }
   const opponent = game.opponent || (game.is_home ? game.away_team : game.home_team);
   const result = teamResult(game);
