@@ -42,6 +42,9 @@ import zipfile
 from pathlib import Path
 from typing import Callable, Optional
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from app.utils.agent_origin import tagged  # noqa: E402 — stdlib-only module (#4642)
+
 ARTIFACT = "ci-shard-durations"
 MEMBER = "ci_shard_durations.json"
 DURATIONS_FILE = Path(__file__).resolve().parent / MEMBER
@@ -53,7 +56,9 @@ Opener = Callable[[urllib.request.Request], bytes]
 
 
 def _default_open(req: urllib.request.Request) -> bytes:
-    with urllib.request.urlopen(req, timeout=60) as resp:  # redirects are followed
+    url = req.full_url
+    tagged_req = urllib.request.Request(url, headers=tagged(url, dict(req.header_items())))
+    with urllib.request.urlopen(tagged_req, timeout=60) as resp:  # redirects are followed
         return resp.read()
 
 
@@ -64,7 +69,7 @@ def _get(url: str, token: str, opener: Opener, *, raw: bool = False, tries: int 
     last: Optional[Exception] = None
     for attempt in range(tries):
         try:
-            return opener(urllib.request.Request(url, headers=headers))
+            return opener(urllib.request.Request(url, headers=tagged(url, headers)))
         except urllib.error.HTTPError as exc:
             if exc.code < 500 and exc.code != 429:
                 raise
