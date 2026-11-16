@@ -433,7 +433,7 @@ NULL_RATE = 0.23
 #: where the sample had 12 of 87 (13.8%). That is this seed drawing slightly
 #: heavy, and it is left alone because it errs toward a HEAVIER artifact, which
 #: is the safe direction for a budget guard.
-#: 2026-11-15, ruling 188 (#11937): 191,443 -> 191,429, -14. `price_changed_at`
+#: Sun Nov 15, ruling 188 (#11937): 191,443 -> 191,429, -14. `price_changed_at`
 #: joins `DERIVED_MARKET_COLUMNS`. Decomposed, not asserted: +700 is one node per
 #: market row for the new datetime, and -714 is the RNG-stream term — derived
 #: columns are nullable, so the new column's null verdict takes one more draw per
@@ -1258,7 +1258,7 @@ async def test_a_node_cap_breach_defeats_even_the_local_tier(payload, monkeypatc
 #: it, where #7808 left it at 92.1%. The 94 B of envelope margin is thinner than
 #: #7808's 612 B; that is a statement about the bisect's granularity at this
 #: scale, not spare room, and the guard below is what keeps it honest.
-#: 2026-11-15, ruling 188 (#11937), `price_changed_at`: 28,686 -> 28,532
+#: Sun Nov 15, ruling 188 (#11937), `price_changed_at`: 28,686 -> 28,532
 #: outcomes and 461,737 -> 460,632 nodes. Re-bisected by the documented method
 #: and NOT scaled — 32,000 proven over the cap, then one-outcome granularity:
 #: 28,532 encodes to 6,291,055 B against the 6,291,456 B cap (401 B of margin)
