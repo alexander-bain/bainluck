@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from app.utils.team_short_name import is_college_sport, school_label
 from app.utils.container_presentation import MEMBER_EVENT, event_destination
 from app.utils.field_band import _validate_narrative_copy
 from app.utils.grouping_captions import compose_container_caption
@@ -220,6 +221,8 @@ def _slugify(value: str) -> str:
 def _extract_short_name(
     team_name: str,
     team_data: Optional[Mapping[str, Any]] = None,
+    *,
+    sport: Optional[str] = None,
 ) -> str:
     if isinstance(team_data, Mapping):
         raw_short = str(team_data.get("short_name") or "").strip()
@@ -228,6 +231,10 @@ def _extract_short_name(
     cleaned = str(team_name or "").strip()
     if not cleaned:
         return ""
+    if is_college_sport(sport):
+        # 194-A: "vs Gonzaga", never "vs Bulldogs".
+        location = team_data.get("location") if isinstance(team_data, Mapping) else None
+        return school_label(cleaned, location) or cleaned
     lower_cleaned = cleaned.lower()
     for multi in _MULTI_WORD_NICKNAMES:
         if lower_cleaned.endswith(multi.lower()):
@@ -479,11 +486,12 @@ def select_subject_sequence(
             now=effective_now,
             max_prob_age_hours=max_prob_age_hours,
         )
+        card_sport = raw_card.get("sport") or raw_card.get("sport_key")
         if is_home:
-            opp_short = _extract_short_name(away_name, away_data)
+            opp_short = _extract_short_name(away_name, away_data, sport=card_sport)
             opp_label = f"vs {opp_short}"
         else:
-            opp_short = _extract_short_name(home_name, home_data)
+            opp_short = _extract_short_name(home_name, home_data, sport=card_sport)
             opp_label = f"at {opp_short}"
 
         et_date_key = commence_utc.astimezone(SPORTS_DAY_TZ).date().isoformat()
