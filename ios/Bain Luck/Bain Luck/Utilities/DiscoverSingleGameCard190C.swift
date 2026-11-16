@@ -280,7 +280,7 @@ enum DiscoverSingleGameCard190C {
             return ColumnHeaders(
                 score: nil,
                 pregame: showPregameColumn ? "Pregame" : nil,
-                primary: hasCurrentChance ? "Now" : nil
+                primary: hasCurrentChance ? "Chance" : nil
             )
         }()
 
