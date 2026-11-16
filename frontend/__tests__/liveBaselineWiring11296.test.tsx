@@ -139,15 +139,17 @@ function heroCurrentStamp(html: string): string | null {
 
 function pregameSummaryText(html: string): string | null {
   const m = html.match(
-    /data-testid="headline-12472-pregame-summary"[^>]*><span[^>]*>([^<]+)<\/span>\s*<span[^>]*>([^<]+)<\/span><\/div>/,
+    /data-testid="headline-12472-pregame-summary"[^>]*>([\s\S]*?)<\/div>/,
   );
-  return m ? `${m[1]}  ${m[2]}` : null;
+  if (!m) return null;
+  const text = m[1].replace(/<[^>]+>/g, "").trim();
+  return text.replace(/^Pregame\s*/, "Pregame  ");
 }
 
 const SUMMARY_ID = "headline-12472-pregame-summary";
 const FINAL_BAND = "event-hero-final-forecast";
 
-describe("a live game with both typed forecasts (Direction 199 / Ruling 200-B)", () => {
+describe("a live game with both typed forecasts (Direction 199 / Ruling 200-B / Ruling 214-A1)", () => {
   it("prints the current pair in Proj. and the retained pregame projection in the single grey line below", () => {
     const html = page(liveRow());
     expect(heroCurrentStamp(html)).toBe("23-27 home-away");
@@ -161,13 +163,13 @@ describe("a live game with both typed forecasts (Direction 199 / Ruling 200-B)",
     );
   });
 
-  it("keeps the grey pregame line single-line (whitespace-nowrap) and quiet (#526071)", () => {
+  it("keeps the grey pregame line single-line (whitespace-nowrap) and quiet (#8B98A9) with Ruling 214-A1 team colours", () => {
     const html = page(liveRow());
     const at = html.indexOf(`data-testid="${SUMMARY_ID}"`);
     expect(at).toBeGreaterThan(-1);
     const tag = html.slice(html.lastIndexOf("<div", at), html.indexOf(">", at) + 1);
     expect(tag).toContain("whitespace-nowrap");
-    expect(tag).toContain("#526071");
+    expect(tag.toUpperCase()).toContain("#8B98A9");
   });
 
   it("adds no numeric difference and no final-band markup", () => {
