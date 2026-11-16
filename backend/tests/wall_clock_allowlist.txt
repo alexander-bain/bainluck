@@ -422,3 +422,4 @@ tests/test_matching_reconciliation_2706.py  the near dates are adjudication hist
 tests/test_grade_any_slate_11937.py  slate dates are fixture data and the Pacific-day bounds test; nothing reads the wall clock
 tests/test_export_grouping_grades_9937.py  graded-at stamps are fixture data for the Pacific-date filename; nothing reads the wall clock
 tests/test_grade_deals_only_drawn_cards_11937.py  slate dates are fixture data; nothing reads the wall clock
+tests/test_discover_game_reason_190.py  the game cards are a fixed fixture and every signal read is handed the fixed NOW (2026-11-15 23:30 UTC); no wall clock is read

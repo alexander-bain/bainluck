@@ -1,7 +1,7 @@
 """Ruling 190 (#11937): a single game must earn its Discover seat.
 
 Specimens are the nine game cards in the first 60 Discover seats at
-2026-11-15 23:30Z (`fixtures/discover_games_2026_11_15.json`), trimmed to the
+Sun Nov 15, 23:30 UTC (`fixtures/discover_games_2026_11_15.json`), trimmed to the
 fields the rule reads. Under the old rule all nine held seats. Under 190:
 
 * kept — four live games whose chance moved 15+ points from pregame
