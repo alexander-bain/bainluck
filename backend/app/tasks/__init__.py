@@ -7160,11 +7160,67 @@ def snapshot_coverage_metrics(self):
     return _tracked_run("coverage_metrics", _snapshot_coverage_metrics())
 
 
-@celery_app.task(bind=True, soft_time_limit=300, time_limit=360, name="app.tasks.precompute_category_pages")
+#: #12042: a section that finds the Discover base build running waits this long
+#: and asks again, up to this many times, then runs anyway (an hourly page is
+#: never skipped for an hour on account of a build that takes ~30 s).
+CATEGORY_SECTION_BASE_WAIT_S = 15
+CATEGORY_SECTION_BASE_WAIT_TRIES = 8
+
+#: #12042: the category precompute's sections, in run order, one beat entry each
+#: at :26, :27, ... after the :25 entry opens the hour's report. Declared here
+#: rather than imported (the module is imported lazily by these tasks); a test
+#: pins it equal to `precompute_category_pages.category_section_names()`. Each is
+#: its own beat entry, not dispatched by another task, so the result-retention
+#: rule (`test_no_task_dispatches_another_task`) still derives from the beat.
+CATEGORY_SECTION_BEAT_ORDER = (
+    "politics", "entertainment", "economics", "weather", "golf", "golf_schedule", "grids",
+)
+#: One minute per section, in order. :31 is skipped: it is the settlement-capture
+#: sweep's clear minute on `background` (10:31 UTC daily, CERT-418's gate in
+#: `test_settlement_sweep_beat`).
+CATEGORY_SECTION_MINUTES = (26, 27, 28, 29, 30, 32, 33)
+
+
+@celery_app.task(bind=True, soft_time_limit=60, time_limit=90, name="app.tasks.precompute_category_pages")
 def precompute_category_pages(self):
-    """Precompute category page responses and cache in Redis (every 1h)."""
-    from app.tasks.precompute_category_pages import _precompute_all_category_pages
-    return _tracked_run("precompute_category_pages", _precompute_all_category_pages())
+    """Open the hour's category precompute report (every 1h at :25).
+
+    #12042: the seven sections no longer run here. worker-background's prefork
+    children are checked against ``--max-memory-per-child`` only when a task
+    ends; with seven sections in one task a child ended near the sum of their
+    peaks, beside the every-2-minute Discover base build on the other child, and
+    the worker was killed (R15) with this task in flight at 2:28, 5:26 and
+    7:27 AM PT on Nov 12. Each section is now its own beat entry
+    (``precompute_category_section``, a minute apart from :26), so a child can be
+    recycled between sections and two sections rarely overlap. This entry opens
+    the report first, so a section that never lands reads ``not_attempted``,
+    never last hour's ``ok``.
+    """
+    from app.tasks.precompute_category_pages import start_section_report
+
+    start_section_report()
+    return {"status": "report_opened", "sections": list(CATEGORY_SECTION_BEAT_ORDER)}
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=300,
+    time_limit=360,
+    max_retries=CATEGORY_SECTION_BASE_WAIT_TRIES,
+    name="app.tasks.precompute_category_section",
+)
+def precompute_category_section(self, section: str):
+    """#12042: one section of the hourly category precompute."""
+    from app.tasks.precompute_category_pages import (
+        _precompute_all_category_pages,
+        discover_base_running,
+    )
+
+    if discover_base_running() and self.request.retries < CATEGORY_SECTION_BASE_WAIT_TRIES:
+        raise self.retry(countdown=CATEGORY_SECTION_BASE_WAIT_S)
+    return _tracked_run(
+        f"category_section_{section}", _precompute_all_category_pages(only=section)
+    )
 
 
 @celery_app.task(bind=True, soft_time_limit=240, time_limit=280, name="app.tasks.warm_event_concepts")
@@ -7642,11 +7698,19 @@ def refresh_league(self, sport_key: str, token: str | None = None):
 
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.precompute_discover_candidate_base")
 def precompute_discover_candidate_base(self):
-    """Precompute + publish the anonymous Discover candidate-ID base (Queue 285)."""
-    from app.tasks.precompute_category_pages import _precompute_discover_candidate_base
-    return _tracked_run(
-        "precompute_discover_candidate_base", _precompute_discover_candidate_base()
+    """Precompute + publish the anonymous Discover candidate-ID base (Queue 285).
+
+    #12042: holds a short running flag so a category section on the other child
+    waits instead of building beside it. The base itself never waits."""
+    from app.tasks.precompute_category_pages import (
+        _precompute_discover_candidate_base,
+        mark_discover_base_running,
     )
+
+    with mark_discover_base_running():
+        return _tracked_run(
+            "precompute_discover_candidate_base", _precompute_discover_candidate_base()
+        )
 
 
 #: #2236. The limits are derived from the period, not chosen: the hard limit is
@@ -8709,7 +8773,9 @@ celery_app.conf.beat_schedule = {
     },
     "precompute-category-pages": {
         "task": "app.tasks.precompute_category_pages",
-        "schedule": crontab(minute=25),  # Every hour at :25 — warm caches for politics/entertainment/economics/weather
+        # Every hour at :25. #12042: it opens the hour's report; the sections run
+        # as their own entries from :26 (added below the schedule literal).
+        "schedule": crontab(minute=25),
         "options": {"queue": "background"},
     },
     "warm-prop-families": {
@@ -10349,6 +10415,18 @@ celery_app.conf.beat_schedule = {
         "options": {"queue": "background"},
     },
 }
+
+# #12042: one beat entry per category section, a minute apart after the :25 entry
+# that opens the hour's report (see `precompute_category_pages`).
+for _section, _minute in zip(CATEGORY_SECTION_BEAT_ORDER, CATEGORY_SECTION_MINUTES, strict=True):
+    celery_app.conf.beat_schedule[
+        f"precompute-category-section-{_section.replace('_', '-')}"
+    ] = {
+        "task": "app.tasks.precompute_category_section",
+        "schedule": crontab(minute=_minute),
+        "kwargs": {"section": _section},
+        "options": {"queue": "background"},
+    }
 
 # Route the heavy grinder class onto the dedicated `heavy` worker. Beat entries
 # pin `options["queue"]` explicitly, which OVERRIDES task_routes at dispatch

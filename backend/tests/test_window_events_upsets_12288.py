@@ -123,8 +123,8 @@ async def test_upsets_brewing_orders_by_point_swing_uses_pregame_never_opened() 
 
     feed_item, container = compose_upsets_brewing_card_and_container(producer, res)
     ctx = feed_item["context_summary"]
-    assert "40% or lower pregame" in ctx
-    assert "+33 pts from pregame" in ctx
+    assert "The Hornets were 28% before the game" in ctx
+    assert "Up 78–71, they are 61%" in ctx
     assert container["context_line"] == ctx
     assert not FORBIDDEN_COPY_RE.search(ctx)
     assert not FORBIDDEN_COPY_RE.search(feed_item["data"]["roundup"]["footer"])
@@ -141,3 +141,25 @@ def test_auto_withholds_when_fewer_than_three_live_upsets() -> None:
     res = select_window_events_upsets(_live_upset_events_fixture()[:2], min_members=3)
     assert isinstance(res, RoundupRefusal)
     assert res.reasons[0][0] == "insufficient_live_upsets"
+
+
+def test_refuses_minor_or_off_hour_leagues_so_card_stays_off_until_featured_games_upset() -> None:
+    minor_league_events = [
+        {
+            "id": 990001 + i,
+            "status": "live",
+            "status_detail": "2nd Half",
+            "sport": "soccer_poland_ekstraklasa",
+            "home_team": f"Club {i}A",
+            "away_team": f"Club {i}B",
+            "home_score": 1,
+            "away_score": 0,
+            "pregame_home_win_probability": 0.29,
+            "home_win_probability": 0.62,
+        }
+        for i in range(3)
+    ]
+    res = select_window_events_upsets(minor_league_events, min_members=3)
+    assert isinstance(res, RoundupRefusal)
+    assert res.reasons[0][0] == "insufficient_featured_league_upsets"
+

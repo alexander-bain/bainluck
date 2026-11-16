@@ -2162,7 +2162,18 @@ def free_background_slots(
 #: #11935 composed with master `a68d05abe1`: the assembled configuration reads
 #: explicit 105, implicit 38, total 143. The ceremony refresh remains explicit
 #: background and #12372's retired comparison timer remains absent.
-BACKGROUND_BEAT_COUNT = 143
+#: 🔴 RE-DERIVED at speed (2026-11-12, #12042): 143 → 150, explicit 105 → 112,
+#: fall-through UNMOVED at 38. The seven sections of the hourly category
+#: precompute, which ran inside the one :25 task, are now their own entries
+#: (`precompute-category-section-*`, :26–:30, :32, :33), each naming
+#: `background`. Cost: the SAME seven section builds an hour as before (a whole
+#: run measured 298.4 s on Nov 12, 9:26 AM PT; the five non-grid sections 49.5 s
+#: on Aug 29), now seven fires instead of one, so other background work can run
+#: between sections; the :25 fire becomes a report write of milliseconds. The
+#: worker was killed (R15) with the one-task form in flight at 2:28, 5:26 and
+#: 7:27 AM PT Nov 12. The census RUN over the tree branched from `62522482aa`
+#: printed `explicit 112 implicit 38 total 150`.
+BACKGROUND_BEAT_COUNT = 150
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

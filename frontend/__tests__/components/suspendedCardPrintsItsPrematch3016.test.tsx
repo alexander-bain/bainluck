@@ -120,7 +120,7 @@ describe("a suspended card prints its pre-match reading", () => {
     // `Pre-match · sportsbooks` — the same label the FINAL sibling wears, and
     // the approved word (notice 33). Asserted through `BOOKS_LABEL` rather
     // than a spelling, so a change to the word moves both at once.
-    expect(text(render(makeEvent()))).toContain(`Pre-match · ${BOOKS_LABEL}`);
+    expect(text(render(makeEvent()))).toContain(`Pregame · ${BOOKS_LABEL}`);
   });
 
   it("attaches them to the right sides", () => {

@@ -7,13 +7,13 @@
     "sibling"
   ],
   "level": "member",
-  "kicker": "NBA · SEASON AWARDS",
-  "name": "NBA award races",
+  "kicker": "NBA \u00b7 SEASON AWARDS",
+  "name": "NBA individual awards",
   "category": "sports",
   "tag": "NBA",
   "section_title": "All NBA season award leaders",
   "subtitle": "Front-runners across major NBA player and coach trophies, ordered from closest race to clearest favorite.",
-  "footer": "One winner per trophy · 4 major NBA awards",
+  "footer": "One winner per award.",
   "score": 91.5,
   "rule": {
     "producer": "league_award_ladders",
