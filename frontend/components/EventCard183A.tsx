@@ -32,7 +32,7 @@ import {
   formatTbdStartLabel,
 } from "@/lib/gameTimeLabel";
 import { isFinishedStatus, isSuspendedStatus, SUSPENDED_LABEL } from "@/lib/eventState";
-import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
+import { shippableCrestBadge, teamShortNames } from "@/lib/teamShortName";
 import { cleanDiscoverGameReason } from "@/lib/gameCard183AFlag";
 import { PinIcon } from "@/components/PinButton";
 
@@ -243,6 +243,8 @@ export interface LivePregameSummary199 {
  * - One line, never wraps, nothing else is ever added to it.
  * - If one pregame value is missing, that half is left out; if both are missing,
  *   returns `null` so the line is omitted completely.
+ * - Note (Ruling 204-C): cards drop this live grey line, while the game-page
+ *   headline (`EventPageHeadline199`) imports and renders this helper.
  */
 export function formatLivePregameSummary(
   card: Pick<
@@ -508,7 +510,7 @@ function CrestBadge({
       />
     );
   }
-  const initials = teamCrestInitials(teamName, sport, abbreviation);
+  const initials = shippableCrestBadge(teamName, sport, abbreviation);
   return (
     <span
       className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-bold leading-none text-white ${
@@ -924,11 +926,13 @@ export function buildUnifiedCardFromFeed(
       data.home_team_data?.logo_small ??
       data.home_team_data?.logo_large ??
       data.home_image_url ??
+      espnTeamLogoByName(data.home_team, data.sport) ??
       null,
     away_logo:
       data.away_team_data?.logo_small ??
       data.away_team_data?.logo_large ??
       data.away_image_url ??
+      espnTeamLogoByName(data.away_team, data.sport) ??
       null,
     home_abbrev: data.home_team_data?.abbreviation ?? null,
     away_abbrev: data.away_team_data?.abbreviation ?? null,
@@ -1126,10 +1130,10 @@ export default function EventCard183A({
     !tennis &&
     !isDone &&
     !isSuspended &&
-    (isLive
-      ? projectedFinalFormat(card.sport) != null ||
-        (card.projected_away != null && card.projected_home != null)
-      : card.projected_away != null && card.projected_home != null);
+    card.projected_away != null &&
+    card.projected_home != null &&
+    card.projected_away !== "" &&
+    card.projected_home !== "";
 
   // Direction 199: during and after a game, print no sentence that repeats the card.
   // Before a game, keep the sentence when informative and name each team as its row does.
