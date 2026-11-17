@@ -1308,6 +1308,26 @@ class ESPNAPIService:
 
         return event
 
+    async def get_predictor(self, sport_key: str, event_id: str) -> Optional[dict]:
+        """ESPN's pregame matchup predictor for one game, raw (#12824).
+
+        ``sports.core.api.espn.com/.../events/{id}/competitions/{id}/predictor``.
+        Returns the body, ``None`` when ESPN has no predictor for the game (404,
+        an answer), and raises :class:`ESPNAuthorityDark` when ESPN did not
+        answer. The body's ``lastModified`` is the only age it carries; the
+        caller decides whether it is recent enough to show
+        (``tasks/espn_predictor.predictor_home_probability``).
+        """
+        path = self._get_espn_path(sport_key)
+        if not path:
+            return None
+        sport, league = path
+        url = (
+            f"{ESPN_CORE_API}/{sport}/leagues/{league}"
+            f"/events/{event_id}/competitions/{event_id}/predictor"
+        )
+        return await self._get(url)
+
     async def get_win_probability(self, sport_key: str, event_id: str) -> Optional[list[dict]]:
         """
         Get win probability data over time for a game.

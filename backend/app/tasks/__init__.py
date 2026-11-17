@@ -6208,6 +6208,27 @@ def create_certain_postseason_games(self, apply=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.refresh_espn_predictor")
+def refresh_espn_predictor(self):
+    """ESPN's matchup predictor as the chance for unpriced scheduled games (#12824).
+
+    Bills at Patriots three weeks out showed no chance at all (TestFlight 5757):
+    no venue listed it and its two sportsbooks are under ruling 051's floor.
+    Reads ESPN's predictor for scheduled NFL, college football, NBA and college
+    basketball games in the next 4 weeks that carry no sportsbook or venue
+    price (or already carry an ESPN reading, so it never freezes) and writes it
+    as the existing `espn` source. A predictor ESPN has not updated in 7 days is
+    absent. See ``tasks/espn_predictor``. Lease: a run never laps the next."""
+    from app.tasks.espn_predictor import _run_refresh_espn_predictor
+    from app.utils.single_flight import single_flight
+
+    with single_flight("app.tasks.refresh_espn_predictor") as lease:
+        if not lease.acquired:
+            return lease.skipped_result()
+        return _tracked_run("refresh_espn_predictor", _run_refresh_espn_predictor())
+
+
 @celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
                  name="app.tasks.stamp_nhl_statpal_fixtures")
 def stamp_nhl_statpal_fixtures(self, apply=True):
@@ -9626,6 +9647,18 @@ celery_app.conf.beat_schedule = {
         # its row is made. At most 12 ESPN board reads.
         "task": "app.tasks.create_certain_postseason_games",
         "schedule": crontab(minute=11),
+        "options": {"queue": "background"},
+    },
+    "refresh-espn-predictor": {
+        # #12824. Every 15 minutes: ESPN's predictor is served `max-age=900`,
+        # and direction 215 asks pregame numbers to be no older than our other
+        # pregame reads. Minutes 1/16/31/46 carried no other hourly-or-faster
+        # background crontab in the 2026-11-17 census of this schedule. The work
+        # is one board read per (league, Eastern day) holding a candidate and
+        # one predictor read per matched game, with no DB session held across
+        # the reads; the soft limit (300 s) is inside the 15-minute period.
+        "task": "app.tasks.refresh_espn_predictor",
+        "schedule": crontab(minute="1,16,31,46"),
         "options": {"queue": "background"},
     },
     "stamp-soccer-statpal-fixtures-hourly": {

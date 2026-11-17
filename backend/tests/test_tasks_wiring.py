@@ -281,6 +281,10 @@ class TestBeatScheduleCompleteness:
         # #9216 — a postseason game that must be played gets its row when ESPN
         # schedules it (background, hourly, :11 by the same census).
         "create-certain-postseason-games-hourly",
+        # #12824 — ESPN's predictor as the chance for unpriced scheduled games
+        # (background, every 15 min at :01/:16/:31/:46, free in the 2026-11-17
+        # census).
+        "refresh-espn-predictor",
         "sync-statpal-standings-daily",
         "mark-resolved-futures",
         "backfill-winners",
