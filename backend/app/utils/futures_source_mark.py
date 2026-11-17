@@ -14,6 +14,7 @@ from app.utils.resolution_authority import (
     DETERMINISTIC_SOURCES,
     PRICE_DERIVED_SOURCES,
 )
+from app.utils.settlement_display import RETRACTED_SOURCE
 from app.utils.source_mark import no_source_mark, quote_source_mark, settled_source_mark
 
 _RESULT_SOURCES = (
@@ -52,9 +53,11 @@ def futures_outcome_source_mark(market: Any, outcome: Any, row: dict) -> dict:
     # retracted grade cannot supply it, even when the stored flag is boolean.
     if type(grade) is bool and authority in _RESULT_SOURCES:
         return settled_source_mark(authority, "Won" if grade else "Lost")
-    if (
-        authority == "ungradeable_result"
-        or getattr(market, "status", None) == "resolved"
+    status = getattr(market, "status", None)
+    # Retracting a grade leaves an open venue quote eligible. A closed result
+    # or a contradictory stored win has no such pricing basis.
+    if status == "resolved" or (
+        authority == RETRACTED_SOURCE and (status != "open" or grade is True)
     ):
         return no_source_mark("result_unknown")
     if row.get("probability") is None:
