@@ -217,7 +217,7 @@ _ESPN_TEAM_LOGOS: dict[str, str] = {
     "texas rangers": "mlb/500/tex",
     "toronto blue jays": "mlb/500/tor",
     "washington nationals": "mlb/500/wsh",
-    # NCAA / CFP contenders
+    # NCAA / CFP / MAC / FCS schools
     "indiana": "ncaa/500/84",
     "indiana hoosiers": "ncaa/500/84",
     "ohio state": "ncaa/500/194",
@@ -235,6 +235,24 @@ _ESPN_TEAM_LOGOS: dict[str, str] = {
     "clemson": "ncaa/500/228",
     "boise state": "ncaa/500/68",
     "smu": "ncaa/500/2567",
+    "western michigan": "ncaa/500/2711",
+    "western michigan broncos": "ncaa/500/2711",
+    "toledo": "ncaa/500/2649",
+    "toledo rockets": "ncaa/500/2649",
+    "ohio": "ncaa/500/195",
+    "ohio bobcats": "ncaa/500/195",
+    "miami oh": "ncaa/500/193",
+    "miami redhawks": "ncaa/500/193",
+    "bowling green": "ncaa/500/189",
+    "northern illinois": "ncaa/500/2459",
+    "kent state": "ncaa/500/2309",
+    "eastern kentucky": "ncaa/500/2198",
+    "central michigan": "ncaa/500/2117",
+    "eastern michigan": "ncaa/500/2199",
+    "ball state": "ncaa/500/2050",
+    "buffalo": "ncaa/500/2084",
+    "buffalo bulls": "ncaa/500/2084",
+    "akron": "ncaa/500/2006",
     # Liga Profesional Argentina & global clubs
     "aldosivi": "soccer/500/9739",
     "sarmiento": "soccer/500/10158",
@@ -244,6 +262,105 @@ _ESPN_TEAM_LOGOS: dict[str, str] = {
     "racing club": "soccer/500/15",
     "independiente": "soccer/500/11",
     "san lorenzo": "soccer/500/18",
+}
+
+_SORTED_SUBSTRING_TEAM_ALIASES: tuple[tuple[str, str], ...] = tuple(
+    sorted(
+        ((k, v) for k, v in _ESPN_TEAM_LOGOS.items() if len(k) >= 7 and " " in k),
+        key=lambda kv: len(kv[0]),
+        reverse=True,
+    )
+)
+
+_DISCOVER_COUNTRY_ISO: dict[str, str] = {
+    "israel": "il",
+    "israeli": "il",
+    "spain": "es",
+    "spanish": "es",
+    "france": "fr",
+    "french": "fr",
+    "germany": "de",
+    "german": "de",
+    "united kingdom": "gb",
+    "british": "gb",
+    "canada": "ca",
+    "canadian": "ca",
+    "japan": "jp",
+    "japanese": "jp",
+    "south korea": "kr",
+    "south korean": "kr",
+    "brazil": "br",
+    "brazilian": "br",
+    "mexico": "mx",
+    "mexican": "mx",
+    "argentina": "ar",
+    "italy": "it",
+    "italian": "it",
+    "poland": "pl",
+    "polish": "pl",
+    "romania": "ro",
+    "romanian": "ro",
+    "australia": "au",
+    "australian": "au",
+    "new zealand": "nz",
+    "india": "in",
+    "indian": "in",
+    "china": "cn",
+    "chinese": "cn",
+    "taiwan": "tw",
+    "taiwanese": "tw",
+    "ukraine": "ua",
+    "ukrainian": "ua",
+    "russia": "ru",
+    "russian": "ru",
+    "iran": "ir",
+    "iranian": "ir",
+    "turkey": "tr",
+    "turkish": "tr",
+    "ireland": "ie",
+    "irish": "ie",
+    "netherlands": "nl",
+    "dutch": "nl",
+    "portugal": "pt",
+    "portuguese": "pt",
+    "chile": "cl",
+    "colombia": "co",
+    "peru": "pe",
+    "venezuela": "ve",
+    "cuba": "cu",
+    "philippines": "ph",
+}
+
+_VERIFIED_TMDB_MUSIC_AWARD_URLS: frozenset[str] = frozenset(
+    {
+        "https://image.tmdb.org/t/p/w780/11QwqK3hUCWkLJclPUPzd6tgtxL.jpg",
+        "https://image.tmdb.org/t/p/w342/2itSpL4aBPoJXQ4QVtBFxQyz0j0.jpg",
+    }
+)
+
+_DISCOVER_DOMAIN_FALLBACK_ALIASES: dict[str, str] = {
+    "music": "domain-fallback-music",
+    "entertainment": "domain-fallback-entertainment",
+    "football": "domain-fallback-football",
+    "basketball": "domain-fallback-basketball",
+    "baseball": "domain-fallback-baseball",
+    "hockey": "domain-fallback-hockey",
+    "soccer": "domain-fallback-soccer",
+    "golf": "domain-fallback-golf",
+    "mma": "domain-fallback-mma",
+    "economics": "domain-fallback-economics",
+    "finance": "domain-fallback-economics",
+    "business": "domain-fallback-economics",
+    "tech": "domain-fallback-tech",
+    "ai": "domain-fallback-tech",
+    "science": "domain-fallback-tech",
+    "esports": "domain-fallback-tech",
+    "geopolitics": "domain-fallback-geopolitics",
+    "world": "domain-fallback-geopolitics",
+    "weather": "domain-fallback-weather",
+    "climate": "domain-fallback-weather",
+    "health": "domain-fallback-health",
+    "politics": "domain-fallback-politics",
 }
 
 _MUSIC_TITLE_RE = re.compile(
@@ -684,7 +801,80 @@ def _lookup_team_or_nation_logo(candidate: str | None) -> str | None:
     flag = nation_flag_url(raw, size="w320")
     if flag:
         return flag
+    padded = f" {norm} "
+    for alias, path in _SORTED_SUBSTRING_TEAM_ALIASES:
+        if f" {alias} " in padded:
+            return f"https://a.espncdn.com/i/teamlogos/{path}.png"
     return None
+
+
+def _extract_country_flag_url(text: str | None) -> str | None:
+    if not text:
+        return None
+    padded = f" {_fold_ascii(text)} "
+    for country_norm, iso in sorted(
+        _DISCOVER_COUNTRY_ISO.items(), key=lambda kv: len(kv[0]), reverse=True
+    ):
+        if f" {country_norm} " in padded:
+            return f"https://flagcdn.com/w320/{iso}.png"
+    return None
+
+
+def _entry_to_resolved_dict(verified: dict[str, str]) -> dict[str, Any]:
+    url = normalize_archive_image_url(verified["url"]) or verified["url"]
+    return {
+        "image_url": url,
+        "image_width": None,
+        "image_height": None,
+        "image_presentation": verified["presentation"],
+        "image_monogram": None,
+        **({"image_credit": verified["credit"]} if verified.get("credit") else {}),
+        **({"image_author": verified["author"]} if verified.get("author") else {}),
+        **({"image_license": verified["license"]} if verified.get("license") else {}),
+        **({"image_source_page": verified["source_page"]} if verified.get("source_page") else {}),
+    }
+
+
+def _lookup_domain_fallback_entry(
+    name: str | None,
+    category: str | None,
+    subject: VisualSubject,
+) -> dict[str, str] | None:
+    reg = _load_verified_register()
+    title_low = (name or "").lower()
+    cat_low = (category or "").strip().lower()
+
+    if subject.kind == "song" or _MUSIC_TITLE_RE.search(title_low):
+        alias = "domain-fallback-music"
+    elif subject.kind == "film" or _FILM_TITLE_RE.search(title_low):
+        alias = "domain-fallback-entertainment"
+    elif "ipo" in title_low or subject.kind == "organization":
+        alias = (
+            "domain-fallback-tech"
+            if cat_low in {"tech", "ai", "science", "esports"} and "ipo" not in title_low
+            else "domain-fallback-economics"
+        )
+    elif cat_low in _DISCOVER_DOMAIN_FALLBACK_ALIASES:
+        alias = _DISCOVER_DOMAIN_FALLBACK_ALIASES[cat_low]
+    else:
+        alias = "domain-fallback-politics"
+
+    return reg.get(_fold_ascii(alias)) or reg.get(_fold_ascii("domain-fallback-politics"))
+
+
+def _append_candidate_with_song_parts(candidates: list[str], value: str | None) -> None:
+    if not value:
+        return
+    cleaned = value.strip()
+    if not cleaned:
+        return
+    if cleaned not in candidates:
+        candidates.append(cleaned)
+    if " - " in cleaned:
+        song_part, artist_part = cleaned.split(" - ", 1)
+        for part in (song_part.strip(), artist_part.strip()):
+            if part and part not in candidates:
+                candidates.append(part)
 
 
 def _lookup_verified_entry(
@@ -693,15 +883,17 @@ def _lookup_verified_entry(
     top_outcomes: list[dict[str, Any]] | None = None,
 ) -> dict[str, str] | None:
     reg = _load_verified_register()
-    candidates: list[str] = [subject.label]
-    lead = _first_meaningful_outcome_name(top_outcomes)
-    if lead and lead not in candidates:
-        candidates.append(lead)
-        if " - " in lead:
-            song_part, artist_part = lead.split(" - ", 1)
-            candidates.extend([song_part.strip(), artist_part.strip()])
+    candidates: list[str] = []
+    _append_candidate_with_song_parts(candidates, subject.label)
+    for out in (top_outcomes or [])[:4]:
+        if not isinstance(out, dict):
+            continue
+        out_name = str(out.get("name") or out.get("label") or "").strip()
+        if not out_name or _PARTY_OR_BUCKET_OUTCOME_RE.match(out_name):
+            continue
+        _append_candidate_with_song_parts(candidates, out_name)
     if name:
-        candidates.append(name)
+        _append_candidate_with_song_parts(candidates, name)
 
     # Exact alias match first
     for cand in candidates:
@@ -744,6 +936,7 @@ def resolve_discover_market_image(
     image_url: str | None = None,
     image_width: int | None = None,
     image_height: int | None = None,
+    allow_domain_fallback: bool = False,
 ) -> dict[str, Any]:
     """Return resolved `{image_url, image_width, image_height, image_presentation, image_monogram, image_credit}`."""
     subject = classify_market_visual_subject(name, category, top_outcomes)
@@ -751,7 +944,11 @@ def resolve_discover_market_image(
 
     # 1. Keep existing real non-stock art if valid for this subject
     if existing and not is_pexels_url(existing):
-        if subject.kind == "song" and is_tmdb_url(existing):
+        if (
+            subject.kind == "song"
+            and is_tmdb_url(existing)
+            and existing not in _VERIFIED_TMDB_MUSIC_AWARD_URLS
+        ):
             existing = None
         else:
             pres = _presentation_for_url(existing, "photo")
@@ -774,38 +971,13 @@ def resolve_discover_market_image(
     # 2. Check verified entity/landmark register
     verified = _lookup_verified_entry(name, subject, top_outcomes)
     if verified:
-        url = normalize_archive_image_url(verified["url"]) or verified["url"]
-        return {
-            "image_url": url,
-            "image_width": None,
-            "image_height": None,
-            "image_presentation": verified["presentation"],
-            "image_monogram": None,
-            **(
-                {"image_credit": verified["credit"]}
-                if verified.get("credit")
-                else {}
-            ),
-            **(
-                {"image_author": verified["author"]}
-                if verified.get("author")
-                else {}
-            ),
-            **(
-                {"image_license": verified["license"]}
-                if verified.get("license")
-                else {}
-            ),
-            **(
-                {"image_source_page": verified["source_page"]}
-                if verified.get("source_page")
-                else {}
-            ),
-        }
+        return _entry_to_resolved_dict(verified)
 
     # 3. Check official team / club / nation crest map
     if subject.kind == "team":
         logo_url = _lookup_team_or_nation_logo(subject.label)
+        if not logo_url and name:
+            logo_url = _lookup_team_or_nation_logo(name)
         if not logo_url and top_outcomes:
             for out in top_outcomes[:3]:
                 if isinstance(out, dict):
@@ -836,6 +1008,23 @@ def resolve_discover_market_image(
             "image_presentation": "photo",
             "image_monogram": None,
         }
+
+    # 4b. On Discover feed serving (#12825: "every Discover card carries an image"),
+    # resolve country flags for national elections/politics or verified domain art
+    # so zero Discover cards ship imageless.
+    if allow_domain_fallback:
+        country_flag = _extract_country_flag_url(name)
+        if country_flag and (category or "").strip().lower() in {"politics", "geopolitics", "world", ""}:
+            return {
+                "image_url": country_flag,
+                "image_width": 320,
+                "image_height": 213,
+                "image_presentation": "logo",
+                "image_monogram": None,
+            }
+        fallback_entry = _lookup_domain_fallback_entry(name, category, subject)
+        if fallback_entry:
+            return _entry_to_resolved_dict(fallback_entry)
 
     # 5. Deterministic `initials on a colour` monogram fallback (zero stock photos on entities)
     return {
@@ -920,7 +1109,7 @@ def dedup_discover_tournament_items(items: list[dict[str, Any]]) -> list[dict[st
 
 
 def resolve_tournament_discover_image(data: dict[str, Any]) -> dict[str, Any]:
-    """Attach verified golfer portrait or golfer monogram to a Discover tournament `data` dict."""
+    """Attach verified golfer portrait or golf course art to a Discover tournament `data` dict."""
     out = dict(data)
     golfers = out.get("golfers") or []
     leader_name = (
@@ -932,24 +1121,19 @@ def resolve_tournament_discover_image(data: dict[str, Any]) -> dict[str, Any]:
         category="golf",
         top_outcomes=[{"name": leader_name}] if leader_name else None,
         image_url=out.get("image_url"),
+        allow_domain_fallback=True,
     )
-    if leader_name and resolved.get("image_url") is None:
-        bg, acc = ("#14532d", "#16a34a")
-        resolved["image_monogram"] = {
-            "initials": compute_initials(leader_name, ticker_ok=False),
-            "label": leader_name,
-            "kind": "person",
-            "bg_hex": bg,
-            "accent_hex": acc,
-        }
     out["image_url"] = resolved["image_url"]
     out["image_presentation"] = resolved["image_presentation"]
     out["image_monogram"] = resolved["image_monogram"]
+    for meta_key in ("image_credit", "image_author", "image_license", "image_source_page"):
+        if resolved.get(meta_key):
+            out[meta_key] = resolved[meta_key]
     return out
 
 
 def resolve_concept_discover_image(data: dict[str, Any]) -> dict[str, Any]:
-    """Attach verified fighter/leader portrait or monogram to a Discover concept `data` dict."""
+    """Attach verified fighter/leader portrait or domain art to a Discover concept `data` dict."""
     out = dict(data)
     leader_obj = out.get("leader") if isinstance(out.get("leader"), dict) else None
     bout = out.get("headline_bout") if isinstance(out.get("headline_bout"), dict) else None
@@ -964,11 +1148,31 @@ def resolve_concept_discover_image(data: dict[str, Any]) -> dict[str, Any]:
         category="mma" if "ufc" in str(out.get("domain") or "").lower() else str(out.get("domain") or ""),
         top_outcomes=[{"name": primary_name}] if primary_name else None,
         image_url=out.get("image_url"),
+        allow_domain_fallback=True,
     )
     out["image_url"] = resolved["image_url"]
     out["image_presentation"] = resolved["image_presentation"]
     out["image_monogram"] = resolved["image_monogram"]
+    for meta_key in ("image_credit", "image_author", "image_license", "image_source_page"):
+        if resolved.get(meta_key):
+            out[meta_key] = resolved[meta_key]
     return out
+
+
+_DEDICATED_BUNDLE_STORY_ALIASES: frozenset[str] = frozenset(
+    {
+        "story:grammys",
+        "story:oscars",
+        "story:emmys",
+        "story:golden_globes",
+        "story:ipo_markets",
+        "grammys",
+        "oscars",
+        "emmys",
+        "golden globes",
+        "ipos",
+    }
+)
 
 
 def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -994,6 +1198,7 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
             image_url=raw_data.get("image_url"),
             image_width=raw_data.get("image_width"),
             image_height=raw_data.get("image_height"),
+            allow_domain_fallback=True,
         )
         new_data = {**raw_data, **resolved}
         return {**item, "data": new_data}
@@ -1031,7 +1236,7 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
             sanitize_discover_feed_item(sub) if isinstance(sub, dict) else sub
             for sub in (raw_data.get("items") or [])
         ]
-        # Resolve bundle-level representative art or monogram for non-roundup / audit consumers
+        # Resolve bundle-level representative art for non-roundup / audit consumers
         # (`RoundupCard.tsx` deliberately renders text + bars only per Oct 6 R4).
         bundle_img: str | None = None
         bundle_pres: str | None = None
@@ -1040,20 +1245,39 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
         bundle_author: str | None = None
         bundle_license: str | None = None
         bundle_source_page: str | None = None
-        for sub in sub_items:
-            if not isinstance(sub, dict):
-                continue
-            sd = sub.get("data") or {}
-            if sd.get("image_url"):
-                bundle_img = sd["image_url"]
-                bundle_pres = sd.get("image_presentation")
-                bundle_credit = sd.get("image_credit")
-                bundle_author = sd.get("image_author")
-                bundle_license = sd.get("image_license")
-                bundle_source_page = sd.get("image_source_page")
-                break
-            if bundle_mono is None and sd.get("image_monogram"):
-                bundle_mono = sd["image_monogram"]
+
+        # 1. Dedicated ceremony / story banner (e.g. TMDB widescreen trophy art for Grammys, Oscars, Emmys, Golden Globes)
+        reg = _load_verified_register()
+        story_key_raw = str(raw_data.get("story_key") or "").strip().lower()
+        title_str = str(raw_data.get("title") or "").strip()
+        for story_probe in (story_key_raw, title_str.lower()):
+            if story_probe in _DEDICATED_BUNDLE_STORY_ALIASES:
+                story_entry = reg.get(_fold_ascii(story_probe))
+                if story_entry:
+                    bundle_img = normalize_archive_image_url(story_entry["url"]) or story_entry["url"]
+                    bundle_pres = story_entry["presentation"]
+                    bundle_credit = story_entry.get("credit") or None
+                    bundle_author = story_entry.get("author") or None
+                    bundle_license = story_entry.get("license") or None
+                    bundle_source_page = story_entry.get("source_page") or None
+                    break
+
+        # 2. Otherwise promote the lead member's verified image
+        if not bundle_img:
+            for sub in sub_items:
+                if not isinstance(sub, dict):
+                    continue
+                sd = sub.get("data") or {}
+                if sd.get("image_url"):
+                    bundle_img = sd["image_url"]
+                    bundle_pres = sd.get("image_presentation")
+                    bundle_credit = sd.get("image_credit")
+                    bundle_author = sd.get("image_author")
+                    bundle_license = sd.get("image_license")
+                    bundle_source_page = sd.get("image_source_page")
+                    break
+                if bundle_mono is None and sd.get("image_monogram"):
+                    bundle_mono = sd["image_monogram"]
 
         if not bundle_img:
             roundup = raw_data.get("roundup") if isinstance(raw_data.get("roundup"), dict) else None
@@ -1064,7 +1288,6 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
                 if isinstance(r, dict) and r.get("label")
             ]
             # Handle subject_sequence like "Boston Celtics: next 3 games"
-            title_str = str(raw_data.get("title") or "")
             subj_prefix = title_str.split(":", 1)[0].strip() if ":" in title_str else title_str
             team_logo = _lookup_team_or_nation_logo(subj_prefix)
             if team_logo:
@@ -1072,11 +1295,16 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
                 bundle_pres = "logo"
                 bundle_credit = "ESPN CDN official crest"
             else:
+                first_sub_cat = None
+                if sub_items and isinstance(sub_items[0], dict):
+                    first_sd = sub_items[0].get("data") or {}
+                    first_sub_cat = first_sd.get("llm_sport_category") or first_sd.get("category")
                 fallback_res = resolve_discover_market_image(
                     name=title_str,
-                    category=None,
+                    category=first_sub_cat,
                     top_outcomes=row_outcomes,
                     image_url=raw_data.get("image_url"),
+                    allow_domain_fallback=True,
                 )
                 bundle_img = fallback_res["image_url"]
                 bundle_pres = fallback_res["image_presentation"]
