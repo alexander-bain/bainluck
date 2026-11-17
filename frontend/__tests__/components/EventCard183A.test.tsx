@@ -70,9 +70,9 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
     return host.querySelector(`[data-testid="${id}"]`);
   }
 
-  it("stays strictly switched off by default unless NEXT_PUBLIC_GAME_CARD_183A === 'true'", () => {
+  it("is enabled by default under Ruling 207-A and disabled only when NEXT_PUBLIC_GAME_CARD_183A === 'false'", () => {
     delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
-    expect(isWebGameCard183AEnabled()).toBe(false);
+    expect(isWebGameCard183AEnabled()).toBe(true);
     process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
     expect(isWebGameCard183AEnabled()).toBe(false);
     process.env.NEXT_PUBLIC_GAME_CARD_183A = "true";

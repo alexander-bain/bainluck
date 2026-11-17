@@ -31,6 +31,18 @@ import type { FeedItem, FeedEventData } from "@/lib/types";
 
 type Tier = "high" | "moderate" | "low" | null;
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("probabilityAuthorityClass — the pure coupling", () => {
   it("leaves a high-confidence number at FULL authority", () => {
     expect(probabilityAuthorityClass("high")).toBe("");

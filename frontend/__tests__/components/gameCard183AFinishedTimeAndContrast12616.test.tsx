@@ -96,4 +96,33 @@ describe("#12616 — finished game start-time label & >=4.5:1 Chance text contra
     expect(html.toLowerCase()).not.toContain('style="color:#d3bc8d"');
     expect(html.toLowerCase()).toContain(`style="color:${darkenedSaints}" data-testid="primary-chance-away">15%<`);
   });
+
+  it("drops the comma in older finished weekday dates ('Sun Nov 15', not 'Sun, Nov 15')", () => {
+    const nowSpy = jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-11-17T20:00:00Z"));
+    try {
+      const ev = {
+        id: 15348001,
+        sport: "americanfootball_nfl",
+        sport_name: "NFL",
+        away_team: "New England Patriots",
+        home_team: "Detroit Lions",
+        commence_time: "2026-11-15T18:00:00Z",
+        completed_at: "2026-11-15T21:12:00Z",
+        status: "completed",
+        away_score: 10,
+        home_score: 35,
+        prematch_odds: { away_probability: 0.42, home_probability: 0.58 },
+      } as unknown as Event;
+
+      const html = renderToStaticMarkup(
+        <EventCard183A card={buildUnifiedCardFromEvent(ev)} surface="standard" />,
+      );
+      expect(html).toContain("Sun Nov 15");
+      expect(html).not.toContain("Sun, Nov 15");
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });
