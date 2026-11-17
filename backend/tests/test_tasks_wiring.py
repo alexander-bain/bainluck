@@ -348,8 +348,6 @@ class TestBeatScheduleCompleteness:
         # B-5 (2026-11-06): the hour's one heavy run of the same task.
         "update-max-movement-heavy",
         "export-engagement-nightly",
-        "daily-challenge-push",
-        "big-move-alerts",
         "morning-digest-daily",
         "precompute-calibration-main",
         # CAL-P084 (#2007) — the beat gauge sampler. :05 and :45, deliberately

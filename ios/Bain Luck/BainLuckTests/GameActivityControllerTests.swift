@@ -236,7 +236,7 @@ final class GameActivityControllerTests: XCTestCase {
         controller.beginViewing(eventID: 2)
         XCTAssertNil(controller.status(for: 2))
         controller.start(snapshot: try snapshot(2, clock: clock))
-        XCTAssertEqual(controller.status(for: 2), "Live Activity started. Updates arrive while this game is open.")
+        XCTAssertNil(controller.status(for: 2), "#12827: a started activity prints no sentence")
         XCTAssertNil(controller.status(for: 1))
         XCTAssertEqual(service.requests, 2)
         XCTAssertEqual(service.ends.map(\.0), ["activity-1"])
@@ -316,7 +316,7 @@ final class GameActivityControllerTests: XCTestCase {
             XCTAssertTrue(controller.activeEventIDs.isEmpty)
             controller.start(snapshot: try snapshot(2, clock: clock))
             XCTAssertEqual(controller.activeEventIDs, [2])
-            XCTAssertEqual(controller.status(for: 2), "Live Activity started. Updates arrive while this game is open.")
+            XCTAssertNil(controller.status(for: 2), "#12827: a started activity prints no sentence")
         }
     }
 

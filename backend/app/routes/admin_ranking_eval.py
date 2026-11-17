@@ -30,6 +30,7 @@ and ``ranking_grades``; the writes go only there.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -273,6 +274,45 @@ def spread_deck(
 #: Carries the grader's name (URL-encoded) on ``GET /grade-deck``.
 GRADER_HEADER = "x-grader-name"
 
+#: #11937 (159-A): named extra card sets per slate. After ranking candidates are
+#: frozen, the cards in their first tens that no adult graded are listed here
+#: under a name, and ``/grade?slate=<id>&set=<name>`` deals them mixed into the
+#: slate's deck, unlabeled, so the grader cannot tell which order they came from.
+#: ``{slate_id: {set_name: [item_key, ...]}}``. A set ships with a PR so the list
+#: is reviewed and on record before anyone grades it.
+EXTRA_SETS_PATH = Path(__file__).resolve().parents[1] / "data" / "ranking_extra_sets.json"
+
+
+def load_extra_sets(path: Path = EXTRA_SETS_PATH) -> dict[str, dict[str, list[str]]]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def mixed(items: list[dict], slate_id: str) -> list[dict]:
+    """The deck in one fixed order that says nothing about where a card came
+    from: by a hash of the slate and the card, the same every time."""
+    return sorted(
+        items,
+        key=lambda c: hashlib.sha256(f"{slate_id}|{c['item_key']}".encode()).hexdigest(),
+    )
+
+
+def deck_with_set(order: list[dict], slate_id: str, keys: list[str], *, size: int) -> list[dict]:
+    """The slate's spread deck plus a named set's cards, mixed. A set card the
+    spread already deals appears once. Raises KeyError naming any key the
+    slate's candidate list doesn't hold, so a typo can't silently shrink a set."""
+    by_key = {c["item_key"]: c for c in order}
+    missing = [k for k in keys if k not in by_key]
+    if missing:
+        raise KeyError(missing)
+    deck = spread_deck(order, size=size)
+    have = {c["item_key"] for c in deck}
+    deck += [by_key[k] for k in dict.fromkeys(keys) if k not in have]
+    return mixed(deck, slate_id)
+
 
 @router.get("/grade-deck")
 async def get_grade_deck(
@@ -280,6 +320,8 @@ async def get_grade_deck(
     surface: str = Query(SURFACE_DISCOVER, max_length=32),
     slate: str | None = Query(None, max_length=64),
     size: int = Query(SPREAD_DECK_SIZE, ge=5, le=60),
+    # `?set=` in the URL; not named `set` here, which would shadow the builtin.
+    card_set: str | None = Query(None, alias="set", max_length=64),
     secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -287,6 +329,9 @@ async def get_grade_deck(
     # Called directly (tests, other handlers), unset params arrive as Query objects.
     slate = slate if isinstance(slate, str) and slate.strip() else None
     size = size if isinstance(size, int) else SPREAD_DECK_SIZE
+    set_name = card_set if isinstance(card_set, str) and card_set.strip() else None
+    if set_name and not slate:
+        raise HTTPException(status_code=422, detail="a named set needs ?slate=")
     # The grader's name comes in a header, never the URL: query strings land in
     # request logs, and the family's kids type their names on this page.
     grader = urllib.parse.unquote(request.headers.get(GRADER_HEADER) or "")[:40]
@@ -313,6 +358,24 @@ async def get_grade_deck(
             )
         )).scalars().all()
         graded = {r.item_key for r in rows}
+    if set_name:
+        keys = load_extra_sets().get(row["slate_id"], {}).get(set_name)
+        if keys is None:
+            raise HTTPException(status_code=404, detail=f"no set {set_name!r} for this slate")
+        try:
+            full = deck_with_set(order, row["slate_id"], list(keys), size=size)
+        except KeyError as exc:
+            raise HTTPException(status_code=422, detail=f"set lists cards not on this slate: {exc.args[0]}")
+        items, left_out = drawn_only([c for c in full if c["item_key"] not in graded])
+        # No per-card flag: the grader must not be able to tell set cards apart.
+        return {
+            **out,
+            "mode": "spread",
+            "candidates": len(order),
+            "already_graded": len(graded & {c["item_key"] for c in full}),
+            "left_out_no_drawing": left_out,
+            "items": items,
+        }
     items, left_out = drawn_only(spread_deck(order, size=size, skip=graded))
     return {
         **out,

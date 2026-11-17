@@ -2,6 +2,48 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import {
+  ABOVE_NINETY_NINE_PERCENT,
+  BELOW_ONE_PERCENT,
+} from "@/lib/probabilityDisplay";
+
+export function formatFedHeatmapCell(prob: number, resolved?: boolean): string {
+  if (!Number.isFinite(prob) || prob <= 0) return "";
+  if (prob < 0.5) return BELOW_ONE_PERCENT;
+  if (prob >= 99.5 && !resolved) return ABOVE_NINETY_NINE_PERCENT;
+  return `${Math.round(prob)}%`;
+}
+
+const LADDER_ABOVE_PREFIX_RE =
+  /^\s*(?:above|over|at least|more than|greater than|exceeds?|reaches?|hits?)\b/i;
+const LADDER_BELOW_PREFIX_RE =
+  /^\s*(?:below|under|at most|less than|fewer than|no more than)\b/i;
+
+export function filterMonotoneLadderRows(
+  rows: [number, string][],
+  reachedSet: ReadonlySet<string>,
+): [number, string][] {
+  if (rows.length < 2) return rows;
+  const allAbove = rows.every(([, label]) => LADDER_ABOVE_PREFIX_RE.test(label));
+  const allBelow = !allAbove && rows.every(([, label]) => LADDER_BELOW_PREFIX_RE.test(label));
+  if (!allAbove && !allBelow) return rows;
+
+  const kept: [number, string][] = [];
+  let prevLiveProb: number | null = null;
+  for (const [prob, label] of rows) {
+    if (reachedSet.has(label.trim())) {
+      kept.push([prob, label]);
+      continue;
+    }
+    if (prevLiveProb !== null) {
+      if (allAbove && prob > prevLiveProb) continue;
+      if (allBelow && prob < prevLiveProb) continue;
+    }
+    prevLiveProb = prob;
+    kept.push([prob, label]);
+  }
+  return kept;
+}
 
 export function probColor(p: number): string {
   if (p >= 65) return "#10B981";

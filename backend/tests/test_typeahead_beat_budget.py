@@ -1259,11 +1259,15 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     # #12042 (precompute_category_pages split): seven `precompute-category-section-*`
     # entries name background; census on the tree branched from 62522482aa printed
     # explicit 112 implicit 38 total 150.
+    # Ruling 179-A: `daily-challenge-push` and `big-move-alerts` (both named
+    # background) taken off their timers; census on the tree branched from
+    # c9f17454d0 printed explicit 110 implicit 38 total 148.
     # #12824: `refresh-espn-predictor` names background; census on the tree
-    # merged with b2ec4abeb3 printed explicit 113 implicit 38 total 151.
-    assert explicit == 113, f"explicitly-routed background beats moved: {explicit}"
+    # merged with 2e276ac262 (179-A composed) printed explicit 111 implicit 38
+    # total 149.
+    assert explicit == 111, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 38, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 151
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 149
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

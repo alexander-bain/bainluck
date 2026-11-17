@@ -10360,16 +10360,14 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(hour=3, minute=0),  # 3:00 AM UTC daily
         "options": {"queue": "heavy"},
     },
-    "daily-challenge-push": {
-        "task": "app.tasks.send_daily_challenge_push",
-        "schedule": crontab(hour=14, minute=0),  # 2:00 PM UTC (10am ET / 7am PT)
-        "options": {"queue": "background"},
-    },
-    "big-move-alerts": {
-        "task": "app.tasks.send_big_move_alerts",
-        "schedule": crontab(minute="*/30"),  # Every 30 minutes
-        "options": {"queue": "background"},
-    },
+    # Ruling 179-A (Alex, Nov 13 2026): the two old push jobs are OFF.
+    # Switching one back is restoring its entry here, as it was:
+    #   "daily-challenge-push": app.tasks.send_daily_challenge_push,
+    #       crontab(hour=14, minute=0), queue background (7 AM PT)
+    #   "big-move-alerts": app.tasks.send_big_move_alerts,
+    #       crontab(minute="*/30"), queue background
+    # plus its line in test_tasks_wiring's allowlist and the background census.
+    # Both tasks stay registered. Guard: tests/test_old_push_jobs_off_179a.py.
     "morning-digest-daily": {
         # Queue #200: notifications v1 — one daily push of the 3-5 most
         # interesting probabilities to opted-in device tokens. Reuses cached
