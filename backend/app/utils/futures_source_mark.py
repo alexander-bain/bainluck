@@ -57,7 +57,8 @@ def futures_outcome_source_mark(market: Any, outcome: Any, row: dict) -> dict:
     # Retracting a grade leaves an open venue quote eligible. A closed result
     # or a contradictory stored win has no such pricing basis.
     if status == "resolved" or (
-        authority == RETRACTED_SOURCE and (status != "open" or grade is True)
+        authority == RETRACTED_SOURCE
+        and (status not in {"active", "open"} or grade is True)
     ):
         return no_source_mark("result_unknown")
     if row.get("probability") is None:

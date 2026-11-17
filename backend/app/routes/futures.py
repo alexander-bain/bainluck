@@ -3040,6 +3040,7 @@ async def load_container_field_folds(
     strip's own comment records a 192-golfer market whose card led with 0.09%.
     So the fold reads the group's FULL membership and ranks that.
     """
+    from ..utils.futures_source_mark import futures_outcome_source_mark
     from ..utils.market_grouping import detect_container_field_groups
 
     pool_by_group: dict[str, int] = defaultdict(int)
@@ -3084,8 +3085,11 @@ async def load_container_field_folds(
             FuturesMarket.id,
             FuturesMarket.name,
             FuturesMarket.source,
+            FuturesMarket.status,
             FuturesOutcome.name,
             FuturesOutcome.current_probability,
+            FuturesOutcome.is_winner,
+            FuturesOutcome.resolution_source,
         )
         .join(FuturesOutcome, FuturesOutcome.market_id == FuturesMarket.id)
         .where(
@@ -3096,7 +3100,9 @@ async def load_container_field_folds(
         )
     )
     members_by_id: dict[int, dict] = {}
-    for group_id, market_id, name, source, leg, probability in member_rows.all():
+    for (
+        group_id, market_id, name, source, status, leg, probability, grade, authority
+    ) in member_rows.all():
         member = members_by_id.setdefault(
             market_id,
             {
@@ -3108,12 +3114,19 @@ async def load_container_field_folds(
                 "complement_probability": None,
             },
         )
-        key = (
-            "probability"
-            if (leg or "").strip().lower() == "yes"
-            else "complement_probability"
-        )
-        member[key] = probability
+        if (leg or "").strip().lower() == "yes":
+            member["probability"] = probability
+            member["source_mark"] = futures_outcome_source_mark(
+                SimpleNamespace(source=source, status=status),
+                SimpleNamespace(
+                    current_probability=probability,
+                    is_winner=grade,
+                    resolution_source=authority,
+                ),
+                member,
+            )
+        else:
+            member["complement_probability"] = probability
 
     members_by_group: dict[str, list[dict]] = defaultdict(list)
     for member in members_by_id.values():
@@ -3431,6 +3444,16 @@ async def _publish_grouped_feed_cache(cache_key: str, payload: dict) -> None:
         logger.debug("grouped-feed cache write failed", exc_info=True)
 
 
+def _grouped_market_first_price(market: dict) -> dict:
+    from ..utils.source_mark import no_source_mark
+
+    outcomes = market["outcomes"]
+    if not outcomes:
+        return {"probability": None, "source_mark": no_source_mark("no_probability")}
+    first = outcomes[0]
+    return {"probability": first["probability"], "source_mark": first["source_mark"]}
+
+
 @router.get("/grouped-feed")
 async def grouped_feed(
     request: Request,
@@ -3463,6 +3486,7 @@ async def grouped_feed(
     anything, and the request path still publishes on a miss so the cache works
     even if the beat is broken.
     """
+    from ..utils.futures_source_mark import futures_outcome_source_mark
     from ..utils.market_grouping import (
         detect_exact_score_groups,
         detect_placement_groups,
@@ -3619,6 +3643,7 @@ async def grouped_feed(
                 "group_id": m.group_id,
                 "source": m.source,
             }
+            o_dict["source_mark"] = futures_outcome_source_mark(m, o, o_dict)
             m_dict["outcomes"].append(o_dict)
             outcome_dicts.append(o_dict)
             leg_books[o.id] = (
@@ -3702,6 +3727,7 @@ async def grouped_feed(
                         "market_name": fold["title"],
                         "group_id": group_id,
                         "source": e["source"],
+                        "source_mark": e["source_mark"],
                     }
                     for e in entries
                 ],
@@ -3723,7 +3749,7 @@ async def grouped_feed(
                 {
                     "id": gm["id"],
                     "name": gm["name"],
-                    "probability": gm["outcomes"][0]["probability"] if gm.get("outcomes") else None,
+                    **_grouped_market_first_price(gm),
                     "threshold_value": gm.get("threshold_value", 0),
                     "threshold_direction": gm.get("threshold_direction", "above"),
                     "source": gm.get("source", ""),
@@ -3749,7 +3775,7 @@ async def grouped_feed(
                     "name": gm["name"],
                     "stage_name": gm.get("stage_name", ""),
                     "stage_order": gm.get("stage_order", 0),
-                    "probability": gm["outcomes"][0]["probability"] if gm.get("outcomes") else None,
+                    **_grouped_market_first_price(gm),
                     "source": gm.get("source", ""),
                 }
                 for gm in group_markets
@@ -3825,6 +3851,7 @@ async def grouped_feed(
                     "id": o["id"],
                     "name": o["name"],
                     "probability": o.get("probability"),
+                    "source_mark": o["source_mark"],
                     # The rung label IS the outcome. No threshold is claimed.
                     "label": o["score_label"],
                     "threshold_value": 0,
@@ -3856,6 +3883,7 @@ async def grouped_feed(
                     "id": o["id"],
                     "name": o["name"],
                     "probability": o.get("probability"),
+                    "source_mark": o["source_mark"],
                     "threshold_value": o.get("threshold_value", 0),
                     "threshold_unit": o.get("threshold_unit", ""),
                     "threshold_direction": o.get("threshold_direction", "above"),

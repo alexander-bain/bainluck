@@ -45,7 +45,9 @@ from typing import Optional
 
 #: Version segment. Bump it when the RESPONSE SHAPE changes, so a deploy cannot
 #: serve a new client an old body — cheaper and more honest than a migration.
-GROUPED_FEED_CACHE_PREFIX = "bainluck:grouped_feed:v1"
+# The prior payload has no quote attribution. Both the route and warmer use
+# this version so an old writer cannot replace responses that carry marks.
+GROUPED_FEED_CACHE_PREFIX = "bainluck:grouped_feed:v2"
 
 #: Fresh TTL. MUST stay above the 2-minute warm cadence (see the module
 #: docstring); ``test_grouped_feed_cache.py`` asserts that relationship rather

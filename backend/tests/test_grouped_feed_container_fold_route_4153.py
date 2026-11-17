@@ -203,9 +203,13 @@ def _members(complements=None):
         for entity, probability in members:
             name = template.format(entity)
             no_leg = complements.get(entity, 1 - probability)
-            rows.append((group, mid, name, "polymarket", "Yes", probability))
+            rows.append(
+                (group, mid, name, "polymarket", "open", "Yes", probability, None, None)
+            )
             if no_leg is not None:
-                rows.append((group, mid, name, "polymarket", "No", no_leg))
+                rows.append(
+                    (group, mid, name, "polymarket", "open", "No", no_leg, None, None)
+                )
             mid += 1
     return rows
 
