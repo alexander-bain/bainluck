@@ -1006,6 +1006,12 @@ def _lookup_domain_fallback_entry(
     return (entry, False) if entry else None
 
 
+_SEASON_SUFFIX_RE = re.compile(
+    r"\s*(?:[:·\-–—]\s*|\(\s*)season\s+\d+\s*\)?\s*$",
+    re.IGNORECASE,
+)
+
+
 def _append_candidate_with_song_parts(candidates: list[str], value: str | None) -> None:
     if not value:
         return
@@ -1014,6 +1020,9 @@ def _append_candidate_with_song_parts(candidates: list[str], value: str | None) 
         return
     if cleaned not in candidates:
         candidates.append(cleaned)
+    season_stripped = _SEASON_SUFFIX_RE.sub("", cleaned).strip()
+    if season_stripped and season_stripped != cleaned and season_stripped not in candidates:
+        candidates.append(season_stripped)
     if " - " in cleaned:
         song_part, artist_part = cleaned.split(" - ", 1)
         for part in (song_part.strip(), artist_part.strip()):
@@ -1061,6 +1070,8 @@ def _presentation_for_url(url: str, fallback: str = "photo") -> str:
         return "logo"
     if _url_host_matches(url, "espncdn.com") and "/headshots/" in url:
         return "portrait"
+    if _url_host_matches(url, "tvmaze.com"):
+        return "portrait"
     if _url_host_matches(url, "archive.org", "coverartarchive.org"):
         return "cover"
     return fallback
@@ -1099,6 +1110,8 @@ def resolve_discover_market_image(
             credit = (
                 "TMDB"
                 if is_tmdb_url(existing)
+                else "TVMaze (CC BY-SA 4.0)"
+                if _url_host_matches(existing, "tvmaze.com")
                 else "Cover Art Archive"
                 if _url_host_matches(existing, "coverartarchive.org", "archive.org")
                 else None

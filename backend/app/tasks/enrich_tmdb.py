@@ -23,13 +23,23 @@ from sqlalchemy import select, update
 
 from app.tasks.base import get_task_session
 from app.utils.image_dimensions import tmdb_declared_width
+from app.utils.music_image_guard import (
+    is_music_market_ineligible_for_tmdb,
+    sanitize_market_image_url,
+)
 
 logger = logging.getLogger(__name__)
 
 TMDB_BASE = "https://api.themoviedb.org/3"
 TMDB_IMG = "https://image.tmdb.org/t/p"
+TVMAZE_SINGLE_SEARCH = "https://api.tvmaze.com/singlesearch/shows"
 TMDB_READ_TOKEN = os.getenv("TMDB_READ_ACCESS_TOKEN")  # v4 bearer (preferred)
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")  # v3 key (fallback)
+
+_TV_SERIES_HINT_RE = re.compile(
+    r"\b(episode|season\s+\d+|show|series|emmys?|netflix\s+show|tv)\b",
+    re.IGNORECASE,
+)
 
 # A quoted title: "Toy Story 5" / “The Odyssey”. 2–80 chars, no nested quotes.
 _QUOTED_TITLE_RE = re.compile(r'["“]([^"”]{2,80})["”]')
@@ -97,6 +107,45 @@ async def _fetch_tmdb_image(title: str) -> tuple[str | None, dict | None]:
             return _pick_tmdb_image(resp.json().get("results", []))
     except Exception as e:  # noqa: BLE001
         logger.error("TMDB fetch error for %r: %s", title, e)
+        return None, None
+
+
+def _pick_tvmaze_image(payload: dict | None) -> tuple[str | None, dict | None]:
+    """Extract a kid-safe (#7461) CC BY-SA 4.0 portrait poster from TVMaze."""
+    if not isinstance(payload, dict):
+        return None, None
+    genres = [str(g).strip().lower() for g in (payload.get("genres") or [])]
+    if "horror" in genres:
+        return None, None
+    img_obj = payload.get("image") or {}
+    if not isinstance(img_obj, dict):
+        return None, None
+    img_url = str(img_obj.get("original") or img_obj.get("medium") or "").strip()
+    if not img_url.startswith("https://static.tvmaze.com/"):
+        return None, None
+    source_page = str(payload.get("url") or "").strip()
+    if not source_page.startswith("https://www.tvmaze.com/"):
+        return None, None
+    return img_url, {
+        "tvmaze_id": payload.get("id"),
+        "name": payload.get("name"),
+        "genres": payload.get("genres") or [],
+        "source_page": source_page,
+        "author": "TVMaze contributors",
+        "license": "CC BY-SA 4.0",
+    }
+
+
+async def _fetch_tvmaze_image(title: str) -> tuple[str | None, dict | None]:
+    """Query key-free TVMaze API for a TV series portrait poster (CC BY-SA 4.0)."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(TVMAZE_SINGLE_SEARCH, params={"q": title})
+            if resp.status_code != 200:
+                return None, None
+            return _pick_tvmaze_image(resp.json())
+    except Exception as e:  # noqa: BLE001
+        logger.error("TVMaze fetch error for %r: %s", title, e)
         return None, None
 
 
@@ -175,9 +224,51 @@ async def enrich_tmdb_images(limit: int = 50):
         logger.info("TMDB credentials not set — skipping TMDB enrichment")
         return {"skipped": True}
 
-    stats = {"checked": 0, "found": 0, "no_match": 0, "skipped_no_title": 0}
+    stats = {
+        "checked": 0,
+        "found": 0,
+        "no_match": 0,
+        "skipped_no_title": 0,
+        "skipped_music": 0,
+        "cleared_music_false_positives": 0,
+        "found_tvmaze": 0,
+    }
 
     async with get_task_session() as session:
+        # #12659: clear any previously attached TMDB film backdrops on music/song/
+        # album/chart markets so stored rows match serve-time withholding.
+        existing_tmdb_result = await session.execute(
+            select(
+                FuturesMarket.id,
+                FuturesMarket.name,
+                FuturesMarket.image_url,
+                FuturesMarket.market_metadata,
+            )
+            .where(
+                FuturesMarket.status == "open",
+                FuturesMarket.llm_sport_category == "entertainment",
+                FuturesMarket.image_url.like("%image.tmdb.org%"),
+            )
+            .limit(500)
+        )
+        for m_id, m_name, m_img, m_meta in existing_tmdb_result.all():
+            if m_img and sanitize_market_image_url(m_img, m_name) is None:
+                clean_meta = m_meta if isinstance(m_meta, dict) else {}
+                await session.execute(
+                    update(FuturesMarket)
+                    .where(FuturesMarket.id == m_id)
+                    .values(
+                        image_url=None,
+                        image_width=None,
+                        image_height=None,
+                        market_metadata={
+                            **clean_meta,
+                            "tmdb": {"skipped_music": True},
+                        },
+                    )
+                )
+                stats["cleared_music_false_positives"] += 1
+
         result = await session.execute(
             select(
                 FuturesMarket.id,
@@ -198,6 +289,16 @@ async def enrich_tmdb_images(limit: int = 50):
             meta = meta if isinstance(meta, dict) else {}
             if meta.get("tmdb"):  # already TMDB-checked (anti-thrash)
                 continue
+            if is_music_market_ineligible_for_tmdb(name):
+                stats["skipped_music"] += 1
+                await session.execute(
+                    update(FuturesMarket)
+                    .where(FuturesMarket.id == market_id)
+                    .values(
+                        market_metadata={**meta, "tmdb": {"skipped_music": True}}
+                    )
+                )
+                continue
             title = _extract_quoted_title(name)
             if not title:
                 stats["skipped_no_title"] += 1
@@ -205,26 +306,21 @@ async def enrich_tmdb_images(limit: int = 50):
 
             stats["checked"] += 1
             url, tmeta = await _fetch_tmdb_image(title)
+            tvmaze_meta = None
+            if not url and _TV_SERIES_HINT_RE.search(name or ""):
+                url, tvmaze_meta = await _fetch_tvmaze_image(title)
 
-            values: dict = {
-                "market_metadata": {**meta, "tmdb": tmeta or {"no_match": True}}
-            }
+            next_meta = {**meta, "tmdb": tmeta or {"no_match": True}}
+            if tvmaze_meta:
+                next_meta["tvmaze"] = tvmaze_meta
+            values: dict = {"market_metadata": next_meta}
             if url:
-                # Prefer real TMDB art over the generic Pexels stock image.
                 values["image_url"] = url
-                # This REPLACES a Pexels photo, so the stored dimensions must be
-                # replaced in the same statement — leaving them would leave the
-                # old photo's size describing the new image. TMDB names the
-                # rendered width in the path and honours it exactly; the height
-                # is not derivable here and is left for the backfill to measure.
-                # That handoff only works because `image_dimensions_backfill`
-                # selects rows with EITHER column NULL. Narrowing it back to
-                # `image_width IS NULL` strands every row written here, since
-                # this writer always sets a width — guarded by
-                # test_backfill_image_dimensions.py.
                 values["image_width"] = tmdb_declared_width(url)
                 values["image_height"] = None
                 stats["found"] += 1
+                if tvmaze_meta:
+                    stats["found_tvmaze"] += 1
             else:
                 stats["no_match"] += 1
 
