@@ -2173,7 +2173,13 @@ def free_background_slots(
 #: worker was killed (R15) with the one-task form in flight at 2:28, 5:26 and
 #: 7:27 AM PT Nov 12. The census RUN over the tree branched from `62522482aa`
 #: printed `explicit 112 implicit 38 total 150`.
-BACKGROUND_BEAT_COUNT = 150
+#: 🔴 RE-DERIVED at speed (2026-11-15, ruling 179-A): 150 → 148, explicit
+#: 112 → 110, fall-through UNMOVED at 38. Alex switched off the two old push
+#: jobs: `daily-challenge-push` (14:00 UTC daily) and `big-move-alerts` (every
+#: 30 min), both named `background`. Their tasks stay registered. Cost: 49 fewer
+#: background fires a day. The census RUN over the tree branched from
+#: `c9f17454d0` printed `explicit 110 implicit 38 total 148`.
+BACKGROUND_BEAT_COUNT = 148
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
