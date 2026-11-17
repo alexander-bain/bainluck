@@ -407,27 +407,14 @@ struct SavedWidgetArt12466: Equatable, Sendable {
     // MARK: - Colours
 
     /// A bar's or stripe's two colours on a surface, away first.
+    /// Routes both light and dark surfaces through `TeamTextContrast` (Ruling 221 + Ruling 197).
     func barHexes(surfaceLuminance: Double) -> (away: String, home: String) {
-        if surfaceLuminance >= 0.5 {
-            return TeamTextContrast.cardColorHexes(
-                awayHex: away.primaryHex,
-                homeHex: home.primaryHex,
-                awaySecondaryHex: away.secondaryHex
-            )
-        }
-        func readableHex(_ hex: String?) -> String? {
-            guard let hex,
-                  let ratio = Self.contrast(hex, againstLuminance: surfaceLuminance),
-                  ratio >= TeamTextContrast.minimumRatio
-            else { return nil }
-            return hex
-        }
-        let awayPrimary = readableHex(away.primaryHex) ?? readableHex(away.secondaryHex)
-        let homePrimary = readableHex(home.primaryHex) ?? readableHex(home.secondaryHex)
-        return ProbabilityBarPalette.pair(
-            awayHex: awayPrimary,
-            homeHex: homePrimary,
-            awaySecondaryHex: readableHex(away.secondaryHex)
+        TeamTextContrast.surfaceColorHexes(
+            awayHex: away.primaryHex,
+            homeHex: home.primaryHex,
+            awaySecondaryHex: away.secondaryHex,
+            homeSecondaryHex: home.secondaryHex,
+            surfaceLuminance: surfaceLuminance
         )
     }
 
@@ -460,8 +447,7 @@ struct SavedWidgetArt12466: Equatable, Sendable {
 
     /// WCAG contrast of `hex` against a background of luminance `background`.
     static func contrast(_ hex: String, againstLuminance background: Double) -> Double? {
-        guard let l = TeamTextContrast.relativeLuminance(hex) else { return nil }
-        return (max(l, background) + 0.05) / (min(l, background) + 0.05)
+        TeamTextContrast.contrast(hex, againstSurfaceLuminance: background)
     }
 
     // MARK: - The bar

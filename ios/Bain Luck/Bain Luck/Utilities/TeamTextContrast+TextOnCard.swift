@@ -42,4 +42,45 @@ extension TeamTextContrast {
     static func textColorOnCard(_ hex: String?, fallback: String) -> Color {
         Color(hex: textHexOnCard(hex, fallback: fallback))
     }
+
+    /// Ruling 221 single-team text hex on a dark surface: primary when readable,
+    /// else secondary when readable, else lightened primary, else `fallback`
+    /// (floored to clear `surfaceLuminance`).
+    static func textHexOnDarkSurface(
+        _ primaryHex: String?,
+        secondaryHex: String? = nil,
+        fallback: String,
+        surfaceLuminance: Double = darkSurfaceLuminance
+    ) -> String {
+        if let resolved = usableOnDarkSurface(
+            primaryHex: primaryHex,
+            secondaryHex: secondaryHex,
+            surfaceLuminance: surfaceLuminance
+        ) {
+            return resolved
+        }
+        return lightenedForDarkSurface(fallback, surfaceLuminance: surfaceLuminance) ?? fallback
+    }
+
+    /// Colour-scheme-aware single-team text hex (`.light` uses `textHexOnCard`,
+    /// `.dark` uses Ruling 221 `textHexOnDarkSurface`).
+    static func textHexOnSurface(
+        _ primaryHex: String?,
+        secondaryHex: String? = nil,
+        fallback: String,
+        colorScheme: ColorScheme
+    ) -> String {
+        colorScheme == .dark
+            ? textHexOnDarkSurface(primaryHex, secondaryHex: secondaryHex, fallback: fallback)
+            : textHexOnCard(primaryHex, fallback: fallback)
+    }
+
+    static func textColorOnSurface(
+        _ primaryHex: String?,
+        secondaryHex: String? = nil,
+        fallback: String,
+        colorScheme: ColorScheme
+    ) -> Color {
+        Color(hex: textHexOnSurface(primaryHex, secondaryHex: secondaryHex, fallback: fallback, colorScheme: colorScheme))
+    }
 }
