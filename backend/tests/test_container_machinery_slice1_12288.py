@@ -477,12 +477,19 @@ async def test_admin_only_machinery_preview_blocks_public_and_serves_admin(
     from fastapi import HTTPException
     from app.routes import admin_utils
     from app.routes.containers import get_container, get_machinery_preview
+    from app.utils import container_corrections
 
     monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
     monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "false")
 
     snap = _sample_snapshot()
-    req_anon = SimpleNamespace(headers={}, url=SimpleNamespace(path="/api/containers/preview/machinery"))
+    req_signed_out = SimpleNamespace(
+        headers={}, url=SimpleNamespace(path="/api/containers/preview/machinery")
+    )
+    req_signed_in_non_admin = SimpleNamespace(
+        headers={"Authorization": "Bearer user-not-admin-token"},
+        url=SimpleNamespace(path="/api/containers/preview/machinery"),
+    )
     req_admin = SimpleNamespace(
         headers={"Authorization": "Bearer admin-ok"},
         url=SimpleNamespace(path="/api/containers/preview/machinery"),
@@ -492,14 +499,42 @@ async def test_admin_only_machinery_preview_blocks_public_and_serves_admin(
         auth = (getattr(request, "headers", None) or {}).get("Authorization", "")
         return auth == "Bearer admin-ok"
 
+    async def _fake_read_published(_db: Any, slug: str) -> Any:
+        return SimpleNamespace(
+            state=container_corrections.READ_UNAVAILABLE,
+            slug=slug,
+            revision=None,
+            members=[],
+        )
+
     monkeypatch.setattr(admin_utils, "_check_admin_auth", _fake_admin_auth)
+    monkeypatch.setattr("app.routes.containers.read_published", _fake_read_published)
 
-    # 1. Anonymous caller is denied on preview endpoint
-    with pytest.raises(HTTPException) as exc_info:
-        await get_machinery_preview(request=req_anon, slugs="machinery-nfl-week", db=snap)
-    assert exc_info.value.status_code == 403
+    # 1. Signed-out reader AND signed-in non-admin are both refused (403) on preview read
+    for caller in (req_signed_out, req_signed_in_non_admin):
+        with pytest.raises(HTTPException) as exc_preview:
+            await get_machinery_preview(request=caller, slugs="machinery-nfl-week", db=snap)
+        assert exc_preview.value.status_code == 403
 
-    # 2. Admin caller receives preview items + 227-A diversity_report while switch stays OFF
+        # 2. Both signed-out and signed-in non-admin are refused (404) on direct machinery-* page
+        with pytest.raises(HTTPException) as exc_direct:
+            await get_container(
+                request=caller,
+                slug="machinery-nfl-week",
+                include_children=True,
+                revision=None,
+                cursor=None,
+                limit=None,
+                market_revision=None,
+                market_cursor=None,
+                market_limit=None,
+                compact=True,
+                debug_timing=False,
+                db=snap,
+            )
+        assert exc_direct.value.status_code == 404
+
+    # 3. Admin caller receives preview items + 227-A diversity_report while switch stays OFF
     preview_res = await get_machinery_preview(
         request=req_admin, slugs="machinery-nfl-week,machinery-2028-presidential", db=snap
     )
@@ -511,7 +546,7 @@ async def test_admin_only_machinery_preview_blocks_public_and_serves_admin(
     ]
     assert preview_res["items"][0]["diversity_report"]["standard"] == "227-A"
 
-    # 3. Direct /api/containers/machinery-nfl-week returns 200 for admin while global switch is OFF
+    # 4. Direct /api/containers/machinery-nfl-week returns 200 for admin while global switch is OFF
     hub_res = await get_container(
         request=req_admin,
         slug="machinery-nfl-week",
@@ -528,3 +563,25 @@ async def test_admin_only_machinery_preview_blocks_public_and_serves_admin(
     )
     assert hub_res["slug"] == "machinery-nfl-week"
     assert hub_res["state"] == "published"
+
+    # 5. Even AFTER an admin previews, ROUNDUP_PRODUCERS holds zero machinery-* slugs
+    #    so neither a signed-out reader nor a signed-in non-admin sees any machinery card
+    #    on Discover, and both remain refused on subsequent direct reads.
+    assert [s for s in ROUNDUP_PRODUCERS if s.startswith("machinery-")] == []
+    for caller in (req_signed_out, req_signed_in_non_admin):
+        with pytest.raises(HTTPException) as exc_after:
+            await get_container(
+                request=caller,
+                slug="machinery-nfl-week",
+                include_children=True,
+                revision=None,
+                cursor=None,
+                limit=None,
+                market_revision=None,
+                market_cursor=None,
+                market_limit=None,
+                compact=True,
+                debug_timing=False,
+                db=snap,
+            )
+        assert exc_after.value.status_code == 404
