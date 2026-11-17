@@ -278,22 +278,14 @@ describe("#2279 — every surface routes the choice through one decision", () =>
     expect(definitions).toEqual([SHARED]);
   });
 
-  it("the menu bar only trusts the served pair when the pair CAME from current_odds", () => {
-    // 🔴 The menu bar's probability falls back to `openingOdds`. The served
-    // percents describe `currentOdds` and nothing else, so reading them on that
-    // branch prints one source's rounding beside another source's probability —
-    // and it still sums to 100, so no sum guard can see it.
+  it("the menu bar preserves the score row when no current chance is available", () => {
     const src = code(join(APP_ROOT, "Views/MenuBarView.swift"));
-    expect(src).toMatch(/let fromCurrentOdds = odds\?\.homeProbability != nil/);
-    expect(src).toMatch(/servedAway: fromCurrentOdds \? odds\?\.awayRenderedPercent : nil/);
-    expect(src).toMatch(/servedHome: fromCurrentOdds \? odds\?\.homeRenderedPercent : nil/);
-    // The flag has to be read BEFORE the guard that may substitute openingOdds,
-    // or it describes the wrong branch.
-    expect(src.indexOf("let fromCurrentOdds")).toBeLessThan(
-      src.indexOf("?? event.openingOdds?.homeProbability"),
-    );
-    // And the pair rule is the last word: no third-tier re-derivation.
-    expect(src).toMatch(/guard let awayPct = duel\[0\], let homePct = duel\[1\] else \{ return nil \}/);
+    expect(src).not.toMatch(/\bopeningOdds\b/);
+    expect(src).toMatch(/odds: event\.currentOdds,\s*heroSource: event\.heroProbabilitySource/);
+    expect(src).toMatch(/guard heroSource != OpeningLineHero\.openingSource/);
+    expect(src).toMatch(/servedAway: odds\.awayRenderedPercent,\s*servedHome: odds\.homeRenderedPercent/);
+    expect(src).toMatch(/homeProb: chance\.home,\s*awayProb: chance\.away/);
+    expect(src).toMatch(/if let homeProb = game\.homeProb/);
   });
 });
 
