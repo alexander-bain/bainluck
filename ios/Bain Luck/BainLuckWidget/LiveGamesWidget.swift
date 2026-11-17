@@ -5,9 +5,12 @@ import WidgetKit
 
 struct SmallLiveGameView: View {
     let entry: BainLuckWidgetEntry
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if let game = entry.liveGames.first {
+            let awayHex = game.resolvedAwayColor(for: colorScheme)
+            let homeHex = game.resolvedHomeColor(for: colorScheme)
             VStack(spacing: 6) {
                 // Sport + period badge
                 HStack {
@@ -29,7 +32,7 @@ struct SmallLiveGameView: View {
                     abbrev: game.awayAbbrev,
                     score: game.awayScore,
                     prob: game.awayProb,
-                    color: game.awayColor,
+                    color: awayHex,
                     isLeading: game.awayIsLeading
                 )
 
@@ -38,7 +41,7 @@ struct SmallLiveGameView: View {
                     abbrev: game.homeAbbrev,
                     score: game.homeScore,
                     prob: game.homeProb,
-                    color: game.homeColor,
+                    color: homeHex,
                     isLeading: game.homeIsLeading
                 )
 
@@ -47,8 +50,8 @@ struct SmallLiveGameView: View {
                 // Probability bar
                 probabilityBar(
                     homeProb: game.homeProb,
-                    homeColor: game.homeColor,
-                    awayColor: game.awayColor,
+                    homeColor: homeHex,
+                    awayColor: awayHex,
                     awayIsWithheld: game.awayProb == nil
                 )
             }
@@ -127,6 +130,7 @@ struct SmallLiveGameView: View {
 
 struct MediumLiveGamesView: View {
     let entry: BainLuckWidgetEntry
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if entry.liveGames.isEmpty && entry.discoverItems.isEmpty {
@@ -198,7 +202,7 @@ struct MediumLiveGamesView: View {
                 HStack(spacing: 4) {
                     // Team color dot
                     Circle()
-                        .fill(Color(hex: game.awayColor ?? "#666666"))
+                        .fill(Color(hex: game.resolvedAwayColor(for: colorScheme) ?? "#666666"))
                         .frame(width: 6, height: 6)
                     Text(game.awayAbbrev)
                         .font(.system(size: 11, weight: .medium))
@@ -218,7 +222,7 @@ struct MediumLiveGamesView: View {
                         .font(.system(size: 11, weight: .medium))
                         .frame(width: 28, alignment: .trailing)
                     Circle()
-                        .fill(Color(hex: game.homeColor ?? "#0A84FF"))
+                        .fill(Color(hex: game.resolvedHomeColor(for: colorScheme) ?? "#0A84FF"))
                         .frame(width: 6, height: 6)
 
                     Spacer()
@@ -318,6 +322,7 @@ struct MediumLiveGamesView: View {
 
 struct LargeDashboardView: View {
     let entry: BainLuckWidgetEntry
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if entry.liveGames.isEmpty && entry.discoverItems.isEmpty {
@@ -377,7 +382,7 @@ struct LargeDashboardView: View {
                 // Away team
                 HStack(spacing: 6) {
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(Color(hex: game.awayColor ?? "#666666"))
+                        .fill(Color(hex: game.resolvedAwayColor(for: colorScheme) ?? "#666666"))
                         .frame(width: 4, height: 24)
 
                     VStack(alignment: .leading, spacing: 1) {
@@ -416,7 +421,7 @@ struct LargeDashboardView: View {
                     .frame(width: 40, alignment: .trailing)
 
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(Color(hex: game.homeColor ?? "#0A84FF"))
+                        .fill(Color(hex: game.resolvedHomeColor(for: colorScheme) ?? "#0A84FF"))
                         .frame(width: 4, height: 24)
                 }
 

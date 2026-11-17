@@ -87,6 +87,7 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
         clockFooter: String?,
         isOffline: Bool,
         clearsRefreshTrailing: Bool,
+        surfaceLuminance: Double = SavedWidgetArt12466.lightSurfaceLuminance,
         now: Date = Date(),
         timeZone: TimeZone = .current
     ) -> SavedGameHeadlineWidgetModel12616 {
@@ -96,9 +97,9 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
             return .before
         }()
 
-        let lightHexes = art.barHexes(surfaceLuminance: SavedWidgetArt12466.lightSurfaceLuminance)
-        let quietAwayHex = TeamTextContrast.quietLineHex(lightHexes.away)
-        let quietHomeHex = TeamTextContrast.quietLineHex(lightHexes.home)
+        let surfaceHexes = art.barHexes(surfaceLuminance: surfaceLuminance)
+        let quietAwayHex = TeamTextContrast.quietLineHex(surfaceHexes.away, surfaceLuminance: surfaceLuminance)
+        let quietHomeHex = TeamTextContrast.quietLineHex(surfaceHexes.home, surfaceLuminance: surfaceLuminance)
         let badgeHexes = art.fillHexes()
 
         let awayRow = reading.rows[0]
@@ -149,7 +150,7 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
                 shortName: shortName,
                 abbreviation: abbr,
                 crestFillHex: isHome ? badgeHexes.home : badgeHexes.away,
-                teamInkHex: isHome ? lightHexes.home : lightHexes.away,
+                teamInkHex: isHome ? surfaceHexes.home : surfaceHexes.away,
                 figure: r.figure ?? "—",
                 projectedText: proj,
                 liveProjectedText: liveProj,
@@ -508,11 +509,12 @@ struct SavedHeadlineCrest12616: View {
     let fillHex: String
     let size: CGFloat
     var fullColor: Bool = true
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ZStack {
             if let image = SavedWidgetLogos12466.image(png) {
-                Circle().fill(fullColor ? Color(hex: "#F3F4F6") : Color.primary.opacity(0.14))
+                Circle().fill(fullColor ? (colorScheme == .dark ? Color.white : Color(hex: "#F3F4F6")) : Color.primary.opacity(0.14))
                 Image(decorative: image, scale: 1)
                     .resizable()
                     .interpolation(.high)
@@ -528,6 +530,11 @@ struct SavedHeadlineCrest12616: View {
                     .padding(size * 0.1)
             }
         }
+        .overlay {
+            if fullColor && colorScheme == .dark && SavedWidgetLogos12466.image(png) == nil {
+                Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+            }
+        }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
     }
@@ -541,6 +548,14 @@ private enum SavedHeadlineTokens12616 {
     static let liveRed = Color(hex: "#DC2626")
     static let wonEmerald = Color(hex: "#059669")
 
+    static let darkInkPrimary = Color(hex: "#F9FAFB")
+    static let darkInkSecondary = Color(hex: "#9CA3AF")
+    static let darkInkContext = Color(hex: "#D1D5DB")
+    static let darkQuietLeadInk = Color(hex: "#D1D5DB")
+    static let darkQuietConnectorInk = Color(hex: "#9CA3AF")
+    static let darkDrawInk = Color(hex: "#CBD5E1")
+    static let darkWonEmerald = Color(hex: "#34D399")
+
     static let mediumLeadingColWidth: CGFloat = 38
     static let mediumPregameColWidth: CGFloat = 52
     static let mediumPrimaryColWidth: CGFloat = 54
@@ -553,12 +568,14 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
     let homeLogo: Data?
     var fullColor: Bool = true
     @ViewBuilder let bar: () -> BarContent
+    @Environment(\.colorScheme) private var colorScheme
 
-    private var inkPrimary: Color { SavedHeadlineTokens12616.inkPrimary }
-    private var inkSecondary: Color { SavedHeadlineTokens12616.inkSecondary }
-    private var inkContext: Color { SavedHeadlineTokens12616.inkContext }
+    private var isDark: Bool { colorScheme == .dark }
+    private var inkPrimary: Color { isDark ? SavedHeadlineTokens12616.darkInkPrimary : SavedHeadlineTokens12616.inkPrimary }
+    private var inkSecondary: Color { isDark ? SavedHeadlineTokens12616.darkInkSecondary : SavedHeadlineTokens12616.inkSecondary }
+    private var inkContext: Color { isDark ? SavedHeadlineTokens12616.darkInkContext : SavedHeadlineTokens12616.inkContext }
     private var liveRed: Color { SavedHeadlineTokens12616.liveRed }
-    private var wonEmerald: Color { SavedHeadlineTokens12616.wonEmerald }
+    private var wonEmerald: Color { isDark ? SavedHeadlineTokens12616.darkWonEmerald : SavedHeadlineTokens12616.wonEmerald }
     private var mediumLeadingColWidth: CGFloat { SavedHeadlineTokens12616.mediumLeadingColWidth }
     private var mediumPregameColWidth: CGFloat { SavedHeadlineTokens12616.mediumPregameColWidth }
     private var mediumPrimaryColWidth: CGFloat { SavedHeadlineTokens12616.mediumPrimaryColWidth }
@@ -946,16 +963,19 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
     private func composedSegmentsText(_ segments: [SavedGameHeadlineWidgetModel12616.TextSegment]) -> Text {
         let awayInk = Color(hex: model.quietAwayInkHex)
         let homeInk = Color(hex: model.quietHomeInkHex)
+        let quietLeadInk = isDark ? SavedHeadlineTokens12616.darkQuietLeadInk : HeadlineStyleTable199.quietInk
+        let quietConnector = isDark ? SavedHeadlineTokens12616.darkQuietConnectorInk : SavedHeadlineTokens12616.quietConnectorInk
+        let drawInk = isDark ? SavedHeadlineTokens12616.darkDrawInk : HeadlineStyleTable199.drawInk
         return segments.reduce(Text("")) { partial, seg in
             switch seg.ink {
             case .quietLead:
                 return partial + Text(seg.text)
                     .fontWeight(.semibold)
-                    .foregroundColor(HeadlineStyleTable199.quietInk)
+                    .foregroundColor(quietLeadInk)
             case .quiet:
                 return partial + Text(seg.text)
                     .fontWeight(.regular)
-                    .foregroundColor(SavedHeadlineTokens12616.quietConnectorInk)
+                    .foregroundColor(quietConnector)
             case .awayTeam:
                 return partial + Text(seg.text)
                     .fontWeight(.bold)
@@ -967,7 +987,7 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
             case .drawOutcome:
                 return partial + Text(seg.text)
                     .fontWeight(.bold)
-                    .foregroundColor(HeadlineStyleTable199.drawInk)
+                    .foregroundColor(drawInk)
             case .emerald:
                 return partial + Text(seg.text)
                     .fontWeight(.semibold)
