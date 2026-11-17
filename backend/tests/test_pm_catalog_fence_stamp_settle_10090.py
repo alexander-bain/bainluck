@@ -111,6 +111,21 @@ async def _turns(seconds):
     await asyncio.sleep(seconds)
 
 
+async def _until(predicate, limit=2.0):
+    """Wait for ``predicate`` instead of sampling it after a fixed sleep.
+
+    #12766's CI (Nov 15, run 43782950228) failed "game A's stamp waited for the
+    standalone write" after a 50 ms sample on a loaded runner. Each wait here is
+    inside a window the test itself holds open (the standalone write is parked
+    until ``standalone_release``; A's stamp until ``x.release``), so waiting
+    longer can only let the property show; it can never make a wrong order pass.
+    """
+    deadline = asyncio.get_running_loop().time() + limit
+    while not predicate() and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.005)
+    return bool(predicate())
+
+
 async def _root_order(monkeypatch):
     """Root's order: standalone write active; handover starts; A arrives;
     standalone write clears; B arrives while A's stamp is held; release."""
@@ -138,18 +153,19 @@ async def _root_order(monkeypatch):
                 await asyncio.sleep(0)
         p.ns["price_buffer"].update(r.games["A"])
         a = asyncio.create_task(p.ns["flush_prices"](flush_started=1000))
-        await _turns(0.05)
-        out["a_written_during_standalone_drain"] = {1, 2} <= r.written
-        out["a_stamp_started_during_standalone_drain"] = stamp_running(1)
+        # The standalone write is still parked: A must write and start its stamp now.
+        out["a_written_during_standalone_drain"] = await _until(lambda: {1, 2} <= r.written)
+        out["a_stamp_started_during_standalone_drain"] = await _until(lambda: stamp_running(1))
+        assert not standalone.done(), "premise: the standalone write is still parked"
         r.standalone_release.set()
         await asyncio.wait_for(standalone, 2)
         await _turns(0.05)
         p.ns["price_buffer"].update(r.games["B"])
         b = asyncio.create_task(p.ns["flush_prices"](flush_started=1001))
-        await _turns(0.1)
+        # A's stamp is held until x.release: B must write and publish meanwhile.
+        out["b_written_while_a_stamp_held"] = await _until(lambda: {900, 901} <= r.written)
+        out["b_published_while_a_stamp_held"] = await _until(lambda: 2 in x.published)
         out["a_stamp_held"] = stamp_running(1)
-        out["b_written_while_a_stamp_held"] = {900, 901} <= r.written
-        out["b_published_while_a_stamp_held"] = 2 in x.published
         out["catalog_completed_while_a_stamp_held"] = mapped.is_set()
         x.release.set()
         await asyncio.wait_for(asyncio.gather(h, a, b), 2)

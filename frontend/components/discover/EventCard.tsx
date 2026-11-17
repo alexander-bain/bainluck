@@ -67,7 +67,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
     fetchEventHistory(data.id, 48, "since_start")
       .then((res) => {
         if (!cancelled) {
-          setChartPoints183A(extractDiscoverChartPointsFromHistory(res));
+          setChartPoints183A(extractDiscoverChartPointsFromHistory(res, data.sport));
         }
       })
       .catch(() => {

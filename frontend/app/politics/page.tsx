@@ -18,6 +18,7 @@ import ErrorState from "@/components/ErrorState";
 import PoliticsSkeleton from "@/components/skeletons/PoliticsSkeleton";
 import Sparkline from "@/components/Sparkline";
 import { formatAsOfStamp } from "@/lib/asOfStamp";
+import { manyWayChartCeiling, manyWayChartYTicks } from "@/lib/chartScaleRule201";
 import { NEVER_A_HOLE_MS, seriesFreshness, seriesWindowLabel } from "@/lib/seriesFreshness";
 import s from "./politics.module.css";
 import { SourceBadge } from "@/components/politics/atoms";
@@ -450,10 +451,11 @@ function PresEvolution({ candidates, sourceMode }: {
 
   const allVals = series.flatMap((sr) => sr.pts.map((p) => p.p));
   if (allVals.length === 0) return null;
-  const yMax = Math.max(...allVals) * 1.15;
+  const ceiling = manyWayChartCeiling(Math.max(...allVals) / 100);
+  const yMax = ceiling * 100;
   const yMin = 0;
 
-  const gridLines = [5, 10, 15, 20, 25, 30, 40, 50].filter((v) => v <= yMax);
+  const gridLines = manyWayChartYTicks(ceiling).filter((v) => v > yMin);
 
   return (
     <div className={s.evoWrap}>

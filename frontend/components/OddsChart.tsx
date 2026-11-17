@@ -27,9 +27,15 @@ import {
   chartAxisToHomeProb,
   chartAxisPercents,
   computeWinProbYAxis,
+  FULL_WIN_PROB_Y_AXIS,
   teamAxisEdges,
   teamAxisTick,
 } from "@/lib/eventKeyStats";
+import {
+  extractThreeWaySample,
+  normalizeSoccerThreeWayPercents,
+  SOCCER_DRAW_LINE_HEX,
+} from "@/lib/chartScaleRule201";
 import { chartTooltipCells, chartTooltipPair } from "@/lib/drawPricedWinner";
 import {
   CHART_TOOLTIP_COMPACT_MEDIA_QUERY,
@@ -40,7 +46,12 @@ import { separateLinesLabel, sourceHex, sourceLabel } from "@/lib/sourceColors";
 import { teamShortNames } from "@/lib/teamShortName";
 import { useAxisPoleFit } from "@/hooks/useAxisPoleFit";
 import { axisPoleStyle, axisLabelStyle } from "@/lib/axisPoleFit";
-import { resolveMatchupTeamColors, teamTextColor } from "@/lib/teamColors";
+import {
+  effectiveAwaySecondaryColor,
+  lookupTeamColors,
+  resolveMatchupTeamColors,
+  teamTextColor,
+} from "@/lib/teamColors";
 import { createChartTimestampMs } from "@/lib/chartTimestampMs";
 import { useAnalyticsContext } from "@/components/Analytics";
 import type {
@@ -572,6 +583,10 @@ interface ChartDataPoint {
   espnDelta: number | null;
   /** Bain Luck aggregated win probability, 0–100 (multi-source mode) */
   bainLuckDelta: number | null;
+  /** Ruling 211-A: three-way soccer probabilities on 0–100 (Home, Draw, Away) */
+  soccerHomeDelta?: number | null;
+  soccerDrawDelta?: number | null;
+  soccerAwayDelta?: number | null;
   /**
    * #10090 — the exact `aggregateLine` timestamp whose value `bainLuckDelta`
    * holds on this row, written with it and carried with it, so the callout can
@@ -2018,8 +2033,16 @@ export default function OddsChart({
       bainLuckDelta: null,
     }), labelFormat);
 
+    const soccerThreeWaySpecs: Array<{
+      awayKey: string;
+      drawKey: string;
+      supportKey: string;
+      weight: number;
+    }> = [];
+
     // Add aggregate data points (betting odds consensus). Values are the raw
     // home win probability on a 0–100 axis (single-axis, not ±50 delta).
+    let hasBettingThreeWay = false;
     for (const point of filteredHistory) {
       const delta =
         point.home_probability !== null
@@ -2029,6 +2052,13 @@ export default function OddsChart({
       const dp = ensurePoint(point.timestamp);
       dp.homeDelta = delta;
 
+      const threeWay = awayWithheld ? extractThreeWaySample(point, sportKey) : null;
+      if (threeWay) {
+        hasBettingThreeWay = true;
+        dp.__s3_betting_away = homeProbToChartAxis(threeWay.away);
+        dp.__s3_betting_draw = homeProbToChartAxis(threeWay.draw);
+      }
+
       // Expand valid_until
       if (point.valid_until) {
         const endTime = parseISO(point.valid_until);
@@ -2036,8 +2066,24 @@ export default function OddsChart({
         if (endTime.getTime() - startTime.getTime() > 60000) {
           const endDp = ensurePoint(point.valid_until);
           if (endDp.homeDelta === null) endDp.homeDelta = delta;
+          if (threeWay) {
+            if (endDp.__s3_betting_away === undefined) {
+              endDp.__s3_betting_away = homeProbToChartAxis(threeWay.away);
+            }
+            if (endDp.__s3_betting_draw === undefined) {
+              endDp.__s3_betting_draw = homeProbToChartAxis(threeWay.draw);
+            }
+          }
         }
       }
+    }
+    if (hasBettingThreeWay) {
+      soccerThreeWaySpecs.push({
+        awayKey: "__s3_betting_away",
+        drawKey: "__s3_betting_draw",
+        supportKey: "homeDelta",
+        weight: 3.0,
+      });
     }
 
     // Add bookmaker lines (single line per bookmaker - home prob delta)
@@ -2082,11 +2128,15 @@ export default function OddsChart({
     if (useNewWinProbData) {
       for (const [sourceKey, points] of Object.entries(filteredWinProbHistory)) {
         const dataKey = `wp_${sourceKey}_delta`;
+        const awayKey = `__s3_wp_${sourceKey}_away`;
+        const drawKey = `__s3_wp_${sourceKey}_draw`;
+        let hasSourceThreeWay = false;
         for (const point of points) {
           const delta =
             point.home_probability !== null
               ? homeProbToChartAxis(point.home_probability)
               : null;
+          const threeWay = awayWithheld ? extractThreeWaySample(point, sportKey) : null;
 
           const dp = ensurePoint(point.timestamp);
           if (delta === null && point.game_state?.live_source_withdrawal === true) {
@@ -2095,14 +2145,33 @@ export default function OddsChart({
             // the previous minute through the ordinary gap fill (#11272).
             const keys = withdrawn.get(dp.timestamp) ?? new Set<string>();
             keys.add(dataKey);
+            keys.add(awayKey);
+            keys.add(drawKey);
             withdrawn.set(dp.timestamp, keys);
             if (typeof dp[dataKey] !== "number") dp[dataKey] = null;
           } else if (delta !== null) {
             dp[dataKey] = delta;
             withdrawn.get(dp.timestamp)?.delete(dataKey);
+            if (threeWay) {
+              hasSourceThreeWay = true;
+              dp[awayKey] = homeProbToChartAxis(threeWay.away);
+              dp[drawKey] = homeProbToChartAxis(threeWay.draw);
+              withdrawn.get(dp.timestamp)?.delete(awayKey);
+              withdrawn.get(dp.timestamp)?.delete(drawKey);
+            }
           } else if (!withdrawn.get(dp.timestamp)?.has(dataKey)) {
             dp[dataKey] = null;
           }
+        }
+        if (hasSourceThreeWay) {
+          const w =
+            sourceKey === "espn" ? 1.5 : sourceKey === "stat_model" ? 1.0 : 0.8;
+          soccerThreeWaySpecs.push({
+            awayKey,
+            drawKey,
+            supportKey: dataKey,
+            weight: w,
+          });
         }
       }
 
@@ -2214,7 +2283,8 @@ export default function OddsChart({
     );
 
     // Every key this chart draws (see `plottedProbKeys`) gets forward-filled.
-    const probKeys = plottedProbKeys;
+    const soccerCarryKeys = soccerThreeWaySpecs.flatMap((s) => [s.awayKey, s.drawKey]);
+    const probKeys = [...plottedProbKeys, ...soccerCarryKeys];
 
     const lastKnown: Record<string, number | null> = {};
     for (const key of probKeys) {
@@ -2268,8 +2338,17 @@ export default function OddsChart({
     // to the next observation and the `type="linear"` line steps to it on that
     // minute, exactly as it does between any two adjacent observations. No
     // break, no connector, nothing in the tooltip names the stretch.
-    for (const key of probKeys) {
-      const support = observationSupport[key];
+    const supportTargetKeys = new Map<string, string[]>();
+    for (const key of plottedProbKeys) {
+      supportTargetKeys.set(key, [key]);
+    }
+    for (const spec of soccerThreeWaySpecs) {
+      const existing = supportTargetKeys.get(spec.supportKey) ?? [];
+      existing.push(spec.awayKey, spec.drawKey);
+      supportTargetKeys.set(spec.supportKey, existing);
+    }
+    for (const [supportKey, targetKeys] of supportTargetKeys.entries()) {
+      const support = observationSupport[supportKey];
       if (!support) continue;
       for (const iv of support.unsupported) {
         if (iv.kind !== "trailing") continue;
@@ -2277,7 +2356,55 @@ export default function OddsChart({
         for (const pt of sorted) {
           // Every minute after the last reading is withdrawn, live edge
           // included.
-          if (chartTimestampMs(pt.timestamp) > fromMinute) pt[key] = null;
+          if (chartTimestampMs(pt.timestamp) > fromMinute) {
+            for (const tk of targetKeys) pt[tk] = null;
+          }
+        }
+      }
+    }
+
+    // Ruling 211-A: populate blended/primary three-way soccer columns (`soccerHomeDelta`,
+    // `soccerDrawDelta`, `soccerAwayDelta`) on 0–100 whenever genuine 3-way observations exist.
+    if (awayWithheld && soccerThreeWaySpecs.length > 0) {
+      for (const pt of sorted) {
+        const homeVal = primaryValueAt(pt);
+        if (homeVal === null) {
+          pt.soccerHomeDelta = null;
+          pt.soccerDrawDelta = null;
+          pt.soccerAwayDelta = null;
+          continue;
+        }
+        let wSum = 0;
+        let awayWeighted = 0;
+        let drawWeighted = 0;
+        for (const spec of soccerThreeWaySpecs) {
+          const a = pt[spec.awayKey];
+          const d = pt[spec.drawKey];
+          if (typeof a === "number" && Number.isFinite(a) && typeof d === "number" && Number.isFinite(d)) {
+            wSum += spec.weight;
+            awayWeighted += spec.weight * a;
+            drawWeighted += spec.weight * d;
+          }
+        }
+        if (wSum > 0) {
+          const rawAway = awayWeighted / wSum;
+          const rawDraw = drawWeighted / wSum;
+          const norm = normalizeSoccerThreeWayPercents(homeVal, rawDraw, rawAway, {
+            preserveHome: showBlendLine,
+          });
+          if (norm) {
+            pt.soccerHomeDelta = norm.home;
+            pt.soccerDrawDelta = norm.draw;
+            pt.soccerAwayDelta = norm.away;
+          } else {
+            pt.soccerHomeDelta = null;
+            pt.soccerDrawDelta = null;
+            pt.soccerAwayDelta = null;
+          }
+        } else {
+          pt.soccerHomeDelta = null;
+          pt.soccerDrawDelta = null;
+          pt.soccerAwayDelta = null;
         }
       }
     }
@@ -2299,7 +2426,19 @@ export default function OddsChart({
   // by the naive-mean fallback that no longer exists. `showBlendLine` added: it
   // now decides whether `bainLuckDelta` is written at all. (`timeRange` is also
   // unread here, but it predates this change and is left alone.)
-  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, showBlendLine, filteredAggregateLine, scoringPlays, timeRange, periodBoundaries, plottedProbKeys, observationSupport, checkpointWindow]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, showBlendLine, filteredAggregateLine, scoringPlays, timeRange, periodBoundaries, plottedProbKeys, observationSupport, checkpointWindow, awayWithheld, sportKey]);
+
+  const hasSoccerThreeLines = useMemo(
+    () =>
+      awayWithheld &&
+      chartData.some(
+        (pt) =>
+          typeof pt.soccerHomeDelta === "number" &&
+          typeof pt.soccerDrawDelta === "number" &&
+          typeof pt.soccerAwayDelta === "number",
+      ),
+    [awayWithheld, chartData],
+  );
 
   // Report the chart's actual rendered time domain to parent so
   // ScoreDifferentialChart can match its x-axis exactly.
@@ -2633,6 +2772,8 @@ export default function OddsChart({
   }, [chartData, primaryMinuteRanges]);
 
   const { domain: yDomain, ticks: yTicks } = useMemo(() => {
+    // Ruling 201 (#12750): draw-priced 3-way soccer charts always keep 0 to 100.
+    if (awayWithheld) return FULL_WIN_PROB_Y_AXIS;
     const values: number[] = [];
     const lastByKey = new Map<string, number>();
     // #11356 — a revealed source line is a comparison the reader asked for, so
@@ -2667,7 +2808,7 @@ export default function OddsChart({
     const lastCheckpoint = latestCheckpoint(drawableCheckpoints);
     if (lastCheckpoint) lastByKey.set("publicationCheckpoint", homeProbToChartAxis(lastCheckpoint.p));
     return computeWinProbYAxis(values, [...lastByKey.values(), ...rangeEnds, ...revealedExtremes]);
-  }, [chartData, axisProbKeys, showBlendLine, legendExpanded, resolvedSources, drawnMinuteRanges, drawableCheckpoints]);
+  }, [chartData, axisProbKeys, showBlendLine, legendExpanded, resolvedSources, drawnMinuteRanges, drawableCheckpoints, awayWithheld]);
 
   /**
    * #7940 — which end of the plot the period-label strip is painted at.
@@ -3075,13 +3216,25 @@ export default function OddsChart({
     if (edge.side === "even") return `the ${where} of this ${noun} is 50/50.`;
     return `the ${where} of this ${noun} is ${sideName(edge.side)} at ${edge.percent}%.`;
   };
+  const awayCurated = lookupTeamColors(awayTeam);
+  const homeCurated = lookupTeamColors(homeTeam);
+  const resolvedAwaySec = effectiveAwaySecondaryColor(awayTeam, awayTeamSecondaryColor);
   const resolvedTeamColors = resolveMatchupTeamColors({
-    homePrimary: homeTeamColor,
-    awayPrimary: awayTeamColor,
-    awaySecondary: awayTeamSecondaryColor,
+    homePrimary: homeTeamColor ?? homeCurated?.primary,
+    awayPrimary: awayTeamColor ?? awayCurated?.primary,
+    awaySecondary: resolvedAwaySec,
   });
   const effectiveHomeTeamColor = resolvedTeamColors.home ?? homeTeamColor;
   const effectiveAwayTeamColor = resolvedTeamColors.away ?? awayTeamColor;
+  const soccerHomeLineHex =
+    teamTextColor(effectiveHomeTeamColor) ??
+    teamTextColor(homeTeamColor) ??
+    "#2563EB";
+  const soccerAwayLineHex =
+    teamTextColor(effectiveAwayTeamColor) ??
+    teamTextColor(resolvedAwaySec ?? awayTeamSecondaryColor) ??
+    "#64748B";
+  const soccerDrawLineHex = SOCCER_DRAW_LINE_HEX;
   const tickInk = {
     home: teamTextColor(effectiveHomeTeamColor) || "#16a34a",
     away: teamTextColor(effectiveAwayTeamColor) || "#2563eb",
@@ -3344,6 +3497,34 @@ export default function OddsChart({
               </div>
             );
           })()}
+
+          {/* Ruling 211-A: three-way soccer probabilities (Home, Draw, Away) */}
+          {hasSoccerThreeLines &&
+            typeof matchingPoint?.soccerHomeDelta === "number" &&
+            typeof matchingPoint?.soccerDrawDelta === "number" &&
+            typeof matchingPoint?.soccerAwayDelta === "number" && (() => {
+              const fmtTriple = (v: number) =>
+                tenths ? `${v.toFixed(1)}%` : `${Math.round(v)}%`;
+              return (
+                <div
+                  className="mb-2 pb-2 border-b border-surface-border space-y-0.5 text-xs tabular-nums"
+                  data-testid="soccer-three-way-tooltip"
+                >
+                  <div className="flex items-center justify-between gap-3 font-semibold" style={{ color: soccerHomeLineHex }}>
+                    <span>{homeShort}</span>
+                    <span>{fmtTriple(matchingPoint.soccerHomeDelta)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 font-medium" style={{ color: soccerDrawLineHex }}>
+                    <span>Draw</span>
+                    <span>{fmtTriple(matchingPoint.soccerDrawDelta)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 font-semibold" style={{ color: soccerAwayLineHex }}>
+                    <span>{awayShort}</span>
+                    <span>{fmtTriple(matchingPoint.soccerAwayDelta)}</span>
+                  </div>
+                </div>
+              );
+            })()}
 
           {/* #925 — at phone width the same numbers as a table: one row per
               source, one column per team, so each source costs one line instead
@@ -3705,10 +3886,10 @@ export default function OddsChart({
             `aria-hidden` on the caret and a real sentence in `sr-only`: a
             screen reader cannot see which end of a gutter a label is at, so the
             glyph carries nothing for it and the sentence carries everything. */}
-        {/* #11356 — the gutter is drawn in every state: one line, two poles.
-            Each pole is a DIRECTION, and its spoken sentence names the reading
-            at that edge of the window actually drawn — "100%" only where the
-            edge is the end of the scale, never at a zoomed crop. */}
+        {/* #11356 — the gutter is drawn in every two-pole / one-line state:
+            when three soccer lines (Home, Draw, Away) are drawn (Ruling 211-A),
+            "up" belongs to no single team, so the one-team pole gutter is hidden. */}
+        {!hasSoccerThreeLines && (
         <div
           ref={axisGutterRef}
           className="flex flex-col items-center justify-between py-3 shrink-0"
@@ -3770,6 +3951,7 @@ export default function OddsChart({
             </div>
           )}
         </div>
+        )}
 
         {/* Chart area. #10249: Recharts' own touch handling never ends an
             inspection, so the last finger lifting ends it here. */}
@@ -4011,6 +4193,7 @@ export default function OddsChart({
                 line the axis is not sized to is not painted under it. */}
             {sourceLinesShown && resolvedSources.map((source) => {
               const isPrimarySource = source.dataKey === primarySeriesKey;
+              if (hasSoccerThreeLines && !legendExpanded) return null;
               return (
               <Line
                 key={source.dataKey}
@@ -4080,8 +4263,47 @@ export default function OddsChart({
 
             {/* Area fill removed — was causing green semi-circle artifacts */}
 
+            {/* Ruling 211-A: soccer charts draw all three lines — Home, Draw (lighter grey), and Away — on 0 to 100 */}
+            {hasSoccerThreeLines && (
+              <>
+                <Line
+                  type="linear"
+                  dataKey="soccerDrawDelta"
+                  name="Draw"
+                  stroke={soccerDrawLineHex}
+                  strokeWidth={2}
+                  dot={false}
+                  isAnimationActive={false}
+                  activeDot={{ r: 4, fill: soccerDrawLineHex }}
+                  connectNulls={showBlendLine}
+                />
+                <Line
+                  type="linear"
+                  dataKey="soccerAwayDelta"
+                  name={awayShort}
+                  stroke={soccerAwayLineHex}
+                  strokeWidth={2.75}
+                  dot={false}
+                  isAnimationActive={false}
+                  activeDot={{ r: 4.5, fill: soccerAwayLineHex }}
+                  connectNulls={showBlendLine}
+                />
+                <Line
+                  type="linear"
+                  dataKey="soccerHomeDelta"
+                  name={homeShort}
+                  stroke={soccerHomeLineHex}
+                  strokeWidth={2.75}
+                  dot={false}
+                  isAnimationActive={false}
+                  activeDot={{ r: 5, fill: soccerHomeLineHex }}
+                  connectNulls={showBlendLine}
+                />
+              </>
+            )}
+
             {/* ── MODE A: Multi-source — aggregated Bain Luck line (prominent, on top) ── */}
-            {showBlendLine && !legacyBlendSides && (
+            {!hasSoccerThreeLines && showBlendLine && !legacyBlendSides && (
               <Line
                 type="linear"
                 dataKey="bainLuckDelta"
@@ -4100,7 +4322,7 @@ export default function OddsChart({
                 sit (a window inside one minute has no row of its own to break
                 on), and each side keeps today's `connectNulls`. They only READ
                 `bainLuckDelta`; the tooltip reads the row (`tooltipType`). */}
-            {showBlendLine && legacyBlendSides &&
+            {!hasSoccerThreeLines && showBlendLine && legacyBlendSides &&
               legacyBlendSides.map((side) => (
                 <Line
                   key={side.key}
@@ -4155,7 +4377,7 @@ export default function OddsChart({
             {/* ── MODE B: Sportsbooks-only — betting odds line (solid, prominent, on top).
                 Dark slate (#0f172a), NOT the old near-white #e5e7eb that vanished on
                 the light-mode card (L2-131 "the blend line absent/gray"). ── */}
-            {!isMultiSource && (
+            {!hasSoccerThreeLines && !isMultiSource && (
               <Line
                 type="linear"
                 dataKey="homeDelta"
@@ -4274,9 +4496,11 @@ export default function OddsChart({
                 }) => {
                   if (props.payload?.calloutDelta == null) return <g />;
                   const { cx = 0, cy = 0 } = props;
-                  const fillColor = showBlendLine
-                    ? BAIN_LUCK_CONFIG.color
-                    : sourceHex("betting");
+                  const fillColor = hasSoccerThreeLines
+                    ? soccerHomeLineHex
+                    : showBlendLine
+                      ? BAIN_LUCK_CONFIG.color
+                      : sourceHex("betting");
                   // #4338 — the plate under the number. Anchored `end` at
                   // `cx - CALLOUT_GAP_PX`, so the glyphs run LEFT from there.
                   // #6858 — the boundary rule's answer, not the bare integer:
@@ -4546,10 +4770,45 @@ export default function OddsChart({
         style={fillContainer ? { justifyContent: "safe center" } : undefined}
         data-testid="chart-source-legend"
       >
+        {/* Ruling 211-A: three-line soccer legend (Home, Draw, Away) */}
+        {hasSoccerThreeLines && (
+          <div
+            className="flex items-center gap-3"
+            style={fillContainer ? { order: -2 } : undefined}
+            data-testid="soccer-three-line-legend"
+          >
+            <div className="flex items-center gap-1.5">
+              <svg width="18" height="4" className="shrink-0">
+                <line x1="0" y1="2" x2="18" y2="2" stroke={soccerHomeLineHex} strokeWidth="2.75" />
+              </svg>
+              <span className="text-xs font-semibold" style={{ color: soccerHomeLineHex }}>
+                {homeShort}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <svg width="18" height="4" className="shrink-0">
+                <line x1="0" y1="2" x2="18" y2="2" stroke={soccerDrawLineHex} strokeWidth="2" />
+              </svg>
+              <span className="text-xs font-medium" style={{ color: soccerDrawLineHex }}>
+                Draw
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <svg width="18" height="4" className="shrink-0">
+                <line x1="0" y1="2" x2="18" y2="2" stroke={soccerAwayLineHex} strokeWidth="2.75" />
+              </svg>
+              <span className="text-xs font-semibold" style={{ color: soccerAwayLineHex }}>
+                {awayShort}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Multi-source mode: Bain Luck aggregated line first (always labeled).
             #1003: gated on showBlendLine, not isMultiSource — a legend entry for a
             line the chart did not draw is the same false claim as the line. */}
         {showBlendLine && (
+          !hasSoccerThreeLines ? (
           <div className="flex items-center gap-1.5" style={fillContainer ? { order: -2 } : undefined}>
             <svg width="20" height="4" className="shrink-0">
               <line
@@ -4562,6 +4821,7 @@ export default function OddsChart({
               {BAIN_LUCK_CONFIG.displayName}
             </span>
           </div>
+          ) : null
         )}
 
         {/* Multi-source: the individual source lines stay collapsed behind an

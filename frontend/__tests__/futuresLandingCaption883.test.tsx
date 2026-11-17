@@ -62,7 +62,7 @@ const history = (bills: ReturnType<typeof point>[]) => ({
 describe("#883 futures landing caption", () => {
   it("names the drawn leader's move over the visible range, dated, in whole points", () => {
     const text = caption(history([point(1, 0.08), point(2, 0.1), point(4, 0.1125)]));
-    expect(text).toBe("Buffalo Bills up 3 pts since Oct 1.");
+    expect(text).toBe("Buffalo Bills up 3 points since Oct 1.");
   });
 
   it("never prints the undated opening comparison", () => {

@@ -1,10 +1,17 @@
-"""Signed-in ActivityKit ownership/CAS; no token acquisition or APNs delivery."""
+"""ActivityKit ownership/CAS; no token acquisition or APNs delivery.
+
+An activity is owned by a phone (177-A: ``X-Device-Id`` + ``X-Device-Secret``,
+no account) or, for builds that send no device headers, by the signed-in
+account. Device headers win when both are present, so an activity started by
+push stays the phone's whether or not its reader signs in mid-game.
+"""
 
 import hashlib
 import json
+from typing import NamedTuple, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -18,7 +25,13 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import get_optional_user
+from app.dependencies.device_auth import (
+    DEVICE_HEADER,
+    SECRET_HEADER,
+    parse_device_id,
+    verify_device,
+)
 from app.models.activitykit import ActivityKitRegistration
 from app.models.models import Event, User
 from app.services.database import get_db_rw
@@ -98,10 +111,36 @@ def _public(row) -> dict:
     }
 
 
-async def _owned(db: AsyncSession, activity_id: str, user_id: int):
+class Owner(NamedTuple):
+    """Who a registration belongs to: ``user_id`` or ``device_id``, and its value."""
+
+    column: str
+    value: object
+
+
+async def activity_owner(
+    user: Optional[User] = Depends(get_optional_user),
+    x_device_id: Optional[str] = Header(default=None, alias=DEVICE_HEADER),
+    x_device_secret: Optional[str] = Header(default=None, alias=SECRET_HEADER),
+    db: AsyncSession = Depends(get_db_rw),
+) -> Owner:
+    if x_device_id is not None:
+        device = await verify_device(db, parse_device_id(x_device_id), x_device_secret)
+        return Owner("device_id", device)
+    if user is not None:
+        return Owner("user_id", user.id)
+    raise HTTPException(
+        401, "Authentication required", headers={"WWW-Authenticate": "Bearer"}
+    )
+
+
+async def _owned(db: AsyncSession, activity_id: str, owner: Owner):
     result = await db.execute(
         select(_TABLE)
-        .where(_TABLE.c.activity_id == activity_id, _TABLE.c.user_id == user_id)
+        .where(
+            _TABLE.c.activity_id == activity_id,
+            _TABLE.c[owner.column] == owner.value,
+        )
         .with_for_update()
     )
     return result.mappings().one_or_none()
@@ -110,10 +149,10 @@ async def _owned(db: AsyncSession, activity_id: str, user_id: int):
 @router.get("/{activity_id}")
 async def get_registration(
     activity_id: str,
-    user: User = Depends(get_current_user),
+    owner: Owner = Depends(activity_owner),
     db: AsyncSession = Depends(get_db_rw),
 ):
-    row = await _owned(db, _activity_id(activity_id), user.id)
+    row = await _owned(db, _activity_id(activity_id), owner)
     if row is None:
         raise HTTPException(404, "Registration not found")
     now = utc_now()  # after registration lock
@@ -124,14 +163,14 @@ async def get_registration(
 
 
 async def _mutate(
-    request: Request, activity_id: str, user: User, db: AsyncSession, *, revoke: bool
+    request: Request, activity_id: str, owner: Owner, db: AsyncSession, *, revoke: bool
 ):
     activity_id = _activity_id(activity_id)
     body = await _body(request, Mutation if revoke else Registration)
     action = "revoke" if revoke else "register"
     request_hash = _hash(body, action)
     mutation_id = str(body.mutation_id)
-    row = await _owned(db, activity_id, user.id)
+    row = await _owned(db, activity_id, owner)
     now = utc_now()  # after registration lock, never from the HTTP body
     if row is not None:
         if row["event_id"] != body.event_id:
@@ -180,7 +219,7 @@ async def _mutate(
                 insert(_TABLE)
                 .values(
                     activity_id=activity_id,
-                    user_id=user.id,
+                    **{owner.column: owner.value},
                     event_id=body.event_id,
                     created_at=now,
                     expires_at=now if revoke else now + AUTHORIZATION_LIFETIME,
@@ -196,7 +235,7 @@ async def _mutate(
                 update(_TABLE)
                 .where(
                     _TABLE.c.activity_id == activity_id,
-                    _TABLE.c.user_id == user.id,
+                    _TABLE.c[owner.column] == owner.value,
                     _TABLE.c.event_id == body.event_id,
                     _TABLE.c.version == body.expected_version,
                     _TABLE.c.is_active.is_(True),
@@ -225,17 +264,17 @@ async def _mutate(
 async def register(
     activity_id: str,
     request: Request,
-    user: User = Depends(get_current_user),
+    owner: Owner = Depends(activity_owner),
     db: AsyncSession = Depends(get_db_rw),
 ):
-    return await _mutate(request, activity_id, user, db, revoke=False)
+    return await _mutate(request, activity_id, owner, db, revoke=False)
 
 
 @router.delete("/{activity_id}")
 async def revoke(
     activity_id: str,
     request: Request,
-    user: User = Depends(get_current_user),
+    owner: Owner = Depends(activity_owner),
     db: AsyncSession = Depends(get_db_rw),
 ):
-    return await _mutate(request, activity_id, user, db, revoke=True)
+    return await _mutate(request, activity_id, owner, db, revoke=True)

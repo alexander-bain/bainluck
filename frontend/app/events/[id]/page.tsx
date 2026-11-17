@@ -24,7 +24,7 @@ import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { eventPageProjectedPair } from "@/lib/projectedFinalPair";
 import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastComparison";
 import { livePregameComparison } from "@/lib/livePregameComparison";
-import { resolveMatchupTeamColors } from "@/lib/teamColors";
+import { effectiveAwaySecondaryColor, lookupTeamColors, resolveMatchupTeamColors } from "@/lib/teamColors";
 import { heldFrameAfter, useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
 import { createReconnectCatchup } from "@/lib/reconnectCatchup";
 import {
@@ -163,6 +163,7 @@ import {
   useEngagementTime,
   usePinnedEvents,
 } from "@/hooks";
+import { useAnalyticsContext } from "@/components/Analytics";
 import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { isPregameStatus } from "@/lib/settledQuote";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
@@ -188,6 +189,11 @@ import { buildMlbEventCards, mlbCardsApply } from "@/lib/mlbEventCards";
 import { buildNhlEventCards, nhlCardsApply } from "@/lib/nhlEventCards";
 import { buildSoccerEventCards, soccerCardsApply } from "@/lib/soccerEventCards";
 import { NFLEventCardDeck, type CardSelection } from "@/components/event/NFLEventCards";
+import {
+  isSharedLinkPinBannerEnabled,
+  SharedLinkPinBanner,
+  SharedMoreFromDiscoverSection,
+} from "@/components/event/SharedEventLanding1D";
 const EventCardReader = dynamic(() => import("@/components/event/EventCardReader"), { ssr: false });
 import { authorityStoppageLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import { restingGameClock } from "@/lib/restingGameClock";
@@ -256,7 +262,8 @@ export default function EventPage({ params }: EventPageProps) {
   const sharedSource = searchParams.get("utm_source");
   const sharedMedium = searchParams.get("utm_medium") || undefined;
   const sharedCampaign = searchParams.get("utm_campaign") || undefined;
-  const isSharedLink = sharedSource === "share";
+  const isSharedLink = sharedSource === "share" || searchParams.get("shared") === "1";
+  const showSharedPinBanner = isSharedLink && isSharedLinkPinBannerEnabled();
   // #10090 — one-decimal headlines, ON by default; a reader who opened
   // `?tenths=off` gets today's whole numbers. One decision for the hero and
   // both charts' end labels, so the three can never print different digits.
@@ -296,6 +303,7 @@ export default function EventPage({ params }: EventPageProps) {
 
   // Analytics
   const { track, trackNavigationClick, recordEvent } = useAnalytics();
+  const { showConsentBanner } = useAnalyticsContext();
 
   // Pinned events
   const { isPinned, togglePin, isMaxReached } = usePinnedEvents();
@@ -870,7 +878,7 @@ export default function EventPage({ params }: EventPageProps) {
       track("shared_link_open", {
         content_type: "event",
         item_id: event.id,
-        source: sharedSource,
+        source: sharedSource ?? "share",
         medium: sharedMedium,
         campaign: sharedCampaign,
       });
@@ -2713,11 +2721,17 @@ export default function EventPage({ params }: EventPageProps) {
     actualSeriesDrawn: drawsActualScore,
   });
 
+  const curatedHome = lookupTeamColors(event.home_team);
+  const curatedAway = lookupTeamColors(event.away_team);
+  const resolvedAwaySecondary = effectiveAwaySecondaryColor(
+    event.away_team,
+    event.away_team_data?.secondary_color,
+  );
   const matchupColors = resolveMatchupTeamColors({
-    homePrimary: event.home_team_data?.primary_color,
-    awayPrimary: event.away_team_data?.primary_color,
-    homeSecondary: event.home_team_data?.secondary_color,
-    awaySecondary: event.away_team_data?.secondary_color,
+    homePrimary: event.home_team_data?.primary_color ?? curatedHome?.primary,
+    awayPrimary: event.away_team_data?.primary_color ?? curatedAway?.primary,
+    homeSecondary: event.home_team_data?.secondary_color ?? curatedHome?.secondary,
+    awaySecondary: resolvedAwaySecondary,
   });
   const effectiveHomePrimary = matchupColors.home ?? event.home_team_data?.primary_color ?? undefined;
   const effectiveAwayPrimary = matchupColors.away ?? event.away_team_data?.primary_color ?? undefined;
@@ -2841,7 +2855,7 @@ export default function EventPage({ params }: EventPageProps) {
         onRetry={() => window.location.reload()}
       />
     }>
-    <div className="space-y-3">
+    <div className={showSharedPinBanner ? "space-y-3 pb-20" : "space-y-3"}>
       {/* Navigation */}
       {/* #3974: THE ROW WRAPS, because at 390px three elements do not fit in it.
           Measured on this page at that width: the row has 366px of usable
@@ -2994,21 +3008,6 @@ export default function EventPage({ params }: EventPageProps) {
           </div>
         )}
       </div>
-
-      {isSharedLink && (
-        <div className="rounded-card border border-accent-brand/20 bg-accent-brand/5 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-text-primary">Shared from Discover</p>
-            <p className="text-xs text-text-secondary">Explore the rest of today&apos;s probability stories.</p>
-          </div>
-          <Link
-            href="/discover"
-            className="inline-flex items-center justify-center rounded-lg bg-accent-brand px-3 py-2 text-sm font-semibold text-white hover:opacity-90 transition-opacity"
-          >
-            Open Discover
-          </Link>
-        </div>
-      )}
 
       {/* Unified Direction 199 Game Page Headline (every sport & state) */}
       <SectionErrorBoundary label="The score and probability" resetKey={event}>
@@ -3228,7 +3227,7 @@ export default function EventPage({ params }: EventPageProps) {
               periodBoundaries={periodBoundaries}
               homeTeamColor={effectiveHomePrimary}
               awayTeamColor={effectiveAwayPrimary}
-              awayTeamSecondaryColor={event.away_team_data?.secondary_color || undefined}
+              awayTeamSecondaryColor={resolvedAwaySecondary || event.away_team_data?.secondary_color || undefined}
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
               homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
@@ -3258,7 +3257,7 @@ export default function EventPage({ params }: EventPageProps) {
               awayTeam={event.away_team}
               homeTeamColor={effectiveHomePrimary}
               awayTeamColor={effectiveAwayPrimary}
-              awayTeamSecondaryColor={event.away_team_data?.secondary_color || undefined}
+              awayTeamSecondaryColor={resolvedAwaySecondary || event.away_team_data?.secondary_color || undefined}
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
               lastPoint={lastChartPoint}
@@ -3354,6 +3353,21 @@ export default function EventPage({ params }: EventPageProps) {
       </div>
 
       </SectionErrorBoundary>
+      )}
+
+      {showSharedPinBanner && showConsentBanner && (
+        <SharedLinkPinBanner
+          inline
+          isPinned={eventIsPinned}
+          pinDisabled={isMaxReached && !eventIsPinned}
+          onPinToggle={() => togglePin(eventId)}
+        />
+      )}
+
+      {isSharedLink && (
+        <SectionErrorBoundary label="More of what the world thinks now" resetKey={event.id}>
+          <SharedMoreFromDiscoverSection currentEventId={event.id} />
+        </SectionErrorBoundary>
       )}
 
       {highlightsPreview && !venueVoided && (
@@ -3884,7 +3898,7 @@ export default function EventPage({ params }: EventPageProps) {
               periodBoundaries={periodBoundaries}
               homeTeamColor={effectiveHomePrimary}
               awayTeamColor={effectiveAwayPrimary}
-              awayTeamSecondaryColor={event.away_team_data?.secondary_color || undefined}
+              awayTeamSecondaryColor={resolvedAwaySecondary || event.away_team_data?.secondary_color || undefined}
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
               homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
@@ -3922,6 +3936,13 @@ export default function EventPage({ params }: EventPageProps) {
           onSelect={selectNflCardRow}
           onClose={closeNflReader}
           atlasMode={atlasOptIn}
+        />
+      )}
+      {showSharedPinBanner && !showConsentBanner && (
+        <SharedLinkPinBanner
+          isPinned={eventIsPinned}
+          pinDisabled={isMaxReached && !eventIsPinned}
+          onPinToggle={() => togglePin(eventId)}
         />
       )}
     </div>
