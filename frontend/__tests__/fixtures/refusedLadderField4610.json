@@ -14,17 +14,53 @@
       {
         "label": "Above 30",
         "movement": null,
-        "probability": 0.7
+        "probability": 0.7,
+        "source_mark": {
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "observed_at": null,
+              "probability": 0.7,
+              "reason": "observation_unknown"
+            }
+          ],
+          "state": "single"
+        }
       },
       {
         "label": "Above 20",
         "movement": null,
-        "probability": 0.55
+        "probability": 0.55,
+        "source_mark": {
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "observed_at": null,
+              "probability": 0.55,
+              "reason": "observation_unknown"
+            }
+          ],
+          "state": "single"
+        }
       },
       {
         "label": "Above 10",
         "movement": null,
-        "probability": 0.2
+        "probability": 0.2,
+        "source_mark": {
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "observed_at": null,
+              "probability": 0.2,
+              "reason": "observation_unknown"
+            }
+          ],
+          "state": "single"
+        }
       }
     ],
     "field_is_a_race": true,
@@ -76,7 +112,19 @@
       "name": "Above 30",
       "probability": 0.7,
       "rank": 1,
-      "rendered_percent": 70
+      "rendered_percent": 70,
+      "source_mark": {
+        "sources": [
+          {
+            "key": "kalshi",
+            "name": "Kalshi",
+            "observed_at": null,
+            "probability": 0.7,
+            "reason": "observation_unknown"
+          }
+        ],
+        "state": "single"
+      }
     },
     {
       "id": 604811621,
@@ -84,7 +132,19 @@
       "name": "Above 20",
       "probability": 0.55,
       "rank": 2,
-      "rendered_percent": 55
+      "rendered_percent": 55,
+      "source_mark": {
+        "sources": [
+          {
+            "key": "kalshi",
+            "name": "Kalshi",
+            "observed_at": null,
+            "probability": 0.55,
+            "reason": "observation_unknown"
+          }
+        ],
+        "state": "single"
+      }
     },
     {
       "id": 604811620,
@@ -92,7 +152,19 @@
       "name": "Above 10",
       "probability": 0.2,
       "rank": 3,
-      "rendered_percent": 20
+      "rendered_percent": 20,
+      "source_mark": {
+        "sources": [
+          {
+            "key": "kalshi",
+            "name": "Kalshi",
+            "observed_at": null,
+            "probability": 0.2,
+            "reason": "observation_unknown"
+          }
+        ],
+        "state": "single"
+      }
     }
   ]
 }

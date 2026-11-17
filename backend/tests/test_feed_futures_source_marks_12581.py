@@ -2,6 +2,7 @@
 
 import copy
 from datetime import timedelta
+from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import pytest
@@ -154,6 +155,22 @@ async def test_snapshot_and_response_cache_preserve_prices_marks_and_no_source_c
         assert snapshot_queries == live_queries
     assert decode_shared_payload(encode_shared_payload(rebuilt)) == rebuilt
     assert all("source_mark" in row for row in rebuilt["data"]["top_outcomes"])
+
+
+@pytest.mark.parametrize("mode", ["discover", "sports"])
+async def test_database_decimal_ladder_keeps_its_card_and_raw_values(monkeypatch, mode):
+    market = board("ladder")
+    for outcome in market.outcomes:
+        outcome.current_probability = Decimal(str(outcome.current_probability))
+    item, _ = await serve(monkeypatch, market, mode)
+    rows = item["data"]["top_outcomes"]
+    original = {o.id: o.current_probability for o in market.outcomes}
+    assert len(rows) == len(original)
+    for row in rows:
+        assert row["probability"] == original[row["id"]]
+        mark = row["source_mark"]
+        assert mark["sources"][0]["probability"] == float(original[row["id"]])
+        assert "method" not in mark
 
 
 @pytest.mark.parametrize("mode", ["discover", "sports"])
