@@ -77,16 +77,23 @@ struct SourceMarkSheet: View {
         number.map { formatProbability($0) }
     }
 
-    /// One line of method under the rows. Multi-source blends print the
-    /// server's `method` when present and non-empty, else "Bain Luck blend";
-    /// one-source marks name that venue ("<Venue>'s price", 145-A).
+    /// One line of method under the rows. Multi-source blends and scaled
+    /// single-source marks print the server's `method` when present and non-empty;
+    /// otherwise multi-source blends print "Bain Luck blend" and one-source marks
+    /// name that source ("Kalshi's price", "Sportsbooks' price", 145-A / #12873).
     static func method(_ mark: SourceMark) -> String? {
+        let served = mark.method?.trimmingCharacters(in: .whitespacesAndNewlines)
         switch mark.state {
         case .blend where mark.sources.count > 1:
-            let served = mark.method?.trimmingCharacters(in: .whitespacesAndNewlines)
             return (served?.isEmpty == false) ? served : "Bain Luck blend"
         case .blend, .single:
-            return mark.sources.first.map { "\($0.name)'s price" }
+            guard let first = mark.sources.first else { return nil }
+            if let served, !served.isEmpty {
+                return served
+            }
+            let name = first.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return nil }
+            return name.lowercased().hasSuffix("s") ? "\(name)' price" : "\(name)'s price"
         case .settled:
             return nil
         case .none, .unknown:
@@ -117,11 +124,20 @@ struct SourceMarkSheet: View {
                 }
                 .padding()
             }
-                .navigationTitle(Self.title)
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
+                #else
+                .navigationTitle(Self.title)
                 #endif
                 .toolbar {
+                    #if os(iOS)
+                    ToolbarItem(placement: .principal) {
+                        Text(Self.title)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                    }
+                    #endif
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Done") { dismiss() }
                     }

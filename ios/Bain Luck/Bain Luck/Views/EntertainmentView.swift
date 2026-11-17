@@ -258,7 +258,7 @@ struct EntertainmentView: View {
 
             // Meta row: source + volume + resolution date
             HStack(spacing: 8) {
-                SourceChip(source: m.src)
+                SourceChip(source: m.src, onCardFace: true)
                 if let vol = m.volume24h, vol > 0 {
                     Text(formatVolume(vol))
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -460,7 +460,7 @@ struct EntertainmentView: View {
                             .lineLimit(2)
                     }
                     Spacer()
-                    SourceChip(source: best.src)
+                    SourceChip(source: best.src, onCardFace: true)
                 }
                 .padding(.bottom, 10)
 
@@ -649,7 +649,7 @@ struct EntertainmentView: View {
 
             // Footer
             HStack(spacing: 8) {
-                SourceChip(source: m.src)
+                SourceChip(source: m.src, onCardFace: true)
                 if let vol = m.volume24h, vol > 0 {
                     Text(formatVolume(vol))
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -788,7 +788,7 @@ struct EntertainmentView: View {
                         .foregroundStyle(DS.textMuted)
                 }
                 Spacer()
-                SourceChip(source: m.src)
+                SourceChip(source: m.src, onCardFace: true)
             }
         }
         .padding(14)

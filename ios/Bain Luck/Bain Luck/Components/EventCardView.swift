@@ -441,45 +441,53 @@ struct EventCardView: View {
     }
 
     private var teamsAndOdds: some View {
-        VStack(spacing: 6) {
-            if !usesFinishedAccessibilityLayout && compactHeaders12616.hasAny {
-                compactHeaderRow
-            }
-
-            teamRow(
-                name: event.awayTeam,
-                avatar: event.avatar(home: false),
-                color: awayColor,
-                record: event.awayTeamData?.record,
-                score: (isLive || isFinished || isSuspended) ? event.awayScore : nil,
-                won: awayWon,
-                side: .away
-            )
-
-            if !usesFinishedAccessibilityLayout,
-               let drawChance = CompactGameCard12616.drawChanceText(
+        let drawChance = usesFinishedAccessibilityLayout
+            ? nil
+            : CompactGameCard12616.drawChanceText(
                 event: event,
                 isScheduled: isScheduled,
                 isLive: isLive,
                 isFinished: isFinished,
                 isSuspended: isSuspended
-               ) {
-                compactDrawRow(drawChance: drawChance)
-            }
-
-            if !compactScheduleStyle && usesFinishedAccessibilityLayout {
-                probabilityBar
-            }
-
-            teamRow(
-                name: event.homeTeam,
-                avatar: event.avatar(home: true),
-                color: homeColor,
-                record: event.homeTeamData?.record,
-                score: (isLive || isFinished || isSuspended) ? event.homeScore : nil,
-                won: homeWon,
-                side: .home
             )
+
+        return VStack(spacing: 6) {
+            if !usesFinishedAccessibilityLayout && compactHeaders12616.hasAny {
+                compactHeaderRow
+            }
+
+            if usesFinishedAccessibilityLayout || usesLiveAccessibilityRowStack204C {
+                teamRow(
+                    name: event.awayTeam,
+                    avatar: event.avatar(home: false),
+                    color: awayColor,
+                    record: event.awayTeamData?.record,
+                    score: (isLive || isFinished || isSuspended) ? event.awayScore : nil,
+                    won: awayWon,
+                    side: .away
+                )
+
+                if !compactScheduleStyle && usesFinishedAccessibilityLayout {
+                    probabilityBar
+                }
+
+                teamRow(
+                    name: event.homeTeam,
+                    avatar: event.avatar(home: true),
+                    color: homeColor,
+                    record: event.homeTeamData?.record,
+                    score: (isLive || isFinished || isSuspended) ? event.homeScore : nil,
+                    won: homeWon,
+                    side: .home
+                )
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    compactCompetitorStack(rowWidth: 358, drawChance: drawChance, isFallback: false)
+                    compactCompetitorStack(rowWidth: 304, drawChance: drawChance, isFallback: false)
+                    compactCompetitorStack(rowWidth: 272, drawChance: drawChance, isFallback: false)
+                    compactCompetitorStack(rowWidth: 236, drawChance: drawChance, isFallback: true)
+                }
+            }
 
             if !compactScheduleStyle && !usesFinishedAccessibilityLayout {
                 probabilityBar
@@ -520,6 +528,41 @@ struct EventCardView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func compactCompetitorStack(
+        rowWidth: CGFloat,
+        drawChance: String?,
+        isFallback: Bool
+    ) -> some View {
+        let fontSize = sharedCompactTeamNameFontSize(forRowWidth: rowWidth)
+        return VStack(spacing: 6) {
+            singleRowTeamRow(
+                name: event.awayTeam,
+                avatar: event.avatar(home: false),
+                color: awayColor,
+                record: event.awayTeamData?.record,
+                score: (isLive || isFinished || isSuspended) ? event.awayScore : nil,
+                won: awayWon,
+                side: .away,
+                nameFontSize: fontSize,
+                preventSingleWordTruncation: !isFallback
+            )
+            if let drawChance {
+                compactDrawRow(drawChance: drawChance, nameFontSize: fontSize)
+            }
+            singleRowTeamRow(
+                name: event.homeTeam,
+                avatar: event.avatar(home: true),
+                color: homeColor,
+                record: event.homeTeamData?.record,
+                score: (isLive || isFinished || isSuspended) ? event.homeScore : nil,
+                won: homeWon,
+                side: .home,
+                nameFontSize: fontSize,
+                preventSingleWordTruncation: !isFallback
+            )
         }
     }
 
@@ -576,7 +619,7 @@ struct EventCardView: View {
     }
 
     private var effectiveLargeColWidth: CGFloat {
-        if isFinished { return min(compactLargeFinalWidth, 68) }
+        if isFinished { return min(compactLiveScoreWidth, 50) }
         if isSuspended { return min(compactPregameWidth, 66) }
         return min(compactLargeChanceWidth, 90)
     }
@@ -600,14 +643,18 @@ struct EventCardView: View {
     }
 
     private var sharedCompactTeamNameFontSize: CGFloat {
-        let reservedChrome: CGFloat = isFinished ? 57 : 42
-        let availableWidth = max(330 - reservedChrome - trailingColumnsClusterWidth12616, 48)
+        sharedCompactTeamNameFontSize(forRowWidth: 330)
+    }
+
+    private func sharedCompactTeamNameFontSize(forRowWidth rowWidth: CGFloat) -> CGFloat {
+        let reservedChrome: CGFloat = isFinished ? 59 : 44
+        let availableWidth = max(rowWidth - reservedChrome - trailingColumnsClusterWidth12616, 48)
         return CardTeamNameSizing.sharedWordSafeFontSize(
             names: [shortTeamNames.away, shortTeamNames.home],
             baseSize: min(compactNameSize, 21),
             weight: .bold,
             availableWidth: availableWidth,
-            minimumScale: 0.65
+            minimumScale: 0.48
         )
     }
 
@@ -747,7 +794,18 @@ struct EventCardView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func singleRowTeamRow(name: String, avatar: ParticipantAvatar, color: Color, record: String?, score: Int?, won: Bool, side: TeamSide) -> some View {
+    private func singleRowTeamRow(
+        name: String,
+        avatar: ParticipantAvatar,
+        color: Color,
+        record: String?,
+        score: Int?,
+        won: Bool,
+        side: TeamSide,
+        nameFontSize: CGFloat? = nil,
+        preventSingleWordTruncation: Bool = false
+    ) -> some View {
+        let resolvedNameFontSize = nameFontSize ?? sharedCompactTeamNameFontSize
         let displayName = side == .away ? shortTeamNames.away : shortTeamNames.home
         return HStack(spacing: 6) {
             TeamLogoView(
@@ -765,16 +823,30 @@ struct EventCardView: View {
             )
             let singleWord = !displayName.contains(" ")
             let isLoser = isFinished && !won && outcome != .draw
-            Text(displayName)
-                .font(HeadlineStyleTable199.names(.card, isLoser: isLoser, scaledSize: sharedCompactTeamNameFontSize))
-                // #4915 — `!won` was standing in for "lost", and on a level
-                // result both sides are `!won`, so a finished draw greyed BOTH
-                // teams.
-                .foregroundStyle(won ? .primary : (isFinished && outcome != .draw ? .secondary : .primary))
-                .lineLimit(singleWord ? 1 : 2)
-                .minimumScaleFactor(0.65)
-                .allowsTightening(true)
-                .fixedSize(horizontal: false, vertical: !singleWord)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(displayName)
+                    .font(HeadlineStyleTable199.names(.card, isLoser: isLoser, scaledSize: resolvedNameFontSize))
+                    // #4915 — `!won` was standing in for "lost", and on a level
+                    // result both sides are `!won`, so a finished draw greyed BOTH
+                    // teams.
+                    .foregroundStyle(won ? .primary : (isFinished && outcome != .draw ? .secondary : .primary))
+                    .lineLimit(singleWord ? 1 : 2)
+                    .allowsTightening(true)
+                    .fixedSize(horizontal: singleWord && preventSingleWordTruncation, vertical: true)
+                if isFinished {
+                    Text("\u{2713}")
+                        .font(HeadlineStyleTable199.secondNumbers(
+                            .card,
+                            prominent: true,
+                            scaledSize: min(resolvedNameFontSize, 18) * 0.85
+                        ))
+                        .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .opacity(won ? 1 : 0)
+                        .accessibilityHidden(true)
+                }
+            }
             Spacer(minLength: 8)
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 if showsMediumColumn12616 {
@@ -841,33 +913,8 @@ struct EventCardView: View {
     @ViewBuilder
     private func largeSlotView(score: Int?, won: Bool, side: TeamSide) -> some View {
         if isFinished {
-            if won {
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    if let score {
-                        Text("\(score)")
-                            .font(HeadlineStyleTable199.secondNumbers(
-                                .card,
-                                prominent: true,
-                                scaledSize: min(compactLargeSize, 24)
-                            ))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.45)
-                            .allowsTightening(true)
-                    }
-                    Text("\u{2713}")
-                        .font(HeadlineStyleTable199.secondNumbers(
-                            .card,
-                            prominent: true,
-                            scaledSize: min(compactLargeSize, 24) * 0.82
-                        ))
-                        .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.45)
-                        .accessibilityHidden(true)
-                }
-            } else if let score {
-                let prominent = outcome == .draw
+            if let score {
+                let prominent = won || outcome == .draw
                 Text("\(score)")
                     .font(HeadlineStyleTable199.secondNumbers(
                         .card,
@@ -893,7 +940,8 @@ struct EventCardView: View {
         }
     }
 
-    private func compactDrawRow(drawChance: String) -> some View {
+    private func compactDrawRow(drawChance: String, nameFontSize: CGFloat? = nil) -> some View {
+        let resolvedNameFontSize = nameFontSize ?? sharedCompactTeamNameFontSize
         let drawWon = isFinished && outcome == .draw
         return HStack(spacing: 6) {
             ZStack {
@@ -906,10 +954,25 @@ struct EventCardView: View {
             }
             .accessibilityHidden(true)
 
-            Text("Draw")
-                .font(HeadlineStyleTable199.names(.card, isLoser: isFinished && !drawWon, scaledSize: sharedCompactTeamNameFontSize))
-                .foregroundStyle(isFinished ? (drawWon ? .primary : .secondary) : .primary)
-                .lineLimit(1)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("Draw")
+                    .font(HeadlineStyleTable199.names(.card, isLoser: isFinished && !drawWon, scaledSize: resolvedNameFontSize))
+                    .foregroundStyle(isFinished ? (drawWon ? .primary : .secondary) : .primary)
+                    .lineLimit(1)
+                if isFinished {
+                    Text("\u{2713}")
+                        .font(HeadlineStyleTable199.secondNumbers(
+                            .card,
+                            prominent: true,
+                            scaledSize: min(resolvedNameFontSize, 18) * 0.85
+                        ))
+                        .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .opacity(drawWon ? 1 : 0)
+                        .accessibilityHidden(true)
+                }
+            }
 
             Spacer(minLength: 8)
 
@@ -937,14 +1000,10 @@ struct EventCardView: View {
                 if showsLargeColumn12616 {
                     Group {
                         if isFinished {
-                            if drawWon {
-                                Text("\u{2713}")
-                                    .font(HeadlineStyleTable199.secondNumbers(.card, prominent: true, scaledSize: min(compactLargeSize, 24) * 0.82))
-                                    .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.45)
-                                    .accessibilityHidden(true)
-                            }
+                            Text("0")
+                                .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactScoreSize, 20)))
+                                .opacity(0)
+                                .accessibilityHidden(true)
                         } else {
                             Text(drawChance)
                                 .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))

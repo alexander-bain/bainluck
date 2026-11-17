@@ -415,14 +415,12 @@ private struct FuturesBrowseOutcomeRow: View {
 private struct FuturesSourceBadge: View {
     let source: String
 
-    private var label: String? { SourceLabels.label(for: source) }
+    private var label: String? { SourceLabels.cardFaceLabel(for: source) }
 
     private var color: Color {
         switch source {
-        case "polymarket": return .blue
-        case "kalshi": return Color(hex: "#22c55e")
         case "odds_api": return Color(hex: "#d97706")
-        default: return .gray
+        default: return .secondary
         }
     }
 

@@ -17,10 +17,17 @@ struct SportCategoryView: View {
     /// (#3709).
     @State private var gridWidth: CGFloat = 0
 
-    init(categoryKey: String, categoryName: String) {
+    private let isPreloadedForTest: Bool
+
+    init(
+        categoryKey: String,
+        categoryName: String,
+        preloadedViewModel: SportCategoryViewModel? = nil
+    ) {
         self.categoryKey = categoryKey
         self.categoryName = categoryName
-        _viewModel = StateObject(wrappedValue: SportCategoryViewModel(categoryKey: categoryKey))
+        self.isPreloadedForTest = (preloadedViewModel != nil)
+        _viewModel = StateObject(wrappedValue: preloadedViewModel ?? SportCategoryViewModel(categoryKey: categoryKey))
     }
 
     var body: some View {
@@ -82,7 +89,9 @@ struct SportCategoryView: View {
             AnalyticsService.trackScreen(name: "sport_category", type: "category")
         }
         .task {
-            await viewModel.load()
+            if !isPreloadedForTest {
+                await viewModel.load()
+            }
         }
         .refreshable {
             await viewModel.load()
@@ -274,12 +283,14 @@ struct SportCategoryView: View {
             }
 
             HStack(spacing: 4) {
-                Text(market.source)
-                    .font(.caption2)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(market.source == "kalshi" ? Color.green.opacity(0.1) : Color.blue.opacity(0.1))
-                    .clipShape(Capsule())
+                if let sourceLabel = SourceLabels.cardFaceLabel(for: market.source) {
+                    Text(sourceLabel)
+                        .font(.caption2)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.1))
+                        .clipShape(Capsule())
+                }
                 if let count = market.outcomeCount, count > 3 {
                     Text("+\(count - 3) more")
                         .font(.caption2)

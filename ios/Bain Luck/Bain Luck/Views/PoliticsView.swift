@@ -653,7 +653,7 @@ struct PoliticsView: View {
                         .foregroundStyle(DS.textMuted)
                 }
                 Spacer()
-                SourceChip(source: m.src)
+                SourceChip(source: m.src, onCardFace: true)
             }
         }
         .padding(14)
@@ -674,7 +674,7 @@ struct PoliticsView: View {
         HStack(spacing: 6) {
             Image(systemName: "info.circle")
                 .font(.system(size: 10))
-            Text("Data from Kalshi & Polymarket. Not political advice.")
+            Text("Prediction-market probabilities, blended into one number. Not political advice.")
         }
         .font(.caption2)
         .foregroundStyle(DS.textMuted)
