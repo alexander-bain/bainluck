@@ -12203,6 +12203,13 @@ async def _score_events(
                 if event.opening_away_probability
                 else None
             )
+            # #12824 (226: A, Fable's item 4): an ESPN-only pregame number is a
+            # model, not a market, so it is never measured against the opening
+            # line ("odds shifted N% since open", the swing bonus).
+            from app.utils.aggregation import pregame_blend_rests_on_espn_alone
+
+            if pregame_blend_rests_on_espn_alone(event):
+                opening_home_prob = opening_away_prob = None
 
             # Always compute aggregate from all available sources (ESPN, stat model,
             # Kalshi, Polymarket, sportsbook consensus). Falls back through tiers.
