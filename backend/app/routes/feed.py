@@ -12207,6 +12207,13 @@ async def _score_events(
             # Always compute aggregate from all available sources (ESPN, stat model,
             # Kalshi, Polymarket, sportsbook consensus). Falls back through tiers.
             current_home_prob = _compute_aggregate_probability(event)
+            if current_home_prob is None:
+                # #12824: removing an opening quote must not remove a verified
+                # final. Use the same settled result as the card, never its
+                # historical line, when ranking a finished game.
+                final_hero = resolve_hero(event)
+                if final_hero is not None and final_hero.source == "settled":
+                    current_home_prob = final_hero.home_probability
             if current_home_prob is None and event.id in snapshot_fallbacks:
                 current_home_prob = snapshot_fallbacks[event.id]
             current_away_prob = (
