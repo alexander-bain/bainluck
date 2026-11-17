@@ -157,7 +157,7 @@ describe("#12858: only a completed compiler run can be counted", () => {
   const empty = { total: 0, byFile: {}, byCode: {} };
   const one = { total: 1, byFile: { "app/page.tsx": 1 }, byCode: { TS2322: 1 } };
 
-  function run(t, compiler, { mode = "--check", baseline = one } = {}) {
+  function run(t, compiler, { mode = "--check", baseline = one, env = process.env } = {}) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "bainluck-tsc-process-"));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     fs.mkdirSync(path.join(root, "scripts"));
@@ -170,7 +170,7 @@ describe("#12858: only a completed compiler run can be counted", () => {
     fs.writeFileSync(path.join(root, "node_modules/typescript/bin/tsc"),
       `require('node:fs').appendFileSync(${JSON.stringify(invocations)}, 'run\\n');\n${compiler}\n`);
     const result = spawnSync(process.execPath, [path.join(root, "scripts/tsc-census.js"), "--run", mode], {
-      encoding: "utf8", timeout: 10000,
+      encoding: "utf8", timeout: 10000, env,
     });
     assert.equal(result.error, undefined);
     assert.equal(result.signal, null);
@@ -181,6 +181,22 @@ describe("#12858: only a completed compiler run can be counted", () => {
   it("accepts a successful clean compiler with a zero baseline", (t) => {
     assert.equal(run(t, "process.exitCode = 0;", { baseline: empty }).status, 0);
   });
+
+  for (const mode of ["--check", "--write-baseline", "--census"]) {
+    it(`gives the compiler a bounded 4 GiB heap in ${mode}, independent of the parent`, (t) => {
+      const result = run(t, `
+        const limit = require('node:v8').getHeapStatistics().heap_size_limit;
+        if (limit < 4096 * 1024 ** 2 || limit > 4224 * 1024 ** 2) {
+          require('node:fs').writeSync(2, 'Unexpected compiler heap limit: ' + limit);
+          process.exitCode = 3;
+        }
+      `, {
+        mode, baseline: empty,
+        env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=128" },
+      });
+      assert.equal(result.status, 0, result.stderr);
+    });
+  }
 
   for (const status of [1, 2]) {
     it(`accepts completed diagnostic exit ${status} when the baseline matches`, (t) => {
