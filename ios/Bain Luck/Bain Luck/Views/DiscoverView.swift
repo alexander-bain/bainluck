@@ -3647,7 +3647,11 @@ private struct NativeIPOComparisonRow: View {
                     // `(data.source ?? "market").uppercased()`, which printed
                     // `ODDS_API` for a key SourceLabels calls "Sportsbooks" and
                     // invented a source named `MARKET` when there was none.
-                    if let mark = SourceLabels.label(for: data.source) {
+                    if let mark = SourceLabels.cardFaceLabel(
+                        for: data.source,
+                        sources: data.sources,
+                        sourceCount: data.sourceCount
+                    ) {
                         Text(mark)
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(DS.textSecondaryReadable)
@@ -3694,8 +3698,12 @@ private struct NativeThresholdComparisonRow: View {
                     .minimumScaleFactor(0.78)
                 Spacer()
                 // #4351: same rule as the threshold row above — the mark names
-                // its source or is not drawn.
-                if let mark = SourceLabels.label(for: data.source) {
+                // its source or is not drawn. Card faces omit Kalshi/Polymarket.
+                if let mark = SourceLabels.cardFaceLabel(
+                    for: data.source,
+                    sources: data.sources,
+                    sourceCount: data.sourceCount
+                ) {
                     Text(mark)
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(DS.textSecondaryReadable)

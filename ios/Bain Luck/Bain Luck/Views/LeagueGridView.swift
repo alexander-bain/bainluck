@@ -206,12 +206,12 @@ struct LeagueGridView: View {
             }
 
             HStack(spacing: 4) {
-                if let sourceLabel = SourceLabels.label(for: market.source) {
+                if let sourceLabel = SourceLabels.cardFaceLabel(for: market.source) {
                     Text(sourceLabel)
                         .font(.caption2)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(market.source == "kalshi" ? Color.green.opacity(0.1) : Color.blue.opacity(0.1))
+                        .background(Color.secondary.opacity(0.1))
                         .clipShape(Capsule())
                 }
                 if let count = market.outcomeCount, count > 3 {

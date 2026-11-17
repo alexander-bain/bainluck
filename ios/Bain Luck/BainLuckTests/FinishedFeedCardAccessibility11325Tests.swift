@@ -463,7 +463,10 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
     }
 
     private func containsPregameToken(_ text: String) -> Bool {
-        tokens(text).contains { $0.caseInsensitiveCompare("Pregame") == .orderedSame }
+        if text.localizedCaseInsensitiveContains("Pregame projection") {
+            return false
+        }
+        return tokens(text).contains { $0.caseInsensitiveCompare("Pregame") == .orderedSame }
     }
 
     private func isElided(_ text: String) -> Bool {
@@ -491,7 +494,11 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
     /// The topmost line reading `digits` above the forecast line (`Projection`
     /// on AX5 or `Projected` on compact 161-B).
     private func scoreLine(_ digits: String, in read: [Line]) -> Line? {
-        let label = read.first { $0.text.contains("Projection") || $0.text.hasPrefix("Projected ") }?.box.minY ?? .infinity
+        let label = read.first {
+            $0.text.contains("Projection")
+                || $0.text.hasPrefix("Projected ")
+                || $0.text.hasPrefix("Pregame projection")
+        }?.box.minY ?? .infinity
         return read.first {
             let t = $0.text.trimmingCharacters(in: .whitespaces)
             return (t == digits || valueTokens($0.text).last == digits) && $0.box.minY < label

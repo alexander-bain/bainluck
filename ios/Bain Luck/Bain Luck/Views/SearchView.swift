@@ -1341,8 +1341,15 @@ struct SearchView: View {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color.secondary.opacity(0.2))
                     .frame(width: 32, height: 32)
-                    // #4720 — same served-first fallback as TeamDetailView.
-                    .overlay(Text(team.abbreviation ?? TeamShortName.abbreviation(team.name)).font(.caption2).bold())
+                    // #4720 — same served-first fallback as TeamDetailView; fixed
+                    // badge font + minimumScaleFactor prevents "K..." / "G..." at .xxxLarge.
+                    .overlay(
+                        Text(team.abbreviation ?? TeamShortName.abbreviation(team.name))
+                            .font(.system(size: 10, weight: .bold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                            .padding(.horizontal, 2)
+                    )
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(team.name).font(.subheadline).fontWeight(.medium)
@@ -1498,13 +1505,11 @@ struct SearchView: View {
 
     @ViewBuilder
     private func searchSourceBadge(_ source: String) -> some View {
-        if let label = SourceLabels.label(for: source) {
+        if let label = SourceLabels.cardFaceLabel(for: source) {
             let color: Color = {
                 switch source {
-                case "polymarket": return .blue
-                case "kalshi": return Color(hex: "#22c55e")
                 case "odds_api": return Color(hex: "#d97706")
-                default: return .gray
+                default: return .secondary
                 }
             }()
             Text(label)
