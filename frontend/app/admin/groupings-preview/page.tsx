@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
-import AdminAuthProvider, { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetchJSON, isAdminAuthError } from "@/lib/adminFetch";
 import { setDiscoverLearningGate } from "@/lib/discoverInteractions";
 import AwardCategoryPairedCard from "@/components/discover/forms/AwardCategoryPairedCard";
@@ -51,6 +51,11 @@ interface DiversityPageReport {
     largest_kind: string | null;
     largest_kind_share: number;
     max_allowed_share: number;
+    passes: boolean;
+  };
+  direction_228_numerical_scale_order?: {
+    checked_scale_markets: number;
+    violations: string[];
     passes: boolean;
   };
   overall_passes: boolean;
@@ -118,11 +123,7 @@ export default function AdminGroupingsPreviewPage() {
     return () => setDiscoverLearningGate(null);
   }, []);
 
-  return (
-    <AdminAuthProvider>
-      <GroupingsPreviewBody />
-    </AdminAuthProvider>
-  );
+  return <GroupingsPreviewBody />;
 }
 
 function StatusBadge({ ok }: { ok: boolean }) {
@@ -188,6 +189,15 @@ function DiversitySummaryCard({ entry }: { entry: MachineryPreviewEntry }) {
             {p4.largest_kind ?? ""} {p4.passes ? "✓" : "✗"}
           </dd>
         </div>
+        {page.direction_228_numerical_scale_order && (
+          <div className="flex items-baseline justify-between gap-2">
+            <dt className="text-text-muted">5. Direction 228 scale order</dt>
+            <dd className="font-medium tabular-nums text-text-primary">
+              {page.direction_228_numerical_scale_order.checked_scale_markets} scale market(s){" "}
+              {page.direction_228_numerical_scale_order.passes ? "✓" : "✗"}
+            </dd>
+          </div>
+        )}
       </dl>
     </div>
   );

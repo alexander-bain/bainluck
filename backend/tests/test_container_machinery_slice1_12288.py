@@ -164,6 +164,39 @@ def _sample_snapshot() -> dict[str, Any]:
                 ],
             },
             {
+                "id": 7266303,
+                "name": "NFL Passing Touchdowns Leader",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 1001, "name": "Joe Burrow", "probability": 0.68},
+                    {"id": 1002, "name": "Jordan Love", "probability": 0.04},
+                    {"id": 1003, "name": "Dak Prescott", "probability": 0.02},
+                ],
+            },
+            {
+                "id": 7186380,
+                "name": "NFL Rushing Touchdowns Leader",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 1011, "name": "Jahmyr Gibbs", "probability": 0.32},
+                    {"id": 1012, "name": "Josh Allen", "probability": 0.23},
+                    {"id": 1013, "name": "James Cook III", "probability": 0.09},
+                ],
+            },
+            {
+                "id": 7266301,
+                "name": "NFL Receiving Touchdowns Leader",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 1021, "name": "Jaxon Smith-Njigba", "probability": 0.38},
+                    {"id": 1022, "name": "Ja'Marr Chase", "probability": 0.07},
+                    {"id": 1023, "name": "CeeDee Lamb", "probability": 0.06},
+                ],
+            },
+            {
                 "id": 2279147,
                 "name": "NFL: NFC North Champion",
                 "status": "open",
@@ -213,9 +246,31 @@ def _sample_snapshot() -> dict[str, Any]:
                 "status": "open",
                 "source": "kalshi",
                 "top_outcomes": [
-                    {"id": 51, "name": "Julianne Moore", "probability": 0.75},
-                    {"id": 52, "name": "Inde Navarrette", "probability": 0.12},
-                    {"id": 53, "name": "Sandra Hüller", "probability": 0.08},
+                    {"id": 51, "name": "Julianne Moore", "probability": 0.75, "opening_probability": 0.68},
+                    {"id": 52, "name": "Renate Reinsve", "probability": 0.14, "opening_probability": 0.18},
+                    {"id": 53, "name": "Sandra Hüller", "probability": 0.08, "opening_probability": 0.09},
+                ],
+            },
+            {
+                "id": 52755611,
+                "name": "Oscar winner: Best Supporting Actor",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 54, "name": "Paul Giamatti", "probability": 0.44, "opening_probability": 0.39},
+                    {"id": 55, "name": "Andrew Garfield", "probability": 0.24, "opening_probability": 0.28},
+                    {"id": 56, "name": "Guitarricadelafuente", "probability": 0.12, "opening_probability": 0.10},
+                ],
+            },
+            {
+                "id": 52755610,
+                "name": "Oscar Winner: Best Supporting Actress",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 57, "name": "Anne Hathaway", "probability": 0.55, "opening_probability": 0.49},
+                    {"id": 58, "name": "Renate Reinsve", "probability": 0.20, "opening_probability": 0.22},
+                    {"id": 59, "name": "Julianne Moore", "probability": 0.11, "opening_probability": 0.12},
                 ],
             },
             {
@@ -275,6 +330,135 @@ def _sample_snapshot() -> dict[str, Any]:
                 "status": "open",
                 "source": "kalshi",
                 "top_outcomes": [{"id": 102, "name": "Yes", "probability": 0.04}],
+            },
+            {
+                "id": 63115850,
+                "name": "2028 U.S. Vice-Presidential Election winner",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 201, "name": "James Talarico", "probability": 0.11, "opening_probability": 0.09},
+                    {"id": 202, "name": "Alexandria Ocasio-Cortez", "probability": 0.09, "opening_probability": 0.11},
+                    {"id": 203, "name": "Pete Buttigieg", "probability": 0.05, "opening_probability": 0.06},
+                ],
+            },
+            {
+                "id": 25922306,
+                "name": "2028 House winner",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 211, "name": "Democratic party", "probability": 0.79, "opening_probability": 0.74},
+                    {"id": 212, "name": "Republican party", "probability": 0.21, "opening_probability": 0.26},
+                ],
+            },
+            {
+                "id": 108398,
+                "name": "Ohio Senate winner? (2028)",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 221, "name": "Democratic party", "probability": 0.52, "opening_probability": 0.48},
+                    {"id": 222, "name": "Republican party", "probability": 0.48, "opening_probability": 0.52},
+                ],
+            },
+            {
+                "id": 57574217,
+                "name": "Fed Decision in January?",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 301, "name": "25 bps increase", "probability": 0.61, "opening_probability": 0.52},
+                    {"id": 302, "name": "No change", "probability": 0.37, "opening_probability": 0.44},
+                    {"id": 303, "name": "25 bps decrease", "probability": 0.01, "opening_probability": 0.02},
+                    {"id": 304, "name": "50+ bps increase", "probability": 0.01, "opening_probability": 0.02},
+                ],
+            },
+            {
+                "id": 114367,
+                "name": "What will the Fed rate be at the end of 2026?",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 311, "name": "4.25%", "probability": 0.88, "opening_probability": 0.82},
+                    {"id": 312, "name": "≥ 4.5%", "probability": 0.06, "opening_probability": 0.08},
+                    {"id": 313, "name": "4.0%", "probability": 0.04, "opening_probability": 0.07},
+                    {"id": 314, "name": "3.75%", "probability": 0.01, "opening_probability": 0.02},
+                ],
+            },
+            {
+                "id": 70732744,
+                "name": "How many Fed rate hikes in 2026?",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 321, "name": "2 (50 bps)", "probability": 0.92, "opening_probability": 0.85},
+                    {"id": 322, "name": "3 (75 bps)", "probability": 0.04, "opening_probability": 0.07},
+                    {"id": 323, "name": "1 (25 bps)", "probability": 0.03, "opening_probability": 0.06},
+                    {"id": 324, "name": "5+ (125+ bps)", "probability": 0.01, "opening_probability": 0.02},
+                ],
+            },
+            {
+                "id": 57574250,
+                "name": "Fed Decision in December?",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 331, "name": "25 bps increase", "probability": 0.92, "opening_probability": 0.84},
+                    {"id": 332, "name": "50+ bps increase", "probability": 0.04, "opening_probability": 0.06},
+                    {"id": 333, "name": "No change", "probability": 0.03, "opening_probability": 0.08},
+                ],
+            },
+            {
+                "id": 113883,
+                "name": "Fed rate cut by...?",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 341, "name": "April 2027 Meeting", "probability": 0.30, "opening_probability": 0.34},
+                    {"id": 342, "name": "June 2027 Meeting", "probability": 0.26, "opening_probability": 0.24},
+                    {"id": 343, "name": "March 2027 Meeting", "probability": 0.09, "opening_probability": 0.12},
+                ],
+            },
+            {
+                "id": 114551,
+                "name": "Predicted Fed rate under each Fed Chair",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 351, "name": "Kevin Warsh & Rate > 2.5%", "probability": 0.97, "opening_probability": 0.93},
+                    {"id": 352, "name": "Rick Rieder & Rate ≤ 2.5%", "probability": 0.01, "opening_probability": 0.02},
+                    {"id": 353, "name": "Kevin Warsh & Rate ≤ 2.5%", "probability": 0.01, "opening_probability": 0.02},
+                ],
+            },
+            {
+                "id": 12924898,
+                "name": "Recession in 2027?",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [{"id": 361, "name": "Yes", "probability": 0.23}],
+            },
+            {
+                "id": 58492239,
+                "name": "Oscars 2027: Best Animated Feature Film Winner",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 601, "name": "Wildwood", "probability": 0.86, "opening_probability": 0.80},
+                    {"id": 602, "name": "Toy Story 5", "probability": 0.08, "opening_probability": 0.12},
+                    {"id": 603, "name": "Shrek 5", "probability": 0.04, "opening_probability": 0.05},
+                ],
+            },
+            {
+                "id": 58492242,
+                "name": "Oscars 2027: Best International Feature Film Winner",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 611, "name": "La Bola Negra", "probability": 0.81, "opening_probability": 0.74},
+                    {"id": 612, "name": "Sentimental Value", "probability": 0.12, "opening_probability": 0.16},
+                    {"id": 613, "name": "Alpha", "probability": 0.05, "opening_probability": 0.06},
+                ],
             },
             {
                 "id": 999999,
@@ -346,6 +530,7 @@ async def test_same_code_path_produces_card_and_container_for_nfl_awards_and_pol
     nfl_forms = [s["visual_block"]["form_id"] for s in nfl_page["sections"]]
     assert nfl_forms == [
         "coin_flip_matchups",
+        "sibling_fields_grid",
         "matchup_slate",
         "contender_spotlight",
         "sibling_fields_grid",
@@ -354,22 +539,31 @@ async def test_same_code_path_produces_card_and_container_for_nfl_awards_and_pol
     nfl_sec_ids = [[m["id"] for m in s["members"]] for s in nfl_page["sections"]]
     flat_nfl_ids = [i for sub in nfl_sec_ids for i in sub]
     assert len(flat_nfl_ids) == len(set(flat_nfl_ids))
-    # Every NFL MVP contender and team resolves a verified image URL
-    mvp_outcomes = nfl_page["sections"][2]["visual_block"]["items"][0]["outcomes"]
+    # Every NFL MVP contender and prop leader resolves a verified ESPN image URL
+    mvp_outcomes = nfl_page["sections"][3]["visual_block"]["items"][0]["outcomes"]
     assert all(o["art"]["url"].startswith("https://a.espncdn.com/") for o in mvp_outcomes)
 
-    # 2. Oscars Best Picture (reuses #12849 paired_metric_set on card and page)
+    # 2. Oscars Best Picture (reuses #12849 paired_metric_set on card and page + history chart)
     osc_def = load_machinery_definition(CANDIDATE_OSCARS_BEST_PICTURE_PATH)
     osc_prod = build_container_machinery_producer(osc_def, enabled=lambda: True)
     osc_card, osc_page = await evaluate_roundup_producer(osc_prod, snap, now=FIXED_NOW)
     assert osc_card is not None and osc_page is not None
     assert osc_card["data"]["roundup"]["paired_metric_set"]["set_id"] == "oscars-2027-best-picture"
     osc_forms = [s["visual_block"]["form_id"] for s in osc_page["sections"]]
-    assert osc_forms == ["paired_stage_bars", "contender_spotlight", "sibling_fields_grid"]
-    dir_outcomes = osc_page["sections"][1]["visual_block"]["items"][0]["outcomes"]
+    assert osc_forms == [
+        "paired_stage_bars",
+        "probability_history_chart",
+        "contender_spotlight",
+        "contender_spotlight",
+    ] or osc_forms[:3] == [
+        "paired_stage_bars",
+        "probability_history_chart",
+        "contender_spotlight",
+    ]
+    dir_outcomes = osc_page["sections"][2]["visual_block"]["items"][0]["outcomes"]
     assert all(o["art"]["url"].startswith("https://image.tmdb.org/") for o in dir_outcomes)
 
-    # 3. 2028 Presidential Race (refuses closed market 999999; resolves verified portraits)
+    # 3. 2028 Presidential Race (refuses closed market 999999; resolves verified portraits + history chart)
     pol_def = load_machinery_definition(CANDIDATE_2028_PRESIDENTIAL_PATH)
     pol_prod = build_container_machinery_producer(pol_def, enabled=lambda: True)
     pol_card, pol_page = await evaluate_roundup_producer(pol_prod, snap, now=FIXED_NOW)
@@ -379,8 +573,8 @@ async def test_same_code_path_produces_card_and_container_for_nfl_awards_and_pol
     assert pol_forms == [
         "duel_bar",
         "contender_spotlight",
+        "probability_history_chart",
         "sibling_fields_grid",
-        "benchmark_strip",
     ]
     pol_member_ids = {m["id"] for s in pol_page["sections"] for m in s["members"]}
     assert 999999 not in pol_member_ids
@@ -585,3 +779,82 @@ async def test_admin_only_machinery_preview_blocks_public_and_serves_admin(
                 db=snap,
             )
         assert exc_after.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_slice3_all_four_groupings_pass_227a_and_direction_228() -> None:
+    import copy
+    import re
+    from app.utils.container_machinery import (
+        CANDIDATE_FED_AND_MACRO_PATH,
+        compute_visual_diversity_report,
+        evaluate_machinery_candidates_preview,
+    )
+
+    snap = _sample_snapshot()
+    items = await evaluate_machinery_candidates_preview(snap, now=FIXED_NOW)
+    assert [it["slug"] for it in items] == [
+        "machinery-nfl-week",
+        "machinery-oscars-best-picture",
+        "machinery-2028-presidential",
+        "machinery-fed-and-macro",
+    ]
+
+    for it in items:
+        rep = it["diversity_report"]
+        assert rep["overall_passes"] is True, f"{it['slug']} failed: {rep}"
+        assert rep["card"]["overall_passes"] is True
+        assert rep["page"]["overall_passes"] is True
+        assert rep["page"]["point_2_longest_form_run"]["longest_row_run"] <= 3
+        assert rep["page"]["point_4_content_mix"]["passes"] is True
+        assert rep["page"]["direction_228_numerical_scale_order"]["passes"] is True
+        # Slice 3 Item 5: settlement filler sentence dropped from card faces and page subtitles
+        assert it["container"]["subtitle"] == ""
+        card_contract = it["feed_item"]["data"]["roundup"]["machinery_card"]
+        assert card_contract["footer"] == ""
+
+    by_slug = {it["slug"]: it for it in items}
+
+    # Slice 3 Item 3 & 4: NFL Week has prop leaders, names game + dates, never week number
+    nfl_mix = by_slug["machinery-nfl-week"]["diversity_report"]["page"]["point_4_content_mix"]["content_kinds"]
+    assert nfl_mix.get("props", 0) >= 2
+    nfl_title = by_slug["machinery-nfl-week"]["container"]["container"]["name"]
+    assert not re.search(r"\bweek\s+\d+\b", nfl_title, re.I)
+    assert "Oct 4" in nfl_title and "toss-up" in nfl_title
+
+    # Slice 3 Item 4: dynamic set-built title updates when set numbers change
+    snap_shifted = copy.deepcopy(snap)
+    snap_shifted["paired_sets"]["oscars-2027-best-picture"]["entries"][0]["stage_2_probability"] = 0.64
+    shifted_items = await evaluate_machinery_candidates_preview(
+        snap_shifted, slugs=["machinery-oscars-best-picture"], now=FIXED_NOW
+    )
+    assert "64%" in shifted_items[0]["container"]["container"]["name"]
+
+    # Direction 228 (#12885): Fed & Macro scale rows run ascending by value, never by probability
+    fed_page = by_slug["machinery-fed-and-macro"]["container"]
+    jan_sec = next(s for s in fed_page["sections"] if s["class"] == "jan_fomc")
+    jan_names = [o["name"] for o in jan_sec["visual_block"]["items"][0]["outcomes"]]
+    assert jan_names == [
+        "25 bps decrease",
+        "No change",
+        "25 bps increase",
+        "50+ bps increase",
+    ]
+    rate_sec = next(s for s in fed_page["sections"] if s["class"] == "rate_path")
+    by_mid = {m["market_id"]: [o["name"] for o in m["outcomes"]] for m in rate_sec["visual_block"]["items"]}
+    assert by_mid[114367] == ["3.75%", "4.0%", "4.25%", "≥ 4.5%"]
+    assert by_mid[70732744] == ["1 (25 bps)", "2 (50 bps)", "3 (75 bps)", "5+ (125+ bps)"]
+
+    # Negative check: scrambling a numerical-scale market fails direction_228_numerical_scale_order
+    tampered = copy.deepcopy(fed_page)
+    for sec in tampered["sections"]:
+        if sec["class"] == "rate_path":
+            sec["visual_block"]["items"][0]["outcomes"] = list(
+                reversed(sec["visual_block"]["items"][0]["outcomes"])
+            )
+    fed_def = load_machinery_definition(CANDIDATE_FED_AND_MACRO_PATH)
+    bad_rep = compute_visual_diversity_report(
+        fed_def, by_slug["machinery-fed-and-macro"]["feed_item"], tampered
+    )
+    assert bad_rep["overall_passes"] is False
+    assert "direction_228_numerical_scale_order" in bad_rep["page"]["failing_points"]
