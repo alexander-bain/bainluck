@@ -8,9 +8,16 @@ import { getSportLabel } from "@/lib/sportCategories";
 import { espnTeamLogoByName } from "@/lib/images";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { awayIsTheComplement, sportPricesADraw } from "@/lib/drawPricedWinner";
+import { extractThreeWaySample, SOCCER_DRAW_LINE_HEX } from "@/lib/chartScaleRule201";
 import { ABOVE_NINETY_NINE_PERCENT, BELOW_ONE_PERCENT } from "@/lib/probabilityDisplay";
 import { probabilityBarPair } from "@/lib/probabilityBarPair";
-import { lookupTeamColors, resolveMatchupTeamColors } from "@/lib/teamColors";
+import { HEADLINE_STYLE_199, type HeadlineRowRole199 } from "@/lib/headlineModel199";
+import {
+  lookupTeamColors,
+  resolveMatchupTeamColors,
+  SLATE_TEAM_FALLBACK,
+  teamTextColor,
+} from "@/lib/teamColors";
 import { prematchReading } from "@/lib/prematchReading";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import {
@@ -41,6 +48,10 @@ export interface ChartPoint183A {
   t: number;
   /** Home win probability in [0, 1]. */
   p: number;
+  /** Ruling 211-A: optional Draw probability in [0, 1] for 3-way soccer. */
+  draw?: number;
+  /** Ruling 211-A: optional Away win probability in [0, 1] for 3-way soccer. */
+  away?: number;
 }
 
 export interface TennisSetScore183A {
@@ -106,24 +117,42 @@ export interface EventCard183AProps {
  */
 export function extractDiscoverChartPointsFromHistory(
   res: EventHistoryResponse | null | undefined,
+  sportKey?: string | null,
 ): ChartPoint183A[] | undefined {
   if (!res || typeof res !== "object") return undefined;
 
+  type ParsedPt = { ms: number; p: number; draw?: number; away?: number };
+
   const parseSeries = (
-    raw: Array<{ timestamp?: string | null; prob?: number | null }> | null | undefined,
-  ): Array<{ ms: number; p: number }> => {
+    raw:
+      | Array<{
+          timestamp?: string | null;
+          prob?: number | null;
+          draw?: number | null;
+          away?: number | null;
+        }>
+      | null
+      | undefined,
+  ): ParsedPt[] => {
     if (!Array.isArray(raw) || raw.length < 3) return [];
-    const parsed: Array<{ ms: number; p: number }> = [];
+    const parsed: ParsedPt[] = [];
     for (const item of raw) {
       if (!item || typeof item.timestamp !== "string") continue;
       const ms = Date.parse(item.timestamp);
       const p = item.prob;
       if (!Number.isFinite(ms) || typeof p !== "number" || !Number.isFinite(p)) continue;
-      parsed.push({ ms, p: Math.min(1, Math.max(0, p)) });
+      const pt: ParsedPt = { ms, p: Math.min(1, Math.max(0, p)) };
+      if (typeof item.draw === "number" && Number.isFinite(item.draw)) {
+        pt.draw = Math.min(1, Math.max(0, item.draw));
+      }
+      if (typeof item.away === "number" && Number.isFinite(item.away)) {
+        pt.away = Math.min(1, Math.max(0, item.away));
+      }
+      parsed.push(pt);
     }
     if (parsed.length < 3) return [];
     parsed.sort((a, b) => a.ms - b.ms);
-    const deduped: Array<{ ms: number; p: number }> = [];
+    const deduped: ParsedPt[] = [];
     for (const pt of parsed) {
       if (deduped.length > 0 && deduped[deduped.length - 1].ms === pt.ms) {
         deduped[deduped.length - 1] = pt;
@@ -134,13 +163,18 @@ export function extractDiscoverChartPointsFromHistory(
     return deduped.length >= 3 ? deduped : [];
   };
 
+  let chosen: ParsedPt[] = [];
+
   const aggRaw = (
     res as EventHistoryResponse & {
       aggregate_line?: Array<{ timestamp: string; home_probability: number }> | null;
     }
   ).aggregate_line;
 
-  let chosen = parseSeries(
+  // Always anchor Home (`p`) on the authoritative blend (`aggregate_line` -> `history` ->
+  // `win_prob_history`) so a Discover card never diverges from the blended headline or
+  // from `/events/[id]` ("the blend is the product").
+  chosen = parseSeries(
     Array.isArray(aggRaw)
       ? aggRaw.map((pt) => ({ timestamp: pt.timestamp, prob: pt.home_probability }))
       : null,
@@ -153,18 +187,129 @@ export function extractDiscoverChartPointsFromHistory(
   }
 
   if (chosen.length < 3 && res.win_prob_history && typeof res.win_prob_history === "object") {
-    let best: Array<{ ms: number; p: number }> = [];
+    let best: ParsedPt[] = [];
     for (const arr of Object.values(res.win_prob_history)) {
       if (!Array.isArray(arr)) continue;
       const cand = parseSeries(
         arr.map((pt) => ({
           timestamp: pt.timestamp,
-          prob: (pt as { home_win_prob?: number | null }).home_win_prob ?? null,
+          prob:
+            pt.home_probability ??
+            (pt as { home_win_prob?: number | null }).home_win_prob ??
+            null,
         })),
       );
       if (cand.length > best.length) best = cand;
     }
     chosen = best;
+  }
+
+  // Ruling 211-A: on draw-priced soccer, attach Draw and Away to the blended Home series
+  // ONLY when genuine 3-way readings exist and agree coherently with the blended Home
+  // (`|srcHome - pt.p| <= 0.12`), partitioning `1 - pt.p` between Draw and Away so Home
+  // stays 100% equal to the blend and `home + draw + away === 1`. Otherwise fall back to
+  // the single blended Home line.
+  if (sportPricesADraw(sportKey) && chosen.length >= 3) {
+    type WeightedThreeWaySeries = {
+      weight: number;
+      pts: Array<{ ms: number; home: number; draw: number; away: number }>;
+    };
+    const threeWaySeries: WeightedThreeWaySeries[] = [];
+
+    if (Array.isArray(res.history)) {
+      const sbPts: Array<{ ms: number; home: number; draw: number; away: number }> = [];
+      for (const raw of res.history) {
+        if (!raw || typeof raw.timestamp !== "string") continue;
+        const ms = Date.parse(raw.timestamp);
+        const s = extractThreeWaySample(raw, sportKey);
+        if (Number.isFinite(ms) && s) {
+          sbPts.push({ ms, home: s.home, draw: s.draw, away: s.away });
+        }
+      }
+      sbPts.sort((a, b) => a.ms - b.ms);
+      if (sbPts.length > 0) threeWaySeries.push({ weight: 3.0, pts: sbPts });
+    }
+
+    if (res.win_prob_history && typeof res.win_prob_history === "object") {
+      for (const [srcKey, arr] of Object.entries(res.win_prob_history)) {
+        if (!Array.isArray(arr)) continue;
+        const srcPts: Array<{ ms: number; home: number; draw: number; away: number }> = [];
+        for (const raw of arr) {
+          if (!raw || typeof raw.timestamp !== "string") continue;
+          const ms = Date.parse(raw.timestamp);
+          const s = extractThreeWaySample(raw, sportKey);
+          if (Number.isFinite(ms) && s) {
+            srcPts.push({ ms, home: s.home, draw: s.draw, away: s.away });
+          }
+        }
+        srcPts.sort((a, b) => a.ms - b.ms);
+        if (srcPts.length > 0) {
+          const w = srcKey === "espn" ? 1.5 : srcKey === "stat_model" ? 1.0 : 0.8;
+          threeWaySeries.push({ weight: w, pts: srcPts });
+        }
+      }
+    }
+
+    if (threeWaySeries.length > 0) {
+      const MAX_GAP_MS = 30 * 60_000;
+      const MAX_HOME_DRIFT = 0.12;
+      const findNearest = (
+        pts: Array<{ ms: number; home: number; draw: number; away: number }>,
+        targetMs: number,
+      ) => {
+        let bestPt: { ms: number; home: number; draw: number; away: number } | null = null;
+        let bestDiff = Infinity;
+        for (const p of pts) {
+          const diff = Math.abs(p.ms - targetMs);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestPt = p;
+          }
+        }
+        return bestPt && bestDiff <= MAX_GAP_MS ? bestPt : null;
+      };
+
+      const enriched: Array<{ draw: number; away: number }> = [];
+      let coherentAll = true;
+      for (const pt of chosen) {
+        let wSum = 0;
+        let hSum = 0;
+        let dSum = 0;
+        let aSum = 0;
+        for (const series of threeWaySeries) {
+          const near = findNearest(series.pts, pt.ms);
+          if (!near) continue;
+          wSum += series.weight;
+          hSum += series.weight * near.home;
+          dSum += series.weight * near.draw;
+          aSum += series.weight * near.away;
+        }
+        if (wSum <= 0) {
+          coherentAll = false;
+          break;
+        }
+        const meanHome = hSum / wSum;
+        const meanDraw = dSum / wSum;
+        const meanAway = aSum / wSum;
+        const daSum = meanDraw + meanAway;
+        if (Math.abs(meanHome - pt.p) > MAX_HOME_DRIFT || daSum <= 0) {
+          coherentAll = false;
+          break;
+        }
+        const rem = Math.max(0, 1 - pt.p);
+        const draw = (meanDraw / daSum) * rem;
+        const away = Math.max(0, rem - draw);
+        enriched.push({ draw, away });
+      }
+
+      if (coherentAll && enriched.length === chosen.length) {
+        chosen = chosen.map((pt, i) => ({
+          ...pt,
+          draw: enriched[i].draw,
+          away: enriched[i].away,
+        }));
+      }
+    }
   }
 
   if (chosen.length < 3) return undefined;
@@ -195,6 +340,8 @@ export function extractDiscoverChartPointsFromHistory(
   return sampled.map((pt) => ({
     t: (pt.ms - minMs) / span,
     p: pt.p,
+    ...(pt.draw !== undefined ? { draw: pt.draw } : {}),
+    ...(pt.away !== undefined ? { away: pt.away } : {}),
   }));
 }
 
@@ -332,18 +479,42 @@ export function extractPregameProjectedPair(
 export interface LivePregameSummary199 {
   body: string;
   fullText: string;
+  namedText: string | null;
+  namedSide: HeadlineRowRole199 | null;
+  firstProjText: string | null;
+  firstProjSide: "home" | "away" | null;
+  secondProjText: string | null;
+  secondProjSide: "home" | "away" | null;
 }
 
 /**
- * Ruling 199 & 200-B single quiet grey line under the live probability bar:
- * `"Pregame  Lions 58% · projected 27–24"` (favourite's pregame chance, then
- * pregame projected score with the favourite first).
+ * Resolves readable per-team text ink for Ruling 214-A1's grey pregame line:
+ * when Ruling 197 assigned the slate fallback (`#64748B`), upgrades text to
+ * `#475569` (`slateTeamTextInk`) so it stands clearly apart from the quiet
+ * neutral label ink (`#8B98A9`) on grey-fallback pairs (e.g. Gonzaga @ Duke).
+ */
+export function resolveLiveSummarySideInk(hex: string | null | undefined): string {
+  const norm = (hex ?? "").trim().toLowerCase();
+  if (
+    !norm ||
+    norm === SLATE_TEAM_FALLBACK.toLowerCase() ||
+    norm === HEADLINE_STYLE_199.slateTeamTextInk.toLowerCase()
+  ) {
+    return HEADLINE_STYLE_199.slateTeamTextInk;
+  }
+  return teamTextColor(hex) ?? hex!;
+}
+
+/**
+ * Rulings 199, 200-B, 213-A & 214-A1 single quiet grey line under the live
+ * probability bar on BOTH the game page and live game cards:
+ * `"Pregame  Lions 58% · projected 27–24"` (favourite's pregame chance in its
+ * team colour, then pregame projected score with the named team's number first
+ * in its colour and the opponent's second in the opponent's colour).
  *
  * - One line, never wraps, nothing else is ever added to it.
  * - If one pregame value is missing, that half is left out; if both are missing,
  *   returns `null` so the line is omitted completely.
- * - Note (Ruling 204-C): cards drop this live grey line, while the game-page
- *   headline (`EventPageHeadline199`) imports and renders this helper.
  */
 export function formatLivePregameSummary(
   card: Pick<
@@ -409,18 +580,29 @@ export function formatLivePregameSummary(
   }
 
   let projHalf: string | null = null;
+  let firstProjText: string | null = null;
+  let firstProjSide: "home" | "away" | null = null;
+  let secondProjText: string | null = null;
+  let secondProjSide: "home" | "away" | null = null;
+
   if (preProjHomeStr != null && preProjAwayStr != null) {
-    if (favSide === "away") {
-      projHalf = `projected ${preProjAwayStr}–${preProjHomeStr}`;
-    } else if (favSide === "home") {
-      projHalf = `projected ${preProjHomeStr}–${preProjAwayStr}`;
-    } else if (
-      Number.isFinite(preProjAwayNum) &&
-      Number.isFinite(preProjHomeNum) &&
-      preProjAwayNum > preProjHomeNum
-    ) {
+    const awayFirst =
+      favSide === "away" ||
+      (favSide === null &&
+        Number.isFinite(preProjAwayNum) &&
+        Number.isFinite(preProjHomeNum) &&
+        preProjAwayNum > preProjHomeNum);
+    if (awayFirst) {
+      firstProjText = preProjAwayStr;
+      firstProjSide = "away";
+      secondProjText = preProjHomeStr;
+      secondProjSide = "home";
       projHalf = `projected ${preProjAwayStr}–${preProjHomeStr}`;
     } else {
+      firstProjText = preProjHomeStr;
+      firstProjSide = "home";
+      secondProjText = preProjAwayStr;
+      secondProjSide = "away";
       projHalf = `projected ${preProjHomeStr}–${preProjAwayStr}`;
     }
   }
@@ -433,6 +615,12 @@ export function formatLivePregameSummary(
   return {
     body,
     fullText: `Pregame  ${body}`,
+    namedText: chanceHalf,
+    namedSide: favSide,
+    firstProjText,
+    firstProjSide,
+    secondProjText,
+    secondProjSide,
   };
 }
 
@@ -720,6 +908,7 @@ function CrestBadge({
 function DiscoverWinChancePanel({
   points,
   strokeColor,
+  awayStrokeColor = "#64748B",
   teamLabel,
   pregamePct,
   endPctLabel,
@@ -729,6 +918,7 @@ function DiscoverWinChancePanel({
 }: {
   points: ChartPoint183A[];
   strokeColor: string;
+  awayStrokeColor?: string;
   teamLabel: string;
   pregamePct: number;
   endPctLabel: string;
@@ -752,17 +942,36 @@ function DiscoverWinChancePanel({
     return padTop + (1 - (clampedP - domain.min) / span) * plotH;
   };
 
+  const hasThreeWayLines =
+    !fitScale &&
+    points.length >= 2 &&
+    points.every((pt) => typeof pt.draw === "number" && typeof pt.away === "number");
+
   const clamped = points.map((pt) => ({
     x: padLeft + Math.min(1, Math.max(0, pt.t)) * plotW,
     y: toY(Math.min(1, Math.max(0, pt.p))),
   }));
-  const polyD = clamped
-    .map((pt, idx) => `${idx === 0 ? "M" : "L"}${pt.x.toFixed(1)},${pt.y.toFixed(1)}`)
-    .join(" ");
+  const drawClamped = hasThreeWayLines
+    ? points.map((pt) => ({
+        x: padLeft + Math.min(1, Math.max(0, pt.t)) * plotW,
+        y: toY(Math.min(1, Math.max(0, pt.draw!))),
+      }))
+    : [];
+  const awayClamped = hasThreeWayLines
+    ? points.map((pt) => ({
+        x: padLeft + Math.min(1, Math.max(0, pt.t)) * plotW,
+        y: toY(Math.min(1, Math.max(0, pt.away!))),
+      }))
+    : [];
+  const toPathD = (pts: Array<{ x: number; y: number }>) =>
+    pts.map((pt, idx) => `${idx === 0 ? "M" : "L"}${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(" ");
+  const polyD = toPathD(clamped);
+  const drawPolyD = toPathD(drawClamped);
+  const awayPolyD = toPathD(awayClamped);
   const firstPt = clamped[0];
   const lastPt = clamped[clamped.length - 1];
   const areaD =
-    firstPt && lastPt
+    !hasThreeWayLines && firstPt && lastPt
       ? `${polyD} L${lastPt.x.toFixed(1)},${(padTop + plotH).toFixed(1)} L${firstPt.x.toFixed(1)},${(padTop + plotH).toFixed(1)} Z`
       : "";
   const gradId = `chart191a-grad-${cardId}`;
@@ -814,6 +1023,64 @@ function DiscoverWinChancePanel({
           );
         })}
         {areaD && <path d={areaD} fill={`url(#${gradId})`} />}
+        {hasThreeWayLines && (
+          <>
+            <path
+              d={drawPolyD}
+              fill="none"
+              stroke={SOCCER_DRAW_LINE_HEX}
+              strokeWidth={1.75}
+              strokeLinejoin="miter"
+              strokeLinecap="round"
+              data-testid="discover-soccer-line-draw"
+            />
+            {drawClamped[0] && (
+              <circle
+                cx={drawClamped[0].x}
+                cy={drawClamped[0].y}
+                r={2.25}
+                className="fill-surface-card"
+                stroke={SOCCER_DRAW_LINE_HEX}
+                strokeWidth={1.5}
+              />
+            )}
+            {drawClamped[drawClamped.length - 1] && (
+              <circle
+                cx={drawClamped[drawClamped.length - 1].x}
+                cy={drawClamped[drawClamped.length - 1].y}
+                r={3}
+                fill={SOCCER_DRAW_LINE_HEX}
+              />
+            )}
+            <path
+              d={awayPolyD}
+              fill="none"
+              stroke={awayStrokeColor}
+              strokeWidth={2.25}
+              strokeLinejoin="miter"
+              strokeLinecap="round"
+              data-testid="discover-soccer-line-away"
+            />
+            {awayClamped[0] && (
+              <circle
+                cx={awayClamped[0].x}
+                cy={awayClamped[0].y}
+                r={2.5}
+                className="fill-surface-card"
+                stroke={awayStrokeColor}
+                strokeWidth={1.75}
+              />
+            )}
+            {awayClamped[awayClamped.length - 1] && (
+              <circle
+                cx={awayClamped[awayClamped.length - 1].x}
+                cy={awayClamped[awayClamped.length - 1].y}
+                r={3.25}
+                fill={awayStrokeColor}
+              />
+            )}
+          </>
+        )}
         <path
           d={polyD}
           fill="none"
@@ -821,6 +1088,7 @@ function DiscoverWinChancePanel({
           strokeWidth={2.25}
           strokeLinejoin="miter"
           strokeLinecap="round"
+          data-testid={hasThreeWayLines ? "discover-soccer-line-home" : undefined}
         />
         {firstPt && (
           <circle
@@ -1000,6 +1268,14 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
     home_prob: rawHome,
     away_prob: rawAway,
     draw_prob: rawDraw,
+    served_home_pct:
+      probWithheld || event.hero_probability != null || event.hero_probability_away != null
+        ? null
+        : event.current_odds?.home_rendered_percent,
+    served_away_pct:
+      probWithheld || event.hero_probability != null || event.hero_probability_away != null
+        ? null
+        : event.current_odds?.away_rendered_percent,
     pregame_home_pct: openHome,
     pregame_away_pct: openAway,
     pregame_draw_pct: openDrawPct,
@@ -1404,6 +1680,55 @@ export default function EventCard183A({
     card.projected_away !== "" &&
     card.projected_home !== "";
 
+  const livePregameLine =
+    isLive && !isSuspended
+      ? formatLivePregameSummary(card, awayShort, homeShort)
+      : null;
+  const liveSummaryBasePx =
+    livePregameLine == null
+      ? 12
+      : livePregameLine.fullText.length <= 38
+        ? 12
+        : livePregameLine.fullText.length <= 46
+          ? 11
+          : 10;
+  const liveSummaryBaseRem = `${Number((liveSummaryBasePx / 16).toFixed(4))}rem`;
+  const liveSummaryRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    const el = liveSummaryRef.current;
+    if (!el) return;
+    const fit = () => {
+      const target = liveSummaryRef.current;
+      if (!target || target.clientWidth <= 0) return;
+      target.style.fontSize = liveSummaryBaseRem;
+      let px =
+        (typeof window !== "undefined"
+          ? parseFloat(window.getComputedStyle(target).fontSize)
+          : NaN) || liveSummaryBasePx;
+      while (px > 7.5 && target.scrollWidth > target.clientWidth + 1) {
+        px = Math.max(7.5, Number((px - 0.5).toFixed(1)));
+        target.style.fontSize = `${px}px`;
+      }
+    };
+    fit();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
+    if (ro) ro.observe(el);
+    window.addEventListener("resize", fit);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", fit);
+    };
+  }, [liveSummaryBasePx, liveSummaryBaseRem, livePregameLine?.fullText]);
+
+  const awaySummaryInk = resolveLiveSummarySideInk(awayInk);
+  const homeSummaryInk = resolveLiveSummarySideInk(homeInk);
+  const sideSummaryInk = (side: HeadlineRowRole199 | null | undefined): string =>
+    side === "away"
+      ? awaySummaryInk
+      : side === "home"
+        ? homeSummaryInk
+        : HEADLINE_STYLE_199.slateTeamTextInk;
+
   // Direction 199: during and after a game, print no sentence that repeats the card.
   // Before a game, keep the sentence when informative and name each team as its row does.
   const discoverReason = (() => {
@@ -1551,6 +1876,13 @@ export default function EventCard183A({
       : formatBoundedWholePct(drawWholePct, inferredDraw);
 
   const hasScoreOrSets = hasScore || hasTennisSetBoxes;
+  const denseTennisSets = hasTennisSetBoxes && card.tennis_sets!.length >= 3;
+  const primaryColWidthClass = isLive
+    ? denseTennisSets
+      ? "min-w-[60px]"
+      : "min-w-[70px]"
+    : "min-w-[58px]";
+  const liveNowFontClass = denseTennisSets ? "text-[18.5px]" : "text-[22px]";
   const teamFontClass = sharedGameCardTeamFontClass(awayShort, homeShort, hasScoreOrSets);
 
   return (
@@ -1610,21 +1942,21 @@ export default function EventCard183A({
           {hasTennisSetBoxes && (
             <div className="flex items-center gap-1" data-testid="tennis-score-strip">
               {card.tennis_sets!.map((_, idx) => (
-                <span key={idx} className="w-5 text-center">
+                <span key={idx} className="min-w-[22px] text-center whitespace-nowrap">
                   S{idx + 1}
                 </span>
               ))}
-              {showTennisPointsBox && <span className="ml-0.5 w-7 text-right">Pts</span>}
+              {showTennisPointsBox && <span className="ml-0.5 min-w-[28px] text-right whitespace-nowrap">Pts</span>}
             </div>
           )}
           {hasScore && (
-            <span className="w-9 text-right" data-testid="col-header-score">
+            <span className="min-w-[38px] text-right whitespace-nowrap" data-testid="col-header-score">
               {tennis ? "Sets" : "Score"}
             </span>
           )}
           {showProjCol && (
             <span
-              className={`w-12 text-right ${hasScoreOrSets ? "ml-[12px]" : ""}`}
+              className={`min-w-[48px] text-right whitespace-nowrap ${hasScoreOrSets ? "ml-[12px]" : ""}`}
               data-testid="col-header-proj"
             >
               Proj.
@@ -1632,14 +1964,14 @@ export default function EventCard183A({
           )}
           {showPregameCol && (
             <span
-              className={`w-12 text-right ${hasScoreOrSets ? "ml-[14px]" : ""}`}
+              className={`min-w-[48px] text-right whitespace-nowrap ${hasScoreOrSets ? "ml-[14px]" : ""}`}
               data-testid="col-header-pregame"
             >
               Pregame
             </span>
           )}
           <span
-            className={`ml-[16px] ${isLive ? "w-[66px]" : "w-[58px]"} text-right text-text-secondary`}
+            className={`ml-[14px] ${primaryColWidthClass} text-right whitespace-nowrap text-text-secondary`}
             data-testid="col-header-now"
           >
             {isLive ? "Now" : isDone ? "Final" : "Chance"}
@@ -1696,7 +2028,7 @@ export default function EventCard183A({
                   return (
                     <span
                       key={idx}
-                      className={`w-5 text-center text-[15px] ${
+                      className={`min-w-[22px] text-center whitespace-nowrap text-[15px] ${
                         s.current
                           ? "rounded bg-surface-elevated font-bold text-text-primary"
                           : wonSet
@@ -1712,20 +2044,20 @@ export default function EventCard183A({
                   );
                 })}
                 {showTennisPointsBox && (
-                  <span className="ml-0.5 w-7 text-right text-xs font-semibold text-text-secondary">
+                  <span className="ml-0.5 min-w-[28px] text-right whitespace-nowrap text-xs font-semibold text-text-secondary">
                     {card.tennis_game_points!.away}
                   </span>
                 )}
               </div>
             )}
             {hasScore && (
-              <span className="w-9 text-right text-[16.5px] font-semibold text-text-primary">
+              <span className="min-w-[38px] text-right whitespace-nowrap text-[16.5px] font-semibold text-text-primary">
                 {card.away_score}
               </span>
             )}
             {showProjCol && (
               <span
-                className={`w-12 text-right ${
+                className={`min-w-[48px] text-right whitespace-nowrap ${
                   isLive
                     ? "ml-[12px] text-[16.5px] font-semibold text-text-primary"
                     : "text-[16px] font-semibold text-text-secondary"
@@ -1737,7 +2069,7 @@ export default function EventCard183A({
             )}
             {showPregameCol && (
               <span
-                className={`w-12 text-right text-[14px] font-normal text-text-muted ${
+                className={`min-w-[48px] text-right whitespace-nowrap text-[14px] font-normal text-text-muted ${
                   hasScoreOrSets ? "ml-[14px]" : ""
                 }`}
               >
@@ -1745,23 +2077,23 @@ export default function EventCard183A({
               </span>
             )}
             <span
-              className={`ml-[16px] text-right ${
+              className={`ml-[14px] ${primaryColWidthClass} text-right whitespace-nowrap ${
                 isDone
                   ? awayWon
-                    ? "w-[58px] text-[18px] font-extrabold text-text-primary"
+                    ? "text-[18px] font-extrabold text-text-primary"
                     : finishedLevelDraw
-                      ? "w-[58px] text-[18px] font-bold text-text-primary"
-                      : "w-[58px] text-[18px] font-medium text-text-muted"
+                      ? "text-[18px] font-bold text-text-primary"
+                      : "text-[18px] font-medium text-text-muted"
                   : isLive
-                    ? "w-[66px] text-[22px] font-extrabold leading-none"
-                    : "w-[58px] text-[18px] font-bold"
+                    ? `${liveNowFontClass} font-extrabold leading-none`
+                    : "text-[18px] font-bold"
               }`}
               style={{
                 color:
                   !isDone &&
                   !awayWithheld &&
                   (isLive ? liveTenths.away != null : awayWholePct != null)
-                    ? awayInk
+                    ? awaySummaryInk
                     : undefined,
               }}
               data-testid="primary-chance-away"
@@ -1804,10 +2136,10 @@ export default function EventCard183A({
               )}
             </div>
             <div className="flex shrink-0 items-baseline tabular-nums">
-              {hasScore && <span className="w-9 text-right text-xs text-text-muted">—</span>}
+              {hasScore && <span className="min-w-[38px] text-right whitespace-nowrap text-xs text-text-muted">—</span>}
               {showProjCol && (
                 <span
-                  className={`w-12 text-right text-xs text-text-muted ${
+                  className={`min-w-[48px] text-right whitespace-nowrap text-xs text-text-muted ${
                     hasScoreOrSets ? "ml-[12px]" : ""
                   }`}
                 >
@@ -1816,7 +2148,7 @@ export default function EventCard183A({
               )}
               {showPregameCol && (
                 <span
-                  className={`w-12 text-right text-[14px] font-normal text-text-muted ${
+                  className={`min-w-[48px] text-right whitespace-nowrap text-[14px] font-normal text-text-muted ${
                     hasScoreOrSets ? "ml-[14px]" : ""
                   }`}
                 >
@@ -1824,12 +2156,12 @@ export default function EventCard183A({
                 </span>
               )}
               <span
-                className={`ml-[16px] text-right ${
+                className={`ml-[14px] ${primaryColWidthClass} text-right whitespace-nowrap ${
                   isDone
-                    ? "w-[58px] text-[15px] font-normal text-text-muted"
+                    ? "text-[15px] font-normal text-text-muted"
                     : isLive
-                      ? "w-[66px] text-[17px] font-bold text-text-secondary"
-                      : "w-[58px] text-[16px] font-bold text-text-secondary"
+                      ? "text-[17px] font-bold text-text-secondary"
+                      : "text-[16px] font-bold text-text-secondary"
                 }`}
               >
                 {drawPrimaryDisplay}
@@ -1846,7 +2178,7 @@ export default function EventCard183A({
               sport={card.sport}
               abbreviation={card.home_abbrev}
               logoUrl={card.home_logo}
-              color={card.home_color}
+              color={homeInk}
             />
             <span
               className={`truncate ${teamFontClass} ${
@@ -1885,7 +2217,7 @@ export default function EventCard183A({
                   return (
                     <span
                       key={idx}
-                      className={`w-5 text-center text-[15px] ${
+                      className={`min-w-[22px] text-center whitespace-nowrap text-[15px] ${
                         s.current
                           ? "rounded bg-surface-elevated font-bold text-text-primary"
                           : wonSet
@@ -1901,20 +2233,20 @@ export default function EventCard183A({
                   );
                 })}
                 {showTennisPointsBox && (
-                  <span className="ml-0.5 w-7 text-right text-xs font-semibold text-text-secondary">
+                  <span className="ml-0.5 min-w-[28px] text-right whitespace-nowrap text-xs font-semibold text-text-secondary">
                     {card.tennis_game_points!.home}
                   </span>
                 )}
               </div>
             )}
             {hasScore && (
-              <span className="w-9 text-right text-[16.5px] font-semibold text-text-primary">
+              <span className="min-w-[38px] text-right whitespace-nowrap text-[16.5px] font-semibold text-text-primary">
                 {card.home_score}
               </span>
             )}
             {showProjCol && (
               <span
-                className={`w-12 text-right ${
+                className={`min-w-[48px] text-right whitespace-nowrap ${
                   isLive
                     ? "ml-[12px] text-[16.5px] font-semibold text-text-primary"
                     : "text-[16px] font-semibold text-text-secondary"
@@ -1926,7 +2258,7 @@ export default function EventCard183A({
             )}
             {showPregameCol && (
               <span
-                className={`w-12 text-right text-[14px] font-normal text-text-muted ${
+                className={`min-w-[48px] text-right whitespace-nowrap text-[14px] font-normal text-text-muted ${
                   hasScoreOrSets ? "ml-[14px]" : ""
                 }`}
               >
@@ -1934,21 +2266,21 @@ export default function EventCard183A({
               </span>
             )}
             <span
-              className={`ml-[16px] text-right ${
+              className={`ml-[14px] ${primaryColWidthClass} text-right whitespace-nowrap ${
                 isDone
                   ? homeWon
-                    ? "w-[58px] text-[18px] font-extrabold text-text-primary"
+                    ? "text-[18px] font-extrabold text-text-primary"
                     : finishedLevelDraw
-                      ? "w-[58px] text-[18px] font-bold text-text-primary"
-                      : "w-[58px] text-[18px] font-medium text-text-muted"
+                      ? "text-[18px] font-bold text-text-primary"
+                      : "text-[18px] font-medium text-text-muted"
                   : isLive
-                    ? "w-[66px] text-[22px] font-extrabold leading-none"
-                    : "w-[58px] text-[18px] font-bold"
+                    ? `${liveNowFontClass} font-extrabold leading-none`
+                    : "text-[18px] font-bold"
               }`}
               style={{
                 color:
                   !isDone && (isLive ? liveTenths.home != null : homeWholePct != null)
-                    ? homeInk
+                    ? homeSummaryInk
                     : undefined,
               }}
               data-testid="primary-chance-home"
@@ -2004,12 +2336,61 @@ export default function EventCard183A({
         </div>
       )}
 
+      {/* Rulings 199, 200-B, 213-A & 214-A1: single non-wrapping quiet grey line under the bar during a game, with each team's numbers in its team colour */}
+      {livePregameLine && (
+        <div
+          ref={liveSummaryRef}
+          className="mt-1.5 overflow-hidden whitespace-nowrap leading-tight tabular-nums"
+          style={{
+            fontSize: liveSummaryBaseRem,
+            color: HEADLINE_STYLE_199.liveSummaryQuietInk,
+          }}
+          data-testid="live-pregame-summary-line"
+        >
+          <span className="font-medium">Pregame</span>
+          {"  "}
+          {livePregameLine.namedText != null && (
+            <span
+              className="font-semibold"
+              style={{ color: sideSummaryInk(livePregameLine.namedSide) }}
+              data-testid="live-pregame-named"
+            >
+              {livePregameLine.namedText}
+            </span>
+          )}
+          {livePregameLine.firstProjText != null &&
+            livePregameLine.secondProjText != null && (
+              <>
+                <span>
+                  {livePregameLine.namedText != null ? " · projected " : "projected "}
+                </span>
+                <span
+                  className="font-semibold"
+                  style={{ color: sideSummaryInk(livePregameLine.firstProjSide) }}
+                  data-testid="live-pregame-proj-first"
+                >
+                  {livePregameLine.firstProjText}
+                </span>
+                <span>–</span>
+                <span
+                  className="font-semibold"
+                  style={{ color: sideSummaryInk(livePregameLine.secondProjSide) }}
+                  data-testid="live-pregame-proj-second"
+                >
+                  {livePregameLine.secondProjText}
+                </span>
+              </>
+            )}
+        </div>
+      )}
+
       {/* 191-A Discover chart panel during & after a game (Ruling 201 fitted vertical scale on 2-way games) */}
       {canRenderChartPanel && (
         <DiscoverWinChancePanel
           cardId={card.id}
           points={chartPoints}
           strokeColor={homeInk}
+          awayStrokeColor={awayInk}
           teamLabel={homeShort}
           pregamePct={card.pregame_home_pct as number}
           endPctLabel={chartEndLabel}

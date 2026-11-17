@@ -46,6 +46,8 @@ import {
 } from "@/lib/soccerEventCards";
 import { getLeagueDisplay } from "@/lib/sportCategories";
 import {
+  effectiveAwaySecondaryColor,
+  lookupTeamColors,
   resolveMatchupTeamColors,
   teamTextColor,
 } from "@/lib/teamColors";
@@ -825,10 +827,15 @@ export function resolveEventPageHeadline199(
     { name: event.away_team, abbreviation: event.away_team_data?.abbreviation },
     event.sport,
   );
+  const homeKnown = lookupTeamColors(event.home_team);
+  const awayKnown = lookupTeamColors(event.away_team);
   const teamHexes = resolveHeadlineTeamHexes199({
-    homePrimary: event.home_team_data?.primary_color,
-    awayPrimary: event.away_team_data?.primary_color,
-    awaySecondary: event.away_team_data?.secondary_color,
+    homePrimary: event.home_team_data?.primary_color ?? homeKnown?.primary,
+    awayPrimary: event.away_team_data?.primary_color ?? awayKnown?.primary,
+    awaySecondary: effectiveAwaySecondaryColor(
+      event.away_team,
+      event.away_team_data?.secondary_color,
+    ),
   });
   const colors = {
     away: teamHexes.away,
@@ -1145,6 +1152,7 @@ export function resolveEventPageHeadline199(
           let favName = shortNames.home;
           let favText = preTexts.home;
           let favIsHome = true;
+          let favSide: HeadlineRowRole199 = "home";
           if (
             snap.pregameShares.away > snap.pregameShares.home &&
             snap.pregameShares.away >= snap.pregameShares.draw
@@ -1152,6 +1160,7 @@ export function resolveEventPageHeadline199(
             favName = shortNames.away;
             favText = preTexts.away;
             favIsHome = false;
+            favSide = "away";
           } else if (
             snap.pregameShares.draw > snap.pregameShares.home &&
             snap.pregameShares.draw > snap.pregameShares.away
@@ -1159,17 +1168,43 @@ export function resolveEventPageHeadline199(
             favName = "Draw";
             favText = preTexts.draw;
             favIsHome = true;
+            favSide = "draw";
           }
-          const projHalf = pregameProj
+          const namedText = `${favName} ${favText}`;
+          const firstProjText = pregameProj
             ? favIsHome
-              ? ` · projected ${pregameProj.home}–${pregameProj.away}`
-              : ` · projected ${pregameProj.away}–${pregameProj.home}`
+              ? pregameProj.home
+              : pregameProj.away
+            : null;
+          const secondProjText = pregameProj
+            ? favIsHome
+              ? pregameProj.away
+              : pregameProj.home
+            : null;
+          const firstProjSide: "home" | "away" | null = pregameProj
+            ? favIsHome
+              ? "home"
+              : "away"
+            : null;
+          const secondProjSide: "home" | "away" | null = pregameProj
+            ? favIsHome
+              ? "away"
+              : "home"
+            : null;
+          const projHalf = pregameProj
+            ? ` · projected ${firstProjText}–${secondProjText}`
             : "";
-          const bodyText = `${favName} ${favText}${projHalf}`;
+          const bodyText = `${namedText}${projHalf}`;
           liveSummary = {
             leadWord: "Pregame",
             bodyText,
             fullText: `Pregame  ${bodyText}`,
+            namedText,
+            namedSide: favSide,
+            firstProjText,
+            firstProjSide,
+            secondProjText,
+            secondProjSide,
           };
         }
 
@@ -1264,6 +1299,12 @@ export function resolveEventPageHeadline199(
           leadWord: "Pregame",
           bodyText: rawSummary.body,
           fullText: rawSummary.fullText,
+          namedText: rawSummary.namedText,
+          namedSide: rawSummary.namedSide,
+          firstProjText: rawSummary.firstProjText,
+          firstProjSide: rawSummary.firstProjSide,
+          secondProjText: rawSummary.secondProjText,
+          secondProjSide: rawSummary.secondProjSide,
         }
       : null;
 

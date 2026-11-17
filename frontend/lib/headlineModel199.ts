@@ -59,6 +59,12 @@ export interface HeadlineLivePregameSummary199 {
   leadWord: "Pregame";
   bodyText: string;
   fullText: string;
+  namedText?: string | null;
+  namedSide?: HeadlineRowRole199 | null;
+  firstProjText?: string | null;
+  firstProjSide?: "home" | "away" | null;
+  secondProjText?: string | null;
+  secondProjSide?: "home" | "away" | null;
 }
 
 export interface HeadlineModel199 {
@@ -87,6 +93,8 @@ export interface HeadlineModel199 {
 /** Semantic colours matching `HeadlineStyleTable199` on iOS. */
 export const HEADLINE_STYLE_199 = {
   quietInk: "#526071",
+  liveSummaryQuietInk: "#8B98A9", // quiet neutral label ink distinct from #475569 slate team text
+  slateTeamTextInk: "#475569", // slate-600 — readable & distinct from liveSummaryQuietInk on grey-fallback pairs
   primaryInk: "#0F172A",
   loserOpacity: 0.65,
   winnerTickInk: "#178F4D",

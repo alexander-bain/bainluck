@@ -23,10 +23,6 @@ const ROOT = join(__dirname, "..", "..");
  * reason. A file here is a decision on the record, not an exemption.
  */
 const NOT_A_FIELD_CHART: Record<string, string> = {
-  "components/TeamSeasonJourney.tsx":
-    "one team's season line, not a field — it uses the opt-in zoom chip (L2-164) instead",
-  "components/event/SettledPathChart.tsx":
-    "settled: the winner is at 100%, so the ladder would return 1.0 and the prop would be inert",
   "components/event/TwoSidedTimeline.tsx":
     "co_equal_list — two head-to-head competitors summing to 100%, the case a flat 0–100% axis is RIGHT for",
 };

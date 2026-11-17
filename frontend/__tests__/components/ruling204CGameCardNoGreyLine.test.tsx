@@ -6,12 +6,15 @@
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import EventPageHeadline199 from "@/components/event/EventPageHeadline199";
+import { resolveEventPageHeadline199 } from "@/lib/eventPageHeadline199";
 import EventCard183A, {
   buildUnifiedCardFromEvent,
   buildUnifiedCardFromTeamGame,
   extractDiscoverChartPointsFromHistory,
   formatLivePregameSummary,
   formatPregameKickoff,
+  resolveLiveSummarySideInk,
   type UnifiedGameCardData,
 } from "@/components/EventCard183A";
 import FeedCard from "@/components/FeedCard";
@@ -196,7 +199,9 @@ describe("Ruling 204-C — buildUnifiedCardFromTeamGame & EventCard183A flag-gat
       expect(liveHtml).toContain('data-testid="primary-chance-away">62.4%<');
       expect(liveHtml).toContain('data-testid="primary-chance-home">—<');
       expect(liveHtml).not.toContain('data-testid="pregame-bar-tick"');
-      expect(liveHtml).not.toContain('data-testid="live-pregame-summary-line"');
+      // Rulings 213-A & 214-A1: live card prints single grey pregame line ("Pregame  Arsenal 59%")
+      expect(liveHtml).toContain('data-testid="live-pregame-summary-line"');
+      expect(liveHtml).toContain("Arsenal 59%");
     });
   });
 
@@ -263,8 +268,8 @@ describe("Ruling 204-C — buildUnifiedCardFromTeamGame & EventCard183A flag-gat
       expect(onHtml).toContain("Q3 6:12");
       expect(onHtml).not.toContain("LIVE ·");
       expect(onHtml).toContain('data-testid="pregame-bar-tick"');
-      expect(onHtml).not.toContain('data-testid="live-pregame-summary-line"');
-      expect(onHtml).not.toContain("Pregame");
+      expect(onHtml).toContain('data-testid="live-pregame-summary-line"');
+      expect(onHtml).toContain("Lions 58%");
 
       // When live_projection is unheld, "Proj." is omitted so no header floats over an empty column
       const unheldFeedItem: FeedItem = {
@@ -335,7 +340,7 @@ describe("Ruling 204-C — buildUnifiedCardFromTeamGame & EventCard183A flag-gat
 
       expect(upcomingOn).toContain('data-testid="event-card-183a-standard"');
       expect(upcomingOn).toContain('data-testid="pregame-bar-tick"');
-      expect(upcomingOn).not.toContain('data-testid="live-pregame-summary-line"');
+      expect(upcomingOn).toContain('data-testid="live-pregame-summary-line"');
 
       expect(recentOn).toContain('data-testid="event-card-183a-standard"');
       expect(recentOn).toContain('data-testid="winner-tick-home"');
@@ -534,6 +539,168 @@ describe("Ruling 204-C — buildUnifiedCardFromTeamGame & EventCard183A flag-gat
       } as unknown as Event;
       const card = buildUnifiedCardFromEvent(liveWithNumericEspnData);
       expect(card.live_clock_label).toBe("8:14");
+    });
+
+    it("7. Rulings 213-A & 214-A1: colours named team + first projected number in named team's colour and second in opponent's across same-colour-family (Kansas–Duke) and grey-fallback (Gonzaga–Duke) pairs on both page and card", () => {
+      // A) Same-colour-family pair: Kansas (#0051BA blue, secondary #E8000D crimson) @ Duke (#003087 blue)
+      // Suppose Kansas was pregame 54% favourite, projected Kansas 79 – Duke 76 -> named Kansas first!
+      const kansasAtDukeEvent = {
+        id: 21401,
+        sport: "basketball_ncaab",
+        sport_name: "NCAAB",
+        home_team: "Duke Blue Devils",
+        away_team: "Kansas Jayhawks",
+        commence_time: LIVE_ISO,
+        status: "live",
+        home_score: 41,
+        away_score: 44,
+        espn: { period: "2nd Half", game_clock: "11:20" },
+        current_odds: {
+          home_probability: 0.462,
+          away_probability: 0.538,
+          projected_home_score: 77.0,
+          projected_away_score: 80.0,
+          live_projection: {
+            kind: "in_play",
+            boundary: "commence_time",
+            boundary_at: LIVE_ISO,
+            earliest_confirmed_at: "2026-11-16T14:05:00Z",
+            latest_captured_at: "2026-11-16T14:50:00Z",
+            source: "sportsbooks",
+            basis: "consensus_spread_total",
+            bookmaker_count: 10,
+            unit: "points",
+            period: "full_game",
+            projected_home_score: 77.0,
+            projected_away_score: 80.0,
+          },
+        },
+        prematch_odds: {
+          home_probability: 0.46,
+          away_probability: 0.54,
+          source: "odds_snapshot",
+          captured_at: "2026-11-16T13:55:00Z",
+        },
+        pregame_projection: {
+          kind: "last_before_scheduled_start",
+          boundary: "scheduled_start",
+          boundary_at: LIVE_ISO,
+          source: "sportsbooks",
+          basis: "consensus_spread_total",
+          unit: "points",
+          period: "full_game",
+          projected_home_score: 76.1,
+          projected_away_score: 79.2,
+          bookmaker_count: 10,
+          earliest_captured_at: "2026-11-16T13:30:00Z",
+          latest_captured_at: "2026-11-16T13:58:00Z",
+        },
+      } as unknown as Event;
+
+      const kuCard = buildUnifiedCardFromEvent(kansasAtDukeEvent);
+      const kuCardHtml = renderToStaticMarkup(<EventCard183A card={kuCard} surface="standard" />);
+      expect(kuCardHtml).toContain('data-testid="live-pregame-named"');
+      // Kansas switched to crimson #E8000D; Duke stays #00539B; named Kansas (79) comes first, Duke (76) second
+      expect(kuCardHtml.toLowerCase()).toContain('style="color:#e8000d" data-testid="live-pregame-named">kansas 54%<');
+      expect(kuCardHtml.toLowerCase()).toContain('style="color:#e8000d" data-testid="live-pregame-proj-first">79<');
+      expect(kuCardHtml.toLowerCase()).toContain('style="color:#00539b" data-testid="live-pregame-proj-second">76<');
+
+      const kuPageModel = resolveEventPageHeadline199({
+        event: kansasAtDukeEvent as never,
+        isLive: true,
+        effectivelyLive: true,
+        isFinished: false,
+        isSuspended: false,
+        stoppageLabel: null,
+        venueVoided: false,
+        venueSettledSentence: null,
+        homeProb: 0.462,
+        servedAwayProb: 0.538,
+        homePct: 46,
+        servedAwayPct: 54,
+        probSourceLabel: "Blend",
+        tenthsOptIn: true,
+        settledWinnerSide: null,
+        bestHomeScore: 41,
+        bestAwayScore: 44,
+        heroScorePairPresent: true,
+        heroScoreIsStoppageFiller: false,
+        projectedPairAdmitted: true,
+        projectedPairRaw: { home_score: 77, away_score: 80 },
+        liveClockLabel: "2H 11:20",
+        startClock: "clock",
+        pregameStateLabel: null,
+      });
+      const kuPageHtml = renderToStaticMarkup(
+        <EventPageHeadline199
+          model={kuPageModel}
+          event={kansasAtDukeEvent as never}
+          isPinned={false}
+          pinDisabled={false}
+          onPinToggle={jest.fn()}
+        />,
+      );
+      expect(kuPageHtml.toLowerCase()).toContain('style="color:#e8000d" data-testid="headline-pregame-named">kansas 54%<');
+      expect(kuPageHtml.toLowerCase()).toContain('style="color:#e8000d" data-testid="headline-pregame-proj-first">79<');
+      expect(kuPageHtml.toLowerCase()).toContain('style="color:#00539b" data-testid="headline-pregame-proj-second">76<');
+
+      // B) Grey-fallback pair: Kentucky (#0033A0 blue, #FFFFFF white secondary -> Ruling 197 slate fallback) @ Duke (#00539B blue)
+      const kentuckyAtDukeEvent = {
+        ...kansasAtDukeEvent,
+        id: 21402,
+        away_team: "Kentucky Wildcats",
+        away_team_data: {
+          name: "Kentucky Wildcats",
+          primary_color: "#0033A0",
+          secondary_color: "#FFFFFF",
+        },
+      } as unknown as Event;
+      expect(resolveLiveSummarySideInk("#64748B")).toBe("#475569");
+      const ukCardHtml = renderToStaticMarkup(
+        <EventCard183A card={buildUnifiedCardFromEvent(kentuckyAtDukeEvent)} surface="standard" />,
+      );
+      expect(ukCardHtml.toLowerCase()).toContain('style="color:#475569" data-testid="live-pregame-named">kentucky 54%<');
+      expect(ukCardHtml.toLowerCase()).toContain('style="color:#475569" data-testid="live-pregame-proj-first">79<');
+      expect(ukCardHtml.toLowerCase()).toContain('style="color:#00539b" data-testid="live-pregame-proj-second">76<');
+
+      const ukPageModel = resolveEventPageHeadline199({
+        event: kentuckyAtDukeEvent as never,
+        isLive: true,
+        effectivelyLive: true,
+        isFinished: false,
+        isSuspended: false,
+        stoppageLabel: null,
+        venueVoided: false,
+        venueSettledSentence: null,
+        homeProb: 0.462,
+        servedAwayProb: 0.538,
+        homePct: 46,
+        servedAwayPct: 54,
+        probSourceLabel: "Blend",
+        tenthsOptIn: true,
+        settledWinnerSide: null,
+        bestHomeScore: 41,
+        bestAwayScore: 44,
+        heroScorePairPresent: true,
+        heroScoreIsStoppageFiller: false,
+        projectedPairAdmitted: true,
+        projectedPairRaw: { home_score: 77, away_score: 80 },
+        liveClockLabel: "2H 11:20",
+        startClock: "clock",
+        pregameStateLabel: null,
+      });
+      const ukPageHtml = renderToStaticMarkup(
+        <EventPageHeadline199
+          model={ukPageModel}
+          event={kentuckyAtDukeEvent as never}
+          isPinned={false}
+          pinDisabled={false}
+          onPinToggle={jest.fn()}
+        />,
+      );
+      expect(ukPageHtml.toLowerCase()).toContain('style="color:#475569" data-testid="headline-pregame-named">kentucky 54%<');
+      expect(ukPageHtml.toLowerCase()).toContain('style="color:#475569" data-testid="headline-pregame-proj-first">79<');
+      expect(ukPageHtml.toLowerCase()).toContain('style="color:#00539b" data-testid="headline-pregame-proj-second">76<');
     });
   });
 });

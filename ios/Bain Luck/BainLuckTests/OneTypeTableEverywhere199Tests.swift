@@ -281,9 +281,15 @@ final class OneTypeTableEverywhere199Tests: XCTestCase {
         @ViewBuilder
         func widgetBar() -> some View {
             if reading.shares != nil {
-                HStack(spacing: 2) {
-                    Capsule().fill(awayColor).frame(maxWidth: .infinity)
-                    Capsule().fill(homeColor).frame(width: 112)
+                GeometryReader { geo in
+                    let awayShare: CGFloat = art.isLive ? 0.338 : 0.42
+                    let gap: CGFloat = 2
+                    let usable = max(8, geo.size.width - gap)
+                    HStack(spacing: gap) {
+                        Capsule().fill(awayColor).frame(width: usable * awayShare)
+                        Capsule().fill(homeColor).frame(width: usable * (1 - awayShare))
+                    }
+                    .frame(width: geo.size.width, height: 5)
                 }
                 .frame(height: 5)
             }
@@ -333,6 +339,7 @@ final class OneTypeTableEverywhere199Tests: XCTestCase {
                 Text(phaseTitle)
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 16)
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -371,6 +378,7 @@ final class OneTypeTableEverywhere199Tests: XCTestCase {
                     Text("5 · Small Widget (.widget · 158×158) + Watch Tile (.wristTile) Side by Side")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     HStack(alignment: .center, spacing: 12) {
                         smallWidget
                         watchTile
@@ -405,8 +413,17 @@ final class OneTypeTableEverywhere199Tests: XCTestCase {
             "projected_home_score": 27.0
           },
           "pregame_projection": {
-            "away_score": 21.0,
-            "home_score": 27.0,
+            "projected_away_score": 21.0,
+            "projected_home_score": 27.0,
+            "kind": "last_before_scheduled_start",
+            "boundary": "scheduled_start",
+            "boundary_at": "2026-11-17T01:15:00Z",
+            "earliest_captured_at": "2026-11-16T18:30:00Z",
+            "latest_captured_at": "\(freshStamp)",
+            "source": "sportsbooks",
+            "basis": "consensus_spread_total",
+            "bookmaker_count": 5,
+            "unit": "points",
             "period": "full_game"
           },
           "hero_probability_observed_at": "\(freshStamp)"
@@ -429,16 +446,18 @@ final class OneTypeTableEverywhere199Tests: XCTestCase {
           "home_team_data": { "abbreviation": "DET", "primary_color": "#0076B6", "secondary_color": "#B0B7BC" },
           "prematch_odds": { "away_probability": 0.42, "home_probability": 0.58 },
           "pregame_projection": {
-            "away_score": 21.0,
-            "home_score": 27.0,
+            "projected_away_score": 21.0,
+            "projected_home_score": 27.0,
+            "kind": "last_before_scheduled_start",
+            "boundary": "scheduled_start",
+            "boundary_at": "2026-11-16T18:00:00Z",
+            "earliest_captured_at": "2026-11-16T17:30:00Z",
+            "latest_captured_at": "2026-11-16T17:58:00Z",
+            "source": "sportsbooks",
+            "basis": "consensus_spread_total",
+            "bookmaker_count": 5,
+            "unit": "points",
             "period": "full_game"
-          },
-          "live_projection": {
-            "away_score": 23.0,
-            "home_score": 30.0,
-            "period": "full_game",
-            "basis": "in_play",
-            "observed_at": "\(freshStamp)"
           },
           "current_odds": {
             "away_probability": 0.338,
@@ -446,7 +465,21 @@ final class OneTypeTableEverywhere199Tests: XCTestCase {
             "away_rendered_percent": 34,
             "home_rendered_percent": 66,
             "projected_away_score": 23.0,
-            "projected_home_score": 30.0
+            "projected_home_score": 30.0,
+            "live_projection": {
+              "projected_away_score": 23.0,
+              "projected_home_score": 30.0,
+              "kind": "in_play",
+              "boundary": "commence_time",
+              "boundary_at": "2026-11-16T18:00:00Z",
+              "earliest_confirmed_at": "2026-11-16T19:10:00Z",
+              "latest_captured_at": "\(freshStamp)",
+              "source": "sportsbooks",
+              "basis": "consensus_spread_total",
+              "bookmaker_count": 5,
+              "unit": "points",
+              "period": "full_game"
+            }
           },
           "hero_probability_observed_at": "\(freshStamp)"
         }
@@ -532,5 +565,249 @@ final class OneTypeTableEverywhere199Tests: XCTestCase {
         try writePNG(duringImg, filename: "199-type-table-during-390.png", outDir: outDir)
         try writePNG(afterImg, filename: "199-type-table-after-390.png", outDir: outDir)
         try writePNG(fullSheet, filename: "199-one-type-table-everywhere-390.png", outDir: outDir)
+    }
+
+    // MARK: - 3. One Layout Per State Across Every Surface (5 Unifications)
+
+    func testOneLayoutPerStateAcrossEverySurface() throws {
+        let freshStamp = "2026-11-16T19:14:00Z"
+
+        // 1. Before: Discover card uses `Proj. · Chance` columns, never a `"Projected: ..."` sentence.
+        let scheduledFeed = try decodeJSON(FeedEventData.self, """
+        {
+          "id": 99001,
+          "sport": "americanfootball_nfl",
+          "sport_name": "NFL",
+          "status": "scheduled",
+          "commence_time": "2026-11-17T01:15:00Z",
+          "away_team": "New England Patriots",
+          "home_team": "Detroit Lions",
+          "away_team_data": { "abbreviation": "NE", "primary_color": "#002244", "secondary_color": "#C60C30" },
+          "home_team_data": { "abbreviation": "DET", "primary_color": "#0076B6" },
+          "current_odds": {
+            "away_probability": 0.42,
+            "home_probability": 0.58,
+            "away_rendered_percent": 42,
+            "home_rendered_percent": 58,
+            "projected_away_score": 21.0,
+            "projected_home_score": 27.0
+          }
+        }
+        """)
+        let beforeDiscover = DiscoverSingleGameCard190C.build(event: scheduledFeed, prematch: nil)
+        XCTAssertEqual(beforeDiscover.headers, .init(score: nil, pregame: "Proj.", primary: "Chance"))
+        XCTAssertEqual(beforeDiscover.rows[0].pregameText, "21")
+        XCTAssertEqual(beforeDiscover.rows[1].pregameText, "27")
+        XCTAssertNil(beforeDiscover.scheduledProjectedLine)
+
+        // 2. After: Discover card uses `Pregame · Final` with tick after winner's score, no bar, no `Result` column;
+        //    Feed card (`EventCardView`) also has no finished `ProbabilityBar` and places the tick after the winner's score.
+        let finishedFeed = try decodeJSON(FeedEventData.self, """
+        {
+          "id": 99003,
+          "sport": "americanfootball_nfl",
+          "sport_name": "NFL",
+          "status": "completed",
+          "commence_time": "2026-11-16T13:00:00Z",
+          "away_team": "New England Patriots",
+          "home_team": "Detroit Lions",
+          "away_score": 20,
+          "home_score": 31,
+          "prematch_odds": { "away_probability": 0.42, "home_probability": 0.58 }
+        }
+        """)
+        let prematch = PrematchReading.resolve(prematch: finishedFeed.prematchOdds, opening: finishedFeed.openingOdds)
+        let afterDiscover = DiscoverSingleGameCard190C.build(event: finishedFeed, prematch: prematch)
+        XCTAssertEqual(afterDiscover.headers, .init(score: nil, pregame: "Pregame", primary: "Final"))
+        XCTAssertNil(afterDiscover.bar)
+        XCTAssertNil(afterDiscover.rows[0].scoreText)
+        XCTAssertNil(afterDiscover.rows[1].scoreText)
+        XCTAssertEqual(afterDiscover.rows[0].primaryCell, .finalScore(text: "20", won: false, isDrawOutcome: false))
+        XCTAssertEqual(afterDiscover.rows[1].primaryCell, .finalScore(text: "31", won: true, isDrawOutcome: false))
+
+        let iosRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let eventCardSource = try String(contentsOf: iosRoot.appendingPathComponent("Bain Luck/Components/EventCardView.swift"), encoding: .utf8)
+        XCTAssertTrue(eventCardSource.contains("if isFinished {\n            // One layout per state: finished cards print Pregame · Final with the\n            // tick after the winner's score and no probability bar.\n            EmptyView()"))
+
+        // 3 & 4. Medium Widget: During uses `Score · Proj. · Now` (`204-C`) with pregame bar notch;
+        //        Before prints both teams' chances in team colour (Patriots red `#C60C30`, not black `#111827`).
+        let beforeWidgetDetail = try decodeWidgetEvent("""
+        {
+          "id": 99004,
+          "sport": "americanfootball_nfl",
+          "sport_name": "NFL",
+          "status": "scheduled",
+          "commence_time": "2026-11-17T01:15:00Z",
+          "away_team": "New England Patriots",
+          "home_team": "Detroit Lions",
+          "away_team_data": { "abbreviation": "NE", "primary_color": "#002244", "secondary_color": "#C60C30" },
+          "home_team_data": { "abbreviation": "DET", "primary_color": "#0076B6" },
+          "current_odds": {
+            "away_probability": 0.42,
+            "home_probability": 0.58,
+            "away_rendered_percent": 42,
+            "home_rendered_percent": 58,
+            "projected_away_score": 21.0,
+            "projected_home_score": 27.0
+          },
+          "hero_probability_observed_at": "\(freshStamp)"
+        }
+        """)
+        let beforeArt = SavedWidgetArt12466.game(beforeWidgetDetail)
+        let beforeReading = SavedWidgetReadingRules10875.game(beforeWidgetDetail, side: nil, now: fixedNow)
+        let beforeWidgetModel = SavedGameHeadlineWidgetModel12616.build(
+            reading: beforeReading,
+            art: beforeArt,
+            clockFooter: "As of 11:14 AM",
+            isOffline: false,
+            clearsRefreshTrailing: false,
+            now: fixedNow,
+            timeZone: pacific
+        )
+        XCTAssertEqual(beforeWidgetModel.headers, .init(leading: "Proj.", pregame: nil, primary: "Chance"))
+        XCTAssertEqual(beforeWidgetModel.away.teamInkHex.uppercased(), "#C60C30", "Patriots chance uses Patriots red")
+        XCTAssertFalse(beforeWidgetModel.away.isEmphasized, "Patriots is the underdog")
+        let widgetSource = try String(contentsOf: iosRoot.appendingPathComponent("Bain Luck/Widgets10875/SavedGameHeadlineWidget12616.swift"), encoding: .utf8)
+        XCTAssertTrue(widgetSource.contains("case .before:\n            return row.figure == \"—\" ? inkSecondary : Color(hex: row.teamInkHex)"))
+
+        // 3. During, medium widget (`213-A` + `214-A1`): `Score · Proj. · Now`, bar with pregame tick, and grey pregame line with team-coloured numbers.
+        let duringWidgetDetail = try decodeWidgetEvent("""
+        {
+          "id": 99005,
+          "sport": "americanfootball_nfl",
+          "sport_name": "NFL",
+          "status": "live",
+          "commence_time": "2026-11-16T18:00:00Z",
+          "away_team": "New England Patriots",
+          "home_team": "Detroit Lions",
+          "away_score": 17,
+          "home_score": 24,
+          "espn": { "period": "Q3", "game_clock": "08:14" },
+          "away_team_data": { "abbreviation": "NE", "primary_color": "#002244", "secondary_color": "#C60C30" },
+          "home_team_data": { "abbreviation": "DET", "primary_color": "#0076B6" },
+          "prematch_odds": { "away_probability": 0.42, "home_probability": 0.58 },
+          "pregame_projection": {
+            "projected_away_score": 21.0,
+            "projected_home_score": 27.0,
+            "kind": "last_before_scheduled_start",
+            "boundary": "scheduled_start",
+            "boundary_at": "2026-11-16T18:00:00Z",
+            "earliest_captured_at": "2026-11-16T17:30:00Z",
+            "latest_captured_at": "2026-11-16T17:58:00Z",
+            "source": "sportsbooks",
+            "basis": "consensus_spread_total",
+            "bookmaker_count": 5,
+            "unit": "points",
+            "period": "full_game"
+          },
+          "current_odds": {
+            "away_probability": 0.338,
+            "home_probability": 0.662,
+            "away_rendered_percent": 34,
+            "home_rendered_percent": 66,
+            "live_projection": {
+              "projected_away_score": 23.0,
+              "projected_home_score": 30.0,
+              "kind": "in_play",
+              "boundary": "commence_time",
+              "boundary_at": "2026-11-16T18:00:00Z",
+              "earliest_confirmed_at": "2026-11-16T19:10:00Z",
+              "latest_captured_at": "\(freshStamp)",
+              "source": "sportsbooks",
+              "basis": "consensus_spread_total",
+              "bookmaker_count": 5,
+              "unit": "points",
+              "period": "full_game"
+            }
+          },
+          "hero_probability_observed_at": "\(freshStamp)"
+        }
+        """)
+        let duringArt = SavedWidgetArt12466.game(duringWidgetDetail)
+        let duringReading = SavedWidgetReadingRules10875.game(duringWidgetDetail, side: nil, now: fixedNow)
+        let duringWidgetModel = SavedGameHeadlineWidgetModel12616.build(
+            reading: duringReading,
+            art: duringArt,
+            clockFooter: "As of 11:14 AM",
+            isOffline: false,
+            clearsRefreshTrailing: false,
+            now: fixedNow,
+            timeZone: pacific
+        )
+        XCTAssertEqual(duringWidgetModel.headers, .init(leading: "Score", pregame: "Proj.", primary: "Now"))
+        XCTAssertEqual(duringWidgetModel.away.liveProjectedText, "23")
+        XCTAssertEqual(duringWidgetModel.home.liveProjectedText, "30")
+        XCTAssertEqual(duringWidgetModel.pregameAwayBarShare ?? 0, 0.42, accuracy: 0.001)
+        XCTAssertEqual(duringWidgetModel.mediumFooter, "Pregame  Lions 58% · projected 27–21")
+
+        // 5. Watch tile: `"Up 8 points from 58%"` (no `+`, `"points"` / `"point"`, no `"pregame"`).
+        let watchUp = WatchWristTileModel12616.build(
+            WatchWristTileInput12616(
+                homeTeam: "Detroit Lions", awayTeam: "New England Patriots",
+                homeServedAbbreviation: "DET", awayServedAbbreviation: "NE",
+                sportKey: "americanfootball_nfl",
+                isLive: true,
+                homeScore: 24, awayScore: 17,
+                homeProbability: 0.662, awayProbability: 0.338,
+                prematchHomeProbability: 0.58, prematchAwayProbability: 0.42,
+                homePrimaryColor: "#0076B6", awayPrimaryColor: "#C60C30",
+                liveClockText: "Q3 8:14",
+                probabilityObservedAt: fixedNow
+            ),
+            now: fixedNow,
+            timeZone: pacific
+        )
+        XCTAssertEqual(watchUp.supportingLine, "Up 8 points from 58%")
+
+        // 6. After (widgets & Watch tile print "Final" once per surface — never a duplicate bottom "Final" or trailing "· Final").
+        let afterWidgetDetail = try decodeWidgetEvent("""
+        {
+          "id": 99006,
+          "sport": "americanfootball_nfl",
+          "sport_name": "NFL",
+          "status": "completed",
+          "commence_time": "2026-11-16T13:00:00Z",
+          "away_team": "New England Patriots",
+          "home_team": "Detroit Lions",
+          "away_score": 20,
+          "home_score": 31,
+          "hero_settled_result": "home",
+          "away_team_data": { "abbreviation": "NE", "primary_color": "#002244", "secondary_color": "#C60C30" },
+          "home_team_data": { "abbreviation": "DET", "primary_color": "#0076B6" },
+          "prematch_odds": { "away_probability": 0.42, "home_probability": 0.58 },
+          "current_odds": { "away_probability": 0.0, "home_probability": 1.0 }
+        }
+        """)
+        let afterArt = SavedWidgetArt12466.game(afterWidgetDetail)
+        let afterReading = SavedWidgetReadingRules10875.game(afterWidgetDetail, side: nil, now: fixedNow)
+        let afterWidgetModel = SavedGameHeadlineWidgetModel12616.build(
+            reading: afterReading,
+            art: afterArt,
+            clockFooter: "Final",
+            isOffline: false,
+            clearsRefreshTrailing: false,
+            now: fixedNow,
+            timeZone: pacific
+        )
+        XCTAssertEqual(afterWidgetModel.smallTopMeta, "NFL · Final")
+        XCTAssertEqual(afterWidgetModel.mediumTopMeta, "NFL · Final")
+        XCTAssertEqual(afterWidgetModel.smallFooter, "")
+        XCTAssertEqual(afterWidgetModel.mediumFooter, "")
+
+        let watchAfterFav = WatchWristTileModel12616.build(
+            WatchWristTileInput12616(
+                homeTeam: "Detroit Lions", awayTeam: "New England Patriots",
+                homeServedAbbreviation: "DET", awayServedAbbreviation: "NE",
+                sportKey: "americanfootball_nfl",
+                isFinal: true,
+                homeScore: 31, awayScore: 20,
+                prematchHomeProbability: 0.58, prematchAwayProbability: 0.42,
+                homePrimaryColor: "#0076B6", awayPrimaryColor: "#C60C30"
+            ),
+            now: fixedNow,
+            timeZone: pacific
+        )
+        XCTAssertEqual(watchAfterFav.topMetaText, "FINAL · VS PATRIOTS")
+        XCTAssertEqual(watchAfterFav.supportingLine, "Pregame 58%")
     }
 }

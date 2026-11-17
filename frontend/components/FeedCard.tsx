@@ -1540,7 +1540,7 @@ function FuturesFeedCard({
                   className={`text-[11px] font-medium ${
                   leader.movement > 0 ? "text-accent-live" : "text-accent-danger"
                 }`}>
-                  {leader.movement > 0 ? "+" : "-"}{formatMovementPoints(leader.movement)} pts
+                  {leader.movement > 0 ? "+" : "-"}{formatMovementPoints(leader.movement)} points
                 </div>
               )}
             </div>

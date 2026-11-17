@@ -44,6 +44,11 @@ struct WatchWristTileModel12616: Equatable, Sendable {
         case after
     }
 
+    nonisolated struct SupportingSegment: Equatable, Sendable {
+        let text: String
+        let hex: String?
+    }
+
     let stage: Stage
     let topMetaText: String
     let liveCapsuleText: String?
@@ -56,11 +61,11 @@ struct WatchWristTileModel12616: Equatable, Sendable {
     let badgeFillHex: String
     let badgeInkHex: String
     let supportingLine: String
+    var supportingSegments: [SupportingSegment] = []
 
     /// WCAG luminance of the dark Watch card surface (`#14161C`).
     static let watchSurfaceLuminance = 0.016
     private static let emeraldBrightHex = "#34D399"
-    private static let darkFallbackSkyHex = "#38BDF8"
 
     static func build(
         _ input: WatchWristTileInput12616,
@@ -85,13 +90,24 @@ struct WatchWristTileModel12616: Equatable, Sendable {
 
         let badgeFills = ProbabilityBarPalette.pair(
             awayHex: input.awayPrimaryColor,
-            homeHex: input.homePrimaryColor
+            homeHex: input.homePrimaryColor,
+            awaySecondaryHex: input.awaySecondaryColor
         )
 
         // MARK: - After (Settled Final)
         if input.isFinal, let hs = input.homeScore, let ascore = input.awayScore {
+            let pregamePair = resolvePregamePercents(input)
             if hs == ascore {
                 let homeBadge = badgeFills.home
+                let drawSupporting: String = {
+                    if let drawPct = renderedPercent(input.prematchDrawProbability) {
+                        return "Pregame Draw \(drawPct)%"
+                    }
+                    if let homePct = pregamePair.home {
+                        return "Pregame \(abbrs.home) \(homePct)%"
+                    }
+                    return ""
+                }()
                 return WatchWristTileModel12616(
                     stage: .after,
                     topMetaText: "FINAL · DRAW",
@@ -104,7 +120,7 @@ struct WatchWristTileModel12616: Equatable, Sendable {
                     heroInkHex: "#E5E7EB",
                     badgeFillHex: homeBadge,
                     badgeInkHex: badgeInk(on: homeBadge),
-                    supportingLine: "Final · Draw"
+                    supportingLine: drawSupporting
                 )
             }
 
@@ -113,7 +129,6 @@ struct WatchWristTileModel12616: Equatable, Sendable {
             let opponentUpper = (winnerIsHome ? names.away : names.home).uppercased()
             let preposition = winnerIsHome ? "VS" : "AT"
             let badgeFill = winnerIsHome ? badgeFills.home : badgeFills.away
-            let pregamePair = resolvePregamePercents(input)
             let winnerPrePct = winnerIsHome ? pregamePair.home : pregamePair.away
 
             let supporting: String = {
@@ -121,9 +136,9 @@ struct WatchWristTileModel12616: Equatable, Sendable {
                     if pct < 50 {
                         return "Won from \(pct)% pregame chance"
                     }
-                    return "Pregame \(pct)% · Final"
+                    return "Pregame \(pct)%"
                 }
-                return "Final"
+                return ""
             }()
 
             return WatchWristTileModel12616(
@@ -149,11 +164,17 @@ struct WatchWristTileModel12616: Equatable, Sendable {
         let leaderAbbr = leaderIsHome ? abbrs.home : abbrs.away
         let opponentAbbr = leaderIsHome ? abbrs.away : abbrs.home
         let badgeFill = leaderIsHome ? badgeFills.home : badgeFills.away
-        let heroHex = readableDarkSurfaceHex(
-            primary: leaderIsHome ? input.homePrimaryColor : input.awayPrimaryColor,
-            secondary: leaderIsHome ? input.homeSecondaryColor : input.awaySecondaryColor,
-            badgeFallback: badgeFill
+        let watchHexes = TeamTextContrast.darkSurfaceColorHexes(
+            awayHex: input.awayPrimaryColor,
+            homeHex: input.homePrimaryColor,
+            awaySecondaryHex: input.awaySecondaryColor,
+            homeSecondaryHex: input.homeSecondaryColor,
+            surfaceLuminance: watchSurfaceLuminance
         )
+        let heroHex = leaderIsHome ? watchHexes.home : watchHexes.away
+        let oppHex = leaderIsHome
+            ? TeamTextContrast.quietLineHex(watchHexes.away, surfaceLuminance: watchSurfaceLuminance)
+            : TeamTextContrast.quietLineHex(watchHexes.home, surfaceLuminance: watchSurfaceLuminance)
         let heroFigure = resolved.percent.map { "\($0)%" } ?? "—"
 
         // MARK: - During (Live)
@@ -173,14 +194,14 @@ struct WatchWristTileModel12616: Equatable, Sendable {
                 if let cur = resolved.percent, let pre = leaderPrePct {
                     let delta = cur - pre
                     if delta > 0 {
-                        let unit = delta == 1 ? "pt" : "pts"
-                        return "Up +\(delta) \(unit) from \(pre)% pregame"
+                        let unit = delta == 1 ? "point" : "points"
+                        return "Up \(delta) \(unit) from \(pre)%"
                     } else if delta < 0 {
                         let drop = abs(delta)
-                        let unit = drop == 1 ? "pt" : "pts"
-                        return "Down \(drop) \(unit) from \(pre)% pregame"
+                        let unit = drop == 1 ? "point" : "points"
+                        return "Down \(drop) \(unit) from \(pre)%"
                     } else {
-                        return "Even with \(pre)% pregame"
+                        return "Even with \(pre)%"
                     }
                 }
                 if let obs = input.probabilityObservedAt, obs <= now {
@@ -219,20 +240,32 @@ struct WatchWristTileModel12616: Equatable, Sendable {
         let preposition = leaderIsHome ? "VS \(opponentAbbr)" : "AT \(opponentAbbr)"
         let topMeta = "\(whenText) · \(preposition)"
 
-        let projected = resolveProjectedPair(input)
-        let projClause: String? = projected.map { proj in
-            let leaderScore = leaderIsHome ? proj.home : proj.away
-            let oppScore = leaderIsHome ? proj.away : proj.home
-            return "Proj. \(leaderScore)–\(oppScore)"
-        }
-
         let statusWord: String = {
             if resolved.isFavored { return "Favored" }
             if resolved.isEven { return "Even matchup" }
             return "Home win chance"
         }()
 
-        let supporting = projClause.map { "\(statusWord) · \($0)" } ?? statusWord
+        let projected = resolveProjectedPair(input)
+        let supporting: String
+        let supportingSegs: [SupportingSegment]
+        if let proj = projected {
+            // Ruling 214-A1: "Proj. 27–21" with each number in its team's colour,
+            // the favourite's first, and no team abbreviation after it.
+            let leaderScore = leaderIsHome ? proj.home : proj.away
+            let oppScore = leaderIsHome ? proj.away : proj.home
+            let quietHeroHex = TeamTextContrast.quietLineHex(heroHex, surfaceLuminance: watchSurfaceLuminance)
+            supporting = "\(statusWord) · Proj. \(leaderScore)\u{2013}\(oppScore)"
+            supportingSegs = [
+                SupportingSegment(text: "\(statusWord) · Proj. ", hex: nil),
+                SupportingSegment(text: "\(leaderScore)", hex: quietHeroHex),
+                SupportingSegment(text: "\u{2013}", hex: nil),
+                SupportingSegment(text: "\(oppScore)", hex: oppHex),
+            ]
+        } else {
+            supporting = statusWord
+            supportingSegs = [SupportingSegment(text: statusWord, hex: nil)]
+        }
 
         return WatchWristTileModel12616(
             stage: .before,
@@ -246,7 +279,8 @@ struct WatchWristTileModel12616: Equatable, Sendable {
             heroInkHex: heroHex,
             badgeFillHex: badgeFill,
             badgeInkHex: badgeInk(on: badgeFill),
-            supportingLine: supporting
+            supportingLine: supporting,
+            supportingSegments: supportingSegs
         )
     }
 
@@ -383,23 +417,7 @@ struct WatchWristTileModel12616: Equatable, Sendable {
     }
 
     private static func contrast(_ hex: String?, against backgroundLuminance: Double) -> Double? {
-        guard let l = TeamTextContrast.relativeLuminance(hex) else { return nil }
-        return (max(l, backgroundLuminance) + 0.05) / (min(l, backgroundLuminance) + 0.05)
-    }
-
-    private static func readableDarkSurfaceHex(
-        primary: String?,
-        secondary: String?,
-        badgeFallback: String
-    ) -> String {
-        for candidate in [primary, secondary, badgeFallback] {
-            if let c = candidate,
-               let ratio = contrast(c, against: watchSurfaceLuminance),
-               ratio >= TeamTextContrast.minimumRatio {
-                return c
-            }
-        }
-        return darkFallbackSkyHex
+        TeamTextContrast.contrast(hex, againstSurfaceLuminance: backgroundLuminance)
     }
 
     private static func badgeInk(on hex: String) -> String {
@@ -462,12 +480,14 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                     monogramBadge
                 }
             }
-            Text(model.supportingLine)
-                .font(HeadlineStyleTable199.quietText(.wristTile, monospacedDigits: true, scaledSize: HeadlineStyleTable199.quietTextBaseSize(.wristTile)))
-                .foregroundStyle(Color.white.opacity(0.68))
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .modifier(OptionalIdentifier12616(id: identifierPrefix.map { "\($0).clock" }))
+            if !model.supportingLine.isEmpty {
+                composedSupportingText
+                    .font(HeadlineStyleTable199.quietText(.wristTile, monospacedDigits: true, scaledSize: HeadlineStyleTable199.quietTextBaseSize(.wristTile)))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(model.supportingLine)
+                    .modifier(OptionalIdentifier12616(id: identifierPrefix.map { "\($0).clock" }))
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
@@ -480,6 +500,22 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                         .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
                 )
         )
+    }
+
+    private var composedSupportingText: Text {
+        let baseQuiet = Color.white.opacity(0.68)
+        guard !model.supportingSegments.isEmpty else {
+            return Text(model.supportingLine).foregroundColor(baseQuiet)
+        }
+        return model.supportingSegments.reduce(Text("")) { partial, seg in
+            if let hex = seg.hex {
+                return partial + Text(seg.text)
+                    .fontWeight(.bold)
+                    .foregroundColor(Self.rgbColor(hex))
+            }
+            return partial + Text(seg.text)
+                .foregroundColor(baseQuiet)
+        }
     }
 
     @ViewBuilder
