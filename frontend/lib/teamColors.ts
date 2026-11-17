@@ -156,6 +156,55 @@ export function teamTextColor(hex: string | null | undefined): string | undefine
 }
 
 /**
+ * Darkens a team hex colour in RGB space when its WCAG contrast against the
+ * `#FFFFFF` card surface falls below `minContrast` (default `4.5`, WCAG AA for
+ * text), preserving hue/chroma for light golds, yellows, and pale blues (e.g.
+ * New Orleans Saints `#D3BC8D` `1.91:1` -> `#786B50` `4.56:1`). Pure/near-white
+ * team colours fall back to `#475569`.
+ */
+export function darkenTeamColorForCardText(
+  hex: string | null | undefined,
+  minContrast: number = 4.5,
+): string {
+  if (!hex) return "#475569";
+  const rgbStr = hexToRgb(hex);
+  if (!rgbStr) return "#475569";
+  const [r, g, b] = rgbStr.split(" ").map(Number);
+  const currentRatio = contrastVsCardSurface(hex);
+  if (currentRatio !== null && currentRatio >= minContrast) {
+    return ensureHash(hex);
+  }
+  const maxC = Math.max(r, g, b);
+  const minC = Math.min(r, g, b);
+  if (maxC >= 245 && maxC - minC <= 12) {
+    return "#475569";
+  }
+  const targetRatio = minContrast + 0.05;
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 20; i++) {
+    const mid = (lo + hi) / 2;
+    const candHex =
+      "#" +
+      [Math.round(r * mid), Math.round(g * mid), Math.round(b * mid)]
+        .map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, "0"))
+        .join("");
+    const ratio = contrastVsCardSurface(candHex) ?? 1;
+    if (ratio >= targetRatio) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return (
+    "#" +
+    [Math.round(r * lo), Math.round(g * lo), Math.round(b * lo)]
+      .map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, "0"))
+      .join("")
+  );
+}
+
+/**
  * Returns a CSS rgba() string from a hex color with opacity.
  * Useful for team-colored backgrounds, borders, and shadows.
  *
