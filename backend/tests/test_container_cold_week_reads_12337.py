@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from builtins import ExceptionGroup
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -18,6 +20,89 @@ from tests.test_container_hydrated_reader_9636 import _Session, _nfl_week
 def empty_reference_caches(monkeypatch):
     monkeypatch.setattr(event_route, "_ei_cache", {})
     monkeypatch.setattr(event_route, "_team_cache", {})
+
+
+@pytest.fixture(autouse=True)
+def reference_pool(monkeypatch):
+    pool = SimpleNamespace(checkedout=Mock(return_value=0), size=Mock(return_value=10))
+    monkeypatch.setattr(database, "engine", SimpleNamespace(pool=pool))
+    return pool
+
+
+@pytest.mark.parametrize("checked_out,expected_sessions", [(0, 1), (9, 1), (10, 0), (11, 0)])
+async def test_reference_reads_respect_pool_capacity(
+    monkeypatch, reference_pool, checked_out, expected_sessions
+):
+    hub, events, markets = _nfl_week()
+    event_ids = [event.id for event in events]
+    opened = []
+
+    @asynccontextmanager
+    async def references():
+        opened.append(True)
+        yield _Session()
+
+    monkeypatch.setattr(database, "async_session_maker", references)
+    reference_pool.checkedout.return_value = checked_out
+    baseline = await route._hydrate_event_cards(
+        _Session(hub, events=events, markets=markets), event_ids
+    )
+
+    cards = await route._hydrate_event_cards(
+        _Session(hub, events=events, markets=markets), event_ids,
+        concurrent_references=True,
+    )
+
+    assert cards == baseline
+    assert cards[0]
+    assert len(opened) == expected_sessions
+    reference_pool.checkedout.assert_called_once()
+    reference_pool.size.assert_called_once()
+
+
+@pytest.mark.parametrize("counter_failure", ["missing", "raises"])
+async def test_unavailable_pool_counters_keep_the_sequential_reader(
+    monkeypatch, reference_pool, counter_failure, caplog
+):
+    if counter_failure == "missing":
+        monkeypatch.setattr(database.engine, "pool", object())
+    else:
+        reference_pool.checkedout.side_effect = RuntimeError("representative counter failure")
+    caplog.set_level("DEBUG", logger=route.__name__)
+    hub, events, markets = _nfl_week()
+    event_ids = [event.id for event in events]
+    reference_read = Mock(side_effect=AssertionError("unexpected separate reference read"))
+    monkeypatch.setattr(route, "_read_event_card_references", reference_read)
+    baseline = await route._hydrate_event_cards(
+        _Session(hub, events=events, markets=markets), event_ids
+    )
+
+    cards = await route._hydrate_event_cards(
+        _Session(hub, events=events, markets=markets), event_ids,
+        concurrent_references=True,
+    )
+
+    assert cards == baseline
+    assert cards[0]
+    reference_read.assert_not_called()
+    assert "pool counters could not be read" in caplog.text
+
+
+async def test_the_compact_route_keeps_its_counts_when_the_pool_is_busy(monkeypatch, reference_pool):
+    from tests.test_container_compact_week_12337 import CompactSession, long_week, read_week
+
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "false")
+    reference_pool.checkedout.return_value = 10
+    reference_read = Mock(side_effect=AssertionError("unexpected separate reference read"))
+    monkeypatch.setattr(route, "_read_event_card_references", reference_read)
+    hub, events, markets = long_week()
+
+    payload = await read_week(CompactSession(hub, events=events, markets=markets), compact=True)
+
+    assert payload["related_summary"] == {"count": 13, "unclassified_count": 11}
+    assert payload["member_count"] == 4
+    reference_read.assert_not_called()
 
 
 async def test_concurrent_cards_equal_the_sequential_cards_and_use_a_separate_session(monkeypatch):
