@@ -1910,7 +1910,7 @@ export default function EventCard183A({
             <span className="font-medium text-text-muted">{SUSPENDED_LABEL}</span>
           ) : isDone ? (
             <span className="font-medium text-text-muted">
-              {formatFinishedGameLabel(card.commence_time)}
+              {formatFinishedGameLabel(card.commence_time).replace(/^([A-Za-z]+),\s+/, "$1 ")}
             </span>
           ) : (
             <span className="text-text-muted">

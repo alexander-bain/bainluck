@@ -136,6 +136,18 @@ const renderDiscover = (d: FeedEventData) =>
     />
   );
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("notice 33 — the word the site may not print", () => {
   it("the /sports card's pre-match marker says sportsbooks, and no banned word survives the render", () => {
     const html = renderFeed(booksFinal());
