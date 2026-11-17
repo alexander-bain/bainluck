@@ -1,9 +1,9 @@
 "use client";
 
 import { discoverCrestBadge, isCollegeSport, teamShortNames } from "@/lib/teamShortName";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { formatProbability } from "@/lib/api";
+import { fetchEventHistory, formatProbability } from "@/lib/api";
 import { buildDiscoverShareUrl } from "@/lib/share";
 import type { FeedItem, FeedEventData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, chipCategory, getCat, HERO_CHIP_ON_DARK } from "./constants";
@@ -28,7 +28,11 @@ import { probabilityBarPair } from "@/lib/probabilityBarPair";
 import { resolveMatchupTeamColors } from "@/lib/teamColors";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { crestNeedsPlate } from "@/lib/discover/crestPlate";
-import EventCard183A, { buildUnifiedCardFromFeed } from "@/components/EventCard183A";
+import EventCard183A, {
+  buildUnifiedCardFromFeed,
+  extractDiscoverChartPointsFromHistory,
+  type ChartPoint183A,
+} from "@/components/EventCard183A";
 import { isWebGameCard183AEnabled } from "@/lib/gameCard183AFlag";
 
 /**
@@ -49,10 +53,41 @@ interface EventCardProps extends CardActionCallbacks {
 
 export function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick, onShare, onContextExpand, onContextCollapse }: EventCardProps) {
   const [showContext, setShowContext] = useState(false);
-  if (isWebGameCard183AEnabled()) {
+  const [chartPoints183A, setChartPoints183A] = useState<ChartPoint183A[] | undefined>(undefined);
+  const flag183AEnabled = isWebGameCard183AEnabled();
+
+  useEffect(() => {
+    if (!flag183AEnabled) return;
+    const activeOrSettled = data.status === "live" || isFinishedStatus(data.status);
+    if (!activeOrSettled || isSuspendedStatus(data.status)) {
+      setChartPoints183A(undefined);
+      return;
+    }
+    let cancelled = false;
+    fetchEventHistory(data.id, 48, "since_start")
+      .then((res) => {
+        if (!cancelled) {
+          setChartPoints183A(extractDiscoverChartPointsFromHistory(res, data.sport));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setChartPoints183A(undefined);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [flag183AEnabled, data.id, data.status]);
+
+  if (flag183AEnabled) {
+    const unified = buildUnifiedCardFromFeed(item, data);
+    if (chartPoints183A && chartPoints183A.length >= 3) {
+      unified.chart_points = chartPoints183A;
+    }
     return (
       <EventCard183A
-        card={buildUnifiedCardFromFeed(item, data)}
+        card={unified}
         surface="discover"
         isPinned={liked}
         onPinToggle={() => setLiked(!liked)}

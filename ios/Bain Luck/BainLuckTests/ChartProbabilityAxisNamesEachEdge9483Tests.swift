@@ -248,10 +248,14 @@ final class ChartProbabilityAxisNamesEachEdge9483Tests: XCTestCase {
         (0..<n).map { a + (b - a) * Double($0) / Double(n - 1) }
     }
 
-    func testTooFewReadingsKeepTheFullAxisAndDrawNothing() {
+    func testEmptyReadingsKeepTheFullAxisWhileEarlyReadingsFitFromFirstObservation() {
+        // Zero finite readings keep the empty 0–100 axis furniture.
         XCTAssertEqual(Axis.window(readings: []), Axis.full)
-        XCTAssertEqual(Axis.window(readings: [0.55, 0.6, 0.62]), Axis.full)
-        XCTAssertEqual(Axis.window(readings: Array(repeating: 0.6, count: 11)), Axis.full)
+        // #12750 / Ruling 201: two-team games fit from the very first reading,
+        // including when fewer than 12 readings exist, using the 20-point minimum span.
+        XCTAssertEqual(Axis.window(readings: [0.55, 0.6, 0.62]), window(45, 70, [45, 50, 55, 60, 65, 70]))
+        XCTAssertEqual(Axis.window(readings: Array(repeating: 0.6, count: 11)), window(50, 70, [50, 55, 60, 65, 70]))
+        XCTAssertEqual(Axis.window(readings: [0.58]), window(45, 70, [45, 50, 55, 60, 65, 70]))
     }
 
     func testAWobbleAtEvenIsNotMagnifiedPastTheMinimumSpan() {
@@ -300,8 +304,11 @@ final class ChartProbabilityAxisNamesEachEdge9483Tests: XCTestCase {
     func testNonFiniteReadingsAreSkippedNotReadAsZero() {
         let readings = ramp(0.6, 0.7, 12) + [.nan, .infinity]
         XCTAssertEqual(Axis.window(readings: readings, mustShow: [.nan]), window(55, 75, [55, 60, 65, 70, 75]))
-        // Eleven finite readings plus junk is still too few.
-        XCTAssertEqual(Axis.window(readings: Array(repeating: 0.6, count: 11) + [.nan, -Double.infinity]), Axis.full)
+        // Eleven finite readings plus junk skips the non-finite values and fits the 11 valid readings.
+        XCTAssertEqual(Axis.window(readings: Array(repeating: 0.6, count: 11) + [.nan, -Double.infinity]),
+                       window(50, 70, [50, 55, 60, 65, 70]))
+        // All non-finite readings has zero finite values and keeps the full axis.
+        XCTAssertEqual(Axis.window(readings: [.nan, .infinity, -Double.infinity]), Axis.full)
     }
 
     func testTheWindowDoesNotDependOnHowTheCallerQualifiedTheSides() {

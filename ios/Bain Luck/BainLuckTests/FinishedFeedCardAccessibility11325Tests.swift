@@ -325,14 +325,10 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             let name = "sports-nfl-393-large-\(status)-constructed-odds"
             let lines = try sportsLines(e, width: 393, size: .large, name: name)
             let all = describe(lines)
-            if status == "live" {
-                // #12616 / #12684: live cards with pregame odds carry the "Pregame" column header once.
-                XCTAssertEqual(lines.filter { containsPregameToken($0.text) }.count, 1,
-                               "\(name): a live card with pregame odds must print the 'Pregame' header once — \(all)")
-            } else {
-                XCTAssertFalse(lines.contains { containsPregameToken($0.text) },
-                               "\(name): a \(status) card printed 'Pregame' — \(all)")
-            }
+            // Ruling 204-C: live cards print Score · Proj. · Now with no Pregame column;
+            // scheduled and suspended cards also print no 'Pregame' word.
+            XCTAssertFalse(lines.contains { containsPregameToken($0.text) },
+                           "\(name): a \(status) card printed 'Pregame' — \(all)")
             if status == "suspended" {
                 for percent in ["24%", "76%"] {
                     XCTAssertTrue(lines.contains { valueTokens($0.text).contains(percent) },
@@ -517,9 +513,30 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         return nil
     }
 
-    /// Tokens with a percent read as "24 %" closed up to "24%".
+    /// Tokens with a percent read as "24 %" closed up to "24%", and the winner's
+    /// trailing score tick (`23 ✓`, which Vision without language correction reads
+    /// as `"23 ✓"`, `"23 v"`, or `"23v"`) stripped so `scoreLine` and `qualifiedRow`
+    /// still match the integer score (`"23"`).
     private func valueTokens(_ text: String) -> [String] {
-        tokens(text.replacingOccurrences(of: " %", with: "%"))
+        let raw = tokens(text.replacingOccurrences(of: " %", with: "%"))
+        var out: [String] = []
+        for token in raw {
+            if (token == "✓" || token == "✔" || token == "v" || token == "V"),
+               let prev = out.last, !prev.isEmpty, prev.allSatisfy(\.isNumber) {
+                continue
+            }
+            if let last = token.last,
+               (last == "✓" || last == "✔" || last == "v" || last == "V"),
+               token.count >= 2 {
+                let digits = String(token.dropLast())
+                if digits.allSatisfy(\.isNumber) {
+                    out.append(digits)
+                    continue
+                }
+            }
+            out.append(token)
+        }
+        return out
     }
 
     /// The lines directly under `score`, in its column, clear of the forecast

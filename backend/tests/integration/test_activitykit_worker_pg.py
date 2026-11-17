@@ -9,6 +9,7 @@ from sqlalchemy import insert, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.models.activitykit import ActivityKitRegistration
+from app.models.push_device import PushDevice
 from app.models.activitykit_delivery import ActivityKitDelivery
 from app.services.activitykit_apns import APNsResult
 from app.services.activitykit_worker import DurableActivityKitWorker, decode_state
@@ -39,6 +40,8 @@ async def pg():
         await conn.execute(text("CREATE TABLE events(id INTEGER PRIMARY KEY)"))
         await conn.execute(text("INSERT INTO users VALUES (1)"))
         await conn.execute(text("INSERT INTO events VALUES (42)"))
+        # 177-A: a registration may belong to a phone (FK target).
+        await conn.run_sync(PushDevice.__table__.create)
         await conn.run_sync(REG.create)
         await conn.run_sync(DEL.create)
         await conn.execute(

@@ -1009,3 +1009,42 @@ class TestThemeCollectionWiring9935:
             ("assemble_theme_collections", ("assemble", False, "ai")),
             ("rebuild_theme_snapshot", ("rebuild", 7)),
         ]
+
+
+def test_admin_precomputes_give_way_to_readers_overnight_215b():
+    """215-B (Fable, Nov 16 2026): admin precomputes run once, overnight PT, so
+    they stop holding heavy's slots while the 15-minute price pass queues. Each
+    key lives 50 h, so one missed night never empties its page."""
+    from app.routes.source_intelligence import CACHE_TTL as SI_TTL
+    from app.tasks import celery_app
+    from app.tasks.precompute_admin_health import _ADMIN_LINK_RATE_CACHE_TTL
+    from app.tasks.precompute_backfill_progress import CACHE_TTL as BP_TTL
+
+    beat = celery_app.conf.beat_schedule
+    for name, hour_utc in (
+        ("precompute-source-intelligence", 11),
+        ("precompute-admin-link-rate", 11),
+        ("precompute-backfill-progress", 10),
+    ):
+        sched = beat[name]["schedule"]
+        assert sched.hour == {hour_utc}, (name, sched.hour)
+        assert len(sched.minute) == 1, (name, sched.minute)
+    for ttl in (SI_TTL, _ADMIN_LINK_RATE_CACHE_TTL, BP_TTL):
+        assert ttl >= 48 * 3600
+
+
+def test_sportsbook_pregame_uses_the_plan_direction_215():
+    """Direction 215 / Fable 3:33 PM Nov 16 2026: pregame odds, long-tail
+    discovery and futures poll faster, inside the plan we already pay for, with
+    the quota guard unchanged; pregame spend carries its window in the task tag
+    so the projection can be checked against real spend."""
+    import inspect
+
+    from app.tasks import celery_app, config, odds_polling
+
+    assert config.SOON_POLL_INTERVAL == 120
+    assert config.LATER_POLL_INTERVAL == 300
+    assert config.DISCOVER_TIER3_INTERVAL == config.DISCOVER_TIER4_INTERVAL == 1800
+    assert celery_app.conf.beat_schedule["poll-futures-every-4h"]["schedule"].hour == set(range(24))
+    src = inspect.getsource(odds_polling)
+    assert '"poll_odds" if tier == "live" else f"poll_odds_{tier}"' in src

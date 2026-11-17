@@ -251,3 +251,106 @@ async def test_the_warmer_still_respects_the_deadline_floor(rig):
         events._force_search_cache_rebuild.reset(token)
     assert took < 0.25 and missed == [129037]
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_title_composes_during_independent_work_before_the_final_wait(rig, monkeypatch):
+    """#11933: an event handshake proves overlap without a timing threshold."""
+    began, release = asyncio.Event(), asyncio.Event()
+
+    async def compose(db, market):
+        rig.composed.append(market.id)
+        began.set()
+        await release.wait()
+        return _verdict("overlapped")
+
+    monkeypatch.setattr(futures_mod, "_compose_verified_title", compose)
+    engine, db = _engine_session()
+    started = events._prime_search_verified_title(db, [_market()], None)
+    await asyncio.wait_for(began.wait(), timeout=2)
+    # The route can complete its independent container/headline work here.
+    release.set()
+    await asyncio.wait_for(started[129037], timeout=2)
+    out = await _search_verified_titles(db, [_market()], None, started=started)
+    assert out[129037].question_identity == {"tag": "overlapped"}
+    assert rig.composed == [129037]
+    assert rig.rows[0][0] is not db
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_priming_starts_only_one_title_and_reuses_an_existing_flight(rig):
+    engine, db = _engine_session()
+    first = events._prime_search_verified_title(db, [_market(), _market(129038)], None)
+    second = events._prime_search_verified_title(db, [_market()], None)
+    assert list(first) == [129037] and first[129037] is second[129037]
+    await _settle()
+    assert rig.composed == [129037]
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("guard", ["deadline", "full_pool", "no_pool_counters", "held", "not_title"])
+async def test_priming_preserves_the_existing_no_new_read_guards(rig, monkeypatch, guard):
+    engine, db = _engine_session()
+    original_checkedout = type(engine.pool).checkedout
+    market = _market()
+    deadline = None
+    if guard == "deadline":
+        deadline = time.monotonic() + events._SEARCH_VERIFIED_TITLE_MIN_REMAINING_S - 0.1
+    elif guard == "full_pool":
+        monkeypatch.setattr(type(engine.pool), "checkedout", lambda self: 2)
+    elif guard == "no_pool_counters":
+        def no_count(self):
+            raise RuntimeError("no counter")
+        monkeypatch.setattr(type(engine.pool), "checkedout", no_count)
+    elif guard == "held":
+        futures_mod._VERIFIED_TITLE_CACHE[market.id] = (time.monotonic() + 60, _verdict("held"))
+    else:
+        market.market_metadata = {"polymarket_event_slug": "another-event"}
+    assert events._prime_search_verified_title(db, [market], deadline) == {}
+    assert rig.composed == [] and events._VERIFIED_TITLE_BACKGROUND == {}
+    monkeypatch.setattr(type(engine.pool), "checkedout", original_checkedout)
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_primed_read_is_not_retried_when_it_finishes_without_a_cached_verdict(rig, monkeypatch):
+    engine, db = _engine_session()
+    calls = []
+
+    async def no_verdict(db, market):
+        calls.append(market.id)
+        return None
+
+    monkeypatch.setattr(futures_mod, "_resolve_verified_title", no_verdict)
+    started = events._prime_search_verified_title(db, [_market()], None)
+    await started[129037]
+    await asyncio.sleep(0)  # let the single-flight registry remove the completed task
+    assert events._VERIFIED_TITLE_BACKGROUND == {}
+    assert await _search_verified_titles(db, [_market()], None, started=started) == {}
+    assert calls == [129037]
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_primed_read_can_finish_when_its_own_connection_fills_the_pool(rig, monkeypatch):
+    engine, db = _engine_session(pool_size=1)
+    rig.delay = 0
+    started = events._prime_search_verified_title(db, [_market()], None)
+    monkeypatch.setattr(type(engine.pool), "checkedout", lambda self: 1)
+    missed = []
+    out = await _search_verified_titles(db, [_market()], None, started=started, missed=missed)
+    assert isinstance(out[129037], Composition) and missed == []
+    assert rig.composed == [129037]
+    await engine.dispose()
+
+
+def test_route_starts_title_before_container_reads_and_consumes_the_same_handle():
+    import inspect
+
+    src = inspect.getsource(events.search_events)
+    start = src.index("_title_started = _prime_search_verified_title(")
+    independent = src.index("await _search_container_parent_ids(")
+    consume = src.index("started=_title_started")
+    assert start < independent < consume

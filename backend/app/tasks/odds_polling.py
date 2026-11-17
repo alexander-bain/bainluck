@@ -1702,7 +1702,7 @@ async def _poll_all_odds():
                         record_odds_api_quota(
                             service.last_requests_remaining,
                             service.last_requests_used or 0,
-                            "poll_odds",
+                            "poll_odds" if tier == "live" else f"poll_odds_{tier}",
                             pre_call_used=pre_used,
                             sport_key=sport_key,
                         )

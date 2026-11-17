@@ -36,22 +36,26 @@ const swift = swiftText(read("ios/Bain Luck/Bain Luck/Utilities/CalibrationStale
 const swiftVM = read("ios/Bain Luck/Bain Luck/ViewModels/CalibrationViewModel.swift");
 const swiftView = read("ios/Bain Luck/Bain Luck/Views/CalibrationView.swift");
 
-// Headlines, the cadence clause and the input sentence — web's lib owns these.
+// Headlines and the input sentence — web's lib owns these.
 const LIB_SENTENCES = [
   "Showing the last complete snapshot.",
   "The curve is current. The data behind it is older.",
   "We can't confirm the curve is current. The data behind it is older.",
   "We can't confirm how current the data behind this is.",
   "We can't confirm how current this is.",
-  "The curve rebuilds hourly.",
-  "Hourly rebuilds have not produced a new snapshot.",
   "come and gone without a new snapshot.",
-  '"hourly rebuild has"',
-  '"hourly rebuilds have"',
   "The market data behind it is being gathered again from scratch, so it has no date to show.",
   "We couldn’t read when the market data behind it was last staged.",
   '"served_bank_empty"',
   '"moments"',
+];
+
+// 215-B cadence sentences: native carries "daily" for 1.0.7; web transitions in #12809.
+const DAILY_CADENCE_PAIRS = [
+  { daily: "The curve rebuilds daily.", legacyHourly: "The curve rebuilds hourly." },
+  { daily: "Daily rebuilds have not produced a new snapshot.", legacyHourly: "Hourly rebuilds have not produced a new snapshot." },
+  { daily: '"daily rebuild has"', legacyHourly: '"hourly rebuild has"' },
+  { daily: '"daily rebuilds have"', legacyHourly: '"hourly rebuilds have"' },
 ];
 
 // The banner body — web's page owns these.
@@ -69,6 +73,17 @@ describe("#8959 staleness banner copy: web and native carry the same words", () 
     it(`lib + native both carry ${s}`, () => {
       assert.ok(webLib.includes(s), `calibrationStaleness.ts no longer carries ${s}`);
       assert.ok(swift.includes(s), `CalibrationStaleness.swift has drifted from web: ${s}`);
+    });
+  }
+
+  for (const pair of DAILY_CADENCE_PAIRS) {
+    it(`native carries daily cadence ${pair.daily} (215-B)`, () => {
+      assert.ok(swift.includes(pair.daily), `CalibrationStaleness.swift missing ${pair.daily}`);
+      assert.ok(!swift.includes(pair.legacyHourly), `CalibrationStaleness.swift still carries ${pair.legacyHourly}`);
+      assert.ok(
+        webLib.includes(pair.daily) || webLib.includes(pair.legacyHourly),
+        `calibrationStaleness.ts missing cadence sentence for ${pair.daily}`,
+      );
     });
   }
 

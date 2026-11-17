@@ -647,20 +647,23 @@ struct NFLMilestoneCardView9483: View {
 
     private func chart(_ profile: PlayerMilestoneProfile.Profile, selected: NFLMilestoneCard9483.Rung?) -> some View {
         let domain = NFLMilestoneCard9483.statDomain(profile.domain, actual: card.actual)
+        let yScale = ChartScaleRule201.manyWayWindow(values: card.rungs.compactMap(\.chance))
         return Chart {
             // The final is a rule on the stat axis. Its value is printed large
             // in the card's header, so the rule carries no second label to clip.
             if let actual = card.actual {
                 RectangleMark(xStart: .value("Start", domain.lowerBound), xEnd: .value("Final", actual),
-                              yStart: .value("Chance", 0), yEnd: .value("Chance", 1))
+                              yStart: .value("Chance", 0), yEnd: .value("Chance", yScale.ceilingFraction))
                     .foregroundStyle(color.opacity(0.07))
                 RuleMark(x: .value("Final", actual))
                     .foregroundStyle(color)
                     .lineStyle(StrokeStyle(lineWidth: 2))
             }
-            RuleMark(y: .value("Chance", 0.5))
-                .foregroundStyle(Color.secondary.opacity(0.35))
-                .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+            if yScale.domain.contains(0.5) {
+                RuleMark(y: .value("Chance", 0.5))
+                    .foregroundStyle(Color.secondary.opacity(0.35))
+                    .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+            }
             ForEach(card.rungs.filter { $0.chance != nil }) { rung in
                 let isSelected = rung.rowID == selected?.rowID
                 let chance = rung.chance ?? 0
@@ -678,9 +681,9 @@ struct NFLMilestoneCardView9483: View {
             }
         }
         .chartXScale(domain: domain)
-        .chartYScale(domain: 0...1)
+        .chartYScale(domain: yScale.domain)
         .chartYAxis {
-            AxisMarks(position: .leading, values: [0, 0.5, 1]) { value in
+            AxisMarks(position: .leading, values: yScale.ticks) { value in
                 AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
                 AxisValueLabel {
                     if let chance = value.as(Double.self) { Text("\(Int((chance * 100).rounded()))%") }

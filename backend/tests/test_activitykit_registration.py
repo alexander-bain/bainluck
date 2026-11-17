@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import create_engine, event, insert, select, update
 from sqlalchemy.pool import StaticPool
 
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import get_optional_user
 from app.models.activitykit import ActivityKitRegistration
 from app.routes import activitykit
 from app.services.database import Base, get_db_rw
@@ -32,6 +32,8 @@ class Database:
         for sql in [
             "CREATE TABLE users(id INTEGER PRIMARY KEY)",
             "CREATE TABLE events(id INTEGER PRIMARY KEY)",
+            # 177-A: a registration may be owned by a phone instead of an account.
+            "CREATE TABLE push_devices(device_id CHAR(32) PRIMARY KEY)",
             "INSERT INTO users VALUES (1), (2)",
             "INSERT INTO events VALUES (42), (43)",
         ]:
@@ -85,7 +87,7 @@ def client(db, user=1):
 
     app.dependency_overrides[get_db_rw] = database
     if user is not None:
-        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=user)
+        app.dependency_overrides[get_optional_user] = lambda: SimpleNamespace(id=user)
     return TestClient(app)
 
 

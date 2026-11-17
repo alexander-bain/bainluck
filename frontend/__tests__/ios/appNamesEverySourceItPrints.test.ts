@@ -537,18 +537,20 @@ d("#4135 — the app names a source or draws none", () => {
       // has to hold. #4351 touched seven files, including the four the first cut
       // of this ship missed and a LOOK found. #12578 / 137-A (Alex, Nov 10): the
       // Player Props header names no venue any more, so PlayerPropsCardView
-      // prints none and is no longer one of them.
+      // prints none and is no longer one of them. #12823 (Fable, Nov 16): the
+      // team page's Season Futures rows drop "Polymarket" / "Kalshi" venue names.
       for (const rel of [
         "Components/DiscoverFuturesCard.swift",
         "Views/DiscoverView.swift",
         "Components/RelatedFuturesView.swift",
         "Components/DistributionCardView.swift",
         "Components/HeatMapCardView.swift",
-        "Views/TeamDetailView.swift",
       ]) {
         const source = stripComments(readFileSync(join(IOS_ROOT, rel), "utf8"));
         expect([rel, source.includes("SourceLabels.label(for:")]).toEqual([rel, true]);
       }
+      const teamDetailSource = stripComments(readFileSync(join(IOS_ROOT, "Views/TeamDetailView.swift"), "utf8"));
+      expect(teamDetailSource).not.toContain("SourceLabels.label(for:");
     });
 
     it("the resolver still refuses to name a key it does not know", () => {
