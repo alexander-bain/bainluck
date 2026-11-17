@@ -93,7 +93,7 @@ function SharedFuturesTeaserCard({ item }: { item: FeedItem }) {
   if (movePts !== null) {
     const pts = Math.round(Math.abs(movePts));
     if (pts >= 2) {
-      moveChip = `${movePts > 0 ? "up" : "down"} ${pts} ${pts === 1 ? "point" : "points"}`;
+      moveChip = `${movePts > 0 ? "up" : "down"} ${pts} points`;
     }
   }
 
