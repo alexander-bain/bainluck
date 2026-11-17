@@ -209,6 +209,7 @@
 				Utilities/DrawPricedWinner.swift,
 				Utilities/GameActivityAttributes.swift,
 				Utilities/GameActivitySnapshot.swift,
+				Utilities/GameActivityCrests.swift,
 				Utilities/EventHeadlineTenths10090.swift,
 				Utilities/GameContinuation.swift,
 				Utilities/HeadlineStyleTable199.swift,
