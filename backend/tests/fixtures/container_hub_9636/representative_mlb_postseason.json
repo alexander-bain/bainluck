@@ -179,7 +179,19 @@
                   "name": "Los Angeles Dodgers",
                   "probability": 0.58,
                   "rank": null,
-                  "resolution_source": null
+                  "resolution_source": null,
+                  "source_mark": {
+                    "sources": [
+                      {
+                        "key": "kalshi",
+                        "name": "Kalshi",
+                        "observed_at": null,
+                        "probability": 0.58,
+                        "reason": "observation_unknown"
+                      }
+                    ],
+                    "state": "single"
+                  }
                 },
                 {
                   "american_odds": null,
@@ -189,7 +201,19 @@
                   "name": "San Diego Padres",
                   "probability": 0.42,
                   "rank": null,
-                  "resolution_source": null
+                  "resolution_source": null,
+                  "source_mark": {
+                    "sources": [
+                      {
+                        "key": "kalshi",
+                        "name": "Kalshi",
+                        "observed_at": null,
+                        "probability": 0.42,
+                        "reason": "observation_unknown"
+                      }
+                    ],
+                    "state": "single"
+                  }
                 }
               ],
               "updated_at": null
@@ -238,7 +262,19 @@
                   "name": "Los Angeles Dodgers",
                   "probability": 0.21,
                   "rank": null,
-                  "resolution_source": null
+                  "resolution_source": null,
+                  "source_mark": {
+                    "sources": [
+                      {
+                        "key": "kalshi",
+                        "name": "Kalshi",
+                        "observed_at": null,
+                        "probability": 0.21,
+                        "reason": "observation_unknown"
+                      }
+                    ],
+                    "state": "single"
+                  }
                 },
                 {
                   "american_odds": null,
@@ -248,7 +284,19 @@
                   "name": "New York Yankees",
                   "probability": 0.12,
                   "rank": null,
-                  "resolution_source": null
+                  "resolution_source": null,
+                  "source_mark": {
+                    "sources": [
+                      {
+                        "key": "kalshi",
+                        "name": "Kalshi",
+                        "observed_at": null,
+                        "probability": 0.12,
+                        "reason": "observation_unknown"
+                      }
+                    ],
+                    "state": "single"
+                  }
                 }
               ],
               "updated_at": null
