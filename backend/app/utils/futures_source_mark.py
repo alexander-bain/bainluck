@@ -6,6 +6,7 @@ Keep their ages unknown until the writer supplies that evidence.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any, Iterable
 
 from app.utils.resolution_authority import (
@@ -22,14 +23,17 @@ _RESULT_SOURCES = (
 
 
 def describe_field_normalization(
-    mark: dict, *, input_probability: float | None, displayed_probability: float | None
+    mark: dict,
+    *,
+    input_probability: float | Decimal | None,
+    displayed_probability: float | Decimal | None,
 ) -> None:
     """Explain the existing field scaling without altering inputs or arithmetic."""
     if (
         mark.get("state") not in {"single", "blend"}
         or input_probability is None
         or displayed_probability is None
-        or abs(float(input_probability) - displayed_probability) < 1e-8
+        or abs(float(input_probability) - float(displayed_probability)) < 1e-8
     ):
         return
     mark["method"] = (
