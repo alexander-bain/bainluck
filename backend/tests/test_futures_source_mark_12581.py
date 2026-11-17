@@ -1,12 +1,16 @@
 """Detail provenance follows admitted prices, never a row-touch clock (#12581)."""
 
 from datetime import timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
 import app.routes.futures as routes
-from app.utils.futures_source_mark import futures_outcome_source_mark
+from app.utils.futures_source_mark import (
+    describe_field_normalization,
+    futures_outcome_source_mark,
+)
 from tests.test_futures_verified_title_9387 import (
     KALSHI_ID,
     NOW,
@@ -22,6 +26,34 @@ from tests.test_futures_verified_title_9387 import (
     pm_market,
     trio,
 )
+
+
+@pytest.mark.parametrize(
+    "original,displayed,scaled",
+    [
+        (Decimal("0.19"), Decimal("0.19"), False),
+        (0.19, Decimal("0.25"), True),
+        (Decimal("0.19"), 0.25, True),
+        (Decimal("0"), Decimal("0"), False),
+    ],
+)
+def test_database_decimal_prices_keep_the_scaling_explanation(
+    original, displayed, scaled
+):
+    quoted = float(original)
+    mark = {"state": "single", "sources": [{"probability": quoted}]}
+    describe_field_normalization(
+        mark,
+        input_probability=original,
+        displayed_probability=displayed,
+    )
+    assert ("method" in mark) is scaled
+    if scaled:
+        assert (
+            mark["method"]
+            == "Bain Luck field · scaled with the other outcomes to total 100%"
+        )
+    assert mark["sources"] == [{"probability": quoted}]
 
 
 @pytest.mark.parametrize(
