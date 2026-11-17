@@ -201,7 +201,7 @@ describe("#5459 the event page stops promising liveness it cannot back", () => {
     // that was unbacked, not the price.
     expect(html).toContain("Jeanjean");
     expect(html).toContain("Liu");
-    expect(html).toContain(ADMISSION);
+    expect(html).toContain("Ended · no result reported");
   });
 
   it("drops them on the page's OWN reading when the blend is an hour old", () => {
@@ -213,7 +213,7 @@ describe("#5459 the event page stops promising liveness it cannot back", () => {
 
     expect(html).not.toContain(PROMISE);
     expect(html).not.toContain(CLAIM);
-    expect(html).toContain(ADMISSION);
+    expect(html).toContain("Ended · no result reported");
   });
 
   it("does NOT drop them a minute inside the boundary", () => {

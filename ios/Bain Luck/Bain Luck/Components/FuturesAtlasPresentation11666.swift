@@ -1035,10 +1035,10 @@ struct FuturesAtlasHeadlineCard192A: View {
 
                 Spacer(minLength: 4)
 
-                if !header.isResolved {
-                    EkgTraceShape(beating: header.primaryDisplay.asOfText == nil)
+                if !header.isResolved, header.primaryDisplay.asOfText == nil {
+                    EkgTraceShape(beating: true)
                         .stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-                        .foregroundStyle(header.primaryDisplay.asOfText == nil ? Color.green : Color.secondary)
+                        .foregroundStyle(DS.emerald)
                         .frame(width: 26, height: 9)
                         .accessibilityHidden(true)
                 }

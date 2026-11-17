@@ -355,6 +355,14 @@ class TestBeatScheduleCompleteness:
         "compute-fair-fight-comparison",
         "precompute-source-intelligence",
         "precompute-category-pages",
+        # #12042: one entry per category section, :26-:30, :32, :33.
+        "precompute-category-section-politics",
+        "precompute-category-section-entertainment",
+        "precompute-category-section-economics",
+        "precompute-category-section-weather",
+        "precompute-category-section-golf",
+        "precompute-category-section-golf-schedule",
+        "precompute-category-section-grids",
         "warm-event-concepts",
         # LAT-P137 — the producer for the Search page's category census, which
         # LAT-P122 cached and left with nothing to rebuild it. Gotcha #12: this
@@ -1001,3 +1009,25 @@ class TestThemeCollectionWiring9935:
             ("assemble_theme_collections", ("assemble", False, "ai")),
             ("rebuild_theme_snapshot", ("rebuild", 7)),
         ]
+
+
+def test_admin_precomputes_give_way_to_readers_overnight_215b():
+    """215-B (Fable, Nov 16 2026): admin precomputes run once, overnight PT, so
+    they stop holding heavy's slots while the 15-minute price pass queues. Each
+    key lives 50 h, so one missed night never empties its page."""
+    from app.routes.source_intelligence import CACHE_TTL as SI_TTL
+    from app.tasks import celery_app
+    from app.tasks.precompute_admin_health import _ADMIN_LINK_RATE_CACHE_TTL
+    from app.tasks.precompute_backfill_progress import CACHE_TTL as BP_TTL
+
+    beat = celery_app.conf.beat_schedule
+    for name, hour_utc in (
+        ("precompute-source-intelligence", 11),
+        ("precompute-admin-link-rate", 11),
+        ("precompute-backfill-progress", 10),
+    ):
+        sched = beat[name]["schedule"]
+        assert sched.hour == {hour_utc}, (name, sched.hour)
+        assert len(sched.minute) == 1, (name, sched.minute)
+    for ttl in (SI_TTL, _ADMIN_LINK_RATE_CACHE_TTL, BP_TTL):
+        assert ttl >= 48 * 3600

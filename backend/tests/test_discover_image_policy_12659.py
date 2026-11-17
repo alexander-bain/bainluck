@@ -86,10 +86,80 @@ def test_film_without_verified_poster_drops_stock_for_initials_on_colour():
         top_outcomes=[{"name": "Above 85", "probability": 0.64}],
         image_url="https://images.pexels.com/photos/55555/pexels-photo-55555.jpeg?h=350",
     )
-    assert res_odyssey["image_url"] is None
-    assert res_odyssey["image_monogram"] is not None
-    assert res_odyssey["image_monogram"]["kind"] == "film"
-    assert res_odyssey["image_monogram"]["initials"] == "OD"
+    assert res_odyssey["image_url"] == "https://image.tmdb.org/t/p/w342/krVa7rKCQb4OBfsr2LTJv4rTz5q.jpg"
+    assert res_odyssey["image_credit"] == "TMDB"
+    assert res_odyssey["image_monogram"] is None
+
+    res_unregistered = resolve_discover_market_image(
+        name='"The Further Mis-Adventures of Cliff Booth" Rotten Tomatoes score?',
+        category="entertainment",
+        top_outcomes=[{"name": "Above 45", "probability": 0.64}],
+        image_url="https://images.pexels.com/photos/55555/pexels-photo-55555.jpeg?h=350",
+    )
+    assert res_unregistered["image_url"] is None
+    assert res_unregistered["image_monogram"] is not None
+    assert res_unregistered["image_monogram"]["kind"] == "film"
+    assert res_unregistered["image_monogram"]["initials"] == "FM"
+
+
+def test_entertainment_awards_music_and_cached_payload_sanitization():
+    from app.utils.discover_image_policy import sanitize_entertainment_response_images
+
+    # Oscars Best Picture led by The Odyssey -> verified TMDB poster + TMDB credit
+    res_oscars = resolve_discover_market_image(
+        name="Oscar Winner: Best Picture",
+        category="entertainment",
+        top_outcomes=[{"name": "The Odyssey", "probability": 0.565}],
+        image_url="https://images.pexels.com/photos/7005636/pexels-photo-7005636.jpeg?h=350",
+    )
+    assert res_oscars["image_url"] == "https://image.tmdb.org/t/p/w342/krVa7rKCQb4OBfsr2LTJv4rTz5q.jpg"
+    assert res_oscars["image_credit"] == "TMDB"
+
+    # Oscars Best Director led by Christopher Nolan -> verified TMDB portrait + TMDB credit
+    res_director = resolve_discover_market_image(
+        name="Oscar Winner: Best Director",
+        category="entertainment",
+        top_outcomes=[{"name": "Christopher Nolan", "probability": 0.563}],
+        image_url="https://images.pexels.com/photos/123/pexels-photo-123.jpeg?h=350",
+    )
+    assert res_director["image_url"] == "https://image.tmdb.org/t/p/w185/xuAIuYSmsUzKlUMBFGVZaWsY3DZ.jpg"
+    assert res_director["image_presentation"] == "portrait"
+    assert res_director["image_credit"] == "TMDB"
+
+    # Music artist headline ("Will Drake release a new album?") -> verified Wikimedia portrait + CC credit
+    res_drake = resolve_discover_market_image(
+        name="Will Drake release a new album?",
+        category="entertainment",
+        top_outcomes=[{"name": "December 31", "probability": 0.42}],
+        image_url="https://images.pexels.com/photos/17681464/pexels-photo-17681464.jpeg?h=350",
+    )
+    assert res_drake["image_url"] is not None
+    assert "Drake_at_The_Carter_Effect" in res_drake["image_url"]
+    assert res_drake["image_author"] == "GabboT"
+    assert res_drake["image_license"] == "CC BY-SA 2.0"
+
+    # Cached /api/entertainment payload sanitization strips stock photos on people/films/songs
+    cached_ent = {
+        "trending": [
+            {
+                "market_id": 1,
+                "q": "Oscar Winner: Best Picture",
+                "top_outcomes": [{"name": "The Odyssey", "prob": 56.5}],
+                "image_url": "https://images.pexels.com/photos/7005636/pexels-photo-7005636.jpeg?h=350",
+            },
+            {
+                "market_id": 2,
+                "q": "Dancing with the Stars · Episode 11 Elimination",
+                "top_outcomes": [{"name": "Maura Higgins", "prob": 34.0}],
+                "image_url": "https://images.pexels.com/photos/6173886/pexels-photo-6173886.jpeg?h=350",
+            },
+        ],
+    }
+    clean_ent = sanitize_entertainment_response_images(cached_ent)
+    assert clean_ent["trending"][0]["image_url"] == "https://image.tmdb.org/t/p/w342/krVa7rKCQb4OBfsr2LTJv4rTz5q.jpg"
+    assert clean_ent["trending"][0]["image_credit"] == "TMDB"
+    assert clean_ent["trending"][1]["image_url"] is None
+    assert clean_ent["trending"][1]["image_monogram"]["initials"] == "MH"
 
 
 def test_all_15_audited_bad_pexels_ids_blocked_even_on_topic_markets():

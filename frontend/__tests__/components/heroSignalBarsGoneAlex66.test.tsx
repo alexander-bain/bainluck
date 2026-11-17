@@ -31,10 +31,8 @@ describe("Alex 66 — the event hero draws no confidence bars", () => {
     expect(PAGE).not.toContain("confidenceFromSources");
   });
 
-  it("keeps the hero's source label row", () => {
-    expect(PAGE).toMatch(
-      /\{!isFinished && probSourceLabel && \(\s*<div[^>]*>\s*<span[^>]*>\s*\{probSourceLabel\}\s*<\/span>\s*<\/div>/,
-    );
+  it("mounts the unified Direction 199 game page headline with no confidence bars", () => {
+    expect(PAGE).toContain("<EventPageHeadline199");
   });
 
   it("keeps the EKG as the hero's live signal", () => {

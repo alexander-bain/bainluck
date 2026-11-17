@@ -205,9 +205,16 @@ nonisolated struct BainLuckShortcuts10873: AppShortcutsProvider {
         AppShortcut(
             intent: GetProbabilityIntent10873(),
             phrases: [
-                "Get a probability from \(.applicationName)",
+                // Ruling 208-A — Alex's phone heard "Get a probability from Bain
+                // Luck" as a Wallet request twice of three (Nov 16). These lead
+                // or end with the name next to words no other app claims; the
+                // name's pronunciation hint is in INAlternativeAppNames.
+                "\(.applicationName) chance",
+                "What's the chance in \(.applicationName)",
+                "Who's winning in \(.applicationName)",
                 "Ask \(.applicationName) for a chance",
                 "Check a chance in \(.applicationName)",
+                "Get a probability from \(.applicationName)",
             ],
             shortTitle: "Get Probability",
             systemImageName: "percent"
@@ -218,6 +225,7 @@ nonisolated struct BainLuckShortcuts10873: AppShortcutsProvider {
                 "Open a game in \(.applicationName)",
                 "Open a market in \(.applicationName)",
                 "Find a game in \(.applicationName)",
+                "\(.applicationName) game",
             ],
             shortTitle: "Open Game or Market",
             systemImageName: "magnifyingglass"

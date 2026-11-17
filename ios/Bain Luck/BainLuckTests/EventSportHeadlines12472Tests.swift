@@ -227,11 +227,13 @@ final class EventSportHeadlines12472Tests: XCTestCase {
 
         var nflLive = nflBefore
         nflLive.status = "live"
-        XCTAssertNil(EventSportHeadlines12472.kind(for: nflLive, now: fixedNow), "live NFL is not part of this slice")
+        XCTAssertEqual(EventSportHeadlines12472.kind(for: nflLive, now: fixedNow), .nflDuringGame)
 
         var nflFinal = nflBefore
         nflFinal.status = "completed"
-        XCTAssertNil(EventSportHeadlines12472.kind(for: nflFinal, now: fixedNow), "finished NFL stays on its existing final card")
+        nflFinal.awayScore = 17
+        nflFinal.homeScore = 24
+        XCTAssertEqual(EventSportHeadlines12472.kind(for: nflFinal, now: fixedNow), .nflAfterGame)
 
         let nflOpeningOnly = try nflPregameFixture(heroSource: "opening")
         XCTAssertNil(EventSportHeadlines12472.kind(for: nflOpeningOnly, now: fixedNow), "opening-only weeks keep OpeningLineHero")

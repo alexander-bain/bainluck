@@ -97,41 +97,41 @@ function stamp(html: string, testId: string): string | null {
   return m ? `${m[1]}-${m[2]} ${m[3]}` : null;
 }
 
+function heroStamp(html: string): string | null {
+  const h = html.match(/data-projected-cell="home"[^>]*>([^<]+)<\/span>/)?.[1];
+  const a = html.match(/data-projected-cell="away"[^>]*>([^<]+)<\/span>/)?.[1];
+  return h && a ? `${Math.round(Number(h))}-${Math.round(Number(a))} home-away` : null;
+}
+
 const HERO = "event-hero-projected-final";
 
 describe("the specimen headline, before play", () => {
-  it("prints the full label and names each number, home first like the columns", () => {
+  it("prints the Proj. column and names each number on its team row", () => {
     const html = page(specimen());
-    expect(stamp(html, HERO)).toBe("30-22 home-away");
-    expect(html).toContain('aria-label="Projected final: 49ers 30, Commanders 22"');
-    expect(html).toMatch(/49ers\u00a0<span class="font-mono">30<\/span>/);
-    expect(html).toMatch(/Commanders\u00a0<span class="font-mono">22<\/span>/);
+    expect(heroStamp(html)).toBe("30-22 home-away");
+    expect(html).toContain(">Proj.<");
+    expect(html).toContain("49ers");
+    expect(html).toContain("Commanders");
   });
 
   it("is no longer the faint 11px provenance line", () => {
     const html = page(specimen());
-    const at = html.indexOf(`data-testid="${HERO}"`);
-    const row = html.slice(at, html.indexOf("</div>", at));
-    expect(row).toContain("text-text-primary");
-    expect(row).not.toContain("text-[11px] text-text-muted");
-    // The photographed sentence is gone, not joined.
+    expect(html).toContain('data-projected-cell="home"');
     expect(html).not.toContain("Projected final: 30");
   });
 
-  it("sits under the chance and above the sportsbook count", () => {
+  it("sits inside the headline immediately before each team's Chance cell", () => {
     const html = page(specimen());
-    const at = html.indexOf(`data-testid="${HERO}"`);
+    const at = html.indexOf('data-projected-cell="away"');
     expect(at).toBeGreaterThan(html.indexOf('data-testid="event-hero-probability"'));
-    // The visible count (`>21 sportsbooks<`), not the probability's data attribute.
-    const books = html.search(/>\d+ sportsbooks</);
-    expect(books).toBeGreaterThan(-1);
-    expect(at).toBeLessThan(books);
+    const chance = html.indexOf("data-hero-digits=", at);
+    expect(chance).toBeGreaterThan(at);
   });
 
   it("is the pair the card one tap back prints", () => {
     const fromCard = stamp(card(specimen()), "event-card-projected-final");
     expect(fromCard).toBe("30-22 home-away");
-    expect(stamp(page(specimen(), { home_score: 31.4, away_score: 19.9 }), HERO)).toBe(fromCard);
+    expect(heroStamp(page(specimen(), { home_score: 31.4, away_score: 19.9 }))).toBe(fromCard);
   });
 });
 
@@ -144,9 +144,9 @@ describe("live and finished", () => {
       away_score: 3,
     } as Partial<Event>);
 
-  it("live: the in-game pair keeps its label and never the word pregame", () => {
+  it("live: the in-game pair prints in Proj. and never the phrase Pregame projection", () => {
     const html = page(live(), { home_score: 27.2, away_score: 19.6 });
-    expect(stamp(html, HERO)).toBe("27-20 home-away");
+    expect(heroStamp(html)).toBe("27-20 home-away");
     expect(html).not.toContain("Pregame projection");
   });
 
@@ -161,7 +161,7 @@ describe("live and finished", () => {
       } as Partial<Event>),
       { home_score: 27.1, away_score: 24.2 },
     );
-    expect(stamp(html, HERO)).toBeNull();
+    expect(heroStamp(html)).toBeNull();
     expect(html).not.toContain("Pregame projection");
   });
 });
@@ -172,7 +172,7 @@ describe("the format rule reaches the headline's sportsbook pair", () => {
       { sport: "icehockey_nhl", home_team: "Boston Bruins", away_team: "Buffalo Sabres", home_team_data: undefined, away_team_data: undefined } as Partial<Event>,
       { spread: -1.5, over_under: 5.5, projected_home_score: 3.5, projected_away_score: 2.0 },
     );
-    expect(stamp(page(nhl), HERO)).toBeNull();
+    expect(heroStamp(page(nhl))).toBeNull();
   });
 
   // lane1 R1 on 614c4e7b86: the format gate must withhold hockey's forecast
@@ -183,7 +183,7 @@ describe("the format rule reaches the headline's sportsbook pair", () => {
       { spread: -1.5, over_under: 5.5, projected_home_score: 3.5, projected_away_score: 2.0 },
     );
     // 3.6 / 2.4 rounds to 4 – 2: printable on every other gate, so only R1 withholds it.
-    expect(stamp(page(nhl, { home_score: 3.6, away_score: 2.4 }), HERO)).toBeNull();
+    expect(heroStamp(page(nhl, { home_score: 3.6, away_score: 2.4 }))).toBeNull();
   });
 
   it("control: baseball before play keeps its ladder pair (the run line is not a margin)", () => {
@@ -191,16 +191,16 @@ describe("the format rule reaches the headline's sportsbook pair", () => {
       { sport: "baseball_mlb", home_team: "Texas Rangers", away_team: "New York Mets", home_team_data: undefined, away_team_data: undefined } as Partial<Event>,
       { spread: -1.5, over_under: 8.5, projected_home_score: 5.0, projected_away_score: 3.5 },
     );
-    expect(stamp(page(mlb, { home_score: 4.6, away_score: 3.2 }), HERO)).toBe("5-3 home-away");
+    expect(heroStamp(page(mlb, { home_score: 4.6, away_score: 3.2 }))).toBe("5-3 home-away");
   });
 
-  it("soccer carries its 90-minute basis in the label", () => {
+  it("soccer prints its regulation goal projection in the Proj. column", () => {
     const epl = specimen(
       { sport: "soccer_epl", home_team: "Arsenal", away_team: "Chelsea", home_team_data: undefined, away_team_data: undefined } as Partial<Event>,
       { projected_home_score: 2.1, projected_away_score: 0.9 },
     );
     const html = page(epl);
-    expect(stamp(html, HERO)).toBe("2-1 home-away");
-    expect(html).toContain(">Projected final (90 min)<");
+    expect(heroStamp(html)).toBe("2-1 home-away");
+    expect(html).toContain(">Proj.<");
   });
 });

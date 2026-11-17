@@ -208,12 +208,12 @@ struct SavedSideValue12466: View {
         VStack(alignment: alignment, spacing: 0) {
             if let figure = row.figure {
                 Text(figure)
-                    .font(.system(size: size, weight: .bold, design: .rounded).monospacedDigit())
+                    .font(HeadlineStyleTable199.now(.widget, scaledSize: size))
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
             } else if row.verdict == nil {
                 Text("—")
-                    .font(.system(size: size * 0.7, weight: .semibold, design: .rounded))
+                    .font(HeadlineStyleTable199.secondNumbers(.widget, scaledSize: size * 0.7))
                     .opacity(0.5)
                     .accessibilityLabel("No number")
             }
@@ -221,7 +221,7 @@ struct SavedSideValue12466: View {
                 // #12466 (Fable, Nov 11): "LOST" is quieter than "WON", not faint:
                 // at 0.6 it disappeared on the Vikings' purple at small size.
                 Text(verdict)
-                    .font(.system(size: max(11, size * 0.4), weight: row.emphasized ? .heavy : .bold, design: .rounded))
+                    .font(HeadlineStyleTable199.headers(.widget, scaledSize: max(11, size * 0.4)))
                     .textCase(.uppercase)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
@@ -284,7 +284,11 @@ struct SavedLookView12466: View {
     static func ink(_ look: SavedWidgetLook12466, model: SavedLookModel12466?) -> Color? {
         switch look {
         case .today: return nil
-        case .matchup: return .white
+        case .matchup:
+            if let model, model.isGame, model.drawsFull {
+                return Color(hex: "#6B7280")
+            }
+            return .white
         }
     }
 }
@@ -299,7 +303,9 @@ struct SavedLookBackground12466: View {
         case .today:
             Rectangle().fill(.fill.tertiary)
         case .matchup:
-            if let model, let art = model.art {
+            if let model, model.isGame, model.drawsFull {
+                Color.white
+            } else if let model, let art = model.art {
                 let fills = art.fillHexes()
                 ZStack {
                     Color(hex: fills.away)
@@ -329,128 +335,48 @@ struct SavedSlant12466: Shape {
     }
 }
 
-// MARK: - A · Matchup
+// MARK: - A · Matchup (183-A compact headline size family for priced/settled games)
 
 struct SavedMatchupLook12466: View {
     let model: SavedLookModel12466
     let family: WidgetFamily
-
-    private var fills: (away: String, home: String) {
-        model.art?.fillHexes() ?? (SavedLookInk12466.emeraldHex, SavedLookInk12466.emeraldHex)
-    }
+    @Environment(\.widgetRenderingMode) private var mode
 
     var body: some View {
-        Group {
-            if !model.drawsFull {
-                SavedLookPlain12466(model: model)
-            } else if model.isGame {
-                family == .systemMedium ? AnyView(medium) : AnyView(small)
-            } else {
-                SavedMarketLook12466(model: model, family: family, inkOnFill: true,
-                                     barTrack: Color.black.opacity(0.25), barFill: .white)
+        if !model.drawsFull {
+            SavedLookPlain12466(model: model)
+                .foregroundStyle(.white)
+        } else if model.isGame, let art = model.art {
+            let headlineModel = SavedGameHeadlineWidgetModel12616.build(
+                reading: model.reading,
+                art: art,
+                clockFooter: model.footer,
+                isOffline: model.entry.isOffline,
+                clearsRefreshTrailing: model.entry.isRefreshable12305,
+                now: model.entry.date
+            )
+            SavedGameHeadlineWidgetView12616(
+                model: headlineModel,
+                size: family == .systemMedium ? .medium : .small,
+                awayLogo: model.logo(isHome: false),
+                homeLogo: model.logo(isHome: true),
+                fullColor: mode == .fullColor
+            ) {
+                bar
             }
+        } else {
+            SavedMarketLook12466(model: model, family: family, inkOnFill: true,
+                                 barTrack: Color.black.opacity(0.25), barFill: .white)
+                .foregroundStyle(.white)
         }
-        .foregroundStyle(.white)
-    }
-
-    private func ink(_ isHome: Bool) -> Color {
-        Color(hex: SavedWidgetArt12466.ink(on: isHome ? fills.home : fills.away))
-    }
-
-    private func chip(_ isHome: Bool, size: CGFloat) -> some View {
-        SavedLogoChip12466(png: model.logo(isHome: isHome), short: model.side(isHome: isHome)?.short ?? "",
-                           colorHex: isHome ? fills.home : fills.away, size: size)
     }
 
     @ViewBuilder private var bar: some View {
         if let shares = model.reading.shares {
-            SavedChanceBar12466(shares: shares, awayColor: .white.opacity(model.headlineIsHome ? 0.55 : 1),
-                                homeColor: .white.opacity(model.headlineIsHome ? 1 : 0.55),
-                                height: 6, track: .black.opacity(0.25), leadsHome: model.headlineIsHome)
+            let colors = model.barColors(surfaceLuminance: SavedWidgetArt12466.lightSurfaceLuminance)
+            SavedChanceBar12466(shares: shares, awayColor: colors.away, homeColor: colors.home,
+                                height: 5, track: Color(hex: "#E5E7EB"), leadsHome: model.headlineIsHome)
         }
-    }
-
-    private var small: some View {
-        VStack(spacing: 0) {
-            HStack {
-                chip(false, size: 38)
-                Spacer(minLength: 4)
-                chip(true, size: 38)
-            }
-            Spacer(minLength: 2)
-            HStack(alignment: .lastTextBaseline) {
-                SavedSideValue12466(row: model.away, size: 27).foregroundStyle(ink(false))
-                Spacer(minLength: 2)
-                SavedSideValue12466(row: model.home, size: 27, alignment: .trailing).foregroundStyle(ink(true))
-            }
-            HStack {
-                Text(model.away.shortLabel).foregroundStyle(ink(false).opacity(0.85))
-                Spacer(minLength: 2)
-                Text(model.home.shortLabel).foregroundStyle(ink(true).opacity(0.85))
-            }
-            .font(.caption2.weight(.heavy))
-            bar.padding(.top, 5)
-            Text(model.footer)
-                .font(.caption2.weight(.medium))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.trailing, model.entry.isRefreshable12305 ? 24 : 0)
-                .padding(.top, 4)
-        }
-    }
-
-    private var medium: some View {
-        VStack(spacing: 6) {
-            // #12466 (Fable, Nov 11): both names at one size. The full names when
-            // both fit whole; otherwise both short names, never one shrunk beside
-            // the other ("Fairleigh Dickinson Knights" beside "East Texas A&M Lions").
-            ViewThatFits(in: .horizontal) {
-                matchupRow(shortNames: false)
-                matchupRow(shortNames: true)
-            }
-            bar
-            HStack(spacing: 4) {
-                if let status = model.statusLine {
-                    Text(status).fontWeight(.semibold)
-                    Text("·")
-                }
-                Text(model.footer)
-                Spacer(minLength: 0)
-            }
-            .font(.caption2)
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            .padding(.trailing, model.entry.isRefreshable12305 ? 24 : 0)
-        }
-    }
-
-    private func matchupRow(shortNames: Bool) -> some View {
-        HStack(alignment: .center) {
-            side(false, shortName: shortNames)
-            Spacer(minLength: 6)
-            Text("vs")
-                .font(.caption.weight(.heavy))
-                .opacity(0.8)
-            Spacer(minLength: 6)
-            side(true, shortName: shortNames)
-        }
-    }
-
-    private func side(_ isHome: Bool, shortName: Bool) -> some View {
-        let align: HorizontalAlignment = isHome ? .trailing : .leading
-        let row = model.row(isHome: isHome)
-        return VStack(alignment: align, spacing: 3) {
-            chip(isHome, size: 42)
-            // No shrinking: `ViewThatFits` above picks the names that fit at this size.
-            Text(shortName ? row.shortLabel : row.label)
-                .font(.footnote.weight(.bold))
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-            SavedSideValue12466(row: model.row(isHome: isHome), size: 32, alignment: align)
-        }
-        .foregroundStyle(ink(isHome))
-        .frame(maxWidth: .infinity, alignment: isHome ? .trailing : .leading)
     }
 }
 
@@ -502,14 +428,14 @@ struct SavedMarketLook12466: View {
 extension SavedMarketLook12466 {
     func outcomeName(_ name: String) -> some View {
         Text(name)
-            .font(.footnote.weight(.semibold))
+            .font(HeadlineStyleTable199.names(.widget, scaledSize: HeadlineStyleTable199.nameBaseSize(.widget)))
             .lineLimit(1)
             .opacity(0.85)
     }
 
     func value(_ headline: SavedWidgetReading10875.Row) -> some View {
         Text(headline.verdict ?? headline.figure ?? "—")
-            .font(.system(size: family == .systemMedium ? 32 : 28, weight: .bold, design: .rounded).monospacedDigit())
+            .font(HeadlineStyleTable199.now(.widget, scaledSize: family == .systemMedium ? 32 : 28))
             .lineLimit(1)
             .minimumScaleFactor(0.5)
     }

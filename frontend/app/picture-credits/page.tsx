@@ -133,6 +133,30 @@ export default function PictureCreditsPage() {
         ))}
       </ul>
 
+      <section
+        data-testid="tmdb-attribution-block"
+        className="flex items-center gap-3.5 rounded-xl bg-surface-card border border-surface-border p-4"
+      >
+        <img
+          src="/tmdb-blue-short.svg"
+          alt="TMDB"
+          className="h-4 w-auto flex-shrink-0"
+        />
+        <p className="text-caption text-text-secondary leading-snug">
+          Film posters and screen contender portraits are provided by{" "}
+          <a
+            href="https://www.themoviedb.org/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-accent-brand hover:underline font-medium"
+          >
+            TMDB
+          </a>
+          . This product uses the TMDB API but is not endorsed or certified by
+          TMDB.
+        </p>
+      </section>
+
       <footer className="pt-4 border-t border-surface-border flex flex-wrap items-center justify-between gap-3 text-caption text-text-muted">
         <span>
           {CREDITED_ENTRIES.length} credited pictures from the verified art

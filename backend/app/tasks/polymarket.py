@@ -1092,6 +1092,112 @@ def resolve_event_category(
 # Polling implementation
 # =========================================================================
 
+#: #219E / decision 170-188: the keyset walk's saved position and its share of
+#: the poll's time budget. It runs after the newest-first offset scan and stops
+#: here, leaving the rest of the page budget to the settled-sports pass.
+POLYMARKET_KEYSET_CURSOR_KEY = "bainluck:polymarket_keyset_cursor"
+POLYMARKET_KEYSET_CURSOR_TTL_S = 2 * 86400
+#: Nov 16 2026: 300 -> 240. At 300 the 6:15 AM poll hit the 540 s soft limit
+#: and skipped its three closing steps; the 7:15 AM run's walk ended 46 s past
+#: 300 on one slow page. The walk is the part that gives way first.
+POLYMARKET_KEYSET_STOP_AT_S = 240
+
+#: The poll's soft limit (``poll_polymarket_markets``) and the time held back
+#: for its three closing steps (sub-market link sweep, re-date, stuck-status
+#: rescue), which run after every page loop and have no budget of their own.
+#: Every page loop stops by ``POLYMARKET_POLL_PAGE_BUDGET_S``, and each one
+#: also stops early when its slowest page so far would carry it past that line,
+#: so one slow page cannot eat the closing steps' time.
+POLYMARKET_POLL_SOFT_LIMIT_S = 540
+POLYMARKET_CLOSING_RESERVE_S = 120
+POLYMARKET_POLL_PAGE_BUDGET_S = POLYMARKET_POLL_SOFT_LIMIT_S - POLYMARKET_CLOSING_RESERVE_S
+
+
+async def _keyset_walk_active_events(
+    service,
+    rc,
+    *,
+    seen_ids: set,
+    process_batch,
+    started: float,
+    stop_at_s: float = POLYMARKET_KEYSET_STOP_AT_S,
+    clock=None,
+) -> dict:
+    """#219E: re-read active Polymarket events the offset scan cannot reach.
+
+    The hourly poll's offset scan reaches only the 2,000 newest active events
+    (Gamma's offset cap), so an active market in an older event was never re-read
+    by it. That is most of what Discover features ("AI bubble burst in 2026?").
+    This walks ALL active events by keyset, in id order, from a saved cursor, a
+    page at a time until ``stop_at_s`` of the poll has elapsed. Each page goes
+    through the poll's own batch writer (``process_batch``), and the cursor is
+    saved only after its page is written, so a killed run re-reads, never skips.
+    The end of the active set clears the cursor, so the next run starts over.
+    Events the offset scan already handled this run are skipped. Never raises.
+    """
+    import time as _time
+
+    clock = clock or _time.monotonic
+    out = {"keyset_pages": 0, "keyset_events": 0, "keyset_complete": False, "keyset_error": None}
+    try:
+        raw = rc.get(POLYMARKET_KEYSET_CURSOR_KEY) if rc is not None else None
+        cursor = (raw.decode() if isinstance(raw, bytes) else raw) or None
+    except Exception:
+        cursor = None
+    # One clock read per page. The slowest page so far is the forecast for the
+    # next one: a page that would END past the stop is not started (Nov 16: one
+    # slow page ran the walk 46 s past its stop and the poll out of time).
+    previous = None
+    slowest = 0.0
+    while True:
+        now = clock()
+        if previous is not None:
+            slowest = max(slowest, now - previous)
+        previous = now
+        out["keyset_elapsed_s"] = round(now - started, 1)
+        if now - started + slowest >= stop_at_s:
+            break
+        try:
+            events, next_cursor = await service.get_events_keyset(
+                active=True, closed=False, limit=100, after_cursor=cursor
+            )
+        except Exception as exc:  # the offset scan's work stands; next run resumes
+            out["keyset_error"] = str(exc)[:200]
+            logger.warning("Polymarket keyset walk: page read failed: %s", exc)
+            break
+        batch = []
+        for event_data in events:
+            event_id = str(event_data.get("id", ""))
+            if not event_id or event_id in seen_ids:
+                continue
+            seen_ids.add(event_id)
+            parsed = service._parse_event(event_data)
+            if parsed and parsed.markets:
+                batch.append(parsed)
+        if batch:
+            try:
+                await process_batch(batch)
+            except Exception as exc:  # cursor not advanced: this page is re-read next run
+                out["keyset_error"] = str(exc)[:200]
+                logger.warning("Polymarket keyset walk: page write failed: %s", exc)
+                break
+            out["keyset_events"] += len(batch)
+        out["keyset_pages"] += 1
+        try:
+            if next_cursor:
+                rc.setex(POLYMARKET_KEYSET_CURSOR_KEY, POLYMARKET_KEYSET_CURSOR_TTL_S, next_cursor)
+            else:
+                rc.delete(POLYMARKET_KEYSET_CURSOR_KEY)
+        except Exception:
+            pass  # a lost cursor only means the walk starts over
+        if not next_cursor:
+            out["keyset_complete"] = True
+            break
+        cursor = next_cursor
+    out["keyset_slowest_page_s"] = round(slowest, 1)
+    return out
+
+
 async def _poll_polymarket_markets():
     """Async implementation of Polymarket polling."""
     import asyncio
@@ -1231,7 +1337,7 @@ async def _poll_polymarket_markets():
         # runs instead of re-scanning the same early pages each time.
         import time as _time
         _start = _time.monotonic()
-        _MAX_SECONDS = 420  # 120s margin under the 540s soft limit
+        _MAX_SECONDS = POLYMARKET_POLL_PAGE_BUDGET_S  # 420: the closing steps keep 120 s
         from app.tasks.redis_state import get_redis_client
         _rc = get_redis_client()
         _poll_cursor_key = "bainluck:polymarket_poll_page"
@@ -1331,6 +1437,33 @@ async def _poll_polymarket_markets():
         stats["unique_events_seen"] = len(seen_ids)
         stats["hit_page_cap"] = pages_fetched >= max_pages
 
+        # #219E / decision 170-188: the offset scan above stops at the 2,000
+        # newest events; walk the rest by keyset, inside the same time budget.
+        async def _process_keyset_batch(events):
+            await _process_event_batch(
+                events, stats, FuturesMarket, FuturesOutcome,
+                FuturesOddsSnapshot, pg_insert, probability_to_american,
+                compute_market_tier,
+            )
+
+        stats["offset_scan_s"] = round(_time.monotonic() - _start, 1)
+        stats.update(
+            await _keyset_walk_active_events(
+                service, _rc, seen_ids=seen_ids,
+                process_batch=_process_keyset_batch, started=_start,
+            )
+        )
+        # Logged here, not only in the final line, so a run the soft limit stops
+        # still says how far the walk got.
+        logger.info(
+            "Polymarket keyset walk: %d pages, %d events, complete=%s, error=%s, "
+            "offset scan ended at %.0fs, walk ended at %.0fs, slowest page %.0fs",
+            stats.get("keyset_pages", 0), stats.get("keyset_events", 0),
+            stats.get("keyset_complete"), stats.get("keyset_error"),
+            stats["offset_scan_s"], _time.monotonic() - _start,
+            stats.get("keyset_slowest_page_s", 0.0),
+        )
+
         # Supplementary pass: fetch settled sports game events by tag.
         # The main scan (active=True, closed=False) only gets open events.
         # Settled game events are needed for source coverage + calibration.
@@ -1377,18 +1510,23 @@ async def _poll_polymarket_markets():
             )
             _SPORTS_TAG_SLUGS = _PRIORITY_TAG_SLUGS
         supplemented = 0
+        # Nov 16 2026: the slowest settled page so far forecasts the next, as in
+        # the keyset walk, so the pass never starts a page that would end past
+        # the page budget and into the closing steps' reserve.
+        _slowest_tag_page = 0.0
         for tag_slug in _SPORTS_TAG_SLUGS:
             # #984: skip the settled-sports pass entirely if the main scan already
             # spent the budget — it must not push the task past the 540s wall.
-            if budget_hit or (_time.monotonic() - _start) > _MAX_SECONDS:
+            if budget_hit or (_time.monotonic() - _start) + _slowest_tag_page > _MAX_SECONDS:
                 budget_hit = True
                 break
             tag_offset = 0
             max_tag_pages = 20
             for _tp in range(max_tag_pages):
-                if (_time.monotonic() - _start) > _MAX_SECONDS:
+                if (_time.monotonic() - _start) + _slowest_tag_page > _MAX_SECONDS:
                     budget_hit = True
                     break
+                _tag_page_started = _time.monotonic()
                 try:
                     await asyncio.sleep(0.3)
                     tag_events = await service.get_events(
@@ -1424,6 +1562,12 @@ async def _poll_polymarket_markets():
                 except Exception as e:
                     logger.debug("Polymarket supplementary %s page %d: %s", tag_slug, _tp, e)
                     break
+                finally:
+                    _slowest_tag_page = max(
+                        _slowest_tag_page, _time.monotonic() - _tag_page_started
+                    )
+        stats["settled_pass_ended_s"] = round(_time.monotonic() - _start, 1)
+        stats["settled_slowest_page_s"] = round(_slowest_tag_page, 1)
         if supplemented:
             logger.info("Polymarket supplementary sports fetch added %d events", supplemented)
 
@@ -1437,6 +1581,9 @@ async def _poll_polymarket_markets():
     # top-level error (already recorded above) still gets its links written —
     # per-batch, a raising poll kept whatever the completed batches had swept, and
     # this must not be weaker than that. `stats` is reported either way.
+    import time as _closing_time
+
+    _closing_started = _closing_time.monotonic()
     stats["sub_markets_linked"] = await link_polymarket_sub_markets()
 
     # #6073, AFTER the link sweep and for the same reason it sits after the
@@ -1461,7 +1608,16 @@ async def _poll_polymarket_markets():
         stats["errors"].append(f"stuck_status: {e}")
         logger.exception("Stuck-status rescue (#6073) failed")
 
+    # How long the three closing steps took, against their 120 s reserve.
+    stats["closing_steps_s"] = round(_closing_time.monotonic() - _closing_started, 1)
     stats["total_api_events"] = len(seen_ids)
+    logger.info(
+        "Polymarket poll: closing steps took %.0fs (reserve %ds); keyset pages %d, "
+        "events %d, complete=%s",
+        stats["closing_steps_s"], POLYMARKET_CLOSING_RESERVE_S,
+        stats.get("keyset_pages", 0), stats.get("keyset_events", 0),
+        stats.get("keyset_complete"),
+    )
     logger.info(
         "Polymarket poll: %d API events → %d processed, %d markets, %d outcomes, %d snapshots, %d crypto skipped, %d openings refused as hindsight (#2027), %d errors | by_category: %s",
         stats["total_api_events"], stats["events_processed"], stats["markets_processed"],

@@ -99,7 +99,10 @@ nonisolated enum ChartProbabilityAxis9483 {
     /// The 0–1 axis the chart drew before this window existed.
     static let full = Window(lowerPercent: 0, upperPercent: 100, tickPercents: [0, 25, 50, 75, 100])
 
-    /// Below this many readings a percentile is not a percentile — keep the full axis.
+    /// Minimum sample count before `p2..p98` percentiles replace raw extremes.
+    /// Under 12 readings (`1..<minSamples`), #12750 / Ruling 201 fits directly around
+    /// the observed readings with the same 20-point minimum span and grid snapping
+    /// rather than falling back to `0...100`. Only `0` finite readings returns `full`.
     static let minSamples = 12
     /// Narrowest window ever shown, in percentage points, so a 2-point wobble is
     /// not magnified into drama.
@@ -129,17 +132,26 @@ nonisolated enum ChartProbabilityAxis9483 {
     ///    minimum span back at the other end.
     static func window(readings: [Double], mustShow: [Double] = []) -> Window {
         let values = readings.map { $0 * 100 }.filter(\.isFinite)
-        guard values.count >= minSamples else { return full }
+        guard !values.isEmpty else { return full }
 
         let sorted = values.sorted()
-        var lo = percentile(sorted, 0.02)
-        var hi = percentile(sorted, 0.98)
-
-        // Rule 1b — compared before any widening rule, so it is core vs full.
         let fullLo = sorted[0]
         let fullHi = sorted[sorted.count - 1]
-        let fullSpan = fullHi - fullLo
-        if fullSpan > 0 && (hi - lo) / fullSpan >= minCoreShare {
+        var lo: Double
+        var hi: Double
+        if sorted.count >= minSamples {
+            lo = percentile(sorted, 0.02)
+            hi = percentile(sorted, 0.98)
+
+            // Rule 1b — compared before any widening rule, so it is core vs full.
+            let fullSpan = fullHi - fullLo
+            if fullSpan > 0 && (hi - lo) / fullSpan >= minCoreShare {
+                lo = fullLo
+                hi = fullHi
+            }
+        } else {
+            // Under 12 readings (#12750 / Ruling 201): fit from the very first reading
+            // around the observed range with the same 20-point minimum span and grid rules.
             lo = fullLo
             hi = fullHi
         }

@@ -1,9 +1,9 @@
 "use client";
 
 import { discoverCrestBadge, isCollegeSport, teamShortNames } from "@/lib/teamShortName";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { formatProbability } from "@/lib/api";
+import { fetchEventHistory, formatProbability } from "@/lib/api";
 import { buildDiscoverShareUrl } from "@/lib/share";
 import type { FeedItem, FeedEventData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, chipCategory, getCat, HERO_CHIP_ON_DARK } from "./constants";
@@ -25,9 +25,14 @@ import {
 } from "@/lib/eventState";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { probabilityBarPair } from "@/lib/probabilityBarPair";
+import { resolveMatchupTeamColors } from "@/lib/teamColors";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { crestNeedsPlate } from "@/lib/discover/crestPlate";
-import EventCard183A, { buildUnifiedCardFromFeed } from "@/components/EventCard183A";
+import EventCard183A, {
+  buildUnifiedCardFromFeed,
+  extractDiscoverChartPointsFromHistory,
+  type ChartPoint183A,
+} from "@/components/EventCard183A";
 import { isWebGameCard183AEnabled } from "@/lib/gameCard183AFlag";
 
 /**
@@ -48,10 +53,41 @@ interface EventCardProps extends CardActionCallbacks {
 
 export function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick, onShare, onContextExpand, onContextCollapse }: EventCardProps) {
   const [showContext, setShowContext] = useState(false);
-  if (isWebGameCard183AEnabled()) {
+  const [chartPoints183A, setChartPoints183A] = useState<ChartPoint183A[] | undefined>(undefined);
+  const flag183AEnabled = isWebGameCard183AEnabled();
+
+  useEffect(() => {
+    if (!flag183AEnabled) return;
+    const activeOrSettled = data.status === "live" || isFinishedStatus(data.status);
+    if (!activeOrSettled || isSuspendedStatus(data.status)) {
+      setChartPoints183A(undefined);
+      return;
+    }
+    let cancelled = false;
+    fetchEventHistory(data.id, 48, "since_start")
+      .then((res) => {
+        if (!cancelled) {
+          setChartPoints183A(extractDiscoverChartPointsFromHistory(res));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setChartPoints183A(undefined);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [flag183AEnabled, data.id, data.status]);
+
+  if (flag183AEnabled) {
+    const unified = buildUnifiedCardFromFeed(item, data);
+    if (chartPoints183A && chartPoints183A.length >= 3) {
+      unified.chart_points = chartPoints183A;
+    }
     return (
       <EventCard183A
-        card={buildUnifiedCardFromFeed(item, data)}
+        card={unified}
         surface="discover"
         isPinned={liked}
         onPinToggle={() => setLiked(!liked)}
@@ -59,8 +95,14 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
       />
     );
   }
-  const homeColor = data.home_team_data?.primary_color || "#374151";
-  const awayColor = data.away_team_data?.primary_color || "#6b7280";
+  const resolvedMatchup = resolveMatchupTeamColors({
+    homePrimary: data.home_team_data?.primary_color,
+    awayPrimary: data.away_team_data?.primary_color,
+    homeSecondary: data.home_team_data?.secondary_color,
+    awaySecondary: data.away_team_data?.secondary_color,
+  });
+  const homeColor = resolvedMatchup.home || "#374151";
+  const awayColor = resolvedMatchup.away || "#6b7280";
   // #4470: the probability row and the bar sit on the WHITE card, so they get
   // the shared pair rule rather than the raw team colour. Leeds United's
   // `primary_color` is `#ffffff`, and on production 2026-09-09 that painted
@@ -69,11 +111,12 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // trailing 7 days composite below the 1.5:1 floor, Real Madrid and Tottenham
   // among them. The opacity is 1 because this bar is opaque, unlike FeedCard's;
   // deciding it at FeedCard's 0.7 would grey out nine colours a reader can see.
-  //
-  // The crest tiles and the header gradient below deliberately keep the raw
-  // colour: they sit on the coloured header, not on the card, so the card
-  // surface this module measures against is not their background.
-  const barPair = probabilityBarPair(awayColor, homeColor, PROBABILITY_BAR_OPACITY);
+  const barPair = probabilityBarPair(
+    awayColor,
+    homeColor,
+    PROBABILITY_BAR_OPACITY,
+    data.away_team_data?.secondary_color,
+  );
   const shortPair = teamShortNames(
     { name: data.home_team },
     { name: data.away_team },
@@ -536,7 +579,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               {/* Alex: label it when it is not a prediction market. A books
                   median is a different claim from a prediction-market opening
                   and must not be printed as one — ux/1034 A3's lesson. */}
-              Pre-match{prematch.label ? ` · ${prematch.label}` : ""}
+              Pregame{prematch.label ? ` · ${prematch.label}` : ""}
             </span>
             <span
               className="font-mono tabular-nums text-text-muted"

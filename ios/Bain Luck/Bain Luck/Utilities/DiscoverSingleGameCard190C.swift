@@ -144,6 +144,7 @@ enum DiscoverSingleGameCard190C {
         let drawShare: Double?
         let homeShare: Double
         let awayIsWithheld: Bool
+        var pregameNotch: Double? = nil
     }
 
     nonisolated struct Model: Equatable, Sendable {
@@ -154,6 +155,7 @@ enum DiscoverSingleGameCard190C {
         let headers: ColumnHeaders
         let rows: [RowModel]
         let bar: BarSegments?
+        var livePregameSummary: EventSportHeadlines12472.LivePregameSummary? = nil
         let scheduledProjectedLine: String?
     }
 
@@ -177,15 +179,22 @@ enum DiscoverSingleGameCard190C {
             away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
         let pregameLabels = CompactGameCard12616.liveSidePregameLabels(
             event: event, prematch: prematch)
+        let liveProjectedLabels: (away: String, home: String)? = (isLive && !isSuspended)
+            ? CompactGameCard12616.liveProjectedColumnLabels(
+                printed: LiveProjectedFinal2920.card(event),
+                awayScore: event.awayScore,
+                homeScore: event.homeScore
+              )
+            : nil
 
         let hasPrematchAny = pregameLabels.away != nil || pregameLabels.home != nil || pregameLabels.draw != nil
         let showPregameColumn: Bool = {
             if isSuspended { return hasPrematchAny }
-            if isScheduled { return false }
-            // On 3-column states (Live / Finished), honour `showsInlinePregame` so `.xxxLarge`
-            // long single-word names never break mid-word.
+            if isScheduled || isLive { return false }
+            // On Finished, honour `showsInlinePregame` so `.xxxLarge` long single-word names never break mid-word.
             return showsInlinePregame && hasPrematchAny
         }()
+        let showLiveProjectedColumn: Bool = isLive && !isSuspended && showsInlinePregame && liveProjectedLabels != nil
 
         let hasScore = (isLive || isFinished || isSuspended)
             && (event.awayScore != nil || event.homeScore != nil)
@@ -266,7 +275,7 @@ enum DiscoverSingleGameCard190C {
             if isLive {
                 return ColumnHeaders(
                     score: hasScore ? "Score" : nil,
-                    pregame: showPregameColumn ? "Pregame" : nil,
+                    pregame: showLiveProjectedColumn ? "Proj." : nil,
                     primary: hasCurrentChance ? "Now" : nil
                 )
             }
@@ -280,7 +289,7 @@ enum DiscoverSingleGameCard190C {
             return ColumnHeaders(
                 score: nil,
                 pregame: showPregameColumn ? "Pregame" : nil,
-                primary: hasCurrentChance ? "Now" : nil
+                primary: hasCurrentChance ? "Chance" : nil
             )
         }()
 
@@ -334,7 +343,9 @@ enum DiscoverSingleGameCard190C {
             fullName: event.awayTeam,
             shortName: shortPair.away,
             scoreText: hasScore ? event.awayScore.map(String.init) : nil,
-            pregameText: pregameCellText(pregameLabels.away, withheld: awayPregameWithheld),
+            pregameText: showLiveProjectedColumn
+                ? liveProjectedLabels?.away
+                : pregameCellText(pregameLabels.away, withheld: awayPregameWithheld),
             primaryCell: awayPrimary,
             isWinner: awayWon,
             isDimmedAfter: isFinished && !awayWon && outcome != .draw
@@ -345,7 +356,9 @@ enum DiscoverSingleGameCard190C {
             fullName: event.homeTeam,
             shortName: shortPair.home,
             scoreText: hasScore ? event.homeScore.map(String.init) : nil,
-            pregameText: pregameCellText(pregameLabels.home, withheld: false),
+            pregameText: showLiveProjectedColumn
+                ? liveProjectedLabels?.home
+                : pregameCellText(pregameLabels.home, withheld: false),
             primaryCell: homePrimary,
             isWinner: homeWon,
             isDimmedAfter: isFinished && !homeWon && outcome != .draw
@@ -377,10 +390,26 @@ enum DiscoverSingleGameCard190C {
         }
         rows.append(homeRow)
 
-        // Bar: shown only on compact pregame cards (`!usesPictureLayout && !isFinished && !isSuspended`).
-        // Under 191-A, games in progress and finished games swap the bar for the chart panel under the rows.
+        // Ruling 204-C + 200-B: Segmented probability bar before AND during a game
+        // (never after a game), with the tick on the bar carrying the pregame chance
+        // during play. On Discover during play (`usesPictureLayout == true`), the
+        // 191-A chart panel sits underneath this bar, matching website EventCard183A.
         let bar: BarSegments? = {
-            guard !usesPictureLayout, !isFinished, !isSuspended else { return nil }
+            guard !isFinished, !isSuspended else { return nil }
+            let prematchThreeWayDraw = CompactGameCard12616.hasExplicitThreeWayPrematch(event)
+                ? event.prematchOdds?.drawProbability
+                : nil
+            let liveNotch = (!awayCurrentWithheld)
+                ? CompactGameCard12616.pregameBarNotch(
+                    prematch: prematch,
+                    prematchDraw: prematchThreeWayDraw,
+                    barShowsThreeWayDraw: explicitThreeWayCurrent,
+                    sportPricesADraw: DrawPricedWinner.sportPricesADraw(event.sport),
+                    isLive: isLive && !isSuspended,
+                    isFinished: false,
+                    isSuspended: isSuspended
+                  )
+                : nil
             if explicitThreeWayCurrent,
                let awayP = CompactGameCard12616.usableProbability(event.currentOdds?.awayProbability),
                let drawP = CompactGameCard12616.usableProbability(event.currentOdds?.drawProbability),
@@ -391,7 +420,8 @@ enum DiscoverSingleGameCard190C {
                     awayShare: shares.away,
                     drawShare: shares.draw,
                     homeShare: shares.home,
-                    awayIsWithheld: false
+                    awayIsWithheld: false,
+                    pregameNotch: liveNotch
                 )
             }
             guard let printable = printableCurrent else { return nil }
@@ -402,7 +432,8 @@ enum DiscoverSingleGameCard190C {
                 awayShare: shares.away,
                 drawShare: nil,
                 homeShare: shares.home,
-                awayIsWithheld: printable.away == nil
+                awayIsWithheld: printable.away == nil,
+                pregameNotch: printable.away == nil ? nil : liveNotch
             )
         }()
 
@@ -412,9 +443,16 @@ enum DiscoverSingleGameCard190C {
                 return nil
             }
             let badges = NativeEventDiscoverCard.cardBadges(
-                away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+                away: event.awayTeam,
+                home: event.homeTeam,
+                awayServed: event.awayTeamData?.abbreviation,
+                homeServed: event.homeTeamData?.abbreviation,
+                sportKey: event.sport
+            )
             return "Projected: \(badges.away) \(pair.away) \u{2013} \(badges.home) \(pair.home)"
         }()
+
+        let livePregameSummary = LivePregameCardSummary213A.resolve(event: event)
 
         return Model(
             leagueName: event.sportName ?? sportDisplayName(for: event.sport),
@@ -424,6 +462,7 @@ enum DiscoverSingleGameCard190C {
             headers: headers,
             rows: rows,
             bar: bar,
+            livePregameSummary: livePregameSummary,
             scheduledProjectedLine: scheduledProjectedLine
         )
     }

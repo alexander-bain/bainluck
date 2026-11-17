@@ -31,7 +31,7 @@ from app.utils.discover_bundles import (
     theme_member_withhold_reason,
 )
 
-AWARDS = "story:major_entertainment_events"
+AWARDS = "story:oscars"
 
 
 def _member(
@@ -62,8 +62,8 @@ def _member(
 BEST_PICTURE = _member(
     6173044, "Oscars 2027: Best Picture Winner", "entertainment", 90.0
 )
-ALBUM_OF_YEAR = _member(
-    9935001, "Grammys 2027: Album of the Year", "entertainment", 85.0
+BEST_DIRECTOR = _member(
+    9935001, "Oscars 2027: Best Director Winner", "entertainment", 85.0
 )
 BOXER = _member(61082201, "Sandoval vs Oscar Collazo", "boxing", 88.0)
 TENNIS_A = _member(63448382, "Oscar Brown vs Ivan Petrov", "tennis", 87.0)
@@ -79,10 +79,10 @@ def _standalone_ids(out: list[dict]) -> set:
     return {item["data"]["id"] for item in out if item.get("type") == "futures"}
 
 
-# ── Preconditions: the specimens really do key into Awards Season ───────────
+# ── Preconditions: the specimens really do key into Oscars ──────────────────
 
 
-@pytest.mark.parametrize("item", [BEST_PICTURE, ALBUM_OF_YEAR, *NEAR_MISSES])
+@pytest.mark.parametrize("item", [BEST_PICTURE, BEST_DIRECTOR, *NEAR_MISSES])
 def test_every_specimen_keys_into_awards_season(item):
     """Without this the refusals below could pass because the near-misses
     never reached the family at all."""
@@ -97,7 +97,7 @@ def test_a_non_entertainment_oscar_does_not_fit_awards_season(item):
     assert _member_fits_story(AWARDS, item) is False
 
 
-@pytest.mark.parametrize("item", [BEST_PICTURE, ALBUM_OF_YEAR])
+@pytest.mark.parametrize("item", [BEST_PICTURE, BEST_DIRECTOR])
 def test_an_entertainment_awards_market_fits(item):
     assert _member_fits_story(AWARDS, item) is True
 
@@ -114,7 +114,7 @@ def test_a_family_with_no_category_claim_is_unchanged():
 
 
 def test_main_loop_refuses_the_near_misses_and_keeps_best_picture():
-    out = assemble_story_theme_bundles([BEST_PICTURE, *NEAR_MISSES, ALBUM_OF_YEAR])
+    out = assemble_story_theme_bundles([BEST_PICTURE, *NEAR_MISSES, BEST_DIRECTOR])
 
     bundles = _bundles(out)
     assert len(bundles) == 1
@@ -122,13 +122,13 @@ def test_main_loop_refuses_the_near_misses_and_keeps_best_picture():
 
 
 def test_a_refused_member_still_emits_as_its_own_card():
-    out = assemble_story_theme_bundles([BEST_PICTURE, *NEAR_MISSES, ALBUM_OF_YEAR])
+    out = assemble_story_theme_bundles([BEST_PICTURE, *NEAR_MISSES, BEST_DIRECTOR])
     assert _standalone_ids(out) == {61082201, 63448382, 63448383}
 
 
 def test_near_misses_alone_cannot_form_an_awards_bundle():
     """Before the gate, three Oscars-by-name rows folded into a bundle
-    headed "Who wins awards season?" with no award in it."""
+    with no award in it."""
     out = assemble_story_theme_bundles(list(NEAR_MISSES))
     assert _bundles(out) == []
     assert _standalone_ids(out) == {61082201, 63448382, 63448383}
@@ -140,10 +140,10 @@ def test_near_misses_alone_cannot_form_an_awards_bundle():
 def test_overflow_top_up_refuses_the_near_misses():
     reserve = [
         *NEAR_MISSES,
-        _member(9935002, "Emmys 2027: Best Drama Series", "entertainment"),
+        _member(9935002, "Oscars 2027: Best Original Screenplay", "entertainment"),
     ]
     carrier_a = dict(BEST_PICTURE, _story_overflow_members=reserve)
-    carrier_b = dict(ALBUM_OF_YEAR, _story_overflow_members=reserve)
+    carrier_b = dict(BEST_DIRECTOR, _story_overflow_members=reserve)
 
     out = assemble_story_theme_bundles([carrier_a, carrier_b])
 

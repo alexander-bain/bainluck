@@ -16,6 +16,7 @@ arms come back short. SQLite runs none of that as production does.
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -97,8 +98,8 @@ async def maker():
     await engine.dispose()
 
 
-@pytest.fixture
-async def search(maker):
+@pytest.fixture(params=["original", "maintained-copy"])
+async def search(maker, request, monkeypatch):
     """`GET /api/events/search` (or `typeahead`) against the real app and database.
 
     Redis raises, so every ask is a cache miss — the strawman asks the same
@@ -111,6 +112,26 @@ async def search(maker):
     from app.dependencies.auth import get_optional_user
     from app.main import app
     from app.services.database import get_db, get_db_rw
+    from app.utils import open_futures_outcomes as ofo
+
+    if request.param == "maintained-copy":
+        from sqlalchemy import func, insert, select
+        from app.models.models import FuturesMarket, FuturesOutcome, OpenFuturesOutcome
+
+        async with maker() as session:
+            await session.execute(insert(OpenFuturesOutcome).from_select(
+                ["outcome_id", "market_id", "name"],
+                select(FuturesOutcome.id, FuturesOutcome.market_id, FuturesOutcome.name)
+                .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
+                .where(FuturesMarket.status == "open"),
+            ))
+            floor = await session.scalar(select(func.max(FuturesOutcome.id)))
+            await session.commit()
+        monkeypatch.setattr(ofo, "_state", lambda: {
+            "reader_floor": floor, "pass_at": time.time(), "cycle_complete": True,
+        })
+    else:
+        monkeypatch.setattr(ofo, "_state", lambda: None)
 
     async def _override():
         async with maker() as session:
@@ -173,6 +194,38 @@ async def test_the_outcome_run_must_be_one_option(search):
     """`red` and `sox` in two different poker options is not a Red Sox board."""
     names = _futures(await search("red sox world series"))
     assert POKER not in names, names
+
+
+async def test_a_split_outcome_created_after_the_copy_is_still_found(search, maker):
+    from app.models.models import FuturesMarket, FuturesOutcome
+
+    async with maker() as session:
+        market = FuturesMarket(
+            source="kalshi", external_id="split-late-11933", name="Conference Trophy",
+            status="open", resolution_date=datetime.now(timezone.utc) + timedelta(days=30),
+            volume=10000.0,
+        )
+        session.add(market)
+        await session.flush()
+        session.add(FuturesOutcome(
+            market_id=market.id, external_id="split-late-option-11933",
+            name="Arizona Cardinals", current_probability=0.4,
+        ))
+        await session.commit()
+    assert "Conference Trophy" in _futures(await search("cardinals conference trophy"))
+
+
+async def test_a_market_closed_since_the_copy_never_reaches_the_page(search, maker):
+    from sqlalchemy import update
+    from app.models.models import FuturesMarket
+
+    async with maker() as session:
+        await session.execute(update(FuturesMarket).where(
+            FuturesMarket.name == WORLD_SERIES,
+        ).values(status="closed"))
+        await session.commit()
+    assert WORLD_SERIES not in _futures(await search("dodgers world series"))
+    assert WORLD_SERIES not in _dropdown_futures(await search("dodgers world series", "typeahead"))
 
 
 async def test_a_full_window_never_reads_the_split_arms(search):

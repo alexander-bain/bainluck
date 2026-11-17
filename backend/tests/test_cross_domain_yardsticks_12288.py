@@ -62,6 +62,8 @@ async def test_eval_rows_pair_four_domains_near_46_percent_and_preserve_event_de
 
     feed_item, container = compose_yardsticks_card_and_container(producer, res)
     assert res.title == "Four things that are all about 46% likely"
+    assert res.count_line == "4 unrelated things"
+    assert feed_item["data"]["roundup"]["count_line"] == "4 unrelated things"
     ctx = feed_item["context_summary"]
     assert "rated the same" in ctx
     assert not FORBIDDEN_COPY_RE.search(ctx)

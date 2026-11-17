@@ -29,6 +29,7 @@ final class PreferencesViewModel: ObservableObject {
     private var morningDigestSaveTask: Task<Void, Never>?
 
     private var affinitySaveTask: Task<Void, Never>?
+    private var skipNetworkLoad = false
 
     init(morningDigestUpdater: @escaping MorningDigestUpdater = { enabled in
         let response = try await APIClient.shared.updatePushPreferences(morningDigest: enabled)
@@ -36,6 +37,16 @@ final class PreferencesViewModel: ObservableObject {
     }) {
         self.morningDigestUpdater = morningDigestUpdater
     }
+
+    #if DEBUG
+    init(loadedPrefs: PreferencesResponse, sportAffinities: [String: Double] = ["nba": 1.0, "nfl": 0.75, "ncaab": 0.5, "soccer": 0.25]) {
+        self.morningDigestUpdater = { enabled in enabled }
+        self.prefs = loadedPrefs
+        self.sportAffinities = sportAffinities
+        self.loading = false
+        self.skipNetworkLoad = true
+    }
+    #endif
 
     // MARK: - Computed: Teams grouped by relation type
 
@@ -62,6 +73,7 @@ final class PreferencesViewModel: ObservableObject {
     // MARK: - Load
 
     func load() async {
+        guard !skipNetworkLoad else { return }
         loading = true
         do {
             let response = try await APIClient.shared.fetchPreferences()

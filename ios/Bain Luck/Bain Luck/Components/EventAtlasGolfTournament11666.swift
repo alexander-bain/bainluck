@@ -353,6 +353,40 @@ enum EventAtlasGolfTournament11666 {
         return value
     }
 
+    /// Resolves the tournament's first tee time from full ISO-8601 (`"2026-11-13T13:00:00Z"`)
+    /// or date-only (`"2026-11-13"`) strings.
+    nonisolated static func resolveFirstTeeTime(
+        commenceTime: String?,
+        fallbackMarketCommenceTime: String? = nil
+    ) -> Date? {
+        for candidate in [commenceTime, fallbackMarketCommenceTime] {
+            guard let raw = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { continue }
+            if let dt = raw.asDate { return dt }
+            if raw.count == 10, let dt = "\(raw)T00:00:00Z".asDate { return dt }
+        }
+        return nil
+    }
+
+    /// Interim pregame rule (#12740): `/api/futures/{id}` does not carry a per-outcome timestamp
+    /// for `opening_probability`, only `created_at` when the market was first seen. Show a starting
+    /// number under `"Pregame"` ONLY when the market was first seen strictly before the tournament's
+    /// first tee time; leave `"Pregame"` empty for markets first seen at/after play began or when unknown.
+    nonisolated static func isPreTeeTimeMarket(
+        market: FuturesMarketDetail?,
+        tournamentCommenceTime: String?
+    ) -> Bool {
+        guard let createdIso = market?.createdAt,
+              let createdAt = createdIso.asDate,
+              let firstTee = resolveFirstTeeTime(
+                  commenceTime: tournamentCommenceTime,
+                  fallbackMarketCommenceTime: market?.commenceTime
+              )
+        else {
+            return false
+        }
+        return createdAt < firstTee
+    }
+
     nonisolated static func formatSourceDisplay(_ raw: String?) -> String {
         guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
             return "Market source"
@@ -371,6 +405,7 @@ enum EventAtlasGolfTournament11666 {
         golferName: String,
         phase: GolfFinishPhase10868,
         market: FuturesMarketDetail?,
+        tournamentCommenceTime: String? = nil,
         fallbackWinRow: GolfTournamentFieldRow? = nil,
         isTournamentSettled: Bool = false,
         loadFailed: Bool = false,
@@ -397,7 +432,7 @@ enum EventAtlasGolfTournament11666 {
         let observedIso = outcome?.observedAt ?? outcome?.lastUpdated ?? market?.updatedAt
         let recent = market == nil ? true : NFLMilestoneCard9483.isRecent(observedIso, now: now)
         let sourceText = formatSourceDisplay(market?.source)
-        let timeText = observedIso?.asDate.map { EventAtlasChartMarks11666.formatExactTimestampPT($0) }
+        let timeText = observedIso?.asDate.map { EventAtlasChartMarks11666.formatMinuteTimestampPT($0) }
 
         let detailSuffix: String = {
             if let timeText {
@@ -431,11 +466,12 @@ enum EventAtlasGolfTournament11666 {
             recordedMissing = "Not recorded"
 
         case .recorded:
-            if let openProb = validChance(outcome?.openingProbability ?? fallbackWinRow?.openingProbability) {
+            let hasPreTeeBaseline = isPreTeeTimeMarket(market: market, tournamentCommenceTime: tournamentCommenceTime)
+            if hasPreTeeBaseline, let openProb = validChance(outcome?.openingProbability ?? fallbackWinRow?.openingProbability) {
                 beforeObs = GolfFinishObservation10868(
                     probability: openProb,
                     text: formatProbability(openProb),
-                    accessibilityDetail: "Opened · \(sourceText)"
+                    accessibilityDetail: "Pregame · \(sourceText)"
                 )
                 beforeMissing = "Not recorded"
             } else {
@@ -456,11 +492,12 @@ enum EventAtlasGolfTournament11666 {
             }
 
         case .final:
-            if let openProb = validChance(outcome?.openingProbability ?? fallbackWinRow?.openingProbability) {
+            let hasPreTeeBaseline = isPreTeeTimeMarket(market: market, tournamentCommenceTime: tournamentCommenceTime)
+            if hasPreTeeBaseline, let openProb = validChance(outcome?.openingProbability ?? fallbackWinRow?.openingProbability) {
                 beforeObs = GolfFinishObservation10868(
                     probability: openProb,
                     text: formatProbability(openProb),
-                    accessibilityDetail: "Opened · \(sourceText)"
+                    accessibilityDetail: "Pregame · \(sourceText)"
                 )
             } else {
                 beforeObs = nil
@@ -476,9 +513,9 @@ enum EventAtlasGolfTournament11666 {
                   let liveProb = recordedObs?.probability
             else { return nil }
             if let pts = formatMovementPoints(liveProb - openProb) {
-                return "\(pts) since open"
+                return "\(pts) since pregame"
             }
-            return "0.0 pts since open"
+            return "0.0 pts since pregame"
         }()
 
         let actual: GolfFinishResult10868 = {
@@ -571,6 +608,7 @@ enum EventAtlasGolfTournament11666 {
             golferName: selectedGolferName,
             phase: phase,
             market: atlasData.winnerMarket,
+            tournamentCommenceTime: presentation.commenceTime,
             fallbackWinRow: fallbackWinRow,
             isTournamentSettled: isSettled,
             loadFailed: atlasData.failedMarketSlots.contains("win"),
@@ -583,6 +621,7 @@ enum EventAtlasGolfTournament11666 {
             golferName: selectedGolferName,
             phase: phase,
             market: atlasData.top5Market,
+            tournamentCommenceTime: presentation.commenceTime,
             isTournamentSettled: isSettled,
             loadFailed: atlasData.failedMarketSlots.contains("top5"),
             now: now
@@ -594,6 +633,7 @@ enum EventAtlasGolfTournament11666 {
             golferName: selectedGolferName,
             phase: phase,
             market: atlasData.top10Market,
+            tournamentCommenceTime: presentation.commenceTime,
             isTournamentSettled: isSettled,
             loadFailed: atlasData.failedMarketSlots.contains("top10"),
             now: now
@@ -605,6 +645,7 @@ enum EventAtlasGolfTournament11666 {
             golferName: selectedGolferName,
             phase: phase,
             market: atlasData.top20Market,
+            tournamentCommenceTime: presentation.commenceTime,
             isTournamentSettled: isSettled,
             loadFailed: atlasData.failedMarketSlots.contains("top20"),
             now: now
@@ -619,23 +660,32 @@ enum EventAtlasGolfTournament11666 {
             golferName: selectedGolferName,
             phase: phase,
             market: atlasData.makeCutMarket,
+            tournamentCommenceTime: presentation.commenceTime,
             isTournamentSettled: isSettled,
             loadFailed: atlasData.failedMarketSlots.contains("makeCut"),
             now: now
         ) : nil
 
+        let allSlots = [winSlot, top5Slot, top10Slot, top20Slot] + (makeCutSlot.map { [$0] } ?? [])
+        let anyHasPregameBaseline = allSlots.contains { $0.before != nil }
+
         let contextText: String? = {
             let observedIso = findOutcome(for: selectedGolferName, in: atlasData.winnerMarket)?.observedAt
                 ?? findOutcome(for: selectedGolferName, in: atlasData.winnerMarket)?.lastUpdated
                 ?? atlasData.winnerMarket?.updatedAt
-            let pt = observedIso?.asDate.map { EventAtlasChartMarks11666.formatExactTimestampPT($0) }
+            let pt = observedIso?.asDate.map { EventAtlasChartMarks11666.formatMinuteTimestampPT($0) }
             switch phase {
             case .before:
                 return pt.map { "Pre-tournament · updated \($0)" } ?? "Pre-tournament expectations"
             case .recorded:
-                return pt.map { "In play · latest recorded \($0) · vs open" } ?? "In play · recorded vs opening chance"
+                if anyHasPregameBaseline {
+                    return pt.map { "In play · latest recorded \($0) · vs pregame" } ?? "In play · recorded vs pregame chance"
+                }
+                return pt.map { "In play · latest recorded \($0)" } ?? "In play · recorded estimates"
             case .final:
-                return "Final · opening chances beside confirmed results"
+                return anyHasPregameBaseline
+                    ? "Final · pregame chances beside confirmed results"
+                    : "Final · confirmed results"
             }
         }()
 
@@ -650,7 +700,6 @@ enum EventAtlasGolfTournament11666 {
             return strokes
         }()
 
-        let allSlots = [winSlot, top5Slot, top10Slot, top20Slot] + (makeCutSlot.map { [$0] } ?? [])
         let anyLoadFailed = !atlasData.failedMarketSlots.isEmpty
         let allEmpty = allSlots.allSatisfy { $0.before == nil && $0.recorded == nil }
         let useOpeningLabels = phase != .before
@@ -667,16 +716,16 @@ enum EventAtlasGolfTournament11666 {
             actualSummary: actualSummary,
             selected: phase == .recorded ? selectedFinish : nil,
             makeCut: makeCutSlot,
-            beforeLabel: useOpeningLabels ? "Opened" : GolfFinishExpectationInput10868.beforeTitle,
-            beforeColumnLabel: useOpeningLabels ? "Opened" : "Before",
-            finalBarsExplanation: "Bars show opening market chances.",
+            beforeLabel: useOpeningLabels ? "Pregame" : GolfFinishExpectationInput10868.beforeTitle,
+            beforeColumnLabel: useOpeningLabels ? "Pregame" : "Before",
+            finalBarsExplanation: "Bars show pregame market chances.",
             missingBaselinesExplanation: (anyLoadFailed && allEmpty)
                 ? "Couldn’t load finish markets."
-                : (useOpeningLabels ? "Opening chances weren’t recorded." : "Pre-tournament chances weren’t recorded."),
+                : (useOpeningLabels ? "Pregame chances weren’t recorded." : "Pre-tournament chances weren’t recorded."),
             missingRecordedExplanation: (anyLoadFailed && allEmpty)
                 ? "Couldn’t load finish markets."
                 : "No recorded finish estimates for this golfer at this moment.",
-            finalFootnotePrefix: "Actual finish is separate from each opening chance."
+            finalFootnotePrefix: "Actual finish is separate from each pregame chance."
         )
     }
 
@@ -699,7 +748,7 @@ enum EventAtlasGolfTournament11666 {
         }()
         let outcome = findOutcome(for: golferName, in: market)
         let observedIso = outcome?.observedAt ?? outcome?.lastUpdated ?? market?.updatedAt
-        let pt = observedIso?.asDate.map { EventAtlasChartMarks11666.formatExactTimestampPT($0) }
+        let pt = observedIso?.asDate.map { EventAtlasChartMarks11666.formatMinuteTimestampPT($0) }
         let sourceAttr: String? = {
             guard let src = market?.source, !src.isEmpty else { return nil }
             return "\(formatSourceDisplay(src)) market"
@@ -743,18 +792,13 @@ enum EventAtlasGolfTournament11666 {
     }
 
     /// Computes the `Auto` Y-axis upper bound (`0.20`, `0.30`, `0.50`, `0.75`, `1.00`)
-    /// or `1.00` when `fullScale` is true.
+    /// or `1.00` when `fullScale` is true, via `ChartScaleRule201` (Ruling 202-A).
     nonisolated static func yAxisCeiling(contenders: [JourneyContender], fullScale: Bool) -> Double {
-        if fullScale { return 1.0 }
         let maxPoint = contenders.flatMap { $0.points.map(\.probability) }.max() ?? 0
         let maxCurrent = contenders.compactMap(\.currentProbability).max() ?? 0
         let maxOpen = contenders.compactMap(\.openingProbability).max() ?? 0
         let peak = max(maxPoint, max(maxCurrent, maxOpen))
-        if peak <= 0.18 { return 0.20 }
-        if peak <= 0.28 { return 0.30 }
-        if peak <= 0.45 { return 0.50 }
-        if peak <= 0.70 { return 0.75 }
-        return 1.0
+        return ChartScaleRule201.zeroToTopCeilingFraction(peakFraction: peak, fullScale: fullScale)
     }
 
     /// Ruling 192-A: the Golf headline card names the top 4 golfers, and the first-screen
@@ -936,8 +980,12 @@ enum EventAtlasGolfTournament11666 {
                 return nil
             }
 
+            let winnerHasPreTeeBaseline = isPreTeeTimeMarket(
+                market: atlasData.winnerMarket,
+                tournamentCommenceTime: presentation.commenceTime
+            )
             let openProb: Double? = {
-                guard phase != .before, !winFailed else { return nil }
+                guard phase != .before, !winFailed, winnerHasPreTeeBaseline else { return nil }
                 return validChance(outcome?.openingProbability ?? meta?.openingProbability ?? fieldRow?.openingProbability)
             }()
 
@@ -1295,10 +1343,10 @@ struct EventAtlasGolfHeadlineCardView192A: View {
 
             Spacer(minLength: 4)
 
-            if phase != .final {
-                EkgTraceShape(beating: phase == .recorded)
+            if phase == .recorded {
+                EkgTraceShape(beating: true)
                     .stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-                    .foregroundStyle(phase == .recorded ? DS.emerald : DS.textSecondaryReadable)
+                    .foregroundStyle(DS.emerald)
                     .frame(width: 26, height: 9)
                     .accessibilityHidden(true)
             }
@@ -1534,6 +1582,7 @@ struct EventAtlasGolfJourneyCardView11666: View {
     }
 
     private var footerJourneyCaption: String {
+        let hasPregame = contenders.contains { $0.openingProbability != nil }
         switch phase {
         case .before:
             return "Pre-tournament win history"
@@ -1541,9 +1590,9 @@ struct EventAtlasGolfJourneyCardView11666: View {
             if let round = liveRound, round >= 1 {
                 return "Round 1 tee-off → Round \(round) live"
             }
-            return "Opening to live"
+            return hasPregame ? "Pregame to live" : "Live tournament history"
         case .final:
-            return "Opening to final"
+            return hasPregame ? "Pregame to final" : "Tournament history"
         }
     }
 
@@ -1597,10 +1646,17 @@ struct EventAtlasGolfJourneyCardView11666: View {
                         if let minD = allDates.min(), let maxD = allDates.max(), maxD > minD {
                             let spanHours = maxD.timeIntervalSince(minD) / 3600
                             let midD = minD.addingTimeInterval(maxD.timeIntervalSince(minD) / 2.0)
-                            let tickDates = dynamicTypeSize.isAccessibilitySize ? [minD, maxD] : [minD, midD, maxD]
+                            let useTwoTicks = dynamicTypeSize.isAccessibilitySize || spanHours < 48
+                            let tickDates = useTwoTicks ? [minD, maxD] : [minD, midD, maxD]
                             AxisMarks(values: tickDates) { value in
                                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.4, dash: [3, 3]))
-                                if spanHours < 48 {
+                                if spanHours < 6 {
+                                    AxisValueLabel(
+                                        format: .dateTime.hour().minute(),
+                                        anchor: OddsChartView.xAxisLabelAnchor(index: value.index, count: value.count)
+                                    )
+                                    .font(.caption2)
+                                } else if spanHours < 48 {
                                     AxisValueLabel(
                                         format: .dateTime.weekday(.abbreviated).hour(),
                                         anchor: OddsChartView.xAxisLabelAnchor(index: value.index, count: value.count)
@@ -1878,6 +1934,10 @@ struct EventAtlasGolfFieldSheet192A: View {
                     EventAtlasGolfContenderChooserView11666(
                         field: presentation.field,
                         phase: phase,
+                        showsPregameBaseline: EventAtlasGolfTournament11666.isPreTeeTimeMarket(
+                            market: atlasData.winnerMarket,
+                            tournamentCommenceTime: presentation.commenceTime
+                        ),
                         selectedGolferName: effectiveSelectedGolfer,
                         mode: $mode,
                         band: $band,
@@ -1950,7 +2010,7 @@ struct EventAtlasGolfClosingRoundCardView11666: View {
                     Text(row.golferName)
                         .font(.subheadline.weight(.bold))
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Opening win chance: \(preText)")
+                    Text("Pregame win chance: \(preText)")
                         .font(.caption)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1974,7 +2034,7 @@ struct EventAtlasGolfClosingRoundCardView11666: View {
                         Text(scoreText)
                             .font(.title3.weight(.bold))
                             .monospacedDigit()
-                        Text("○ Opened \(preText)")
+                        Text("○ Pregame \(preText)")
                             .font(.caption)
                             .foregroundStyle(DS.textSecondaryReadable)
                             .monospacedDigit()
@@ -2177,12 +2237,6 @@ struct EventAtlasGolfRoundsCardView11666: View {
                                     .foregroundStyle(.primary)
                                     .fixedSize(horizontal: false, vertical: true)
                                 HStack(spacing: 8) {
-                                    if let open = outcome.openingProbability, open > 0, open < 1 {
-                                        Text("○ Opened \(formatProbability(open))")
-                                            .font(.caption)
-                                            .foregroundStyle(DS.textSecondaryReadable)
-                                            .monospacedDigit()
-                                    }
                                     if isSettled {
                                         Text(isWinner ? "✓ Won" : (group.gradedWinner != nil ? "—" : "Unconfirmed"))
                                             .font(.caption.weight(isWinner ? .semibold : .regular))
@@ -2203,12 +2257,6 @@ struct EventAtlasGolfRoundsCardView11666: View {
                                     .foregroundStyle(.primary)
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 4)
-                                if let open = outcome.openingProbability, open > 0, open < 1 {
-                                    Text("○ Opened \(formatProbability(open))")
-                                        .font(.caption)
-                                        .foregroundStyle(DS.textSecondaryReadable)
-                                        .monospacedDigit()
-                                }
                                 if isSettled {
                                     Text(isWinner ? "✓ Won" : (group.gradedWinner != nil ? "—" : "Unconfirmed"))
                                         .font(.caption.weight(isWinner ? .semibold : .regular))
@@ -2238,6 +2286,7 @@ struct EventAtlasGolfRoundsCardView11666: View {
 struct EventAtlasGolfContenderChooserView11666: View {
     let field: [GolfTournamentFieldRow]
     let phase: GolfFinishPhase10868
+    var showsPregameBaseline: Bool = false
     let selectedGolferName: String
     @Binding var mode: EventAtlasGolfTournament11666.ChooserMode
     @Binding var band: EventAtlasGolfTournament11666.SurnameBand
@@ -2441,8 +2490,8 @@ struct EventAtlasGolfContenderChooserView11666: View {
                     Text("✓ Won")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(DS.emeraldDark)
-                } else if let open = row.openingProbability, open > 0, open < 1 {
-                    Text("○ Opened \(formatProbability(open))")
+                } else if showsPregameBaseline, let open = row.openingProbability, open > 0, open < 1 {
+                    Text("○ Pregame \(formatProbability(open))")
                         .font(.caption)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .monospacedDigit()
@@ -2483,13 +2532,13 @@ struct EventAtlasGolfFinishDetailsSheet11666: View {
 
                 Section("Readings") {
                     LabeledContent(
-                        item.phase == .before ? "Before tournament" : "Opened",
+                        item.phase == .before ? "Before tournament" : "Pregame",
                         value: item.beforePercent ?? item.beforeMissingText
                     )
                     if item.phase == .recorded {
                         LabeledContent("Recorded estimate", value: item.recordedPercent ?? item.recordedMissingText)
                         if let deltaText = item.deltaText {
-                            LabeledContent("Since open", value: deltaText)
+                            LabeledContent("Since pregame", value: deltaText)
                         }
                     }
                     if let resultText = item.resultText {

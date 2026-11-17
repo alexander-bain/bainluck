@@ -266,11 +266,10 @@ describe("#6085 — a finished game's share picture leads with the result", () =
     expect(text).toContain("58%");
   });
 
-  it("names the rung, because an opening_odds reading is a sportsbook median", async () => {
-    // Alex: "labelled when not a prediction market." `sportsbooks` and never a
-    // venue name (notice 33), and never the banned words.
+  it("labels the pregame reading as 'Pregame' with no venue or sportsbooks tag", async () => {
     const text = allText(await renderCard(ZVEREV_SHELTON));
-    expect(text).toContain("Pre-match · sportsbooks");
+    expect(text).toContain("Pregame");
+    expect(text).not.toMatch(/\bsportsbooks\b/i);
     expect(text).not.toMatch(/\bbookmaker/i);
     expect(text).not.toMatch(/\bbooks\b/);
   });
@@ -312,7 +311,7 @@ describe("#6085 — a finished game's share picture leads with the result", () =
     expect(text).toContain("Live now");
     // And the pre-match pair must NOT appear as a second reading beside it.
     expect(text).not.toContain("42%");
-    expect(text).not.toContain("Pre-match");
+    expect(text).not.toContain("Pregame");
   });
 
   it("CONTROL: a scheduled game is untouched", async () => {

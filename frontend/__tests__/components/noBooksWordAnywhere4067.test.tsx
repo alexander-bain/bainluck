@@ -143,14 +143,14 @@ describe("notice 33 — the word the site may not print", () => {
     // POSITIVE FIRST. A bare `not.toContain` passes on an empty render, which is
     // how a guard of this shape lies; the marker has to be PRESENT and correct
     // before its absence in the banned form means anything.
-    expect(html).toContain("Pre-match · sportsbooks");
+    expect(html).toContain("Pregame · sportsbooks");
     expect(visibleText(html)).not.toMatch(BANNED);
   });
 
   it("the Discover card says it the same way", () => {
     const html = renderDiscover(booksFinal());
 
-    expect(html).toContain("Pre-match · sportsbooks");
+    expect(html).toContain("Pregame · sportsbooks");
     expect(visibleText(html)).not.toMatch(BANNED);
   });
 

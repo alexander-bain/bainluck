@@ -115,11 +115,34 @@ struct FuturesDetailView: View {
     @State private var sortField: FuturesSortField = .probability
     @State private var sortAscending = false
     @State private var showAllOutcomes = false
+    #if DEBUG
+    private var preloadedTimelineForTest: ProbabilityTimelineResponse? = nil
+    #endif
+
+    private var chartPreloadedTimeline: ProbabilityTimelineResponse? {
+        #if DEBUG
+        return preloadedTimelineForTest
+        #else
+        return nil
+        #endif
+    }
 
     init(marketId: Int) {
         self.marketId = marketId
         _viewModel = StateObject(wrappedValue: FuturesDetailViewModel(marketId: marketId))
     }
+
+    #if DEBUG
+    init(
+        marketId: Int,
+        viewModelForTest: FuturesDetailViewModel,
+        preloadedTimelineForTest: ProbabilityTimelineResponse? = nil
+    ) {
+        self.marketId = marketId
+        _viewModel = StateObject(wrappedValue: viewModelForTest)
+        self.preloadedTimelineForTest = preloadedTimelineForTest
+    }
+    #endif
 
     private var shareMessage: String { futuresDetailShareMessage(viewModel.market) }
 
@@ -146,6 +169,8 @@ struct FuturesDetailView: View {
     /// Boston–Detroit (54069274) at its deepest scroll had #13 Detroit over 5.5
     /// under it: a graded row nobody could read. iPad's tab bar is at the top.
     /// Same split, and the same reason, as `PinFeedbackToast.bottomClearance`.
+    static let readableDetailMaxWidth: CGFloat = 720
+
     static func bottomClearance(horizontalSizeClass: UserInterfaceSizeClass?) -> CGFloat {
         horizontalSizeClass == .regular ? 0 : 120
     }
@@ -176,7 +201,8 @@ struct FuturesDetailView: View {
                                 golfTournamentStart: golfTournamentStart(market),
                                 golfTournamentEnd: golfTournamentEnd(market),
                                 chartRefreshToken: viewModel.chartRefreshToken,
-                                representation: viewModel.representation
+                                representation: viewModel.representation,
+                                preloadedTimeline: chartPreloadedTimeline
                             )
                             .padding(.bottom, Self.bottomClearance(horizontalSizeClass: horizontalSizeClass))
                         } else {
@@ -226,7 +252,8 @@ struct FuturesDetailView: View {
                                             representation: viewModel.representation,
                                             expectation: viewModel.representation == .source ? nil
                                                 : VerifiedTitleChartExpectation(
-                                                    market: market, hero: futuresDetailHeroOutcome(market))
+                                                    market: market, hero: futuresDetailHeroOutcome(market)),
+                                            preloadedTimeline: chartPreloadedTimeline
                                         )
                                     }
 
@@ -237,11 +264,7 @@ struct FuturesDetailView: View {
                             }
                         }
                     }
-                    #if os(macOS)
-                    .frame(maxWidth: 1000)
-                    #else
-                    .frame(maxWidth: 700)
-                    #endif
+                    .frame(maxWidth: Self.readableDetailMaxWidth)
                     .frame(maxWidth: .infinity)
                 }
                 // #10876 — the hero's bottom edge is measured in this space.

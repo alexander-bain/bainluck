@@ -20,20 +20,20 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    // Atlas Column Type Spec: one tabular SF Pro digit family at three gentle optical steps
-    // (`20 pt Bold` primary, `17 pt Semibold` live score, `15 pt Regular` pregame, `10.5 pt Semibold` headers).
-    @ScaledMetric(relativeTo: .body) private var compactNameSize: CGFloat = 17
-    @ScaledMetric(relativeTo: .caption2) private var headerFontSize: CGFloat = 10.5
-    @ScaledMetric(relativeTo: .body) private var compactScoreSize: CGFloat = 17
-    @ScaledMetric(relativeTo: .subheadline) private var compactPregameSize: CGFloat = 15
-    @ScaledMetric(relativeTo: .title3) private var compactLargeSize: CGFloat = 20
+    // Unified onto HeadlineStyleTable199 (.card) so team names, scores, and chances
+    // share one size and weight family with the event-page headline, feed card, widget, and Watch tile.
+    @ScaledMetric(relativeTo: .body) private var compactNameSize: CGFloat = HeadlineStyleTable199.nameBaseSize(.card)
+    @ScaledMetric(relativeTo: .caption2) private var headerFontSize: CGFloat = HeadlineStyleTable199.headerBaseSize(.card)
+    @ScaledMetric(relativeTo: .body) private var compactScoreSize: CGFloat = HeadlineStyleTable199.secondNumberBaseSize(.card, prominent: false)
+    @ScaledMetric(relativeTo: .subheadline) private var compactPregameSize: CGFloat = HeadlineStyleTable199.pregameNumberBaseSize(.card)
+    @ScaledMetric(relativeTo: .title3) private var compactLargeSize: CGFloat = HeadlineStyleTable199.nowBaseSize(.card)
 
-    @ScaledMetric(relativeTo: .body) private var scoreColWidth: CGFloat = 46
-    @ScaledMetric(relativeTo: .subheadline) private var pregameColWidth: CGFloat = 58
-    @ScaledMetric(relativeTo: .title3) private var primaryColWidth: CGFloat = 68
+    @ScaledMetric(relativeTo: .body) private var scoreColWidth: CGFloat = 34
+    @ScaledMetric(relativeTo: .subheadline) private var pregameColWidth: CGFloat = 48
+    @ScaledMetric(relativeTo: .title3) private var primaryColWidth: CGFloat = 76
 
-    private let scoreToPregameGutter: CGFloat = 18
-    private let pregameToPrimaryGap: CGFloat = 10
+    private let scoreToPregameGutter: CGFloat = 12
+    private let pregameToPrimaryGap: CGFloat = 14
 
     private var shortNames: (away: String, home: String) {
         TeamShortName.shortPair(
@@ -41,7 +41,10 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     }
 
     private var showsInlinePregame: Bool {
-        CompactGameCard12616.liveInlinePregameFits(
+        if dynamicTypeSize.isAccessibilitySize && event.status == "live" {
+            return true
+        }
+        return CompactGameCard12616.liveInlinePregameFits(
             awayShortName: shortNames.away,
             homeShortName: shortNames.home,
             typeSize: dynamicTypeSize
@@ -66,11 +69,38 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     }
 
     private var effectivePrimaryWidth: CGFloat {
-        dynamicTypeSize.isAccessibilitySize ? min(primaryColWidth, 88) : min(primaryColWidth, 78)
+        dynamicTypeSize.isAccessibilitySize ? min(primaryColWidth, 92) : min(primaryColWidth, 84)
     }
 
     private var gapAfterScore: CGFloat {
         model.headers.pregame != nil ? scoreToPregameGutter : pregameToPrimaryGap
+    }
+
+    private var trailingColumnsClusterWidth: CGFloat {
+        let scoreW = model.headers.score != nil ? effectiveScoreWidth : 0
+        let pregameW = model.headers.pregame != nil
+            ? effectivePregameWidth + (model.headers.score != nil ? scoreToPregameGutter : 0)
+            : 0
+        let primaryW = model.headers.primary != nil
+            ? effectivePrimaryWidth + (model.headers.pregame != nil
+                ? pregameToPrimaryGap
+                : (model.headers.score != nil ? gapAfterScore : 0))
+            : 0
+        return scoreW + pregameW + primaryW
+    }
+
+    private var sharedCompactTeamNameFontSize: CGFloat {
+        let competitorNames = model.rows
+            .filter { $0.kind != .draw }
+            .map(\.shortName)
+        let availableWidth = max(330 - 36 - 8 - trailingColumnsClusterWidth, 72)
+        return CardTeamNameSizing.sharedWordSafeFontSize(
+            names: competitorNames,
+            baseSize: min(compactNameSize, 20),
+            weight: .bold,
+            availableWidth: availableWidth,
+            minimumScale: 0.72
+        )
     }
 
     var body: some View {
@@ -87,6 +117,19 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 }
             }
 
+            if let bar = model.bar {
+                segmentedBarView(bar)
+            }
+
+            if let livePregameSummary = model.livePregameSummary {
+                LivePregameSummaryRow214A1(
+                    summary: livePregameSummary,
+                    surface: .card,
+                    colors: (away: awayColor, home: homeColor),
+                    accessibilityIdentifier: "discover-card-live-pregame-summary"
+                )
+            }
+
             if usesPictureLayout191A {
                 DiscoverPictureChartPanel191AView(
                     event: event,
@@ -95,14 +138,12 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                     homeColor: homeColor,
                     preloadedHistory: preloadedChartHistory
                 )
-            } else if let bar = model.bar {
-                segmentedBarView(bar)
             }
 
             VStack(alignment: .leading, spacing: 6) {
                 if let scheduledProjectedLine = model.scheduledProjectedLine {
                     Text(scheduledProjectedLine)
-                        .font(.caption.monospacedDigit())
+                        .font(HeadlineStyleTable199.quietText(.card, monospacedDigits: true))
                         .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -199,33 +240,30 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
 
     private var headerFont: Font {
         let cap: CGFloat = dynamicTypeSize.isAccessibilitySize ? 14.5 : 13
-        return .system(size: min(headerFontSize, cap), weight: .semibold).monospacedDigit()
+        return HeadlineStyleTable199.headers(.card, scaledSize: min(headerFontSize, cap)).monospacedDigit()
     }
 
     private var columnHeadersCluster: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             if let scoreHeader = model.headers.score {
-                Text(scoreHeader.uppercased())
+                Text(scoreHeader)
                     .font(headerFont)
-                    .tracking(0.45)
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
                     .frame(width: effectiveScoreWidth, alignment: .trailing)
             }
             if let pregameHeader = model.headers.pregame {
-                Text(pregameHeader.uppercased())
+                Text(pregameHeader)
                     .font(headerFont)
-                    .tracking(0.45)
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
                     .frame(width: effectivePregameWidth, alignment: .trailing)
                     .padding(.leading, model.headers.score != nil ? scoreToPregameGutter : 0)
             }
             if let primaryHeader = model.headers.primary {
-                Text(primaryHeader.uppercased())
+                Text(primaryHeader)
                     .font(headerFont)
-                    .tracking(0.45)
-                    .foregroundStyle(model.isLive || model.isFinished ? Color.primary.opacity(0.78) : DS.textSecondaryReadable)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
                     .frame(width: effectivePrimaryWidth, alignment: .trailing)
                     .padding(.leading, model.headers.pregame != nil
@@ -239,14 +277,15 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
 
     private func compactRowView(_ row: DiscoverSingleGameCard190C.RowModel) -> some View {
         let singleWord = !row.shortName.contains(" ")
+        let isLoser = model.isFinished && !row.isWinner && row.isDimmedAfter
         return HStack(alignment: .center, spacing: 8) {
             rowBadgeView(row)
 
             Text(row.shortName)
-                .font(.system(size: min(compactNameSize, 20), weight: model.isFinished ? (row.isWinner ? .bold : .medium) : .semibold))
+                .font(HeadlineStyleTable199.names(.card, isLoser: isLoser, scaledSize: sharedCompactTeamNameFontSize))
                 .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
                 .lineLimit(singleWord ? 1 : 2)
-                .minimumScaleFactor(singleWord ? 0.72 : 0.85)
+                .minimumScaleFactor(0.75)
                 .fixedSize(horizontal: false, vertical: !singleWord)
 
             Spacer(minLength: 8)
@@ -254,7 +293,11 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 if model.headers.score != nil {
                     Text(row.scoreText ?? "")
-                        .font(.system(size: min(compactScoreSize, 20), weight: .semibold).monospacedDigit())
+                        .font(HeadlineStyleTable199.secondNumbers(
+                            .card,
+                            prominent: model.isFinished && row.isWinner,
+                            scaledSize: model.isFinished && row.isWinner ? min(compactLargeSize, 24) : min(compactScoreSize, 20)
+                        ))
                         .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
                         .lineLimit(1)
                         .frame(width: effectiveScoreWidth, alignment: .trailing)
@@ -262,8 +305,12 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
 
                 if model.headers.pregame != nil {
                     Text(row.pregameText ?? "")
-                        .font(.system(size: min(compactPregameSize, 18), weight: .regular).monospacedDigit())
-                        .foregroundStyle(DS.textSecondaryReadable)
+                        .font(HeadlineStyleTable199.secondNumbers(
+                            .card,
+                            prominent: false,
+                            scaledSize: model.isLive ? min(compactScoreSize, 20) : min(compactPregameSize, 18)
+                        ))
+                        .foregroundStyle(model.isLive ? Color.primary : DS.textSecondaryReadable)
                         .lineLimit(1)
                         .frame(width: effectivePregameWidth, alignment: .trailing)
                         .padding(.leading, model.headers.score != nil ? scoreToPregameGutter : 0)
@@ -307,7 +354,11 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     ) -> some View {
         if model.headers.score != nil {
             Text(row.scoreText ?? "")
-                .font(.system(size: min(compactScoreSize, 22), weight: .semibold).monospacedDigit())
+                .font(HeadlineStyleTable199.secondNumbers(
+                    .card,
+                    prominent: model.isFinished && row.isWinner,
+                    scaledSize: min(compactScoreSize, 22)
+                ))
                 .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
@@ -316,13 +367,17 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         }
         if model.headers.pregame != nil {
             Text(row.pregameText ?? "")
-                .font(.system(size: min(compactPregameSize, 19), weight: .regular).monospacedDigit())
-                .foregroundStyle(DS.textSecondaryReadable)
+                .font(HeadlineStyleTable199.secondNumbers(
+                    .card,
+                    prominent: false,
+                    scaledSize: model.isLive ? min(compactScoreSize, 22) : min(compactPregameSize, 19)
+                ))
+                .foregroundStyle(model.isLive ? Color.primary : DS.textSecondaryReadable)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .frame(width: effectivePregameWidth, alignment: .trailing)
                 .padding(.leading, model.headers.score != nil ? scoreToPregameGutter : 0)
-                .accessibilityLabel(row.pregameText.map { "Pregame \($0)" } ?? "")
+                .accessibilityLabel(row.pregameText.map { model.isLive ? "Projected \($0)" : "Pregame \($0)" } ?? "")
         }
         if let primaryHeader = model.headers.primary {
             primaryCellView(row)
@@ -360,7 +415,9 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 size: size,
                 sportKey: event.sport,
                 isPhotograph: avatar.isPhotograph,
-                opponentName: event.homeTeam
+                opponentName: event.homeTeam,
+                abbreviation: event.awayTeamData?.abbreviation,
+                opponentAbbreviation: event.homeTeamData?.abbreviation
             )
         case .home:
             let avatar = event.avatar(home: true)
@@ -371,7 +428,9 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 size: size,
                 sportKey: event.sport,
                 isPhotograph: avatar.isPhotograph,
-                opponentName: event.awayTeam
+                opponentName: event.awayTeam,
+                abbreviation: event.homeTeamData?.abbreviation,
+                opponentAbbreviation: event.awayTeamData?.abbreviation
             )
         case .draw:
             ZStack {
@@ -391,17 +450,18 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         switch row.primaryCell {
         case .probability(let text):
             Text(text)
-                .font(.system(size: min(compactLargeSize, 24), weight: .bold).monospacedDigit())
+                .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                 .foregroundStyle(sideAccentColor(for: row.kind))
                 .lineLimit(1)
+                .minimumScaleFactor(0.85)
         case .won(let text):
             Text(text)
-                .font(.system(size: min(compactPregameSize, 18), weight: .bold))
+                .font(HeadlineStyleTable199.secondNumbers(.card, prominent: true, scaledSize: min(compactPregameSize, 18)))
                 .foregroundStyle(DS.emerald)
                 .lineLimit(1)
         case .settledDash:
             Text(absentProbabilityMarker)
-                .font(.system(size: min(compactPregameSize, 18), weight: .regular).monospacedDigit())
+                .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactPregameSize, 18)))
                 .foregroundStyle(DS.textSecondaryReadable)
                 .lineLimit(1)
         case .none:
@@ -422,30 +482,51 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     private func segmentedBarView(_ bar: DiscoverSingleGameCard190C.BarSegments) -> some View {
         GeometryReader { geo in
             let gap: CGFloat = 2
-            HStack(spacing: gap) {
-                if let drawShare = bar.drawShare, drawShare > 0 {
-                    let usableWidth = max(12, geo.size.width - gap * 2)
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .fill(awayColor)
-                        .frame(width: max(4, usableWidth * bar.awayShare))
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .fill(Color.secondary.opacity(0.32))
-                        .frame(width: max(4, usableWidth * drawShare))
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .fill(homeColor)
-                        .frame(width: max(4, usableWidth * bar.homeShare))
-                } else {
-                    let usableWidth = max(8, geo.size.width - gap)
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .fill(bar.awayIsWithheld ? Color.secondary.opacity(0.25) : awayColor)
-                        .frame(width: max(4, usableWidth * bar.awayShare))
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .fill(homeColor)
-                        .frame(width: max(4, usableWidth * bar.homeShare))
+            ZStack(alignment: .leading) {
+                HStack(spacing: gap) {
+                    if let drawShare = bar.drawShare, drawShare > 0 {
+                        let usableWidth = max(12, geo.size.width - gap * 2)
+                        RoundedRectangle(cornerRadius: 2.5)
+                            .fill(awayColor)
+                            .frame(width: max(4, usableWidth * bar.awayShare))
+                        RoundedRectangle(cornerRadius: 2.5)
+                            .fill(Color.secondary.opacity(0.32))
+                            .frame(width: max(4, usableWidth * drawShare))
+                        RoundedRectangle(cornerRadius: 2.5)
+                            .fill(homeColor)
+                            .frame(width: max(4, usableWidth * bar.homeShare))
+                    } else {
+                        let usableWidth = max(8, geo.size.width - gap)
+                        RoundedRectangle(cornerRadius: 2.5)
+                            .fill(bar.awayIsWithheld ? Color.secondary.opacity(0.25) : awayColor)
+                            .frame(width: max(4, usableWidth * bar.awayShare))
+                        RoundedRectangle(cornerRadius: 2.5)
+                            .fill(homeColor)
+                            .frame(width: max(4, usableWidth * bar.homeShare))
+                    }
+                }
+                .frame(width: geo.size.width, height: 6)
+
+                if let notch = bar.pregameNotch,
+                   !bar.awayIsWithheld,
+                   notch.isFinite, notch > 0, notch < 1,
+                   geo.size.width > 8 {
+                    let clampedX = min(max(geo.size.width * notch, 3), geo.size.width - 3)
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(Color.white)
+                            .frame(width: 4, height: 8)
+                        RoundedRectangle(cornerRadius: 0.75)
+                            .fill(Color.primary.opacity(0.72))
+                            .frame(width: 1.5, height: 8)
+                    }
+                    .position(x: clampedX, y: 3)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                 }
             }
         }
-        .frame(height: 5)
+        .frame(height: 6)
         .accessibilityHidden(true)
     }
 }
