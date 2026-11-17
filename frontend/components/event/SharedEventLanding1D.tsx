@@ -6,7 +6,6 @@ import useSWR from "swr";
 import EventCard183A, { buildUnifiedCardFromFeed } from "@/components/EventCard183A";
 import { PinIcon, pinTitle } from "@/components/PinButton";
 import { fetchFeed } from "@/lib/api";
-import { APP_STORE_URL } from "@/lib/brandCopy";
 import { formatProbabilityPercent, movementPoints } from "@/lib/probabilityDisplay";
 import type { FeedEventData, FeedFuturesData, FeedItem } from "@/lib/types";
 
@@ -14,7 +13,7 @@ import type { FeedEventData, FeedFuturesData, FeedItem } from "@/lib/types";
  * Ruling 212-A (`#11934` Step 1D) — Web landing additions when a reader arrives
  * from a shared game link (`/events/[id]?utm_source=share` or `?shared=1`).
  *
- * Applies Fable's four Ruling 212-A rules:
+ * Applies Fable's Ruling 212-A rules + 4:09 PM PT look updates:
  * 1. Every game on the screen uses the shipped components (`EventPageHeadline199`
  *    above, `OddsChart` for the chart, and `EventCard183A` for any game teaser
  *    in "More of what the world thinks now").
@@ -23,11 +22,21 @@ import type { FeedEventData, FeedFuturesData, FeedItem } from "@/lib/types";
  * 3. No clutter line under the arrival chart (no `"pregame (61%) Projected: ..."`).
  * 4. Plain words: `"points"`, never `"pts"`, and never raw `"Will ..."` question
  *    titles or `"from pregame"` before kickoff.
+ * 5. Apple's standard Smart App Banner (`apple-itunes-app` meta tag site-wide)
+ *    replaces any custom `"Get the app"` button, and `SharedLinkPinBanner` stays
+ *    off behind `NEXT_PUBLIC_SHARED_LINK_PIN_ALERTS=1` until web-pin alerts and
+ *    1.0.8 app handoff exist end to end.
  */
+
+export function isSharedLinkPinBannerEnabled(
+  envFlag: string | undefined = process.env.NEXT_PUBLIC_SHARED_LINK_PIN_ALERTS,
+): boolean {
+  return envFlag === "1";
+}
 
 export function normalizeSharedTeaserCopy(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  let cleaned = raw
+  const cleaned = raw
     .replace(/\b([+-]?\d+(?:\.\d+)?)\s*pts\b/gi, "$1 points")
     .replace(/\bpts\b/gi, "points")
     .trim();
@@ -84,7 +93,7 @@ function SharedFuturesTeaserCard({ item }: { item: FeedItem }) {
   if (movePts !== null) {
     const pts = Math.round(Math.abs(movePts));
     if (pts >= 2) {
-      moveChip = `${movePts > 0 ? "up" : "down"} ${pts} points`;
+      moveChip = `${movePts > 0 ? "up" : "down"} ${pts} ${pts === 1 ? "point" : "points"}`;
     }
   }
 
@@ -215,6 +224,8 @@ export interface SharedLinkPinBannerProps {
   onPinToggle: () => void;
   /** When true (consent banner open), renders inline rather than stacking two fixed bottom bars. */
   inline?: boolean;
+  /** Feature switch override (defaults to `NEXT_PUBLIC_SHARED_LINK_PIN_ALERTS === "1"`, off in 1.0.7). */
+  enabled?: boolean;
 }
 
 export function SharedLinkPinBanner({
@@ -222,7 +233,12 @@ export function SharedLinkPinBanner({
   pinDisabled,
   onPinToggle,
   inline = false,
+  enabled = isSharedLinkPinBannerEnabled(),
 }: SharedLinkPinBannerProps) {
+  if (!enabled) {
+    return null;
+  }
+
   return (
     <div
       className={
@@ -232,43 +248,31 @@ export function SharedLinkPinBanner({
       }
       data-testid="shared-link-pin-banner"
     >
-      <div className="pointer-events-auto mx-auto flex max-w-xl items-center justify-between gap-2 rounded-2xl bg-text-primary px-3 py-2.5 text-surface-card shadow-lg">
+      <div className="pointer-events-auto mx-auto flex max-w-xl items-center justify-between gap-2 rounded-2xl bg-text-primary px-3.5 py-2.5 text-surface-card shadow-lg">
         <div className="min-w-0 flex-1">
           <p className="truncate text-[12.5px] font-bold leading-snug text-surface-card">
             {isPinned ? "Pinned on this browser" : "Pin for swing alerts"}
           </p>
           <p className="truncate text-[11px] leading-snug text-surface-card/75">
             {isPinned
-              ? "Kickoff & swing pushes in the app"
-              : "Free Bain Luck app · No sign-in"}
+              ? "Carries into the Bain Luck app"
+              : "Pick up your pin in the app"}
           </p>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            disabled={pinDisabled}
-            onClick={onPinToggle}
-            title={pinTitle(isPinned, pinDisabled)}
-            aria-label={isPinned ? "Unpin game" : "Pin game"}
-            aria-pressed={isPinned}
-            data-testid="shared-link-pin-button"
-            className="inline-flex items-center gap-1 rounded-xl border border-surface-card/20 bg-surface-card/10 px-2.5 py-1.5 text-[12px] font-semibold text-surface-card transition-colors hover:bg-surface-card/20 disabled:opacity-40"
-          >
-            <PinIcon filled={isPinned} className="h-3.5 w-3.5" />
-            <span>{isPinned ? "Pinned" : "Pin"}</span>
-          </button>
-
-          <a
-            href={APP_STORE_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            data-testid="shared-link-get-app"
-            className="inline-flex items-center justify-center rounded-xl bg-accent-brand px-3 py-1.5 text-[12px] font-semibold text-white transition-opacity hover:opacity-90"
-          >
-            Get the app
-          </a>
-        </div>
+        <button
+          type="button"
+          disabled={pinDisabled}
+          onClick={onPinToggle}
+          title={pinTitle(isPinned, pinDisabled)}
+          aria-label={isPinned ? "Unpin game" : "Pin game"}
+          aria-pressed={isPinned}
+          data-testid="shared-link-pin-button"
+          className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-surface-card/20 bg-surface-card/10 px-3 py-1.5 text-[12px] font-semibold text-surface-card transition-colors hover:bg-surface-card/20 disabled:opacity-40"
+        >
+          <PinIcon filled={isPinned} className="h-3.5 w-3.5" />
+          <span>{isPinned ? "Pinned" : "Pin"}</span>
+        </button>
       </div>
     </div>
   );

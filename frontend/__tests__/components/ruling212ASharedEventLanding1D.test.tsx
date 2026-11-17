@@ -1,12 +1,17 @@
 import React from "react";
+import * as fs from "fs";
+import * as path from "path";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+  isSharedLinkPinBannerEnabled,
   normalizeSharedTeaserCopy,
   SharedLinkPinBanner,
   SharedMoreFromDiscoverSection,
 } from "@/components/event/SharedEventLanding1D";
-import { APP_STORE_URL } from "@/lib/brandCopy";
+import { APP_STORE_APP_ID, buildAppleItunesMetaContent } from "@/lib/brandCopy";
 import type { FeedItem } from "@/lib/types";
+
+const FRONTEND_ROOT = path.join(__dirname, "..", "..");
 
 describe("Ruling 212-A (#11934 Step 1D) — Shared-link web landing", () => {
   it("normalizes 'pts' to 'points' and suppresses raw 'Will ...' question copy", () => {
@@ -139,24 +144,75 @@ describe("Ruling 212-A (#11934 Step 1D) — Shared-link web landing", () => {
     expect(html).toContain("See sports, awards, tech &amp; economy");
   });
 
-  it("renders the fixed bottom Pin & Get-the-app banner with bookmark PinIcon and canonical App Store URL", () => {
-    const unpinnedHtml = renderToStaticMarkup(
+  it("uses Apple's Smart App Banner site-wide (and on /events and /futures deep links) instead of a custom Get-the-app button", () => {
+    const rootLayout = fs.readFileSync(path.join(FRONTEND_ROOT, "app", "layout.tsx"), "utf8");
+    const eventLayout = fs.readFileSync(
+      path.join(FRONTEND_ROOT, "app", "events", "[id]", "layout.tsx"),
+      "utf8",
+    );
+    const futuresLayout = fs.readFileSync(
+      path.join(FRONTEND_ROOT, "app", "futures", "[id]", "layout.tsx"),
+      "utf8",
+    );
+
+    expect(rootLayout).toContain("itunes: { appId: APP_STORE_APP_ID }");
+    expect(eventLayout).toContain("itunes: { appId: APP_STORE_APP_ID, appArgument: url }");
+    expect(futuresLayout).toContain("itunes: { appId: APP_STORE_APP_ID, appArgument: url }");
+
+    expect(buildAppleItunesMetaContent("https://www.bainluck.com/events/14780579", null)).toBe(
+      `app-id=${APP_STORE_APP_ID}, app-argument=https://www.bainluck.com/events/14780579`,
+    );
+    expect(
+      buildAppleItunesMetaContent(
+        "https://www.bainluck.com/events/14780579",
+        "com.bainluck.Bain-Luck.Clip",
+      ),
+    ).toBe(
+      `app-id=${APP_STORE_APP_ID}, app-clip-bundle-id=com.bainluck.Bain-Luck.Clip, app-argument=https://www.bainluck.com/events/14780579`,
+    );
+  });
+
+  it("keeps the Pin-for-swing-alerts banner OFF by default until 1.0.8 alerts exist, and never renders a custom Get-the-app button", () => {
+    expect(isSharedLinkPinBannerEnabled(undefined)).toBe(false);
+    expect(isSharedLinkPinBannerEnabled("0")).toBe(false);
+    expect(isSharedLinkPinBannerEnabled("1")).toBe(true);
+
+    const defaultOffHtml = renderToStaticMarkup(
       <SharedLinkPinBanner isPinned={false} pinDisabled={false} onPinToggle={() => {}} />,
     );
-    expect(unpinnedHtml).toContain("Pin for swing alerts");
-    expect(unpinnedHtml).toContain("Free Bain Luck app · No sign-in");
-    expect(unpinnedHtml).toContain(`href="${APP_STORE_URL}"`);
-    expect(unpinnedHtml).toContain("Get the app");
-    expect(unpinnedHtml).toContain('aria-label="Pin game"');
+    expect(defaultOffHtml).toBe("");
 
-    const pinnedHtml = renderToStaticMarkup(
-      <SharedLinkPinBanner isPinned={true} pinDisabled={false} onPinToggle={() => {}} />,
+    const enabledUnpinnedHtml = renderToStaticMarkup(
+      <SharedLinkPinBanner
+        enabled={true}
+        isPinned={false}
+        pinDisabled={false}
+        onPinToggle={() => {}}
+      />,
     );
-    expect(pinnedHtml).toContain("Pinned on this browser");
-    expect(pinnedHtml).toContain('aria-label="Unpin game"');
+    expect(enabledUnpinnedHtml).toContain("Pin for swing alerts");
+    expect(enabledUnpinnedHtml).not.toContain("Get the app");
+    expect(enabledUnpinnedHtml).toContain('aria-label="Pin game"');
+
+    const enabledPinnedHtml = renderToStaticMarkup(
+      <SharedLinkPinBanner
+        enabled={true}
+        isPinned={true}
+        pinDisabled={false}
+        onPinToggle={() => {}}
+      />,
+    );
+    expect(enabledPinnedHtml).toContain("Pinned on this browser");
+    expect(enabledPinnedHtml).not.toContain("Get the app");
+    expect(enabledPinnedHtml).toContain('aria-label="Unpin game"');
 
     const maxPinsHtml = renderToStaticMarkup(
-      <SharedLinkPinBanner isPinned={false} pinDisabled={true} onPinToggle={() => {}} />,
+      <SharedLinkPinBanner
+        enabled={true}
+        isPinned={false}
+        pinDisabled={true}
+        onPinToggle={() => {}}
+      />,
     );
     expect(maxPinsHtml).toContain('title="Max 6 pins"');
   });

@@ -190,6 +190,7 @@ import { buildNhlEventCards, nhlCardsApply } from "@/lib/nhlEventCards";
 import { buildSoccerEventCards, soccerCardsApply } from "@/lib/soccerEventCards";
 import { NFLEventCardDeck, type CardSelection } from "@/components/event/NFLEventCards";
 import {
+  isSharedLinkPinBannerEnabled,
   SharedLinkPinBanner,
   SharedMoreFromDiscoverSection,
 } from "@/components/event/SharedEventLanding1D";
@@ -262,6 +263,7 @@ export default function EventPage({ params }: EventPageProps) {
   const sharedMedium = searchParams.get("utm_medium") || undefined;
   const sharedCampaign = searchParams.get("utm_campaign") || undefined;
   const isSharedLink = sharedSource === "share" || searchParams.get("shared") === "1";
+  const showSharedPinBanner = isSharedLink && isSharedLinkPinBannerEnabled();
   // #10090 — one-decimal headlines, ON by default; a reader who opened
   // `?tenths=off` gets today's whole numbers. One decision for the hero and
   // both charts' end labels, so the three can never print different digits.
@@ -2847,7 +2849,7 @@ export default function EventPage({ params }: EventPageProps) {
         onRetry={() => window.location.reload()}
       />
     }>
-    <div className={isSharedLink ? "space-y-3 pb-20" : "space-y-3"}>
+    <div className={showSharedPinBanner ? "space-y-3 pb-20" : "space-y-3"}>
       {/* Navigation */}
       {/* #3974: THE ROW WRAPS, because at 390px three elements do not fit in it.
           Measured on this page at that width: the row has 366px of usable
@@ -3347,7 +3349,7 @@ export default function EventPage({ params }: EventPageProps) {
       </SectionErrorBoundary>
       )}
 
-      {isSharedLink && showConsentBanner && (
+      {showSharedPinBanner && showConsentBanner && (
         <SharedLinkPinBanner
           inline
           isPinned={eventIsPinned}
@@ -3930,7 +3932,7 @@ export default function EventPage({ params }: EventPageProps) {
           atlasMode={atlasOptIn}
         />
       )}
-      {isSharedLink && !showConsentBanner && (
+      {showSharedPinBanner && !showConsentBanner && (
         <SharedLinkPinBanner
           isPinned={eventIsPinned}
           pinDisabled={isMaxReached && !eventIsPinned}
