@@ -537,12 +537,46 @@ nonisolated struct TeamRosterMember: Decodable, Equatable, Sendable {
     let position: String?
 }
 
+/// Lenient wrapper around `/api/teams/{slug}`'s `team.roster` (`team.roster_players`).
+/// `roster_sync.py` appends plain ASCII-variant strings alongside rich player dicts for
+/// accented names, and legacy rows may hold plain strings or non-array payloads.
+/// Skips string/malformed elements and degrades non-array payloads to `[]` so `TeamPageResponse`
+/// never fails decoding because of `roster`.
+nonisolated struct LossyTeamRoster: Decodable, Equatable, Sendable {
+    let members: [TeamRosterMember]
+
+    private nonisolated struct AnyJSONValue: Decodable {
+        init(from decoder: Decoder) throws {}
+    }
+
+    init(members: [TeamRosterMember] = []) {
+        self.members = members
+    }
+
+    init(from decoder: Decoder) throws {
+        guard var container = try? decoder.unkeyedContainer() else {
+            self.members = []
+            return
+        }
+        var parsed: [TeamRosterMember] = []
+        while !container.isAtEnd {
+            if let member = try? container.decode(TeamRosterMember.self) {
+                parsed.append(member)
+            } else if (try? container.decode(AnyJSONValue.self)) == nil {
+                break
+            }
+        }
+        self.members = parsed
+    }
+}
+
 /// Team identity and display metadata for a team page.
 nonisolated struct TeamPageTeam: Decodable, Sendable {
     let id: Int
     let slug: String
     let name: String
     let abbreviation: String?
+    let location: String?
     let sportKey: String?
     let sportName: String?
     let primaryColor: String?
@@ -551,7 +585,11 @@ nonisolated struct TeamPageTeam: Decodable, Sendable {
     let logoLarge: String?
     let record: String?
     let standings: [String: AnyCodable]?
-    var roster: [TeamRosterMember]? = nil
+    var roster: LossyTeamRoster? = nil
+
+    var rosterMembers: [TeamRosterMember] {
+        roster?.members ?? []
+    }
 }
 
 // TeamFutureItem defined in FuturesModels.swift (shared with team page + futures browsing)

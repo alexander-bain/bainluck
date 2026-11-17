@@ -190,18 +190,28 @@ enum TeamFutureRowPresentation {
     private static func outcomeNamesTeam(_ outcomeName: String, team: TeamPageTeam, matchedTeam: TeamFutureTeam?) -> Bool {
         let outKey = normalizePersonKey(outcomeName, stripSuffix: false)
         guard !outKey.isEmpty else { return false }
+        let shortName = TeamShortName.short(team.name, sportKey: team.sportKey)
+        let teamKey = normalizePersonKey(team.name, stripSuffix: false)
+        let shortKey = normalizePersonKey(shortName, stripSuffix: false)
+        var derivedLocation: String?
+        if !shortKey.isEmpty, teamKey.hasSuffix(" " + shortKey) {
+            derivedLocation = String(teamKey.dropLast(shortKey.count + 1))
+        }
+        let sameClubMatchedName: String? = (matchedTeam?.id == nil || matchedTeam?.id == team.id) ? matchedTeam?.name : nil
         let candidates = [
             team.name,
+            team.location,
+            derivedLocation,
+            shortName,
             team.abbreviation,
-            matchedTeam?.name,
+            sameClubMatchedName,
         ].compactMap { $0 }.map { normalizePersonKey($0, stripSuffix: false) }
-        if candidates.contains(outKey) { return true }
-        let teamKey = normalizePersonKey(team.name, stripSuffix: false)
-        return teamKey.hasPrefix(outKey + " ") || teamKey.hasSuffix(" " + outKey)
+        return candidates.contains(outKey)
     }
 
     private static func matchRosterMember(for item: TeamFutureItem, team: TeamPageTeam) -> TeamRosterMember? {
-        guard let roster = team.roster, !roster.isEmpty else { return nil }
+        let roster = team.rosterMembers
+        guard !roster.isEmpty else { return nil }
 
         let outcomeExact = normalizePersonKey(item.outcomeName, stripSuffix: false)
         if let exact = roster.first(where: { normalizePersonKey($0.name, stripSuffix: false) == outcomeExact }) {

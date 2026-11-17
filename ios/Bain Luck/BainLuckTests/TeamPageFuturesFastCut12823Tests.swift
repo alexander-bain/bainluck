@@ -246,6 +246,139 @@ final class TeamPageFuturesFastCut12823Tests: XCTestCase {
         XCTAssertFalse(src.contains("SourceLabels.label(for:"), "TeamDetailView must not render venue labels on rows")
     }
 
+    func testMixedStringAndDictRosterAndNonArrayRosterNeverFailTeamPageDecode() throws {
+        // 1. Mixed roster from roster_sync.py (ASCII string variant + rich dict + malformed/null entries)
+        let mixedJSON = """
+        {
+          "team": {
+            "id": 22,
+            "slug": "dallas-mavericks",
+            "name": "Dallas Mavericks",
+            "abbreviation": "DAL",
+            "location": "Dallas",
+            "sport_key": "basketball_nba",
+            "sport_name": "NBA",
+            "primary_color": "#00538C",
+            "logo_small": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/dal.png",
+            "roster": [
+              "Luka Doncic",
+              {"name": "Luka Dončić", "espn_id": "3945274", "headshot": "https://a.espncdn.com/i/headshots/nba/players/full/3945274.png", "position": "PG"},
+              null,
+              42,
+              {"malformed": true},
+              "Jayson Tatum"
+            ]
+          },
+          "upcoming_events": [],
+          "recent_events": [],
+          "championship_path": [],
+          "futures": [
+            {
+              "outcome_id": 1,
+              "outcome_name": "Luka Doncic",
+              "market_id": 100,
+              "market_name": "NBA: 2026-27 Most Valuable Player",
+              "market_tier": 1,
+              "category": "basketball",
+              "source": "kalshi",
+              "probability": 0.28,
+              "rank": 2,
+              "total_outcomes": 30
+            },
+            {
+              "outcome_id": 2,
+              "outcome_name": "Kyrie Irving",
+              "market_id": 101,
+              "market_name": "NBA: 2026-27 All-Star Selection",
+              "market_tier": 3,
+              "category": "basketball",
+              "source": "polymarket",
+              "probability": 0.45,
+              "rank": 8,
+              "total_outcomes": 40
+            },
+            {
+              "outcome_id": 3,
+              "outcome_name": "England",
+              "market_id": 102,
+              "market_name": "Christian Barmore Next Team",
+              "market_tier": 5,
+              "category": "football",
+              "source": "kalshi",
+              "probability": 0.02
+            }
+          ]
+        }
+        """
+        let mixedPage = try decodePage(mixedJSON)
+        XCTAssertEqual(mixedPage.team.rosterMembers.count, 1)
+        XCTAssertEqual(mixedPage.team.rosterMembers.first?.name, "Luka Dončić")
+
+        // Diacritic-folded match resolves Luka Dončić's headshot even when outcome is ASCII "Luka Doncic"
+        let lukaRow = TeamFutureRowPresentation.fastCutRow12823(mixedPage.futures[0], team: mixedPage.team)
+        if case .playerHeadshot(let url, let pos, _, _, _) = lukaRow.avatar {
+            XCTAssertEqual(url.absoluteString, "https://a.espncdn.com/i/headshots/nba/players/full/3945274.png")
+            XCTAssertEqual(pos, "PG")
+        } else {
+            XCTFail("Expected playerHeadshot for Luka Doncic from mixed roster")
+        }
+
+        // Unmatched player falls back to team crest
+        let kyrieRow = TeamFutureRowPresentation.fastCutRow12823(mixedPage.futures[1], team: mixedPage.team)
+        if case .teamCrest(let url, let abbr, _) = kyrieRow.avatar {
+            XCTAssertEqual(url?.absoluteString, "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/dal.png")
+            XCTAssertEqual(abbr, "DAL")
+        } else {
+            XCTFail("Expected teamCrest fallback for unmatched player")
+        }
+
+        // Partial word ("England" on "New England Patriots") never falsely counts as naming the team
+        let patriotsPage = try decodePage(patriotsPageJSON())
+        let englandItem = mixedPage.futures[2]
+        let englandOnPatriots = TeamFutureRowPresentation.fastCutRow12823(englandItem, team: patriotsPage.team)
+        if case .teamCrest = englandOnPatriots.avatar {
+            // Expected: "England" does not name "New England Patriots"
+        } else {
+            XCTFail("Partial word 'England' must not count as naming New England Patriots")
+        }
+
+        // 2. Legacy string-only roster AND non-array roster both decode cleanly and fall back to crest
+        for rosterPayload in ["[\"Jayson Tatum\", \"Jaylen Brown\"]", "{\"legacy\": true}", "\"unstructured\""] {
+            let nonDictJSON = """
+            {
+              "team": {
+                "id": 5,
+                "slug": "boston-celtics",
+                "name": "Boston Celtics",
+                "abbreviation": "BOS",
+                "logo_small": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/bos.png",
+                "roster": \(rosterPayload)
+              },
+              "upcoming_events": [],
+              "recent_events": [],
+              "championship_path": [],
+              "futures": [
+                {
+                  "outcome_id": 10,
+                  "outcome_name": "Jayson Tatum",
+                  "market_id": 200,
+                  "market_name": "NBA: 2026-27 MVP",
+                  "probability": 0.18
+                }
+              ]
+            }
+            """
+            let decoded = try decodePage(nonDictJSON)
+            XCTAssertTrue(decoded.team.rosterMembers.isEmpty)
+            let row = TeamFutureRowPresentation.fastCutRow12823(decoded.futures[0], team: decoded.team)
+            if case .teamCrest(_, let abbr, _) = row.avatar {
+                XCTAssertEqual(abbr, "BOS")
+            } else {
+                XCTFail("Expected teamCrest fallback for roster payload \(rosterPayload)")
+            }
+        }
+    }
+
     func testPatriotsTeamPageRendersWithZeroVenueNamesZeroTruncationAndExports390Sheet() async throws {
         let page = try decodePage(patriotsPageJSON())
 
