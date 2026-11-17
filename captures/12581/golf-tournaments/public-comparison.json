@@ -1,0 +1,680 @@
+[
+  {
+    "tournament": "CME Group Tour Championship",
+    "before": [
+      {
+        "name": "Jeeno Thitikul",
+        "probability": 0.089,
+        "rank": 1,
+        "movement_24h": 0.0245,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Miyu Yamashita",
+        "probability": 0.086,
+        "rank": 2,
+        "movement_24h": 0.0215,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Nelly Korda",
+        "probability": 0.085,
+        "rank": 3,
+        "movement_24h": 0.0455,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Hae-Ran Ryu",
+        "probability": 0.065,
+        "rank": 4,
+        "movement_24h": 0.018,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Akie Iwai",
+        "probability": 0.042,
+        "rank": 5,
+        "movement_24h": 0.0065,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Hye-Jin Choi",
+        "probability": 0.038,
+        "rank": 6,
+        "movement_24h": 0.014,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Hyo Joo Kim",
+        "probability": 0.033,
+        "rank": 7,
+        "movement_24h": 0.0135,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Ruoning Yin",
+        "probability": 0.03,
+        "rank": 8,
+        "movement_24h": 0.0105,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Lottie Woad",
+        "probability": 0.021,
+        "rank": 9,
+        "movement_24h": 0.0115,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Nasa Hataoka",
+        "probability": 0.015,
+        "rank": 10,
+        "movement_24h": 0.004,
+        "movement_is_dated": true
+      }
+    ],
+    "after": [
+      {
+        "name": "Jeeno Thitikul",
+        "probability": 0.089,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.0895,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        },
+        "rank": 1,
+        "movement_24h": 0.0245,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Miyu Yamashita",
+        "probability": 0.086,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.0865,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        },
+        "rank": 2,
+        "movement_24h": 0.0215,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Nelly Korda",
+        "probability": 0.085,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.085,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        },
+        "rank": 3,
+        "movement_24h": 0.0455,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Hae-Ran Ryu",
+        "probability": 0.065,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.065,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        },
+        "rank": 4,
+        "movement_24h": 0.018,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Akie Iwai",
+        "probability": 0.042,
+        "source_mark": {
+          "state": "blend",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.042,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "polymarket",
+              "name": "Polymarket",
+              "probability": 0.042,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ],
+          "method": "Bain Luck blend \u00b7 the average of these sources"
+        },
+        "rank": 5,
+        "movement_24h": 0.0065,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Hye-Jin Choi",
+        "probability": 0.038,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.0385,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        },
+        "rank": 6,
+        "movement_24h": 0.014,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Hyo Joo Kim",
+        "probability": 0.033,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.033,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        },
+        "rank": 7,
+        "movement_24h": 0.0135,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Ruoning Yin",
+        "probability": 0.03,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.03,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        },
+        "rank": 8,
+        "movement_24h": 0.0105,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Lottie Woad",
+        "probability": 0.021,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.0215,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        },
+        "rank": 9,
+        "movement_24h": 0.0115,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Nasa Hataoka",
+        "probability": 0.015,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.0155,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        },
+        "rank": 10,
+        "movement_24h": 0.004,
+        "movement_is_dated": true
+      }
+    ]
+  },
+  {
+    "tournament": "The RSM Classic",
+    "before": [
+      {
+        "name": "Ben James",
+        "probability": 0.041,
+        "rank": 1,
+        "movement_24h": 0.0108,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Blades Brown",
+        "probability": 0.033,
+        "rank": 2,
+        "movement_24h": 0.0032,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Brian Harman",
+        "probability": 0.032,
+        "rank": 3,
+        "movement_24h": 0.0089,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Jordan Smith",
+        "probability": 0.031,
+        "rank": 4,
+        "movement_24h": 0.0094,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Michael Brennan",
+        "probability": 0.031,
+        "rank": 5,
+        "movement_24h": -0.0077,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Doug Ghim",
+        "probability": 0.029,
+        "rank": 6,
+        "movement_24h": 0.0018,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Jackson Koivun",
+        "probability": 0.029,
+        "rank": 7,
+        "movement_24h": -0.008,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Michael Thorbjornsen",
+        "probability": 0.026,
+        "rank": 8,
+        "movement_24h": 0.016,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Keith Mitchell",
+        "probability": 0.026,
+        "rank": 9,
+        "movement_24h": 0.0095,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Ben Kohles",
+        "probability": 0.024,
+        "rank": 10,
+        "movement_24h": 0.0086,
+        "movement_is_dated": true
+      }
+    ],
+    "after": [
+      {
+        "name": "Ben James",
+        "probability": 0.041,
+        "source_mark": {
+          "state": "blend",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.05,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "polymarket",
+              "name": "Polymarket",
+              "probability": 0.0315,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "datagolf",
+              "name": "DataGolf",
+              "probability": 0.042067,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ],
+          "method": "Bain Luck blend \u00b7 the average of these sources"
+        },
+        "rank": 1,
+        "movement_24h": 0.0108,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Blades Brown",
+        "probability": 0.033,
+        "source_mark": {
+          "state": "blend",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.0365,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "polymarket",
+              "name": "Polymarket",
+              "probability": 0.0345,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "datagolf",
+              "name": "DataGolf",
+              "probability": 0.028867,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ],
+          "method": "Bain Luck blend \u00b7 the average of these sources"
+        },
+        "rank": 2,
+        "movement_24h": 0.0032,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Brian Harman",
+        "probability": 0.032,
+        "source_mark": {
+          "state": "blend",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.0335,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "polymarket",
+              "name": "Polymarket",
+              "probability": 0.0315,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "datagolf",
+              "name": "DataGolf",
+              "probability": 0.031383,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ],
+          "method": "Bain Luck blend \u00b7 the average of these sources"
+        },
+        "rank": 3,
+        "movement_24h": 0.0089,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Jordan Smith",
+        "probability": 0.031,
+        "source_mark": {
+          "state": "blend",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.0295,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "datagolf",
+              "name": "DataGolf",
+              "probability": 0.032183,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ],
+          "method": "Bain Luck blend \u00b7 the average of these sources"
+        },
+        "rank": 4,
+        "movement_24h": 0.0094,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Michael Brennan",
+        "probability": 0.031,
+        "source_mark": {
+          "state": "blend",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.039,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "polymarket",
+              "name": "Polymarket",
+              "probability": 0.024,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "datagolf",
+              "name": "DataGolf",
+              "probability": 0.029033,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ],
+          "method": "Bain Luck blend \u00b7 the average of these sources"
+        },
+        "rank": 5,
+        "movement_24h": -0.0077,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Doug Ghim",
+        "probability": 0.029,
+        "source_mark": {
+          "state": "blend",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.032,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "polymarket",
+              "name": "Polymarket",
+              "probability": 0.018,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "datagolf",
+              "name": "DataGolf",
+              "probability": 0.0383,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ],
+          "method": "Bain Luck blend \u00b7 the average of these sources"
+        },
+        "rank": 6,
+        "movement_24h": 0.0018,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Jackson Koivun",
+        "probability": 0.029,
+        "source_mark": {
+          "state": "blend",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.0405,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "polymarket",
+              "name": "Polymarket",
+              "probability": 0.0205,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "datagolf",
+              "name": "DataGolf",
+              "probability": 0.026233,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ],
+          "method": "Bain Luck blend \u00b7 the average of these sources"
+        },
+        "rank": 7,
+        "movement_24h": -0.008,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Michael Thorbjornsen",
+        "probability": 0.026,
+        "source_mark": {
+          "state": "blend",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.0305,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "datagolf",
+              "name": "DataGolf",
+              "probability": 0.021667,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ],
+          "method": "Bain Luck blend \u00b7 the average of these sources"
+        },
+        "rank": 8,
+        "movement_24h": 0.016,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Keith Mitchell",
+        "probability": 0.026,
+        "source_mark": {
+          "state": "blend",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.0295,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "polymarket",
+              "name": "Polymarket",
+              "probability": 0.019,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "datagolf",
+              "name": "DataGolf",
+              "probability": 0.028333,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ],
+          "method": "Bain Luck blend \u00b7 the average of these sources"
+        },
+        "rank": 9,
+        "movement_24h": 0.0095,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Ben Kohles",
+        "probability": 0.024,
+        "source_mark": {
+          "state": "blend",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.0325,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "polymarket",
+              "name": "Polymarket",
+              "probability": 0.02,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            },
+            {
+              "key": "datagolf",
+              "name": "DataGolf",
+              "probability": 0.018483,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ],
+          "method": "Bain Luck blend \u00b7 the average of these sources"
+        },
+        "rank": 10,
+        "movement_24h": 0.0086,
+        "movement_is_dated": true
+      }
+    ]
+  }
+]
