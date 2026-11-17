@@ -2783,6 +2783,20 @@ def reset_nfl_division_roundup_cache_for_tests() -> None:
     reset_roundup_cache_for_tests()
 
 
+def _nfl_club_source_mark(club: Any) -> dict[str, Any]:
+    """Explain the held blend; the register's row-touch age is not a read witness."""
+    from app.utils.futures_source_mark import verified_futures_source_mark
+
+    return verified_futures_source_mark(
+        (
+            ("kalshi", club.kalshi_probability),
+            ("polymarket", club.polymarket_probability),
+        ),
+        club.probability,
+        club.rule,
+    )
+
+
 def assemble_nfl_division_roundup(
     blends: list[Any],
     refusals: list[Any],
@@ -2830,10 +2844,16 @@ def assemble_nfl_division_roundup(
             if stamps and all(s is not None for s in stamps)
             else None
         )
+        source_mark = _nfl_club_source_mark(lead)
+        if len(tied) > 1:
+            # A printed-percent tie can join different exact numbers and inputs.
+            # The unchanged row number is the leader's; say whose inputs it uses.
+            source_mark["method"] += f" · Inputs for {lead.club}"
         rows.append({
             "market_id": int(b.kalshi_market_id),
             "label": f"{b.division}: {club_label}",
             "probability": float(lead.probability),
+            "source_mark": source_mark,
             "observed_at": row_observed_at,
             "pair": {"kalshi_market_id": int(b.kalshi_market_id), "polymarket_market_id": int(b.polymarket_market_id)},
         })
@@ -2955,7 +2975,11 @@ def _build_nfl_division_roundup_members(
         if div_blend is None or not isinstance(base_card, dict) or base_card.get("_withheld_reason"):
             return None, None
         blended_outcomes = [
-            {"name": c.club, "probability": float(c.probability)}
+            {
+                "name": c.club,
+                "probability": float(c.probability),
+                "source_mark": _nfl_club_source_mark(c),
+            }
             for c in sorted(div_blend.clubs, key=lambda c: -c.probability)
         ]
         if len(blended_outcomes) != 4:
