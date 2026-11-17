@@ -30,7 +30,12 @@ concurrency:
 
 jobs:
   triage:
-    if: startsWith(github.event.issue.title, '[Bug Report]')
+    # Only issues the repo owner's account opens: shake reports (the backend's user
+    # token) and TestFlight filings both open as the owner. Anyone else's
+    # "[Bug Report]" issue would start a paid run with our key (Fable, 5:04 PM Nov 16).
+    if: >-
+      startsWith(github.event.issue.title, '[Bug Report]') &&
+      github.event.issue.author_association == 'OWNER'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
