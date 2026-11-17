@@ -388,16 +388,9 @@ struct SavedWidgetArt12466: Equatable, Sendable {
               roundedAway >= scores.away
         else { return nil }
 
-        let safeAway = max(away, Double(scores.away))
-        let safeHome = max(home, Double(scores.home))
-        if expected.isSoccer {
-            let fmtAway = String(format: "%.1f", (safeAway * 10).rounded() / 10)
-            let fmtHome = String(format: "%.1f", (safeHome * 10).rounded() / 10)
-            return LiveProjectedPair(awayText: fmtAway, homeText: fmtHome)
-        }
         return LiveProjectedPair(
-            awayText: String(Int(safeAway.rounded())),
-            homeText: String(Int(safeHome.rounded()))
+            awayText: String(roundedAway),
+            homeText: String(roundedHome)
         )
     }
 

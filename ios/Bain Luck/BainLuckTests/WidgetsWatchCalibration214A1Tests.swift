@@ -299,6 +299,126 @@ final class WidgetsWatchCalibration214A1Tests: XCTestCase {
         )
         XCTAssertEqual(afterModel.smallTopTrailing, "Pregame 58%")
         XCTAssertEqual(afterModel.smallTopTrailingInkHex?.uppercased(), "#0076B6")
+
+        // Live soccer Medium widget: prints rounded whole-number goals (matching LiveProjectedFinalAdmission2920),
+        // never decimals, and withholds outside regulation.
+        let soccerRegDetail = try decodeWidgetEvent("""
+        {
+          "id": 702004,
+          "sport": "soccer_epl",
+          "sport_name": "Premier League",
+          "status": "live",
+          "commence_time": "2026-11-16T18:00:00Z",
+          "away_team": "Chelsea",
+          "home_team": "Arsenal",
+          "away_score": 0,
+          "home_score": 1,
+          "away_team_data": { "abbreviation": "CHE", "primary_color": "#034694" },
+          "home_team_data": { "abbreviation": "ARS", "primary_color": "#EF0107" },
+          "espn": { "period": "62'" },
+          "prematch_odds": { "away_probability": 0.25, "home_probability": 0.50, "draw_probability": 0.25 },
+          "current_odds": {
+            "away_probability": 0.14,
+            "home_probability": 0.68,
+            "draw_probability": 0.18,
+            "away_rendered_percent": 14,
+            "home_rendered_percent": 68,
+            "live_projection": {
+              "projected_away_score": 0.8,
+              "projected_home_score": 1.6,
+              "kind": "in_play",
+              "boundary": "commence_time",
+              "boundary_at": "2026-11-16T18:00:00Z",
+              "earliest_confirmed_at": "2026-11-16T19:02:00Z",
+              "latest_captured_at": "\(freshStamp)",
+              "source": "sportsbooks",
+              "basis": "consensus_spread_total",
+              "bookmaker_count": 6,
+              "unit": "goals",
+              "period": "regulation"
+            }
+          },
+          "hero_probability_observed_at": "\(freshStamp)"
+        }
+        """)
+        let soccerRegModel = SavedGameHeadlineWidgetModel12616.build(
+            reading: SavedWidgetReadingRules10875.game(soccerRegDetail, side: nil, now: fixedNow),
+            art: SavedWidgetArt12466.game(soccerRegDetail),
+            clockFooter: "As of 11:14 AM",
+            isOffline: false,
+            clearsRefreshTrailing: false,
+            now: fixedNow,
+            timeZone: pacific
+        )
+        XCTAssertEqual(soccerRegModel.headers, .init(leading: "Score", pregame: "Proj.", primary: "Now"))
+        XCTAssertEqual(soccerRegModel.away.liveProjectedText, "1")
+        XCTAssertEqual(soccerRegModel.home.liveProjectedText, "2")
+
+        // Extra time withholds soccer 90-min regulation projection
+        let soccerETDetail = try decodeWidgetEvent("""
+        {
+          "id": 702005,
+          "sport": "soccer_epl",
+          "sport_name": "Premier League",
+          "status": "live",
+          "commence_time": "2026-11-16T18:00:00Z",
+          "away_team": "Chelsea",
+          "home_team": "Arsenal",
+          "away_score": 1,
+          "home_score": 1,
+          "espn": { "period": "95'" },
+          "current_odds": {
+            "away_probability": 0.30,
+            "home_probability": 0.40,
+            "draw_probability": 0.30,
+            "away_rendered_percent": 30,
+            "home_rendered_percent": 40,
+            "live_projection": {
+              "projected_away_score": 1.4,
+              "projected_home_score": 1.6,
+              "kind": "in_play",
+              "boundary": "commence_time",
+              "boundary_at": "2026-11-16T18:00:00Z",
+              "earliest_confirmed_at": "2026-11-16T19:35:00Z",
+              "latest_captured_at": "\(freshStamp)",
+              "source": "sportsbooks",
+              "basis": "consensus_spread_total",
+              "bookmaker_count": 6,
+              "unit": "goals",
+              "period": "regulation"
+            }
+          },
+          "hero_probability_observed_at": "\(freshStamp)"
+        }
+        """)
+        let soccerETModel = SavedGameHeadlineWidgetModel12616.build(
+            reading: SavedWidgetReadingRules10875.game(soccerETDetail, side: nil, now: fixedNow),
+            art: SavedWidgetArt12466.game(soccerETDetail),
+            clockFooter: "As of 11:14 AM",
+            isOffline: false,
+            clearsRefreshTrailing: false,
+            now: fixedNow,
+            timeZone: pacific
+        )
+        XCTAssertNil(soccerETModel.headers.pregame)
+        XCTAssertNil(soccerETModel.away.liveProjectedText)
+        XCTAssertNil(soccerETModel.home.liveProjectedText)
+
+        // Parity guard: PeriodLabel.isSoccerRegulationPeriod matches LiveProjectedFinalAdmission2920.soccerPhase
+        let samplePeriods: [String?] = [
+            nil, "", "  ", "1st Half", "2nd half", "first half", "second half",
+            "1H", "2H", "HT", "Halftime", "half time", "half-time",
+            "0", "1'", "45'", "45+2", "45' + 3'", "62'", "90", "90+4'",
+            "30+2", "91'", "105+1", "ET", "Pen.", "FT", "4 5", "90+100", "Q1", "١٢"
+        ]
+        for raw in samplePeriods {
+            let expectedReg = LiveProjectedFinalAdmission2920.soccerPhase(servedPeriod: raw) == .regulation
+            XCTAssertEqual(
+                PeriodLabel.isSoccerRegulationPeriod(raw),
+                expectedReg,
+                "Soccer regulation parity mismatch for \(String(describing: raw))"
+            )
+        }
     }
 
     // MARK: - 4. 390 px Render Sheet Across All Four Items
