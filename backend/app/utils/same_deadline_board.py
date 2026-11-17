@@ -17,6 +17,7 @@ import json
 import math
 import os
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, time as dtime, timezone
 from pathlib import Path
@@ -512,6 +513,8 @@ class _QualifiedDeadlineMarket:
     label: str
     probability: float
     no_probability: Optional[float]
+    yes_source_mark: dict[str, Any]
+    no_source_mark: dict[str, Any]
     movement: Optional[float]
     observed_at: Optional[str]
     template_key: str
@@ -681,6 +684,9 @@ def _classify_candidate(
     if category == "uncategorized":
         return None, "missing_category"
 
+    yes_mark, no_mark = _deadline_source_marks(
+        market.get("source"), yes_outcome, no_outcome, prob, no_prob
+    )
     return (
         _QualifiedDeadlineMarket(
             market_id=market_id,
@@ -690,6 +696,8 @@ def _classify_candidate(
             label=label,
             probability=prob,
             no_probability=no_prob,
+            yes_source_mark=yes_mark,
+            no_source_mark=no_mark,
             movement=movement,
             observed_at=obs,
             template_key=_derive_template_key(market, label),
@@ -705,6 +713,50 @@ def _classify_candidate(
 def _half_up_percent(prob: float) -> int:
     """Round ``prob * 100`` half-up to match ``Math.round(prob * 100)`` on the client."""
     return int(math.floor(prob * 100.0 + 0.5))
+
+
+def _deadline_source_marks(
+    source: Any,
+    yes_outcome: Mapping[str, Any],
+    no_outcome: Optional[Mapping[str, Any]],
+    yes_probability: float,
+    no_probability: Optional[float],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Retain actual inputs; neither legacy row clocks nor a default venue prove them."""
+    from app.utils.source_mark import no_source_mark, quote_source_mark
+
+    def quote(outcome: Mapping[str, Any], probability: float) -> dict[str, Any]:
+        if outcome.get("resolution_source") == "ungradeable_result":
+            return no_source_mark("result_unknown")
+        return quote_source_mark(
+            [
+                {
+                    "key": str(source or "").strip().lower(),
+                    "probability": probability,
+                    "observed_at": None,
+                }
+            ]
+        )
+
+    yes_mark = quote(yes_outcome, yes_probability)
+    if no_probability is None:
+        # The existing card computes No from Yes. Name the input it actually
+        # used, rather than presenting the complement as a separate venue quote.
+        no_mark = deepcopy(yes_mark)
+        if no_mark["state"] == "single":
+            no_mark["method"] = "The No number is 100% minus this source's Yes price"
+    elif abs(yes_probability + no_probability - 1.0) > 1e-8:
+        # Existing payloads can carry a stored No value alongside a different
+        # rendered_percent derived from Yes. Preserve both; neither has one
+        # unambiguous source explanation until that display conflict is fixed.
+        no_mark = no_source_mark("display_basis_conflict")
+    else:
+        no_mark = quote(no_outcome or {}, no_probability)
+        if no_mark["state"] == "single" and _half_up_percent(
+            no_probability
+        ) != 100 - _half_up_percent(yes_probability):
+            no_mark["method"] = "Rounded with Yes so the two rows total 100%"
+    return yes_mark, no_mark
 
 
 def _build_binary_member_card(item: _QualifiedDeadlineMarket) -> dict[str, Any]:
@@ -723,6 +775,7 @@ def _build_binary_member_card(item: _QualifiedDeadlineMarket) -> dict[str, Any]:
             "id": item.yes_outcome_id,
             "name": "Yes",
             "probability": item.probability,
+            "source_mark": deepcopy(item.yes_source_mark),
             "rendered_percent": yes_pct,
             "american_odds": None,
             "rank": 1,
@@ -734,6 +787,7 @@ def _build_binary_member_card(item: _QualifiedDeadlineMarket) -> dict[str, Any]:
             "id": item.yes_outcome_id + 1,
             "name": "No",
             "probability": no_prob,
+            "source_mark": deepcopy(item.no_source_mark),
             "rendered_percent": no_pct,
             "american_odds": None,
             "rank": 2,
@@ -950,6 +1004,7 @@ def select_same_deadline_board(
             "market_id": item.market_id,
             "label": item.label,
             "probability": item.probability,
+            "source_mark": deepcopy(item.yes_source_mark),
             "rendered_percent": _half_up_percent(item.probability),
             "observed_at": item.observed_at,
         }
