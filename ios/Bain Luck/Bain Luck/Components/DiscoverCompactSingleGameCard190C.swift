@@ -93,13 +93,13 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         let competitorNames = model.rows
             .filter { $0.kind != .draw }
             .map(\.shortName)
-        let availableWidth = max(330 - 36 - 8 - trailingColumnsClusterWidth, 72)
+        let availableWidth = max(330 - 36 - 8 - trailingColumnsClusterWidth, 48)
         return CardTeamNameSizing.sharedWordSafeFontSize(
             names: competitorNames,
             baseSize: min(compactNameSize, 20),
             weight: .bold,
             availableWidth: availableWidth,
-            minimumScale: 0.72
+            minimumScale: 0.65
         )
     }
 
@@ -291,7 +291,8 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 .font(HeadlineStyleTable199.names(.card, isLoser: isLoser, scaledSize: sharedCompactTeamNameFontSize))
                 .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
                 .lineLimit(singleWord ? 1 : 2)
-                .minimumScaleFactor(0.75)
+                .minimumScaleFactor(0.65)
+                .allowsTightening(true)
                 .fixedSize(horizontal: false, vertical: !singleWord)
 
             Spacer(minLength: 8)

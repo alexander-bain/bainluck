@@ -148,19 +148,28 @@ final class SavedWidgetArt12466Tests: XCTestCase {
         }
     }
 
-    func testOnADarkSurfaceATeamTriesItsOwnSecondaryBeforeTheDefault() {
+    func testOnADarkSurfaceATeamTriesItsOwnSecondaryThenLightensItsPrimary() {
         let dark = SavedWidgetArt12466.darkSurfaceLuminance
         // Navy fails 3:1 on the dark fill; the team's own gold passes.
         let navyGold = art(awayPrimary: "#002A5C", awaySecondary: "#FFB612", homePrimary: "#E31837")
             .barHexes(surfaceLuminance: dark)
         XCTAssertEqual(navyGold.away, "#FFB612")
         XCTAssertEqual(navyGold.home, "#E31837")
-        // Both of the team's colours fail: the slot default, as the app's floor does.
+        // Ruling 221: when both stored colours fail 3:1 on dark, lighten the team's primary
+        // rather than dropping to the grey slot default.
         let bothDark = art(awayPrimary: "#002A5C", awaySecondary: "#0B162A", homePrimary: "#E31837")
             .barHexes(surfaceLuminance: dark)
-        XCTAssertEqual(bothDark.away, ProbabilityBarPalette.awayDefault)
+        XCTAssertEqual(
+            bothDark.away,
+            TeamTextContrast.lightenedForDarkSurface("#002A5C", surfaceLuminance: dark)
+        )
+        XCTAssertNotEqual(bothDark.away, ProbabilityBarPalette.awayDefault)
+        // Only a team with NO stored colour at all uses the slot default.
+        let noColour = art(awayPrimary: nil, awaySecondary: nil, homePrimary: "#E31837")
+            .barHexes(surfaceLuminance: dark)
+        XCTAssertEqual(noColour.away, ProbabilityBarPalette.awayDefault)
         // Whatever each side resolves to, the two read apart and clear the floor.
-        for pair in [navyGold, bothDark] {
+        for pair in [navyGold, bothDark, noColour] {
             XCTAssertTrue(ProbabilityBarPalette.distinguishable(pair.away, pair.home))
             for hex in [pair.away, pair.home] {
                 XCTAssertGreaterThanOrEqual(SavedWidgetArt12466.contrast(hex, againstLuminance: dark) ?? 0,
@@ -346,9 +355,9 @@ final class SavedWidgetArt12466Tests: XCTestCase {
         // 2. A finished game's footer says "Final", not the score again.
         XCTAssertTrue(looks.contains("reading.status.hasPrefix(\"Final\"), reading.rows.allSatisfy({ $0.figure != nil })"))
         XCTAssertTrue(looks.contains("return \"Final\""))
-        // 3. Light surface + legible refresh ink on priced/settled games; losing verdict quieter, not faint.
-        XCTAssertTrue(looks.contains("if let model, model.isGame, model.drawsFull {\n                Color.white"))
-        XCTAssertTrue(looks.contains("return Color(hex: \"#6B7280\")"))
+        // 3. Light/dark surface + legible refresh ink on priced/settled games; losing verdict quieter, not faint.
+        XCTAssertTrue(looks.contains("colorScheme == .dark ? Color(hex: Self.darkCardHex) : Color.white"))
+        XCTAssertTrue(looks.contains("Color(hex: \"#6B7280\")"))
         XCTAssertTrue(looks.contains(".opacity(row.emphasized ? 1 : 0.85)"))
         XCTAssertFalse(looks.contains(".opacity(row.emphasized ? 1 : 0.6)"))
     }

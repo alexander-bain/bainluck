@@ -281,12 +281,16 @@ struct SavedLookView12466: View {
 
     /// The text colour the refresh button and plain text take on this look's
     /// background.
-    static func ink(_ look: SavedWidgetLook12466, model: SavedLookModel12466?) -> Color? {
+    static func ink(
+        _ look: SavedWidgetLook12466,
+        model: SavedLookModel12466?,
+        colorScheme: ColorScheme = .light
+    ) -> Color? {
         switch look {
         case .today: return nil
         case .matchup:
             if let model, model.isGame, model.drawsFull {
-                return Color(hex: "#6B7280")
+                return colorScheme == .dark ? Color(hex: "#9CA3AF") : Color(hex: "#6B7280")
             }
             return .white
         }
@@ -297,6 +301,9 @@ struct SavedLookView12466: View {
 struct SavedLookBackground12466: View {
     let look: SavedWidgetLook12466
     let model: SavedLookModel12466?
+    @Environment(\.colorScheme) private var colorScheme
+
+    static let darkCardHex = "#1C1C1E"
 
     var body: some View {
         switch look {
@@ -304,7 +311,7 @@ struct SavedLookBackground12466: View {
             Rectangle().fill(.fill.tertiary)
         case .matchup:
             if let model, model.isGame, model.drawsFull {
-                Color.white
+                colorScheme == .dark ? Color(hex: Self.darkCardHex) : Color.white
             } else if let model, let art = model.art {
                 let fills = art.fillHexes()
                 ZStack {
@@ -341,6 +348,13 @@ struct SavedMatchupLook12466: View {
     let model: SavedLookModel12466
     let family: WidgetFamily
     @Environment(\.widgetRenderingMode) private var mode
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var surfaceLuminance: Double {
+        colorScheme == .dark
+            ? SavedWidgetArt12466.darkSurfaceLuminance
+            : SavedWidgetArt12466.lightSurfaceLuminance
+    }
 
     var body: some View {
         if !model.drawsFull {
@@ -353,6 +367,7 @@ struct SavedMatchupLook12466: View {
                 clockFooter: model.footer,
                 isOffline: model.entry.isOffline,
                 clearsRefreshTrailing: model.entry.isRefreshable12305,
+                surfaceLuminance: surfaceLuminance,
                 now: model.entry.date
             )
             SavedGameHeadlineWidgetView12616(
@@ -373,9 +388,10 @@ struct SavedMatchupLook12466: View {
 
     @ViewBuilder private var bar: some View {
         if let shares = model.reading.shares {
-            let colors = model.barColors(surfaceLuminance: SavedWidgetArt12466.lightSurfaceLuminance)
+            let colors = model.barColors(surfaceLuminance: surfaceLuminance)
+            let track = colorScheme == .dark ? Color.white.opacity(0.14) : Color(hex: "#E5E7EB")
             SavedChanceBar12466(shares: shares, awayColor: colors.away, homeColor: colors.home,
-                                height: 5, track: Color(hex: "#E5E7EB"), leadsHome: model.headlineIsHome)
+                                height: 5, track: track, leadsHome: model.headlineIsHome)
         }
     }
 }

@@ -108,6 +108,7 @@ struct SavedItemWidget10875: Widget {
 
 struct SavedItemWidgetView10875: View {
     @Environment(\.widgetFamily) private var family
+    @Environment(\.colorScheme) private var colorScheme
     let entry: SavedItemWidgetEntry10875
 
     /// #12466: a new look draws over a reading; every message keeps today's.
@@ -183,7 +184,7 @@ struct SavedItemWidgetView10875: View {
 
     /// The ↻ in the ink of the look's background.
     @ViewBuilder private var refreshButton: some View {
-        if let ink = SavedLookView12466.ink(drawnLook, model: lookModel) {
+        if let ink = SavedLookView12466.ink(drawnLook, model: lookModel, colorScheme: colorScheme) {
             SavedRefreshButton12305().foregroundStyle(ink)
         } else {
             SavedRefreshButton12305()
