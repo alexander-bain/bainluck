@@ -9,6 +9,7 @@ from typing import Any
 
 from app.utils.container_presentation import MEMBER_MARKET, market_destination
 from app.utils.futures_liveness import SETTLEMENT_SOURCE
+from app.utils.source_mark import settled_source_mark
 
 
 def _rc() -> Any:
@@ -77,6 +78,7 @@ def _result_member(
             1.0,
             None,
             _iso_utc(row.get("last_updated")),
+            settled_source_mark(SETTLEMENT_SOURCE, "Won"),
         )
         for row in selected
     ]
