@@ -89,7 +89,10 @@ function runTsc() {
     console.error('typescript is not installed — run `npm ci` in frontend/ first.');
     process.exit(2);
   }
-  const res = spawnSync(process.execPath, [tsc, '--noEmit', '--incremental', 'false', '--pretty', 'false'], {
+  // Full-program checks can exceed Node 20's roughly 2 GiB runner default.
+  // Bound only this compiler at 4 GiB; do not alter other Node processes or
+  // retry a failed measurement. Signals and fatal exits still refuse below.
+  const res = spawnSync(process.execPath, ['--max-old-space-size=4096', tsc, '--noEmit', '--incremental', 'false', '--pretty', 'false'], {
     cwd: FRONTEND,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
