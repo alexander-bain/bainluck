@@ -338,7 +338,11 @@ extension WidgetTapJourneyTests {
         try widgetWarmRequire(process.label == baseline.processUUID,
                               "Real host tap cold-relaunched the app instead of preserving its process UUID", app: app)
         for overlay in dismissedOverlays {
-            try widgetWarmWait(NSPredicate(format: "exists == false"), on: overlay, timeout: 15,
+            // 45 s, not 15: right after the tap brings the app forward, one hosted
+            // accessibility snapshot can take 14 s (run 43963455417, widgets: the
+            // first check of the picker's Cancel took 14.4 s, the picker was gone
+            // in the failure capture, and the 15 s wait had expired).
+            try widgetWarmWait(NSPredicate(format: "exists == false"), on: overlay, timeout: 45,
                                message: "Real host tap did not dismiss the previously observed overlay", app: app)
         }
         try widgetWarmRequire(!app.buttons["watch.picker-cancel"].firstMatch.exists && !app.otherElements["Continue on iPhone"].firstMatch.exists,

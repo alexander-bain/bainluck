@@ -435,6 +435,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
     @MainActor
     private func reveal(_ element: XCUIElement, in app: XCUIApplication, belowNavigationChrome: Bool = false) throws {
         var previousEarlierTop: CGFloat?
+        var previousBelowTop: CGFloat?
         var usedRecoveryDrag = false
         for _ in 0..<32 {
             let chromeBottom = belowNavigationChrome ? app.navigationBars.allElementsBoundByIndex
@@ -463,6 +464,15 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
                 start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
                 continue
             }
+            // The OS face gallery snaps card to card: a short upward drag snaps back
+            // and the next card's Add never moves (run 43963455417, widgets: Modular's
+            // Add stayed at y 233 through 32 drags). A list that did not move under a
+            // drag advances one Digital Crown step instead.
+            if belowNavigationChrome && !earlier, let priorTop = previousBelowTop, element.frame.minY == priorTop {
+                XCUIDevice.shared.rotateDigitalCrown(delta: 0.5)
+                continue
+            }
+            previousBelowTop = belowNavigationChrome && !earlier ? element.frame.minY : nil
             previousEarlierTop = belowNavigationChrome && earlier ? element.frame.minY : nil
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
             let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.75 : 0.45))
