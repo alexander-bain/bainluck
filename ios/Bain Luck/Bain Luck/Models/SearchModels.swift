@@ -256,6 +256,27 @@ nonisolated struct SearchFuturesMarket: Decodable, Identifiable, Sendable {
         return heatMapBetterThanEvenIndex(points).map { ordered[$0].0 }
     }
 
+    /// Direction 228 (#12885) & #8834: on a numerical scale search row (which `/search`
+    /// may serve in threshold order with row 0 at 99%), quote the modal / crossing answer
+    /// rung rather than blindly assuming index 0 is the leader.
+    @MainActor var numericalLadderAnswer: SearchFuturesOutcome? {
+        guard status != "resolved", let outcomes = topOutcomes, outcomes.count > 1 else { return nil }
+        guard outcomes.first?.verdict(in: self) == nil,
+              outcomes.first(where: { $0.probability != nil })?.verdict(in: self) == nil else { return nil }
+        let probSum = outcomes.compactMap(\.probability).reduce(0, +)
+        let isCumulative = probSum > 1.35 || outcomes.allSatisfy {
+            let r = NumericalMarketScaleOrder228.parseLabelKey($0.name)?.relationRank ?? 0
+            return r <= -1 || r >= 2
+        }
+        return NumericalMarketScaleOrder228.orderedAll(
+            outcomes,
+            label: \.name,
+            probability: \.probability,
+            totalOutcomeCount: outcomeCount ?? outcomes.count,
+            isCumulative: isCumulative
+        )?.first(where: \.isLeader)?.element
+    }
+
     private static func dateRungValue(_ label: String) -> Double? {
         // Search does not serve threshold-point metadata. Recognize only a
         // complete calendar-date label, including Discover's Before/By form.
@@ -367,6 +388,8 @@ nonisolated struct FacetedFuturesMarket: Decodable, Identifiable, Sendable {
     let outcomeCount: Int?
     let imageUrl: String?
     let hookDescription: String?
+    var marketType: String? = nil
+    var mutuallyExclusive: Bool? = nil
 }
 
 /// Outcome row embedded in a faceted futures market.
@@ -376,6 +399,7 @@ nonisolated struct FacetedFuturesOutcome: Decodable, Identifiable, Sendable {
     let name: String
     let probability: Double?
     let movement: Double?
+    var sortKey: Double? = nil
 }
 
 /// Named facet value and count used by browse filters.

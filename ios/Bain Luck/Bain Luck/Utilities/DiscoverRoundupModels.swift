@@ -393,10 +393,22 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
             )
         }
 
-        // Explicit `order: "probability"` sorts highest-first; all dynamic candidate
-        // producers (movers, closest-race awards/divisions, ceremony categories,
-        // box office slates, yardsticks, sequences) preserve their canonical container order.
-        if trimmed(contract.order).lowercased() == "probability" {
+        // Direction 228 (#12885): numerical scale rows always run in ascending
+        // numerical order, never by probability. Otherwise explicit `order: "probability"`
+        // sorts highest-first and dynamic candidate producers preserve canonical order.
+        let normalizedOrder = trimmed(contract.order).lowercased()
+        if validated.allSatisfy({ $0.kind == .market }),
+           let scaleKeys = NumericalMarketScaleOrder228.scaleKeys(
+               for: validated.map(\.label),
+               orderHint: contract.order,
+               totalOutcomeCount: validated.count
+           ) {
+            let keyed = Array(zip(validated, scaleKeys))
+            validated = keyed.sorted { lhs, rhs in
+                if lhs.1 != rhs.1 { return lhs.1 < rhs.1 }
+                return lhs.0.index < rhs.0.index
+            }.map(\.0)
+        } else if normalizedOrder == "probability" {
             validated.sort { lhs, rhs in
                 if lhs.row.probability != rhs.row.probability {
                     return lhs.row.probability > rhs.row.probability

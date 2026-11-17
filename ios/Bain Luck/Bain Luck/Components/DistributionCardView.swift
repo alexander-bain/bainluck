@@ -31,10 +31,12 @@ struct DistributionCardView: View {
         DistributionBoardOrder.listedRows(outcomes, order: data.discoverCard?.distributionOrder)
     }
 
-    /// #10374 — rank digits beside dates read as ranks ("1 October 12"), so a
-    /// chronological board draws none.
+    /// #10374 & #12885 — rank digits beside dates or numerical scales read as
+    /// ranks ("1 October 12", "1 3.75%"), so chronological and numerical boards
+    /// draw none.
     private var showsRanks: Bool {
         !DistributionBoardOrder.isChronological(data.discoverCard?.distributionOrder)
+            && !DistributionBoardOrder.isNumerical(outcomes, order: data.discoverCard?.distributionOrder)
     }
 
     private var remainingCount: Int {

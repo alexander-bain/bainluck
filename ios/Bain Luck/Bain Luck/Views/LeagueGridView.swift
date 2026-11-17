@@ -190,7 +190,14 @@ struct LeagueGridView: View {
                 .lineLimit(2)
 
             if let outcomes = market.topOutcomes, !outcomes.isEmpty {
-                ForEach(Array(outcomes.prefix(3).enumerated()), id: \.offset) { _, o in
+                let shown = NumericalMarketScaleOrder228.orderedSlice(
+                    outcomes,
+                    limit: 3,
+                    label: \.name,
+                    probability: { $0.prob / 100.0 },
+                    totalOutcomeCount: market.outcomeCount ?? outcomes.count
+                )?.map(\.element) ?? Array(outcomes.prefix(3))
+                ForEach(Array(shown.enumerated()), id: \.offset) { _, o in
                     HStack(spacing: 4) {
                         Text(o.name)
                             .font(.caption)

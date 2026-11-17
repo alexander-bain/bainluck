@@ -201,7 +201,13 @@ struct ContainerHubView: View {
                 if ContainerHubPresentation.questionNeedsVerdictRows(search) {
                     Text(search.name).font(.subheadline.weight(.semibold))
                         .fixedSize(horizontal: false, vertical: true)
-                    ForEach(search.topOutcomes ?? []) { outcome in
+                    let rawVerdictOutcomes = search.topOutcomes ?? []
+                    let verdictOutcomes = NumericalMarketScaleOrder228.orderedAll(
+                        rawVerdictOutcomes,
+                        label: \.name,
+                        probability: \.probability
+                    )?.map(\.element) ?? rawVerdictOutcomes
+                    ForEach(verdictOutcomes) { outcome in
                         let outcomeMark = feed.topOutcomes?.first(where: { $0.id == outcome.id || $0.name == outcome.name })?.sourceMark ?? feed.sourceMark
                         HStack(alignment: .center, spacing: 4) {
                             Text(outcome.name).font(.caption)

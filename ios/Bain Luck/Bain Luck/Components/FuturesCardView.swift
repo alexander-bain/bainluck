@@ -65,11 +65,23 @@ struct FuturesCardView: View {
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // Top outcomes
-            if let outcomes = futures.topOutcomes?.prefix(3) {
+            // Top outcomes (Direction 228 #12885: numerical scales list ascending without #rank)
+            if let allOutcomes = futures.topOutcomes, !allOutcomes.isEmpty {
+                let numerical = NumericalMarketScaleOrder228.orderedSlice(
+                    allOutcomes,
+                    limit: 3,
+                    label: \.name,
+                    probability: \.probability,
+                    explicitSortKey: \.sortKey,
+                    marketType: futures.marketType,
+                    totalOutcomeCount: futures.outcomeCount ?? allOutcomes.count,
+                    isCumulative: futures.mutuallyExclusive == false
+                )
+                let shown = numerical?.map(\.element) ?? Array(allOutcomes.prefix(3))
+                let showsRank = numerical == nil
                 VStack(spacing: 4) {
-                    ForEach(Array(outcomes)) { outcome in
-                        outcomeRow(outcome)
+                    ForEach(shown) { outcome in
+                        outcomeRow(outcome, showsRank: showsRank)
                     }
                 }
             }
@@ -92,9 +104,9 @@ struct FuturesCardView: View {
         #endif
     }
 
-    private func outcomeRow(_ outcome: FeedFuturesOutcome) -> some View {
+    private func outcomeRow(_ outcome: FeedFuturesOutcome, showsRank: Bool = true) -> some View {
         HStack(spacing: 8) {
-            if let rank = outcome.rank {
+            if showsRank, let rank = outcome.rank {
                 Text("#\(rank)")
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.tertiary)
