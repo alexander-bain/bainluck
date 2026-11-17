@@ -41,6 +41,9 @@ struct TeamDetailView: View {
     @State private var race: TeamDivisionRace.Race?
     /// #10234 — the grid fetch has finished (or was never needed).
     @State private var raceSettled = false
+    /// #12823 — outcome labels resolved from `/api/futures/{id}` for unquantified totals
+    /// containers (`"Pro Football: 2026 Regular Season Win Totals"` -> `"O 9.5 — New England Patriots"` -> `"10+ wins"`).
+    @State private var resolvedTotalsOutcomeNames: [Int: String] = [:]
     private let skipNetworkLoad: Bool
     private let preloadedAvatarImages: [URL: Image]
 
@@ -55,7 +58,8 @@ struct TeamDetailView: View {
         slug: String,
         loadedPageForTest: TeamPageResponse,
         raceForTest: TeamDivisionRace.Race? = nil,
-        preloadedAvatarImagesForTest: [URL: Image] = [:]
+        preloadedAvatarImagesForTest: [URL: Image] = [:],
+        resolvedTotalsOutcomeNamesForTest: [Int: String] = [:]
     ) {
         self.slug = slug
         self.skipNetworkLoad = true
@@ -64,6 +68,7 @@ struct TeamDetailView: View {
         self._loading = State(initialValue: false)
         self._race = State(initialValue: raceForTest)
         self._raceSettled = State(initialValue: true)
+        self._resolvedTotalsOutcomeNames = State(initialValue: resolvedTotalsOutcomeNamesForTest)
     }
     #endif
 
@@ -86,6 +91,8 @@ struct TeamDetailView: View {
         guard !skipNetworkLoad else { return }
         do {
             let page = try await APIClient.shared.fetchTeamPage(slug: slug)
+            let resolvedLines = await Self.resolveMissingTotalsOutcomeNames(for: page.futures)
+            resolvedTotalsOutcomeNames = resolvedLines
             data = page
             loading = false
             if let gridSlug = TeamDivisionRace.gridSlug(sportKey: page.team.sportKey) {
@@ -96,6 +103,36 @@ struct TeamDetailView: View {
         } catch {
             self.error = "Could not load team"
             loading = false
+        }
+    }
+
+    private static func resolveMissingTotalsOutcomeNames(for futures: [TeamFutureItem]) async -> [Int: String] {
+        var seenMarkets: Set<Int> = []
+        let candidateMarketIds = futures
+            .filter { TeamFutureRowPresentation.needsTotalsLineResolution($0) }
+            .compactMap { item -> Int? in
+                guard seenMarkets.insert(item.marketId).inserted else { return nil }
+                return item.marketId
+            }
+            .prefix(3)
+        guard !candidateMarketIds.isEmpty else { return [:] }
+
+        return await withTaskGroup(of: [(Int, String)].self) { group in
+            for marketId in candidateMarketIds {
+                group.addTask {
+                    guard let detail = try? await APIClient.shared.fetchFuturesDetail(id: marketId) else {
+                        return []
+                    }
+                    return detail.outcomes.map { ($0.id, $0.name) }
+                }
+            }
+            var map: [Int: String] = [:]
+            for await pairs in group {
+                for (oid, name) in pairs {
+                    map[oid] = name
+                }
+            }
+            return map
         }
     }
 
@@ -206,18 +243,31 @@ struct TeamDetailView: View {
 
             // #9396: only omit questions actually answered above; a tier
             // alone cannot distinguish titles from seeds, advancement or awards.
-            let futures = TeamDivisionRace.seasonFutures(
+            let seasonFutures = TeamDivisionRace.seasonFutures(
                 data.futures, championshipPath: data.championshipPath, race: race,
                 sportKey: data.team.sportKey)
+            let rowsByOutcomeId = Dictionary(
+                seasonFutures.compactMap { future in
+                    TeamFutureRowPresentation.fastCutRow12823(
+                        future,
+                        team: team,
+                        resolvedOutcomeName: resolvedTotalsOutcomeNames[future.outcomeId]
+                    ).map { (future.outcomeId, $0) }
+                },
+                uniquingKeysWith: { first, _ in first }
+            )
+            let futures = seasonFutures.filter { rowsByOutcomeId[$0.outcomeId] != nil }
             if !futures.isEmpty {
                 Section("Season Futures") {
                     ForEach(futures) { future in
                         // #9091 + #12823 (1.0.7 fast cut): circular player headshots
-                        // with crest fallback, redundant sport/season prefixes stripped
-                        // so captions stop cutting off, and zero venue names on rows.
-                        let row = TeamFutureRowPresentation.fastCutRow12823(future, team: team)
-                        NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
-                            teamSeasonFutureRow12823(row)
+                        // with crest fallback, subject-first titles, quantified lines
+                        // ("10+ wins"), redundant sport/season prefixes stripped, and
+                        // zero venue names on rows.
+                        if let row = rowsByOutcomeId[future.outcomeId] {
+                            NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
+                                teamSeasonFutureRow12823(row)
+                            }
                         }
                     }
                 }

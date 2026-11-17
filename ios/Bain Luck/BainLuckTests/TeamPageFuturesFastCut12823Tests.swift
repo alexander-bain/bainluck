@@ -195,7 +195,15 @@ final class TeamPageFuturesFastCut12823Tests: XCTestCase {
         )
 
         let page = try decodePage(patriotsPageJSON())
-        let rows = page.futures.map { TeamFutureRowPresentation.fastCutRow12823($0, team: page.team) }
+        let resolvedTotals = [231028212: "O 9.5 — New England Patriots"]
+        let rows = page.futures.compactMap {
+            TeamFutureRowPresentation.fastCutRow12823(
+                $0,
+                team: page.team,
+                resolvedOutcomeName: resolvedTotals[$0.outcomeId]
+            )
+        }
+        XCTAssertEqual(rows.count, 8)
 
         // 1. Drake Maye -> player headshot + stripped caption
         XCTAssertEqual(rows[0].title, "Drake Maye")
@@ -207,12 +215,12 @@ final class TeamPageFuturesFastCut12823Tests: XCTestCase {
             XCTFail("Expected playerHeadshot for Drake Maye")
         }
 
-        // 2. Christian Barmore Next Team (outcome "New England") -> Christian Barmore headshot, nil position badge on team title!
-        XCTAssertEqual(rows[1].title, "New England")
-        XCTAssertEqual(rows[1].caption, "Christian Barmore Next Team")
+        // 2. Christian Barmore Next Team (outcome "New England") -> subject "Christian Barmore" + "Next team: New England"!
+        XCTAssertEqual(rows[1].title, "Christian Barmore")
+        XCTAssertEqual(rows[1].caption, "Next team: New England")
         if case .playerHeadshot(let url, let pos, _, _, _) = rows[1].avatar {
             XCTAssertEqual(url.absoluteString, "https://a.espncdn.com/i/headshots/nfl/players/full/4372030.png")
-            XCTAssertNil(pos)
+            XCTAssertEqual(pos, "DT")
         } else {
             XCTFail("Expected playerHeadshot for Christian Barmore Next Team")
         }
@@ -227,6 +235,15 @@ final class TeamPageFuturesFastCut12823Tests: XCTestCase {
             XCTFail("Expected teamCrest fallback for Team to Make Postseason")
         }
 
+        // 3a. Regular Season Win Totals ("O 9.5 — New England Patriots") -> "10+ wins · Regular Season",
+        //     and nil (withheld) when no line is known!
+        XCTAssertEqual(rows[5].title, "New England Patriots")
+        XCTAssertEqual(rows[5].caption, "10+ wins · Regular Season")
+        XCTAssertNil(
+            TeamFutureRowPresentation.fastCutRow12823(page.futures[5], team: page.team, resolvedOutcomeName: nil),
+            "Unlabelled Win Totals row without a line must be withheld rather than printing a bare 'Regular Season Win Totals 15%'"
+        )
+
         // 3b. Rhamondre Stevenson -> player headshot + stripped "1,000+ Rushing Yards"
         XCTAssertEqual(rows[7].title, "Rhamondre Stevenson")
         XCTAssertEqual(rows[7].caption, "1,000+ Rushing Yards")
@@ -236,6 +253,50 @@ final class TeamPageFuturesFastCut12823Tests: XCTestCase {
         } else {
             XCTFail("Expected playerHeadshot for Rhamondre Stevenson")
         }
+
+        // 3c. Additional which-team & which-coach rewrites + integer push-aware Over/Under formatting
+        let extraJSON = """
+        {
+          "team": {
+            "id": 11,
+            "slug": "new-england-patriots",
+            "name": "New England Patriots",
+            "abbreviation": "NE",
+            "location": "New England",
+            "sport_key": "americanfootball_nfl"
+          },
+          "upcoming_events": [],
+          "recent_events": [],
+          "championship_path": [],
+          "futures": [
+            {"outcome_id": 1, "outcome_name": "Los Angeles Dodgers", "market_id": 1, "market_name": "Sandy Alcantara's Next Team", "probability": 0.06},
+            {"outcome_id": 2, "outcome_name": "Tennessee Titans", "market_id": 2, "market_name": "Which team will draft Cam Ward?", "probability": 0.65},
+            {"outcome_id": 3, "outcome_name": "Mike Vrabel", "market_id": 3, "market_name": "New England Patriots Next Head Coach", "probability": 0.72},
+            {"outcome_id": 4, "outcome_name": "O 10 — New England Patriots", "market_id": 4, "market_name": "Pro Football: 2026 Regular Season Win Totals", "canonical_market_key": "football::win_totals:2026", "probability": 0.11},
+            {"outcome_id": 5, "outcome_name": "U 9.5 — New England Patriots", "market_id": 5, "market_name": "Pro Football: 2026 Regular Season Win Totals", "canonical_market_key": "football::win_totals:2026", "probability": 0.86}
+          ]
+        }
+        """
+        let extraPage = try decodePage(extraJSON)
+        let r0 = try XCTUnwrap(TeamFutureRowPresentation.fastCutRow12823(extraPage.futures[0], team: extraPage.team))
+        XCTAssertEqual(r0.title, "Sandy Alcantara")
+        XCTAssertEqual(r0.caption, "Next team: Los Angeles Dodgers")
+
+        let r1 = try XCTUnwrap(TeamFutureRowPresentation.fastCutRow12823(extraPage.futures[1], team: extraPage.team))
+        XCTAssertEqual(r1.title, "Cam Ward")
+        XCTAssertEqual(r1.caption, "Drafted by: Tennessee Titans")
+
+        let r2 = try XCTUnwrap(TeamFutureRowPresentation.fastCutRow12823(extraPage.futures[2], team: extraPage.team))
+        XCTAssertEqual(r2.title, "Mike Vrabel")
+        XCTAssertEqual(r2.caption, "Next head coach: New England Patriots")
+
+        let r3 = try XCTUnwrap(TeamFutureRowPresentation.fastCutRow12823(extraPage.futures[3], team: extraPage.team))
+        XCTAssertEqual(r3.title, "New England Patriots")
+        XCTAssertEqual(r3.caption, "Over 10 wins · Regular Season")
+
+        let r4 = try XCTUnwrap(TeamFutureRowPresentation.fastCutRow12823(extraPage.futures[4], team: extraPage.team))
+        XCTAssertEqual(r4.title, "New England Patriots")
+        XCTAssertEqual(r4.caption, "9 or fewer wins · Regular Season")
 
         // 4. Source guard: TeamDetailView never prints Polymarket / Kalshi / SourceLabels
         let teamDetailURL = URL(fileURLWithPath: #filePath)
@@ -301,7 +362,7 @@ final class TeamPageFuturesFastCut12823Tests: XCTestCase {
               "outcome_id": 3,
               "outcome_name": "England",
               "market_id": 102,
-              "market_name": "Christian Barmore Next Team",
+              "market_name": "New England Patriots Next Head Coach",
               "market_tier": 5,
               "category": "football",
               "source": "kalshi",
@@ -315,7 +376,7 @@ final class TeamPageFuturesFastCut12823Tests: XCTestCase {
         XCTAssertEqual(mixedPage.team.rosterMembers.first?.name, "Luka Dončić")
 
         // Diacritic-folded match resolves Luka Dončić's headshot even when outcome is ASCII "Luka Doncic"
-        let lukaRow = TeamFutureRowPresentation.fastCutRow12823(mixedPage.futures[0], team: mixedPage.team)
+        let lukaRow = try XCTUnwrap(TeamFutureRowPresentation.fastCutRow12823(mixedPage.futures[0], team: mixedPage.team))
         if case .playerHeadshot(let url, let pos, _, _, _) = lukaRow.avatar {
             XCTAssertEqual(url.absoluteString, "https://a.espncdn.com/i/headshots/nba/players/full/3945274.png")
             XCTAssertEqual(pos, "PG")
@@ -324,7 +385,7 @@ final class TeamPageFuturesFastCut12823Tests: XCTestCase {
         }
 
         // Unmatched player falls back to team crest
-        let kyrieRow = TeamFutureRowPresentation.fastCutRow12823(mixedPage.futures[1], team: mixedPage.team)
+        let kyrieRow = try XCTUnwrap(TeamFutureRowPresentation.fastCutRow12823(mixedPage.futures[1], team: mixedPage.team))
         if case .teamCrest(let url, let abbr, _) = kyrieRow.avatar {
             XCTAssertEqual(url?.absoluteString, "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/dal.png")
             XCTAssertEqual(abbr, "DAL")
@@ -335,7 +396,8 @@ final class TeamPageFuturesFastCut12823Tests: XCTestCase {
         // Partial word ("England" on "New England Patriots") never falsely counts as naming the team
         let patriotsPage = try decodePage(patriotsPageJSON())
         let englandItem = mixedPage.futures[2]
-        let englandOnPatriots = TeamFutureRowPresentation.fastCutRow12823(englandItem, team: patriotsPage.team)
+        let englandOnPatriots = try XCTUnwrap(TeamFutureRowPresentation.fastCutRow12823(englandItem, team: patriotsPage.team))
+        XCTAssertEqual(englandOnPatriots.caption, "Next head coach: New England Patriots")
         if case .teamCrest = englandOnPatriots.avatar {
             // Expected: "England" does not name "New England Patriots"
         } else {
@@ -370,7 +432,7 @@ final class TeamPageFuturesFastCut12823Tests: XCTestCase {
             """
             let decoded = try decodePage(nonDictJSON)
             XCTAssertTrue(decoded.team.rosterMembers.isEmpty)
-            let row = TeamFutureRowPresentation.fastCutRow12823(decoded.futures[0], team: decoded.team)
+            let row = try XCTUnwrap(TeamFutureRowPresentation.fastCutRow12823(decoded.futures[0], team: decoded.team))
             if case .teamCrest(_, let abbr, _) = row.avatar {
                 XCTAssertEqual(abbr, "BOS")
             } else {
@@ -405,7 +467,8 @@ final class TeamPageFuturesFastCut12823Tests: XCTestCase {
                 slug: "new-england-patriots",
                 loadedPageForTest: page,
                 raceForTest: nil,
-                preloadedAvatarImagesForTest: preloaded
+                preloadedAvatarImagesForTest: preloaded,
+                resolvedTotalsOutcomeNamesForTest: [231028212: "O 9.5 — New England Patriots"]
             )
         }
         .frame(width: 390, height: 960)
@@ -441,8 +504,9 @@ final class TeamPageFuturesFastCut12823Tests: XCTestCase {
         }
 
         // Vision OCR verification:
-        // - Stripped captions ("Top 12 Scoring QBs", "400+ Passing Yards in a Game", "1,000+ Rushing Yards") read whole!
-        // - Zero "Polymarket", "Kalshi", "Pro Football:", "Fantasy Football:", or "…"!
+        // - Subject-first rows ("Christian Barmore" + "Next team: New England")
+        // - Named win-totals line ("10+ wins · Regular Season")
+        // - Zero "Polymarket", "Kalshi", "Pro Football:", "Fantasy Football:", "Win Totals", or "…"!
         let req = VNRecognizeTextRequest()
         req.recognitionLevel = .accurate
         req.usesLanguageCorrection = false
@@ -451,7 +515,7 @@ final class TeamPageFuturesFastCut12823Tests: XCTestCase {
         let lines = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
         let joined = lines.joined(separator: " ")
 
-        for forbidden in ["Polymarket", "Kalshi", "Pro Football", "Fantasy Football", "New England DT", "…", "..."] {
+        for forbidden in ["Polymarket", "Kalshi", "Pro Football", "Fantasy Football", "Win Totals", "Christian Barmore Next Team", "…", "..."] {
             XCTAssertFalse(
                 joined.localizedCaseInsensitiveContains(forbidden),
                 "Patriots Season Futures must never show '\(forbidden)', got: \(lines)"
@@ -460,11 +524,12 @@ final class TeamPageFuturesFastCut12823Tests: XCTestCase {
         for required in [
             "Drake Maye",
             "Top 12 Scoring QBs",
-            "Christian Barmore Next Team",
+            "Christian Barmore",
+            "Next team: New England",
+            "10+ wins",
             "400+ Passing Yards in a Game",
             "Rhamondre Stevenson",
-            "1,000+ Rushing Yards",
-            "Regular Season Win Totals"
+            "1,000+ Rushing Yards"
         ] {
             XCTAssertTrue(
                 joined.contains(required),
@@ -475,7 +540,7 @@ final class TeamPageFuturesFastCut12823Tests: XCTestCase {
         if let dir = ProcessInfo.processInfo.environment["EXPORT_TEAM_12823_DIR"], !dir.isEmpty {
             let outURL = URL(fileURLWithPath: dir, isDirectory: true)
             try FileManager.default.createDirectory(at: outURL, withIntermediateDirectories: true)
-            try XCTUnwrap(image.pngData()).write(to: outURL.appendingPathComponent("12823-patriots-season-futures-390.png"))
+            try XCTUnwrap(image.pngData()).write(to: outURL.appendingPathComponent("12823-patriots-season-futures-after-390.png"))
         }
     }
 }
