@@ -2352,6 +2352,7 @@ export interface EconThemeFed {
   count: number;
   fomc_meetings: { date: string; mo: string; dist: number[][]; resolved: boolean; market_id: number }[];
   rate_cuts: number[][];
+  rate_cuts_market_id?: number | null;
   side_markets: EconMarketRow[];
 }
 

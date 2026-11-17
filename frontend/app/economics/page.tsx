@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import useSWR from "swr";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -18,6 +19,12 @@ import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
 // ---------------------------------------------------------------------------
 // Fed Heatmap Section
 // ---------------------------------------------------------------------------
+
+function econMarketHref(marketId: number | null | undefined): string | null {
+  return typeof marketId === "number" && Number.isInteger(marketId) && marketId > 0
+    ? `/futures/${marketId}`
+    : null;
+}
 
 function FedHeatmap({ meetings }: { meetings: any[] }) {
   if (!meetings.length) return null;
@@ -51,12 +58,29 @@ function FedHeatmap({ meetings }: { meetings: any[] }) {
           minWidth: heatmapMinWidth(meetings.length),
         }}>
           <div />
-          {meetings.map((m: any, i: number) => (
-            <div key={i} className="text-center pb-1.5">
-              <div className="text-[11px] font-semibold text-text-secondary">{m.mo || m.date}</div>
-              <div className="font-mono text-[9px] text-text-muted">{m.date}</div>
-            </div>
-          ))}
+          {meetings.map((m: any, i: number) => {
+            const href = econMarketHref(m.market_id);
+            const headerInner = (
+              <>
+                <div className="text-[11px] font-semibold text-text-secondary group-hover:underline">{m.mo || m.date}</div>
+                <div className="font-mono text-[9px] text-text-muted">{m.date}</div>
+              </>
+            );
+            return href ? (
+              <Link
+                key={i}
+                href={href}
+                data-testid="fed-heatmap-meeting-link"
+                className="group block text-center pb-1.5 rounded hover:bg-surface-secondary/60 transition-colors"
+              >
+                {headerInner}
+              </Link>
+            ) : (
+              <div key={i} className="text-center pb-1.5">
+                {headerInner}
+              </div>
+            );
+          })}
           {rates.map(r => (
             <div key={r} className="contents">
               <div className="font-mono text-[10px] text-text-secondary text-right pr-2 flex items-center justify-end" style={{ height: 38 }}>
@@ -67,14 +91,30 @@ function FedHeatmap({ meetings }: { meetings: any[] }) {
                 const modal = m.dist?.reduce((best: number, d: any, i: number) =>
                   d[0] > (m.dist[best]?.[0] || 0) ? i : best, 0) || 0;
                 const isModal = m.dist?.[modal]?.[1] === r;
-                return (
-                  <div key={mi} className="flex items-center justify-center rounded font-mono text-[11px] font-semibold"
-                    style={{
-                      height: 38,
-                      background: cellColor(prob),
-                      border: isModal ? "1.5px solid var(--accent-brand)" : "1px solid var(--surface-border)",
-                      color: prob >= 30 ? "#064E3B" : prob >= 10 ? "var(--text-secondary)" : "var(--text-muted)",
-                    }}>
+                const href = econMarketHref(m.market_id);
+                const cellStyle = {
+                  height: 38,
+                  background: cellColor(prob),
+                  border: isModal ? "1.5px solid var(--accent-brand)" : "1px solid var(--surface-border)",
+                  color: prob >= 30 ? "#064E3B" : prob >= 10 ? "var(--text-secondary)" : "var(--text-muted)",
+                };
+                return href ? (
+                  <Link
+                    key={mi}
+                    href={href}
+                    data-testid="fed-heatmap-cell-link"
+                    aria-label={`${m.mo || m.date} FOMC ${r}: ${prob}%`}
+                    className="flex items-center justify-center rounded font-mono text-[11px] font-semibold hover:opacity-85 transition-opacity"
+                    style={cellStyle}
+                  >
+                    {prob > 0 ? prob : ""}
+                  </Link>
+                ) : (
+                  <div
+                    key={mi}
+                    className="flex items-center justify-center rounded font-mono text-[11px] font-semibold"
+                    style={cellStyle}
+                  >
                     {prob > 0 ? prob : ""}
                   </div>
                 );
@@ -148,10 +188,11 @@ function ThresholdLadder({ rows }: { rows: [number, string][] }) {
 function DistributionCard({ dist }: { dist: EconDistribution }) {
   if (!dist.rows.length) return null;
   const isLadder = dist.kind === "ladder";
-  return (
-    <Card>
+  const href = econMarketHref(dist.market_id);
+  const card = (
+    <Card className={href ? "group-hover:border-text-muted/40 transition-colors" : ""}>
       <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="text-[13px] font-semibold text-text-primary leading-snug">{dist.q}</div>
+        <div className="text-[13px] font-semibold text-text-primary leading-snug group-hover:underline">{dist.q}</div>
       </div>
       {isLadder
         ? <ThresholdLadder rows={dist.rows} />
@@ -161,6 +202,13 @@ function DistributionCard({ dist }: { dist: EconDistribution }) {
         right={isLadder ? "Thresholds overlap" : "Modal bracket highlighted"}
       />
     </Card>
+  );
+  return href ? (
+    <Link href={href} data-testid="econ-distribution-card-link" className="group block">
+      {card}
+    </Link>
+  ) : (
+    card
   );
 }
 
@@ -270,15 +318,25 @@ export default function EconomicsPage() {
                 <FooterNote left="Each column = one FOMC meeting" right="Resolves post-FOMC" />
               </Card>
               <div className="flex flex-col gap-3.5">
-                {t.fed.rate_cuts && t.fed.rate_cuts.length > 0 && (
-                  <Card>
-                    <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-1.5">
-                      How many cuts in 2026?
-                    </div>
-                    <RateCutsChart cuts={t.fed.rate_cuts as [number, string][]} />
-                    <FooterNote left="Modal outcome highlighted" />
-                  </Card>
-                )}
+                {t.fed.rate_cuts && t.fed.rate_cuts.length > 0 && (() => {
+                  const cutsHref = econMarketHref(t.fed.rate_cuts_market_id);
+                  const cutsCard = (
+                    <Card className={cutsHref ? "group-hover:border-text-muted/40 transition-colors" : ""}>
+                      <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-1.5 group-hover:underline">
+                        How many cuts in 2026?
+                      </div>
+                      <RateCutsChart cuts={t.fed.rate_cuts as [number, string][]} />
+                      <FooterNote left="Modal outcome highlighted" />
+                    </Card>
+                  );
+                  return cutsHref ? (
+                    <Link href={cutsHref} data-testid="econ-rate-cuts-card-link" className="group block">
+                      {cutsCard}
+                    </Link>
+                  ) : (
+                    cutsCard
+                  );
+                })()}
                 {t.fed.side_markets && t.fed.side_markets.length > 0 && (
                   <Card>
                     <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-2">

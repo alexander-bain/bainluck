@@ -107,6 +107,7 @@ function renderDistributionBlock(dist: EconDistribution, key: string | number) {
       <ThresholdLadderCard
         key={key}
         meta={{
+          marketId: dist.market_id ?? null,
           marketTitle: dist.q,
           source: cleanSource(dist.src),
         }}
@@ -118,6 +119,7 @@ function renderDistributionBlock(dist: EconDistribution, key: string | number) {
     <BucketDistribution
       key={key}
       meta={{
+        marketId: dist.market_id ?? null,
         marketTitle: dist.q,
         source: cleanSource(dist.src),
       }}
@@ -199,6 +201,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
             {t.fed.rate_cuts && t.fed.rate_cuts.length > 0 && (
               <BucketDistribution
                 meta={{
+                  marketId: t.fed.rate_cuts_market_id ?? null,
                   kicker: "RATE CUTS",
                   marketTitle: "How many cuts in 2026?",
                   source: null,

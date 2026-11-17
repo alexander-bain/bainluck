@@ -1519,6 +1519,7 @@ async def get_economics(db: AsyncSession):
 
     fomc_meetings = []
     rate_cuts = []
+    rate_cuts_market_id: int | None = None
     rate_side = []
 
     # ─── The rate-path heatmap picks its own columns (#2870) ────────────────
@@ -1651,6 +1652,7 @@ async def get_economics(db: AsyncSession):
         name_lower = (m.name or "").lower()
         if "how many" in name_lower and ("cut" in name_lower or "hike" in name_lower):
             rate_cuts = _brackets_from_outcomes(m)
+            rate_cuts_market_id = m.id
         else:
             _row = _market_row(m)
             if _row:
@@ -2062,6 +2064,7 @@ async def get_economics(db: AsyncSession):
             "count": _fed_section_count,
             "fomc_meetings": fomc_meetings[:8],
             "rate_cuts": rate_cuts,
+            "rate_cuts_market_id": rate_cuts_market_id,
             "side_markets": rate_side[:6],
         },
         "inflation": {
