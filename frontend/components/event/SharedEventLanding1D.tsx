@@ -63,7 +63,7 @@ function futuresCategoryLabel(data: FeedFuturesData): string {
     return "Entertainment";
   }
   if (lower.includes("politic") || lower.includes("election")) return "Politics";
-  if (lower.includes("tech") || lower.includes("ai")) return "Tech";
+  if (lower.includes("tech") || /\bai\b/.test(lower)) return "Tech";
   if (lower.includes("weather") || lower.includes("climate")) return "Weather";
   return cat.replace(/_/g, " ");
 }
@@ -89,11 +89,13 @@ function SharedFuturesTeaserCard({ item }: { item: FeedItem }) {
     : normalizeSharedTeaserCopy(item.context_summary || item.headline || item.reason);
 
   let moveChip: string | null = null;
+  let movePositive = true;
   const movePts = movementPoints(leader.movement);
   if (movePts !== null) {
     const pts = Math.round(Math.abs(movePts));
     if (pts >= 2) {
-      moveChip = `${movePts > 0 ? "up" : "down"} ${pts} points`;
+      movePositive = movePts > 0;
+      moveChip = `${movePositive ? "up" : "down"} ${pts} points`;
     }
   }
 
@@ -108,7 +110,11 @@ function SharedFuturesTeaserCard({ item }: { item: FeedItem }) {
           <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
             <span>{futuresCategoryLabel(data)}</span>
             {moveChip && (
-              <span className="normal-case font-semibold text-accent-green">
+              <span
+                className={`normal-case font-semibold ${
+                  movePositive ? "text-accent-green" : "text-accent-danger"
+                }`}
+              >
                 · {moveChip}
               </span>
             )}
