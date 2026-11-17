@@ -9650,15 +9650,17 @@ celery_app.conf.beat_schedule = {
         "options": {"queue": "background"},
     },
     "refresh-espn-predictor": {
-        # #12824. Every 15 minutes: ESPN's predictor is served `max-age=900`,
-        # and direction 215 asks pregame numbers to be no older than our other
-        # pregame reads. Minutes 1/16/31/46 carried no other hourly-or-faster
-        # background crontab in the 2026-11-17 census of this schedule. The work
+        # #12824. About every 15 minutes: ESPN's predictor is served
+        # `max-age=900`, and direction 215 asks pregame numbers to be no older
+        # than our other pregame reads. :01/:16/:34/:49 (gaps 15/18/15/12 min)
+        # carried NO other background crontab, daily ones included, in the
+        # 2026-11-17 census; no exact quarter-hour set is free (:31 is the
+        # nightly settlement sweep's, `test_settlement_sweep_beat` G8). The work
         # is one board read per (league, Eastern day) holding a candidate and
         # one predictor read per matched game, with no DB session held across
         # the reads; the soft limit (300 s) is inside the 15-minute period.
         "task": "app.tasks.refresh_espn_predictor",
-        "schedule": crontab(minute="1,16,31,46"),
+        "schedule": crontab(minute="1,16,34,49"),
         "options": {"queue": "background"},
     },
     "stamp-soccer-statpal-fixtures-hourly": {
