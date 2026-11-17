@@ -2026,6 +2026,9 @@ def test_case17_v3_gap3_real_feed_serialization_dedup_and_display_chain_integrat
     assert rep_item_null["deadline_member"]["yes_probability"] == 0.245
     # In `_score_futures`, largest-remainder rounding on binary `(0.755, 0.245)` produces `(76, 24)`
     assert rep_item_null["deadline_member"]["yes_rendered_percent"] == 24
+    assert rep_item_null["deadline_member"]["source_mark"]["method"] == (
+        "The source gave 24.5%. The card rounds it to 24%."
+    )
     assert rep_item_null["deadline_member"]["movement_status"] == "no_stored_claim"
     # The family summary and the expanded members explain the same bound legs.
     # No is first in the source rows but the representative's number is Yes.

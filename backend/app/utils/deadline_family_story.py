@@ -1812,7 +1812,10 @@ def _deadline_yes_display_mark(
     if percent == rendered_percent(yes):
         return mark
     if abs(100 * yes - percent) <= 0.5 + 1e-8:
-        return {**mark, "method": f"The card rounds this Yes price to {percent}%"}
+        return {
+            **mark,
+            "method": f"The source gave {100 * yes:g}%. The card rounds it to {percent}%.",
+        }
     return conflict
 
 
