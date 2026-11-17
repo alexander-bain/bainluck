@@ -43,6 +43,38 @@ def test_public_movers_omit_unknown_and_flat_moves_but_keep_dated_and_other_sour
     assert [r["probability_change_24h"] for r in payload["movers"]] == pytest.approx([0.03, -0.56])
 
 
+@pytest.mark.parametrize("source", ["kalshi", "polymarket", "odds_api"])
+def test_a_withdrawn_current_price_cannot_keep_advertising_its_old_move(source):
+    from app.routes.futures import _movers_payload
+
+    # Public /movers on Nov 17 returned these three Kalshi nominees with null
+    # current probabilities, while their own detail withheld the moves too.
+    rows = []
+    for oid, name, change in [
+        (225945104, "Jared Verse", 0.605),
+        (225945105, "Jalen Carter", 0.60),
+        (225945106, "Pat Surtain II", 0.595),
+    ]:
+        row = _outcome(0.10, source=source, stored=change)
+        row.id, row.name, row.market_id = oid, name, 59164990
+        row.current_probability = None
+        rows.append(row)
+    assert _movers_payload(rows, 24) == {"movers": [], "timeframe_hours": 24}
+
+
+def test_a_real_zero_and_an_adjacent_priced_mover_are_not_withdrawals():
+    from app.routes.futures import _movers_payload
+
+    zero = _outcome(source="kalshi", stored=-0.60)
+    zero.current_probability = 0.0
+    healthy = _outcome(0.12)
+    missing = _outcome(source="kalshi")
+    missing.current_probability = None
+    payload = _movers_payload([zero, missing, healthy], 24)
+    assert [row["current_probability"] for row in payload["movers"]] == [0.0, 0.15]
+    assert [row["probability_change_24h"] for row in payload["movers"]] == pytest.approx([-0.60, 0.03])
+
+
 class _Result:
     def __init__(self, rows):
         self.rows = rows
@@ -76,17 +108,20 @@ async def test_daily_email_uses_dated_moves_without_sending_an_email():
     assert len(db.calls) == 2
 
 
-@pytest.mark.parametrize("basis,source,expected", [
-    (None, "polymarket", 0), (0.15, "polymarket", 0),
-    (0.12, "polymarket", 0), (0.40, "polymarket", 1),
-    (None, "kalshi", 1),
+@pytest.mark.parametrize("basis,source,probability,expected", [
+    (None, "polymarket", 0.15, 0), (0.15, "polymarket", 0.15, 0),
+    (0.12, "polymarket", 0.15, 0), (0.40, "polymarket", 0.15, 1),
+    (None, "kalshi", 0.15, 1),
+    (None, "kalshi", None, 0), (0.40, "polymarket", None, 0),
+    (None, "odds_api", None, 0), (None, "kalshi", 0.0, 1),
 ])
 async def test_big_move_alert_requires_the_dated_move_to_clear_its_threshold(
-    monkeypatch, basis, source, expected,
+    monkeypatch, basis, source, probability, expected,
 ):
     from app.tasks.push_notifications import _send_big_move_alerts
 
     row = _outcome(basis, source=source)
+    row.current_probability = probability
     nominee = (row.market_id, row.market.name, row.name, row.probability_change_24h,
                row.current_probability, row.id, source, row.market.market_metadata)
     # No pinned user: a valid nominee reaches the pin lookup, without any send.

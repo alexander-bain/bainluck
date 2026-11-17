@@ -1096,10 +1096,15 @@ def _movers_payload(outcomes, hours: int) -> dict:
     # basis must support the move before it may appear in the public list.
     outcomes = [
         o for o in outcomes
-        if getattr(o.market, "source", None) != "polymarket"
-        or reader_change_24h(
-            o.market, o.id, o.current_probability, o.probability_change_24h
-        ) not in (None, 0)
+        # #12658: a retained delta cannot advertise a move after its current
+        # price was withdrawn. This applies to every venue, including Kalshi.
+        if o.current_probability is not None
+        and (
+            getattr(o.market, "source", None) != "polymarket"
+            or reader_change_24h(
+                o.market, o.id, o.current_probability, o.probability_change_24h
+            ) not in (None, 0)
+        )
     ]
     return {
         "movers": [
