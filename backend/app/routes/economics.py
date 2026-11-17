@@ -35,7 +35,7 @@ from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 from app.utils.inflation_release_identity import fold_same_release
 from app.utils.ladder_monotonicity import INC, cumulative_outcome_ladder, parse_threshold
 from app.utils.feed_market_quality import book_bounds_nothing, is_fabricated_midpoint
-from app.utils.futures_liveness import market_reads_settled
+from app.utils.futures_liveness import leg_is_graded, market_reads_settled
 from app.utils.economics_headline import (
     LadderCandidate,
     RecessionCandidate,
@@ -868,6 +868,21 @@ def _ladder_rungs_in_threshold_order(market: FuturesMarket) -> list:
     return out
 
 
+def _ladder_rung_is_reached(outcome) -> bool:
+    """True when the venue has authoritatively settled this threshold rung as won (#12093)."""
+    if outcome is None:
+        return False
+    if getattr(outcome, "is_winner", None) is True:
+        return True
+    return (
+        leg_is_graded(
+            getattr(outcome, "is_winner", None),
+            getattr(outcome, "resolution_source", None),
+        )
+        and float(getattr(outcome, "current_probability", None) or 0) >= 1.0
+    )
+
+
 def _distribution_row(
     market: FuturesMarket, *, min_outcomes: int = 6
 ) -> dict | None:
@@ -887,27 +902,43 @@ def _distribution_row(
     outcomes = list(market.outcomes)
     if len(outcomes) < min_outcomes:
         return None
-    if not any(float(o.current_probability or 0) > 0 for o in outcomes):
+    if not any(
+        float(o.current_probability or 0) > 0 or _ladder_rung_is_reached(o)
+        for o in outcomes
+    ):
         return None
 
+    reached_labels: list[str] = []
     if _is_cumulative_ladder(market):
         kind = "ladder"
-        rows = [
-            [round(float(o.current_probability or 0) * 100, 1), (o.name or "").strip()]
-            for o in _ladder_rungs_in_threshold_order(market)
-            if (o.name or "").strip()
-        ]
+        rows = []
+        for o in _ladder_rungs_in_threshold_order(market):
+            label = (o.name or "").strip()
+            if not label:
+                continue
+            if _ladder_rung_is_reached(o):
+                reached_labels.append(label)
+                rows.append([100.0, label])
+                continue
+            if not _rung_is_quoted(o):
+                continue
+            rows.append([round(float(o.current_probability or 0) * 100, 1), label])
+        if not rows:
+            return None
     else:
         kind = "brackets"
         rows = _brackets_from_outcomes(market)
 
-    return {
+    payload = {
         "q": market.name,
         "kind": kind,
         "rows": rows,
         "src": _source(market) or None,
         "market_id": market.id,
     }
+    if reached_labels:
+        payload["reached_labels"] = reached_labels
+    return payload
 
 
 def _brackets_from_outcomes(market: FuturesMarket, normalize: bool = True) -> list[list]:

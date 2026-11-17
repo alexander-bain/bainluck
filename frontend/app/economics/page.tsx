@@ -7,11 +7,13 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import {
   SectionHeader, Card, MarketRow, FooterNote,
   ProbNum, ProbBar, Histogram, Delta, probColor, orderNumericBuckets,
+  formatFedHeatmapCell, filterMonotoneLadderRows,
 } from "@/components/economics/atoms";
 import ErrorState from "@/components/ErrorState";
 import EconomicsSkeleton from "@/components/skeletons/EconomicsSkeleton";
 import { fetchEconomics } from "@/lib/api";
 import { heatmapMinWidth, ratePathHeading } from "@/lib/fedRatePath";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { EconData, EconDistribution } from "@/lib/api";
 import EconomicsAtlasView from "@/components/economics/EconomicsAtlasView";
 import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
@@ -92,6 +94,7 @@ function FedHeatmap({ meetings }: { meetings: any[] }) {
                   d[0] > (m.dist[best]?.[0] || 0) ? i : best, 0) || 0;
                 const isModal = m.dist?.[modal]?.[1] === r;
                 const href = econMarketHref(m.market_id);
+                const cellText = formatFedHeatmapCell(prob, Boolean(m.resolved));
                 const cellStyle = {
                   height: 38,
                   background: cellColor(prob),
@@ -103,11 +106,11 @@ function FedHeatmap({ meetings }: { meetings: any[] }) {
                     key={mi}
                     href={href}
                     data-testid="fed-heatmap-cell-link"
-                    aria-label={`${m.mo || m.date} FOMC ${r}: ${prob}%`}
+                    aria-label={`${m.mo || m.date} FOMC ${r}: ${cellText || `${prob}%`}`}
                     className="flex items-center justify-center rounded font-mono text-[11px] font-semibold hover:opacity-85 transition-opacity"
                     style={cellStyle}
                   >
-                    {prob > 0 ? prob : ""}
+                    {cellText}
                   </Link>
                 ) : (
                   <div
@@ -115,7 +118,7 @@ function FedHeatmap({ meetings }: { meetings: any[] }) {
                     className="flex items-center justify-center rounded font-mono text-[11px] font-semibold"
                     style={cellStyle}
                   >
-                    {prob > 0 ? prob : ""}
+                    {cellText}
                   </div>
                 );
               })}
@@ -163,20 +166,46 @@ function RateCutsChart({ cuts }: { cuts: [number, string][] }) {
 /** Cumulative "at least X" thresholds. Each row is an independent probability
  *  of clearing its own bar, so they legitimately sum past 100% and are scaled
  *  against 100, never against each other. */
-function ThresholdLadder({ rows }: { rows: [number, string][] }) {
-  const ordered = orderNumericBuckets(rows);
+function ThresholdLadder({
+  rows,
+  reachedLabels,
+}: {
+  rows: [number, string][];
+  reachedLabels?: string[];
+}) {
+  const reachedSet = new Set((reachedLabels ?? []).map((s) => s.trim()));
+  const ordered = filterMonotoneLadderRows(orderNumericBuckets(rows), reachedSet);
+  const rightColWidth = reachedSet.size > 0 ? "68px" : "44px";
   return (
     <div className="flex flex-col gap-1.5 mt-1">
       {ordered.map(([prob, label], i) => {
-        const col = probColor(prob);
+        const isReached = reachedSet.has(label.trim());
+        const col = isReached ? "#10B981" : probColor(prob);
+        const displayPct = isReached
+          ? "✓ Reached"
+          : formatProbabilityPercent(prob / 100, { rendered: Math.round(prob) });
         return (
-          <div key={i} className="grid items-center gap-2" style={{ gridTemplateColumns: "1fr 90px 40px" }}>
+          <div
+            key={i}
+            className="grid items-center gap-2"
+            style={{ gridTemplateColumns: `1fr 82px ${rightColWidth}` }}
+          >
             <span className="text-[12px] text-text-secondary leading-snug min-w-0 truncate">{label}</span>
             <div className="h-[5px] bg-surface-secondary rounded-full overflow-hidden">
-              <div className="h-full rounded-full" style={{ width: `${Math.max(prob, 1.5)}%`, background: col }} />
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: isReached ? "100%" : `${Math.min(100, Math.max(prob, 1.5))}%`,
+                  background: col,
+                  opacity: isReached ? 0.5 : 1,
+                }}
+              />
             </div>
-            <span className="font-mono text-[12px] font-semibold text-right" style={{ color: col }}>
-              {Math.round(prob)}%
+            <span
+              className="font-mono text-[12px] font-semibold text-right whitespace-nowrap"
+              style={{ color: isReached ? "var(--text-secondary)" : col }}
+            >
+              {displayPct}
             </span>
           </div>
         );
@@ -195,7 +224,7 @@ function DistributionCard({ dist }: { dist: EconDistribution }) {
         <div className="text-[13px] font-semibold text-text-primary leading-snug group-hover:underline">{dist.q}</div>
       </div>
       {isLadder
-        ? <ThresholdLadder rows={dist.rows} />
+        ? <ThresholdLadder rows={dist.rows} reachedLabels={dist.reached_labels} />
         : <Histogram buckets={dist.rows} color="#10B981" />}
       <FooterNote
         left={isLadder ? "Chance of clearing each threshold" : `${dist.rows.length} brackets`}
