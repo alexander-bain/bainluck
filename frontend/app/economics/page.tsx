@@ -33,7 +33,9 @@ function FedHeatmap({ meetings }: { meetings: any[] }) {
 
   const allLabels = new Set<string>();
   meetings.forEach(m => m.dist?.forEach((d: any) => allLabels.add(d[1])));
-  const rates = Array.from(allLabels).sort().reverse();
+  const rates = orderNumericBuckets(Array.from(allLabels).map((r) => [0, r] as [number, string]))
+    .map(([, r]) => r)
+    .reverse();
 
   const get = (m: any, r: string) => {
     const found = m.dist?.find((d: any) => d[1] === r);
@@ -132,12 +134,13 @@ function FedHeatmap({ meetings }: { meetings: any[] }) {
 
 function RateCutsChart({ cuts }: { cuts: [number, string][] }) {
   if (!cuts.length) return null;
+  const orderedCuts = orderNumericBuckets(cuts);
   // Floor the divisor: an all-zero field makes prob/max NaN, which the browser
   // drops from the style declaration silently — no error, no bar.
-  const max = Math.max(...cuts.map(c => c[0]), 0.1);
+  const max = Math.max(...orderedCuts.map(c => c[0]), 0.1);
   return (
     <div className="flex flex-col gap-2 mt-2">
-      {cuts.map(([prob, label], i) => {
+      {orderedCuts.map(([prob, label], i) => {
         const w = (prob / max) * 100;
         const col = probColor(prob);
         const isModal = prob === max;

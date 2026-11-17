@@ -21,6 +21,8 @@
  * SHAPE_TO_KERNEL so the two never drift.
  */
 
+import { numericalScaleOrderIndices } from "./numericalScaleOrder";
+
 export const SHAPE_CLAIM = "claim";
 export const SHAPE_QUANTITY = "quantity";
 export const SHAPE_DUEL = "duel";
@@ -135,6 +137,12 @@ export function resolveShapeFallback(signal: ShapeSignal): MarketShape | null {
   const named = names.filter((nm) => !YES_NO.has(nm));
   const numeric = named.filter((nm) => NUMERIC_OUTCOME_RE.test(nm)).length;
   if (numeric >= 2 && numeric * 2 >= named.length) return SHAPE_QUANTITY;
+  if (
+    named.length >= 2 &&
+    numericalScaleOrderIndices(named.map((name) => ({ name }))) !== null
+  ) {
+    return SHAPE_QUANTITY;
+  }
 
   const isYesNo = names.every((nm) => YES_NO.has(nm));
   const groupSize = signal.groupSize ?? 1;

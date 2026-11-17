@@ -121,15 +121,15 @@ describe("#9574 — tied rungs keep the ladder's order", () => {
     expect(names(sorted)).toEqual(["Under 105", "Under 100", "Under 98", "Under 95"]);
   });
 
-  test("the ladder bars and the table agree on the brent tie", () => {
+  test("the ladder bars and the table agree on the brent tie (Direction 228 ascending numerical order)", () => {
     const rungs = buildOutcomeLadderRungs(BRENT, "cumulative");
-    // Ascending probability, least inclusive first.
+    // Direction 228 (#12885): numerical-scale ladders run ascending by value, matching the table above.
     expect(rungs.map((r) => r.label)).toEqual([
-      "Above $104.50",
-      "Above $104",
-      "Above $103",
-      "Above $102.50",
       "Above $101",
+      "Above $102.50",
+      "Above $103",
+      "Above $104",
+      "Above $104.50",
     ]);
   });
 

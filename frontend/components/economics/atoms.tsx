@@ -6,6 +6,7 @@ import {
   ABOVE_NINETY_NINE_PERCENT,
   BELOW_ONE_PERCENT,
 } from "@/lib/probabilityDisplay";
+import { parseNumericalScaleKey } from "@/lib/numericalScaleOrder";
 
 export function formatFedHeatmapCell(prob: number, resolved?: boolean): string {
   if (!Number.isFinite(prob) || prob <= 0) return "";
@@ -250,6 +251,10 @@ export function parseNumericBucketSortKey(label: string): [number, number, numbe
     const v = parseFloat(m[1].replace(/,/g, "")) * bucketUnitMult(m[2]);
     return [v, 0, v];
   }
+  const fallbackScale = parseNumericalScaleKey(s);
+  if (fallbackScale) {
+    return [fallbackScale.primary, fallbackScale.boundRank, fallbackScale.secondary];
+  }
   return null;
 }
 
@@ -285,7 +290,10 @@ export function Histogram({ buckets, color }: {
   // above the bar, unstripped (the leading `Headline:` names a leg; it is not
   // boilerplate) and wrapping rather than truncating.
   const stacked = buckets.some(b => label(b[1]).length > SIDE_LABEL_MAX_CHARS);
-  const ordered = stacked ? buckets : orderNumericBuckets(buckets);
+  // Direction 228 (#12885): numeric/count/rate buckets order numerically even
+  // when stacked; combo legs with `,` and `:` return null in parseNumericBucketSortKey
+  // so `orderNumericBuckets` leaves combo markets untouched.
+  const ordered = orderNumericBuckets(buckets);
   const max = Math.max(...ordered.map(b => b[0]));
   const peak = ordered.reduce((best, b, i) => (b[0] > ordered[best][0] ? i : best), 0);
   if (stacked) {
