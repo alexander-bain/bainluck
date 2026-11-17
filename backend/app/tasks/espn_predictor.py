@@ -79,6 +79,20 @@ UNREFRESHED_READING_LIMIT = timedelta(hours=2)
 #: no value and so does not count.
 PRICE_SOURCES: tuple[str, ...] = ("betting", "kalshi", "polymarket")
 
+#: The off switch. ``withdraw`` makes a run REMOVE the ESPN reading from every
+#: scheduled game in scope instead of reading ESPN, which is the clean rollback:
+#: a plain revert would leave the last readings standing, and before kickoff the
+#: blend never ages them. Run once in ``withdraw``, then revert. Set as the
+#: ``ESPN_PREDICTOR_MODE`` config var (Alex) or by changing this default.
+DEFAULT_MODE = "on"
+
+
+def predictor_mode() -> str:
+    import os
+
+    mode = (os.environ.get("ESPN_PREDICTOR_MODE") or DEFAULT_MODE).strip().lower()
+    return "withdraw" if mode == "withdraw" else "on"
+
 
 @dataclass(frozen=True)
 class PredictorRow:
@@ -376,13 +390,20 @@ async def _run_refresh_espn_predictor() -> dict:
             for r in result.all()
         ]
     stats["candidates"] = len(rows)
-    rows = [row for row in rows if wants_reading(row)]
+    stats["mode"] = predictor_mode()
+    if stats["mode"] == "withdraw":
+        rows = [row for row in rows if "espn" in (row.sources or {})]
+    else:
+        rows = [row for row in rows if wants_reading(row)]
     stats["wanted"] = len(rows)
     if not rows:
         stats["status"] = "no_candidates"
         return stats
 
-    plans = await _read_espn(rows, now, stats)
+    if stats["mode"] == "withdraw":
+        plans = {row.event_id: ("remove", "switched-off") for row in rows}
+    else:
+        plans = await _read_espn(rows, now, stats)
 
     async with get_task_session(reuse_publication_client=True) as session:
         for row in rows:

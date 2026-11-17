@@ -309,3 +309,51 @@ async def test_one_failed_write_does_not_cost_the_rest(monkeypatch):
     stats = await ep._run_refresh_espn_predictor()
     assert writes == [2]
     assert stats["write_errors"] == 1 and session.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_withdraw_mode_removes_every_reading_and_reads_nothing(monkeypatch):
+    """The rollback: a revert alone would leave pregame readings frozen."""
+    from contextlib import asynccontextmanager
+
+    rows = [
+        _db_row(1, {"espn": _entry(0.2, NOW)}),
+        _db_row(2, {"betting": _entry(0.6, NOW), "espn": _entry(0.3, NOW)}),
+        _db_row(3, {}),
+        _db_row(4, {"betting": _entry(0.6, NOW)}),
+    ]
+    session = _FakeSession(rows)
+
+    @asynccontextmanager
+    async def fake_session(**_kw):
+        yield session
+
+    async def must_not_read(*_a, **_k):
+        raise AssertionError("withdraw mode must not read ESPN")
+
+    writes = []
+
+    async def fake_write(session_, target, source, value, **kw):
+        writes.append((target.id, source, value))
+
+    async def fake_publish(_session):
+        return None
+
+    monkeypatch.setenv("ESPN_PREDICTOR_MODE", "withdraw")
+    monkeypatch.setattr("app.tasks.base.get_task_session", fake_session)
+    monkeypatch.setattr(ep, "_read_espn", must_not_read)
+    monkeypatch.setattr("app.utils.nonvenue_live_push.write_nonvenue_probability", fake_write)
+    monkeypatch.setattr("app.utils.nonvenue_live_push.publish_committed_nonvenue_frames", fake_publish)
+
+    stats = await ep._run_refresh_espn_predictor()
+    assert writes == [(1, "espn", None), (2, "espn", None)]
+    assert stats["mode"] == "withdraw" and stats["removed"] == 2
+
+
+def test_mode_defaults_on_and_only_withdraw_switches_it(monkeypatch):
+    monkeypatch.delenv("ESPN_PREDICTOR_MODE", raising=False)
+    assert ep.predictor_mode() == "on"
+    monkeypatch.setenv("ESPN_PREDICTOR_MODE", "nonsense")
+    assert ep.predictor_mode() == "on"
+    monkeypatch.setenv("ESPN_PREDICTOR_MODE", " Withdraw ")
+    assert ep.predictor_mode() == "withdraw"
