@@ -14178,7 +14178,7 @@ def _discover_candidate_pool_specs(
         ),
     ]
     if not category_filter:
-        from app.utils.futures_liveness import VENUE_SETTLED_KEY
+        from app.utils.futures_liveness import BOOK_REFUSED_KEY, VENUE_SETTLED_KEY
 
         base_filters.extend(
             [
@@ -14190,6 +14190,12 @@ def _discover_candidate_pool_specs(
                 # in `market_reads_settled` is for grading a market settled, not
                 # for featuring it. Category pages keep that rule.
                 FuturesMarket.market_metadata[VENUE_SETTLED_KEY].astext.is_(None),
+                # Ruling 198-B (Nov 15): a market whose current book the price
+                # writer refused on two reads in a row is not featured. It keeps
+                # its number, with "As of", on its own page and on category
+                # pages (this branch is Discover only). The writer clears the
+                # stamp on the first accepted price.
+                FuturesMarket.market_metadata[BOOK_REFUSED_KEY].astext.is_(None),
             ]
         )
 
