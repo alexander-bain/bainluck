@@ -469,6 +469,26 @@ enum PeriodLabel {
             token == "ot" || (token.count <= 3 && token.hasSuffix("ot") && token.dropLast(2).allSatisfy(\.isNumber))
         }
     }
+
+    /// Whether a served soccer period string represents in-play regulation
+    /// (1st/2nd half, halftime, minute 0–90, or 45+/90+ stoppage).
+    nonisolated static func isSoccerRegulationPeriod(_ raw: String?) -> Bool {
+        let text = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let regPhases: Set<String> = [
+            "1st half", "2nd half", "first half", "second half",
+            "1h", "2h", "ht", "halftime", "half time", "half-time",
+        ]
+        if regPhases.contains(text) { return true }
+        let stripped = text.replacingOccurrences(of: "'", with: "").replacingOccurrences(of: " ", with: "")
+        if let plusIdx = stripped.firstIndex(of: "+") {
+            let minPart = String(stripped[..<plusIdx])
+            let stopPart = String(stripped[stripped.index(after: plusIdx)...])
+            guard let m = Int(minPart), let s = Int(stopPart), s >= 0, s <= 99 else { return false }
+            return m == 45 || m == 90
+        }
+        guard let m = Int(stripped), m >= 0 else { return false }
+        return m <= 90
+    }
 }
 
 // MARK: - Halves inferred from a gap (#3317)

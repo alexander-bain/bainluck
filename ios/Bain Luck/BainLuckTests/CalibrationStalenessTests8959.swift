@@ -123,7 +123,7 @@ final class CalibrationStalenessTests8959: XCTestCase {
 
     func testAnEmptiedBankSaysSoAndStatesTheEarnedCadence() throws {
         // #5185 + the cadence control: the beat is proven landing, so "The curve
-        // rebuilds hourly." is true here and must be said — deleting the sentence
+        // rebuilds daily." is true here and must be said — deleting the sentence
         // is not a fix for it once being wrong.
         let vm = try model(Self.payload(
             staged: #"{"measured": false, "reason": "served_bank_empty"}"#))
@@ -132,7 +132,7 @@ final class CalibrationStalenessTests8959: XCTestCase {
         XCTAssertEqual(
             vm.staleBannerDetail,
             "These numbers were built \(try when(Self.prodGeneratedAt)) (22 min ago). "
-                + "The curve rebuilds hourly. "
+                + "The curve rebuilds daily. "
                 + "The market data behind it is being gathered again from scratch, so it has no date to show. "
                 + "We’d rather say so than call these numbers current."
         )
@@ -162,7 +162,15 @@ final class CalibrationStalenessTests8959: XCTestCase {
             producer: #"{"stalled": true, "beats_missed": 1130, "age_s": 4070000}"#,
             staged: #"{"measured": false}"#))
         let detail = try XCTUnwrap(vm.staleBannerDetail)
-        XCTAssertTrue(detail.contains("(47 days ago). 1,130 hourly rebuilds have come and gone without a new snapshot. "), detail)
+        XCTAssertTrue(detail.contains("(47 days ago). 1,130 daily rebuilds have come and gone without a new snapshot. "), detail)
+    }
+
+    func testMissingGeneratedAtDropsUpdatedHourly7612() throws {
+        let undated = try model(Self.payload(generatedAt: nil))
+        XCTAssertNil(undated.updatedLabel, "#7612: missing generated_at must omit Updated rather than saying 'Updated hourly'")
+        let dated = try model(Self.payload())
+        XCTAssertNotNil(dated.updatedLabel)
+        XCTAssertFalse(dated.updatedLabel?.localizedCaseInsensitiveContains("hourly") == true)
     }
 
     // MARK: - Precedence

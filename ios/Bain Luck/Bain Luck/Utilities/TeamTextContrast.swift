@@ -149,4 +149,15 @@ enum TeamTextContrast {
         )
         return (Color(hex: hexes.away), Color(hex: hexes.home))
     }
+
+    /// Ruling 214-A1 (`#12808` Fable note): on quiet pregame/projection lines, a team
+    /// whose Ruling-197 colour fell back to slate (`#64748B`) prints one shade darker
+    /// (`#475569`, matching the website) so it reads clearly distinct from `"Pregame"`.
+    static let quietLineSlateFallbackHex = "#475569"
+
+    static func quietLineHex(_ resolvedCardHex: String) -> String {
+        resolvedCardHex.uppercased() == ProbabilityBarPalette.awayDefault.uppercased()
+            ? quietLineSlateFallbackHex
+            : resolvedCardHex
+    }
 }

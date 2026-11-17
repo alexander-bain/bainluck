@@ -1,5 +1,8 @@
 import Foundation
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Rulings 213-A + 214-A1 — shared live pregame summary resolver for phone cards
 /// (`FeedEventData` on Discover, feed, and search) and shared single-line
@@ -143,8 +146,28 @@ struct LivePregameSummaryRow214A1: View {
 
     /// Neutral quiet connector grey (`#767C85`, regular weight) so connecting prose
     /// (`" · projected "`, `"–"`) stays visually lighter and neutral beside a team on
-    /// Ruling 197's `#64748B` cool slate fallback.
+    /// Ruling 197's `#475569` darkened slate fallback.
     private static let connectorInk = Color(red: 118.0 / 255.0, green: 124.0 / 255.0, blue: 133.0 / 255.0)
+    private static let slate600Ink = Color(red: 71.0 / 255.0, green: 85.0 / 255.0, blue: 105.0 / 255.0)
+
+    /// Fable #12808 note: when Ruling 197 fell back to `#64748B` (`100, 116, 139`),
+    /// print team text on the quiet pregame line in `#475569` (`71, 85, 105`) to match
+    /// the website and separate clearly from `"Pregame"`.
+    private static func quietLineTeamColor(_ color: Color) -> Color {
+        #if canImport(UIKit)
+        var r: CGFloat = 0
+        var g: CGFloat = 0
+        var b: CGFloat = 0
+        var a: CGFloat = 0
+        if UIColor(color).getRed(&r, green: &g, blue: &b, alpha: &a),
+           abs(r - 100.0 / 255.0) < 0.012,
+           abs(g - 116.0 / 255.0) < 0.012,
+           abs(b - 139.0 / 255.0) < 0.012 {
+            return slate600Ink
+        }
+        #endif
+        return color
+    }
 
     var body: some View {
         composedText
@@ -160,7 +183,9 @@ struct LivePregameSummaryRow214A1: View {
     }
 
     private var composedText: Text {
-        summary.segments.reduce(Text("")) { partial, seg in
+        let awayInk = Self.quietLineTeamColor(colors.away)
+        let homeInk = Self.quietLineTeamColor(colors.home)
+        return summary.segments.reduce(Text("")) { partial, seg in
             switch seg.ink {
             case .quietLead:
                 return partial + Text(seg.text)
@@ -173,11 +198,11 @@ struct LivePregameSummaryRow214A1: View {
             case .awayTeam:
                 return partial + Text(seg.text)
                     .fontWeight(.bold)
-                    .foregroundColor(colors.away)
+                    .foregroundColor(awayInk)
             case .homeTeam:
                 return partial + Text(seg.text)
                     .fontWeight(.bold)
-                    .foregroundColor(colors.home)
+                    .foregroundColor(homeInk)
             case .drawOutcome:
                 return partial + Text(seg.text)
                     .fontWeight(.bold)
