@@ -2254,6 +2254,9 @@ export default function EventPage({ params }: EventPageProps) {
   // "Connected" takes this value.
   // The header badge's age (`heroStampInputs`) is the source-staleness policy,
   // not a confirmation claim, and keeps the raw stream value unchanged.
+  // #12822 — before kickoff, Chance prints whole percents on every surface;
+  // during play (`effectivelyLive`), Now and the chart callout keep tenths.
+  const liveTenthsActive = tenthsOptIn && effectivelyLive;
   const admittedPreviewProbability = displayedPreview(blendPreview, event, blendPreviewNow);
   const committedPrinted = (() => {
     if (admittedPreviewProbability === null) return null;
@@ -2262,13 +2265,13 @@ export default function EventPage({ params }: EventPageProps) {
     return heroPrintedPair({
       homeProb: committed.homeProb, awayProb: printableAway(committed.awayProb, event.sport),
       homePct: committed.homePct, awayPct: printableAway(committed.awayPct, event.sport),
-      awayWithheld: awaySlotWithheld, venueSettled: venueSettledSentence !== null, tenths: tenthsOptIn,
+      awayWithheld: awaySlotWithheld, venueSettled: venueSettledSentence !== null, tenths: liveTenthsActive,
     });
   })();
   const confirmedAtShown = confirmationOfDisplayed(streamConfirmedAt, committedPrinted && {
     shown: heroPrintedPair({
       homeProb, awayProb, homePct, awayPct,
-      awayWithheld: awaySlotWithheld, venueSettled: venueSettledSentence !== null, tenths: tenthsOptIn,
+      awayWithheld: awaySlotWithheld, venueSettled: venueSettledSentence !== null, tenths: liveTenthsActive,
     }),
     committed: committedPrinted,
   });
@@ -3240,7 +3243,7 @@ export default function EventPage({ params }: EventPageProps) {
               homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
               awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
               awayWithheld={awaySlotWithheld}
-              tenths={tenthsOptIn}
+              tenths={liveTenthsActive}
               atlasMode={atlasOptIn}
               settledWinnerSide={atlasSettledWinnerSide}
               /* #9483 — NFL and NBA: both teams' lines (design freeze v328). */
@@ -3898,7 +3901,7 @@ export default function EventPage({ params }: EventPageProps) {
               /* #6238 — the fullscreen chart is the same chart. A reader who
                  taps expand must not get the withheld number back. */
               awayWithheld={awaySlotWithheld}
-              tenths={tenthsOptIn}
+              tenths={liveTenthsActive}
               atlasMode={atlasOptIn}
               settledWinnerSide={atlasSettledWinnerSide}
               pairedAwayLine={storyCardsOn}

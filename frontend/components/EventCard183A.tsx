@@ -1268,6 +1268,14 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
     home_prob: rawHome,
     away_prob: rawAway,
     draw_prob: rawDraw,
+    served_home_pct:
+      probWithheld || event.hero_probability != null
+        ? null
+        : (event.current_odds?.home_rendered_percent ?? null),
+    served_away_pct:
+      probWithheld || event.hero_probability_away != null
+        ? null
+        : (event.current_odds?.away_rendered_percent ?? null),
     pregame_home_pct: openHome,
     pregame_away_pct: openAway,
     pregame_draw_pct: openDrawPct,
@@ -1833,6 +1841,13 @@ export default function EventCard183A({
       : formatBoundedWholePct(drawWholePct, inferredDraw);
 
   const hasScoreOrSets = hasScore || hasTennisSetBoxes;
+  const denseTennisSets = hasTennisSetBoxes && card.tennis_sets!.length >= 3;
+  const primaryColWidthClass = isLive
+    ? denseTennisSets
+      ? "min-w-[60px]"
+      : "min-w-[70px]"
+    : "min-w-[58px]";
+  const liveNowFontClass = denseTennisSets ? "text-[18.5px]" : "text-[22px]";
   const teamFontClass = sharedGameCardTeamFontClass(awayShort, homeShort, hasScoreOrSets);
 
   return (
@@ -1892,21 +1907,21 @@ export default function EventCard183A({
           {hasTennisSetBoxes && (
             <div className="flex items-center gap-1" data-testid="tennis-score-strip">
               {card.tennis_sets!.map((_, idx) => (
-                <span key={idx} className="w-5 text-center">
+                <span key={idx} className="min-w-[22px] text-center whitespace-nowrap">
                   S{idx + 1}
                 </span>
               ))}
-              {showTennisPointsBox && <span className="ml-0.5 w-7 text-right">Pts</span>}
+              {showTennisPointsBox && <span className="ml-0.5 min-w-[28px] text-right whitespace-nowrap">Pts</span>}
             </div>
           )}
           {hasScore && (
-            <span className="w-9 text-right" data-testid="col-header-score">
+            <span className="min-w-[38px] text-right whitespace-nowrap" data-testid="col-header-score">
               {tennis ? "Sets" : "Score"}
             </span>
           )}
           {showProjCol && (
             <span
-              className={`w-12 text-right ${hasScoreOrSets ? "ml-[12px]" : ""}`}
+              className={`min-w-[48px] text-right whitespace-nowrap ${hasScoreOrSets ? "ml-[12px]" : ""}`}
               data-testid="col-header-proj"
             >
               Proj.
@@ -1914,14 +1929,14 @@ export default function EventCard183A({
           )}
           {showPregameCol && (
             <span
-              className={`w-12 text-right ${hasScoreOrSets ? "ml-[14px]" : ""}`}
+              className={`min-w-[48px] text-right whitespace-nowrap ${hasScoreOrSets ? "ml-[14px]" : ""}`}
               data-testid="col-header-pregame"
             >
               Pregame
             </span>
           )}
           <span
-            className={`ml-[16px] ${isLive ? "w-[66px]" : "w-[58px]"} text-right text-text-secondary`}
+            className={`ml-[14px] ${primaryColWidthClass} text-right whitespace-nowrap text-text-secondary`}
             data-testid="col-header-now"
           >
             {isLive ? "Now" : isDone ? "Final" : "Chance"}
@@ -1978,7 +1993,7 @@ export default function EventCard183A({
                   return (
                     <span
                       key={idx}
-                      className={`w-5 text-center text-[15px] ${
+                      className={`min-w-[22px] text-center whitespace-nowrap text-[15px] ${
                         s.current
                           ? "rounded bg-surface-elevated font-bold text-text-primary"
                           : wonSet
@@ -1994,20 +2009,20 @@ export default function EventCard183A({
                   );
                 })}
                 {showTennisPointsBox && (
-                  <span className="ml-0.5 w-7 text-right text-xs font-semibold text-text-secondary">
+                  <span className="ml-0.5 min-w-[28px] text-right whitespace-nowrap text-xs font-semibold text-text-secondary">
                     {card.tennis_game_points!.away}
                   </span>
                 )}
               </div>
             )}
             {hasScore && (
-              <span className="w-9 text-right text-[16.5px] font-semibold text-text-primary">
+              <span className="min-w-[38px] text-right whitespace-nowrap text-[16.5px] font-semibold text-text-primary">
                 {card.away_score}
               </span>
             )}
             {showProjCol && (
               <span
-                className={`w-12 text-right ${
+                className={`min-w-[48px] text-right whitespace-nowrap ${
                   isLive
                     ? "ml-[12px] text-[16.5px] font-semibold text-text-primary"
                     : "text-[16px] font-semibold text-text-secondary"
@@ -2019,7 +2034,7 @@ export default function EventCard183A({
             )}
             {showPregameCol && (
               <span
-                className={`w-12 text-right text-[14px] font-normal text-text-muted ${
+                className={`min-w-[48px] text-right whitespace-nowrap text-[14px] font-normal text-text-muted ${
                   hasScoreOrSets ? "ml-[14px]" : ""
                 }`}
               >
@@ -2027,16 +2042,16 @@ export default function EventCard183A({
               </span>
             )}
             <span
-              className={`ml-[16px] text-right ${
+              className={`ml-[14px] ${primaryColWidthClass} text-right whitespace-nowrap ${
                 isDone
                   ? awayWon
-                    ? "w-[58px] text-[18px] font-extrabold text-text-primary"
+                    ? "text-[18px] font-extrabold text-text-primary"
                     : finishedLevelDraw
-                      ? "w-[58px] text-[18px] font-bold text-text-primary"
-                      : "w-[58px] text-[18px] font-medium text-text-muted"
+                      ? "text-[18px] font-bold text-text-primary"
+                      : "text-[18px] font-medium text-text-muted"
                   : isLive
-                    ? "w-[66px] text-[22px] font-extrabold leading-none"
-                    : "w-[58px] text-[18px] font-bold"
+                    ? `${liveNowFontClass} font-extrabold leading-none`
+                    : "text-[18px] font-bold"
               }`}
               style={{
                 color:
@@ -2086,10 +2101,10 @@ export default function EventCard183A({
               )}
             </div>
             <div className="flex shrink-0 items-baseline tabular-nums">
-              {hasScore && <span className="w-9 text-right text-xs text-text-muted">—</span>}
+              {hasScore && <span className="min-w-[38px] text-right whitespace-nowrap text-xs text-text-muted">—</span>}
               {showProjCol && (
                 <span
-                  className={`w-12 text-right text-xs text-text-muted ${
+                  className={`min-w-[48px] text-right whitespace-nowrap text-xs text-text-muted ${
                     hasScoreOrSets ? "ml-[12px]" : ""
                   }`}
                 >
@@ -2098,7 +2113,7 @@ export default function EventCard183A({
               )}
               {showPregameCol && (
                 <span
-                  className={`w-12 text-right text-[14px] font-normal text-text-muted ${
+                  className={`min-w-[48px] text-right whitespace-nowrap text-[14px] font-normal text-text-muted ${
                     hasScoreOrSets ? "ml-[14px]" : ""
                   }`}
                 >
@@ -2106,12 +2121,12 @@ export default function EventCard183A({
                 </span>
               )}
               <span
-                className={`ml-[16px] text-right ${
+                className={`ml-[14px] ${primaryColWidthClass} text-right whitespace-nowrap ${
                   isDone
-                    ? "w-[58px] text-[15px] font-normal text-text-muted"
+                    ? "text-[15px] font-normal text-text-muted"
                     : isLive
-                      ? "w-[66px] text-[17px] font-bold text-text-secondary"
-                      : "w-[58px] text-[16px] font-bold text-text-secondary"
+                      ? "text-[17px] font-bold text-text-secondary"
+                      : "text-[16px] font-bold text-text-secondary"
                 }`}
               >
                 {drawPrimaryDisplay}
@@ -2167,7 +2182,7 @@ export default function EventCard183A({
                   return (
                     <span
                       key={idx}
-                      className={`w-5 text-center text-[15px] ${
+                      className={`min-w-[22px] text-center whitespace-nowrap text-[15px] ${
                         s.current
                           ? "rounded bg-surface-elevated font-bold text-text-primary"
                           : wonSet
@@ -2183,20 +2198,20 @@ export default function EventCard183A({
                   );
                 })}
                 {showTennisPointsBox && (
-                  <span className="ml-0.5 w-7 text-right text-xs font-semibold text-text-secondary">
+                  <span className="ml-0.5 min-w-[28px] text-right whitespace-nowrap text-xs font-semibold text-text-secondary">
                     {card.tennis_game_points!.home}
                   </span>
                 )}
               </div>
             )}
             {hasScore && (
-              <span className="w-9 text-right text-[16.5px] font-semibold text-text-primary">
+              <span className="min-w-[38px] text-right whitespace-nowrap text-[16.5px] font-semibold text-text-primary">
                 {card.home_score}
               </span>
             )}
             {showProjCol && (
               <span
-                className={`w-12 text-right ${
+                className={`min-w-[48px] text-right whitespace-nowrap ${
                   isLive
                     ? "ml-[12px] text-[16.5px] font-semibold text-text-primary"
                     : "text-[16px] font-semibold text-text-secondary"
@@ -2208,7 +2223,7 @@ export default function EventCard183A({
             )}
             {showPregameCol && (
               <span
-                className={`w-12 text-right text-[14px] font-normal text-text-muted ${
+                className={`min-w-[48px] text-right whitespace-nowrap text-[14px] font-normal text-text-muted ${
                   hasScoreOrSets ? "ml-[14px]" : ""
                 }`}
               >
@@ -2216,16 +2231,16 @@ export default function EventCard183A({
               </span>
             )}
             <span
-              className={`ml-[16px] text-right ${
+              className={`ml-[14px] ${primaryColWidthClass} text-right whitespace-nowrap ${
                 isDone
                   ? homeWon
-                    ? "w-[58px] text-[18px] font-extrabold text-text-primary"
+                    ? "text-[18px] font-extrabold text-text-primary"
                     : finishedLevelDraw
-                      ? "w-[58px] text-[18px] font-bold text-text-primary"
-                      : "w-[58px] text-[18px] font-medium text-text-muted"
+                      ? "text-[18px] font-bold text-text-primary"
+                      : "text-[18px] font-medium text-text-muted"
                   : isLive
-                    ? "w-[66px] text-[22px] font-extrabold leading-none"
-                    : "w-[58px] text-[18px] font-bold"
+                    ? `${liveNowFontClass} font-extrabold leading-none`
+                    : "text-[18px] font-bold"
               }`}
               style={{
                 color:
@@ -2289,8 +2304,16 @@ export default function EventCard183A({
       {/* Rulings 199, 200-B, 213-A & 214-A1: single non-wrapping quiet grey line under the bar during a game, with each team's numbers in its team colour */}
       {livePregameLine && (
         <div
-          className="mt-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] leading-tight tabular-nums"
-          style={{ color: HEADLINE_STYLE_199.liveSummaryQuietInk }}
+          className="mt-1.5 overflow-hidden whitespace-nowrap leading-tight tabular-nums"
+          style={{
+            fontSize:
+              livePregameLine.fullText.length <= 38
+                ? 12
+                : livePregameLine.fullText.length <= 46
+                  ? 11
+                  : 10,
+            color: HEADLINE_STYLE_199.liveSummaryQuietInk,
+          }}
           data-testid="live-pregame-summary-line"
         >
           <span className="font-medium">Pregame</span>
