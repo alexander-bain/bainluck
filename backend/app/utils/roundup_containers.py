@@ -1168,6 +1168,17 @@ def _strip_parent_from_payload(out: dict[str, Any]) -> None:
         out["container"].pop("parent_name", None)
 
 
+def ensure_optional_roundup_candidates() -> None:
+    """Register flag-gated candidate roundup producers when explicitly enabled."""
+    import importlib
+    import os
+
+    flag = os.environ.get("CONTAINER_MACHINERY_SLICE1_ENABLED", "").strip().lower()
+    if flag in {"1", "true", "yes", "on"}:
+        mod = importlib.import_module("app.utils.container_machinery")
+        mod.register_machinery_slice1_candidates()
+
+
 async def serve_roundup(
     slug: str,
     db: Any,
