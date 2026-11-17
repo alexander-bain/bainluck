@@ -299,6 +299,42 @@ final class WidgetsWatchCalibration214A1Tests: XCTestCase {
         )
         XCTAssertEqual(afterModel.smallTopTrailing, "Pregame 58%")
         XCTAssertEqual(afterModel.smallTopTrailingInkHex?.uppercased(), "#0076B6")
+        XCTAssertEqual(afterModel.smallFooter, "")
+
+        // Upset small widget: keeps `"Pregame 42%"` in winner's red (`#C60C30`) in the header
+        // and drops the duplicate `"Won from 42% pregame"` footer (Fable look 5:12 PM PT).
+        let afterUpsetDetail = try decodeWidgetEvent("""
+        {
+          "id": 702006,
+          "sport": "americanfootball_nfl",
+          "sport_name": "NFL",
+          "status": "completed",
+          "commence_time": "2026-11-16T13:00:00Z",
+          "away_team": "New England Patriots",
+          "home_team": "Detroit Lions",
+          "away_score": 28,
+          "home_score": 24,
+          "hero_settled_result": "away",
+          "away_team_data": { "abbreviation": "NE", "primary_color": "#C60C30" },
+          "home_team_data": { "abbreviation": "DET", "primary_color": "#0076B6" },
+          "prematch_odds": { "away_probability": 0.42, "home_probability": 0.58 },
+          "current_odds": { "away_probability": 1.0, "home_probability": 0.0 }
+        }
+        """)
+        let afterUpsetModel = SavedGameHeadlineWidgetModel12616.build(
+            reading: SavedWidgetReadingRules10875.game(afterUpsetDetail, side: nil, now: fixedNow),
+            art: SavedWidgetArt12466.game(afterUpsetDetail),
+            clockFooter: "Final",
+            isOffline: false,
+            clearsRefreshTrailing: false,
+            now: fixedNow,
+            timeZone: pacific
+        )
+        XCTAssertEqual(afterUpsetModel.smallTopTrailing, "Pregame 42%")
+        XCTAssertEqual(afterUpsetModel.smallTopTrailingInkHex?.uppercased(), "#C60C30")
+        XCTAssertEqual(afterUpsetModel.smallFooter, "")
+        XCTAssertTrue(afterUpsetModel.smallFooterSegments.isEmpty)
+        XCTAssertEqual(afterUpsetModel.mediumFooter, "Patriots won from a 42% pregame chance")
 
         // Live soccer Medium widget: prints rounded whole-number goals (matching LiveProjectedFinalAdmission2920),
         // never decimals, and withholds outside regulation.
@@ -780,10 +816,31 @@ final class WidgetsWatchCalibration214A1Tests: XCTestCase {
         let img = renderHostedSheet(sheet, width: 390)
         XCTAssertEqual(img.size.width, 390, accuracy: 0.5)
 
+        let afterSheet = VStack(alignment: .leading, spacing: 14) {
+            Text("After-Game Widgets — Upset Small Widget Header Only (390 px)")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            sectionLabel("Small Widget After: Favourite Won (Pregame 58%) · Upset Won (Pregame 42%, No Duplicate Footer)")
+            HStack(alignment: .center, spacing: 12) {
+                widgetCard(model: afterM, reading: afterR, art: afterA, size: .small)
+                widgetCard(model: afterUpsetM, reading: afterUpsetR, art: afterUpsetA, size: .small)
+            }
+
+            sectionLabel("Medium Widget After: Upset Won (Patriots @ Lions)")
+            widgetCard(model: afterUpsetM, reading: afterUpsetR, art: afterUpsetA, size: .medium)
+        }
+        .padding(16)
+
+        let afterImg = renderHostedSheet(afterSheet, width: 390)
+        XCTAssertEqual(afterImg.size.width, 390, accuracy: 0.5)
+
         if let dir = ProcessInfo.processInfo.environment["EXPORT_WIDGETS_214A1_DIR"], !dir.isEmpty {
             let outURL = URL(fileURLWithPath: dir, isDirectory: true)
             try FileManager.default.createDirectory(at: outURL, withIntermediateDirectories: true)
             try XCTUnwrap(img.pngData()).write(to: outURL.appendingPathComponent("widgets-watch-calibration-214a1-390.png"))
+            try XCTUnwrap(afterImg.pngData()).write(to: outURL.appendingPathComponent("widgets-214a1-after-sheet-390.png"))
         }
     }
 

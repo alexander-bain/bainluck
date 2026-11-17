@@ -183,7 +183,8 @@ final class SavedGameWidgetAndWristTileSat5Tests: XCTestCase {
         XCTAssertTrue(afterModel.home.isWinner)
         XCTAssertTrue(afterModel.away.isLoser)
         XCTAssertEqual(afterModel.smallTopTrailing, "Pregame 38%")
-        XCTAssertEqual(afterModel.smallFooter, "Won from 38% pregame")
+        XCTAssertEqual(afterModel.smallFooter, "", "Upset small widget keeps Pregame 38% in header without repeating Won from 38% pregame in footer")
+        XCTAssertTrue(afterModel.smallFooterSegments.isEmpty)
         XCTAssertEqual(afterModel.mediumFooter, "Packers won from a 38% pregame chance")
         XCTAssertTrue(afterModel.footerIsEmeraldCallout)
 

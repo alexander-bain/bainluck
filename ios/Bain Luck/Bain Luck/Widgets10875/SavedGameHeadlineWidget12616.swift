@@ -234,17 +234,15 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
         } else {
             switch stage {
             case .after:
+                smallFooter = ""
+                smallFooterSegments = []
                 if let winnerIsHome, let pct = winnerPregamePct, pct < 50 {
                     let winnerName = winnerIsHome ? homeSide.shortName : awaySide.shortName
-                    smallFooter = "Won from \(pct)% pregame"
                     mediumFooter = "\(winnerName) won from a \(pct)% pregame chance"
-                    smallFooterSegments = [TextSegment(text: smallFooter, ink: .emerald)]
                     mediumFooterSegments = [TextSegment(text: mediumFooter, ink: .emerald)]
                     footerIsEmerald = true
                 } else {
-                    smallFooter = ""
                     mediumFooter = ""
-                    smallFooterSegments = []
                     mediumFooterSegments = []
                     footerIsEmerald = false
                 }
