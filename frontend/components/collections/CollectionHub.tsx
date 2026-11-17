@@ -122,8 +122,9 @@ export default function CollectionHub({ slug }: { slug: string }) {
     return () => ctrl.abort();
   }, [isOscarsHub]);
 
+  const allowMachineryBlocks = isMachinerySlice1Enabled() || slug.startsWith("machinery-");
   const machinerySectionsActive =
-    isMachinerySlice1Enabled() && Boolean(shown?.sections.some((s) => s.visualBlock));
+    allowMachineryBlocks && Boolean(shown?.sections.some((s) => s.visualBlock));
 
   const activePairedSets: PairedMetricSet[] = useMemo(() => {
     if (machinerySectionsActive) return [];
@@ -386,7 +387,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
         {/* #11040: one plain sentence saying how this section's markets settle. */}
         {section.note && <p data-section-note={section.cls} className="text-sm text-text-secondary">{section.note}</p>}
       </div>}
-      {isMachinerySlice1Enabled() && section.visualBlock ? (
+      {allowMachineryBlocks && section.visualBlock ? (
         <MachinerySectionRenderer visualBlock={section.visualBlock} members={visibleSectionMembers} />
       ) : section.layout === "party" && control(108620) && control(108621) ? (
         midterms && atlasEnabled ? (

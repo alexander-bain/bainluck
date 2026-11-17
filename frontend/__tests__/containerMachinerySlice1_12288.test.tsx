@@ -270,4 +270,19 @@ describe("#12288 Slice 1 — topic-free container machinery renderer", () => {
     expect(html).not.toContain(">WW<");
     expect(html).not.toContain(">BUF<");
   });
+
+  it("exposes /admin/groupings-preview with GA4 hooks and AdminAuthProvider", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const src = fs.readFileSync(
+      path.join(__dirname, "..", "app", "admin", "groupings-preview", "page.tsx"),
+      "utf-8",
+    );
+    expect(src).toContain("usePageTracking");
+    expect(src).toContain("useScrollDepth");
+    expect(src).toContain("useEngagementTime");
+    expect(src).toContain("AdminAuthProvider");
+    expect(src).toContain("/api/containers/preview/machinery");
+    expect(src).toContain("227: A Diversity Report");
+  });
 });

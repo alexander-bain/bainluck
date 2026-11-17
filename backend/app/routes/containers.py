@@ -76,7 +76,7 @@ from time import perf_counter
 from typing import Annotated, Awaitable, Callable, Iterator, Literal, Optional, ParamSpec, TypeVar
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -530,8 +530,46 @@ async def get_week_navigation(
         return {"slug": slug, "state": "unavailable", "previous": None, "next": None}
 
 
+@router.get("/preview/machinery")
+async def get_machinery_preview(
+    request: Request,
+    slugs: Annotated[
+        Optional[str],
+        Query(description="Optional comma-separated candidate slugs to preview."),
+    ] = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Admin-only preview of switched-off #12288 grouping & container machinery
+    candidates (NFL Week, Oscars Best Picture, 2028 Presidential Race, Fed & Economy),
+    with Ruling 227-A report-only diversity counts.
+
+    Public readers and non-admin sessions receive 403 while
+    CONTAINER_MACHINERY_SLICE1_ENABLED remains false.
+    """
+    from app.routes.admin_utils import _check_admin_auth
+    from app.utils.container_machinery import (
+        container_machinery_enabled,
+        evaluate_machinery_candidates_preview,
+    )
+
+    if not await _check_admin_auth(None, request, db):
+        raise HTTPException(status_code=403, detail="Admin authentication required")
+    wanted = (
+        [s.strip() for s in slugs.split(",") if s.strip()]
+        if slugs is not None
+        else None
+    )
+    items = await evaluate_machinery_candidates_preview(db, slugs=wanted)
+    return {
+        "public_switch_enabled": container_machinery_enabled(),
+        "count": len(items),
+        "items": items,
+    }
+
+
 @router.get("/{slug}")
 async def get_container(
+    request: Request = None,
     slug: str = Path(..., min_length=1, max_length=200),
     include_children: bool = Query(
         True, description="Include members of nested containers (draws)."
@@ -569,6 +607,7 @@ async def get_container(
             result = await _get_container(
                 slug, include_children, revision, cursor, limit,
                 market_revision, market_cursor, market_limit, compact, db,
+                request=request,
             )
             if timings is not None and not isinstance(result, Response):
                 result = Response(content=_render(result), media_type="application/json")
@@ -586,7 +625,7 @@ async def get_container(
 async def _get_container(
     slug: str, include_children: bool, revision: Optional[str], cursor: Optional[str], limit: Optional[str],
     market_revision: Optional[str], market_cursor: Optional[str], market_limit: Optional[str],
-    compact: bool, db: AsyncSession,
+    compact: bool, db: AsyncSession, *, request: Optional[Request] = None,
 ) -> dict | Response:
     if not containers_read_enabled() or (slug == MIDTERMS_SLUG and not midterms_enabled()):
         raise HTTPException(status_code=404, detail="Not found")
@@ -601,6 +640,21 @@ async def _get_container(
 
     if slug in ROUNDUP_PRODUCERS:
         return await serve_roundup(slug, db, include_children=include_children)
+
+    from app.utils.container_machinery import (
+        is_machinery_candidate_slug,
+        serve_machinery_candidate_preview,
+    )
+
+    if request is not None and is_machinery_candidate_slug(slug):
+        from app.routes.admin_utils import _check_admin_auth
+
+        if await _check_admin_auth(None, request, db):
+            preview = await serve_machinery_candidate_preview(
+                slug, db, include_children=include_children
+            )
+            if preview is not None:
+                return preview["container"]
 
     with _time_stage("published_read"):
         published = await read_published(db, slug)
