@@ -115,11 +115,28 @@ class GameActivitySnapshot:
         return {"snapshot": snapshot}
 
 
+#: Apple's two Live Activity priorities. "5" is delivered when convenient, so a
+#: locked phone can show a reading minutes old; "10" is delivered now (#10542:
+#: Magic at Celtics, Nov 16, the phone sat three priority-5 pushes behind a score
+#: the server already had).
+PRIORITIES = ("5", "10")
+
+
+def _priority(value: object) -> str:
+    if value not in PRIORITIES:
+        raise ActivityKitPayloadError("APNs priority must be '5' or '10'")
+    return value
+
+
 @dataclass(frozen=True)
 class ActivityKitPush:
     """Encoded bounded body, without a token, credentials, topic or network client."""
 
     body: bytes
+    priority: str = "5"
+
+    def __post_init__(self) -> None:
+        _priority(self.priority)
 
     @property
     def headers(self) -> dict[str, str]:
@@ -127,7 +144,7 @@ class ActivityKitPush:
         # old reading while a device is offline; retry/reconciliation is a later owner.
         return {
             "apns-push-type": "liveactivity",
-            "apns-priority": "5",
+            "apns-priority": self.priority,
             "apns-expiration": "0",
         }
 
@@ -153,7 +170,7 @@ def _envelope(snapshot: GameActivitySnapshot, sent_at: datetime, event: str) -> 
     }
 
 
-def _encode(aps: dict) -> ActivityKitPush:
+def _encode(aps: dict, priority: str = "5") -> ActivityKitPush:
     try:
         body = json.dumps(
             {"aps": aps}, ensure_ascii=False, allow_nan=False, separators=(",", ":")
@@ -164,11 +181,11 @@ def _encode(aps: dict) -> ActivityKitPush:
         raise ActivityKitPayloadError(
             "ActivityKit payload exceeds the APNs 4 KiB limit"
         )
-    return ActivityKitPush(body=body)
+    return ActivityKitPush(body=body, priority=_priority(priority))
 
 
 def build_activitykit_update(
-    snapshot: GameActivitySnapshot, *, sent_at: datetime
+    snapshot: GameActivitySnapshot, *, sent_at: datetime, priority: str = "5"
 ) -> ActivityKitPush:
     """Update a nonterminal game; freshness belongs to displayed producer clocks.
 
@@ -192,7 +209,7 @@ def build_activitykit_update(
         aps["stale-date"] = max(
             0, math.floor((oldest + OBSERVATION_MAX_AGE).timestamp())
         )
-    return _encode(aps)
+    return _encode(aps, priority)
 
 
 def build_activitykit_end(
@@ -200,6 +217,7 @@ def build_activitykit_end(
     *,
     sent_at: datetime,
     reason: Literal["terminal", "stop"] = "terminal",
+    priority: str = "5",
 ) -> ActivityKitPush:
     """End for authoritative final/closed, or an explicit user stop.
 
@@ -216,4 +234,4 @@ def build_activitykit_end(
         aps["dismissal-date"] = max(0, aps["timestamp"] - 1)
     else:
         raise ActivityKitPayloadError("Unknown end reason")
-    return _encode(aps)
+    return _encode(aps, priority)
