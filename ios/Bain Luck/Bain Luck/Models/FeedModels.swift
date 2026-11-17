@@ -1003,6 +1003,8 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     /// the served answer agrees with a local derivation on all 98. `CardSum.swift`
     /// carries the full reasoning.
     let cardSumReason: String?
+    /// #11920 / #12581 (137-A): server-owned source attribution mark for collection and feed cards.
+    var sourceMark: SourceMark? = nil
 }
 
 // MARK: - Discover Card Archetype
@@ -1136,10 +1138,21 @@ nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
     let priceObservedAt: String?
     let rank: Int?
     let movement: Double?
+    /// #11920 / #12581 (137-A): server-owned per-outcome source attribution mark.
+    var sourceMark: SourceMark? = nil
 
-    init(id: Int, name: String, probability: Double?, rank: Int?, movement: Double?, priceObservedAt: String? = nil) {
+    init(
+        id: Int,
+        name: String,
+        probability: Double?,
+        rank: Int?,
+        movement: Double?,
+        priceObservedAt: String? = nil,
+        sourceMark: SourceMark? = nil
+    ) {
         self.id = id; self.name = name; self.probability = probability
         self.rank = rank; self.movement = movement; self.priceObservedAt = priceObservedAt
+        self.sourceMark = sourceMark
     }
 
 }
