@@ -1,0 +1,87 @@
+{
+  "started_at": "2026-11-17T17:46:11.506687+00:00",
+  "ended_at": "2026-11-17T17:46:22.201681+00:00",
+  "window_end": "2026-11-24T17:46:11.506687+00:00",
+  "pages": [
+    {
+      "offset": 0,
+      "served_count": 476
+    },
+    {
+      "offset": 500,
+      "served_count": 453
+    },
+    {
+      "offset": 1000,
+      "served_count": 319
+    },
+    {
+      "offset": 1500,
+      "served_count": 266
+    },
+    {
+      "offset": 2000,
+      "served_count": 296
+    },
+    {
+      "offset": 2500,
+      "served_count": 0
+    }
+  ],
+  "unique_future_games": 1784,
+  "opening_count": 27,
+  "opening_ids": [
+    15333615,
+    15333616,
+    15333617,
+    15333618,
+    15333619,
+    15347516,
+    15348868,
+    15349057,
+    15349059,
+    15349792,
+    15349834,
+    15349896,
+    15349897,
+    15349898,
+    15349988,
+    15350004,
+    15350031,
+    15350168,
+    15350309,
+    15350310,
+    15350311,
+    15350312,
+    15350347,
+    15350350,
+    15350351,
+    15350352,
+    15350353
+  ],
+  "bills": {
+    "id": 15184640,
+    "home_team": "New England Patriots",
+    "away_team": "Buffalo Bills",
+    "commence_time": "2026-12-06T21:25:00+00:00",
+    "hero_probability": 0.5034,
+    "hero_probability_away": 0.4965,
+    "hero_probability_source": "opening",
+    "current_odds": {
+      "captured_at": "2026-09-10T00:11:05.994661+00:00",
+      "home_probability": 0.5034,
+      "away_probability": 0.4966,
+      "away_rendered_percent": 50,
+      "home_rendered_percent": 50,
+      "spread": null,
+      "over_under": null,
+      "projected_home_score": null,
+      "projected_away_score": null,
+      "bookmaker_count": 2,
+      "projection_captured_at": null,
+      "projection_bookmaker_count": 0,
+      "projection_unavailable": "no_recent_lines"
+    }
+  },
+  "bills_title": "Buffalo Bills vs New England Patriots: Buffalo Bills 50%, New England Patriots 50% | Bain Luck"
+}

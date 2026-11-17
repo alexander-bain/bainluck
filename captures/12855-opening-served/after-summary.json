@@ -1,0 +1,352 @@
+{
+  "finished_at": "2026-11-17T20:18:52.297146+00:00",
+  "health": {
+    "status": "ok",
+    "db": true,
+    "redis": true,
+    "redis_check": {
+      "error": null,
+      "elapsed_ms": 0
+    },
+    "commit": "b62b1351",
+    "uptime_seconds": 70,
+    "dyno": "web.1",
+    "process_id": "e7d39cc12087"
+  },
+  "before_window_start": "2026-11-17T17:46:11.506687+00:00",
+  "before_window_end": "2026-11-24T17:46:11.506687+00:00",
+  "before_cohort_count": 27,
+  "after_list_found": 25,
+  "after_list_number_count": 2,
+  "after_list_opening_count": 0,
+  "rows": [
+    {
+      "id": 15333615,
+      "home_team": "Igor Michaliszyn",
+      "away_team": "Tomasz Romanowski",
+      "status": "scheduled",
+      "commence_time": "2026-11-21T11:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15333616,
+      "home_team": "Mateusz Pawlik",
+      "away_team": "Madars Fleminas",
+      "status": "scheduled",
+      "commence_time": "2026-11-21T11:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15333617,
+      "home_team": "Marcin Held",
+      "away_team": "Valeriu Mircea",
+      "status": "scheduled",
+      "commence_time": "2026-11-21T11:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15333618,
+      "home_team": "Steven Krt",
+      "away_team": "Oskar Szczepaniak",
+      "status": "scheduled",
+      "commence_time": "2026-11-21T11:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15333619,
+      "home_team": "Sasha Moisa",
+      "away_team": "Wojciech Kawa",
+      "status": "scheduled",
+      "commence_time": "2026-11-21T11:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15347516,
+      "home_team": "Bragantino-SP",
+      "away_team": "Vasco da Gama",
+      "status": "scheduled",
+      "commence_time": "2026-11-22T22:30:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15348868,
+      "home_team": "Maccabi Tel Aviv",
+      "away_team": "Dubai Basketball",
+      "status": "scheduled",
+      "commence_time": "2026-11-19T17:15:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15349057,
+      "home_team": "Kyran Jones",
+      "away_team": "Sean Arkwright",
+      "status": "scheduled",
+      "commence_time": "2026-11-20T20:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15349059,
+      "home_team": "Tymoteusz \u0141opaczyk",
+      "away_team": "Adrian Bartosinski",
+      "status": "scheduled",
+      "commence_time": "2026-11-21T11:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15349834,
+      "home_team": "New Zealand",
+      "away_team": "India",
+      "status": "scheduled",
+      "commence_time": "2026-11-18T22:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15349896,
+      "home_team": "Cleveland Monsters",
+      "away_team": "Hamilton Hammers",
+      "status": "scheduled",
+      "commence_time": "2026-11-18T00:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15349897,
+      "home_team": "Calgary Wranglers",
+      "away_team": "Coachella Valley Firebirds",
+      "status": "scheduled",
+      "commence_time": "2026-11-19T01:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15349898,
+      "home_team": "Rockford IceHogs",
+      "away_team": "Chicago Wolves",
+      "status": "scheduled",
+      "commence_time": "2026-11-18T01:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15349988,
+      "home_team": "FC Bayern M\u00fcnchen",
+      "away_team": "Saski Baskonia",
+      "status": "scheduled",
+      "commence_time": "2026-11-19T19:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15350004,
+      "home_team": "Xavier Musketeers",
+      "away_team": "Cleveland St Vikings",
+      "status": "scheduled",
+      "commence_time": "2026-11-18T00:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15350031,
+      "home_team": "DePaul Blue Demons",
+      "away_team": "Maryland-Eastern Shore Hawks",
+      "status": "scheduled",
+      "commence_time": "2026-11-18T01:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15350168,
+      "home_team": "Belleville Senators",
+      "away_team": "Laval Rocket",
+      "status": "scheduled",
+      "commence_time": "2026-11-18T15:30:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15350309,
+      "home_team": "W-B/Scranton Penguins",
+      "away_team": "Milwaukee Admirals",
+      "status": "scheduled",
+      "commence_time": "2026-11-18T23:35:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15350311,
+      "home_team": "Grand Rapids Griffins",
+      "away_team": "Manitoba Moose",
+      "status": "scheduled",
+      "commence_time": "2026-11-19T00:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15350312,
+      "home_team": "Syracuse Crunch",
+      "away_team": "Rochester Americans",
+      "status": "scheduled",
+      "commence_time": "2026-11-19T00:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15350347,
+      "home_team": "Henderson Silver Knights",
+      "away_team": "San Jose Barracuda",
+      "status": "scheduled",
+      "commence_time": "2026-11-19T03:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15350350,
+      "home_team": "San Diego Gulls",
+      "away_team": "Bakersfield Condors",
+      "status": "scheduled",
+      "commence_time": "2026-11-19T03:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15350351,
+      "home_team": "Ontario Reign",
+      "away_team": "Abbotsford Canucks",
+      "status": "scheduled",
+      "commence_time": "2026-11-19T03:00:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    {
+      "id": 15350352,
+      "home_team": "Belmont Bruins",
+      "away_team": "Tennessee Volunteers",
+      "status": "scheduled",
+      "commence_time": "2026-11-18T00:30:00+00:00",
+      "hero_probability": 0.0728,
+      "hero_probability_away": 0.9272,
+      "hero_probability_source": "blend"
+    },
+    {
+      "id": 15350353,
+      "home_team": "Kansas St Wildcats",
+      "away_team": "SMU Mustangs",
+      "status": "scheduled",
+      "commence_time": "2026-11-18T00:30:00+00:00",
+      "hero_probability": 0.8525,
+      "hero_probability_away": 0.1475,
+      "hero_probability_source": "blend"
+    }
+  ],
+  "missing_from_scheduled_list": [
+    15349792,
+    15350310
+  ],
+  "missing_rows_detail": {
+    "15349792": {
+      "id": 15349792,
+      "home_team": "Bakersfield Condors",
+      "away_team": "Colorado Eagles",
+      "status": "live",
+      "commence_time": "2026-11-17T18:30:00+00:00",
+      "hero_probability": null,
+      "hero_probability_away": null,
+      "hero_probability_source": null
+    },
+    "15350310": {
+      "id": 15350310,
+      "home_team": "Oregon Ducks",
+      "away_team": "Murray St Racers",
+      "status": "live",
+      "commence_time": "2026-11-17T19:00:00+00:00",
+      "hero_probability": 0.9897,
+      "hero_probability_away": 0.0103,
+      "hero_probability_source": "blend"
+    }
+  },
+  "pages": [
+    {
+      "offset": 0,
+      "served_count": 484
+    },
+    {
+      "offset": 500,
+      "served_count": 443
+    },
+    {
+      "offset": 1000,
+      "served_count": 281
+    },
+    {
+      "offset": 1500,
+      "served_count": 294
+    },
+    {
+      "offset": 2000,
+      "served_count": 287
+    },
+    {
+      "offset": 2500,
+      "served_count": 0
+    }
+  ],
+  "bills": {
+    "id": 15184640,
+    "home_team": "New England Patriots",
+    "away_team": "Buffalo Bills",
+    "status": "scheduled",
+    "commence_time": "2026-12-06T21:25:00+00:00",
+    "hero_probability": null,
+    "hero_probability_away": null,
+    "hero_probability_source": null,
+    "current_odds": {
+      "captured_at": "2026-09-10T00:11:05.994661+00:00",
+      "home_probability": null,
+      "away_probability": null,
+      "away_rendered_percent": null,
+      "home_rendered_percent": null,
+      "spread": null,
+      "over_under": null,
+      "projected_home_score": null,
+      "projected_away_score": null,
+      "bookmaker_count": 2,
+      "projection_captured_at": null,
+      "projection_bookmaker_count": 0,
+      "projection_unavailable": "no_recent_lines"
+    }
+  },
+  "bills_title": "Buffalo Bills vs New England Patriots: Buffalo Bills 50%, New England Patriots 50% | Bain Luck"
+}

@@ -1,0 +1,39 @@
+{
+  "refreshed_title": "Buffalo Bills vs New England Patriots Odds | Bain Luck",
+  "after_unique_games": 1779,
+  "after_all_opening_source": 0,
+  "cohort_count": 27,
+  "cohort_unpriced": 24,
+  "cohort_blended": [
+    {
+      "id": 15350352,
+      "home_team": "Belmont Bruins",
+      "away_team": "Tennessee Volunteers",
+      "status": "scheduled",
+      "commence_time": "2026-11-18T00:30:00+00:00",
+      "hero_probability": 0.0728,
+      "hero_probability_away": 0.9272,
+      "hero_probability_source": "blend"
+    },
+    {
+      "id": 15350353,
+      "home_team": "Kansas St Wildcats",
+      "away_team": "SMU Mustangs",
+      "status": "scheduled",
+      "commence_time": "2026-11-18T00:30:00+00:00",
+      "hero_probability": 0.8525,
+      "hero_probability_away": 0.1475,
+      "hero_probability_source": "blend"
+    },
+    {
+      "id": 15350310,
+      "home_team": "Oregon Ducks",
+      "away_team": "Murray St Racers",
+      "status": "live",
+      "commence_time": "2026-11-17T19:00:00+00:00",
+      "hero_probability": 0.9897,
+      "hero_probability_away": 0.0103,
+      "hero_probability_source": "blend"
+    }
+  ]
+}
