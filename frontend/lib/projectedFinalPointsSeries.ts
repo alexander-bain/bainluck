@@ -255,6 +255,7 @@ export interface ProjectedFinalPointsSeries {
   latestActual: ActualStep | null;
   /** True when the newest stretch of the window has no usable reading. */
   latestIntervalUnavailable: boolean;
+  yMin: number;
   yMax: number;
   yTicks: number[];
 }
@@ -271,10 +272,17 @@ export const DEFAULT_WINDOW_MS = 6 * HOUR_MS;
 export const PREGAME_CONTEXT_MS = HOUR_MS;
 /**
  * The longest stretch between two recorded captures the line may hold a
- * reading across. Past this the stretch is unobserved and the line breaks. A
- * rendering choice, not a measured poll cadence.
+ * reading across during or after a game. Past this the stretch is unobserved
+ * and the line breaks. A rendering choice, not a measured poll cadence.
  */
 export const MAX_CAPTURE_GAP_MS = HOUR_MS;
+/**
+ * #12889: before kickoff, full-game spreads and totals are polled hourly
+ * (rulings 138-A / 152-A) and land ~55–65 minutes apart, so pregame lines
+ * hold across up to two hours (hourly poll plus slack) while live/finished
+ * games keep `MAX_CAPTURE_GAP_MS`.
+ */
+export const PREGAME_MAX_CAPTURE_GAP_MS = 2 * HOUR_MS;
 
 function parseTime(value: string | null | undefined): number | null {
   if (!value) return null;
@@ -408,6 +416,12 @@ export function buildProjectedFinalPointsSeries(
     // Only captures inside the window. Nothing older is carried in (module doc).
     if (at < start) continue;
     const { home, away } = pair;
+    if (home == null && away == null && phase === "before") {
+      // #12889 / 138-A / 152-A: pregame moneyline-only (`h2h`) polls do not
+      // request spreads or totals, so a null/null row before kickoff is an
+      // unpolled market on that tick rather than an incomplete pair.
+      continue;
+    }
     if (home == null || away == null) {
       rows.push({ at, kind: "withheld", reason: "pair_incomplete" });
       continue;
@@ -429,6 +443,7 @@ export function buildProjectedFinalPointsSeries(
   }
   rows.sort((a, b) => a.at - b.at);
 
+  const maxCaptureGapMs = phase === "before" ? PREGAME_MAX_CAPTURE_GAP_MS : MAX_CAPTURE_GAP_MS;
   const segments: ForecastPoint[][] = [];
   const withheld: WithheldReading[] = [];
   let run: ForecastPoint[] = [];
@@ -447,7 +462,7 @@ export function buildProjectedFinalPointsSeries(
     // The line only runs on to the next VALID capture. If the next reading is
     // unusable, or was recorded long after this one, nothing recorded the
     // stretch in between, so the line stops at this capture.
-    const broken = !next || next.kind === "withheld" || next.at - row.at > MAX_CAPTURE_GAP_MS;
+    const broken = !next || next.kind === "withheld" || next.at - row.at > maxCaptureGapMs;
     const holdEnd = broken ? row.at : next.at;
     run.push({ at: row.at, home: row.home, away: row.away, holdEnd });
     if (next && broken) close();
@@ -459,15 +474,39 @@ export function buildProjectedFinalPointsSeries(
   const latest = lastRun[lastRun.length - 1];
   const lastRow = rows[rows.length - 1];
   const latestIntervalUnavailable =
-    lastRow.kind === "withheld" || end - latest.at > MAX_CAPTURE_GAP_MS;
+    lastRow.kind === "withheld" || end - latest.at > maxCaptureGapMs;
 
+  let low = Number.POSITIVE_INFINITY;
   let high = 0;
-  for (const seg of segments) for (const p of seg) high = Math.max(high, p.home, p.away);
+  for (const seg of segments) {
+    for (const p of seg) {
+      low = Math.min(low, p.home, p.away);
+      high = Math.max(high, p.home, p.away);
+    }
+  }
   for (const s of actualSteps) high = Math.max(high, s.home, s.away);
-  const step = league.tickStep;
-  const yMax = niceMax(high + step / 4, step);
+
+  let yMin = 0;
+  let yMax: number;
   const yTicks: number[] = [];
-  for (let v = 0; v <= yMax; v += step) yTicks.push(v);
+  if (phase === "before" && Number.isFinite(low)) {
+    // #12889: before kickoff there is no score line climbing from 0, so fit the
+    // axis to the projections with breathing room (e.g. 105..120 for 111..115.5)
+    // while keeping 0..yMax during and after the game.
+    const rawSpan = Math.max(0, high - low);
+    const pStep = rawSpan > 15 ? 10 : 5;
+    const pad = Math.max(pStep * 0.6, rawSpan * 0.25);
+    yMin = Math.max(0, Math.floor((low - pad) / pStep) * pStep);
+    yMax = Math.ceil((high + pad) / pStep) * pStep;
+    if (yMax - yMin < 3 * pStep) {
+      yMax = yMin + 3 * pStep;
+    }
+    for (let v = yMin; v <= yMax; v += pStep) yTicks.push(v);
+  } else {
+    const step = league.tickStep;
+    yMax = niceMax(high + step / 4, step);
+    for (let v = 0; v <= yMax; v += step) yTicks.push(v);
+  }
 
   return {
     supported: true,
@@ -482,6 +521,7 @@ export function buildProjectedFinalPointsSeries(
     latest,
     latestActual: actualAt(actualSteps, end),
     latestIntervalUnavailable,
+    yMin,
     yMax,
     yTicks,
   };

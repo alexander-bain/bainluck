@@ -119,7 +119,7 @@ function actualPath(
 
 function readingLabel(series: ProjectedFinalPointsSeries): string {
   if (series.phase === "after") return "Last projection before the final";
-  return "Latest projection";
+  return "Projected final";
 }
 
 /** How much a marker's time says about the period's start, in a reader's words. */
@@ -194,8 +194,9 @@ export default function ProjectedFinalPointsChart({
 
   const { home: homeStroke, away: awayStroke } = projectedTeamStrokes(homeColor, awayColor, awaySecondaryColor);
   const span = Math.max(1, full.end - full.start);
+  const ySpan = Math.max(1, full.yMax - full.yMin);
   const x = (t: number) => LEFT + ((Math.min(Math.max(t, full.start), full.end) - full.start) / span) * (RIGHT - LEFT);
-  const y = (v: number) => BOTTOM - (v / full.yMax) * (BOTTOM - TOP);
+  const y = (v: number) => BOTTOM - ((v - full.yMin) / ySpan) * (BOTTOM - TOP);
 
   const reading = full.latest;
   const actual = full.latestActual;
@@ -242,7 +243,6 @@ export default function ProjectedFinalPointsChart({
             <div className="text-2xl font-semibold tabular-nums text-text-primary">
               {pagePair ? pagePair[key] : points(reading[key])}
             </div>
-            <div className="text-xs text-text-secondary">projected final</div>
             {/* Only a recorded score is printed. Without one there is no "— final" placeholder:
                 a dash beside "final" reads as a result nobody recorded. */}
             {showActual && actual && (
