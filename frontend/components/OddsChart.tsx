@@ -968,19 +968,33 @@ function AtlasOddsChartHeader({
   bus,
   settled,
   showOpening,
+  showRecordedReading,
+  recordedReadingCount,
 }: {
   bus: AtlasSelectionBus;
   settled: boolean;
   showOpening: boolean;
+  showRecordedReading: boolean;
+  recordedReadingCount: number;
 }) {
   const [selectedReading, setSelectedReading] = useAtlasSelectionBus(bus);
   return (
-    <div className="space-y-2 shrink-0" data-testid="event-atlas-chart-header">
-      <AtlasChartMarkKey
-        settled={settled}
-        showOpening={showOpening}
-        openingLabel="Pregame"
-      />
+    <div className="space-y-1.5 shrink-0" data-testid="event-atlas-chart-header">
+      <details
+        className="text-xs text-text-secondary"
+        data-testid="event-atlas-how-to-read"
+      >
+        <summary className="cursor-pointer">How to read this</summary>
+        <div className="mt-1.5">
+          <AtlasChartMarkKey
+            settled={settled}
+            showOpening={showOpening}
+            showRecordedReading={showRecordedReading}
+            recordedReadingCount={recordedReadingCount}
+            openingLabel="Pregame"
+          />
+        </div>
+      </details>
       <AtlasSelectedReadingReadout
         reading={
           selectedReading && !showOpening && selectedReading.isOpening
@@ -994,9 +1008,16 @@ function AtlasOddsChartHeader({
 }
 
 /**
- * #11974 Step E2 — renders the shared Atlas mark grammar (`AtlasSeriesReadingMarks`
+ * #11974 Step E2 / #12615 — renders the shared Atlas mark grammar (`AtlasSeriesReadingMarks`
  * and `AtlasResultWordMark`) inside `<ComposedChart>` via Recharts `<Customized>`,
- * reusing Builder D's `AtlasChartMarks` components without modifying them.
+ * reusing `AtlasChartMarks` components.
+ *
+ * #12615: in the game window (`"Since Start"` / live), `solidMarkMode="all"` draws
+ * a visible mark for every recorded reading (`stride = 1`, no thinning), matching
+ * the projected final chart. In `"All"`, `solidMarkMode="none"` avoids smearing
+ * thousands of pre-game readings while keeping the hollow `Pregame` opening mark,
+ * the continuous change line, the settled result word, and tap/scrub readout on
+ * every observation.
  */
 function AtlasOddsChartMarksLayer({
   bus,
@@ -1005,6 +1026,7 @@ function AtlasOddsChartMarksLayer({
   outcomeName,
   color,
   includesOpening,
+  solidMarkMode,
   settledResult,
   currentCallout,
   ...state
@@ -1015,6 +1037,7 @@ function AtlasOddsChartMarksLayer({
   outcomeName: string;
   color: string;
   includesOpening: boolean;
+  solidMarkMode: "all" | "none";
   settledResult: "won" | "lost" | null;
   currentCallout: { rowIndex: number; delta: number; atMs?: number } | null;
 }) {
@@ -1073,6 +1096,8 @@ function AtlasOddsChartMarksLayer({
         points={points}
         color={color}
         includesOpening={includesOpening}
+        solidMarkMode={solidMarkMode}
+        solidMarkRadius={points.length > 60 ? 2.5 : 3}
         selectedReading={selectedReading}
         onSelectReading={setSelectedReading}
       />
@@ -1824,13 +1849,15 @@ export default function OddsChart({
 
   // #4974 slice 1 — the recorded checkpoints, or null for today's chart. Only
   // where the blend line is drawn (they ARE the blend's recorded values) and
-  // only on a finished game: a live chart keeps its motion exactly.
+  // only on a finished game: a live chart keeps its motion exactly. When
+  // `atlasMode` is active (#11974 / #12615), the chart draws the continuous
+  // blend line (`— Change`) and the recorded minute marks via `AtlasOddsChartMarksLayer`.
   const checkpoints = useMemo(
     () =>
-      showBlendLine && isClosed && !isLive
+      !atlasMode && showBlendLine && isClosed && !isLive
         ? eligibleCheckpoints(publications, { finished: true })
         : null,
-    [showBlendLine, isClosed, isLive, publications],
+    [atlasMode, showBlendLine, isClosed, isLive, publications],
   );
   const checkpointWindow = useMemo(
     () => (checkpoints ? recordedWindow(checkpoints) : null),
@@ -3050,6 +3077,8 @@ export default function OddsChart({
   })();
 
   const atlasIncludesOpening = timeRange === "all";
+  const atlasShowsRecordedMarks = timeRange !== "all";
+  const atlasSolidMarkMode: "all" | "none" = atlasShowsRecordedMarks ? "all" : "none";
   const atlasSelectionBus = atlasMode ? getAtlasSelectionBus(chartRef, timeRange) : null;
 
   const atlasObservationRows: AtlasObservationRow[] = (() => {
@@ -3855,6 +3884,8 @@ export default function OddsChart({
               bus={atlasSelectionBus}
               settled={atlasSettledResult !== null}
               showOpening={atlasIncludesOpening}
+              showRecordedReading={atlasShowsRecordedMarks}
+              recordedReadingCount={atlasObservationRows.length}
             />
           </div>
         )}
@@ -4473,6 +4504,7 @@ export default function OddsChart({
                           outcomeName={homeTeam}
                           color={primaryLineColor}
                           includesOpening={atlasIncludesOpening}
+                          solidMarkMode={atlasSolidMarkMode}
                           settledResult={atlasSettledResult}
                           currentCallout={currentCallout}
                         />
