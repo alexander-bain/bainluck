@@ -202,19 +202,30 @@ nonisolated enum IntentFailure10873: Error, CustomLocalizedStringResourceConvert
 /// free-form questions.
 nonisolated struct BainLuckShortcuts10873: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
+        // Ruling 208-A, second pass — the team inside the phrase, the way a
+        // person asks. Alex, on the first set: "no human being would ever say
+        // them." The team names come from `TeamQuery208B.suggestedEntities`,
+        // refreshed at launch (`updateAppShortcutParameters`).
+        AppShortcut(
+            intent: TeamChanceIntent208B(),
+            phrases: [
+                "Ask \(.applicationName) about the \(\.$team)",
+                "Ask \(.applicationName) about the \(\.$team) game",
+                "Ask \(.applicationName) how the \(\.$team) are doing",
+                "Ask \(.applicationName) if the \(\.$team) will win",
+            ],
+            shortTitle: "Ask About a Team",
+            systemImageName: "sportscourt"
+        )
         AppShortcut(
             intent: GetProbabilityIntent10873(),
             phrases: [
-                // Ruling 208-A — Alex's phone heard "Get a probability from Bain
-                // Luck" as a Wallet request twice of three (Nov 16). These lead
-                // or end with the name next to words no other app claims; the
-                // name's pronunciation hint is in INAlternativeAppNames.
+                // "Bain Luck chance" reached the app with no Wallet question on
+                // Alex's phone (Nov 16); kept. "Get a probability from Bain
+                // Luck" was heard as Wallet twice of three; removed.
+                "Ask \(.applicationName) about a game",
+                "Ask \(.applicationName) who's going to win",
                 "\(.applicationName) chance",
-                "What's the chance in \(.applicationName)",
-                "Who's winning in \(.applicationName)",
-                "Ask \(.applicationName) for a chance",
-                "Check a chance in \(.applicationName)",
-                "Get a probability from \(.applicationName)",
             ],
             shortTitle: "Get Probability",
             systemImageName: "percent"
@@ -242,5 +253,13 @@ nonisolated struct BainLuckShortcuts10873: AppShortcutsProvider {
             shortTitle: "My Stuff",
             systemImageName: "person.fill"
         )
+    }
+}
+
+/// Ruling 208-A — tells Siri the team names its phrases may carry. Called at
+/// launch; here so the app file needs no AppIntents import.
+enum SiriPhrases208B {
+    static func refreshTeamNames() {
+        BainLuckShortcuts10873.updateAppShortcutParameters()
     }
 }
