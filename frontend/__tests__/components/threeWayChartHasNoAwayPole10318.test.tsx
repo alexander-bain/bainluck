@@ -98,6 +98,7 @@ describe("#10318 — a draw-priced game's chart has no away pole and counts no f
           kalshi: THREE_WAY.map(({ timestamp, home_probability }) => ({
             timestamp,
             home_probability,
+            away_probability: null,
           })),
         }}
         winProbSources={{
