@@ -4920,7 +4920,7 @@ jobs:
         id: db_177a_push_devices_without_an_account
         # Random disposable schema; the routes, phone-owned activities and the migration itself.
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-        run: "python -m pytest tests/integration/test_push_devices_177a_pg.py -v -rs > /tmp/pushdevices177a.txt 2>&1 || {\n  cat /tmp/pushdevices177a.txt\n  exit 1\n}\ncat /tmp/pushdevices177a.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/pushdevices177a.txt; then\n  echo \"::error::#177-A push-devices gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]9 passed([,[:space:]]|$)\" /tmp/pushdevices177a.txt || {\n  echo \"::error::#177-A push-devices gate did not run all nine cases\"\n  exit 1\n}\n"
+        run: "python -m pytest tests/integration/test_push_devices_177a_pg.py -v -rs > /tmp/pushdevices177a.txt 2>&1 || {\n  cat /tmp/pushdevices177a.txt\n  exit 1\n}\ncat /tmp/pushdevices177a.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/pushdevices177a.txt; then\n  echo \"::error::#177-A push-devices gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]13 passed([,[:space:]]|$)\" /tmp/pushdevices177a.txt || {\n  echo \"::error::#177-A push-devices gate did not run all 13 cases (9 for 177-A, 4 for 212-A)\"\n  exit 1\n}\n"
       - name: "#10556 durable ActivityKit reservations (real Postgres)"
         id: db_301_10556_durable_activitykit_reservations_r
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
