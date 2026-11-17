@@ -1,4 +1,5 @@
 """A book/trade rule switch is not a mover, an email item or a push alert."""
+import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -6,6 +7,13 @@ from types import SimpleNamespace
 import pytest
 
 from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY, reader_change_24h
+
+
+_UNPRICED_FINALISTS = [
+    (225945104, "Jared Verse", 0.605),
+    (225945105, "Jalen Carter", 0.60),
+    (225945106, "Pat Surtain II", 0.595),
+]
 
 
 def _metadata(basis, *, oid=7, hours=18):
@@ -50,11 +58,7 @@ def test_a_withdrawn_current_price_cannot_keep_advertising_its_old_move(source):
     # Public /movers on Nov 17 returned these three Kalshi nominees with null
     # current probabilities, while their own detail withheld the moves too.
     rows = []
-    for oid, name, change in [
-        (225945104, "Jared Verse", 0.605),
-        (225945105, "Jalen Carter", 0.60),
-        (225945106, "Pat Surtain II", 0.595),
-    ]:
+    for oid, name, change in _UNPRICED_FINALISTS:
         row = _outcome(0.10, source=source, stored=change)
         row.id, row.name, row.market_id = oid, name, 59164990
         row.current_probability = None
@@ -73,6 +77,47 @@ def test_a_real_zero_and_an_adjacent_priced_mover_are_not_withdrawals():
     payload = _movers_payload([zero, missing, healthy], 24)
     assert [row["current_probability"] for row in payload["movers"]] == [0.0, 0.15]
     assert [row["probability_change_24h"] for row in payload["movers"]] == pytest.approx([-0.60, 0.03])
+
+
+@pytest.mark.parametrize("pooled", [False, True])
+def test_unpriced_outcomes_cannot_use_a_ranked_mover_slot(pooled):
+    from app.routes.futures import _build_movers_query
+
+    query = str(_build_movers_query(20, pooled=pooled))
+    assert "futures_outcomes.current_probability IS NOT NULL" in query
+
+
+async def test_the_movers_route_filters_an_older_warmed_payload(monkeypatch):
+    from app.routes.futures import get_futures_movers, movers_cache_key
+    from app.tasks import redis_state
+
+    missing_prices = [
+        {
+            "outcome_id": oid,
+            "name": name,
+            "market_id": 59164990,
+            "current_probability": None,
+            "probability_change_24h": delta,
+        }
+        for oid, name, delta in _UNPRICED_FINALISTS
+    ]
+    zero = {
+        "outcome_id": 42, "current_probability": 0.0, "probability_change_24h": -0.25,
+    }
+    priced = {
+        "outcome_id": 43, "current_probability": 0.45, "probability_change_24h": 0.18,
+    }
+    cached = {"movers": [*missing_prices, zero, priced], "timeframe_hours": 24}
+
+    def read(key):
+        assert key == movers_cache_key(24, 20)
+        return json.dumps(cached)
+
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda: SimpleNamespace(get=read))
+    assert await get_futures_movers(hours=24, limit=20, db=None) == {
+        "movers": [zero, priced],
+        "timeframe_hours": 24,
+    }
 
 
 class _Result:
