@@ -183,6 +183,31 @@ final class GameActivitySnapshotTests: XCTestCase {
         XCTAssertEqual(try snapshot(home: 0.9997, away: 0.0003).headlineNowText(home: false), "<1%")
     }
 
+    // Fable's 6:36 PM look on #12768: whole percents before kickoff (39%, 61%),
+    // tenths only once play starts, as #12822 / #12837 set for the page.
+    func testBeforeKickoffTheChanceIsWholeAndTenthsStartWithPlay() throws {
+        let before = try snapshot(status: "scheduled", home: 0.614, away: 0.386, sport: "americanfootball_nfl")
+        XCTAssertNotNil(before.homeHeadlineTenths, "the tenths still ride along for kickoff")
+        XCTAssertNil(before.headlineNowText(home: true), "so the views print the whole percent")
+        XCTAssertNil(before.headlineNowText(home: false))
+        let live = try snapshot(status: "live", home: 0.614, away: 0.386, sport: "americanfootball_nfl")
+        XCTAssertEqual(live.headlineNowText(home: true), "61.4%")
+    }
+
+    // Fable's 6:36 PM look on #12768: a final score is settled, so no "Score as of"
+    // time goes beside it. The reading is private to the widget, so read its source.
+    func testAFinalCarriesNoTimeOnTheLockScreenOrIsland() throws {
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("BainLuckWidget/GameLiveActivity.swift"), encoding: .utf8)
+        let footer = try XCTUnwrap(source.components(separatedBy: "var footer: Text? {").dropFirst().first)
+        let body = try XCTUnwrap(footer.components(separatedBy: "\n    }\n").first)
+        let finalGuard = try XCTUnwrap(body.range(of: "if snapshot.isFinal { return nil }"))
+        let firstTime = try XCTUnwrap(body.range(of: "style: .time"))
+        XCTAssertLessThan(finalGuard.lowerBound, firstTime.lowerBound, "the final returns before any time is drawn")
+        XCTAssertTrue(source.contains("if let footer = reading.footer {"), "a nil footer draws nothing")
+    }
+
     func testDecodedHeadlineTenthsOutOfRangeOrOneSidedAreDropped() throws {
         let value = try snapshot(sport: "americanfootball_nfl")
         var payload = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])

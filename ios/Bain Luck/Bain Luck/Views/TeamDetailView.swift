@@ -91,6 +91,8 @@ struct TeamDetailView: View {
         }
     }
 
+    static let readableDetailMaxWidth: CGFloat = 720
+
     private func teamContent(_ data: TeamPageResponse) -> some View {
         let team = data.team
         return List {
@@ -240,6 +242,12 @@ struct TeamDetailView: View {
                 }
             }
         }
+        #if os(iOS)
+        .scrollContentBackground(.hidden)
+        #endif
+        .frame(maxWidth: Self.readableDetailMaxWidth)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.groupedBackground)
         .navigationTitle(team.name)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

@@ -8,10 +8,17 @@ final class HeadlineStyleTable199Tests: XCTestCase {
     func testNowIsTheLargestNumberOnEverySurface() {
         for surface in HeadlineStyleTable199.Surface.allCases {
             let now = HeadlineStyleTable199.nowBaseSize(surface)
-            for prominent in [false, true] {
-                XCTAssertGreaterThan(
-                    now, HeadlineStyleTable199.secondNumberBaseSize(surface, prominent: prominent),
-                    "\(surface.rawValue): Now must be larger than every second number (prominent: \(prominent))")
+            XCTAssertGreaterThan(
+                now, HeadlineStyleTable199.secondNumberBaseSize(surface, prominent: false),
+                "\(surface.rawValue): Now must be larger than every plain second number")
+            // #12796 sized the card, widget and wrist tile so a prominent number (a
+            // final score) may equal Now; Now is never smaller. The Live Activity's
+            // own two surfaces keep Now strictly largest.
+            let prominent = HeadlineStyleTable199.secondNumberBaseSize(surface, prominent: true)
+            if surface == .lockScreen || surface == .island {
+                XCTAssertGreaterThan(now, prominent, surface.rawValue)
+            } else {
+                XCTAssertGreaterThanOrEqual(now, prominent, surface.rawValue)
             }
             XCTAssertGreaterThan(now, HeadlineStyleTable199.nameBaseSize(surface), surface.rawValue)
             XCTAssertGreaterThan(now, HeadlineStyleTable199.quietTextBaseSize(surface), surface.rawValue)

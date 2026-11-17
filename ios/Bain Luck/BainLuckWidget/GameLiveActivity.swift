@@ -252,8 +252,11 @@ private struct GameActivityReading {
     /// When the numbers were observed, never when they arrived: one time when
     /// both land in the same minute. A stale reading gives its OLDEST time and
     /// the way to refresh it (a tap opens the game, which sends a new reading).
-    var footer: Text {
+    /// Nil after a final: a settled score carries no time beside it (Fable's
+    /// 6:36 PM look on #12768), on the Lock Screen and the expanded island.
+    var footer: Text? {
         guard matches else { return Text("Open Bain Luck for current details") }
+        if snapshot.isFinal { return nil }
         if snapshot.lifecycle == .closed { return Text("Result unverified · tap for details") }
         let score = snapshot.scoreObservedAt
         let chance = pair != nil || singleChanceLabel != nil ? snapshot.probabilityObservedAt : nil
@@ -534,12 +537,14 @@ private struct GameActivityFooter: View {
     var alignment: Alignment = .leading
 
     var body: some View {
-        reading.footer
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.75)
-            .frame(maxWidth: .infinity, alignment: alignment)
+        if let footer = reading.footer {
+            footer
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .frame(maxWidth: .infinity, alignment: alignment)
+        }
     }
 }
 

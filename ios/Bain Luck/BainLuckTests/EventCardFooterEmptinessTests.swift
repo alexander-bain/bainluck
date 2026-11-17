@@ -84,12 +84,13 @@ final class EventCardFooterEmptinessTests: XCTestCase {
         )
     }
 
-    func testLiveCardWithAReasonKeepsItsFooter() {
-        XCTAssertTrue(
+    func testLiveCardDrawsNoFooterEvenWithAReason204C() {
+        XCTAssertFalse(
             Footer.hasContent(
                 reason: "San Francisco Giants odds shifted 41%", isLive: true,
                 awayOpening: nil, homeOpening: nil, sport: twoWay
-            )
+            ),
+            "Ruling 204-C: during a game, phone cards print Score · Proj. · Now with no grey line"
         )
     }
 
@@ -119,15 +120,15 @@ final class EventCardFooterEmptinessTests: XCTestCase {
 
     // MARK: - #5363 + #12616: soccer live row without a reason also has no footer
 
-    func testADrawPricedLiveRowWithoutReasonHasNoFooter12616() {
+    func testADrawPricedLiveRowHasNoFooter204C() {
         XCTAssertFalse(
             Footer.hasContent(reason: nil, isLive: true, awayOpening: nil,
-                              homeOpening: 0.55, sport: soccer),
-            "soccer's single-sided 'Pregame <home> 55%' moved to livePregameContext12616"
-        )
-        XCTAssertTrue(
-            Footer.hasContent(reason: "Tight game", isLive: true, awayOpening: nil,
                               homeOpening: 0.55, sport: soccer)
+        )
+        XCTAssertFalse(
+            Footer.hasContent(reason: "Tight game", isLive: true, awayOpening: nil,
+                              homeOpening: 0.55, sport: soccer),
+            "Ruling 204-C: live soccer cards also draw no grey sentence under the bar"
         )
     }
 

@@ -63,6 +63,13 @@ enum MacMainWindow10878 {
     /// lands on an empty window.
     static let detailOnlyTabs: Set<AppTab> = [.futures, .weather, .economics, .politics, .entertainment]
 
+    /// Maps any `AppTab` (including `detailOnlyTabs` category views) onto the
+    /// visible sidebar item that owns it so the Mac and iPad sidebars never
+    /// lose their active highlight.
+    static func highlightedSidebarTab(for tab: AppTab) -> AppTab {
+        detailOnlyTabs.contains(tab) ? .leagues : tab
+    }
+
     /// The same words the phone tab bar and iPad sidebar print.
     static func liveBadge(count: Int) -> String? {
         count > 0 ? "\(count) live" : nil
@@ -122,7 +129,7 @@ struct MacMainWindowView: View {
 
     private var selection: Binding<AppTab?> {
         Binding(
-            get: { navCoordinator.selectedTab },
+            get: { MacMainWindow10878.highlightedSidebarTab(for: navCoordinator.selectedTab) },
             set: { MacMainWindow10878.applySelection($0, to: navCoordinator) }
         )
     }

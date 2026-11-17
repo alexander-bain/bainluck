@@ -53,6 +53,11 @@ final class NavigationCoordinator: ObservableObject {
     /// Defaults to `ReleaseSurfaces.predictionsExperienceEnabled`; settable so
     /// unit tests can exercise both answers.
     var predictionsExperienceEnabled: Bool = ReleaseSurfaces.predictionsExperienceEnabled
+    /// Whether the active window mounts Quick Links (`Preferences`, `Accuracy`)
+    /// directly in its sidebar (Mac and iPad split) rather than pushing them
+    /// inside a phone tab's `NavigationStack`. Defaults to `MacMainWindow10878.runsOnMac`;
+    /// `MainTabView` updates it for `.iPadSplit` vs `.phoneTabs`.
+    var usesSidebarQuickLinks: Bool = MacMainWindow10878.runsOnMac
     /// This window's outstanding ask for Search field focus; SearchView drains it.
     @Published private(set) var searchFocus = MacSearchFocusTicket10878()
     @Published var pendingRoute: Route?
@@ -116,11 +121,14 @@ final class NavigationCoordinator: ObservableObject {
             return true
 
         case "futures":
+            // Browse owns the "Futures Markets — All prediction markets" hub card
+            // (`LeaguesView`) and consumes `pendingRoute` (#2998), so market links
+            // highlight Browse on Mac, iPad, and iPhone rather than Sports.
             if pathComponents.count >= 2, let id = Int(pathComponents[1]) {
-                navigate(to: .futuresDetail(id: id), tab: .feed)
+                navigate(to: .futuresDetail(id: id), tab: .leagues)
                 return true
             }
-            navigate(to: .futuresList, tab: .feed)
+            navigate(to: .futuresList, tab: .leagues)
             return true
 
         case "ei":
@@ -268,23 +276,28 @@ final class NavigationCoordinator: ObservableObject {
             return true
 
         case "preferences":
-            navigate(to: .preferences, tab: .myStuff)
+            if usesSidebarQuickLinks {
+                pendingRoute = nil
+                selectedTab = .preferences
+            } else {
+                navigate(to: .preferences, tab: .myStuff)
+            }
             return true
 
         case "weather":
-            navigate(to: .weather, tab: .feed)
+            navigate(to: .weather, tab: .leagues)
             return true
 
         case "economics":
-            navigate(to: .economics, tab: .feed)
+            navigate(to: .economics, tab: .leagues)
             return true
 
         case "politics":
-            navigate(to: .politics, tab: .feed)
+            navigate(to: .politics, tab: .leagues)
             return true
 
         case "entertainment":
-            navigate(to: .entertainment, tab: .feed)
+            navigate(to: .entertainment, tab: .leagues)
             return true
 
         case "category":
@@ -324,7 +337,12 @@ final class NavigationCoordinator: ObservableObject {
             }
 
         case "calibration":
-            navigate(to: .calibration, tab: .leagues)
+            if usesSidebarQuickLinks {
+                pendingRoute = nil
+                selectedTab = .calibration
+            } else {
+                navigate(to: .calibration, tab: .leagues)
+            }
             return true
 
         case "about":

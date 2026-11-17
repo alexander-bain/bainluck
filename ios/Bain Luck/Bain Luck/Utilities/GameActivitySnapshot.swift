@@ -215,8 +215,10 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
     /// alone can't tell 99.97% from certainty, so a live reading never prints
     /// "100%" or "0%" here: the ends read ">99%" and "<1%", as the page does
     /// for anything short of an exact 1 or 0.
+    /// Before kickoff the chance prints whole (39%, 61%): tenths only once play
+    /// starts, the rule #12822 / #12837 set for the page headline.
     func headlineNowText(home: Bool) -> String? {
-        guard let t = homeHeadlineTenths else { return nil }
+        guard lifecycle == .live || lifecycle == .suspended, let t = homeHeadlineTenths else { return nil }
         let side = home ? t : 1000 - t
         let probability = min(max(Double(side) / 1000, 0.0001), 0.9999)
         return EventHeadlineTenths10090.text(tenths: side, probability: probability)

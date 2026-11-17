@@ -18,8 +18,7 @@ def client(monkeypatch):
                                reason=None, container_id=1, members=[])
 
     async def sports_payload(*args, compact=False):
-        assert compact is False
-        return {"state": "published", "revision": 7, "sections": []}
+        return {"state": "published", "revision": 7, "sections": [], "compact": compact}
 
     monkeypatch.setattr(route, "containers_read_enabled", lambda: True)
     monkeypatch.setattr(route, "container_read_cache_enabled", lambda: False)
@@ -34,11 +33,14 @@ def client(monkeypatch):
 
 @pytest.mark.parametrize("param,value", [("revision", "1" * 13), ("cursor", "a" * 65),
                                          ("limit", "1" * 5)])
-def test_sports_hub_ignores_theme_query_lengths_at_http_boundary(client, param, value):
+@pytest.mark.parametrize("compact", [True, False])
+def test_sports_hub_ignores_theme_query_lengths_at_http_boundary(client, param, value, compact):
     url = "/api/containers/nfl-2026-week-5"
-    baseline = client.get(url)
-    response = client.get(url, params={param: value})
+    params = {} if compact else {"compact": "false"}
+    baseline = client.get(url, params=params)
+    response = client.get(url, params={**params, param: value})
     assert baseline.status_code == response.status_code == 200
+    assert baseline.json()["compact"] is compact
     assert response.json() == baseline.json()
 
 

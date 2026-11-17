@@ -30,14 +30,11 @@ describe("#10108 hero doubles names wrap at the slash", () => {
     expect(renderToStaticMarkup(<SlashBreakableName text="Phillies" />)).toBe("Phillies");
   });
 
-  it("both hero name slots on the event page render through it", () => {
-    const page = readFileSync(
-      join(__dirname, "..", "..", "app", "events", "[id]", "page.tsx"),
+  it("competitor name slots in EventPageHeadline199 render through it", () => {
+    const headline = readFileSync(
+      join(__dirname, "..", "..", "components", "event", "EventPageHeadline199.tsx"),
       "utf8",
     );
-    expect(page).toContain("<SlashBreakableName text={heroShortNames.home} />");
-    expect(page).toContain("<SlashBreakableName text={heroShortNames.away} />");
-    // No hero slot prints the bare name any more.
-    expect(page).not.toMatch(/>\s*\{heroShortNames\.(home|away)\}\s*<\/TeamNameLink>/);
+    expect(headline).toContain("<SlashBreakableName text={row.shortName} />");
   });
 });

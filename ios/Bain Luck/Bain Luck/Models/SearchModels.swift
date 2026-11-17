@@ -512,6 +512,10 @@ nonisolated struct SearchTeam: Decodable, Identifiable, Sendable {
     let logo: String?
     let record: String?
     let sportKey: String?
+    /// The server's word that the search words name this team, not just share
+    /// a word with it ("Patriots" names New England and George Mason; it does
+    /// not name St Kitts & Nevis). Siri's team choice reads it (ruling 208-A).
+    let queryNamesTeam: Bool?
 }
 
 // MARK: - Team Page

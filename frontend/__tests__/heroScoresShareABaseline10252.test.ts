@@ -21,52 +21,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'app', 'events', '[id]', 'page.tsx'),
+  path.join(__dirname, '..', 'components', 'event', 'EventPageHeadline199.tsx'),
   'utf8',
 );
 
-const heroStart = SRC.indexOf('{/* Teams + Score + Giant Probability');
-const hero = SRC.slice(heroStart, SRC.indexOf('{event.standings_context?.stakes', heroStart));
-
-describe('#10252 — the hero scores share a baseline when one record wraps', () => {
-  it('finds the hero block', () => {
-    expect(heroStart).toBeGreaterThan(-1);
-    expect(hero.length).toBeGreaterThan(1000);
+describe('#10252 — competitor rows in EventPageHeadline199 align each row independently so records never shift scores', () => {
+  it('renders each competitor on its own items-center justify-between row', () => {
+    expect(SRC).toContain('data-testid={`headline-12472-${row.role}-row`}');
+    expect(SRC).toContain('className="flex items-center justify-between gap-2 min-w-0 max-[359px]:flex-wrap"');
   });
 
-  it('stretches the three columns instead of centring them', () => {
-    const row = hero.match(/<div className="flex (items-\w+) justify-between max-\[359px\]:flex-wrap">/);
-    expect(row?.[1]).toBe('items-stretch');
+  it('aligns all numeric cells on a shared baseline per row', () => {
+    expect(SRC).toContain('className="flex items-baseline shrink-0 max-[359px]:ml-auto"');
   });
 
-  it('pushes BOTH scores to the foot of their columns', () => {
-    for (const side of ['Home', 'Away']) {
-      const score = hero.match(
-        new RegExp(`<span className="([^"]*)">\\s*\\{best${side}Score\\}`),
-      );
-      expect(score).not.toBeNull();
-      const classes = score![1].split(/\s+/);
-      expect(classes).toContain('mt-auto');
-      expect(classes).not.toContain('mt-1');
-    }
-  });
-
-  it('keeps the centre block vertically centred', () => {
-    expect(hero).toContain(
-      // #11301 appends the below-360 wrap onto its own full-width row.
-      '<div className="flex flex-col items-center justify-center px-1 sm:px-4 min-w-0 max-[359px]:order-3 max-[359px]:basis-full max-[359px]:mt-3">',
-    );
-  });
-
-  it('centres a wrapped record line under its name, on both sides', () => {
-    for (const side of ['home', 'away']) {
-      const record = hero.match(
-        new RegExp(
-          `<span className="([^"]*)">\\s*\\{event\\.standings_context\\?\\.${side} \\|\\| event\\.${side}_team_data\\?\\.record\\}`,
-        ),
-      );
-      expect(record).not.toBeNull();
-      expect(record![1].split(/\s+/)).toContain('text-center');
-    }
+  it('stacks the optional record cleanly inside the left name column', () => {
+    expect(SRC).toContain('{row.record ? (');
+    expect(SRC).toContain('{row.record}');
   });
 });

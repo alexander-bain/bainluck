@@ -36,11 +36,13 @@ from app.models.models import (
 )
 
 from app.models.activitykit import ActivityKitRegistration
+from app.models.push_device import PushDevice
 
 from .activitykit_delivery import ActivityKitDelivery
 from .activitykit_observation import ActivityKitObservation
 
 __all__ = [
+    "PushDevice",
     "ActivityKitObservation",
     "ActivityKitDelivery",
     "ActivityKitRegistration",

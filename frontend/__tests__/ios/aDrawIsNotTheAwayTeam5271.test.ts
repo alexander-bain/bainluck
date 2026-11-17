@@ -509,16 +509,14 @@ d("a draw is not the away team on iOS", () => {
     expect(code).toMatch(
       /side == \.home\s*\?\s*reading\?\.homeProbability\s*:\s*\(prematchAwayIsWithheld \? nil : reading\?\.awayProbability\)/
     );
-    // Both bars keep the remainder and drop the colour on their own reading.
-    expect(code).toMatch(
-      /prematchAwayIsWithheld\s*\r?\n?\s*\?\s*Color\.secondary\.opacity\(0\.25\)/
-    );
+    // Finished cards draw no probability bar; the active bar keeps the remainder and drops the colour when away is withheld.
+    expect(code).toMatch(/if isFinished \{\s*EmptyView\(\)\s*\}/);
     expect(code).toMatch(
       /currentAwayIsWithheld \? Color\.secondary\.opacity\(0\.25\) : awayColor/
     );
     expect(
       (code.match(/Color\.secondary\.opacity\(0\.25\)/g) ?? []).length
-    ).toBe(2);
+    ).toBe(1);
   });
 
   /**

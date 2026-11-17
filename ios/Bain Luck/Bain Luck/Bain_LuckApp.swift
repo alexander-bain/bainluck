@@ -62,6 +62,9 @@ struct Bain_LuckApp: App {
         // time since launch rather than time since whichever screen happened to
         // measure itself first (latency/121).
         AppLaunchClock.touch()
+        // Ruling 208-A — Siri learns the team names its phrases may carry
+        // ("Ask Bain Luck about the Patriots") from the app at launch.
+        SiriPhrases208B.refreshTeamNames()
         #if DEBUG && os(iOS) && canImport(ActivityKit)
         // #10864 — the simulator's Live Activity demo; launch argument only.
         GameActivityDemo10864.runIfAsked()

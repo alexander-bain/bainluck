@@ -267,6 +267,7 @@
     "#10090 a tagged-twin page's stream removal floor equals its detail's revision vector; each fold path holds alone; a reversed twin is in neither (real Postgres)",
     "#10090 history_fold_revision certifies only what a fresh build read past (real Postgres)",
     "#10542 ActivityKit registration ownership (real Postgres)",
+    "#177-A a phone registers its pins and push tokens without an account (real Postgres)",
     "#10556 durable ActivityKit reservations (real Postgres)",
     "#10564 abandoned ActivityKit credentials expire (real Postgres)",
     "#10568 canonical ActivityKit observation ordering (real Postgres)",

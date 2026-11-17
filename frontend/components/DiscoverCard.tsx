@@ -218,6 +218,8 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
             bundleId={(item.data as FeedBundleData).id}
             collectionRef={(item.data as FeedBundleData).collection_ref}
             deadlineFamily={(item.data as FeedBundleData).deadline_family}
+            imageUrl={(item.data as FeedBundleData).image_url}
+            imagePresentation={(item.data as FeedBundleData).image_presentation}
             nowIso={nowIso}
             timeZone={timeZone}
           />
@@ -230,6 +232,8 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
             items={(item.data as FeedBundleData).items}
             title={(item.data as FeedBundleData).title}
             sharedQuestion={(item.data as FeedBundleData).shared_question}
+            imageUrl={(item.data as FeedBundleData).image_url}
+            imagePresentation={(item.data as FeedBundleData).image_presentation}
             positionIndex={positionIndex}
           />
         ) : null}

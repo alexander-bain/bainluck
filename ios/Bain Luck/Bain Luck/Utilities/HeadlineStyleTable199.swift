@@ -27,9 +27,9 @@ nonisolated enum HeadlineStyleTable199 {
     static func nowBaseSize(_ surface: Surface) -> CGFloat {
         switch surface {
         case .page: return 26
-        case .card: return 16
-        case .widget: return 27
-        case .wristTile: return 17
+        case .card: return 20
+        case .widget: return 18
+        case .wristTile: return 25
         case .lockScreen: return 22
         case .island: return 24
         }
@@ -38,19 +38,29 @@ nonisolated enum HeadlineStyleTable199 {
     static func secondNumberBaseSize(_ surface: Surface, prominent: Bool = false) -> CGFloat {
         switch surface {
         case .page: return prominent ? 22 : 17
-        case .card: return prominent ? 15 : 13
-        case .widget: return prominent ? 20 : 13
-        case .wristTile: return prominent ? 15 : 12
+        case .card: return prominent ? 20 : 17
+        case .widget: return prominent ? 18 : 15
+        case .wristTile: return prominent ? 25 : 15
         case .lockScreen: return prominent ? 20 : 15
         case .island: return prominent ? 20 : 15
+        }
+    }
+
+    static func pregameNumberBaseSize(_ surface: Surface) -> CGFloat {
+        switch surface {
+        case .page: return 17
+        case .card: return 15
+        case .widget: return 13
+        case .wristTile: return 12
+        case .lockScreen, .island: return 15
         }
     }
 
     static func quietTextBaseSize(_ surface: Surface) -> CGFloat {
         switch surface {
         case .page: return 12
-        case .card: return 11.5
-        case .widget: return 11
+        case .card: return 12
+        case .widget: return 10.5
         case .wristTile: return 11
         case .lockScreen, .island: return 11
         }
@@ -59,9 +69,9 @@ nonisolated enum HeadlineStyleTable199 {
     static func nameBaseSize(_ surface: Surface) -> CGFloat {
         switch surface {
         case .page: return 15.5
-        case .card: return 15
-        case .widget: return 13
-        case .wristTile: return 13
+        case .card: return 17
+        case .widget: return 14
+        case .wristTile: return 15
         case .lockScreen, .island: return 15
         }
     }
@@ -69,8 +79,8 @@ nonisolated enum HeadlineStyleTable199 {
     static func headerBaseSize(_ surface: Surface) -> CGFloat {
         switch surface {
         case .page: return 11
-        case .card: return 11
-        case .widget: return 10
+        case .card: return 10.5
+        case .widget: return 10.5
         case .wristTile: return 10
         case .lockScreen, .island: return 11
         }
@@ -84,11 +94,11 @@ nonisolated enum HeadlineStyleTable199 {
         case .page:
             return .system(size: min(size, 32), weight: .black, design: .rounded).monospacedDigit()
         case .card:
-            return .system(size: min(size, 22), weight: .heavy, design: .rounded).monospacedDigit()
+            return .system(size: min(size, 24), weight: .heavy, design: .rounded).monospacedDigit()
         case .widget:
-            return .system(size: size, weight: .bold, design: .rounded).monospacedDigit()
+            return .system(size: size, weight: .heavy, design: .rounded).monospacedDigit()
         case .wristTile:
-            return .title3.bold().monospacedDigit()
+            return .system(size: size, weight: .heavy, design: .rounded).monospacedDigit()
         case .lockScreen, .island:
             return .system(size: size, weight: .black, design: .rounded).monospacedDigit()
         }
@@ -109,13 +119,12 @@ nonisolated enum HeadlineStyleTable199 {
             return .system(size: min(size, cap), weight: weight, design: .rounded).monospacedDigit()
         case .card:
             let weight: Font.Weight = prominent ? .bold : .semibold
-            return .system(size: min(size, 20), weight: weight, design: .rounded).monospacedDigit()
+            let cap: CGFloat = prominent ? 24 : 20
+            return .system(size: min(size, cap), weight: weight, design: .rounded).monospacedDigit()
         case .widget:
             let weight: Font.Weight = prominent ? .bold : .semibold
             return .system(size: size, weight: weight, design: .rounded).monospacedDigit()
-        case .wristTile:
-            return (prominent ? Font.body.bold() : Font.footnote.weight(.semibold)).monospacedDigit()
-        case .lockScreen, .island:
+        case .wristTile, .lockScreen, .island:
             let weight: Font.Weight = prominent ? .bold : .semibold
             return .system(size: size, weight: weight, design: .rounded).monospacedDigit()
         }
@@ -162,9 +171,9 @@ nonisolated enum HeadlineStyleTable199 {
         case .page, .card:
             return .subheadline.weight(weight)
         case .widget:
-            return .footnote.weight(.semibold)
+            return .footnote.weight(weight)
         case .wristTile:
-            return .footnote.weight(.semibold)
+            return .footnote.weight(weight)
         case .lockScreen, .island:
             return .subheadline.weight(isLoser ? .regular : .semibold)
         }

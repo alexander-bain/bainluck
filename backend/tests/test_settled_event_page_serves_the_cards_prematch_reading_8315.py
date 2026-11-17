@@ -27,6 +27,7 @@ from app.routes import events as events_route
 from app.routes.events import _settled_prematch_odds, get_event
 from app.utils.feed_scoring import format_event_data
 from app.utils.prematch_reading import prematch_prior_sql
+from app.utils import prematch_reading
 
 from tests.test_series_fold_3810 import is_blend_fold, is_series_fold
 
@@ -293,7 +294,7 @@ def route(monkeypatch):
     def _serve(event, rows):
         events_route._event_detail_cache.clear()
         db = _RouteSession(event, rows)
-        return asyncio.run(get_event(EVENT_ID, db=db)), db
+        return asyncio.run(get_event(event.id, db=db)), db
 
     yield _serve
     events_route._event_detail_cache.clear()
@@ -318,3 +319,87 @@ def test_the_route_serves_no_prematch_odds_before_the_game(route):
 
     assert db.prematch_reads == 0
     assert "prematch_odds" not in body
+
+
+def _freeze_detail_clock(monkeypatch, *, now):
+    class FixedMeta(type(datetime)):
+        def __instancecheck__(cls, value):
+            return isinstance(value, datetime)
+
+    class FixedDateTime(datetime, metaclass=FixedMeta):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz) if tz else now.replace(tzinfo=None)
+
+    monkeypatch.setattr(events_route, "datetime", FixedDateTime)
+    monkeypatch.setattr(prematch_reading, "_utcnow", lambda: now)
+
+
+def test_live_detail_serves_the_same_kickoff_prior_as_the_finished_page(route, monkeypatch):
+    # #12633: Patriots-Lions had a Kalshi prior, but live detail omitted it.
+    # Use the observed probabilities while the frozen clock keeps the state live.
+    _freeze_detail_clock(monkeypatch, now=KICKOFF + timedelta(hours=1))
+    event = _event(status="live", sport_key="americanfootball_nfl", home=0.5765, away=0.4235)
+    event.id = 14639206
+    event.home_team_name, event.away_team_name = "Detroit Lions", "New England Patriots"
+    row = _row("kalshi", 0.575, 0.425)
+    row.event_id = event.id
+
+    live, db = route(event, [row])
+
+    assert live["status"] == "live"
+    assert db.prematch_reads == 1
+    assert live["prematch_odds"] == {
+        "home_probability": 0.575, "away_probability": 0.425,
+        "home_rendered_percent": 58, "away_rendered_percent": 42,
+        "source": "kalshi",
+    }
+    assert live["opening_odds"]["home_probability"] == pytest.approx(0.5765)
+    event.status = "completed"
+    finished, _ = route(event, [row])
+    assert live["prematch_odds"] == finished["prematch_odds"]
+
+
+def test_live_detail_uses_the_served_state_and_does_not_ask_before_kickoff(route, monkeypatch):
+    _freeze_detail_clock(monkeypatch, now=KICKOFF - timedelta(hours=1))
+    body, db = route(_event(status="live"), [_row("kalshi", 0.61, 0.39)])
+    assert body["status"] == "scheduled"
+    assert db.prematch_reads == 0
+    assert "prematch_odds" not in body
+
+
+@pytest.mark.parametrize("opening", [(None, None), (0.6007, 0.3993)])
+def test_live_detail_keeps_absence_or_the_existing_books_fallback(route, opening, monkeypatch):
+    _freeze_detail_clock(monkeypatch, now=KICKOFF + timedelta(hours=1))
+    body, db = route(_event(status="live", home=opening[0], away=opening[1]), [])
+    assert db.prematch_reads == 1
+    if opening[0] is None:
+        assert "prematch_odds" not in body
+    else:
+        assert body["prematch_odds"]["source"] == "books"
+        assert body["prematch_odds"]["home_probability"] == pytest.approx(opening[0])
+
+
+def test_live_detail_reuses_the_kickoff_cache_and_a_changed_cutoff_reads_again(monkeypatch):
+    _freeze_detail_clock(monkeypatch, now=KICKOFF + timedelta(hours=1))
+    event = _event(status="live")
+
+    async def exercise():
+        first_db = _PrematchSession([_row("kalshi", 0.61, 0.39)])
+        first = await _settled_prematch_odds(first_db, event, "baseball_mlb", live_detail=True)
+        assert len(first_db.calls) == 1
+        cached_db = _PrematchSession(fail=True)
+        assert await _settled_prematch_odds(
+            cached_db, event, "baseball_mlb", live_detail=True
+        ) == first
+        event.status = "completed"
+        assert await _settled_prematch_odds(cached_db, event, "baseball_mlb") == first
+        assert cached_db.calls == []
+
+        event.commence_time += timedelta(minutes=1)
+        changed_db = _PrematchSession([_row("kalshi", 0.63, 0.37)])
+        changed = await _settled_prematch_odds(changed_db, event, "baseball_mlb")
+        assert len(changed_db.calls) == 1
+        assert changed["home_probability"] == 0.63
+
+    asyncio.run(exercise())
