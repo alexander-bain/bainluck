@@ -3387,6 +3387,160 @@ def _upcoming_from_schedule(
 GOLF_CATEGORY_CACHE_KEY = "bainluck:category:golf"
 
 
+#: #12740 — how long before the first tee a reading may have last stood and
+#: still be "the reading in force". Retention merges equal-price runs into their
+#: first row and extends ``valid_until``, so a price that simply did not move is
+#: covered by this window through ``valid_until``; a source that had gone quiet
+#: for days before the start is not a pregame number, it is an old one.
+PREGAME_READING_MAX_AGE = timedelta(hours=48)
+
+_PREGAME_AS_OF_SQL = text(
+    """
+    SELECT o.outcome_id, snap.probability, snap.yes_bid, snap.yes_ask
+      FROM unnest(CAST(:outcome_ids AS integer[])) AS o(outcome_id)
+      CROSS JOIN LATERAL (
+            SELECT s.probability, s.yes_bid, s.yes_ask
+              FROM futures_odds_snapshots s
+             WHERE s.outcome_id = o.outcome_id
+               AND s.captured_at < :cutoff
+               AND COALESCE(s.valid_until, s.captured_at) >= :floor
+             ORDER BY s.captured_at DESC
+             LIMIT 1
+           ) AS snap
+    """
+)
+
+
+class _AsOfOutcome:
+    """An outcome priced at the reading in force at the cutoff (#12740).
+
+    Delegates everything to the real row except the price fields the pipeline
+    reads (`current_probability` and the book the placeholder rule checks) and
+    the fields that would leak the present into the past (movement, opening,
+    result). No reading at the cutoff means no price, so the pipeline skips it
+    exactly as it skips an unpriced outcome today.
+    """
+
+    def __init__(self, real, snap):
+        self._real = real
+        self.current_probability = None if snap is None else snap[0]
+        self.current_yes_bid = None if snap is None else snap[1]
+        self.current_yes_ask = None if snap is None else snap[2]
+        self.opening_probability = None
+        self.probability_change_24h = None
+        self.is_winner = None
+        self.resolution_source = None
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+class _AsOfMarket:
+    """A market whose outcomes are `_AsOfOutcome`s; everything else is the real row."""
+
+    def __init__(self, real, snaps: dict):
+        self._real = real
+        self.outcomes = [_AsOfOutcome(o, snaps.get(o.id)) for o in real.outcomes]
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def _pregame_cutoff(tourn: dict, tourn_markets: list, redis_client) -> tuple[datetime | None, str | None]:
+    """The first tee for this tournament, and how it was known.
+
+    ``first_play``: the first in-play poll that saw round 1 under way (#12782),
+    the earliest across this tournament's DataGolf events. ``start_date``: the
+    fallback, midnight UTC of the start date — honest "before the tournament
+    day", just earlier. Neither: no cutoff, so no Pregame.
+    """
+    from app.utils.golf_first_play import read_first_play
+
+    seen: list[datetime] = []
+    if redis_client is not None:
+        for market in tourn_markets:
+            parts = (getattr(market, "external_id", None) or "").split(":")
+            if len(parts) == 4 and parts[0] == "datagolf" and all(parts):
+                moment = read_first_play(redis_client, parts[1], parts[2])
+                if moment is not None:
+                    seen.append(moment)
+    if seen:
+        return min(seen), "first_play"
+    raw = tourn.get("start_date")
+    if raw:
+        try:
+            start = datetime.fromisoformat(str(raw)[:10]).replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None, None
+        return start, "start_date"
+    return None, None
+
+
+async def _attach_pregame(db, tournaments: list[dict], tournament_markets: dict, now: datetime) -> None:
+    """Serve ``pregame_probability`` per golfer and ``pregame_as_of`` per tournament.
+
+    #12740. "Pregame" used to be the first reading ever stored, which can be
+    weeks early or, for a market picked up late, mid-tournament. It is now the
+    same blend as the live number, computed over each outcome's reading in
+    force at the first tee (`_AsOfMarket` through `_build_one_tournament`), so
+    Pregame and Now are comparable.
+
+    Empty, never a guess: before the cutoff (the tournament has not started,
+    and its current number IS its pregame number), and for a golfer no source
+    priced before the cutoff.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        redis_client = get_redis_client()
+    except Exception:  # noqa: BLE001 — the fallback cutoff still works without Redis
+        redis_client = None
+
+    for tourn in tournaments:
+        for golfer in (tourn.get("_all_golfers") or []) + (tourn.get("golfers") or []):
+            golfer["pregame_probability"] = None
+        tourn["pregame_as_of"] = None
+        tourn["pregame_cutoff_basis"] = None
+
+        tourn_markets = tournament_markets.get(tourn.get("key")) or []
+        if not tourn_markets:
+            continue
+        cutoff, basis = _pregame_cutoff(tourn, tourn_markets, redis_client)
+        if cutoff is None or cutoff > now:
+            continue
+        outcome_ids = [o.id for m in tourn_markets for o in m.outcomes]
+        if not outcome_ids:
+            continue
+        rows = await db.execute(
+            _PREGAME_AS_OF_SQL,
+            {"outcome_ids": outcome_ids, "cutoff": cutoff, "floor": cutoff - PREGAME_READING_MAX_AGE},
+        )
+        snaps = {
+            r.outcome_id: (
+                float(r.probability) if r.probability is not None else None,
+                float(r.yes_bid) if r.yes_bid is not None else None,
+                float(r.yes_ask) if r.yes_ask is not None else None,
+            )
+            for r in rows
+        }
+        if not snaps:
+            continue
+        as_of = _build_one_tournament(
+            tourn.get("key"), [_AsOfMarket(m, snaps) for m in tourn_markets], {},
+        )
+        if not as_of:
+            continue
+        pregame_by_key = {}
+        for g in (as_of.get("_all_golfers") or as_of.get("golfers") or []):
+            key = _match_key(g.get("name") or "")
+            if key and g.get("probability") is not None:
+                pregame_by_key[key] = round(float(g["probability"]), 4)
+        for golfer in (tourn.get("_all_golfers") or []) + (tourn.get("golfers") or []):
+            golfer["pregame_probability"] = pregame_by_key.get(_match_key(golfer.get("name") or ""))
+        tourn["pregame_as_of"] = cutoff.isoformat()
+        tourn["pregame_cutoff_basis"] = basis
+
+
 def _build_one_tournament(tourn_key: str, tourn_markets: list, prob_24h_ago: dict) -> dict | None:
     """One tournament's entry from its markets: the cross-source aggregation.
 
@@ -3802,6 +3956,13 @@ async def get_golf(
             _fill_dates_from_espn_lpga_calendar(tournaments, await _get_espn_lpga_calendar(), now)
         except Exception as e:  # noqa: BLE001 — a dark ESPN must never cost the listing
             logger.warning("ESPN LPGA calendar fill failed: %s", e)
+
+    # #12740 — "Pregame": each golfer's chance as of the first tee. After the
+    # date fills above, because the fallback cutoff is the start date.
+    try:
+        await _attach_pregame(db, tournaments, tournament_markets, now)
+    except Exception as e:  # noqa: BLE001 — Pregame must never cost the listing
+        logger.warning("Golf pregame (#12740) failed: %s", e)
 
     # Biggest movers
     all_movers = []
