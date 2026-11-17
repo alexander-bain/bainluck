@@ -324,7 +324,10 @@ def _is_twin(a: "_SelectedTournament", b: "_SelectedTournament") -> bool:
     wa, wb = _distinctive_words(a.name), _distinctive_words(b.name)
     if not wa or not wb:
         return False
-    return wa <= wb or wb <= wa
+    # Subset in either direction. `issubset`, not `<=`: CodeQL reads `<=` as a
+    # total order and calls the second test "always true", but sets are only
+    # partially ordered ({a} and {b} are neither).
+    return wa.issubset(wb) or wb.issubset(wa)
 
 
 def _evaluate_single_tournament(
