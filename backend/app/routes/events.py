@@ -20748,7 +20748,7 @@ async def get_event(
         hero_home_prob = current_odds_probability(
             agg_prob, agg_tier, aggregated["home_probability"], event.status
         )
-        hero_away_prob = round(1.0 - hero_home_prob, 6) if hero_home_prob is not None else aggregated["away_probability"]
+        hero_away_prob = round(1.0 - hero_home_prob, 6) if hero_home_prob is not None else None
 
         # ── #6238: AND ON A THREE-OUTCOME WINNER MARKET THAT SECOND NUMBER IS
         #    NOT THE AWAY TEAM'S PRICE ────────────────────────────────────────
@@ -37689,11 +37689,11 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         captured_at = odds_data.get("captured_at")
         snapshots = odds_data.get("snapshots", [])
 
-        _hero_home = _blend if _blend is not None else aggregated["home_probability"]
+        _hero_home = _blend
         _hero_away = (
             round(1.0 - _hero_home, 6)
             if _hero_home is not None
-            else aggregated["away_probability"]
+            else None
         )
         current_home_prob = _hero_home
         current_away_prob = _hero_away
@@ -37731,7 +37731,7 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         _served_away = (
             round(1.0 - _served_home, 6)
             if _served_home is not None
-            else aggregated["away_probability"]
+            else None
         )
 
         response["current_odds"] = {

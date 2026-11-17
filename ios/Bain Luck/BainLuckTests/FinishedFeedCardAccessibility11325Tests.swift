@@ -77,6 +77,8 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             XCTAssertTrue(below.contains("22") && below.contains("29"), "\(name): forecast pair 22/29 missing — \(all)")
             for line in read where line.box.maxY < label.box.minY {
                 XCTAssertFalse(isElided(line.text), "\(name): '\(line.text)' is cut short — \(all)")
+                XCTAssertFalse(line.text.trimmingCharacters(in: .whitespaces).hasSuffix("-"),
+                               "\(name): '\(line.text)' broke mid-word — \(all)")
             }
         }
     }
@@ -325,10 +327,22 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             let name = "sports-nfl-393-large-\(status)-constructed-odds"
             let lines = try sportsLines(e, width: 393, size: .large, name: name)
             let all = describe(lines)
-            // Ruling 204-C: live cards print Score · Proj. · Now with no Pregame column;
-            // scheduled and suspended cards also print no 'Pregame' word.
-            XCTAssertFalse(lines.contains { containsPregameToken($0.text) },
-                           "\(name): a \(status) card printed 'Pregame' — \(all)")
+            // Rulings 200-B / 204-C / 213-A: live cards print Score · Proj. · Now
+            // with NO 'Pregame' column header or team-row word, and carry at most the
+            // single one-line pregame summary beneath the rows/bar; scheduled and
+            // suspended cards print 'Pregame' nowhere on the card.
+            if status == "live" {
+                let homeScore = try XCTUnwrap(scoreLine("23", in: lines), "\(name): no live 23 — \(all)")
+                let headerAndRows = lines.filter { $0.box.maxY <= homeScore.box.maxY + 4 }
+                XCTAssertFalse(headerAndRows.contains { containsPregameToken($0.text) },
+                               "\(name): a live card printed 'Pregame' in its headers or rows — \(all)")
+                let belowRows = lines.filter { $0.box.minY > homeScore.box.maxY && containsPregameToken($0.text) }
+                XCTAssertLessThanOrEqual(belowRows.count, 1,
+                                         "\(name): expected at most one 200-B pregame summary line below rows — \(all)")
+            } else {
+                XCTAssertFalse(lines.contains { containsPregameToken($0.text) },
+                               "\(name): a \(status) card printed 'Pregame' — \(all)")
+            }
             if status == "suspended" {
                 for percent in ["24%", "76%"] {
                     XCTAssertTrue(lines.contains { valueTokens($0.text).contains(percent) },
@@ -358,6 +372,8 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
                 || normalized(line.text).contains("Francisco")
                 || normalized(line.text).contains("49ers") {
                 XCTAssertFalse(isElided(line.text), "\(name): team name line '\(line.text)' is cut short — \(all)")
+                XCTAssertFalse(line.text.trimmingCharacters(in: .whitespaces).hasSuffix("-"),
+                               "\(name): team name line '\(line.text)' broke mid-word — \(all)")
             }
         }
     }

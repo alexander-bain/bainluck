@@ -23,6 +23,7 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
     let counts: ContainerHubCounts?
     let page: ContainerHubPage?
     let revisionMoved: Bool
+    let pairedMetricSet: PairedMetricSet?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -47,8 +48,11 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
         counts = try c.decodeIfPresent(ContainerHubCounts.self, forKey: .counts)
         page = try c.decodeIfPresent(ContainerHubPage.self, forKey: .page)
         revisionMoved = try c.decodeIfPresent(Bool.self, forKey: .revisionMoved) ?? false
+        pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet)) ?? nil
         if state == .published {
-            guard revision.map({ $0 > 0 }) == true, edition?.matches(slug: slug) == true,
+            let isRoundupMemberHub = edition == nil && slug.hasPrefix("roundup-") && container?.kind == "roundup"
+            guard revision.map({ $0 > 0 }) == true,
+                  edition?.matches(slug: slug) == true || isRoundupMemberHub,
                   container?.slug == slug, memberCount >= 0, withheldCount >= 0 else {
                 throw DecodingError.dataCorruptedError(forKey: .edition, in: c, debugDescription: "Published collection identity is invalid")
             }
@@ -65,6 +69,7 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case state, slug, revision, reason, edition, container, children, sections
         case memberCount, withheld, withheldCount, assembled, knownClasses, counts, page, revisionMoved
+        case pairedMetricSet
     }
 
     /// Preserve the accepted page inventory while replacing its fresh envelope.
@@ -74,6 +79,7 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
         self.sections = sections; self.memberCount = memberCount; self.page = page
         self.withheld = withheld; self.withheldCount = withheldCount; assembled = envelope.assembled
         knownClasses = envelope.knownClasses; counts = envelope.counts; revisionMoved = envelope.revisionMoved
+        pairedMetricSet = envelope.pairedMetricSet
     }
 
     var identity: Identity { Identity(slug: slug, revision: revision) }

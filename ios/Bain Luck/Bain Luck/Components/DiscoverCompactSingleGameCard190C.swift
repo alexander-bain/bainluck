@@ -31,6 +31,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     @ScaledMetric(relativeTo: .body) private var scoreColWidth: CGFloat = 42
     @ScaledMetric(relativeTo: .subheadline) private var pregameColWidth: CGFloat = 48
     @ScaledMetric(relativeTo: .title3) private var primaryColWidth: CGFloat = 82
+    @State private var measuredContentWidth: CGFloat = 0
 
     private let scoreToPregameGutter: CGFloat = 12
     private let pregameToPrimaryGap: CGFloat = 14
@@ -153,6 +154,13 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 footerRow()
             }
         }
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { measuredContentWidth = geo.size.width }
+                    .onChange(of: geo.size.width) { _, w in measuredContentWidth = w }
+            }
+        )
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
     }
@@ -339,10 +347,31 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         }
     }
 
+    private func accessibilityDisplayLabel(for row: DiscoverSingleGameCard190C.RowModel) -> String {
+        if row.kind == .draw { return row.fullName }
+        return TeamShortName.isCollegeSport(sportKey: event.sport) ? row.shortName : row.fullName
+    }
+
+    private var sharedAccessibilityTeamNameFontSize: CGFloat {
+        let names = model.rows
+            .filter { $0.kind != .draw }
+            .map(accessibilityDisplayLabel(for:))
+        let contentW = measuredContentWidth > 0 ? measuredContentWidth : 333
+        return CardTeamNameSizing.sharedUnboundedWordSafeFontSize(
+            names: names,
+            baseSize: compactNameSize,
+            weight: .bold,
+            availableWidth: max(contentW, 120),
+            minimumScale: 0.55
+        )
+    }
+
     private func accessibilityRowView(_ row: DiscoverSingleGameCard190C.RowModel) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(row.fullName)
-                .font(.body.weight(model.isFinished ? (row.isWinner ? .bold : .medium) : .semibold))
+        let displayLabel = accessibilityDisplayLabel(for: row)
+        let weight: Font.Weight = model.isFinished ? (row.isWinner ? .bold : .medium) : .semibold
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(displayLabel)
+                .font(.system(size: sharedAccessibilityTeamNameFontSize, weight: weight))
                 .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)

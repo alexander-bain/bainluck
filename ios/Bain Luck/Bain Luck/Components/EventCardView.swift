@@ -29,6 +29,8 @@ struct EventCardView: View {
     @ScaledMetric(relativeTo: .subheadline) private var compactPregameWidth: CGFloat = 58
     @ScaledMetric(relativeTo: .title3) private var compactLargeChanceWidth: CGFloat = 82
     @ScaledMetric(relativeTo: .title3) private var compactLargeFinalWidth: CGFloat = 60
+    @ScaledMetric(relativeTo: .subheadline) private var finishedAccessibilityNameSize: CGFloat = 15
+    @State private var measuredCardWidth: CGFloat = 0
 
     private let scoreToPregameGutter: CGFloat = 18
     private let pregameToNowGap: CGFloat = 10
@@ -197,6 +199,13 @@ struct EventCardView: View {
             }
         }
         .padding(.vertical, 6)
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { measuredCardWidth = geo.size.width }
+                    .onChange(of: geo.size.width) { _, w in measuredCardWidth = w }
+            }
+        )
         .contentShape(Rectangle())
         #if os(macOS)
         .background(isHovered ? Color.primary.opacity(0.04) : Color.clear)
@@ -695,6 +704,29 @@ struct EventCardView: View {
         }
     }
 
+    private var accessibilityDisplayLabels: (away: String, home: String) {
+        if TeamShortName.isCollegeSport(sportKey: event.sport) {
+            return shortTeamNames
+        }
+        return (away: event.awayTeam, home: event.homeTeam)
+    }
+
+    private func sharedAccessibilityNameFontSize(
+        baseSize: CGFloat,
+        weight: Font.Weight,
+        reservedHorizontal: CGFloat
+    ) -> CGFloat {
+        let cardW = measuredCardWidth > 0 ? measuredCardWidth : 361
+        let labels = accessibilityDisplayLabels
+        return CardTeamNameSizing.sharedUnboundedWordSafeFontSize(
+            names: [labels.away, labels.home],
+            baseSize: baseSize,
+            weight: weight,
+            availableWidth: max(cardW - reservedHorizontal, 120),
+            minimumScale: 0.55
+        )
+    }
+
     private func liveAccessibilityTeamRow204C(
         name: String,
         avatar: ParticipantAvatar,
@@ -703,12 +735,15 @@ struct EventCardView: View {
         won: Bool,
         side: TeamSide
     ) -> some View {
-        let displayLabel = TeamShortName.isCollegeSport(sportKey: event.sport)
-            ? (side == .away ? shortTeamNames.away : shortTeamNames.home)
-            : name
+        let displayLabel = side == .away ? accessibilityDisplayLabels.away : accessibilityDisplayLabels.home
+        let nameSize = sharedAccessibilityNameFontSize(
+            baseSize: compactNameSize,
+            weight: .semibold,
+            reservedHorizontal: 0
+        )
         return VStack(alignment: .leading, spacing: 4) {
             Text(displayLabel)
-                .font(.body.weight(.semibold))
+                .font(.system(size: nameSize, weight: .semibold))
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -980,16 +1015,20 @@ struct EventCardView: View {
     /// downward rather than squeezing the number. Same selection, rounding,
     /// withholding and colour as the single row; no number, no block.
     private func finishedAccessibilityTeamRow(name: String, avatar: ParticipantAvatar, color: Color, score: Int?, won: Bool, side: TeamSide) -> some View {
-        let displayLabel = TeamShortName.isCollegeSport(sportKey: event.sport)
-            ? (side == .away ? shortTeamNames.away : shortTeamNames.home)
-            : name
+        let displayLabel = side == .away ? accessibilityDisplayLabels.away : accessibilityDisplayLabels.home
+        let crestSize: CGFloat = isLive ? 28 : 24
+        let nameSize = sharedAccessibilityNameFontSize(
+            baseSize: finishedAccessibilityNameSize,
+            weight: .bold,
+            reservedHorizontal: crestSize + 8
+        )
         return VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .top, spacing: 8) {
                 TeamLogoView(
                     url: avatar.url,
                     teamName: name,
                     color: color,
-                    size: isLive ? 28 : 24,
+                    size: crestSize,
                     sportKey: event.sport,
                     isPhotograph: avatar.isPhotograph,
                     opponentName: side == .away ? event.homeTeam : event.awayTeam,
@@ -997,8 +1036,7 @@ struct EventCardView: View {
                     opponentAbbreviation: side == .away ? event.homeTeamData?.abbreviation : event.awayTeamData?.abbreviation
                 )
                 Text(displayLabel)
-                    .font(.subheadline)
-                    .fontWeight(won ? .bold : .medium)
+                    .font(.system(size: nameSize, weight: won ? .bold : .medium))
                     .foregroundStyle(won ? .primary : (isFinished && outcome != .draw ? .secondary : .primary))
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)

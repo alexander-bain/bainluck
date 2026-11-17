@@ -78,8 +78,8 @@ class HeroReading:
     and it is load-bearing vocabulary, not a label: ``settled`` outranks the
     blend on a finished game (Q441/#1495 — a game that turned late publishes the
     loser as the favourite otherwise), ``final_unresolved`` says the game is over
-    but we cannot yet name a winner (CERT-1938), and ``opening`` says nobody has
-    quoted this since the line was posted.
+    but we cannot yet name a winner (CERT-1938). An opening line never supplies
+    a current chance (#12824).
     """
 
     home_probability: float
@@ -92,28 +92,11 @@ def resolve_hero(
     event: Any, *, source_inputs: Optional[list[tuple[str, float]]] = None,
     source_method: Optional[list[str]] = None,
 ) -> Optional[HeroReading]:
-    """The hero cascade, once: settled -> blend -> opening, or ``None``.
+    """Resolve a verified result, then an admitted current chance.
 
-    ``event`` is anything carrying ``status``, ``home_score``, ``away_score``,
-    ``completed_at``, ``win_probability_sources``, ``espn_win_prob_home`` and
-    ``opening_home_probability`` / ``opening_away_probability``.
-
-    THE ORDER IS THE WHOLE CONTENT OF THIS FUNCTION and every arm of it was
-    bought with a defect:
-
-    1. **Settled outranks the blend** (Q441/#1495).  On a finished game the
-       blend is not an answer, it is whatever price was last captured before
-       capture stopped — 5 of 44 sampled games published the LOSER as the
-       favourite.  Gated to trustworthily-settled only; see ``settled_hero``.
-    2. **The blend, labelled honestly** (CERT-1938).  A game can be over without
-       us being able to name a winner — a tennis match whose result lives in a
-       tournament container we have not graded.  The number is unchanged; only
-       the claim about it is.
-    3. **The opening, when nothing else exists.**  Not a forecast, a record of
-       where the line opened, and named as such.
-
-    ``None`` means we have nothing to print, which is a real state and never a
-    zero.
+    A finished game with a price but no verified winner retains the
+    ``final_unresolved`` label. Historical opening lines stay separate even on
+    such a game. ``None`` means there is no chance to print, never zero.
     """
     settled = resolve_settled_hero(
         status=getattr(event, "status", None),
@@ -129,58 +112,18 @@ def resolve_hero(
             settled_result=settled.result,
         )
 
-    # ── #6694: A TIER-3 ANSWER IS NOT A BLEND AND MUST NOT BE CALLED ONE ─────
-    #
-    # `compute_aggregate_probability` falls back through three tiers and its
-    # third one RETURNS `opening_home_probability`. So on any event that has an
-    # opening price it is never `None`, which made arm 3 below structurally
-    # unreachable: the `opening` source this module documents as load-bearing
-    # vocabulary — "nobody has quoted this since the line was posted" — could
-    # not be reached to say it.
-    #
-    # Measured on production 2026-09-19 12:00–12:40Z: 486 events in a two-day
-    # window carry the Tier-3 signature (no weighted source in the bag, no ESPN
-    # reading, an opening on file), 8 of them live at that minute, and every one
-    # was served `hero_probability_source: "blend"`. Specimen 15314578
-    # (Uganda–Kenya, live) printed a 64% hero captioned as a live blend above a
-    # chart whose own series ended at 78% — its opening and its market, on one
-    # screen, with nothing to tell the reader which was which.
-    #
-    # 🔴 THE NUMBER IS NOT THE DEFECT AND DOES NOT MOVE. 64% is the honest
-    # figure here: the bag holds `betting_book_count: 1` and no `betting`
-    # reading, because RULING 051 DROPS the sportsbook consensus below
-    # `BETTING_BOOK_FLOOR` (3) — "a consensus of one is not a consensus". The
-    # live single-book price sitting in `odds_snapshots` is exactly what that
-    # ruling exists to refuse, so reaching for it here would rebuild #1841's
-    # 87-13-for-a-team-trailing-5-0. This change moves the CLAIM, not the value,
-    # which is the same move CERT-1938 made one arm up: "The number is
-    # unchanged; only the claim about it is."
-    #
-    # The finished-game exemption is not an edge case being tidied away.
-    # `final_unresolved` says "this game is over and we cannot name a winner",
-    # which is a strictly more urgent thing for a reader to know than where the
-    # line opened, so on a finished status it keeps the arm it has today.
+    # #12824: the first stored line cannot become a current chance. Retain the
+    # tier check defensively for old callers even though the aggregator no
+    # longer returns an opening tier.
     blend, blend_tier = compute_aggregate_probability_tiered(
         event, source_inputs=source_inputs, source_method=source_method
     )
     _finished = is_finished_status(getattr(event, "status", None))
-    if blend is not None and not (blend_tier == TIER_OPENING and not _finished):
+    if blend is not None and blend_tier != TIER_OPENING:
         return HeroReading(
             home_probability=blend,
             away_probability=round(1.0 - blend, 6),
             source=FINAL_UNRESOLVED_SOURCE if _finished else "blend",
-        )
-
-    opening = getattr(event, "opening_home_probability", None)
-    if opening is not None:
-        home = float(opening)
-        away = getattr(event, "opening_away_probability", None)
-        return HeroReading(
-            home_probability=home,
-            away_probability=(
-                float(away) if away is not None else round(1.0 - home, 6)
-            ),
-            source="opening",
         )
 
     return None

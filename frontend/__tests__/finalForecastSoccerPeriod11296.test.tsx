@@ -146,6 +146,18 @@ const surfaces: Array<[string, (e: Event) => string, string, string]> = [
   ["FeedCard", (e) => feed(feedItem(e)), "feed-card-final-forecast", "2-2 away-home"],
 ];
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the fixture is what production served", () => {
   it("a completed 1–1 soccer final, FT, with an admitted 90-minute forecast and no period key", () => {
     const s = saved();

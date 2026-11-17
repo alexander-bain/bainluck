@@ -42,6 +42,18 @@ const payload = require("../fixtures/leagueMlbProduction.json") as LeagueFutures
 const props = (payload.sections.props || []) as LeagueMarket[];
 const awards = (payload.sections.awards || []) as LeagueMarket[];
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the live MLB specimen — what the three shapes count", () => {
   test("the specimen still holds the shapes this queue was aimed at", () => {
     // If this fails, the fixture drifted from the queue's premise and the

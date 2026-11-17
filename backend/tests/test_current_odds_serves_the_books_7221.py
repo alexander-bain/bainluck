@@ -1,49 +1,8 @@
-"""#7221 — `current_odds` stops serving the opening line under a live stamp.
+"""#7221 / #12824: detail and cards never revive a refused current chance.
 
-## The defect, measured on production 2026-09-19
-
-`current_odds` is the sportsbook object: `spread`, `over_under`, the projected
-scores, `bookmaker_count` and `captured_at` are all computed from the snapshot
-rows the route just filtered. Its probability was not — it was
-`compute_aggregate_probability`, whose Tier 3 returns `opening_home_probability`
-(#6694). So on an event with no weighted source in its bag the object served the
-OPENING under a stamp seconds old.
-
-`GET /api/events/15314578` (Uganda–Kenya, cricket, live since 11:30Z), read at
-14:19:20Z — one response, one microsecond:
-
-    current_odds.home_probability   0.6414
-    current_odds.captured_at        14:19:20.574177Z
-    current_odds.bookmaker_count    1
-    bookmaker_odds[0]               fanduel 0.044 @ 14:19:20.574177Z
-
-    opening_odds.home_probability   0.6414     <- the same number, three hours old
-
-`/search?q=Uganda` at 390px printed `Uganda 64% · Kenya 36%` under a green LIVE
-badge with `Opened 64/36` directly beneath it. 16 live events carried the
-signature at that minute; nine were more than five points from their own books'
-consensus, the worst 58.19.
-
-## What is asserted, and why in both directions
-
-The substitution is opt-in per STATUS and per TIER, so the refusal direction is
-guarded as hard as the substitution (gotcha #43). Serving a pre-game snapshot
-consensus as a live price is the mirror-image defect of serving the opening:
-
-* a **scheduled** row keeps the Tier-3 number — `Event.opening_*` is still
-  rewritten on every poll until the consensus freezes (#3922), so there the
-  opening IS the current price;
-* a **finished** row keeps it — the card reads `opening_odds` and captions it
-  "Pre-match", and settled means settled;
-* a **Tier-1/Tier-2** answer is a real multi-source reading and is untouched;
-* an event with **no consensus to step aside for** keeps the number it has.
-
-`TestTheRankingDidNotMove` and `TestTheTwoArmsAgree` are the durable ones.
-#6960 ruled one ship ago that this formatter's withholds happen at the serving
-boundary ONLY, because `current_home_prob` feeds `compute_highlight` and moving
-it would silently re-score cards; and Q441/#1495 recorded that the detail route
-and the list formatter are two copies of the same lines, so a fix applied to one
-of them ships half a fix.
+Raw snapshot metadata remains available, but historical or thin-book prices
+cannot replace an absent aggregate. The real ASGI route and list formatter
+must agree, and admitted sources remain unchanged.
 """
 
 from __future__ import annotations
@@ -88,25 +47,25 @@ def _offset(hours: float) -> datetime:
 class TestTheHelper:
     """`current_odds_probability` — the whole decision, in one place."""
 
-    def test_a_live_tier_3_answer_steps_aside_for_the_books(self):
-        assert current_odds_probability(OPENING, TIER_OPENING, BOOK, "live") == BOOK
+    def test_a_historical_tier_is_refused_even_with_a_snapshot(self):
+        assert current_odds_probability(OPENING, TIER_OPENING, BOOK, "live") is None
 
     @pytest.mark.parametrize("status", ["scheduled", "completed", "closed", "suspended"])
-    def test_every_other_status_keeps_the_number_it_has(self, status):
-        """Only `live` has passed the in-play recency filter (layer 2)."""
-        assert current_odds_probability(OPENING, TIER_OPENING, BOOK, status) == OPENING
+    def test_every_status_refuses_a_historical_tier(self, status):
+        """A historical line cannot answer in any state."""
+        assert current_odds_probability(OPENING, TIER_OPENING, BOOK, status) is None
 
     @pytest.mark.parametrize("tier", [TIER_SOURCES, TIER_ESPN])
     def test_a_real_multi_source_reading_is_untouched(self, tier):
         assert current_odds_probability(BLEND, tier, BOOK, "live") == BLEND
 
-    def test_with_no_consensus_to_step_aside_for_the_opening_stays(self):
-        """Withholding here would blank a hero; an old number beats no number."""
-        assert current_odds_probability(OPENING, TIER_OPENING, None, "live") == OPENING
+    def test_without_a_consensus_the_opening_stays_absent(self):
+        """An old number is not a current chance."""
+        assert current_odds_probability(OPENING, TIER_OPENING, None, "live") is None
 
-    def test_no_aggregate_at_all_still_falls_back_to_the_books(self):
-        """The pre-existing `else` arm of the ternary, unchanged."""
-        assert current_odds_probability(None, None, BOOK, "live") == BOOK
+    def test_no_aggregate_cannot_reenter_through_raw_snapshots(self):
+        """Raw snapshots cannot undo source admission."""
+        assert current_odds_probability(None, None, BOOK, "live") is None
 
     def test_nothing_anywhere_is_none(self):
         assert current_odds_probability(None, None, None, "live") is None
@@ -167,20 +126,20 @@ class TestTheCardArm:
     flat, so on the card the defect has no escape hatch at all.
     """
 
-    def test_a_live_card_prints_the_book_not_the_opening(self):
+    def test_a_live_card_does_not_revive_the_opening_or_refused_book(self):
         served = events_route._format_event_with_aggregated_odds(
             _event(), _odds_data()
         )["current_odds"]
-        assert served["home_probability"] == BOOK
+        assert served["home_probability"] is None
         # The defect itself: the live figure and the pre-match figure were one
         # number. They must not be again.
         assert served["home_probability"] != OPENING
 
-    def test_the_away_leg_is_derived_from_the_number_actually_served(self):
+    def test_the_away_leg_is_absent_when_the_home_leg_is_absent(self):
         served = events_route._format_event_with_aggregated_odds(
             _event(), _odds_data()
         )["current_odds"]
-        assert served["away_probability"] == round(1.0 - BOOK, 6)
+        assert served["away_probability"] is None
 
     def test_the_rest_of_the_object_is_the_snapshots_as_before(self):
         served = events_route._format_event_with_aggregated_odds(
@@ -190,11 +149,11 @@ class TestTheCardArm:
         assert served["captured_at"] is not None
 
     @pytest.mark.parametrize("status", ["scheduled", "completed", "suspended"])
-    def test_off_the_live_state_the_payload_is_what_it_was(self, status):
+    def test_other_states_also_refuse_the_old_opening_chance(self, status):
         served = events_route._format_event_with_aggregated_odds(
             _event(status=status), _odds_data()
         )["current_odds"]
-        assert served["home_probability"] == OPENING
+        assert served["home_probability"] is None
 
     def test_a_real_blend_still_beats_the_single_book(self):
         """Ruling 051 is not loosened: this row HAS a consensus, and it wins."""
@@ -207,31 +166,26 @@ class TestTheCardArm:
         )["current_odds"]
         assert served["home_probability"] == BLEND
 
-    def test_with_no_book_consensus_the_card_keeps_its_number(self):
+    def test_with_no_book_consensus_the_card_has_no_current_chance(self):
         served = events_route._format_event_with_aggregated_odds(
             _event(), _odds_data(home_prob=None)
         )["current_odds"]
-        assert served["home_probability"] == OPENING
+        assert served["home_probability"] is None
 
 
-class TestTheRankingDidNotMove:
-    """#6960's rule, applied to this ship: the serving boundary ONLY.
+class TestTheRankingDoesNotScoreAnOldOpening:
+    """An opening-only event must not be ranked as if it had a current chance."""
 
-    `current_home_prob` feeds `compute_highlight`, which scores and orders
-    cards. This is a truth fix, so the score a card carries — and therefore
-    where it sits on the page — is identical before and after.
-    """
-
-    def test_compute_highlight_still_receives_the_unmoved_number(self):
+    def test_compute_highlight_does_not_score_a_historical_current_chance(self):
         with patch.object(
             events_route, "compute_highlight", wraps=events_route.compute_highlight
         ) as spy:
             events_route._format_event_with_aggregated_odds(_event(), _odds_data())
-        assert spy.call_args.kwargs["current_home_prob"] == OPENING
+        assert spy.call_args.kwargs["current_home_prob"] is None
         assert spy.call_args.kwargs["current_home_prob"] != BOOK
 
-    def test_the_score_itself_is_unchanged_by_the_substitution(self):
-        """Belt and braces: the number the ranking sees is what it scores."""
+    def test_raw_snapshot_presence_does_not_change_the_score(self):
+        """Only the admitted chance can affect current-price scoring."""
         with_fix = events_route._format_event_with_aggregated_odds(
             _event(), _odds_data()
         )
@@ -363,6 +317,7 @@ def _detail_session(event, snapshots):
         return empty
 
     session.execute = AsyncMock(side_effect=_execute)
+    session.begin_nested = MagicMock(return_value=AsyncMock())
     return session
 
 
@@ -373,10 +328,13 @@ async def detail_client_factory():
 
     clients = []
 
-    async def _build(bag=None, book=BOOK):
+    async def _build(bag=None, book=BOOK, *, event=None, snapshots=None):
         _game_markets_cache.clear()
         _event_detail_cache.clear()
-        session = _detail_session(_detail_event(bag=bag), [_snapshot(book)])
+        session = _detail_session(
+            event if event is not None else _detail_event(bag=bag),
+            snapshots if snapshots is not None else [_snapshot(book)],
+        )
 
         async def _mock_get_db():
             yield session
@@ -404,25 +362,25 @@ async def detail_client_factory():
 class TestTheDetailArm:
     """`GET /api/events/{id}` — the served payload, not the helper."""
 
-    async def test_the_served_payload_carries_the_book(self, detail_client_factory):
+    async def test_the_served_payload_has_no_current_chance_from_a_refused_book(self, detail_client_factory):
         client = await detail_client_factory()
         resp = await client.get(f"/api/events/{EVENT_ID}")
         assert resp.status_code == 200
         current = resp.json()["current_odds"]
-        assert current["home_probability"] == BOOK
+        assert current["home_probability"] is None
         assert current["home_probability"] != OPENING
 
-    async def test_the_stamp_and_the_number_now_describe_one_reading(
+    async def test_raw_book_evidence_keeps_its_own_number_and_stamp(
         self, detail_client_factory
     ):
-        """The whole defect in one assertion: the object stops disagreeing with
-        the book it counts and stamps."""
+        """Quote evidence survives without licensing the current chance."""
         client = await detail_client_factory()
         payload = (await client.get(f"/api/events/{EVENT_ID}")).json()
         current = payload["current_odds"]
         books = payload["bookmaker_odds"]
         assert len(books) == 1
-        assert current["home_probability"] == books[0]["home_probability"]
+        assert current["home_probability"] is None
+        assert books[0]["home_probability"] == BOOK
         assert current["captured_at"] == books[0]["captured_at"]
 
     async def test_a_real_blend_is_still_the_detail_hero(
@@ -456,3 +414,109 @@ class TestTheTwoArmsAgree:
             detail["current_odds"]["home_probability"]
             == card["current_odds"]["home_probability"]
         )
+
+
+class TestBillsPatriotsOpening12824:
+    """Two September book rows cannot become December's current chance.
+
+    Relative dates retain the measured 68-day quote age and 19-day lead time
+    through the clock sweep. The probabilities and two-book count are the
+    reported Bills-at-Patriots specimen, event 15184640.
+    """
+
+    @pytest.mark.parametrize("source", [None, "espn", "kalshi"])
+    async def test_detail_refuses_the_old_line_until_a_source_returns(
+        self, detail_client_factory, source
+    ):
+        now = datetime.now(timezone.utc)
+        event = _detail_event(bag={"betting_book_count": 2})
+        event.id = 15184640
+        event.home_team_name = "New England Patriots"
+        event.away_team_name = "Buffalo Bills"
+        event.sport.key = event.sport_key = "americanfootball_nfl"
+        event.sport.name = "NFL"
+        event.status = "scheduled"
+        event.commence_time = now + timedelta(days=19)
+        event.opening_home_probability = 0.5034
+        event.opening_away_probability = 0.4966
+        if source == "espn":
+            event.espn_win_prob_home = 0.141
+        elif source == "kalshi":
+            event.win_probability_sources["kalshi"] = {
+                "value": 0.14, "updated_at": now.isoformat(),
+            }
+        snapshots = [_snapshot(0.524, bookmaker="draftkings"),
+                     _snapshot(0.4828, bookmaker="caesars")]
+        for snap in snapshots:
+            snap.captured_at = snap.valid_until = now - timedelta(days=68)
+        client = await detail_client_factory(event=event, snapshots=snapshots)
+        response = await client.get("/api/events/15184640")
+        assert response.status_code == 200
+        payload = response.json()
+        expected = {None: None, "espn": 0.141, "kalshi": 0.14}[source]
+        assert payload.get("hero_probability") == expected
+        assert payload["current_odds"]["home_probability"] == expected
+        assert payload["current_odds"]["away_probability"] == (
+            None if expected is None else round(1 - expected, 6)
+        )
+        assert payload.get("hero_probability_source") != "opening"
+        assert event.opening_home_probability == 0.5034
+        assert event.opening_away_probability == 0.4966
+
+    @pytest.mark.parametrize("status", ["scheduled", "live", "completed", "suspended"])
+    def test_list_and_search_cannot_revive_raw_snapshots(self, status):
+        event = _event(status=status)
+        event.opening_home_probability = 0.5034
+        event.opening_away_probability = 0.4966
+        event.win_probability_sources = {"betting_book_count": 2}
+        payload = events_route._format_event_with_aggregated_odds(
+            event, _odds_data(0.5034)
+        )
+        assert payload.get("hero_probability") is None
+        assert payload["current_odds"]["home_probability"] is None
+        assert payload["current_odds"]["away_probability"] is None
+        # Historical evidence remains on the stored event, including after play.
+        assert event.opening_home_probability == 0.5034
+
+    def test_a_real_zero_survives_and_a_verified_result_still_wins(self):
+        event = _event(bag={"espn": {"value": 0.0}})
+        payload = events_route._format_event_with_aggregated_odds(event, _odds_data())
+        assert payload["current_odds"]["home_probability"] == 0.0
+        assert payload["hero_probability"] == 0.0
+        event.status = "completed"
+        event.completed_at = _offset(-1)
+        event.home_score, event.away_score = 30, 20
+        payload = events_route._format_event_with_aggregated_odds(event, _odds_data())
+        assert payload["hero_probability"] == 1.0
+        assert payload["hero_probability_source"] == "settled"
+
+    async def test_feed_does_not_restore_an_opening_through_historical_snapshots(self):
+        from app.routes.feed import _score_events
+        from app.utils.personalization import PersonalizationContext
+
+        event = _event(status="scheduled")
+        event.commence_time = _offset(2)
+        event.llm_importance = "marquee"
+        event.raw_ei = 90
+        event.event_tags = []
+        db = _detail_session(event, [])
+        fallback = AsyncMock(return_value={event.id: OPENING})
+        with (
+            patch("app.utils.feed_snapshot_fallback.read_snapshot_fallbacks", fallback),
+            patch("app.routes.feed._get_championship_probabilities", AsyncMock(return_value={})),
+        ):
+            absent = await _score_events(
+                db, datetime.now(timezone.utc), None, PersonalizationContext(),
+                my_teams_only=True, my_team_names=[HOME],
+            )
+            assert absent == []
+            fallback.assert_not_awaited()
+            event.win_probability_sources = {
+                "kalshi": {"value": 0.6, "updated_at": _offset(0).isoformat()},
+            }
+            present = await _score_events(
+                db, datetime.now(timezone.utc), None, PersonalizationContext(),
+                my_teams_only=True, my_team_names=[HOME],
+            )
+        assert len(present) == 1
+        assert present[0]["data"]["current_odds"]["home_probability"] == 0.6

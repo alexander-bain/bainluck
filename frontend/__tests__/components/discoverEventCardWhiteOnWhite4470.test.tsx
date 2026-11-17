@@ -196,6 +196,18 @@ function painted(data: FeedEventData): Painted {
 const LEEDS = "#ffffff";
 const CHELSEA_FALLBACK = "#374151";
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#4470 — a Discover game card never paints a probability white on white", () => {
   it("the production specimen: Leeds United's number and bar segment are both visible", () => {
     const p = painted(makeData(LEEDS, null));
