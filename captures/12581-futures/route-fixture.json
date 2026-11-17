@@ -1,0 +1,53 @@
+{
+  "now": "2026-10-02T16:20:00+00:00",
+  "rows": [
+    {
+      "label": "Bills \u00b7 source board",
+      "number": 0.25149062,
+      "mark": {
+        "state": "single",
+        "sources": [
+          {
+            "key": "betting",
+            "name": "Sportsbooks",
+            "probability": 0.112913,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          }
+        ],
+        "method": "Bain Luck field \u00b7 scaled with the other outcomes to total 100%"
+      }
+    },
+    {
+      "label": "Bills \u00b7 verified title blend",
+      "number": 0.2757158,
+      "mark": {
+        "state": "blend",
+        "sources": [
+          {
+            "key": "kalshi",
+            "name": "Kalshi",
+            "probability": 0.13,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          },
+          {
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": 0.135,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          },
+          {
+            "key": "betting",
+            "name": "Sportsbooks",
+            "probability": 0.112913,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          }
+        ],
+        "method": "Bain Luck blend \u00b7 the weighted middle of these sources \u00b7 scaled with the other outcomes to total 100%"
+      }
+    }
+  ]
+}
