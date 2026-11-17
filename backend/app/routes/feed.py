@@ -16737,6 +16737,8 @@ async def _score_golf_tournaments(
         return []
 
     from app.utils.golf_base import get_golf_base
+    from app.utils.golf_source_mark import golfer_result_mark
+    from app.utils.source_mark import no_source_mark
 
     try:
         tournaments, _golf_provenance = await get_golf_base(db, now, stages=stages)
@@ -16837,6 +16839,10 @@ async def _score_golf_tournaments(
         # for a tournament whose tour we cannot evidence, and a .get() default only
         # fires on an ABSENT key — this line would otherwise read "None: X leads…".
         if champion:
+            matched_champion = next(
+                (g["name"] for g in (field or golfers) if g.get("name") == champion),
+                None,
+            )
             # #9212: a decided tournament has a winner, not a leader at a price.
             reason = f"{t.get('tour_label') or 'Golf'}: {champion} won"
         else:
@@ -16939,6 +16945,10 @@ async def _score_golf_tournaments(
                 {
                     "name": g["name"],
                     "probability": g["probability"],
+                    "source_mark": (
+                        golfer_result_mark(g["name"], matched_champion) if champion
+                        else g.get("source_mark") or no_source_mark("source_evidence_incomplete")
+                    ),
                     **({"rendered_percent": g["rendered_percent"]}
                        if g.get("rendered_percent") is not None else {}),
                     "rank": g["rank"],
