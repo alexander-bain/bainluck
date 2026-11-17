@@ -6039,12 +6039,22 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
     """
     from app.utils.outcome_display import assign_display_ranks, normalize_display_probs
     from app.utils.futures_verified_title import apply_title_display
+    from app.utils.futures_source_mark import (
+        describe_field_normalization, verified_futures_source_mark,
+    )
 
     _stamp_representation(detail, verdict)
     changed = False
     if isinstance(verdict, Composition):
         for row in detail["outcomes"]:
-            changed |= _overlay_current(row, verdict.overlay.get(row["id"]), "probability")
+            overlay = verdict.overlay.get(row["id"])
+            changed |= _overlay_current(row, overlay, "probability")
+            if row.get("source_mark", {}).get("state") != "settled":
+                row["source_mark"] = verified_futures_source_mark(
+                    overlay.source_inputs if overlay is not None else (),
+                    row["probability"],
+                    overlay.aggregation_rule if overlay is not None else "unsupported",
+                )
     # A source-only/refused composition can retain complete references. A
     # changed blend has no historical field with those same contributors;
     # its old source-only references are still withheld by _overlay_current.
@@ -6089,6 +6099,16 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
             for key in ("opening_probability", "opening_american_odds", "probability_change_24h"):
                 row[key] = None
     assign_display_ranks(detail["outcomes"])
+    original_prices = {o.id: o.current_probability for o in market.outcomes}
+    for row in detail["outcomes"]:
+        overlay = verdict.overlay.get(row["id"]) if isinstance(verdict, Composition) else None
+        describe_field_normalization(
+            row["source_mark"],
+            input_probability=(
+                overlay.probability if overlay else original_prices.get(row["id"])
+            ),
+            displayed_probability=row["probability"],
+        )
     # The stored sentence was written about the source row's numbers.
     if changed and detail.get("hook_description"):
         detail["hook_description"] = None
@@ -11526,6 +11546,23 @@ def _format_market_detail(
     # Prices and eligibility are untouched by design — this only overwrites the one
     # field whose whole job is to say where the row sits, using the list it sits in.
     assign_display_ranks(outcomes)
+
+    # The source price is the selected stored input, before field normalization.
+    # Withheld values and unresolved results keep an explicit refusal.
+    from app.utils.futures_source_mark import (
+        describe_field_normalization, futures_outcome_source_mark,
+    )
+
+    source_outcomes = {o.id: o for o in sorted_outcomes}
+    for row in outcomes:
+        row["source_mark"] = futures_outcome_source_mark(
+            market, source_outcomes[row["id"]], row,
+        )
+        describe_field_normalization(
+            row["source_mark"],
+            input_probability=source_outcomes[row["id"]].current_probability,
+            displayed_probability=row["probability"],
+        )
 
     # #5906: THE HOOK GOES THROUGH THE SAME GATE THE DISCOVER CARD HAS ALWAYS
     # USED. `routes/feed.py` has run every stored hook past `is_hook_stale`
