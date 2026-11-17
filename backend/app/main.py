@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 from app.routes import activitykit
 from app.routes import devices
+from app.routes import paired_metrics
 from app.routes import containers, events, event_stream, event_publications, market_stream, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_rate_limit, admin_speed_switch, admin_feed_config, admin_label_pass, admin_team_clusters, admin_cockpit, admin_file_issue, admin_cohort, admin_ranking_eval, auth, user, feed, feed_prices, market_moves, oscars, oscars_pool, golf, event, hub, march_madness, playoffs, tournaments, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, prop_families, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe, telemetry
 from app.services.database import init_db
 
@@ -351,6 +352,7 @@ app.include_router(weather.router, prefix="/api/weather", tags=["Weather"])
 app.include_router(economics.router, prefix="/api/economics", tags=["Economics"])
 app.include_router(politics.router, prefix="/api/politics", tags=["Politics"])
 app.include_router(entertainment.router, prefix="/api/entertainment", tags=["Entertainment"])
+app.include_router(paired_metrics.router, prefix="/api", tags=["Paired Metrics"])
 app.include_router(league_futures.router, prefix="/api/leagues", tags=["Leagues"])
 app.include_router(teams.router, prefix="/api/teams", tags=["Teams"])
 app.include_router(prop_families.router, prefix="/api/teams", tags=["Prop Families"])
