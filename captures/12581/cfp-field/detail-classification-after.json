@@ -1,0 +1,1940 @@
+[
+  {
+    "market_id": 227,
+    "market_name": "College Football Playoff Qualifiers",
+    "rows": [
+      {
+        "id": 1826,
+        "name": "Georgia",
+        "probability": 0.99,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.99,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1841,
+        "name": "Notre Dame",
+        "probability": 0.97,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.97,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1830,
+        "name": "Texas",
+        "probability": 0.955,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.955,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1822,
+        "name": "Utah",
+        "probability": 0.945,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.945,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1867,
+        "name": "Alabama",
+        "probability": 0.94,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.94,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1847,
+        "name": "Miami (FL)",
+        "probability": 0.935,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.935,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1853,
+        "name": "Indiana",
+        "probability": 0.905,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.905,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 246328826,
+        "name": "UCLA",
+        "probability": 0.865,
+        "prior_grade": null,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.865,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1831,
+        "name": "Tennessee",
+        "probability": 0.705,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.705,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1829,
+        "name": "Texas Tech",
+        "probability": 0.52,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.52,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1861,
+        "name": "BYU",
+        "probability": 0.415,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.415,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1838,
+        "name": "Oregon",
+        "probability": 0.33,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.33,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1852,
+        "name": "Iowa",
+        "probability": 0.265,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.265,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1837,
+        "name": "Ohio St.",
+        "probability": 0.175,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.175,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1825,
+        "name": "Kentucky",
+        "probability": 0.085,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.085,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1823,
+        "name": "USC",
+        "probability": 0.045,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.045,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1845,
+        "name": "Ole Miss",
+        "probability": 0.015,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.015,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1849,
+        "name": "Louisville",
+        "probability": 0.015,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.015,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1848,
+        "name": "LSU",
+        "probability": 0.015,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.015,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1866,
+        "name": "Arizona",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1850,
+        "name": "Kansas St.",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1862,
+        "name": "Baylor",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1860,
+        "name": "California",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1832,
+        "name": "TCU",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1819,
+        "name": "Virginia Tech",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1864,
+        "name": "Arizona St.",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1855,
+        "name": "Houston",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1842,
+        "name": "North Carolina St.",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1828,
+        "name": "Tulane",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 235731462,
+        "name": "UMass",
+        "probability": 0.01,
+        "prior_grade": null,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1856,
+        "name": "Georgia Tech",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 235731454,
+        "name": "Western Michigan",
+        "probability": 0.01,
+        "prior_grade": null,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1827,
+        "name": "Texas A&M",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1840,
+        "name": "Oklahoma",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1846,
+        "name": "Michigan",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1835,
+        "name": "Penn St.",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1836,
+        "name": "Pittsburgh",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1820,
+        "name": "Vanderbilt",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1857,
+        "name": "Florida St.",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1865,
+        "name": "Arkansas",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1851,
+        "name": "James Madison",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1843,
+        "name": "Miami (OH)",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1863,
+        "name": "Auburn",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1858,
+        "name": "Florida",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1818,
+        "name": "Washington",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1821,
+        "name": "Virginia",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1859,
+        "name": "Clemson",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1844,
+        "name": "Missouri",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1854,
+        "name": "Illinois",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 231533771,
+        "name": "Mississippi St.",
+        "probability": 0.01,
+        "prior_grade": null,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1824,
+        "name": "North Texas",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1833,
+        "name": "SMU",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1839,
+        "name": "Oklahoma St.",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1834,
+        "name": "South Carolina",
+        "probability": 0.01,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "market_id": 181,
+    "market_name": "College Football National Championship Winner",
+    "rows": [
+      {
+        "id": 973,
+        "name": "Georgia",
+        "probability": 0.325,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.325,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 988,
+        "name": "Notre Dame",
+        "probability": 0.155,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.155,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1014,
+        "name": "Alabama",
+        "probability": 0.115,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.115,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 977,
+        "name": "Texas",
+        "probability": 0.095,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.095,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 994,
+        "name": "Miami (FL)",
+        "probability": 0.085,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.085,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1000,
+        "name": "Indiana",
+        "probability": 0.075,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.075,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 969,
+        "name": "Utah",
+        "probability": 0.035,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.035,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 254415640,
+        "name": "UCLA",
+        "probability": 0.035,
+        "prior_grade": null,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.035,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 254415681,
+        "name": "Wake Forest",
+        "probability": 0.035,
+        "prior_grade": null,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.035,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 978,
+        "name": "Tennessee",
+        "probability": 0.015,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.015,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 985,
+        "name": "Oregon",
+        "probability": 0.015,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.015,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 976,
+        "name": "Texas Tech",
+        "probability": 0.015,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.015,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 968,
+        "name": "Virginia",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 982,
+        "name": "Penn St.",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 981,
+        "name": "South Carolina",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 971,
+        "name": "North Texas",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 989,
+        "name": "North Carolina St.",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 975,
+        "name": "Tulane",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 990,
+        "name": "Miami (OH)",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 993,
+        "name": "Michigan",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 999,
+        "name": "Iowa",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 996,
+        "name": "Louisville",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1004,
+        "name": "Florida St.",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1013,
+        "name": "Arizona",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1003,
+        "name": "Georgia Tech",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1002,
+        "name": "Houston",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 998,
+        "name": "James Madison",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1008,
+        "name": "BYU",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 984,
+        "name": "Ohio St.",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 995,
+        "name": "LSU",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 974,
+        "name": "Texas A&M",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 987,
+        "name": "Oklahoma",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 970,
+        "name": "USC",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 992,
+        "name": "Ole Miss",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 991,
+        "name": "Missouri",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 967,
+        "name": "Vanderbilt",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 983,
+        "name": "Pittsburgh",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 997,
+        "name": "Kansas St.",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 972,
+        "name": "Kentucky",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1001,
+        "name": "Illinois",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 979,
+        "name": "TCU",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 986,
+        "name": "Oklahoma St.",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 235955303,
+        "name": "Mississippi St.",
+        "probability": 0.009999999999999998,
+        "prior_grade": null,
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1012,
+        "name": "Arkansas",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1011,
+        "name": "Arizona St.",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1010,
+        "name": "Auburn",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1005,
+        "name": "Florida",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1006,
+        "name": "Clemson",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 980,
+        "name": "SMU",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1009,
+        "name": "Baylor",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 1007,
+        "name": "California",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 965,
+        "name": "Washington",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      },
+      {
+        "id": 966,
+        "name": "Virginia Tech",
+        "probability": 0.009999999999999998,
+        "prior_grade": "ungradeable_result",
+        "source_mark": {
+          "state": "single",
+          "sources": [
+            {
+              "key": "kalshi",
+              "name": "Kalshi",
+              "probability": 0.01,
+              "observed_at": null,
+              "reason": "observation_unknown"
+            }
+          ]
+        }
+      }
+    ]
+  }
+]
