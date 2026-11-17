@@ -13,17 +13,20 @@ struct SourceMarkButton: View {
     let number: Double?
     /// The font size of the number the ring follows; the ring is 0.7 of it.
     let numberSize: CGFloat
+    /// Compact dense-list mode keeps row height tight while expanding hit area via `.contentShape`.
+    var compactRow: Bool = false
 
     @State private var open = false
 
     /// The ring's share of the number's type size (Alex's ruling: about 0.7).
     static let ringScale: CGFloat = 0.7
 
-    init?(_ mark: SourceMark?, number: Double? = nil, numberSize: CGFloat) {
+    init?(_ mark: SourceMark?, number: Double? = nil, numberSize: CGFloat, compactRow: Bool = false) {
         guard let mark, mark.draws else { return nil }
         self.mark = mark
         self.number = number
         self.numberSize = numberSize
+        self.compactRow = compactRow
     }
 
     var body: some View {
@@ -31,9 +34,10 @@ struct SourceMarkButton: View {
             Image(systemName: "info.circle")
                 .font(.system(size: numberSize * Self.ringScale))
                 .foregroundStyle(Color.secondary.opacity(0.55))
-                // A 44pt tap target around a ring that stays quiet.
-                .frame(minWidth: 28, minHeight: 44)
-                .contentShape(Rectangle())
+                // A 44pt tap target around a ring that stays quiet (compact rows keep
+                // visual height tight and extend hit testing via negative inset).
+                .frame(minWidth: compactRow ? 22 : 28, minHeight: compactRow ? 20 : 44)
+                .contentShape(Rectangle().inset(by: compactRow ? -10 : 0))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Where this number comes from")

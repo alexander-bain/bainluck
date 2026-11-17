@@ -202,12 +202,16 @@ struct ContainerHubView: View {
                     Text(search.name).font(.subheadline.weight(.semibold))
                         .fixedSize(horizontal: false, vertical: true)
                     ForEach(search.topOutcomes ?? []) { outcome in
-                        HStack(alignment: .firstTextBaseline) {
+                        let outcomeMark = feed.topOutcomes?.first(where: { $0.id == outcome.id || $0.name == outcome.name })?.sourceMark ?? feed.sourceMark
+                        HStack(alignment: .center, spacing: 4) {
                             Text(outcome.name).font(.caption)
                             Spacer(minLength: 8)
                             Text(ContainerHubPresentation.outcomeLabel(outcome, market: search))
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(outcome.verdict(in: search) == .won ? DS.emerald : DS.textSecondary)
+                            if let mark = SourceMarkButton(outcomeMark, number: nil, numberSize: 12, compactRow: true) {
+                                mark
+                            }
                         }
                     }
                     if search.topOutcomes?.isEmpty != false {
