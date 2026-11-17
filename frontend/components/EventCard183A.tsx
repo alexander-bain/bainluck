@@ -1269,13 +1269,13 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
     away_prob: rawAway,
     draw_prob: rawDraw,
     served_home_pct:
-      probWithheld || event.hero_probability != null
+      probWithheld || event.hero_probability != null || event.hero_probability_away != null
         ? null
-        : (event.current_odds?.home_rendered_percent ?? null),
+        : event.current_odds?.home_rendered_percent,
     served_away_pct:
-      probWithheld || event.hero_probability_away != null
+      probWithheld || event.hero_probability != null || event.hero_probability_away != null
         ? null
-        : (event.current_odds?.away_rendered_percent ?? null),
+        : event.current_odds?.away_rendered_percent,
     pregame_home_pct: openHome,
     pregame_away_pct: openAway,
     pregame_draw_pct: openDrawPct,
