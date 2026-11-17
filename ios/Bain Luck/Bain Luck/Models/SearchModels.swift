@@ -529,6 +529,14 @@ nonisolated struct TeamPageResponse: Decodable, Sendable {
     let championshipPath: [ChampionshipPathEntry]
 }
 
+/// Roster player entry served on `/api/teams/{slug}` (`team.roster`).
+nonisolated struct TeamRosterMember: Decodable, Equatable, Sendable {
+    let name: String
+    let espnId: String?
+    let headshot: String?
+    let position: String?
+}
+
 /// Team identity and display metadata for a team page.
 nonisolated struct TeamPageTeam: Decodable, Sendable {
     let id: Int
@@ -543,6 +551,7 @@ nonisolated struct TeamPageTeam: Decodable, Sendable {
     let logoLarge: String?
     let record: String?
     let standings: [String: AnyCodable]?
+    var roster: [TeamRosterMember]? = nil
 }
 
 // TeamFutureItem defined in FuturesModels.swift (shared with team page + futures browsing)

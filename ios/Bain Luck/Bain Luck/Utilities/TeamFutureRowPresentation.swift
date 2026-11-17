@@ -75,6 +75,159 @@ enum TeamFutureRowPresentation {
             rankLine: rankLine
         )
     }
+
+    // MARK: - #12823 Team-Page 1.0.7 Fast Cut (Headshots + Crest Fallback, Prefix Strip, No Venue Labels)
+
+    enum Avatar: Equatable, Sendable {
+        case playerHeadshot(url: URL, position: String?, fallbackCrestURL: URL?, fallbackAbbr: String, fallbackHex: String?)
+        case teamCrest(url: URL?, abbreviation: String, primaryHex: String?)
+    }
+
+    struct FastCutRow12823: Equatable, Sendable {
+        let title: String
+        let caption: String
+        let settledWon: Bool
+        let out: Bool
+        let percent: String?
+        let rankLine: String?
+        let avatar: Avatar
+    }
+
+    /// Strips redundant sport/fantasy/league + season-year prefixes (`"Pro Football: 2026-27 "`,
+    /// `"Fantasy Football: 2026-27 "`, `"NBA: 2026-27 "`, etc.) so team-page rows lead with the
+    /// actual stat or milestone without cutting off at the right edge, while leaving genuine
+    /// award prefixes like `"Gold Glove: AL Center Field"` untouched.
+    static func cleanedMarketCaption(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return raw }
+
+        var s = trimmed
+        s = s.replacingOccurrences(
+            of: #"^(?:(?:Pro|Fantasy|College)\s+(?:Football|Basketball|Baseball|Hockey|Soccer)|NFL|NBA|MLB|NHL|MLS|WNBA|NCAAF|NCAAB)\s*:\s*"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        s = s.replacingOccurrences(
+            of: #"^Pro\s+(?:Football|Basketball|Baseball|Hockey|Soccer)\s+(?=(?:Playoffs?|Week\s+\d+)\b)"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        let withoutYear = s.replacingOccurrences(
+            of: #"^20\d{2}(?:-\d{2,4})?\s+"#,
+            with: "",
+            options: [.regularExpression]
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !withoutYear.isEmpty {
+            s = withoutYear
+        }
+        let cleaned = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? trimmed : cleaned
+    }
+
+    static func resolveAvatar(for item: TeamFutureItem, team: TeamPageTeam) -> Avatar {
+        let fallbackCrestURL = httpsURL(item.matchedTeam?.logoSmall ?? team.logoSmall ?? team.logoLarge)
+        let fallbackAbbr = team.abbreviation ?? TeamShortName.abbreviation(team.name)
+        let fallbackHex = item.matchedTeam?.primaryColor ?? team.primaryColor
+        let namesTeam = outcomeNamesTeam(item.outcomeName, team: team, matchedTeam: item.matchedTeam)
+
+        if let member = matchRosterMember(for: item, team: team),
+           let headshotURL = httpsURL(member.headshot) {
+            return .playerHeadshot(
+                url: headshotURL,
+                position: namesTeam ? nil : member.position,
+                fallbackCrestURL: fallbackCrestURL,
+                fallbackAbbr: fallbackAbbr,
+                fallbackHex: fallbackHex
+            )
+        }
+
+        return .teamCrest(
+            url: fallbackCrestURL,
+            abbreviation: fallbackAbbr,
+            primaryHex: fallbackHex
+        )
+    }
+
+    static func fastCutRow12823(_ item: TeamFutureItem, team: TeamPageTeam) -> FastCutRow12823 {
+        let base = row(item)
+        return FastCutRow12823(
+            title: base.title,
+            caption: cleanedMarketCaption(base.caption),
+            settledWon: base.settledWon,
+            out: base.out,
+            percent: base.percent,
+            rankLine: base.rankLine,
+            avatar: resolveAvatar(for: item, team: team)
+        )
+    }
+
+    private static func httpsURL(_ raw: String?) -> URL? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty,
+              let url = URL(string: raw),
+              url.scheme?.lowercased() == "https"
+        else { return nil }
+        return url
+    }
+
+    private static func normalizePersonKey(_ raw: String, stripSuffix: Bool) -> String {
+        let folded = raw
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .lowercased()
+        let cleaned = folded.replacingOccurrences(
+            of: #"[^a-z0-9\s]"#,
+            with: "",
+            options: .regularExpression
+        )
+        var tokens = cleaned.split(whereSeparator: \.isWhitespace).map(String.init)
+        if stripSuffix, tokens.count >= 3, let last = tokens.last,
+           ["jr", "sr", "ii", "iii", "iv", "v"].contains(last) {
+            tokens.removeLast()
+        }
+        return tokens.joined(separator: " ")
+    }
+
+    private static func outcomeNamesTeam(_ outcomeName: String, team: TeamPageTeam, matchedTeam: TeamFutureTeam?) -> Bool {
+        let outKey = normalizePersonKey(outcomeName, stripSuffix: false)
+        guard !outKey.isEmpty else { return false }
+        let candidates = [
+            team.name,
+            team.abbreviation,
+            matchedTeam?.name,
+        ].compactMap { $0 }.map { normalizePersonKey($0, stripSuffix: false) }
+        if candidates.contains(outKey) { return true }
+        let teamKey = normalizePersonKey(team.name, stripSuffix: false)
+        return teamKey.hasPrefix(outKey + " ") || teamKey.hasSuffix(" " + outKey)
+    }
+
+    private static func matchRosterMember(for item: TeamFutureItem, team: TeamPageTeam) -> TeamRosterMember? {
+        guard let roster = team.roster, !roster.isEmpty else { return nil }
+
+        let outcomeExact = normalizePersonKey(item.outcomeName, stripSuffix: false)
+        if let exact = roster.first(where: { normalizePersonKey($0.name, stripSuffix: false) == outcomeExact }) {
+            return exact
+        }
+
+        let outcomeRelaxed = normalizePersonKey(item.outcomeName, stripSuffix: true)
+        if !outcomeRelaxed.isEmpty,
+           let relaxed = roster.first(where: { normalizePersonKey($0.name, stripSuffix: true) == outcomeRelaxed }) {
+            return relaxed
+        }
+
+        // Team-outcome market about a specific roster player (e.g. "Christian Barmore Next Team" -> "New England").
+        if outcomeNamesTeam(item.outcomeName, team: team, matchedTeam: item.matchedTeam) {
+            let marketNorm = " " + normalizePersonKey(item.marketName, stripSuffix: false) + " "
+            let sortedByLength = roster.sorted { $0.name.count > $1.name.count }
+            for member in sortedByLength {
+                let memberKey = normalizePersonKey(member.name, stripSuffix: false)
+                guard memberKey.contains(" ") else { continue }
+                if marketNorm.contains(" " + memberKey + " ") {
+                    return member
+                }
+            }
+        }
+        return nil
+    }
 }
 
 /// What one team-page "Championship Path" step prints in place of its number.

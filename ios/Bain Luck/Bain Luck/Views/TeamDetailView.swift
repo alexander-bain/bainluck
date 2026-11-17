@@ -42,16 +42,24 @@ struct TeamDetailView: View {
     /// #10234 — the grid fetch has finished (or was never needed).
     @State private var raceSettled = false
     private let skipNetworkLoad: Bool
+    private let preloadedAvatarImages: [URL: Image]
 
     init(slug: String) {
         self.slug = slug
         self.skipNetworkLoad = false
+        self.preloadedAvatarImages = [:]
     }
 
     #if DEBUG
-    init(slug: String, loadedPageForTest: TeamPageResponse, raceForTest: TeamDivisionRace.Race? = nil) {
+    init(
+        slug: String,
+        loadedPageForTest: TeamPageResponse,
+        raceForTest: TeamDivisionRace.Race? = nil,
+        preloadedAvatarImagesForTest: [URL: Image] = [:]
+    ) {
         self.slug = slug
         self.skipNetworkLoad = true
+        self.preloadedAvatarImages = preloadedAvatarImagesForTest
         self._data = State(initialValue: loadedPageForTest)
         self._loading = State(initialValue: false)
         self._race = State(initialValue: raceForTest)
@@ -100,17 +108,24 @@ struct TeamDetailView: View {
             Section {
                 HStack(spacing: 16) {
                     if let logo = team.logoLarge ?? team.logoSmall, let url = URL(string: logo) {
-                        AsyncImage(url: url) { image in
-                            image.resizable().scaledToFit()
-                        } placeholder: {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color(hex: TeamDetailTeamColour.logoTileHex(team.primaryColor)))
-                                // #4720 — the served abbreviation still wins; the
-                                // FALLBACK was one raw character ("1" for
-                                // "1. FC Heidenheim 1846") and is now the app's badge.
-                                .overlay(Text(team.abbreviation ?? TeamShortName.abbreviation(team.name)).font(.title2).bold().foregroundStyle(.white))
+                        if let preloaded = preloadedAvatarImages[url] {
+                            preloaded
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 64, height: 64)
+                        } else {
+                            AsyncImage(url: url) { image in
+                                image.resizable().scaledToFit()
+                            } placeholder: {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color(hex: TeamDetailTeamColour.logoTileHex(team.primaryColor)))
+                                    // #4720 — the served abbreviation still wins; the
+                                    // FALLBACK was one raw character ("1" for
+                                    // "1. FC Heidenheim 1846") and is now the app's badge.
+                                    .overlay(Text(team.abbreviation ?? TeamShortName.abbreviation(team.name)).font(.title2).bold().foregroundStyle(.white))
+                            }
+                            .frame(width: 64, height: 64)
                         }
-                        .frame(width: 64, height: 64)
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         Text(team.name).font(.title2).bold()
@@ -197,46 +212,12 @@ struct TeamDetailView: View {
             if !futures.isEmpty {
                 Section("Season Futures") {
                     ForEach(futures) { future in
-                        // #9091: the outcome is the headline ("Ceddanne Rafaela"),
-                        // the market its caption, and a graded winner a result.
-                        let row = TeamFutureRowPresentation.row(future)
+                        // #9091 + #12823 (1.0.7 fast cut): circular player headshots
+                        // with crest fallback, redundant sport/season prefixes stripped
+                        // so captions stop cutting off, and zero venue names on rows.
+                        let row = TeamFutureRowPresentation.fastCutRow12823(future, team: team)
                         NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 6) {
-                                    Text(row.title).font(.subheadline).lineLimit(1)
-                                    if row.settledWon {
-                                        Text(TeamFutureRowPresentation.wonBadge)
-                                            .font(.caption2).fontWeight(.semibold)
-                                            .foregroundStyle(.green)
-                                            .padding(.horizontal, 6).padding(.vertical, 1)
-                                            .background(Color.green.opacity(0.12), in: Capsule())
-                                            .fixedSize()
-                                    } else if row.out {
-                                        // #11493: out of it, in the grid's words.
-                                        Text(TeamFutureRowPresentation.outBadge)
-                                            .font(.caption2).fontWeight(.semibold)
-                                            .foregroundStyle(.secondary)
-                                            .padding(.horizontal, 6).padding(.vertical, 1)
-                                            .background(Color.secondary.opacity(0.12), in: Capsule())
-                                            .fixedSize()
-                                    }
-                                }
-                                Text(row.caption).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                HStack(spacing: 6) {
-                                    if let percent = row.percent {
-                                        Text(percent).font(.caption).bold().monospacedDigit()
-                                            .foregroundStyle(row.settledWon ? Color.green : Color.primary)
-                                    }
-                                    if let rankLine = row.rankLine {
-                                        Text(rankLine).font(.caption2).foregroundStyle(.secondary)
-                                    }
-                                    // #4351: this one did not even shout — the team
-                                    // page printed the key verbatim, `odds_api`.
-                                    if let src = SourceLabels.label(for: future.source) {
-                                        Text(src).font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
+                            teamSeasonFutureRow12823(row)
                         }
                     }
                 }
@@ -386,6 +367,176 @@ struct TeamDetailView: View {
         case .upset(let pre):
             Text("Upset — beat \(formatPct(1 - pre)) odds")
                 .font(.caption).fontWeight(.medium).foregroundStyle(.blue)
+        }
+    }
+
+    private func teamSeasonFutureRow12823(_ row: TeamFutureRowPresentation.FastCutRow12823) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            teamFutureAvatarView12823(row.avatar)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(row.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                    if case .playerHeadshot(_, let pos?, _, _, _) = row.avatar, !pos.isEmpty {
+                        Text(pos)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                    }
+                }
+                Text(row.caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                if row.settledWon {
+                    Text(TeamFutureRowPresentation.wonBadge)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.green)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.green.opacity(0.12), in: Capsule())
+                        .fixedSize()
+                    if let percent = row.percent {
+                        Text(percent)
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(.green)
+                    }
+                } else if row.out {
+                    Text(TeamFutureRowPresentation.outBadge)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.12), in: Capsule())
+                        .fixedSize()
+                } else if let percent = row.percent {
+                    Text(percent)
+                        .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(.primary)
+                        .fixedSize()
+                }
+
+                if let rankLine = row.rankLine {
+                    Text(rankLine)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                }
+            }
+            .fixedSize(horizontal: true, vertical: false)
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private func teamFutureAvatarView12823(_ avatar: TeamFutureRowPresentation.Avatar) -> some View {
+        switch avatar {
+        case .playerHeadshot(let url, _, let fallbackCrestURL, let fallbackAbbr, let fallbackHex):
+            if let preloaded = preloadedAvatarImages[url] {
+                ZStack {
+                    Circle().fill(Color(red: 241.0 / 255.0, green: 245.0 / 255.0, blue: 249.0 / 255.0))
+                    preloaded
+                        .resizable()
+                        .scaledToFill()
+                        .offset(y: 2)
+                }
+                .frame(width: 40, height: 40)
+                .clipShape(Circle())
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.75))
+                .accessibilityHidden(true)
+            } else {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        ZStack {
+                            Circle().fill(Color(red: 241.0 / 255.0, green: 245.0 / 255.0, blue: 249.0 / 255.0))
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .offset(y: 2)
+                        }
+                        .frame(width: 40, height: 40)
+                        .clipShape(Circle())
+                        .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.75))
+                    default:
+                        teamFutureCrestBadge12823(url: fallbackCrestURL, abbreviation: fallbackAbbr, primaryHex: fallbackHex)
+                    }
+                }
+                .frame(width: 40, height: 40)
+                .accessibilityHidden(true)
+            }
+
+        case .teamCrest(let url, let abbreviation, let primaryHex):
+            teamFutureCrestBadge12823(url: url, abbreviation: abbreviation, primaryHex: primaryHex)
+        }
+    }
+
+    @ViewBuilder
+    private func teamFutureCrestBadge12823(url: URL?, abbreviation: String, primaryHex: String?) -> some View {
+        let tileHex = TeamDetailTeamColour.logoTileHex(primaryHex)
+        if let url, let preloaded = preloadedAvatarImages[url] {
+            ZStack {
+                Circle().fill(Color(red: 248.0 / 255.0, green: 250.0 / 255.0, blue: 252.0 / 255.0))
+                preloaded
+                    .resizable()
+                    .scaledToFit()
+                    .padding(6)
+            }
+            .frame(width: 40, height: 40)
+            .clipShape(Circle())
+            .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.75))
+            .accessibilityHidden(true)
+        } else if let url {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    ZStack {
+                        Circle().fill(Color(red: 248.0 / 255.0, green: 250.0 / 255.0, blue: 252.0 / 255.0))
+                        image
+                            .resizable()
+                            .scaledToFit()
+                            .padding(6)
+                    }
+                    .frame(width: 40, height: 40)
+                    .clipShape(Circle())
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.75))
+                default:
+                    Circle()
+                        .fill(Color(hex: tileHex))
+                        .frame(width: 40, height: 40)
+                        .overlay(
+                            Text(abbreviation)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.6)
+                        )
+                }
+            }
+            .frame(width: 40, height: 40)
+            .accessibilityHidden(true)
+        } else {
+            Circle()
+                .fill(Color(hex: tileHex))
+                .frame(width: 40, height: 40)
+                .overlay(
+                    Text(abbreviation)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                )
+                .accessibilityHidden(true)
         }
     }
 
