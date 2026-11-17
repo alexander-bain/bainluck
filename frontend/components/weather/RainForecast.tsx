@@ -6,6 +6,7 @@ import type { RainDay, MonthlyRain as MonthlyRainType } from "./data";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { ATLAS_STATE_COPY } from "@/components/atlas/atlasStateCopy";
 import { SourceBadge } from "./SourceBadge";
+import MarketLink from "./MarketLink";
 import { fetchRain } from "@/lib/weatherApi";
 import { rainCardHeading, rainGridStyle } from "@/lib/rainCardHeading";
 
@@ -190,12 +191,13 @@ export default function RainForecast() {
                     const txtCol = rainTextColor(d.prob);
 
                     return (
-                      <div
+                      <MarketLink
                         key={d.iso ?? d.date}
+                        marketId={d.market_id}
                         // The heading counts these (#3230), so the guard has to
                         // count the same things the reader does, not a class.
-                        data-testid="rain-day-tile"
-                        className="flex flex-col items-center text-center border py-3 px-1"
+                        dataTestId="rain-day-tile"
+                        className="flex flex-col items-center text-center border py-3 px-1 hover:border-text-muted/40 transition-colors"
                         style={{
                           borderColor: isToday ? "#BAE6FD" : "var(--surface-border)",
                           backgroundColor: isToday ? "#F0F9FF" : "transparent",
@@ -239,7 +241,7 @@ export default function RainForecast() {
                             />
                           </div>
                         </div>
-                      </div>
+                      </MarketLink>
                     );
                   })}
                 </div>
@@ -292,9 +294,11 @@ export default function RainForecast() {
                   const delta = m.delta24h ?? 0;
 
                   return (
-                    <div
+                    <MarketLink
                       key={m.city}
-                      className="grid items-center gap-2"
+                      marketId={m.market_id}
+                      dataTestId="monthly-rain-row"
+                      className="grid items-center gap-2 rounded-lg px-1 -mx-1 py-0.5 hover:bg-surface-elevated/60 transition-colors"
                       style={{ gridTemplateColumns: MONTHLY_GRID }}
                     >
                       <div className="min-w-0">
@@ -334,7 +338,7 @@ export default function RainForecast() {
                       >
                         {delta > 0 ? `+${delta}` : delta === 0 ? "—" : delta}
                       </span>
-                    </div>
+                    </MarketLink>
                   );
                 })}
               </div>
