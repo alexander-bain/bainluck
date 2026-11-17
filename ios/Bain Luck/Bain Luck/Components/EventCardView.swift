@@ -485,6 +485,16 @@ struct EventCardView: View {
                 probabilityBar
             }
 
+            if !compactScheduleStyle,
+               let livePregameSummary = LivePregameCardSummary213A.resolve(event: event) {
+                LivePregameSummaryRow214A1(
+                    summary: livePregameSummary,
+                    surface: .card,
+                    colors: (away: awayColor, home: homeColor),
+                    accessibilityIdentifier: "eventCard.livePregameSummary"
+                )
+            }
+
             if !compactScheduleStyle, let scheduledProjectedLine = scheduledAccessibilityProjectedLine12616 {
                 CompactProjectedContextLine12616(
                     text: scheduledProjectedLine.visible,
@@ -747,24 +757,16 @@ struct EventCardView: View {
                 abbreviation: side == .away ? event.awayTeamData?.abbreviation : event.homeTeamData?.abbreviation,
                 opponentAbbreviation: side == .away ? event.homeTeamData?.abbreviation : event.awayTeamData?.abbreviation
             )
-            HStack(spacing: 4) {
-                let singleWord = !displayName.contains(" ")
-                let isLoser = isFinished && !won && outcome != .draw
-                Text(displayName)
-                    .font(HeadlineStyleTable199.names(.card, isLoser: isLoser, scaledSize: sharedCompactTeamNameFontSize))
-                    // #4915 — `!won` was standing in for "lost", and on a level
-                    // result both sides are `!won`, so a finished draw greyed BOTH
-                    // teams.
-                    .foregroundStyle(won ? .primary : (isFinished && outcome != .draw ? .secondary : .primary))
-                    .lineLimit(singleWord ? 1 : 2)
-                    .fixedSize(horizontal: false, vertical: !singleWord)
-                if isFinished && won {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
-                        .accessibilityHidden(true)
-                }
-            }
+            let singleWord = !displayName.contains(" ")
+            let isLoser = isFinished && !won && outcome != .draw
+            Text(displayName)
+                .font(HeadlineStyleTable199.names(.card, isLoser: isLoser, scaledSize: sharedCompactTeamNameFontSize))
+                // #4915 — `!won` was standing in for "lost", and on a level
+                // result both sides are `!won`, so a finished draw greyed BOTH
+                // teams.
+                .foregroundStyle(won ? .primary : (isFinished && outcome != .draw ? .secondary : .primary))
+                .lineLimit(singleWord ? 1 : 2)
+                .fixedSize(horizontal: false, vertical: !singleWord)
             Spacer(minLength: 8)
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 if showsMediumColumn12616 {
@@ -825,8 +827,30 @@ struct EventCardView: View {
     @ViewBuilder
     private func largeSlotView(score: Int?, won: Bool, side: TeamSide) -> some View {
         if isFinished {
-            if let score {
-                let prominent = won || outcome == .draw
+            if won {
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    if let score {
+                        Text("\(score)")
+                            .font(HeadlineStyleTable199.secondNumbers(
+                                .card,
+                                prominent: true,
+                                scaledSize: min(compactLargeSize, 24)
+                            ))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                    }
+                    Text("\u{2713}")
+                        .font(HeadlineStyleTable199.secondNumbers(
+                            .card,
+                            prominent: true,
+                            scaledSize: min(compactLargeSize, 24) * 0.82
+                        ))
+                        .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
+                        .lineLimit(1)
+                        .accessibilityHidden(true)
+                }
+            } else if let score {
+                let prominent = outcome == .draw
                 Text("\(score)")
                     .font(HeadlineStyleTable199.secondNumbers(
                         .card,
@@ -863,18 +887,10 @@ struct EventCardView: View {
             }
             .accessibilityHidden(true)
 
-            HStack(spacing: 4) {
-                Text("Draw")
-                    .font(HeadlineStyleTable199.names(.card, isLoser: isFinished && !drawWon, scaledSize: sharedCompactTeamNameFontSize))
-                    .foregroundStyle(isFinished ? (drawWon ? .primary : .secondary) : .primary)
-                    .lineLimit(1)
-                if drawWon {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
-                        .accessibilityHidden(true)
-                }
-            }
+            Text("Draw")
+                .font(HeadlineStyleTable199.names(.card, isLoser: isFinished && !drawWon, scaledSize: sharedCompactTeamNameFontSize))
+                .foregroundStyle(isFinished ? (drawWon ? .primary : .secondary) : .primary)
+                .lineLimit(1)
 
             Spacer(minLength: 8)
 
@@ -899,7 +915,15 @@ struct EventCardView: View {
 
                 if showsLargeColumn12616 {
                     Group {
-                        if !isFinished {
+                        if isFinished {
+                            if drawWon {
+                                Text("\u{2713}")
+                                    .font(HeadlineStyleTable199.secondNumbers(.card, prominent: true, scaledSize: min(compactLargeSize, 24) * 0.82))
+                                    .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
+                                    .lineLimit(1)
+                                    .accessibilityHidden(true)
+                            }
+                        } else {
                             Text(drawChance)
                                 .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                                 .foregroundStyle(DS.textSecondaryReadable)
@@ -1366,25 +1390,9 @@ struct EventCardView: View {
             isSuspended: isSuspended
         )
         if isFinished {
-            if let reading {
-                ProbabilityBar(
-                    awayProb: reading.awayProbability,
-                    homeProb: reading.homeProbability,
-                    drawProb: usesFinishedAccessibilityLayout ? nil : prematchThreeWayDraw,
-                    // #5363 — the bar KEEPS its remainder, because the two
-                    // segments are a partition and "not the home team" is a
-                    // true quantity. What it is not is the away team, so it
-                    // loses that team's colour along with its number and reads
-                    // as the neutral rest of the whole. The event page settled
-                    // this in #5271; the card family follows it exactly.
-                    awayColor: prematchAwayIsWithheld
-                        ? Color.secondary.opacity(0.25)
-                        : awayColor.opacity(0.65),
-                    homeColor: homeColor.opacity(0.65),
-                    height: usesFinishedAccessibilityLayout ? 4 : 6,
-                    notchProb: usesFinishedAccessibilityLayout ? nil : notch
-                )
-            }
+            // One layout per state: finished cards print Pregame · Final with the
+            // tick after the winner's score and no probability bar.
+            EmptyView()
         } else if isSuspended {
             // live/048 — no bar. It would be the last live blend on a match
             // nothing is reporting on, drawn at full width and full colour: the

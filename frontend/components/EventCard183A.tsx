@@ -10,7 +10,13 @@ import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { awayIsTheComplement, sportPricesADraw } from "@/lib/drawPricedWinner";
 import { ABOVE_NINETY_NINE_PERCENT, BELOW_ONE_PERCENT } from "@/lib/probabilityDisplay";
 import { probabilityBarPair } from "@/lib/probabilityBarPair";
-import { lookupTeamColors, resolveMatchupTeamColors } from "@/lib/teamColors";
+import { HEADLINE_STYLE_199, type HeadlineRowRole199 } from "@/lib/headlineModel199";
+import {
+  lookupTeamColors,
+  resolveMatchupTeamColors,
+  SLATE_TEAM_FALLBACK,
+  teamTextColor,
+} from "@/lib/teamColors";
 import { prematchReading } from "@/lib/prematchReading";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import {
@@ -332,18 +338,42 @@ export function extractPregameProjectedPair(
 export interface LivePregameSummary199 {
   body: string;
   fullText: string;
+  namedText: string | null;
+  namedSide: HeadlineRowRole199 | null;
+  firstProjText: string | null;
+  firstProjSide: "home" | "away" | null;
+  secondProjText: string | null;
+  secondProjSide: "home" | "away" | null;
 }
 
 /**
- * Ruling 199 & 200-B single quiet grey line under the live probability bar:
- * `"Pregame  Lions 58% · projected 27–24"` (favourite's pregame chance, then
- * pregame projected score with the favourite first).
+ * Resolves readable per-team text ink for Ruling 214-A1's grey pregame line:
+ * when Ruling 197 assigned the slate fallback (`#64748B`), upgrades text to
+ * `#475569` (`slateTeamTextInk`) so it stands clearly apart from the quiet
+ * neutral label ink (`#8B98A9`) on grey-fallback pairs (e.g. Gonzaga @ Duke).
+ */
+export function resolveLiveSummarySideInk(hex: string | null | undefined): string {
+  const norm = (hex ?? "").trim().toLowerCase();
+  if (
+    !norm ||
+    norm === SLATE_TEAM_FALLBACK.toLowerCase() ||
+    norm === HEADLINE_STYLE_199.slateTeamTextInk.toLowerCase()
+  ) {
+    return HEADLINE_STYLE_199.slateTeamTextInk;
+  }
+  return teamTextColor(hex) ?? hex!;
+}
+
+/**
+ * Rulings 199, 200-B, 213-A & 214-A1 single quiet grey line under the live
+ * probability bar on BOTH the game page and live game cards:
+ * `"Pregame  Lions 58% · projected 27–24"` (favourite's pregame chance in its
+ * team colour, then pregame projected score with the named team's number first
+ * in its colour and the opponent's second in the opponent's colour).
  *
  * - One line, never wraps, nothing else is ever added to it.
  * - If one pregame value is missing, that half is left out; if both are missing,
  *   returns `null` so the line is omitted completely.
- * - Note (Ruling 204-C): cards drop this live grey line, while the game-page
- *   headline (`EventPageHeadline199`) imports and renders this helper.
  */
 export function formatLivePregameSummary(
   card: Pick<
@@ -409,18 +439,29 @@ export function formatLivePregameSummary(
   }
 
   let projHalf: string | null = null;
+  let firstProjText: string | null = null;
+  let firstProjSide: "home" | "away" | null = null;
+  let secondProjText: string | null = null;
+  let secondProjSide: "home" | "away" | null = null;
+
   if (preProjHomeStr != null && preProjAwayStr != null) {
-    if (favSide === "away") {
-      projHalf = `projected ${preProjAwayStr}–${preProjHomeStr}`;
-    } else if (favSide === "home") {
-      projHalf = `projected ${preProjHomeStr}–${preProjAwayStr}`;
-    } else if (
-      Number.isFinite(preProjAwayNum) &&
-      Number.isFinite(preProjHomeNum) &&
-      preProjAwayNum > preProjHomeNum
-    ) {
+    const awayFirst =
+      favSide === "away" ||
+      (favSide === null &&
+        Number.isFinite(preProjAwayNum) &&
+        Number.isFinite(preProjHomeNum) &&
+        preProjAwayNum > preProjHomeNum);
+    if (awayFirst) {
+      firstProjText = preProjAwayStr;
+      firstProjSide = "away";
+      secondProjText = preProjHomeStr;
+      secondProjSide = "home";
       projHalf = `projected ${preProjAwayStr}–${preProjHomeStr}`;
     } else {
+      firstProjText = preProjHomeStr;
+      firstProjSide = "home";
+      secondProjText = preProjAwayStr;
+      secondProjSide = "away";
       projHalf = `projected ${preProjHomeStr}–${preProjAwayStr}`;
     }
   }
@@ -433,6 +474,12 @@ export function formatLivePregameSummary(
   return {
     body,
     fullText: `Pregame  ${body}`,
+    namedText: chanceHalf,
+    namedSide: favSide,
+    firstProjText,
+    firstProjSide,
+    secondProjText,
+    secondProjSide,
   };
 }
 
@@ -1404,6 +1451,20 @@ export default function EventCard183A({
     card.projected_away !== "" &&
     card.projected_home !== "";
 
+  const livePregameLine =
+    isLive && !isSuspended
+      ? formatLivePregameSummary(card, awayShort, homeShort)
+      : null;
+
+  const awaySummaryInk = resolveLiveSummarySideInk(awayInk);
+  const homeSummaryInk = resolveLiveSummarySideInk(homeInk);
+  const sideSummaryInk = (side: HeadlineRowRole199 | null | undefined): string =>
+    side === "away"
+      ? awaySummaryInk
+      : side === "home"
+        ? homeSummaryInk
+        : HEADLINE_STYLE_199.slateTeamTextInk;
+
   // Direction 199: during and after a game, print no sentence that repeats the card.
   // Before a game, keep the sentence when informative and name each team as its row does.
   const discoverReason = (() => {
@@ -1761,7 +1822,7 @@ export default function EventCard183A({
                   !isDone &&
                   !awayWithheld &&
                   (isLive ? liveTenths.away != null : awayWholePct != null)
-                    ? awayInk
+                    ? awaySummaryInk
                     : undefined,
               }}
               data-testid="primary-chance-away"
@@ -1846,7 +1907,7 @@ export default function EventCard183A({
               sport={card.sport}
               abbreviation={card.home_abbrev}
               logoUrl={card.home_logo}
-              color={card.home_color}
+              color={homeInk}
             />
             <span
               className={`truncate ${teamFontClass} ${
@@ -1948,7 +2009,7 @@ export default function EventCard183A({
               style={{
                 color:
                   !isDone && (isLive ? liveTenths.home != null : homeWholePct != null)
-                    ? homeInk
+                    ? homeSummaryInk
                     : undefined,
               }}
               data-testid="primary-chance-home"
@@ -2000,6 +2061,50 @@ export default function EventCard183A({
                 style={{ left: `${livePregameAwayTickPct}%` }}
                 className="pointer-events-none absolute top-1/2 h-2.5 w-[1.5px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-text-primary/70"
               />
+            )}
+        </div>
+      )}
+
+      {/* Rulings 199, 200-B, 213-A & 214-A1: single non-wrapping quiet grey line under the bar during a game, with each team's numbers in its team colour */}
+      {livePregameLine && (
+        <div
+          className="mt-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] leading-tight tabular-nums"
+          style={{ color: HEADLINE_STYLE_199.liveSummaryQuietInk }}
+          data-testid="live-pregame-summary-line"
+        >
+          <span className="font-medium">Pregame</span>
+          {"  "}
+          {livePregameLine.namedText != null && (
+            <span
+              className="font-semibold"
+              style={{ color: sideSummaryInk(livePregameLine.namedSide) }}
+              data-testid="live-pregame-named"
+            >
+              {livePregameLine.namedText}
+            </span>
+          )}
+          {livePregameLine.firstProjText != null &&
+            livePregameLine.secondProjText != null && (
+              <>
+                <span>
+                  {livePregameLine.namedText != null ? " · projected " : "projected "}
+                </span>
+                <span
+                  className="font-semibold"
+                  style={{ color: sideSummaryInk(livePregameLine.firstProjSide) }}
+                  data-testid="live-pregame-proj-first"
+                >
+                  {livePregameLine.firstProjText}
+                </span>
+                <span>–</span>
+                <span
+                  className="font-semibold"
+                  style={{ color: sideSummaryInk(livePregameLine.secondProjSide) }}
+                  data-testid="live-pregame-proj-second"
+                >
+                  {livePregameLine.secondProjText}
+                </span>
+              </>
             )}
         </div>
       )}

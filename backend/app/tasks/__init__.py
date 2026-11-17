@@ -648,10 +648,7 @@ except Exception:  # pragma: no cover - defensive
 #   High-frequency tasks driving user-visible live game data.
 #   Never blocked by batch jobs.
 #
-# background (Standard-1X, concurrency=1 since ruling 206-b, Nov 16 2026):
-#   206-b: two children (~245 MB each) plus the parent measured ~609 MB on this
-#   512 MB dyno, so it runs ONE job at a time. The "2 x 200MB" budget and the
-#   "one slot of two" fact below were written at two and are history.
+# background (Standard-1X, concurrency=2):
 #   Short (<300s) hourly/daily batch tasks and the merge drivers. Latency-
 #   tolerant but must still fire promptly — so it must NOT share slots with
 #   300s+ grinders. Memory budget: 2 × 200MB + ~100MB overhead ≈ 500MB, which
@@ -9235,7 +9232,10 @@ celery_app.conf.beat_schedule = {
     },
     "precompute-backfill-progress": {
         "task": "app.tasks.precompute_backfill_progress",
-        "schedule": crontab(minute="*/15"),  # Every 15 min — #179/#1052 progress census (density + June ledger)
+        # 215-B (Fable, Nov 16 2026): admin precomputes give way to readers' price refreshes on heavy: every 15 min
+        # -> daily 10:45 UTC (3:45 AM PT). 250 s runs, twice in 8 min, held a
+        # heavy slot on Nov 16. An admin census; CACHE_TTL is 50 h to match.
+        "schedule": crontab(minute=45, hour=10),  # #179/#1052 progress census (density + June ledger)
         # RULING 110 (LAT-P077): moved background -> heavy under the scoped
         # two-task exception. Literal must match the effective queue, which
         # `test_heavy_beat_literals_match_their_effective_queue` reads from
@@ -10380,7 +10380,11 @@ celery_app.conf.beat_schedule = {
     },
     "precompute-source-intelligence": {
         "task": "app.tasks.precompute_source_intelligence",
-        "schedule": crontab(minute=30, hour="1,7,13,19"),  # Every 6 hours, offset 30min
+        # 215-B (Fable, Nov 16 2026): admin precomputes give way to readers' price refreshes on heavy: every 6 h -> daily 11:30 UTC
+        # (4:30 AM PT). It died at its 600 s limit at 11:52 AM Nov 16 on a full
+        # heavy; overnight it runs once on a quiet worker instead of dying 4x/day.
+        # The route's CACHE_TTL is 50 h to match.
+        "schedule": crontab(minute=30, hour=11),
         "options": {"queue": "heavy"},
     },
     # ── CADENCE ↔ TTL HYGIENE, LAT-P062 (Item 3). All three below cache at
@@ -10420,7 +10424,11 @@ celery_app.conf.beat_schedule = {
         # `warm_typeahead` hole. It is in HEAVY_TASKS, so the loop below the
         # beat schedule would pin this to heavy regardless — stated literally
         # here so the source reads true rather than relying on the override.
-        "schedule": crontab(minute="*/30"),
+        # 215-B (Fable, Nov 16 2026): admin precomputes give way to readers' price refreshes on heavy: */30 -> daily
+        # 11:00 UTC (4:00 AM PT). It died at its 120 s limit at 11:54 AM Nov 16;
+        # 48 attempts a day become one, on a quiet worker. Its key lives 50 h
+        # (`_ADMIN_LINK_RATE_CACHE_TTL`). Admin's link-rate tile can be a day old.
+        "schedule": crontab(minute=0, hour=11),
         "options": {"queue": "heavy"},
     },
     "precompute-admin-matured-linkage": {
