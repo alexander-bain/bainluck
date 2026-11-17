@@ -86,5 +86,69 @@ class InfraRetryTests(unittest.TestCase):
         self.assertIn(f"func {case}()", tests, "the warm-up case must exist")
 
 
+# Lines from run 44094233390's widgets shard (the specimen): the launch request was
+# never accepted, the test overran, and the simulator later denied the launch.
+CASE = "Test Case '-[BainLuckWatchUITests.PickerCurrentGameJourneyTests testCurrentGameAndOfflineDetailsAtAccessibilitySize]'"
+LAUNCH_NEVER_ACCEPTED = (
+    f"{CASE} started.\n"
+    "    t =     0.07s Start Test at 2026-11-17 15:16:35.952\n"
+    "    t =     0.18s Set Up\n"
+    "    t =     0.18s Open com.bainluck.Bain-Luck.watchkitapp\n"
+    "    t =     0.18s     Launch com.bainluck.Bain-Luck.watchkitapp\n"
+    "2026-11-17 15:16:36.430 xcodebuild[13455:56408] [MT] IDELaunchParametersSnapshot: no debugger version\n"
+    f"{CASE} exceeded execution time allowance of 5 minutes. The test may have hung.\n"
+    "2026-11-17 15:54:24.728 xcodebuild[13455:58758]  iOSSimulator: EBFA: Failed to launch app with identifier: "
+    "com.bainluck.Bain-Luck.watchkitapp and options: {\n"
+    "Restarting after unexpected exit, crash, or test timeout; summary will include totals from previous launches.\n"
+    "Failing tests:\n\tPickerCurrentGameJourneyTests.testCurrentGameAndOfflineDetailsAtAccessibilitySize()\n"
+    "** TEST EXECUTE FAILED **\n"
+)
+
+
+class LaunchNeverAcceptedTests(unittest.TestCase):
+    def test_the_specimen_launch_the_simulator_never_accepted_is_retried(self):
+        self.assertIn("never accepted the Watch app's launch", infra.infra_abort(LAUNCH_NEVER_ACCEPTED))
+
+    def test_a_quiescence_wait_before_the_request_is_still_the_simulator(self):
+        log = LAUNCH_NEVER_ACCEPTED.replace(
+            "watchkitapp\n2026-11-17 15:16:36.430",
+            "watchkitapp\n    t =     0.18s         Waiting for system app quiescence\n2026-11-17 15:16:36.430", 1)
+        self.assertIn("    Waiting for system app quiescence", log)
+        self.assertIsNotNone(infra.infra_abort(log))
+
+    def test_an_overrun_after_our_app_started_is_never_retried(self):
+        for later in ("Setting up automation session", "Wait for com.bainluck.Bain-Luck.watchkitapp to idle"):
+            log = LAUNCH_NEVER_ACCEPTED.replace(
+                "watchkitapp\n2026-11-17 15:16:36.430",
+                f"watchkitapp\n    t =     0.62s         {later}\n2026-11-17 15:16:36.430", 1)
+            self.assertIsNone(infra.infra_abort(log), later)
+
+    def test_an_overrun_in_the_tests_own_steps_is_never_retried(self):
+        log = LAUNCH_NEVER_ACCEPTED.replace(
+            "watchkitapp\n2026-11-17 15:16:36.430",
+            'watchkitapp\n    t =    40.00s Waiting 45.0s for "watch.pick.101" Button to exist\n2026-11-17 15:16:36.430', 1)
+        self.assertIsNone(infra.infra_abort(log))
+
+    def test_one_launch_overrun_beside_a_real_overrun_is_never_retried(self):
+        other = ("Test Case '-[BainLuckWatchUITests.WidgetTapJourneyTests testActualComplicationHost]' started.\n"
+                 "    t =    60.00s Swipe left\n"
+                 "Test Case '-[BainLuckWatchUITests.WidgetTapJourneyTests testActualComplicationHost]' exceeded "
+                 "execution time allowance of 5 minutes.\n")
+        self.assertIsNone(infra.infra_abort(LAUNCH_NEVER_ACCEPTED + other))
+
+    def test_a_failed_check_beside_a_launch_overrun_is_never_retried(self):
+        failed = ("/x/PickerCurrentGameJourneyTests.swift:40: error: -[BainLuckWatchUITests.PickerCurrentGameJourneyTests "
+                  "testScheduledStartBoundariesAtStandardSize] : XCTAssertTrue failed\n")
+        self.assertIsNone(infra.infra_abort(LAUNCH_NEVER_ACCEPTED + failed))
+
+    def test_the_harness_runs_xcodebuild_beside_the_hang_watchdog(self):
+        harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        suite = harness.split("run_xctest_suite() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn('> "$OUT/tests.log" 2>&1 &', suite)
+        self.assertIn('tools/watch_ui_hang_watchdog.py" "$OUT/tests.log" "$xcodebuild_pid"', suite)
+        self.assertIn('if wait "$xcodebuild_pid"; then', suite, "the judged exit is xcodebuild's own")
+        self.assertIn('kill "$watchdog_pid"', suite)
+
+
 if __name__ == "__main__":
     unittest.main()

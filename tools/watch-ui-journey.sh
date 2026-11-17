@@ -301,24 +301,35 @@ xcodebuild test-without-building "${XCODE_ARGS[@]}" "-only-testing:$WARMUP_CASE"
   > "$OUT/tests-warmup.log" 2>&1 || echo "warm-up exit $? (not judged)" >> "$OUT/preflight.log"
 PHASE='BainLuckWatchUITests full suite from the same built products'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
+# The hang watchdog stops xcodebuild only when a test has overrun and the log then
+# stays silent (run 44094233390: a launch the simulator never accepted held xcodebuild
+# for 38 minutes). It judges nothing; the retry decision below reads the log alone.
 run_xctest_suite() {
-  if xcodebuild test-without-building "${XCODE_ARGS[@]}" ${TEST_SELECTION[@]+"${TEST_SELECTION[@]}"} \
+  xcodebuild test-without-building "${XCODE_ARGS[@]}" ${TEST_SELECTION[@]+"${TEST_SELECTION[@]}"} \
     -resultBundlePath "$RESULT" -collect-test-diagnostics never \
     -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
     -maximum-test-execution-time-allowance 540 \
-    > "$OUT/tests.log" 2>&1; then
+    > "$OUT/tests.log" 2>&1 &
+  local xcodebuild_pid=$!
+  python3 "$ROOT/tools/watch_ui_hang_watchdog.py" "$OUT/tests.log" "$xcodebuild_pid" "$OUT/hang-watchdog.json" &
+  local watchdog_pid=$!
+  if wait "$xcodebuild_pid"; then
     TEST_EXIT=0
   else
     TEST_EXIT=$?
   fi
+  kill "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
 }
 run_xctest_suite
-# Retry ONCE, only when the run died on a dropped simulator or runner connection
-# and no test failed a check or ran out of time (tools/watch_ui_infra_retry.py).
+# Retry ONCE, only when the run died on a dropped simulator or runner connection,
+# or a launch the simulator never accepted, and no test failed a check or ran out of
+# time in its own steps (tools/watch_ui_infra_retry.py).
 # The first log is kept beside the retry's; infra-retry.json records the reason.
 if [[ "$TEST_EXIT" -ne 0 ]] \
   && python3 "$ROOT/tools/watch_ui_infra_retry.py" "$OUT/tests.log" "$OUT/infra-retry.json"; then
   cp "$OUT/tests.log" "$OUT/tests-infra-abort.log"
+  [[ ! -f "$OUT/hang-watchdog.json" ]] || mv "$OUT/hang-watchdog.json" "$OUT/hang-watchdog-infra-abort.json"
   rm -rf "$RESULT"
   reboot_pair_until_ready
   run_xctest_suite

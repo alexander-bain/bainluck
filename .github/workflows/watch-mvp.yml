@@ -40,6 +40,8 @@ on:
       - 'tools/tests/test_watch_ui_stage.py'
       - 'tools/watch_ui_infra_retry.py'
       - 'tools/tests/test_watch_ui_infra_retry.py'
+      - 'tools/watch_ui_hang_watchdog.py'
+      - 'tools/tests/test_watch_ui_hang_watchdog.py'
       - 'tools/watch_ui_shards.py'
       - 'tools/watch_simulator_architecture.py'
       - 'tools/tests/test_watch_simulator_architecture.py'
@@ -276,6 +278,7 @@ jobs:
           python3 -m unittest discover -s tools/tests -p test_watch_ui_products.py
           python3 -m unittest discover -s tools/tests -p test_watch_ui_stage.py
           python3 -m unittest discover -s tools/tests -p test_watch_ui_infra_retry.py
+          python3 -m unittest discover -s tools/tests -p test_watch_ui_hang_watchdog.py
       - name: Build and package exact signed simulator products
         run: python3 tools/watch_ui_stage.py products --output-dir build/watch-ui-products -- bash tools/watch-ui-products.sh
       - uses: actions/upload-artifact@v4
