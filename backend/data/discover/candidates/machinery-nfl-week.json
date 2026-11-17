@@ -1,0 +1,83 @@
+{
+  "slug": "machinery-nfl-week",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "same_window",
+    "same_subject"
+  ],
+  "level": "member",
+  "kicker": "NFL · THIS WEEK",
+  "name": "NFL Week: coin-flip games, full slate & season stakes",
+  "category": "football",
+  "tag": "NFL",
+  "section_title": "Closest Toss-Ups",
+  "footer": "Each game and season race settles from official NFL results.",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 4,
+    "sections": [
+      {
+        "key": "closest_games",
+        "title": "Coin-Flip Matchups",
+        "note": "Games on this week's slate priced closest to a 50–50 toss-up.",
+        "atom_query": {
+          "kind": "events",
+          "sport_key": "americanfootball_nfl",
+          "window_days_ahead": 8,
+          "probability_band": [0.34, 0.66],
+          "order_by": "closeness_to_50",
+          "min_items": 2,
+          "max_items": 4
+        }
+      },
+      {
+        "key": "week_slate",
+        "title": "Week Matchups",
+        "note": "Projected scores and win chances in kickoff order.",
+        "atom_query": {
+          "kind": "events",
+          "sport_key": "americanfootball_nfl",
+          "window_days_ahead": 8,
+          "order_by": "kickoff_asc",
+          "min_items": 2,
+          "max_items": 6
+        }
+      },
+      {
+        "key": "mvp_race",
+        "title": "MVP Race Entering the Week",
+        "note": "Leading quarterback and skill-player contenders across open markets.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["mvp", "winner"],
+          "exclude_tokens": ["age", "conference", "division", "finalists", "nba", "mlb", "nhl", "wnba", "super bowl"],
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 6
+        }
+      },
+      {
+        "key": "division_races",
+        "title": "Division Races on the Line",
+        "note": "Tightest NFL division title fields with teams playing this week.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["nfl", "champion"],
+          "any_tokens": ["nfc north", "afc north", "nfc east", "afc west", "nfc south", "afc east", "afc south", "nfc west"],
+          "exclude_tokens": ["exact order", "total wins", "conference"],
+          "shape": "field",
+          "order_by": "closeness_to_50",
+          "min_items": 2,
+          "max_items": 3,
+          "max_outcomes": 4
+        }
+      }
+    ]
+  }
+}

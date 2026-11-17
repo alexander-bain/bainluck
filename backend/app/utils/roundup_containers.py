@@ -112,6 +112,7 @@ SELECTOR_RULE_KEYS: tuple[str, ...] = (
     "category_name",
     "subject",
     "selector",
+    "sections",
     "team_slug",
     "series_code",
 )
@@ -172,6 +173,7 @@ class RoundupMembers:
     parent_name: Optional[str] = None
     children: tuple[dict[str, Any], ...] = ()
     paired_metric_set: Optional[dict[str, Any]] = None
+    machinery_card: Optional[dict[str, Any]] = None
 
     def __init__(
         self,
@@ -192,6 +194,7 @@ class RoundupMembers:
         parent_name: Optional[str] = None,
         children: Sequence[Mapping[str, Any]] = (),
         paired_metric_set: Optional[Mapping[str, Any]] = None,
+        machinery_card: Optional[Mapping[str, Any]] = None,
     ) -> None:
         object.__setattr__(self, "members", tuple(members))
         object.__setattr__(self, "rows", tuple(rows))
@@ -241,6 +244,13 @@ class RoundupMembers:
             "paired_metric_set",
             copy.deepcopy(dict(paired_metric_set))
             if isinstance(paired_metric_set, Mapping)
+            else None,
+        )
+        object.__setattr__(
+            self,
+            "machinery_card",
+            copy.deepcopy(dict(machinery_card))
+            if isinstance(machinery_card, Mapping)
             else None,
         )
 
@@ -543,13 +553,18 @@ def _normalize_section_entry(
 ) -> dict[str, Any]:
     raw_sec_members = section.get("members") or ()
     norm_members = [_normalize_member_entry(m) for m in raw_sec_members]
-    return {
+    out_sec: dict[str, Any] = {
         "class": str(section.get("class") or "title"),
         "title": str(section.get("title") or default_title),
         "layout": str(section.get("layout") or "field"),
         "count": len(norm_members),
         "members": norm_members,
     }
+    if section.get("note"):
+        out_sec["note"] = str(section["note"])
+    if isinstance(section.get("visual_block"), Mapping):
+        out_sec["visual_block"] = copy.deepcopy(dict(section["visual_block"]))
+    return out_sec
 
 
 def compose_roundup_container(
@@ -807,6 +822,8 @@ def compose_roundup_feed_item(
         roundup_contract["count_line"] = members.count_line
     if getattr(members, "paired_metric_set", None) is not None:
         roundup_contract["paired_metric_set"] = copy.deepcopy(members.paired_metric_set)
+    if getattr(members, "machinery_card", None) is not None:
+        roundup_contract["machinery_card"] = copy.deepcopy(members.machinery_card)
     context_summary_val: Optional[str] = None
     if members.sections and isinstance(members.sections[0], Mapping):
         sec_ctx = str(members.sections[0].get("context_line") or "").strip()
@@ -2458,6 +2475,10 @@ _KIND_TO_MODULE_BUILDER: dict[str, tuple[str, str]] = {
     "window_events_upsets": (
         "app.utils.window_events_upsets",
         "build_window_events_upsets_producer",
+    ),
+    "container_machinery": (
+        "app.utils.container_machinery",
+        "build_container_machinery_producer",
     ),
 }
 
