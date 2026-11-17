@@ -1348,6 +1348,39 @@ nonisolated enum EventAtlasSoccerCards11666 {
             sourceLabel: sourceLabel
         )
     }
+    nonisolated struct ThreeWayBarReading: Equatable, Sendable {
+        let away: Double
+        let draw: Double
+        let home: Double
+        let notch: Double?
+    }
+
+    /// #12616 (187-A) — resolves the game-page three-way soccer bar inputs when
+    /// all three legs carry a display chance, so `ProbabilityBar` draws
+    /// `[Away | Draw | Home]` with the draw in the middle.
+    static func threeWayBarReading(for card: ThreeWayCard) -> ThreeWayBarReading? {
+        func displayChance(_ role: ThreeWayRole) -> Double? {
+            guard let leg = card.legs.first(where: { $0.role == role }) else { return nil }
+            return card.phase == .after ? leg.pregameChance : (leg.quotedChance ?? leg.pregameChance)
+        }
+        guard let away = displayChance(.away),
+              let draw = displayChance(.draw),
+              let home = displayChance(.home),
+              away > 0, draw > 0, home > 0 else { return nil }
+
+        let notch: Double?
+        if card.phase != .before,
+           let preAway = card.legs.first(where: { $0.role == .away })?.pregameChance,
+           let preDraw = card.legs.first(where: { $0.role == .draw })?.pregameChance,
+           let preHome = card.legs.first(where: { $0.role == .home })?.pregameChance {
+            let sum = preAway + preDraw + preHome
+            let share = sum > 0 ? (preAway / sum) : 0
+            notch = (share > 0 && share < 1) ? share : nil
+        } else {
+            notch = nil
+        }
+        return ThreeWayBarReading(away: away, draw: draw, home: home, notch: notch)
+    }
 }
 
 // MARK: - SwiftUI Card Views for Soccer Story Cards
@@ -1374,6 +1407,17 @@ struct EventAtlasSoccerThreeWayCardView11666: View {
             EventAtlasStoryCardMarkKeyView11666(
                 items: EventAtlasSoccerCards11666.threeWayMarkKey(for: card)
             )
+            if let bar = EventAtlasSoccerCards11666.threeWayBarReading(for: card) {
+                ProbabilityBar(
+                    awayProb: bar.away,
+                    homeProb: bar.home,
+                    drawProb: bar.draw,
+                    awayColor: card.phase == .after ? awayColor.opacity(0.65) : awayColor,
+                    homeColor: card.phase == .after ? homeColor.opacity(0.65) : homeColor,
+                    height: 6,
+                    notchProb: bar.notch
+                )
+            }
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(card.legs) { leg in
                     legRow(leg)

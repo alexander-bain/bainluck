@@ -520,12 +520,27 @@ async def test_observation_cleanup_owned_until_real_connection_close_finishes(mo
     owner._engine = engine
     monkeypatch.setattr(owner, "_engine_here", lambda: engine)
     r._observation_read_factory = owner.observation_read
+    if mode == "external-cancel":
+        # This arm proves external cancellation, not the 250 ms deadline. Keep
+        # its preview pending until the test cancels it: a busy CI event loop
+        # can otherwise finish the deadline before the cleanup waiter resumes.
+        # The other two arms still exercise the real deadline unchanged.
+        real_wait = asyncio.wait
+
+        async def wait_for_cancel(tasks, *, timeout=None, return_when=asyncio.ALL_COMPLETED):
+            if asyncio.current_task() is work and timeout is not None:
+                assert timeout == .25
+                timeout = None
+            return await real_wait(tasks, timeout=timeout, return_when=return_when)
+
+        monkeypatch.setattr(asyncio, "wait", wait_for_cancel)
     work = asyncio.create_task(r.preview_accepted_observations(observations, validate))
     shutdown = None
     try:
         await asyncio.wait_for(entered.wait(), 1)
         if mode == "external-cancel":
-            work.cancel()
+            assert not work.done()
+            assert work.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await work
             assert not frames

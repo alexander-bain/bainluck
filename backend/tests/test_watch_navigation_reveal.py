@@ -846,6 +846,10 @@ LAUNCHER_SCOPE_TRANSFORMS = [
         '        let activated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in face.exists && !library.exists }, object: host)\n        try freshFaceRequire(XCTWaiter.wait(for: [activated], timeout: 15) == .completed,\n                             "Configured Exactograph did not become active", host: host)\n        let reading = host.descendants(matching: .any)["watch.complication.corner.fallback"].firstMatch\n        try freshFaceRequire(reading.waitForExistence(timeout: 15) && reading.isHittable && host.frame.contains(reading.frame),\n                             "Actual configured Exactograph has no fitting explicit launcher", host: host)\n        return reading\n    }\n\n',
         '        let activated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in face.exists && !library.exists }, object: host)\n        try freshFaceRequire(XCTWaiter.wait(for: [activated], timeout: 15) == .completed,\n                             "Configured Exactograph did not become active", host: host)\n        let reading = host.descendants(matching: .any)["watch.complication.corner.reading"].firstMatch\n        try freshFaceRequire(reading.waitForExistence(timeout: 15) && reading.isHittable && host.frame.contains(reading.frame),\n                             "Actual configured Exactograph has no fitting saved corner forecast", host: host)\n        return reading\n    }\n\n',
     ),
+    (
+        "        var visits: [String: Int] = [:]\n        for step in 0..<48 {\n            let exists = choice.exists\n",
+        "        var visits: [String: Int] = [:]\n        for step in 0..<32 {\n            let exists = choice.exists\n",
+    ),
 ]
 
 

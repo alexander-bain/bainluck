@@ -19,7 +19,9 @@ import pytest
 from app.services.polymarket_api import PolymarketAPIService
 from app.tasks import polymarket as poly
 from tests.test_polymarket_hindsight_opening_refused_2027 import (
+    _insert_values,
     _legs_by_external_id,
+    _outcome_inserts,
     _run_batch,
 )
 
@@ -111,23 +113,31 @@ LEGS = ("0x9850game1_yes", "0x9850game1_no", "0x9850game2_yes", "0x9850game2_no"
 
 
 class TestTheRailRefusesTheListingSeed:
+    @staticmethod
+    def _assert_no_price_or_opening(fake, stats):
+        # #12658 refuses the unsupported quote before child price/opening
+        # writes. Parent placeholders preserve the two known market identities.
+        inserts = _outcome_inserts(fake)
+        assert inserts
+        assert stats["unpriced_legs_recorded"] == 2
+        assert stats["events_processed"] == 1
+        for statement in inserts:
+            values = _insert_values(statement)
+            price_fields = {key: value for key, value in values.items() if key.startswith((
+                "current_probability", "opening_probability", "opening_captured_at",
+                "opening_american_odds",
+            ))}
+            assert price_fields, values
+            assert all(value is None for value in price_fields.values()), price_fields
+        assert not any(
+            getattr(getattr(statement, "table", None), "name", None) == "futures_odds_snapshots"
+            for statement in fake.statements
+        )
+
     async def test_the_specimen_banks_no_opening_on_either_leg(self, monkeypatch):
         event = _parsed_game(bid=0.01, ask=0.99, last_trade=None)
         fake, stats = await _run_batch(monkeypatch, event)
-        legs = _legs_by_external_id(fake)
-        for external_id in LEGS:
-            assert external_id in legs, f"the writer never reached {external_id}"
-            assert legs[external_id]["opening_probability"] is None, (
-                f"{external_id}: a 1c/99c listing book was stamped as the opening"
-            )
-            assert legs[external_id]["opening_captured_at"] is None
-            assert legs[external_id]["opening_american_odds"] is None
-        # Narrow: the current price still lands; only the opening waits.
-        assert legs["0x9850game2_yes"]["current_probability"] == 0.475
-        assert legs["0x9850game2_no"]["current_probability"] == 0.525
-        assert stats.get("opening_refused_empty_book", 0) == 2, (
-            "one refusal per sub-market, counted, or 'we stopped' is a belief"
-        )
+        self._assert_no_price_or_opening(fake, stats)
 
     async def test_a_tradeable_book_still_opens_both_legs(self, monkeypatch):
         """Non-vacuity: a clause that refused everything would pass the above."""
@@ -139,11 +149,8 @@ class TestTheRailRefusesTheListingSeed:
         assert legs["0x9850game2_no"]["opening_captured_at"] is not None
         assert stats.get("opening_refused_empty_book", 0) == 0
 
-    async def test_an_empty_book_with_a_trade_still_opens(self, monkeypatch):
-        """The exemption the parent-field writers already make."""
+    async def test_an_empty_book_with_an_undated_trade_does_not_open(self, monkeypatch):
+        """A last trade without its time does not rescue an unusable book."""
         event = _parsed_game(bid=0.01, ask=0.99, last_trade=0.475)
         fake, stats = await _run_batch(monkeypatch, event)
-        legs = _legs_by_external_id(fake)
-        assert legs["0x9850game2_yes"]["opening_probability"] == 0.475
-        assert legs["0x9850game2_no"]["opening_probability"] == 0.525
-        assert stats.get("opening_refused_empty_book", 0) == 0
+        self._assert_no_price_or_opening(fake, stats)

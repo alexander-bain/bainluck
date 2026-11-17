@@ -430,6 +430,18 @@ function SearchContent() {
     );
   }
 
+  const teamQuery = results.teams.some((team) => team.query_names_team === true);
+  const teamsSection = hasTeams && (
+    <section className="mb-8" aria-label="Teams">
+      <SectionHeader title="Teams" count={results.teams.length} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {results.teams.map((team) => (
+          <SearchTeamCard key={team.id} team={team} sports={results.sports} />
+        ))}
+      </div>
+    </section>
+  );
+
   const totalCount = (results.teams?.length ?? 0)
     + (results.pagination?.total_results ?? 0)
     + (results.futures?.length ?? 0)
@@ -501,6 +513,8 @@ function SearchContent() {
         </div>
       )}
 
+      {teamQuery && teamsSection}
+
       {hasCollections && (
         <section className="mb-8" aria-label="Collections">
           <SectionHeader title="Collections" count={collections.length} />
@@ -538,22 +552,12 @@ function SearchContent() {
         </section>
       )}
 
-      {/* Teams section */}
-      {hasTeams && (
-        <section className="mb-8">
-          <SectionHeader title="Teams" count={results.teams.length} />
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {results.teams.map((team) => (
-              <SearchTeamCard key={team.id} team={team} sports={results.sports} />
-            ))}
-          </div>
-        </section>
-      )}
+      {!teamQuery && teamsSection}
 
       {/* Games section */}
       {hasEvents && (
         <section className="mb-8">
-          <SectionHeader title="Games" count={results.pagination.total_results} />
+          <SectionHeader title={results.game_set?.title ?? "Games"} count={results.pagination.total_results} />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {liveEvents.map((event, index) => (
               <div key={event.id} onClick={() => {

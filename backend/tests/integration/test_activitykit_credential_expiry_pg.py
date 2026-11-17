@@ -2,7 +2,6 @@
 
 import asyncio
 from datetime import timedelta
-from types import SimpleNamespace
 from uuid import uuid4
 import pytest
 from sqlalchemy import insert, select, update
@@ -79,7 +78,7 @@ async def test_expired_latest_put_replay_conflicts_and_same_owner_get_delete_ack
     monkeypatch.setattr(activitykit, "utc_now", lambda: NOW + AUTHORIZATION_LIFETIME)
     assert (await invoke(pg, value, identity="new"))[0] == 409
     async with pg() as db:
-        ack = await activitykit.get_registration("new", SimpleNamespace(id=1), db)
+        ack = await activitykit.get_registration("new", activitykit.Owner("user_id", 1), db)
     assert not ack["is_active"] and ack["version"] == 2
     status, deleted = await invoke(pg, body(0), identity="new", revoke=True)
     assert status == 200 and deleted == ack

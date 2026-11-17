@@ -11,7 +11,7 @@ import Foundation
 /// claim about the value rather than about which arithmetic produced the integer.
 func formatProbability(_ value: Double, renderedPercent: Int? = nil) -> String {
     let pct = value * 100
-    if pct < 1 { return "<1%" }
+    if pct < 1 || (renderedPercent == 0 && value > 0) { return "<1%" }
     if pct > 99 { return ">99%" }
     if let renderedPercent { return "\(renderedPercent)%" }
     return "\(Int(pct.rounded()))%"
@@ -52,7 +52,7 @@ func formatProbability(_ value: Double, renderedPercent: Int? = nil) -> String {
 /// rather than about which arithmetic produced the integer: an outcome priced at
 /// `0.0005` reads `<1` whether or not its card decided a whole percent for it.
 func percentNumber(_ percent: Double, renderedPercent: Int? = nil) -> String {
-    if percent > 0 && percent < 1 { return "<1" }
+    if percent > 0 && (percent < 1 || renderedPercent == 0) { return "<1" }
     if let renderedPercent { return "\(renderedPercent)" }
     return "\(Int(percent.rounded()))"
 }
@@ -109,10 +109,10 @@ func deltaPointsNumber(_ points: Double) -> String {
 /// pinned rather than fixed.
 ///
 /// Returns `nil` when the badge draws nothing. The arrow carries the direction, so
-/// the string is an unsigned magnitude.
+/// the string is an unsigned magnitude in percentage points (`"1.2 pts"`, never `"1.2%"`).
 func futuresHeroMoveText(_ change: Double?) -> String? {
     guard let m = change, abs(m) >= 0.005 else { return nil }
-    return "\(deltaPointsNumber(m * 100))%"
+    return "\(deltaPointsNumber(m * 100)) pts"
 }
 
 /// The absent-value marker for a number we do not have. `ladderPercent` already

@@ -377,11 +377,12 @@ final class SiriShortcutsAnswerTheDetail10873Tests: XCTestCase {
           {"id":8,"name":"AL Pennant","source":"polymarket","status":"open"},"members":[]}]}
         """.utf8))
         let entities = GameOrMarketCatalog10873.entities(from: response)
-        XCTAssertEqual(entities.map(\.id), ["game-101", "game-102", "market-8", "market-7", "market-9"])
+        // Ruling 208-A — the upcoming game first, the finished one after it.
+        XCTAssertEqual(entities.map(\.id), ["game-102", "game-101", "market-8", "market-7", "market-9"])
         // Same title, different rows: the detail line is what tells them apart.
         XCTAssertEqual(entities[0].title, entities[1].title)
         XCTAssertNotEqual(entities[0].detail, entities[1].detail)
-        XCTAssertTrue(entities[0].detail?.contains("Final") == true, entities[0].detail ?? "nil")
+        XCTAssertTrue(entities[1].detail?.contains("Final") == true, entities[1].detail ?? "nil")
         XCTAssertEqual(entities[2].title, entities[3].title)
         XCTAssertNotEqual(entities[2].detail, entities[3].detail)
         XCTAssertTrue(entities[4].detail?.contains(EventState.venueSettledLabel) == true, entities[4].detail ?? "nil")
@@ -403,10 +404,15 @@ final class SiriShortcutsAnswerTheDetail10873Tests: XCTestCase {
         XCTAssertTrue(IntentLinks10873.isIntentLink(IntentLinks10873.myStuff))
         XCTAssertTrue(IntentLinks10873.isIntentLink(IntentLinks10873.event(id: 5)!))
         XCTAssertTrue(IntentLinks10873.isIntentLink(IntentLinks10873.market(id: 6)!))
+        XCTAssertTrue(IntentLinks10873.isIntentLink(IntentLinks10873.search(query: "Chiefs")!))
         XCTAssertNil(IntentLinks10873.event(id: 0))
+        XCTAssertNil(IntentLinks10873.search(query: "   "))
         for bad in ["bainluck://events/5?x=1", "bainluck://events/05x", "https://bainluck.com/events/5",
                     "bainluck://team/boston-red-sox-mlb", "bainluck://bug-report", "bainluck://events",
-                    "bainluck://futures/5/6", "bainluck://my-stuff/x"] {
+                    "bainluck://futures/5/6", "bainluck://my-stuff/x",
+                    "bainluck://search", "bainluck://search?q=", "bainluck://search?q=%20",
+                    "bainluck://search/extra?q=Chiefs", "bainluck://search?q=Chiefs&x=1",
+                    "bainluck://search?q=Chiefs#top"] {
             XCTAssertFalse(IntentLinks10873.isIntentLink(URL(string: bad)!), bad)
         }
         let handoff = IntentRouteHandoff10873()

@@ -171,6 +171,7 @@ class RoundupMembers:
     parent_slug: Optional[str] = None
     parent_name: Optional[str] = None
     children: tuple[dict[str, Any], ...] = ()
+    paired_metric_set: Optional[dict[str, Any]] = None
 
     def __init__(
         self,
@@ -190,6 +191,7 @@ class RoundupMembers:
         parent_slug: Optional[str] = None,
         parent_name: Optional[str] = None,
         children: Sequence[Mapping[str, Any]] = (),
+        paired_metric_set: Optional[Mapping[str, Any]] = None,
     ) -> None:
         object.__setattr__(self, "members", tuple(members))
         object.__setattr__(self, "rows", tuple(rows))
@@ -233,6 +235,13 @@ class RoundupMembers:
             self,
             "children",
             tuple(dict(c) for c in (children or ()) if isinstance(c, Mapping)),
+        )
+        object.__setattr__(
+            self,
+            "paired_metric_set",
+            copy.deepcopy(dict(paired_metric_set))
+            if isinstance(paired_metric_set, Mapping)
+            else None,
         )
 
 
@@ -693,6 +702,12 @@ def compose_roundup_container(
         "children": children_payload,
         "assembled": True,
     }
+    if isinstance(members, RoundupMembers) and members.sections:
+        first_sec = members.sections[0]
+        if isinstance(first_sec, Mapping):
+            sec_ctx = str(first_sec.get("context_line") or "").strip()
+            if sec_ctx:
+                out_payload["context_line"] = sec_ctx
     if effective_parent_slug:
         out_payload["parent"] = {
             "slug": effective_parent_slug,
@@ -701,6 +716,8 @@ def compose_roundup_container(
         }
     if effective_dest_href:
         out_payload["destination_href"] = effective_dest_href
+    if getattr(members, "paired_metric_set", None) is not None:
+        out_payload["paired_metric_set"] = copy.deepcopy(members.paired_metric_set)
     return out_payload
 
 
@@ -788,6 +805,15 @@ def compose_roundup_feed_item(
         roundup_contract["presentation"] = producer.presentation
     if members.count_line:
         roundup_contract["count_line"] = members.count_line
+    if getattr(members, "paired_metric_set", None) is not None:
+        roundup_contract["paired_metric_set"] = copy.deepcopy(members.paired_metric_set)
+    context_summary_val: Optional[str] = None
+    if members.sections and isinstance(members.sections[0], Mapping):
+        sec_ctx = str(members.sections[0].get("context_line") or "").strip()
+        if sec_ctx:
+            roundup_contract["context_line"] = sec_ctx
+            roundup_contract["subtitle"] = sec_ctx
+            context_summary_val = sec_ctx
     raw_caption = (
         members.caption if members.caption is not None else producer.caption
     )
@@ -808,7 +834,7 @@ def compose_roundup_feed_item(
         "score": base_score,
         "reason": effective_title,
         "headline": effective_title,
-        "context_summary": None,
+        "context_summary": context_summary_val,
         "data": {
             "id": item_id,
             "title": effective_title,
@@ -1936,6 +1962,44 @@ def insert_roundup_feed_items(
                     ):
                         earliest_post_opening_seat = idx
                     continue
+                if (
+                    isinstance(existing, Mapping)
+                    and existing.get("type") == "bundle"
+                    and isinstance(existing.get("data"), Mapping)
+                    and existing["data"].get("kind") != "roundup"
+                    and isinstance(existing["data"].get("items"), list)
+                ):
+                    orig_children = existing["data"]["items"]
+                    kept_children = [
+                        ch
+                        for ch in orig_children
+                        if not (
+                            isinstance(ch, Mapping)
+                            and ch.get("type") == "futures"
+                            and isinstance(ch.get("data"), Mapping)
+                            and ch["data"].get("id") in covered_ids
+                        )
+                    ]
+                    if len(kept_children) != len(orig_children):
+                        changed = True
+                        if (
+                            earliest_post_opening_seat is None
+                            and seat_floor <= idx < page_window
+                        ):
+                            earliest_post_opening_seat = idx
+                        if len(kept_children) < 2:
+                            continue
+                        updated_existing = copy.deepcopy(dict(existing))
+                        updated_existing["data"]["items"] = kept_children
+                        updated_existing["data"]["item_count"] = len(kept_children)
+                        if isinstance(updated_existing["data"].get("member_ids"), list):
+                            updated_existing["data"]["member_ids"] = [
+                                mid
+                                for mid in updated_existing["data"]["member_ids"]
+                                if mid not in covered_ids
+                            ]
+                        filtered.append(updated_existing)
+                        continue
                 filtered.append(existing)
             result = filtered
         earliest_seat_by_id[r_id] = (
@@ -2350,6 +2414,50 @@ _KIND_TO_MODULE_BUILDER: dict[str, tuple[str, str]] = {
     "series_hub": (
         "app.utils.series_hub",
         "build_series_hub_producer",
+    ),
+    "tech_ai_race": (
+        "app.utils.tech_ai_race",
+        "build_tech_ai_race_producer",
+    ),
+    "team_active_streaks": (
+        "app.utils.team_active_streaks",
+        "build_team_active_streaks_producer",
+    ),
+    "big_movers_today": (
+        "app.utils.big_movers_today",
+        "build_big_movers_today_producer",
+    ),
+    "league_division_races": (
+        "app.utils.league_division_races",
+        "build_league_division_races_producer",
+    ),
+    "league_award_ladders": (
+        "app.utils.league_award_ladders",
+        "build_league_award_ladders_producer",
+    ),
+    "opening_weekend_slate": (
+        "app.utils.opening_weekend_slate",
+        "build_opening_weekend_slate_producer",
+    ),
+    "cross_domain_yardsticks": (
+        "app.utils.cross_domain_yardsticks",
+        "build_cross_domain_yardsticks_producer",
+    ),
+    "ceremony_award_categories": (
+        "app.utils.ceremony_award_categories",
+        "build_ceremony_award_categories_producer",
+    ),
+    "headliners_and_hosts": (
+        "app.utils.headliners_and_hosts",
+        "build_headliners_and_hosts_producer",
+    ),
+    "long_shot_movers": (
+        "app.utils.long_shot_movers",
+        "build_long_shot_movers_producer",
+    ),
+    "window_events_upsets": (
+        "app.utils.window_events_upsets",
+        "build_window_events_upsets_producer",
     ),
 }
 

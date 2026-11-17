@@ -249,3 +249,68 @@ nonisolated struct WatchTelemetryReadingTracker {
 
     mutating func reset() { last.removeAll() }
 }
+
+nonisolated enum WatchPinWireKind12640: String, Codable, Sendable, Equatable {
+    case event
+    case future
+}
+
+/// Phone-to-Watch pin descriptor (#12640, option A: IDs only, no Watch sign-in).
+/// `outcomeId` carries an optional chosen outcome so future prop/market outcome pins
+/// ride the same bounded wire without a schema break.
+nonisolated struct WatchPinWireItem12640: Codable, Sendable, Equatable, Hashable {
+    let kind: WatchPinWireKind12640
+    let id: Int
+    let outcomeId: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case id
+        case outcomeId = "outcome_id"
+    }
+
+    init(kind: WatchPinWireKind12640, id: Int, outcomeId: Int? = nil) {
+        self.kind = kind
+        self.id = id
+        self.outcomeId = outcomeId
+    }
+
+    var isValid: Bool {
+        id > 0 && (outcomeId.map { $0 > 0 } ?? true)
+    }
+}
+
+nonisolated enum WatchPinsWire12640 {
+    static let contextKey = "watch_pins"
+    static let pullMessageKey = "watch_pins_pull"
+    static let maxItems = 48
+    static let maxBytes = 8 * 1024
+
+    static func sanitize(_ items: [WatchPinWireItem12640]) -> [WatchPinWireItem12640] {
+        var seen = Set<WatchPinWireItem12640>()
+        var result: [WatchPinWireItem12640] = []
+        for item in items where item.isValid {
+            if seen.insert(item).inserted {
+                result.append(item)
+                if result.count >= maxItems { break }
+            }
+        }
+        return result
+    }
+
+    static func encode(_ items: [WatchPinWireItem12640]) -> Data {
+        let clean = sanitize(items)
+        guard let data = try? JSONEncoder().encode(clean), data.count <= maxBytes else {
+            return Data("[]".utf8)
+        }
+        return data
+    }
+
+    static func decode(_ data: Data?) -> [WatchPinWireItem12640]? {
+        guard let data, data.count <= maxBytes,
+              let raw = try? JSONDecoder().decode([WatchPinWireItem12640].self, from: data) else {
+            return nil
+        }
+        return sanitize(raw)
+    }
+}

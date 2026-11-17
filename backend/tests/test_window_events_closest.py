@@ -136,7 +136,7 @@ def test_stored_definition_carries_membership_and_kind_per_ruling_b():
     assert defn["name"] == "The closest games tonight"
     assert defn["category"] == "sports"
     assert defn["section_title"] == "The 4 closest games"
-    assert defn["footer"] == "Combined probability · the 4 closest of {n} games tonight"
+    assert defn["footer"] == "The 4 closest of {n} games tonight"
     assert defn["rule"]["producer"] == PRODUCER_KIND_WINDOW_EVENTS_CLOSEST
     assert defn["rule"]["window"] == "sports-day"
     assert defn["rule"]["minimum"] == 4
@@ -208,7 +208,7 @@ def test_selects_four_lowest_blended_leaders_and_orders_highest_first():
         window_end=w_end,
         count=4,
         minimum=4,
-        footer_template="Combined probability · the 4 closest of {n} games tonight",
+        footer_template="The 4 closest of {n} games tonight",
     )
     assert not isinstance(result, RoundupRefusal)
     # 4 lowest leaders are 101 (0.51), 103 (0.54 Devils), 104 (0.58), 102 (0.61);
@@ -219,7 +219,7 @@ def test_selects_four_lowest_blended_leaders_and_orders_highest_first():
     assert [r["probability"] for r in result.rows] == [0.61, 0.58, 0.54, 0.51]
     assert result.rows[0]["label"] == "Bucks at Celtics: Celtics"
     assert result.rows[2]["label"] == "Devils at Rangers: Devils"
-    assert result.footer == "Combined probability · the 4 closest of 7 games tonight"
+    assert result.footer == "The 4 closest of 7 games tonight"
 
 
 @pytest.mark.asyncio
@@ -303,7 +303,7 @@ async def test_reusable_producer_serves_container_and_second_definition_without_
         "category": "nba",
         "tag": "NBA",
         "section_title": "The 4 closest NBA games",
-        "footer": "Combined probability · the 4 closest of {n} NBA games tonight",
+        "footer": "The 4 closest of {n} NBA games tonight",
         "rule": {
             "producer": "window_events_closest",
             "window": "sports-day",
@@ -326,7 +326,7 @@ async def test_reusable_producer_serves_container_and_second_definition_without_
     served_tonight = await get_container(slug=CLOSEST_GAMES_TONIGHT_SLUG, db=None)
     assert served_tonight["state"] == "published"
     assert served_tonight["slug"] == CLOSEST_GAMES_TONIGHT_SLUG
-    assert served_tonight["subtitle"] == "Combined probability · the 4 closest of 5 games tonight"
+    assert served_tonight["subtitle"] == "The 4 closest of 5 games tonight"
     assert served_tonight["container"]["id"] == roundup_container_id(CLOSEST_GAMES_TONIGHT_SLUG)
     assert served_tonight["container"]["kind"] == "roundup"
     assert [m["id"] for m in served_tonight["sections"][0]["members"]] == [303, 302, 301, 305]
@@ -335,7 +335,7 @@ async def test_reusable_producer_serves_container_and_second_definition_without_
     # 2. NBA-only definition excludes NHL game 305 and picks [304 (0.64), 303 (0.60), 302 (0.56), 301 (0.52)] of 4 NBA games.
     served_nba = await get_container(slug=second_def["slug"], db=None)
     assert served_nba["state"] == "published"
-    assert served_nba["subtitle"] == "Combined probability · the 4 closest of 4 NBA games tonight"
+    assert served_nba["subtitle"] == "The 4 closest of 4 NBA games tonight"
     assert [m["id"] for m in served_nba["sections"][0]["members"]] == [304, 303, 302, 301]
     assert served_nba["revision"] == roundup_revision([304, 303, 302, 301])
 
@@ -486,7 +486,7 @@ async def test_row_probability_equals_event_page_hero_through_hydrate_event_card
         assert not isinstance(outcome, RoundupRefusal)
         # Events 405 (absent), 406 (opening), and 407 (final_unresolved) are all refused
         # while the 4 blended siblings [404, 403, 401, 402] survive:
-        assert outcome.footer == "Combined probability · the 4 closest of 4 games tonight"
+        assert outcome.footer == "The 4 closest of 4 games tonight"
         assert [r["event_id"] for r in outcome.rows] == [404, 403, 401, 402]
 
         # Every row's probability equals resolve_hero(event)'s leader and its observed_at
@@ -570,7 +570,7 @@ def test_opening_and_final_unresolved_refused_while_blended_sibling_survives():
     )
     assert not isinstance(result, RoundupRefusal)
     assert [r["event_id"] for r in result.rows] == [514, 513, 512, 511]
-    assert result.footer == "Combined probability · the 4 closest of 4 games tonight"
+    assert result.footer == "The 4 closest of 4 games tonight"
     for row in result.rows:
         assert row["observed_at"] == hero_stamp
         assert row["observed_at"] != odds_stamp

@@ -469,6 +469,46 @@ enum PeriodLabel {
             token == "ot" || (token.count <= 3 && token.hasSuffix("ot") && token.dropLast(2).allSatisfy(\.isNumber))
         }
     }
+
+    /// Whether a served soccer period string represents in-play regulation
+    /// (1st/2nd half, halftime, minute 0–90, or 45+/90+ stoppage) — pinned in
+    /// `WidgetsWatchCalibration214A1Tests` to `LiveProjectedFinalAdmission2920.soccerPhase`.
+    nonisolated static func isSoccerRegulationPeriod(_ raw: String?) -> Bool {
+        let text = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let regPhases: Set<String> = [
+            "1st half", "2nd half", "first half", "second half",
+            "1h", "2h", "ht", "halftime", "half time", "half-time",
+        ]
+        if regPhases.contains(text) { return true }
+        let chars = Array(text)
+        var i = 0
+        func digits(max: Int) -> Int? {
+            var value = 0, count = 0
+            while i < chars.count, count < max,
+                  let ascii = chars[i].asciiValue, ascii >= 48, ascii <= 57 {
+                value = value * 10 + Int(ascii - 48)
+                count += 1
+                i += 1
+            }
+            if i < chars.count, let ascii = chars[i].asciiValue, ascii >= 48, ascii <= 57 {
+                return nil
+            }
+            return count > 0 ? value : nil
+        }
+        func skipSpace() { while i < chars.count, chars[i].isWhitespace { i += 1 } }
+
+        guard let minute = digits(max: 3) else { return false }
+        if i < chars.count, chars[i] == "'" { i += 1 }
+        if i == chars.count { return minute <= 90 }
+        skipSpace()
+        guard i < chars.count, chars[i] == "+" else { return false }
+        i += 1
+        skipSpace()
+        guard digits(max: 2) != nil else { return false }
+        if i < chars.count, chars[i] == "'" { i += 1 }
+        guard i == chars.count else { return false }
+        return minute == 45 || minute == 90
+    }
 }
 
 // MARK: - Halves inferred from a gap (#3317)

@@ -888,6 +888,7 @@ class TestTheRoutesOwnDecisions:
         folded = next(p for p in response["player_props"] if set(p.get("_market_ids", [])) == {801, 802})
         assert folded["over_probability"] == 0.42, "control: 9b merged both markets"
         assert folded["source_count"] == 1, "two markets on one venue are one source"
+        assert folded["source_mark"]["state"] == "single"
         assert [s["key"] for s in folded["source_mark"]["sources"]] == ["polymarket"]
         assert [c["probability"] for c in judge["contributors"]] == [0.40, 0.44] or \
             [c["probability"] for c in judge["contributors"]] == [0.44, 0.40]

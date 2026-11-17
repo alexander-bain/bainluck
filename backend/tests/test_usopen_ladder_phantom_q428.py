@@ -116,13 +116,7 @@ class TestTheProductionSpecimens:
         assert _resolve_market_probability(m) is None
 
     def test_djokovic_reach_qf_still_prices_because_it_is_still_traded(self):
-        """0x234cfdf2…c8910. $321 traded in the last 24 hours.
-
-        THE OTHER DIRECTION, and it is the sharp edge (gotcha #43). This book is
-        just as wide (0.49/0.79) and the price is just as much a last trade, but
-        somebody is transacting there NOW. The rule is about currency, not about
-        width — width is already judged upstream — so this one survives.
-        """
+        """#12658: an undated print without a usable two-sided book is declined."""
         m = _market(
             outcome_prices=[0.64, 0.36],
             best_bid=0.49,
@@ -130,7 +124,7 @@ class TestTheProductionSpecimens:
             last_trade_price=0.79,
             volume_24h=321.187332,
         )
-        assert _resolve_market_probability(m) == pytest.approx(0.79)
+        assert _resolve_market_probability(m) is None
 
     def test_a_zero_24h_volume_is_the_same_as_none(self):
         """Gamma reports both for an untraded market; neither is evidence."""
@@ -144,18 +138,14 @@ class TestTheProductionSpecimens:
         assert _resolve_market_probability(m) is None
 
 
-class TestTheBlowoutCaseSurvives:
-    """gotcha #19 is the reason the escape hatch exists. It must keep working.
+class TestUndatedTradesCannotPriceBlowouts:
+    """#12658 supersedes the volume proxy: it cannot date an individual trade.
 
-    "Polymarket midpoint can be stale in blowouts — wide spread ->
-    lastTradePrice". A blowout is a market that has run away DURING active
-    trading: the book clears because everyone is on one side, not because
-    nobody is there. So it carries 24-hour volume by construction, and the
-    recency test cannot reach it. These specimens make that structural claim
-    a behavioural one.
+    A tight near-certain book still prices; a wide book does not become a
+    current quote just because some trades happened during the last day.
     """
 
-    def test_live_game_blowout_keeps_its_trade_price(self):
+    def test_live_game_blowout_refuses_an_undated_trade(self):
         m = _market(
             outcome_prices=[0.50, 0.50],
             best_bid=0.01,
@@ -163,15 +153,10 @@ class TestTheBlowoutCaseSurvives:
             last_trade_price=0.97,
             volume_24h=48_000.0,
         )
-        assert _resolve_market_probability(m) == pytest.approx(0.97)
+        assert _resolve_market_probability(m) is None
 
-    def test_thinly_but_currently_traded_still_counts(self):
-        """No dollar floor. One cent of turnover today beats none.
-
-        A floor would be a knob, and the measured distribution gives no place to
-        put one: 24-hour volume on this population runs continuously from $0 to
-        $1,900 with no empty band. The test is presence, which is not tunable.
-        """
+    def test_small_positive_volume_does_not_date_a_trade(self):
+        """#12658: an undated print without a usable two-sided book is declined."""
         m = _market(
             outcome_prices=[0.48, 0.52],
             best_bid=0.02,
@@ -179,11 +164,11 @@ class TestTheBlowoutCaseSurvives:
             last_trade_price=0.06,
             volume_24h=0.01,
         )
-        assert _resolve_market_probability(m) == pytest.approx(0.06)
+        assert _resolve_market_probability(m) is None
 
 
-class TestNothingElseMoves:
-    """The recency test may only ever reach the wide-book last-trade branch."""
+class TestSupportedBookAndMissingBookControls:
+    """A usable book survives with no volume; unsupported raw prices do not."""
 
     def test_tight_book_never_consults_volume(self):
         """The Fed ladder, bid 0.55 / ask 0.57, and no 24h volume field at all."""
@@ -191,18 +176,17 @@ class TestNothingElseMoves:
                     volume_24h=None)
         assert _resolve_market_probability(m) == pytest.approx(0.56)
 
-    def test_model_priced_row_with_no_book_is_untouched(self):
-        """DataGolf / odds_api rows carry no book, so no branch here applies."""
+    def test_raw_price_with_no_book_is_declined(self):
+        """#12658: an undated print without a usable two-sided book is declined."""
         m = _market(outcome_prices=[0.12, 0.88], last_trade_price=0.12,
                     volume_24h=None)
-        assert _resolve_market_probability(m) == pytest.approx(0.12)
+        assert _resolve_market_probability(m) is None
 
-    def test_wide_book_price_that_is_not_the_midpoint_is_still_kept(self):
-        """#151's ask-only case. It never enters the fabricated-midpoint branch,
-        so the recency test must not touch it even with no 24h volume."""
+    def test_non_midpoint_raw_price_on_a_wide_book_is_declined(self):
+        """#12658: an undated print without a usable two-sided book is declined."""
         m = _market(outcome_prices=[0.20, 0.80], best_bid=0.01, best_ask=0.99,
                     last_trade_price=0.20, volume_24h=None)
-        assert _resolve_market_probability(m) == pytest.approx(0.20)
+        assert _resolve_market_probability(m) is None
 
     def test_real_edge_bucket_survives(self):
         m = _market(outcome_prices=[0.015, 0.985], best_bid=0.01, best_ask=0.02,

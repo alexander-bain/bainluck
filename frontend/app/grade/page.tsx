@@ -18,6 +18,7 @@ import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import AdminAuthProvider, { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import DiscoverCard from "@/components/DiscoverCard";
+import { useRetryNotice } from "@/lib/ranking/useRetryNotice";
 import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
 import { setDiscoverLearningGate } from "@/lib/discoverInteractions";
 import {
@@ -32,6 +33,7 @@ import {
   leftOutLine,
   normalizeGraderName,
   saveWithOneRetry,
+  setFromSearch,
   slateFromSearch,
   type Grade,
   type GradeDeck,
@@ -77,6 +79,7 @@ function GradeSession() {
   // While a named slate re-deals for the grader, the grade buttons wait, so a
   // quick tap can't grade a card the new deck is about to skip.
   const [dealing, setDealing] = useState(false);
+  const { notice, startWait, clearNotice } = useRetryNotice();
 
   useEffect(() => {
     setSlateRef(slateFromSearch(window.location.search));
@@ -109,7 +112,7 @@ function GradeSession() {
   useEffect(() => {
     if (slateRef === undefined) return;
     let cancelled = false;
-    adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef), secret)
+    adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef, setFromSearch(window.location.search)), secret)
       .then((d) => {
         if (cancelled) return;
         setDeck(drawnOnly(d));
@@ -142,7 +145,7 @@ function GradeSession() {
     // A named slate re-deals for this grader, skipping cards they already graded.
     if (slateRef) {
       setDealing(true);
-      adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef), secret, gradeDeckInit(name))
+      adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef, setFromSearch(window.location.search)), secret, gradeDeckInit(name))
         .then((d) => setDeck(drawnOnly(d)))
         .catch((e: unknown) => setError(e instanceof Error ? e.message : "Could not load the cards"))
         .finally(() => setDealing(false));
@@ -173,9 +176,9 @@ function GradeSession() {
           body,
         }),
         (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-        (ms) => setError(`Busy for a moment; saving again in ${Math.ceil(ms / 1000)} s…`),
+        startWait,
       );
-      setError(null);
+      clearNotice();
       if (!res.ok) {
         setError(`Not saved (${res.status}): ${(await res.text()).slice(0, 200)}`);
         return;
@@ -185,6 +188,7 @@ function GradeSession() {
       setIndex((i) => i + 1);
       void loadTally(deck.slate_id);
     } catch {
+      clearNotice();
       setError("Not saved: the network dropped. Try that card again.");
     } finally {
       setSaving(false);
@@ -280,6 +284,7 @@ function GradeSession() {
           </button>
         ))}
       </div>
+      {notice && <p className="mt-2 text-sm text-text-muted" role="status">{notice}</p>}
       {error && <p className="mt-2 text-sm text-text-secondary">{error}</p>}
     </Shell>
   );

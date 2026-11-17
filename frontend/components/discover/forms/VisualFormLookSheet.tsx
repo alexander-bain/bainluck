@@ -20,6 +20,8 @@ import {
   OSCARS_CONTAINER_LOOK_SHEET_OPTIONS,
   PAIRED_METRIC_REGISTER,
   TMDB_ATTRIBUTION_LINE,
+  TMDB_ATTRIBUTION_URL,
+  TMDB_OFFICIAL_LOGO_PATH,
   VISUAL_FORM_LOOK_SHEET_CARDS,
   VISUAL_FORM_SHEET_2_CARDS,
   formatStage1Display,
@@ -38,6 +40,7 @@ import {
   type GroupingGrade,
 } from "@/lib/ranking/groupingGradeSession";
 import { renderedPercent } from "@/lib/renderedPercent";
+import { QuietFillPercentBox } from "@/components/discover/QuietFillPercentBox";
 
 interface ArtThumbProps {
   entry: PairedSubjectEntry;
@@ -141,11 +144,25 @@ function TMDBAttributionNote({ set }: { set: PairedMetricSet }) {
   return (
     <span
       data-testid="tmdb-attribution-line"
-      className="inline-flex items-center gap-1.5 text-xs text-text-muted"
+      className="inline-flex flex-wrap items-center gap-2 text-xs text-text-muted"
     >
-      <span className="rounded border border-surface-border bg-surface-elevated px-1 py-0.5 font-bold tracking-wider text-accent-brand">
-        TMDB
-      </span>
+      <a
+        href={TMDB_ATTRIBUTION_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-testid="tmdb-attribution-link"
+        aria-label="The Movie Database (TMDB)"
+        className="inline-flex shrink-0 items-center rounded border border-surface-border bg-surface-elevated px-1.5 py-0.5"
+      >
+        <img
+          src={TMDB_OFFICIAL_LOGO_PATH}
+          alt="The Movie Database (TMDB)"
+          width={85}
+          height={11}
+          data-testid="tmdb-official-logo"
+          className="inline-block h-[11px] w-auto shrink-0"
+        />
+      </a>
       <span>{TMDB_ATTRIBUTION_LINE}</span>
     </span>
   );
@@ -227,9 +244,16 @@ function DualBarRow({
                     style={{ width: `${Math.max(4, s1.percent)}%` }}
                   />
                 </div>
-                <span className="w-12 text-right text-xs font-semibold tabular-nums text-text-secondary">
-                  {s1.label}
-                </span>
+                <QuietFillPercentBox
+                  percent={s1.percent}
+                  tone="slate"
+                  widthClass="w-14"
+                  alignClass="justify-end"
+                >
+                  <span className="text-xs font-semibold tabular-nums text-text-primary">
+                    {s1.label}
+                  </span>
+                </QuietFillPercentBox>
               </>
             ) : s1.kind === "tick" ? (
               <div className="flex flex-1 items-center justify-between">
@@ -275,9 +299,16 @@ function DualBarRow({
                     style={{ width: `${Math.max(4, s2.percent)}%` }}
                   />
                 </div>
-                <span className="w-12 text-right text-sm font-bold tabular-nums text-text-primary">
-                  {s2.label}
-                </span>
+                <QuietFillPercentBox
+                  percent={s2.percent}
+                  tone="emerald"
+                  widthClass="w-14"
+                  alignClass="justify-end"
+                >
+                  <span className="text-sm font-bold tabular-nums text-text-primary">
+                    {s2.label}
+                  </span>
+                </QuietFillPercentBox>
               </>
             ) : s2.kind === "cross" ? (
               <span className="text-xs font-medium text-text-muted">
@@ -301,6 +332,14 @@ function DualBarRow({
 // ============================================================================
 // Form 1 & Form 5: Stacked Dual Bars with Art (`paired_bars_with_art`)
 // ============================================================================
+
+export function formatCardFaceSubtitle(subtitle: string): string {
+  return subtitle
+    .replace(/\s*·\s*Nominee\s*%.*$/i, "")
+    .replace(/\s*·\s*Paired by club.*$/i, "")
+    .replace(/\s*\([^)]*#\d+[^)]*\)/g, "")
+    .trim();
+}
 
 function PairedBarsWithArtCard({
   set,
@@ -326,29 +365,29 @@ function PairedBarsWithArtCard({
         </span>
       </div>
       <h3 className="mt-1 text-lg font-semibold text-text-primary">{set.title}</h3>
-      <p className="mt-0.5 text-xs text-text-secondary">{set.subtitle}</p>
+      <p className="mt-0.5 text-xs text-text-secondary">
+        {formatCardFaceSubtitle(set.subtitle)}
+      </p>
 
       {/* Legend */}
       <div className="mt-3 flex flex-wrap items-center gap-4 border-b border-surface-border pb-2 text-xs text-text-secondary">
         <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-2.5 w-2.5 rounded-sm border border-surface-border bg-surface-hover" />
+          <span
+            data-testid="legend-swatch-stage-1"
+            className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm bg-text-muted"
+          />
           <span className="font-medium text-text-primary">
             {simulateSettled
               ? `${set.stage_1_label} (✓ / ✗ settled)`
               : `${set.stage_1_label} %`}
           </span>
-          <span className="text-text-muted">
-            (
-            {set.stage_1_market.companion_polymarket_id
-              ? `average of two venues: #${set.stage_1_market.id} + #${set.stage_1_market.companion_polymarket_id}`
-              : `#${set.stage_1_market.id}`}
-            )
-          </span>
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-accent-brand" />
+          <span
+            data-testid="legend-swatch-stage-2"
+            className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm bg-accent-brand"
+          />
           <span className="font-medium text-text-primary">{set.stage_2_label} %</span>
-          <span className="text-text-muted">(#{set.stage_2_market.id})</span>
         </span>
       </div>
 
@@ -367,7 +406,8 @@ function PairedBarsWithArtCard({
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-text-muted">
         <span>
-          Paired in register · Kept separate · Sorted by {set.stage_2_label.toLowerCase()}
+          Sorted by {set.stage_2_label.toLowerCase()} %, ties broken by{" "}
+          {set.stage_1_label.toLowerCase()} %
         </span>
         <TMDBAttributionNote set={set} />
       </div>
@@ -395,6 +435,16 @@ function PairedBarsTop5ExpandableCard({
   const unpricedInHidden = sorted
     .slice(5)
     .find((e) => e.stage_2_probability === null);
+  const unpricedStage1 = unpricedInHidden
+    ? formatStage1Display(unpricedInHidden, set, {
+        simulateSettledStage1: simulateSettled,
+      })
+    : null;
+  const unpricedStage2 = unpricedInHidden
+    ? formatStage2Display(unpricedInHidden, set, {
+        simulateSettledStage1: simulateSettled,
+      })
+    : null;
 
   return (
     <article
@@ -429,19 +479,23 @@ function PairedBarsTop5ExpandableCard({
             type="button"
             data-testid="toggle-expand-all-rows"
             onClick={() => setExpanded((prev) => !prev)}
-            className="flex w-full items-center justify-between rounded-lg border border-surface-border bg-surface-elevated px-3 py-2 text-xs font-semibold text-text-primary hover:bg-surface-hover"
+            className="flex w-full flex-col items-start gap-0.5 rounded-lg border border-surface-border bg-surface-elevated px-3 py-2 text-left text-xs font-semibold text-text-primary hover:bg-surface-hover"
           >
-            <span>
+            <span className="w-full">
               {expanded
                 ? "Show top 5 by Wins % only"
                 : `Show all ${sorted.length} most likely nominees (+${hiddenCount} more)`}
             </span>
-            {!expanded && unpricedInHidden && (
+            {!expanded && unpricedInHidden && unpricedStage1 && unpricedStage2 && (
               <span
                 data-testid="missing-probability-notice"
-                className="font-normal text-text-muted"
+                className="w-full font-normal text-text-muted"
               >
-                incl. {unpricedInHidden.subject} (49% nom · Not listed to win)
+                incl. {unpricedInHidden.subject} (
+                {unpricedStage1.kind === "percent"
+                  ? `${unpricedStage1.label} nom`
+                  : unpricedStage1.label}{" "}
+                · {unpricedStage2.label})
               </span>
             )}
           </button>
@@ -449,7 +503,10 @@ function PairedBarsTop5ExpandableCard({
       )}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-text-muted">
-        <span>Nominee % (average of two venues: #5165726 + #27988771) · Winner #6173044</span>
+        <span>
+          Sorted by {set.stage_2_label.toLowerCase()} %, ties broken by{" "}
+          {set.stage_1_label.toLowerCase()} %
+        </span>
         <TMDBAttributionNote set={set} />
       </div>
     </article>
@@ -487,9 +544,9 @@ function PairedBarsSingleLineCard({
       {/* Column Headers */}
       <div className="mt-3 flex items-center justify-between border-b border-surface-border pb-1.5 text-xs font-semibold uppercase tracking-wide text-text-muted">
         <span>Film (Top 10 by Nom %)</span>
-        <div className="flex items-center gap-3">
-          <span className="w-16 text-right">{set.stage_1_label}</span>
-          <span className="w-24 text-right text-text-primary">{set.stage_2_label}</span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className="w-12 text-right">{set.stage_1_label}</span>
+          <span className="w-16 text-right text-text-primary">{set.stage_2_label}</span>
         </div>
       </div>
 
@@ -509,7 +566,7 @@ function PairedBarsSingleLineCard({
             >
               <ArtThumb entry={entry} kidSurface={kidSurface} size="xs" />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-xs font-semibold text-text-primary">
+                <div className="text-xs font-semibold leading-snug text-text-primary">
                   {entry.subject}
                 </div>
                 {/* Stacked 3px micro-bars */}
@@ -533,9 +590,9 @@ function PairedBarsSingleLineCard({
                 </div>
               </div>
 
-              <div className="flex shrink-0 items-center gap-2 tabular-nums">
+              <div className="flex shrink-0 items-center gap-1.5 tabular-nums">
                 <span
-                  className={`w-14 text-right text-xs font-semibold ${
+                  className={`w-12 text-right text-xs font-semibold ${
                     s1.kind === "tick"
                       ? "text-accent-positive"
                       : s1.kind === "cross"
@@ -546,13 +603,13 @@ function PairedBarsSingleLineCard({
                   {s1.kind === "tick" ? "✓ Nom" : s1.kind === "cross" ? "✗ Out" : s1.label}
                 </span>
                 {s2.kind === "percent" ? (
-                  <span className="w-24 text-right text-xs font-bold text-text-primary">
+                  <span className="w-16 text-right text-xs font-bold text-text-primary">
                     {s2.label}
                   </span>
                 ) : (
                   <span
                     data-testid="missing-probability-notice"
-                    className="w-24 text-right text-xs font-medium text-text-muted"
+                    className="w-16 text-right text-xs font-medium leading-tight text-text-muted"
                   >
                     {s2.label}
                   </span>
@@ -637,7 +694,7 @@ function PairedBarsTop3PlusStripCard({
               >
                 <ArtThumb entry={entry} kidSurface={kidSurface} size="xs" />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-semibold text-text-primary">
+                  <div className="text-xs font-semibold leading-snug text-text-primary">
                     {entry.subject}
                   </div>
                   <div className="mt-0.5 flex flex-wrap items-baseline justify-between gap-1 text-xs tabular-nums">
@@ -725,7 +782,7 @@ function PosterSpotlightTilesCard({
               <div className="flex items-start gap-2.5">
                 <ArtThumb entry={entry} kidSurface={kidSurface} size="md" />
                 <div className="min-w-0 flex-1">
-                  <div className="line-clamp-2 text-xs font-semibold leading-snug text-text-primary">
+                  <div className="text-xs font-semibold leading-snug text-text-primary">
                     {entry.subject}
                   </div>
                   <div className="mt-0.5 truncate text-xs text-text-muted">
@@ -858,36 +915,34 @@ function StepConversionPathCard({
             <div key={entry.subject_key} className="flex items-center gap-3 py-2.5">
               <ArtThumb entry={entry} kidSurface={kidSurface} size="sm" />
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
-                  <span className="text-sm font-semibold text-text-primary">
-                    {entry.subject}
+                <div className="text-sm font-semibold leading-snug text-text-primary">
+                  {entry.subject}
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5 text-xs tabular-nums">
+                  <span
+                    className={
+                      s1.kind === "tick"
+                        ? "font-semibold text-accent-positive"
+                        : s1.kind === "cross"
+                          ? "text-text-muted line-through"
+                          : "font-medium text-text-secondary"
+                    }
+                  >
+                    {s1.kind === "percent" ? `${s1.label} nom` : s1.label}
                   </span>
-                  <div className="flex shrink-0 items-center gap-1.5 text-xs tabular-nums">
-                    <span
-                      className={
-                        s1.kind === "tick"
-                          ? "font-semibold text-accent-positive"
-                          : s1.kind === "cross"
-                            ? "text-text-muted line-through"
-                            : "font-medium text-text-secondary"
-                      }
-                    >
-                      {s1.kind === "percent" ? `${s1.label} nom` : s1.label}
+                  <span className="text-text-muted">→</span>
+                  {s2.kind === "percent" ? (
+                    <span className="font-bold text-text-primary">
+                      {s2.label} win
                     </span>
-                    <span className="text-text-muted">→</span>
-                    {s2.kind === "percent" ? (
-                      <span className="font-bold text-text-primary">
-                        {s2.label} win
-                      </span>
-                    ) : (
-                      <span
-                        data-testid="missing-probability-notice"
-                        className="rounded border border-surface-border bg-surface-elevated px-1.5 py-0.5 text-xs font-medium text-text-muted"
-                      >
-                        {s2.label}
-                      </span>
-                    )}
-                  </div>
+                  ) : (
+                    <span
+                      data-testid="missing-probability-notice"
+                      className="rounded border border-surface-border bg-surface-elevated px-1.5 py-0.5 text-xs font-medium text-text-muted"
+                    >
+                      {s2.label}
+                    </span>
+                  )}
                 </div>
 
                 {/* Single nested funnel bar */}
@@ -1021,30 +1076,28 @@ function LeaderAndChasersSplitCard({
               >
                 <ArtThumb entry={entry} kidSurface={kidSurface} size="sm" />
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
-                    <div className="text-sm font-medium text-text-primary">
-                      {entry.subject}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2 text-right tabular-nums">
-                      <span className="rounded bg-surface-elevated px-2 py-0.5 text-xs font-medium text-text-secondary">
-                        {s1.kind === "percent" ? `${s1.label} nom` : s1.label}
-                      </span>
-                      {s2.kind === "percent" ? (
-                        <span className="w-10 text-sm font-bold text-text-primary">
-                          {s2.label}
-                        </span>
-                      ) : (
-                        <span
-                          data-testid="missing-probability-notice"
-                          className="rounded border border-surface-border bg-surface-elevated px-2 py-0.5 text-xs font-medium text-text-muted"
-                        >
-                          {s2.label}
-                        </span>
-                      )}
-                    </div>
+                  <div className="text-sm font-medium leading-snug text-text-primary">
+                    {entry.subject}
                   </div>
                   <div className="truncate text-xs text-text-muted">
                     {entry.detail}
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 tabular-nums">
+                    <span className="rounded bg-surface-elevated px-2 py-0.5 text-xs font-medium text-text-secondary">
+                      {s1.kind === "percent" ? `${s1.label} nom` : s1.label}
+                    </span>
+                    {s2.kind === "percent" ? (
+                      <span className="text-sm font-bold text-text-primary">
+                        {s2.label} win
+                      </span>
+                    ) : (
+                      <span
+                        data-testid="missing-probability-notice"
+                        className="rounded border border-surface-border bg-surface-elevated px-2 py-0.5 text-xs font-medium text-text-muted"
+                      >
+                        {s2.label}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1143,15 +1196,47 @@ function PodiumAndTiersCard({
                   size={elevated ? "lg" : "md"}
                 />
               </div>
-              <div className="mt-1.5 line-clamp-2 text-xs font-bold leading-tight text-text-primary">
+              <div className="mt-1.5 text-xs font-bold leading-tight text-text-primary">
                 {entry.subject}
               </div>
-              <div className="mt-1 text-base font-bold tabular-nums text-text-primary">
-                {s2.label}{" "}
-                <span className="text-xs font-normal text-text-muted">win</span>
-              </div>
-              <div className="text-xs font-medium tabular-nums text-text-secondary">
-                {s1.kind === "percent" ? `${s1.label} nom` : s1.label}
+              <div className="mt-2 w-full space-y-1">
+                {s2.kind === "percent" && s2.percent !== null ? (
+                  <QuietFillPercentBox
+                    percent={s2.percent}
+                    tone="emerald"
+                    fullWidth
+                    alignClass="justify-center"
+                    className="py-1"
+                  >
+                    <span className="text-base font-bold tabular-nums text-text-primary">
+                      {s2.label}
+                    </span>
+                    <span className="text-xs font-normal text-text-secondary">
+                      win
+                    </span>
+                  </QuietFillPercentBox>
+                ) : (
+                  <div className="text-xs font-medium text-text-muted">
+                    {s2.label}
+                  </div>
+                )}
+                {s1.kind === "percent" && s1.percent !== null ? (
+                  <QuietFillPercentBox
+                    percent={s1.percent}
+                    tone="slate"
+                    fullWidth
+                    alignClass="justify-center"
+                    className="py-0.5"
+                  >
+                    <span className="text-xs font-semibold tabular-nums text-text-primary">
+                      {s1.label} nom
+                    </span>
+                  </QuietFillPercentBox>
+                ) : (
+                  <div className="text-xs font-medium tabular-nums text-text-secondary">
+                    {s1.label}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -1184,10 +1269,40 @@ function PodiumAndTiersCard({
                       {entry.subject}
                     </span>
                   </div>
-                  <span className="shrink-0 text-xs tabular-nums text-text-secondary">
-                    {s1.label} →{" "}
-                    <strong className="text-text-primary">{s2.label}</strong>
-                  </span>
+                  <div className="flex shrink-0 items-center gap-1.5 tabular-nums">
+                    {s1.kind === "percent" && s1.percent !== null ? (
+                      <QuietFillPercentBox
+                        percent={s1.percent}
+                        tone="slate"
+                        widthClass="w-14"
+                        alignClass="justify-center"
+                      >
+                        <span className="text-xs font-semibold text-text-primary">
+                          {s1.label}
+                        </span>
+                      </QuietFillPercentBox>
+                    ) : (
+                      <span className="text-xs text-text-secondary">
+                        {s1.label}
+                      </span>
+                    )}
+                    {s2.kind === "percent" && s2.percent !== null ? (
+                      <QuietFillPercentBox
+                        percent={s2.percent}
+                        tone="emerald"
+                        widthClass="w-14"
+                        alignClass="justify-center"
+                      >
+                        <span className="text-xs font-bold text-text-primary">
+                          {s2.label}
+                        </span>
+                      </QuietFillPercentBox>
+                    ) : (
+                      <span className="text-xs font-bold text-text-primary">
+                        {s2.label}
+                      </span>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -1219,19 +1334,43 @@ function PodiumAndTiersCard({
                       {entry.subject}
                     </span>
                   </div>
-                  {s2.kind === "percent" ? (
-                    <span className="shrink-0 text-xs tabular-nums text-text-secondary">
-                      {s1.label} →{" "}
-                      <strong className="text-text-primary">{s2.label}</strong>
-                    </span>
-                  ) : (
-                    <span
-                      data-testid="missing-probability-notice"
-                      className="shrink-0 text-xs font-medium text-text-muted"
-                    >
-                      {s1.label} · {s2.label}
-                    </span>
-                  )}
+                  <div className="flex shrink-0 items-center gap-1.5 tabular-nums">
+                    {s1.kind === "percent" && s1.percent !== null ? (
+                      <QuietFillPercentBox
+                        percent={s1.percent}
+                        tone="slate"
+                        widthClass="w-14"
+                        alignClass="justify-center"
+                      >
+                        <span className="text-xs font-semibold text-text-primary">
+                          {s1.label}
+                        </span>
+                      </QuietFillPercentBox>
+                    ) : (
+                      <span className="text-xs text-text-secondary">
+                        {s1.label}
+                      </span>
+                    )}
+                    {s2.kind === "percent" && s2.percent !== null ? (
+                      <QuietFillPercentBox
+                        percent={s2.percent}
+                        tone="emerald"
+                        widthClass="w-14"
+                        alignClass="justify-center"
+                      >
+                        <span className="text-xs font-bold text-text-primary">
+                          {s2.label}
+                        </span>
+                      </QuietFillPercentBox>
+                    ) : (
+                      <span
+                        data-testid="missing-probability-notice"
+                        className="w-24 text-right text-xs font-medium leading-tight text-text-muted"
+                      >
+                        {s2.label}
+                      </span>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -1643,9 +1782,16 @@ function SettledGateAfterNominationsCard({
 
 export const renderLookSheetCardBySpec = (
   spec: LookSheetCardSpec,
-  options?: { simulateSettled?: boolean; kidSurface?: boolean },
+  options?: {
+    simulateSettled?: boolean;
+    kidSurface?: boolean;
+    pairedMetricSet?: PairedMetricSet | null;
+    pairedMetricSets?: Record<string, PairedMetricSet> | null;
+  },
 ) => {
   const set =
+    options?.pairedMetricSet ??
+    options?.pairedMetricSets?.[spec.set_id] ??
     PAIRED_METRIC_REGISTER[spec.set_id] ??
     PAIRED_METRIC_REGISTER["oscars-2027-best-picture"];
   const settled = Boolean(spec.force_settled_stage_1 || options?.simulateSettled);
@@ -1746,16 +1892,28 @@ export function OscarsContainerLayoutPreview({
   spec,
   simulateSettled = false,
   kidSurface = false,
+  pairedMetricSets = null,
 }: {
   spec: ContainerLookSheetSpec;
   simulateSettled?: boolean;
   kidSurface?: boolean;
+  pairedMetricSets?: Record<string, PairedMetricSet> | null;
 }) {
-  const picSet = PAIRED_METRIC_REGISTER["oscars-2027-best-picture"];
-  const dirSet = PAIRED_METRIC_REGISTER["oscars-2027-best-director"];
-  const actSet = PAIRED_METRIC_REGISTER["oscars-2027-best-actor"];
-  const actressSet = PAIRED_METRIC_REGISTER["oscars-2027-best-actress"];
-  const animSet = PAIRED_METRIC_REGISTER["oscars-2027-best-animated"];
+  const picSet =
+    pairedMetricSets?.["oscars-2027-best-picture"] ??
+    PAIRED_METRIC_REGISTER["oscars-2027-best-picture"];
+  const dirSet =
+    pairedMetricSets?.["oscars-2027-best-director"] ??
+    PAIRED_METRIC_REGISTER["oscars-2027-best-director"];
+  const actSet =
+    pairedMetricSets?.["oscars-2027-best-actor"] ??
+    PAIRED_METRIC_REGISTER["oscars-2027-best-actor"];
+  const actressSet =
+    pairedMetricSets?.["oscars-2027-best-actress"] ??
+    PAIRED_METRIC_REGISTER["oscars-2027-best-actress"];
+  const animSet =
+    pairedMetricSets?.["oscars-2027-best-animated"] ??
+    PAIRED_METRIC_REGISTER["oscars-2027-best-animated"];
 
   if (spec.option_code === "A") {
     return (
@@ -1801,19 +1959,19 @@ export function OscarsContainerLayoutPreview({
                 >
                   <ArtThumb entry={entry} kidSurface={kidSurface} size="sm" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-semibold text-text-primary">
+                    <div className="text-xs font-semibold leading-snug text-text-primary">
                       {entry.subject}
                     </div>
                     <div className="truncate text-xs text-text-muted">
                       {entry.detail}
                     </div>
-                    <div className="mt-1 flex items-center justify-between text-xs tabular-nums">
-                      <span className="text-text-secondary">
-                        {s1.kind === "percent" ? `${s1.label} nom` : s1.label}
-                      </span>
-                      <span className="font-bold text-text-primary">
+                    <div className="mt-1 space-y-0.5 text-xs tabular-nums">
+                      <div className="font-bold text-text-primary">
                         {s2.label} win
-                      </span>
+                      </div>
+                      <div className="text-text-secondary">
+                        {s1.kind === "percent" ? `${s1.label} nom` : s1.label}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1851,7 +2009,7 @@ export function OscarsContainerLayoutPreview({
                 >
                   <ArtThumb entry={entry} kidSurface={kidSurface} size="sm" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-semibold text-text-primary">
+                    <div className="text-xs font-semibold leading-snug text-text-primary">
                       {entry.subject}
                     </div>
                     <div className="mt-0.5 text-xs font-bold tabular-nums text-text-primary">
@@ -1920,7 +2078,7 @@ export function OscarsContainerLayoutPreview({
                   <ArtThumb entry={entry} kidSurface={kidSurface} size="md" />
                   <div className="min-w-0 flex-1">
                     <div className="text-xs font-semibold text-text-muted">{cat}</div>
-                    <div className="truncate text-sm font-bold text-text-primary">
+                    <div className="text-sm font-bold leading-snug text-text-primary">
                       {entry.subject}
                     </div>
                     <div className="mt-1 flex items-baseline gap-2 text-xs tabular-nums">
@@ -1929,7 +2087,7 @@ export function OscarsContainerLayoutPreview({
                       </span>
                       <span className="text-text-secondary">· {s1.label} nom</span>
                     </div>
-                    <div className="mt-0.5 truncate text-xs text-text-muted">
+                    <div className="mt-0.5 text-xs text-text-muted">
                       Next: {chaser}
                     </div>
                   </div>
@@ -1961,7 +2119,7 @@ export function OscarsContainerLayoutPreview({
                   <div className="flex min-w-0 items-center gap-2.5">
                     <ArtThumb entry={entry} kidSurface={kidSurface} size="sm" />
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-text-primary">
+                      <div className="text-sm font-semibold leading-snug text-text-primary">
                         {entry.subject}
                       </div>
                       <div className="truncate text-xs text-text-muted">
@@ -2036,7 +2194,7 @@ export function OscarsContainerLayoutPreview({
             >
               <ArtThumb entry={item.entry} kidSurface={kidSurface} size="sm" />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-xs font-semibold text-text-primary">
+                <div className="text-xs font-semibold leading-snug text-text-primary">
                   {item.label}
                 </div>
                 <div className="text-xs text-text-muted">{item.cat}</div>
@@ -2071,7 +2229,12 @@ export function OscarsContainerLayoutPreview({
 
 export const renderVisualLookSheetDeckItem = (
   itemKey: string,
-  options?: { simulateSettled?: boolean; kidSurface?: boolean },
+  options?: {
+    simulateSettled?: boolean;
+    kidSurface?: boolean;
+    pairedMetricSet?: PairedMetricSet | null;
+    pairedMetricSets?: Record<string, PairedMetricSet> | null;
+  },
 ): React.ReactNode | null => {
   const allCards = [...VISUAL_FORM_LOOK_SHEET_CARDS, ...VISUAL_FORM_SHEET_2_CARDS];
   const cardSpec = allCards.find((c) => c.item_key === itemKey);
@@ -2093,6 +2256,7 @@ export const renderVisualLookSheetDeckItem = (
           spec={containerSpec}
           simulateSettled={options?.simulateSettled}
           kidSurface={options?.kidSurface}
+          pairedMetricSets={options?.pairedMetricSets ?? null}
         />
       </div>
     );
@@ -2108,6 +2272,7 @@ export interface VisualFormLookSheetGalleryProps {
   kidSurface?: boolean;
   grader?: string | null;
   existingGradesByItemKey?: Record<string, GroupingGrade>;
+  pairedMetricSets?: Record<string, PairedMetricSet> | null;
   onGradeItem?: (
     position: number,
     itemKey: string,
@@ -2121,6 +2286,7 @@ export function VisualFormLookSheetGallery({
   kidSurface = false,
   grader = null,
   existingGradesByItemKey = {},
+  pairedMetricSets = null,
   onGradeItem,
   savingItemKey = null,
 }: VisualFormLookSheetGalleryProps) {
@@ -2147,6 +2313,7 @@ export function VisualFormLookSheetGallery({
         {renderLookSheetCardBySpec(spec, {
           simulateSettled,
           kidSurface,
+          pairedMetricSets,
         })}
 
         {grader && onGradeItem && (
@@ -2222,16 +2389,16 @@ export function VisualFormLookSheetGallery({
 
         <ul className="mt-2.5 space-y-1 text-xs text-text-secondary">
           <li>
-            • <span className="font-semibold text-text-primary">Two distinct numbers per film:</span>{" "}
-            Best Picture Nominee % combines #5165726 and #27988771 where both exist; Nominee % and Winner % (#6173044) are paired in <code className="font-mono">paired_metric_register.json</code> as two separate propositions.
+            • <span className="font-semibold text-text-primary">Two distinct numbers per film (server-computed venue average):</span>{" "}
+            Best Picture Nominee % averages #5165726 and #27988771 across venues on the server via <code className="font-mono">futures_source_merge.blend_with_verdict</code> (<code className="font-mono">backend/app/services/paired_metric_register.py</code>); Nominee % and Winner % (#6173044) are paired in <code className="font-mono">paired_metric_register.json</code> as two separate propositions.
           </li>
           <li>
             • <span className="font-semibold text-text-primary">One rounding rule &amp; selection-carrying titles:</span>{" "}
             Uses <code className="font-mono">renderedPercent</code> (#1933 / #3867) so half-percents (<span className="font-medium text-text-primary">0.955 → 96%</span>, <span className="font-medium text-text-primary">0.935 → 94%</span>) always round half-up; NHL includes all 9 clubs at 5%+ (<span className="font-medium text-text-primary">Dallas Stars 84%/5%</span> alongside <span className="font-medium text-text-primary">Tampa Bay Lightning 82%/5%</span>).
           </li>
           <li>
-            • <span className="font-semibold text-text-primary">Sourced TMDB credits &amp; verified headshots:</span>{" "}
-            Film credits and person headshots are verified against TMDB (<span className="font-medium text-text-primary">Jesse Eisenberg</span> on <em>The Debut</em>, <span className="font-medium text-text-primary">Nathan Fielder #1212667</span> on <em>You Can See Everything</em>) with explicit TMDB attribution.
+            • <span className="font-semibold text-text-primary">Sourced TMDB credits, verified headshots &amp; official TMDB notice + logo:</span>{" "}
+            Film credits and person headshots are verified against TMDB (<span className="font-medium text-text-primary">Jesse Eisenberg</span> on <em>The Debut</em>, <span className="font-medium text-text-primary">Nathan Fielder #1212667</span> on <em>You Can See Everything</em>) and carry the required TMDB attribution notice and official TMDB logo mark linked to <code className="font-mono">themoviedb.org</code>.
           </li>
         </ul>
       </div>
@@ -2270,6 +2437,7 @@ export function VisualFormLookSheetGallery({
                 spec={spec}
                 simulateSettled={simulateSettled}
                 kidSurface={kidSurface}
+                pairedMetricSets={pairedMetricSets}
               />
               {grader && onGradeItem && (
                 <div className="rounded-lg border border-surface-border bg-surface-card p-2.5">

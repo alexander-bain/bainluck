@@ -85,6 +85,23 @@ describe("#12581 source marks on installed web readers", () => {
     }
   });
 
+  it("keeps the current web card identical with single and method fields", () => {
+    const oldProps = [
+      healthyRow({ source_mark: mark("kalshi"), threshold: 1 }),
+      healthyRow({ source_mark: mark("polymarket"), threshold: 2 }),
+    ];
+    const newProps = oldProps.map((row) => ({
+      ...row,
+      source_mark: { ...row.source_mark!, state: "single" as const, method: "One source" },
+    }));
+    expect(groupPlayerProps({ playerProps: newProps }))
+      .toEqual(groupPlayerProps({ playerProps: oldProps }));
+    const render = (props: PlayerPropRow[]) => renderToStaticMarkup(
+      <PlayerPropsDashboard data={{ player_props: props, other: [] } as never} />,
+    );
+    expect(render(newProps)).toBe(render(oldProps));
+  });
+
   it("keeps a protected family separate from the standard stat", () => {
     const { players, dropped } = groupPlayerProps({ playerProps: [
       healthyRow({ market_name: "New England vs Detroit: Receiving yards", outcome_name: "Sam LaPorta: 15+", threshold: 15, over_probability: .86 }),

@@ -175,13 +175,13 @@ async def _seed_ai_markets(session) -> dict:
     return ids
 
 
-async def _get(world, slug, *, revision=None, cursor=None, limit=None):
+async def _get(world, slug, *, revision=None, cursor=None, limit=None, compact=True):
     from app.routes.containers import get_container
 
     async with world["Session"]() as db:
         return await get_container(
             slug=slug, include_children=True, revision=revision, cursor=cursor,
-            limit=limit, db=db,
+            limit=limit, compact=compact, db=db,
         )
 
 
@@ -513,7 +513,8 @@ async def test_a_rolled_back_correction_sends_nothing_and_a_sports_hub_never_sen
 
 
 @pytest.mark.asyncio
-async def test_a_sports_hub_ignores_the_theme_params_byte_for_byte(world):
+@pytest.mark.parametrize("compact", [True, False])
+async def test_a_sports_hub_ignores_the_theme_params_byte_for_byte(world, compact):
     from app.models.models import Container, EventEdge
     from app.routes.containers import _render
     from app.utils import container_corrections as cc
@@ -531,10 +532,11 @@ async def test_a_sports_hub_ignores_the_theme_params_byte_for_byte(world):
         await cc.publish_container(db, container_id=week.id, reason="r", actor="test")
         await db.commit()
 
-    plain = await _get(world, "nfl-2026-week-5")
-    noisy = await _get(world, "nfl-2026-week-5", revision="x", cursor="!!", limit="0")
+    plain = await _get(world, "nfl-2026-week-5", compact=compact)
+    noisy = await _get(world, "nfl-2026-week-5", revision="x", cursor="!!", limit="0", compact=compact)
     assert plain["sections"]  # the control: a real hub with a card on it
-    assert "counts" not in plain and "revision_moved" not in plain
+    assert ("counts" in plain) is compact
+    assert "revision_moved" not in plain
     assert _render(noisy) == _render(plain)
 
 

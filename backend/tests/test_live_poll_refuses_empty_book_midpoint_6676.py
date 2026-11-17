@@ -48,6 +48,10 @@ The three arms that actually test what must SURVIVE — a real two-sided book, a
 priced off its trade, a one-sided longshot — pass in BOTH states. That asymmetry is the
 point: a guard that reddens the survivors too is refusing more than this class.
 
+#12658 replaces the undated-trade and one-sided-price controls below with
+explicit refusals and adds the current near-certain quote and Colts raw-price
+alternation controls. It keeps the decline/withdrawal boundary intact.
+
 Both arms of `TestItDeclinesRatherThanWithdrawing` also pass in both states, on purpose;
 that class's docstring says which mutation they exist for.
 """
@@ -436,28 +440,32 @@ class TestGenuinePricesSurvive:
         await _run(monkeypatch, session, _PolymarketService(payload))
         assert outcomes[0].current_probability == pytest.approx(0.62)
 
-    async def test_a_blowout_priced_off_its_last_trade_survives(self, monkeypatch):
-        """Gotcha #19. A wide book during a blowout clears because everyone is on
-        one side, not because nobody is there — so the venue's own `outcomePrices`
-        tracks the trade and sits FAR from the book's midpoint. 0.93 against a
-        1c/99c book is 0.43 away from 0.5, so neither predicate can see it."""
+    async def test_an_undated_blowout_trade_is_not_written_on_a_wide_book(self, monkeypatch):
         population, outcomes, payload = _beat(
             [_gamma_market(HONEST_CONDITION, [0.93, 0.07], 0.01, 0.99, last=0.93)]
         )
         session = _Session(population)
         await _run(monkeypatch, session, _PolymarketService(payload))
-        assert outcomes[0].current_probability == pytest.approx(0.93)
+        assert outcomes[0].current_probability == 0.42
+        assert session.inserts == []
 
-    async def test_a_longshot_on_a_one_sided_book_survives(self, monkeypatch):
-        """`is_empty_book_midpoint` deliberately does NOT treat a missing side as
-        the widest quote — a one-sided book still carries information, and those
-        rows measured honest. A null bid must not be read as an empty book."""
+    async def test_a_current_near_certain_book_is_written(self, monkeypatch):
+        population, outcomes, payload = _beat(
+            [_gamma_market(HONEST_CONDITION, [0.5, 0.5], 0.965, 0.975, last=0.5)]
+        )
+        session = _Session(population)
+        await _run(monkeypatch, session, _PolymarketService(payload))
+        assert outcomes[0].current_probability == pytest.approx(0.97)
+        assert len(session.inserts) == 1
+
+    async def test_a_one_sided_book_does_not_republish_its_trade(self, monkeypatch):
         population, outcomes, payload = _beat(
             [_gamma_market(HONEST_CONDITION, [0.36, 0.64], None, 0.36, last=0.36)]
         )
         session = _Session(population)
         await _run(monkeypatch, session, _PolymarketService(payload))
-        assert outcomes[0].current_probability == pytest.approx(0.36)
+        assert outcomes[0].current_probability == 0.42
+        assert session.inserts == []
 
     async def test_an_honest_leg_beside_a_phantom_is_still_priced(self, monkeypatch):
         """The refusal is per-LEG. One dead line in an event must not cost the
@@ -474,37 +482,33 @@ class TestGenuinePricesSurvive:
         assert outcomes[1].current_probability == pytest.approx(0.62)
 
 
-class TestAKnownLimitThisFixDoesNotReach:
-    async def test_the_name_index_match_clobbers_the_last_trade_preference(
-        self, monkeypatch
-    ):
-        """A PINNED KNOWN LIMIT, found by this file and not fixed by it (#6676).
+class TestConsistentQuote12658:
+    @pytest.mark.parametrize("raw", [0.71, 0.15, 0.155])
+    @pytest.mark.parametrize("side", ["Over", "Under"])
+    async def test_old_raw_trade_cannot_change_the_named_sides_quote(self, monkeypatch, raw, side):
+        population, outcomes, payload = _beat(
+            [_gamma_market(HONEST_CONDITION, [raw, 1-raw], 0.13, 0.17, last=0.71)],
+            stored_probability=0.71,
+        )
+        outcome = outcomes[0]
+        outcome.name = side
+        outcome.current_yes_bid, outcome.current_yes_ask = 0.10, 0.78
+        session = _Session(population)
+        await _run(monkeypatch, session, _PolymarketService(payload))
+        assert outcome.current_probability == pytest.approx(0.15 if side == "Over" else 0.85)
+        assert outcome.probability_change_24h is None
+        assert len(session.inserts) == 1
+        snapshot = session.inserts[0].compile().params
+        assert snapshot["probability"] == pytest.approx(outcome.current_probability)
+        assert (outcome.current_yes_bid, outcome.current_yes_ask) == pytest.approx(
+            (0.13, 0.17) if side == "Over" else (0.83, 0.87)
+        )
 
-        I wrote in the production comment that the wide-spread `lastTradePrice`
-        preference "runs ABOVE, so a leg with a real trade behind it has already
-        displaced the midpoint and cannot reach this test". That is FALSE, and the
-        first draft of the arm above proved it: the name-index block runs after the
-        preference and unconditionally reassigns `prob = float(prices[idx])`, so for
-        any leg whose outcome names are not yes/no — every Over/Under prop — the
-        midpoint is put BACK and the trade is discarded.
-
-        The honest reading of what the guard does here: before it, this leg was
-        written at 0.5 with a 0.93 trade on the book; after it, nothing is written.
-        Refusing is strictly better than publishing 0.5, but 0.93 is better than
-        both, and recovering it means reordering a pricing policy — a change to
-        legs this class never measured. Out of scope on purpose; recorded as a known limit on #6676, which stays
-        open. No separate issue: it is a code finding with no production specimen
-        attributed to THIS writer (the wide-book/last-trade divergences visible on
-        production at 16:15Z carry the hourly poll's stamp, not this beat's).
-
-        This arm asserts TODAY'S behaviour so the day somebody fixes the ordering,
-        this test goes red and points at the comment that has to change with it.
-        """
+    async def test_a_wide_book_and_undated_trade_still_make_no_chart_point(self, monkeypatch):
         population, outcomes, payload = _beat(
             [_gamma_market(HONEST_CONDITION, [0.5, 0.5], 0.01, 0.99, last=0.93)]
         )
         session = _Session(population)
         await _run(monkeypatch, session, _PolymarketService(payload))
-        assert outcomes[0].current_probability == 0.42, (
-            "the clobber is gone — recheck #6676's known-limit note and the ordering comment"
-        )
+        assert outcomes[0].current_probability == 0.42
+        assert session.inserts == []

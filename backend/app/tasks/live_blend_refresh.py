@@ -2253,7 +2253,7 @@ class TailReceipts:
 
 def atomic_stamp_expression(
     source: str, value: float, stamped_at=None, eligibility=None,
-    observed_basis=None,
+    observed_basis=None, price_read_at=None,
 ):
     """The SET expression that stamps ONE source key WITHOUT reading it first.
 
@@ -2299,11 +2299,14 @@ def atomic_stamp_expression(
     """
     import json
 
-    from sqlalchemy import Text, case, cast, func, literal, type_coerce
+    from sqlalchemy import Text, and_, case, cast, func, literal, type_coerce
     from sqlalchemy.dialects.postgresql import JSONB
+    from sqlalchemy.sql.expression import Grouping
 
     from app.models.models import Event
-    from app.utils.aggregation import OBSERVED_BASIS_KEY, OBSERVED_VALUE_KEY
+    from app.utils.aggregation import (
+        OBSERVED_BASIS_KEY, OBSERVED_VALUE_KEY, PRICE_READ_KEY, make_price_read,
+    )
     from app.utils.probability_eligibility import ELIGIBILITY_KEY
 
     # Production stamps inside the UPDATE, not before waiting for its row lock.
@@ -2341,7 +2344,29 @@ def atomic_stamp_expression(
         entry_expression = entry_expression.concat(
             func.jsonb_build_object("updated_at", func.clock_timestamp())
         )
-    prior_entry = as_object(column[source])
+    # PostgreSQL requires parentheses before subscripting a CASE expression.
+    prior_entry = type_coerce(Grouping(as_object(column[source])), JSONB)
+    # #12581: preserve a read through an identical recompute, never replace its
+    # time with this UPDATE's clock. The reader validates the carried evidence.
+    read = make_price_read(value, price_read_at, observed_basis)
+    read_fields = cast(literal(json.dumps({PRICE_READ_KEY: read} if read else {})), JSONB)
+    if price_read_at is None and observed_basis:
+        prior_read = prior_entry[PRICE_READ_KEY]
+        bound_value = cast(literal(json.dumps(value)), JSONB)
+        bound_basis = cast(literal(json.dumps(observed_basis)), JSONB)
+        same_read = and_(
+            prior_entry["value"] == bound_value,
+            prior_entry[OBSERVED_VALUE_KEY] == bound_value,
+            prior_entry[OBSERVED_BASIS_KEY] == bound_basis,
+            prior_read["value"] == bound_value,
+            prior_read["basis"] == bound_basis,
+            func.jsonb_typeof(prior_read["observed_at"]) == "string",
+        )
+        read_fields = case(
+            (same_read, func.jsonb_build_object(PRICE_READ_KEY, prior_read)), else_=empty,
+        )
+    prior_entry = type_coerce(prior_entry.op("-")(cast(literal(PRICE_READ_KEY), Text)), JSONB)
+    entry_expression = entry_expression.concat(read_fields)
     if not observed_basis:
         for key in (OBSERVED_BASIS_KEY, OBSERVED_VALUE_KEY):
             prior_entry = type_coerce(

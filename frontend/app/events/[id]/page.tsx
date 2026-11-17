@@ -21,12 +21,10 @@ import {
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { matrixForStat, type DuringPlayerProps } from "@/lib/duringPlayerPropsMatrixSelection";
 import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
-import { eventPageProjectedPair, projectedFinalLabel } from "@/lib/projectedFinalPair";
+import { eventPageProjectedPair } from "@/lib/projectedFinalPair";
 import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastComparison";
 import { livePregameComparison } from "@/lib/livePregameComparison";
-import FinalForecastDetails from "@/components/event/FinalForecastDetails";
-import ProjectedFinalLine from "@/components/ProjectedFinalLine";
-import { teamTextColor } from "@/lib/teamColors";
+import { effectiveAwaySecondaryColor, lookupTeamColors, resolveMatchupTeamColors } from "@/lib/teamColors";
 import { heldFrameAfter, useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
 import { createReconnectCatchup } from "@/lib/reconnectCatchup";
 import {
@@ -51,7 +49,6 @@ import {
   type AdmittedChartFrames,
 } from "@/lib/liveChartHistory";
 import { canSubscribeEventQuotes, coversQuoteRevision, quotePairCoversTrigger } from "@/lib/eventQuoteStream";
-import FreshnessChip from "@/components/event/FreshnessChip";
 import {
   applyLiveFrame,
   applyLiveFrameRail,
@@ -91,7 +88,8 @@ import {
   resolveEventOutcome,
   liveHeroGamesLine,
 } from "@/lib/eventOutcome";
-import SettledOutcomeHero from "@/components/event/SettledOutcomeHero";
+import EventPageHeadline199 from "@/components/event/EventPageHeadline199";
+import { resolveEventPageHeadline199 } from "@/lib/eventPageHeadline199";
 import FinalGameWinnerQuote from "@/components/event/FinalGameWinnerQuote";
 const ChartSkeleton = () => <div className="animate-pulse h-48 bg-surface-card rounded-xl" />;
 const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false, loading: ChartSkeleton });
@@ -128,16 +126,6 @@ const TournamentBackLink = dynamic(
   () => import("@/components/event/TournamentExtensions").then((m) => m.TournamentBackLink),
   { ssr: false }
 );
-/* #2447: the register's censused player photo, at the FRONT of the hero's
-   existing team-logo ladder. Same SWR key again, so still one request.
-   NOT `dynamic`, unlike its two neighbours above: this component WRAPS the
-   hero's existing logo markup as its fallback, so lazy-loading it would blank
-   the avatar of every event on the site until the chunk arrived. The two
-   sections below are additive and can afford to appear late; a hero cannot. */
-import {
-  TournamentPlayerFace,
-  servedParticipantImage,
-} from "@/components/event/TournamentExtensions";
 // L2-118 Phase 1: the archetype-agnostic props body (SCRIPT / DIVERGENCE / WHAT HIT).
 const PropsSection = dynamic(() => import("@/components/event/PropsSection"), { ssr: false });
 import type { PropMark } from "@/components/event/PropsSection";
@@ -168,7 +156,6 @@ import {
   scoreDifferentialHeading,
   sportsbookProjectionDrawable,
 } from "@/lib/scoreDifferentialHeading";
-import { espnTeamLogoByName } from "@/lib/images";
 import {
   useAnalytics,
   usePageTracking,
@@ -176,6 +163,7 @@ import {
   useEngagementTime,
   usePinnedEvents,
 } from "@/hooks";
+import { useAnalyticsContext } from "@/components/Analytics";
 import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { isPregameStatus } from "@/lib/settledQuote";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
@@ -201,32 +189,31 @@ import { buildMlbEventCards, mlbCardsApply } from "@/lib/mlbEventCards";
 import { buildNhlEventCards, nhlCardsApply } from "@/lib/nhlEventCards";
 import { buildSoccerEventCards, soccerCardsApply } from "@/lib/soccerEventCards";
 import { NFLEventCardDeck, type CardSelection } from "@/components/event/NFLEventCards";
+import {
+  isSharedLinkPinBannerEnabled,
+  SharedLinkPinBanner,
+  SharedMoreFromDiscoverSection,
+} from "@/components/event/SharedEventLanding1D";
 const EventCardReader = dynamic(() => import("@/components/event/EventCardReader"), { ssr: false });
 import { authorityStoppageLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import { restingGameClock } from "@/lib/restingGameClock";
 import {
-  SUSPENDED_DESCRIPTION,
-  VENUE_SETTLED_DESCRIPTION,
   blendCaptionIsStale,
   hasNoReportedResult,
   serverHeldPastKickoff,
   isFinishedStatus,
   playedBeforeItsClock,
   startBadgeLabel,
-  suspendedSummary,
   venueSettledSummary,
   isVenueVoided,
-  authorityStoppageDescription,
   scoresShowPlay,
 } from "@/lib/eventState";
-import type { ActiveChartPoint, TeamData } from "@/lib/types";
-import TeamNameLink from "@/components/TeamNameLink";
+import type { ActiveChartPoint } from "@/lib/types";
 import { PinIcon } from "@/components/PinButton";
-import { teamShortNames, shippableCrestBadge } from "@/lib/teamShortName";
-import EventHeroProbabilityPair, { heroPrintedPair } from "@/components/EventHeroProbabilityPair";
+import { teamShortNames } from "@/lib/teamShortName";
+import { heroPrintedPair } from "@/components/EventHeroProbabilityPair";
 import { useTenthsOptIn } from "@/lib/tenthsOptIn";
 import { useEkgOptIn } from "@/lib/ekgOptIn";
-import SlashBreakableName from "@/components/SlashBreakableName";
 import { pinChartEdgeToHero } from "@/lib/chartEdgePin";
 import {
   adoptNewerBlendEdge,
@@ -243,7 +230,6 @@ import {
   shouldShowRefreshCountdown,
   headerShowsAge,
   startClockState,
-  formatEventStartLabel,
   resolveProbability,
   computeSharedChartDomain,
   computeLastChartPoint,
@@ -255,33 +241,12 @@ import { SPECIAL_MARKETS_MIN_WIRE_ROWS, specialMarketsDrawnIds } from "@/lib/gam
 import AtlasDetailsSheet from "@/components/atlas/AtlasDetailsSheet";
 import { ATLAS_STATE_COPY, resolveAtlasOptIn } from "@/components/atlas/atlasStateCopy";
 import {
-  EVENT_HEADLINE_PHASE_LABELS,
   resolveAtlasHeadlineObservedAt,
   resolveEventHeadlineBaseline,
-  resolveEventHeadlinePhase,
 } from "@/lib/event/eventHeadlinePhase";
 
 interface EventPageProps {
   params: { id: string };
-}
-
-/* #8677 — the hero tile's image ladder, one expression for both sides.
-   `logo_small` is the LAST image rung, after the two team resolvers, so every
-   tile that already drew a picture keeps it; only the tiles that fell through
-   to letters change. A national team carries nothing but a flagcdn
-   `logo_small` (Discover's card draws that flag), and the hero used to skip it
-   and paint `IRE` for Northern Ireland, which is Republic of Ireland's code. */
-function heroCrestImage(
-  teamData: TeamData | undefined,
-  teamName: string,
-  sportKey?: string | null
-): string | undefined {
-  return (
-    teamData?.logo_large ||
-    espnTeamLogoByName(teamName, sportKey) ||
-    teamData?.logo_small ||
-    undefined
-  );
 }
 
 const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
@@ -297,7 +262,8 @@ export default function EventPage({ params }: EventPageProps) {
   const sharedSource = searchParams.get("utm_source");
   const sharedMedium = searchParams.get("utm_medium") || undefined;
   const sharedCampaign = searchParams.get("utm_campaign") || undefined;
-  const isSharedLink = sharedSource === "share";
+  const isSharedLink = sharedSource === "share" || searchParams.get("shared") === "1";
+  const showSharedPinBanner = isSharedLink && isSharedLinkPinBannerEnabled();
   // #10090 — one-decimal headlines, ON by default; a reader who opened
   // `?tenths=off` gets today's whole numbers. One decision for the hero and
   // both charts' end labels, so the three can never print different digits.
@@ -306,6 +272,9 @@ export default function EventPage({ params }: EventPageProps) {
   const ekgOptIn = useEkgOptIn();
   // #11974 — the event-page atlas adoption, behind `?atlas=1` while Alex reviews it.
   const atlasOptIn = resolveAtlasOptIn(searchParams);
+  // #12615 — the win probability chart shows reading marks by default (unless `?atlas=0` / `?atlas=false`).
+  const atlasChartOptIn =
+    searchParams?.get("atlas") !== "0" && searchParams?.get("atlas") !== "false";
   const [atlasHeadlineSheetOpen, setAtlasHeadlineSheetOpen] = useState(false);
   useEffect(() => {
     setAtlasHeadlineSheetOpen(false);
@@ -337,6 +306,7 @@ export default function EventPage({ params }: EventPageProps) {
 
   // Analytics
   const { track, trackNavigationClick, recordEvent } = useAnalytics();
+  const { showConsentBanner } = useAnalyticsContext();
 
   // Pinned events
   const { isPinned, togglePin, isMaxReached } = usePinnedEvents();
@@ -911,7 +881,7 @@ export default function EventPage({ params }: EventPageProps) {
       track("shared_link_open", {
         content_type: "event",
         item_id: event.id,
-        source: sharedSource,
+        source: sharedSource ?? "share",
         medium: sharedMedium,
         campaign: sharedCampaign,
       });
@@ -1837,7 +1807,6 @@ export default function EventPage({ params }: EventPageProps) {
   // gate removes the record only where it has stopped being legible as one.
   const heroScorePairPresent = bestHomeScore !== null && bestAwayScore !== null;
   const heroUnderway = isLive || isFinished || hasStarted;
-  const recordReadsAsRecord = !heroUnderway || heroScorePairPresent;
 
   // ── #5697 AC2 — A PROJECTION OF THE FINAL NEEDS A GAME THE READER CAN SEE THE
   //    STATE OF ────────────────────────────────────────────────────────────────
@@ -2296,6 +2265,9 @@ export default function EventPage({ params }: EventPageProps) {
   // "Connected" takes this value.
   // The header badge's age (`heroStampInputs`) is the source-staleness policy,
   // not a confirmation claim, and keeps the raw stream value unchanged.
+  // #12822 — before kickoff, Chance prints whole percents on every surface;
+  // during play (`effectivelyLive`), Now and the chart callout keep tenths.
+  const liveTenthsActive = tenthsOptIn && effectivelyLive;
   const admittedPreviewProbability = displayedPreview(blendPreview, event, blendPreviewNow);
   const committedPrinted = (() => {
     if (admittedPreviewProbability === null) return null;
@@ -2304,13 +2276,13 @@ export default function EventPage({ params }: EventPageProps) {
     return heroPrintedPair({
       homeProb: committed.homeProb, awayProb: printableAway(committed.awayProb, event.sport),
       homePct: committed.homePct, awayPct: printableAway(committed.awayPct, event.sport),
-      awayWithheld: awaySlotWithheld, venueSettled: venueSettledSentence !== null, tenths: tenthsOptIn,
+      awayWithheld: awaySlotWithheld, venueSettled: venueSettledSentence !== null, tenths: liveTenthsActive,
     });
   })();
   const confirmedAtShown = confirmationOfDisplayed(streamConfirmedAt, committedPrinted && {
     shown: heroPrintedPair({
       homeProb, awayProb, homePct, awayPct,
-      awayWithheld: awaySlotWithheld, venueSettled: venueSettledSentence !== null, tenths: tenthsOptIn,
+      awayWithheld: awaySlotWithheld, venueSettled: venueSettledSentence !== null, tenths: liveTenthsActive,
     }),
     committed: committedPrinted,
   });
@@ -2681,22 +2653,6 @@ export default function EventPage({ params }: EventPageProps) {
     freshestSourceStamp,
     currentOddsCapturedAt: event.current_odds?.captured_at,
   });
-  const atlasHeadlinePhase = atlasOptIn
-    ? resolveEventHeadlinePhase({
-        status: event.status,
-        commenceTime: event.commence_time,
-        isOpeningLine: probSourceLabel === "Opening line",
-        hasReading:
-          homeProb !== null &&
-          venueSettledSentence === null &&
-          stoppageLabel === null,
-        observedAt: atlasObservedAt,
-        deliveryInterrupted:
-          feedStalled ||
-          liveClaimUnbacked ||
-          connectionTrackerRef.current.interrupted,
-      })
-    : null;
   const atlasPregameBaseline =
     atlasOptIn && !isFinished && (isLive || hasStarted || isSuspended)
       ? resolveEventHeadlineBaseline({
@@ -2771,6 +2727,21 @@ export default function EventPage({ params }: EventPageProps) {
     actualSeriesDrawn: drawsActualScore,
   });
 
+  const curatedHome = lookupTeamColors(event.home_team);
+  const curatedAway = lookupTeamColors(event.away_team);
+  const resolvedAwaySecondary = effectiveAwaySecondaryColor(
+    event.away_team,
+    event.away_team_data?.secondary_color,
+  );
+  const matchupColors = resolveMatchupTeamColors({
+    homePrimary: event.home_team_data?.primary_color ?? curatedHome?.primary,
+    awayPrimary: event.away_team_data?.primary_color ?? curatedAway?.primary,
+    homeSecondary: event.home_team_data?.secondary_color ?? curatedHome?.secondary,
+    awaySecondary: resolvedAwaySecondary,
+  });
+  const effectiveHomePrimary = matchupColors.home ?? event.home_team_data?.primary_color ?? undefined;
+  const effectiveAwayPrimary = matchupColors.away ?? event.away_team_data?.primary_color ?? undefined;
+
   // Score Differential Chart — only when projected/actual score data exists (L2-112 Item 4).
   const scoreDiffCard = hasScoreDiffData ? (
     <SectionErrorBoundary label="The score differential chart" resetKey={historyData}>
@@ -2795,8 +2766,9 @@ export default function EventPage({ params }: EventPageProps) {
         currentAwayScore={servedScore.away_score}
         eventStatus={event.status}
         periodBoundaries={periodBoundaries}
-        homeTeamColor={event.home_team_data?.primary_color || undefined}
-        awayTeamColor={event.away_team_data?.primary_color || undefined}
+        homeTeamColor={effectiveHomePrimary}
+        awayTeamColor={effectiveAwayPrimary}
+        awayTeamSecondaryColor={event.away_team_data?.secondary_color || undefined}
         homeTeamLogo={event.home_team_data?.logo_small || undefined}
         awayTeamLogo={event.away_team_data?.logo_small || undefined}
         homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
@@ -2829,7 +2801,11 @@ export default function EventPage({ params }: EventPageProps) {
   ) : null;
   // #9483 — the game-story cards and their reader take the page's one team-line
   // pair (#10547), and the reader's match line is the hero's own numbers.
-  const nflStrokes = projectedTeamStrokes(event.home_team_data?.primary_color, event.away_team_data?.primary_color);
+  const nflStrokes = projectedTeamStrokes(
+    event.home_team_data?.primary_color,
+    event.away_team_data?.primary_color,
+    event.away_team_data?.secondary_color,
+  );
   const nflCardTeams = {
     awayName: event.away_team,
     homeName: event.home_team,
@@ -2871,8 +2847,9 @@ export default function EventPage({ params }: EventPageProps) {
       periodBoundaries={periodBoundaries}
       homeTeam={event.home_team}
       awayTeam={event.away_team}
-      homeColor={event.home_team_data?.primary_color}
-      awayColor={event.away_team_data?.primary_color}
+      homeColor={effectiveHomePrimary}
+      awayColor={effectiveAwayPrimary}
+      awaySecondaryColor={event.away_team_data?.secondary_color}
     />
   );
 
@@ -2884,7 +2861,7 @@ export default function EventPage({ params }: EventPageProps) {
         onRetry={() => window.location.reload()}
       />
     }>
-    <div className="space-y-3">
+    <div className={showSharedPinBanner ? "space-y-3 pb-20" : "space-y-3"}>
       {/* Navigation */}
       {/* #3974: THE ROW WRAPS, because at 390px three elements do not fit in it.
           Measured on this page at that width: the row has 366px of usable
@@ -3038,800 +3015,81 @@ export default function EventPage({ params }: EventPageProps) {
         )}
       </div>
 
-      {isSharedLink && (
-        <div className="rounded-card border border-accent-brand/20 bg-accent-brand/5 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-text-primary">Shared from Discover</p>
-            <p className="text-xs text-text-secondary">Explore the rest of today&apos;s probability stories.</p>
-          </div>
-          <Link
-            href="/discover"
-            className="inline-flex items-center justify-center rounded-lg bg-accent-brand px-3 py-2 text-sm font-semibold text-white hover:opacity-90 transition-opacity"
-          >
-            Open Discover
-          </Link>
-        </div>
-      )}
-
-      {/* Hero Section — v2 design */}
-      {/* UX-P055: the hero is the answer, so it is the LAST thing worth losing —
-          which is exactly why it gets its own boundary rather than sharing the
-          route's. A hero that throws must not also cost the reader the chart,
-          the props and the script. */}
+      {/* Unified Direction 199 Game Page Headline (every sport & state) */}
       <SectionErrorBoundary label="The score and probability" resetKey={event}>
-      <div
-        className="rounded-card shadow-card overflow-hidden bg-surface-card"
-        data-atlas-mode={atlasOptIn ? "true" : undefined}
-      >
-        {/* Top meta row: phase + broadcast + date/time */}
-        <div className="px-4 sm:px-5 py-2 flex items-center justify-between border-b border-surface-border/30">
-          <div className="flex items-center gap-2">
-            {/* Pin button */}
-            <button
-              onClick={() => togglePin(eventId)}
-              disabled={isMaxReached && !eventIsPinned}
-              className={`
-                p-1 rounded-full transition-all
-                ${eventIsPinned
-                  ? 'text-amber-500'
-                  : 'text-text-muted/40 hover:text-text-secondary'
+      <EventPageHeadline199
+        event={event}
+        model={resolveEventPageHeadline199({
+          event,
+          effectivelyLive,
+          isLive,
+          isFinished,
+          isSuspended,
+          venueVoided,
+          venueSettledSentence,
+          stoppageLabel,
+          startClock,
+          pregameStateLabel: startBadgeLabel(
+            hasStarted,
+            gameCountdown,
+            serverHeldPastKickoff(
+              event?.status,
+              event?.commence_time,
+              undefined,
+              event?.started_without_result,
+              event?.authority_not_started,
+            ),
+            playedBeforeClock,
+          ),
+          liveClockLabel,
+          bestHomeScore,
+          bestAwayScore,
+          heroScorePairPresent,
+          heroScoreIsStoppageFiller,
+          projectedPairRaw: projectedFinalPair,
+          projectedPairAdmitted:
+            heroProjectedHome !== null && heroProjectedAway !== null,
+          homeProb,
+          servedAwayProb,
+          homePct,
+          servedAwayPct,
+          probSourceLabel,
+          tenthsOptIn,
+          settledWinnerSide: settledOutcome?.winnerSide ?? null,
+          gameMarkets:
+            servedGameMarkets?.event_id === event.id
+              ? {
+                  game_question_matrix: servedGameMarkets.game_question_matrix,
+                  other: servedGameMarkets.other,
                 }
-                ${isMaxReached && !eventIsPinned ? 'cursor-not-allowed opacity-30' : ''}
-                focus:outline-none
-              `}
-              title={eventIsPinned ? 'Unpin event' : isMaxReached ? 'Maximum 6 pins' : 'Pin event'}
-              aria-label={eventIsPinned ? 'Unpin event' : 'Pin event'}
-            >
-              <PinIcon filled={eventIsPinned} className="w-4 h-4" />
-            </button>
-
-            {/* Phase badge */}
-            {effectivelyLive ? (
-              <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-600">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                {/* UX-P051 (#1710): the phase badge read both fields raw and
-                    printed "Mon, August 10th at 8:00 PM EDT · 0.0" on a game
-                    ESPN had not started.
-
-                    ITS BOTH-REQUIRED RULE IS DELIBERATELY REPLACED, not
-                    preserved — that is a stated behaviour change. `period &&
-                    game_clock ?` was never a principle, and once a clock already
-                    spelled inside the period is dropped as a duplicate, keeping
-                    it would have made this badge read "LIVE" on every NBA/WNBA
-                    game (measured: "10:00 - 1st Quarter" + "10:00"). It also
-                    means a baseball game whose detail is "Top 2nd" with no clock
-                    now says so instead of the generic word. */}
-                {liveClockLabel || "LIVE"}
-              </span>
-            ) : isFinished ? (
-              <span className="text-[10px] font-semibold text-text-muted">Final</span>
-            ) : isSuspended ? (
-              /* live/048 — the branch that did not exist. Without it a
-                 suspended match fell through to "Pregame", which is the same
-                 lie as "Final" told in the other direction: this one already
-                 started. It gets its own badge and no start time, and the hero
-                 says why in a sentence below. */
-              <span
-                className="text-[10px] font-semibold text-text-muted"
-                title={
-                  venueSettledSentence
-                    ? VENUE_SETTLED_DESCRIPTION
-                    : authorityStoppageDescription(stoppageLabel) ??
-                      SUSPENDED_DESCRIPTION
-                }
-                data-testid="event-hero-suspended"
-                data-venue-settled={venueSettledSentence ? "true" : undefined}
-                data-stoppage={stoppageLabel ?? undefined}
+              : null,
+        })}
+        isPinned={eventIsPinned}
+        pinDisabled={isMaxReached && !eventIsPinned}
+        onPinToggle={() => togglePin(eventId)}
+        animate={streamConnected}
+        homeProbForDataAttr={isFinished ? null : homeProb}
+        settledHero={isFinished}
+        settledWinnerName={settledOutcome?.winnerName ?? null}
+        displayIdentity={headlineIdentity}
+        venueSettled={venueSettledSentence !== null}
+        stoppageLabel={stoppageLabel}
+        atlasMode={atlasOptIn}
+        onOpenAtlasDetails={() => setAtlasHeadlineSheetOpen(true)}
+        ekgControl={
+          ekgShowing ? (
+            <div className="flex justify-center" data-testid="ekg-row">
+              <EkgTimesButton
+                {...connectionTimes}
+                updates={streamUpdates}
+                homeTeam={heroShortNames.home}
               >
-                {/* #6381 — the venue's own grade outranks our silence. When a
-                    source that carried this match's markets has settled them, the
-                    badge says so (and names the graded score when there is
-                    one) instead of denying a result the page draws one screen
-                    below. `venueSettledSummary` returns null on every other
-                    row, so the branch below is unchanged for them. */}
-                {/* CERT-786 — the shared summary, so the hero says exactly what
-                    the card the reader tapped said. The page-level sentence
-                    stays on the `title`, which has room for it. */}
-                {/* #2786 — HOME-AWAY, matching this page's own hero, which
-                    stacks the home score above the away score. */}
-                {atlasOptIn && venueVoided
-                  ? ATLAS_STATE_COPY.voided
-                  : venueSettledSentence ??
-                    suspendedSummary(
-                      event?.away_score,
-                      event?.home_score,
-                      "home-away",
-                      // #8810 — "Postponed" when ESPN said so. Null on every
-                      // other row, which keeps the sentence it had.
-                      stoppageLabel,
-                    )}
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                <span className="text-[10px] text-amber-500 font-medium">
-                  {/* #6031 — the word, and only the word. #3211 suppressed the
-                      countdown once `hasStarted`, which left this branch
-                      suppressing a countdown to a moment in the past while
-                      still printing "Pregame" over a "Since Start" chart. The
-                      two-hour hole this falls into, and why the grace is not
-                      the thing to widen, are in `startBadgeLabel`. */}
-                  {startBadgeLabel(
-                    hasStarted,
-                    gameCountdown,
-                    // #9634 — held by the server: "Pregame", not "Started".
-                    // #9968 — and inside the grace, ESPN still reads pregame.
-                    serverHeldPastKickoff(
-                      event?.status,
-                      event?.commence_time,
-                      undefined,
-                      event?.started_without_result,
-                      event?.authority_not_started,
-                    ),
-                    playedBeforeClock,
-                  )}
-                </span>
-              </span>
-            )}
-          </div>
-
-          {/* Broadcast + date/time + freshness */}
-          <div className="flex items-center gap-2">
-            {/* #5741 — A BROADCAST IS A PROMISE ABOUT THE FUTURE, so it is
-                gated on the same state the badge two lines up reads. It was
-                gated on the field's presence and nothing else, which left the
-                chip as the only element in this row with no opinion about
-                whether the game is over: `/events/15312659` (Diamondbacks 2,
-                Marlins 4, Final) told the reader to watch it on
-                "MLB.TV, DBACKS.TV, Marlins.TV".
-
-                THE RULE IS NOT NEW AND IS NOT MINE — this page was the last
-                holdout of three surfaces. `EventCard`'s footer already reads
-                `!isFinished && !isSuspended` (CERT-792) and iOS's hero already
-                reads `EventDetailView.showsBroadcast` (#4002). Adopted verbatim
-                rather than designed, so the three cannot drift.
-
-                🔴 NOT `effectivelyLive`, which the issue recommended: pregame
-                is the chip's whole job — "the hero's real estate is game state
-                — pregame start time + broadcast" (L2-157, fifteen lines below)
-                — and a positive live gate would delete it for every reader who
-                has not yet watched the game. The pregame arm of the guard below
-                exists to kill exactly that fix.
-
-                `isSuspended` is the page's ONE `hasNoReportedResult` answer
-                (#4015) and is deliberately only READ here: a match nobody can
-                report on is not one to tune into either, which is #3821's false
-                promise worn as a chip. */}
-            {event.espn?.broadcast && !isFinished && !isSuspended && (
-              <span
-                className="px-1.5 py-0.5 rounded bg-surface-elevated text-[10px] font-semibold text-text-secondary tracking-wide"
-                data-testid="event-hero-broadcast"
-              >
-                {event.espn.broadcast}
-              </span>
-            )}
-            {/* #8336 — a live game prints NOTHING here. This slot used to carry a
-                `⟳ 20s` poll ticker, a second freshness indicator one row below
-                the header's age badge — and on a stream-fed page a promise of a
-                poll nobody was waiting on. The header badge is the page's one
-                answer to "how fresh is this" (#4469). */}
-            {effectivelyLive ? null : (
-              <span className="text-[10px] text-text-muted" data-testid="event-hero-start">
-                {/* #3829 — the day is real, the hour may not be. The label and
-                    the reason it is shaped this way live in
-                    `formatEventStartLabel`, beside the state that selects it. */}
-                {formatEventStartLabel(event.commence_time, startClock)}
-              </span>
-            )}
-            {atlasOptIn && (
-              <button
-                type="button"
-                onClick={() => setAtlasHeadlineSheetOpen(true)}
-                data-testid="event-atlas-headline-info-button"
-                aria-label="About this game's probabilities and result"
-                title="Details"
-                className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[11px] font-semibold text-text-secondary transition-colors hover:border-text-muted hover:text-text-primary"
-              >
-                i
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* L2-157 (Alex ruling): internal ranking taxonomy pills
-            ("competitive / regular season / Playoff Race / Major") are NOT user
-            information and are stripped from the hero. The hero's real estate is
-            game state — pregame start time + broadcast (above), LIVE the score
-            (below). Tags are still computed backend-side for ranking. */}
-
-        {/* Teams + Score + Giant Probability — v2 centered layout */}
-        <div className="px-5 sm:px-6 py-4 sm:py-5">
-          {/* #10252 — `items-stretch`, and each score is pushed to the foot of
-              its column (`mt-auto`). Centring the columns put the two scores at
-              different heights whenever one record line wrapped longer than the
-              other: "0-0-1, #5 Metropolitan, 1 pt" over four lines left
-              Carolina's 2 a line and a half below Washington's 5. The centre
-              block keeps its own vertical centring (`justify-center`), and a
-              record that wraps is centred under its name (`text-center`). */}
-          {/* #11301 — BELOW 360px THE ROW WRAPS INTO TWO TEAM CELLS AND A BAND.
-              At 312 the chance pair ran into both crests and at 260 the
-              forecast crossed the neighbouring names and records (Design's
-              hero3 captures): three regions no longer fit side by side. Under
-              360 the two team columns take half the row each and the centre
-              block wraps to a full-width row beneath them, where each chance
-              sits under its own team (`EventHeroProbabilityPair`) and the
-              labelled forecast stacks across the whole width. Type sizes and
-              values are unchanged; the hero grows taller instead. 360 and up
-              keep the three-column anatomy exactly (#10108 measured 360). */}
-          <div className="flex items-stretch justify-between max-[359px]:flex-wrap">
-            {/* Home Team */}
-            <div className="flex flex-col items-center flex-1 max-[359px]:basis-1/2 max-[359px]:order-1">
-              {/* #2447: ONE RESOLVER, BOTH SURFACES. The ladder below is
-                  `home_team_data.logo_large` -> `espnTeamLogoByName` ->
-                  initials, and both of the first two are TEAM resolvers. A
-                  tennis player is not a team, so every US Open match fell
-                  straight through to initials while the register — four
-                  sections down this same page — held a censused photograph of
-                  the same person. This adds the register to the FRONT of the
-                  ladder and leaves every other rung exactly where it was. */}
-              <TournamentPlayerFace
-                eventId={eventId}
-                sportKey={event.sport}
-                homeName={event.home_team}
-                awayName={event.away_team}
-                side="home"
-                size={56}
-                /* #3787 — the payload's own pinned pair, in FRONT of the
-                   bracket register. The register answers NOT_IN_REGISTER for
-                   any match off the bracket, which is why this hero still drew
-                   `DM`/`FT` for a US Open round-of-16 after #2447 shipped. */
-                servedImage={servedParticipantImage(
-                  event.home_image_url,
-                  event.home_flag_url
-                )}
-                fallback={
-              <div
-                className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"
-                style={{ backgroundColor: `${event.home_team_data?.primary_color || "#94A3B8"}15` }}
-              >
-                {heroCrestImage(event.home_team_data, event.home_team, event.sport_key) ? (
-                  <img
-                    src={heroCrestImage(event.home_team_data, event.home_team, event.sport_key)}
-                    alt=""
-                    width={48}
-                    height={48}
-                    loading="lazy"
-                    className="w-12 h-12 object-contain"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; (e.target as HTMLImageElement).nextElementSibling?.classList.remove("hidden"); }}
-                  />
-                ) : null}
-                <span
-                  className={`text-sm font-extrabold ${heroCrestImage(event.home_team_data, event.home_team, event.sport_key) ? "hidden" : ""}`}
-                  style={{ color: teamTextColor(event.home_team_data?.primary_color) || "var(--text-secondary)" }}
-                >
-                  {/* #7270 — the badge policy lives in `lib/teamShortName.ts`, which
-                      owns the unshippable list. This hero used to inline its own copy
-                      of the initials rule and painted `ASS` on a live Big 12 game. */}
-                  {shippableCrestBadge(event.home_team, event.sport_key ?? event.sport)}
-                </span>
-              </div>
-                }
-              />
-              <TeamNameLink
-                name={event.home_team}
-                sportKey={event.sport}
-                className="text-xs font-semibold text-text-primary text-center hover:underline"
-              >
-                <SlashBreakableName text={heroShortNames.home} />
-              </TeamNameLink>
-              {/* #5720 — `recordReadsAsRecord`, computed once beside the scores. */}
-              {recordReadsAsRecord &&
-                (event.standings_context?.home || event.home_team_data?.record) && (
-                <span className="text-[11px] text-text-muted text-center">
-                  {event.standings_context?.home || event.home_team_data?.record}
-                </span>
-              )}
-              {(isLive || isFinished || hasStarted) && bestHomeScore !== null && !heroScoreIsStoppageFiller && (
-                /* L2-163 Item 2a: once there's a real score it is the hero's
-                   biggest element after the probability — Alex's 0-4 exhibit
-                   rendered it nearly invisible at text-2xl. */
-                <span className="text-4xl sm:text-[42px] font-black text-text-primary tabular-nums font-mono leading-none mt-auto pt-1">
-                  {bestHomeScore}
-                </span>
-              )}
+                <EkgHeartbeat tracker={ekgTrackerRef.current} status={streamStatus} />
+              </EkgTimesButton>
             </div>
-
-            {/* Center: Giant Probability (live/pregame) OR winner treatment (settled)
-
-                #5866 — `min-w-0` and NO `flex-shrink-0`, and the phone padding
-                is `px-1`. The three columns are `flex-1` / this / `flex-1`
-                around a non-shrinking `w-14` crest, so while this block refused
-                to shrink its max-content width DICTATED the row and
-                `justify-between` pushed the overflow onto the away column: a
-                live K League hero put the away crest's right edge at 406.4 in a
-                390 viewport, clipped rather than scrollable
-                (`scrollWidth` stayed 390).
-
-                Measured at 390px on today's NFL pregame hero: budget 204.4,
-                used 204.5 — HEADROOM −0.1px BEFORE the game goes live and adds
-                three more lines to this same block. Two different children can
-                be the widest one (the probability pair at 188.5px here; the
-                `+N pts <team> since open` chip on a long club name), which is
-                why the fix bounds the BLOCK rather than any one line. */}
-            <div className="flex flex-col items-center justify-center px-1 sm:px-4 min-w-0 max-[359px]:order-3 max-[359px]:basis-full max-[359px]:mt-3">
-              {isFinished ? (
-                /* Settled: winner name + chip + the result in the sport's own
-                   units, no big number (mirrors FuturesHero's resolved rule).
-                   The win-prob journey stays in the chart below. Extracted to
-                   `SettledOutcomeHero` by #2443 so the outcome is renderable —
-                   and therefore assertable — on its own. */
-                <SettledOutcomeHero
-                  outcome={settledOutcome}
-                  // #5720 — the same predicate the record gate reads, named once
-                  // rather than spelled twice: two copies of "does this hero have
-                  // a score pair" is two things to keep in step.
-                  hasNumericScore={heroScorePairPresent}
-                  winnerPregameProb={settledPregame?.probability ?? null}
-                  winnerPregamePercent={settledPregame?.percent ?? null}
-                  winnerPregameSource={settledPregame?.source ?? null}
-                  winnerPregameLabel={settledPregame?.label ?? null}
-                  loserPregameProb={settledPregame?.loserProbability ?? null}
-                  loserPregamePercent={settledPregame?.loserPercent ?? null}
-                  atlasMode={atlasOptIn}
-                />
-              ) : (
-              // #2085: the two sides are ONE decision — see
-              // `EventHeroProbabilityPair` and `resolveProbability`. This used
-              // to be four spans rounding `homeProb` and `awayProb`
-              // independently, which prints 101 whenever `home * 100` lands on
-              // a half-percent (8.2% of scheduled/live events, measured).
-              <>
-              <EventHeroProbabilityPair
-                homeProb={homeProb}
-                displayIdentity={headlineIdentity}
-                awayProb={awayProb}
-                homePct={homePct}
-                awayPct={awayPct}
-                // #6238 — OMIT the away slot, do not dash it. At 48px an
-                // em-dash is a solid rectangle and `–  ▬%` reads as a number
-                // that failed to draw. See the prop's own note.
-                awayWithheld={awaySlotWithheld}
-                homeColor={event.home_team_data?.primary_color}
-                awayColor={event.away_team_data?.primary_color}
-                probSourceLabel={probSourceLabel}
-                // live/034 S2 — count to the new value only when it is arriving
-                // by push. On the 32s poll a jump IS the honest rendering of
-                // what happened; animating it would imply a continuity between
-                // two readings half a minute apart that the data does not have.
-                animate={streamConnected}
-                // #5890 — the no-reading copy's tense. "No price yet" promises a
-                // price that is still coming; on a match that has kicked off,
-                // the prices came and were withdrawn. The page's own three
-                // answers, not a fourth reading of the clock: `isSuspended` is
-                // the one `hasNoReportedResult` answer computed above.
-                started={isLive || isFinished || isSuspended}
-                // #6438 — the page's ONE settled answer, reused. `Settled ·
-                // Draw 0-0` in the pill and "No price" between the crests were
-                // the same card describing the same graded match two ways, and
-                // the loud one was wrong. Derived from `venueSettledSentence`
-                // rather than re-reading `event.venue_settled`, so the pill and
-                // this slot cannot drift apart — the exact failure
-                // `venueSettledSummary` was centralised to end.
-                venueSettled={venueSettledSentence !== null}
-                // #8810 — a match its authority reported postponed has no price
-                // to print: the pill above says "Postponed", and a big 22%
-                // between the crests reads as a live call on a match nobody
-                // is playing. The slot goes empty, as it does for #6438.
-                stopped={stoppageLabel !== null}
-                tenths={tenthsOptIn}
-                atlasMode={atlasOptIn}
-                voided={venueVoided}
-                stoppageLabel={stoppageLabel}
-              />
-              {atlasOptIn && atlasHeadlinePhase && (
-                <div
-                  className="mt-1 flex flex-col items-center justify-center gap-0.5 text-[11px] text-text-secondary"
-                  data-testid="event-atlas-headline-subline"
-                >
-                  <span
-                    className="font-medium text-text-secondary"
-                    data-testid="event-atlas-phase-label"
-                    data-phase={atlasHeadlinePhase}
-                  >
-                    {EVENT_HEADLINE_PHASE_LABELS[atlasHeadlinePhase]}
-                  </span>
-                  {atlasPregameBaseline && (
-                    <span
-                      className="inline-flex items-center gap-1 text-text-muted tabular-nums"
-                      data-testid="event-atlas-pregame-baseline"
-                      data-prematch-source={atlasPregameBaseline.source}
-                    >
-                      <span
-                        aria-hidden="true"
-                        data-testid="event-atlas-pregame-mark"
-                        className="inline-block h-2 w-2 shrink-0 rounded-full border-[1.5px] border-current bg-surface-card"
-                      />
-                      <span>
-                        {atlasPregameBaseline.text}
-                        {atlasPregameBaseline.label
-                          ? ` · ${atlasPregameBaseline.label}`
-                          : ""}
-                      </span>
-                    </span>
-                  )}
-                </div>
-              )}
-              </>
-              )}
-              {/* #10090 — the heartbeat, under the pair so it adds height, never
-                  width, to a block measured at −0.1px headroom (above). Alex 67:
-                  tap it for the exact times (the panel places itself; this card
-                  clips, see `EkgTimesButton`). */}
-              {ekgShowing ? (
-                <div className="mt-0.5 flex justify-center" data-testid="ekg-row">
-                  <EkgTimesButton {...connectionTimes} updates={streamUpdates}
-                    homeTeam={heroShortNames.home}>
-                    <EkgHeartbeat tracker={ekgTrackerRef.current} status={streamStatus} />
-                  </EkgTimesButton>
-                </div>
-              ) : null}
-
-              {/* Projected final score — derived from spread + total, no gambling jargon.
-
-                  #2441: gated on the sport DECLARING that a derived spread is
-                  a real quantity here. The projection is a points model; on a
-                  tennis match it is a fabricated scoreline in a unit the sport
-                  does not have. An undeclared sport gets the same silence, by
-                  design — see `UNSCORED_IN_POINTS`. */}
-              {/* #5257: and gated on there still being a result to forecast.
-                  The old test was a DENYLIST of two terminal states, so a
-                  `suspended` event — and a `scheduled` one long past its own
-                  kickoff — fell straight through it and printed a projected
-                  final under this card's own "No result reported" badge. This
-                  is #5206's defect one card up, and #4018's line applies as
-                  verbatim as it did there: a forecast and a result are two
-                  questions and they get two predicates. `isSuspended` is the
-                  page's ONE `hasNoReportedResult` answer (computed above, #4015)
-                  and is the same one the badge four lines up is drawn from, so
-                  the card can no longer ask the question one way and answer it
-                  the other. */}
-              {/* #5697 AC2: and gated on the reader being able to see the state
-                  the forecast is about. `projectionHasGameStateToFrame` is
-                  computed beside the scores it reads — a live game with no score
-                  pair prints no projected final, a game that has not kicked off
-                  still does. */}
-              {/* #8156: and gated on the pair being a result the sport can
-                  produce. The `Math.round` below is applied per side, so any
-                  pair under a run apart lands on one integer and a no-tie sport
-                  printed an impossible final (`3 – 3` on live MLB).
-                  `projectedPairIsAPossibleResult` is computed beside the other
-                  projection gates and rounds exactly the way this line does —
-                  the two must never drift, which is why the rounding is not
-                  written out twice in two different expressions. */}
-              {/* #4885: and gated on the pair being reachable from the score
-                  the hero prints: `Projected final: 3 – 2` under a live `4 – 2`
-                  is always false. `projectedPairIsReachableFromTheScore` rounds
-                  the way this line does and reads `bestHomeScore`/`bestAwayScore`,
-                  the values in the score slots, never the event row. */}
-              {/* #8922: every gate above is now evaluated once, in
-                  `heroProjectedFinal`, because the margin and points maps print
-                  the same pair and must never disagree with this line about
-                  whether there is one. */}
-              {/* #2920 / #9483 — directly under the chance it explains, above
-                  the trend, opening and source lines (Alex, 2026-10-19: the 11px
-                  muted `Projected final: 30 – 22` under "11 sportsbooks" was
-                  unreadable and tied neither number to a team). Each number now
-                  sits beside its team's name, home first like the columns. */}
-              {heroProjectedFinal && (
-                <ProjectedFinalLine
-                  label={projectedFinalLabel(event.sport)}
-                  first={{ name: heroShortNames.home, score: heroProjectedFinal.home }}
-                  second={{ name: heroShortNames.away, score: heroProjectedFinal.away }}
-                  order="home-away"
-                  variant="hero"
-                  testId="event-hero-projected-final"
-                />
-              )}
-              {/* #11296 — live: the projection from before the scheduled start,
-                  directly beneath the current one, same team order, the final
-                  band's own words (90-minute basis said in the label). Where it
-                  came from sits one tap down, closed. */}
-              {heroProjectedFinal && heroLiveBaseline && (
-                <>
-                  <ProjectedFinalLine
-                    label={heroLiveBaseline.label}
-                    first={{ name: heroShortNames.home, score: heroLiveBaseline.baseline.home }}
-                    second={{ name: heroShortNames.away, score: heroLiveBaseline.baseline.away }}
-                    order="home-away"
-                    variant="hero"
-                    emphasis="secondary"
-                    testId="event-hero-live-baseline"
-                  />
-                  <FinalForecastDetails
-                    details={heroLiveBaseline.details}
-                    testId="event-hero-live-baseline-details"
-                  />
-                </>
-              )}
-              {/* #11296 — on a final, the forecast band under the result the
-                  columns print: same team order, no grade, no colour. Where it
-                  came from sits one tap down, closed. `heroProjectedFinal` is
-                  null on a final, so the two never print together. */}
-              {heroFinalForecast && (
-                <>
-                  <ProjectedFinalLine
-                    label={heroFinalForecast.label}
-                    first={{ name: heroShortNames.home, score: heroFinalForecast.forecast.home }}
-                    second={{ name: heroShortNames.away, score: heroFinalForecast.forecast.away }}
-                    order="home-away"
-                    variant="hero"
-                    testId="event-hero-final-forecast"
-                  />
-                  <FinalForecastDetails details={heroFinalForecast.details} />
-                </>
-              )}
-
-              {/* Trend indicator — change since opening (live/pregame only).
-
-                  #5719 — POINTS, and the difference of the PRINTED levels.
-
-                  TWO DEFECTS ON ONE LINE. The caption said `%` over a move
-                  measured in percentage POINTS: Michigan 34 -> 75 is +41
-                  points, and as a percentage it is +121. It printed `+41%`
-                  directly above `Opened 34% – 66%`, which invites the reader to
-                  do the subtraction and then answers in the wrong unit. Tenth
-                  surface of the family #5623 / #5669 / #5686 walked through, and
-                  the biggest one.
-
-                  And it rounded a SECOND, DIFFERENT QUANTITY. The raw difference
-                  of the two probabilities is not the difference of the two
-                  integers this block prints around it, and the two disagree
-                  whenever their fractional parts straddle a boundary — #2951's
-                  finding, which #3051 caught on a tennis hero captioning `+3`
-                  between a printed 91 and a printed 95. Subtracting the PRINTED
-                  levels is the only definition under which `shown − caption =
-                  opened` holds on the reader's screen, which is the whole reason
-                  this hero prints all three numbers.
-
-                  🔴 SUBTRACTED HERE RATHER THAN THROUGH `renderedDuelMovePoints`,
-                  and that is not an oversight. #2951's helper re-derives BOTH
-                  pairs from probabilities. This hero's `homePct` may instead be
-                  the SERVED `current_odds.{home,away}_rendered_percent` — see
-                  `withRenderedPercents`, which takes them only on the branches
-                  that read `odds` — so re-deriving would measure the move against
-                  a level the page did not print, reintroducing the exact
-                  contradiction the helper exists to prevent. The rule is
-                  "difference of the printed levels"; `homePct` and
-                  `openingHomePct` ARE the printed levels, whichever end decided
-                  them.
-
-                  A sub-point move now prints nothing rather than `+1` between two
-                  equal numbers. That is #2951's own trade, taken deliberately:
-                  a move the levels cannot express is a move this line may not
-                  claim.
-
-                  #5995 — THE JOURNEY, BECAUSE ON A SCORING SPORT THERE IS NO
-                  SAFE WORD FOR THE UNIT. #5719 left this line printing
-                  `+49 pts Giants since open` directly above a 21–14 scoreline:
-                  three numbers in one block, one of them a score, and `pts` is
-                  the word for the other two. `+7 pts Eagles` over a 7–3 game
-                  was the filed specimen; the marquee frame at `+49` is worse,
-                  because a number larger than either team's score reads as a
-                  running total rather than a delta. `pp` is jargon (D102) and a
-                  hero-only unit word would break the family `pts` belongs to
-                  (#5623 / #5669 / #5686), so the repair is to stop naming a
-                  unit: print the two LEVELS and let the arrow carry direction.
-                  The reader no longer has to trust a unit, or subtract at all.
-
-                  This keeps #5719's rule rather than replacing it. "Difference
-                  of the printed levels" was only ever a way to make
-                  `shown − caption = opened` hold on screen; printing the levels
-                  themselves is that same invariant with the arithmetic removed,
-                  so the caption is now correct BY CONSTRUCTION and the whole
-                  class of second-rounding defects (#2951, #3051) cannot recur
-                  on this line.
-
-                  ONE FORMATTER ON ONE SENTENCE, SINCE #6064. This line used to
-                  run two: the current level was the bare integer
-                  `EventHeroProbabilityPair` printed, the opening level went
-                  through `formatProbability`, and they disagreed at the
-                  boundary — a live blowout put `100%` in the hero while the
-                  line below said `>99%` for the same value. #5995 matched each
-                  end to ITS OWN neighbour, which was right while the hero
-                  refused to clamp, and filed the disagreement as #6064 rather
-                  than smuggling it into a caption fix.
-                  #6064 closed it at the source: the hero now clamps too, so
-                  both ends go through `formatProbability` and "never contradict
-                  the number printed next to you" and "agree with yourself" are
-                  the same requirement. The current end MUST keep passing
-                  `homeProb` — with only `rendered` the clamp has no probability
-                  to test and `100%` comes straight back.
-
-                  Defect 3 on this line is NOT fixed here: the up arrow and its
-                  caption are `text-emerald-*`, which emits no CSS at all, so
-                  green-up has never rendered while red-down always has. That is
-                  #4040 — 195 dead numbered classes tree-wide — and it is a
-                  config decision with a blast radius, not this ship's. */}
-              {!isFinished && openingHomePct !== null && homePct !== null && (() => {
-                const deltaPoints = homePct - openingHomePct;
-                if (deltaPoints === 0) return null; // Did not move on screen — say nothing
-                const homeShort = heroShortNames.home;
-                const isPositive = deltaPoints > 0;
-                return (
-                  /* #5866: `min-w-0` so this row may shrink and its caption
-                     wrap, instead of setting the centre block's width from a
-                     club name. The arrow keeps `flex-shrink-0` — a squashed
-                     3.5px glyph is not a saving. */
-                  <div className="flex items-center gap-1.5 mt-2 min-w-0">
-                    <svg
-                      className={`w-3.5 h-3.5 flex-shrink-0 ${isPositive ? "text-emerald-500" : "text-red-500"}`}
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      {isPositive ? (
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 10l7-7m0 0l7 7m-7-7v18" />
-                      ) : (
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-                      )}
-                    </svg>
-                    <span className={`text-xs font-semibold min-w-0 text-center ${isPositive ? "text-emerald-600" : "text-red-500"}`}>
-                      {/* The two levels, both through `formatProbability` —
-                          the same call `Opened …` makes two lines below and,
-                          since #6064, the same rule the hero above applies. */}
-                      {homeShort}{" "}
-                      {formatProbability(openingHomeProb, { rendered: openingHomePct })}
-                      {" → "}
-                      {formatProbability(homeProb, { rendered: homePct })} since open
-                    </span>
-                  </div>
-                );
-              })()}
-
-              {!atlasOptIn && (
-                <>
-              {/* Opening odds (faint) — live/pregame only */}
-              {!isFinished && openingHomeProb !== null && (
-                <div className="mt-1.5">
-                  <span className="text-[11px] text-text-muted">
-                    {/* #2085 — same pair, same rule. `opening_odds` derives its
-                        away side as `1 - home` on the backend too, so this line
-                        printed 101 for exactly the same reason the hero did. */}
-                    {/* #6238 — the separator and the away figure go together.
-                        `formatProbability(null)` is "-", so leaving this pair
-                        intact printed `Opened 64% – -`, which reads as a
-                        missing number rather than an inapplicable one. */}
-                    {/* #6614 — this pair's OWN answer, not the hero pair's.
-                        `awaySlotWithheld` here deleted a real, independently
-                        sourced opening away price on 9 of 25 live soccer cards:
-                        the opening pair is de-vigged across the board (#1011)
-                        and sums to ~0.76, so its away leg is a price, not a
-                        complement. The hero's current pair above legitimately
-                        answers differently on the same screen — it is 25/25 a
-                        complement — which is why each locus asks separately. */}
-                    Opened {formatProbability(openingHomeProb, { rendered: openingHomePct })}
-                    {!openingAwaySlotWithheld && <>{" "}{"–"} {formatProbability(openingAwayProb, { rendered: openingAwayPct })}</>}
-                  </span>
-                </div>
-              )}
-
-              {/* Source label — live/pregame only */}
-              {!isFinished && probSourceLabel && (
-                <div className="mt-1 flex items-center gap-1.5 min-w-0">
-                  <span className="text-[11px] text-text-muted min-w-0 text-center">
-                    {probSourceLabel}
-                  </span>
-                </div>
-              )}
-                </>
-              )}
-
-            </div>
-
-            {/* Away Team */}
-            <div className="flex flex-col items-center flex-1 max-[359px]:basis-1/2 max-[359px]:order-2">
-              {/* #2447, the other side. Same ladder, same new first rung. */}
-              <TournamentPlayerFace
-                eventId={eventId}
-                sportKey={event.sport}
-                homeName={event.home_team}
-                awayName={event.away_team}
-                side="away"
-                size={56}
-                /* #3787, the other side. Same pair, same precedence. */
-                servedImage={servedParticipantImage(
-                  event.away_image_url,
-                  event.away_flag_url
-                )}
-                fallback={
-              <div
-                className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"
-                style={{ backgroundColor: `${event.away_team_data?.primary_color || "#64748B"}15` }}
-              >
-                {heroCrestImage(event.away_team_data, event.away_team, event.sport_key) ? (
-                  <img
-                    src={heroCrestImage(event.away_team_data, event.away_team, event.sport_key)}
-                    alt=""
-                    width={48}
-                    height={48}
-                    loading="lazy"
-                    className="w-12 h-12 object-contain"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; (e.target as HTMLImageElement).nextElementSibling?.classList.remove("hidden"); }}
-                  />
-                ) : null}
-                <span
-                  className={`text-sm font-extrabold ${heroCrestImage(event.away_team_data, event.away_team, event.sport_key) ? "hidden" : ""}`}
-                  style={{ color: teamTextColor(event.away_team_data?.primary_color) || "#64748B" }}
-                >
-                  {/* #7270 — see the home tile above; same policy, same helper. */}
-                  {shippableCrestBadge(event.away_team, event.sport_key ?? event.sport)}
-                </span>
-              </div>
-                }
-              />
-              <TeamNameLink
-                name={event.away_team}
-                sportKey={event.sport}
-                className="text-xs font-semibold text-text-primary text-center hover:underline"
-              >
-                <SlashBreakableName text={heroShortNames.away} />
-              </TeamNameLink>
-              {/* #5720 — same gate as the home side; see `recordReadsAsRecord`. */}
-              {recordReadsAsRecord &&
-                (event.standings_context?.away || event.away_team_data?.record) && (
-                <span className="text-[11px] text-text-muted text-center">
-                  {event.standings_context?.away || event.away_team_data?.record}
-                </span>
-              )}
-              {(isLive || isFinished || hasStarted) && bestAwayScore !== null && !heroScoreIsStoppageFiller && (
-                /* L2-163 Item 2a: score is the hero's biggest element after the
-                   probability once the game is underway. */
-                <span className="text-4xl sm:text-[42px] font-black text-text-primary tabular-nums font-mono leading-none mt-auto pt-1">
-                  {bestAwayScore}
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* #3330: the games, under the sets, while it is still being played.
-              Centered under the row rather than inside either column, because
-              one line states BOTH sides and splitting it would ask the reader
-              to re-pair `6` with `3` across the probability. Reads
-              left-to-right against the two columns — see `liveGamesLine`. */}
-          {liveGamesLine && (
-            <div className="flex flex-wrap items-center justify-center gap-2 mt-3">
-              <span className="text-[13px] font-semibold text-text-primary tabular-nums font-mono bg-surface-elevated px-2.5 py-1 rounded">
-                {liveGamesLine}
-              </span>
-              {/* HOW OLD THIS GAMES COUNT IS (#3242).
-                  It is NOT the badge above it. That one reads the freshest
-                  win-probability write and can honestly say `1s ago` while this
-                  line is a full beat behind: measured on production 2026-09-05,
-                  ESPN published a match's first game at 15:12 and we showed it
-                  at 15:22. The beat is ~10 minutes, so a games count with no age
-                  on it is a confident number that may be from ten minutes ago.
-                  `observed_at` is when we last CONFIRMED this line with ESPN, so
-                  an unchanged score still reads fresh, and a beat that stalls
-                  (#3316 measured a 42.8-minute hole) makes the chip go Stale
-                  rather than letting the page keep a straight face. */}
-              <FreshnessChip asOf={event.linescore?.observed_at} />
-            </div>
-          )}
-
-          {/* Stakes context from standings */}
-          {event.standings_context?.stakes && (
-            <div className="text-center mt-3">
-              <span className="text-[10px] text-text-muted bg-surface-elevated px-2 py-0.5 rounded">
-                {event.standings_context.stakes}
-              </span>
-            </div>
-          )}
-
-        </div>
-
-
-
-      </div>
+          ) : null
+        }
+      />
 
       {atlasOptIn && (
         <AtlasDetailsSheet
@@ -3973,15 +3231,16 @@ export default function EventPage({ params }: EventPageProps) {
               eventId={eventId}
               eventStatus={event.status}
               periodBoundaries={periodBoundaries}
-              homeTeamColor={event.home_team_data?.primary_color || undefined}
-              awayTeamColor={event.away_team_data?.primary_color || undefined}
+              homeTeamColor={effectiveHomePrimary}
+              awayTeamColor={effectiveAwayPrimary}
+              awayTeamSecondaryColor={resolvedAwaySecondary || event.away_team_data?.secondary_color || undefined}
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
               homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
               awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
               awayWithheld={awaySlotWithheld}
-              tenths={tenthsOptIn}
-              atlasMode={atlasOptIn}
+              tenths={liveTenthsActive}
+              atlasMode={atlasChartOptIn}
               settledWinnerSide={atlasSettledWinnerSide}
               /* #9483 — NFL and NBA: both teams' lines (design freeze v328). */
               pairedAwayLine={storyCardsOn}
@@ -4002,8 +3261,9 @@ export default function EventPage({ params }: EventPageProps) {
               activePoint={activeChartPoint}
               homeTeam={event.home_team}
               awayTeam={event.away_team}
-              homeTeamColor={event.home_team_data?.primary_color || undefined}
-              awayTeamColor={event.away_team_data?.primary_color || undefined}
+              homeTeamColor={effectiveHomePrimary}
+              awayTeamColor={effectiveAwayPrimary}
+              awayTeamSecondaryColor={resolvedAwaySecondary || event.away_team_data?.secondary_color || undefined}
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
               lastPoint={lastChartPoint}
@@ -4101,6 +3361,21 @@ export default function EventPage({ params }: EventPageProps) {
       </SectionErrorBoundary>
       )}
 
+      {showSharedPinBanner && showConsentBanner && (
+        <SharedLinkPinBanner
+          inline
+          isPinned={eventIsPinned}
+          pinDisabled={isMaxReached && !eventIsPinned}
+          onPinToggle={() => togglePin(eventId)}
+        />
+      )}
+
+      {isSharedLink && (
+        <SectionErrorBoundary label="More of what the world thinks now" resetKey={event.id}>
+          <SharedMoreFromDiscoverSection currentEventId={event.id} />
+        </SectionErrorBoundary>
+      )}
+
       {highlightsPreview && !venueVoided && (
         <SectionErrorBoundary label="Three takeaways" resetKey={event.id}>
           <EventHighlightsPreview preview={highlightsPreview} catalogueAvailable={!!gameMarkets} />
@@ -4179,8 +3454,8 @@ export default function EventPage({ params }: EventPageProps) {
           awayTeam={event.away_team}
           homeAbbr={event.home_team_data?.abbreviation || undefined}
           awayAbbr={event.away_team_data?.abbreviation || undefined}
-          homeColor={event.home_team_data?.primary_color || undefined}
-          awayColor={event.away_team_data?.primary_color || undefined}
+          homeColor={effectiveHomePrimary}
+          awayColor={effectiveAwayPrimary}
           homeLogo={event.home_team_data?.logo_small || undefined}
           awayLogo={event.away_team_data?.logo_small || undefined}
           homeWinProb={event.current_odds?.home_probability ?? undefined}
@@ -4268,8 +3543,8 @@ export default function EventPage({ params }: EventPageProps) {
                 homeTeamAbbrev={event.home_team_data?.abbreviation}
                 awayTeamAbbrev={event.away_team_data?.abbreviation}
                 sport={event.sport_key ?? event.sport}
-                homeColor={event.home_team_data?.primary_color || undefined}
-                awayColor={event.away_team_data?.primary_color || undefined}
+                homeColor={effectiveHomePrimary}
+                awayColor={effectiveAwayPrimary}
                 boxScore={event.box_score_data}
               />
             </details>
@@ -4340,8 +3615,8 @@ export default function EventPage({ params }: EventPageProps) {
                 other: gameMarkets?.other,
                 homeTeam: event.home_team,
                 awayTeam: event.away_team,
-                homeColor: event.home_team_data?.primary_color || undefined,
-                awayColor: event.away_team_data?.primary_color || undefined,
+                homeColor: effectiveHomePrimary,
+                awayColor: effectiveAwayPrimary,
                 boxScorePlayers:
                   foldBoxScore?.players != null && foldBoxScore.players.length > 0
                     ? foldBoxScore.players
@@ -4460,8 +3735,9 @@ export default function EventPage({ params }: EventPageProps) {
             gamesToWin={gamesToWin}
             homeTeam={event.home_team}
             awayTeam={event.away_team}
-            homeTeamColor={event.home_team_data?.primary_color || undefined}
-            awayTeamColor={event.away_team_data?.primary_color || undefined}
+            homeTeamColor={effectiveHomePrimary}
+            awayTeamColor={effectiveAwayPrimary}
+            awayTeamSecondaryColor={event.away_team_data?.secondary_color || undefined}
           />
           </SectionErrorBoundary>
         );
@@ -4491,8 +3767,8 @@ export default function EventPage({ params }: EventPageProps) {
         eventId={eventId}
         homeTeam={event.home_team}
         awayTeam={event.away_team}
-        homeTeamColor={event.home_team_data?.primary_color || undefined}
-        awayTeamColor={event.away_team_data?.primary_color || undefined}
+        homeTeamColor={effectiveHomePrimary}
+        awayTeamColor={effectiveAwayPrimary}
         homeTeamLogo={event.home_team_data?.logo_small || undefined}
         awayTeamLogo={event.away_team_data?.logo_small || undefined}
         sportKey={event.sport || undefined}
@@ -4626,8 +3902,9 @@ export default function EventPage({ params }: EventPageProps) {
               eventStatus={event.status}
               fillContainer
               periodBoundaries={periodBoundaries}
-              homeTeamColor={event.home_team_data?.primary_color || undefined}
-              awayTeamColor={event.away_team_data?.primary_color || undefined}
+              homeTeamColor={effectiveHomePrimary}
+              awayTeamColor={effectiveAwayPrimary}
+              awayTeamSecondaryColor={resolvedAwaySecondary || event.away_team_data?.secondary_color || undefined}
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
               homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
@@ -4635,8 +3912,8 @@ export default function EventPage({ params }: EventPageProps) {
               /* #6238 — the fullscreen chart is the same chart. A reader who
                  taps expand must not get the withheld number back. */
               awayWithheld={awaySlotWithheld}
-              tenths={tenthsOptIn}
-              atlasMode={atlasOptIn}
+              tenths={liveTenthsActive}
+              atlasMode={atlasChartOptIn}
               settledWinnerSide={atlasSettledWinnerSide}
               pairedAwayLine={storyCardsOn}
               /* #10362 — and it opens on the range the card shows. Without these the
@@ -4665,6 +3942,13 @@ export default function EventPage({ params }: EventPageProps) {
           onSelect={selectNflCardRow}
           onClose={closeNflReader}
           atlasMode={atlasOptIn}
+        />
+      )}
+      {showSharedPinBanner && !showConsentBanner && (
+        <SharedLinkPinBanner
+          isPinned={eventIsPinned}
+          pinDisabled={isMaxReached && !eventIsPinned}
+          onPinToggle={() => togglePin(eventId)}
         />
       )}
     </div>

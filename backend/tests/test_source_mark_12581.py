@@ -54,9 +54,11 @@ class TestActualHeadlineInputs:
     def test_divergence_lists_only_the_source_that_priced_the_headline(self):
         fixture = event({"betting": quote(0.9), "kalshi": quote(0.1)})
         sources = []
-        hero = resolve_hero(fixture, source_inputs=sources)
+        method = []
+        hero = resolve_hero(fixture, source_inputs=sources, source_method=method)
         assert hero.home_probability == 0.9
         assert sources == [("betting", 0.9)]
+        assert method == ["One source"]
 
     def test_healthy_median_keeps_all_admitted_inputs(self):
         fixture = event(
@@ -68,11 +70,15 @@ class TestActualHeadlineInputs:
             }
         )
         sources = []
+        method = []
         plain = resolve_hero(fixture)
-        traced = resolve_hero(fixture, source_inputs=sources)
+        traced = resolve_hero(fixture, source_inputs=sources, source_method=method)
         assert traced == plain
         assert traced.home_probability == 0.62
         assert dict(sources) == {"betting": 0.6, "kalshi": 0.62, "polymarket": 0.64}
+        assert method == ["Bain Luck blend · the weighted middle of these sources"]
+        home, away = headline_source_marks(fixture, traced, sources, method=method[0])
+        assert home["method"] == away["method"] == method[0]
 
     def test_zero_weight_live_source_is_not_a_contributor(self):
         fixture = event(
@@ -85,10 +91,14 @@ class TestActualHeadlineInputs:
             status="live",
         )
         sources = []
+        method = []
         plain = compute_aggregate_probability_tiered(fixture)
-        traced = compute_aggregate_probability_tiered(fixture, source_inputs=sources)
+        traced = compute_aggregate_probability_tiered(
+            fixture, source_inputs=sources, source_method=method,
+        )
         assert traced == plain
         assert dict(sources) == {"betting": 0.6, "kalshi": 0.62, "polymarket": 0.64}
+        assert method == ["Bain Luck blend · a weighted average of these sources"]
 
     def test_undated_live_source_does_not_escape_eligibility(self):
         fixture = event(
@@ -186,9 +196,24 @@ class TestSourceMarks:
                 },
             ]
         )
+        assert mark["state"] == "single"
+        assert "method" not in mark  # the sheet names the only venue directly
         assert len(mark["sources"]) == 1
         assert mark["sources"][0]["probability"] == 0.55
         assert mark["sources"][0]["observed_at"] == "2026-11-11T15:00:00Z"
+
+    def test_single_source_keeps_its_clock_when_reoriented(self):
+        from app.utils.source_mark import source_mark_on_axis
+
+        mark = quote_source_mark([
+            {"key": "kalshi", "probability": 0.6,
+             "observed_at": "2026-11-11T15:00:00Z"},
+        ])
+        other = source_mark_on_axis(mark, inverted=True)
+        assert other["state"] == "single"
+        assert other["sources"][0]["probability"] == 0.4
+        assert other["sources"][0]["observed_at"] == "2026-11-11T15:00:00Z"
+        assert mark["sources"][0]["probability"] == 0.6
 
     def test_unknown_clock_does_not_borrow_another_legs_clock(self):
         mark = quote_source_mark(
@@ -289,13 +314,13 @@ class TestSourceMarks:
         inputs = []
         hero = resolve_hero(fixture, source_inputs=inputs)
         home, away = headline_source_marks(fixture, hero, inputs, away_available=False)
-        assert home["state"] == "blend"
+        assert home["state"] == "single"
         assert away == {"state": "none", "sources": [], "reason": "away_unavailable"}
 
     @pytest.mark.parametrize("value", [0, 1])
     def test_extreme_live_quote_is_still_a_quote(self, value):
         mark = quote_source_mark([{"key": "kalshi", "probability": value}])
-        assert mark["state"] == "blend"
+        assert mark["state"] == "single"
         assert mark["sources"][0]["probability"] == value
 
 
@@ -998,7 +1023,7 @@ class TestAllGameMarketFamilies:
             )
             for row in rows:
                 mark = row["source_mark"]
-                assert mark["state"] == "blend", section
+                assert mark["state"] == "single", section
                 source = mark["sources"][0]
                 assert source["key"] == "kalshi"
                 assert source["probability"] == row.get(

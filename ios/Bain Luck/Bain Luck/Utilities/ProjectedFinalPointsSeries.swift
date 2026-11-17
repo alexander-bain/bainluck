@@ -192,23 +192,19 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
             }
             return nil
         }
-        var segments: [[Point]] = []
+        var points: [Point] = []
         var withheld: [Withheld] = []
-        var run: [Point] = []
-        func closeRun() { if !run.isEmpty { segments.append(run); run = [] } }
         for (index, row) in ordered.enumerated() {
             if let refusal = reason(row) {
                 withheld.append(Withheld(at: row.at, reason: refusal))
-                closeRun()
                 continue
             }
             guard let home = row.home, let away = row.away else { continue }
             let next = index + 1 < ordered.count ? ordered[index + 1] : nil
             let continues = next.map { reason($0) == nil && $0.at.timeIntervalSince(row.at) <= maxCaptureGap } ?? false
-            run.append(Point(at: row.at, home: home, away: away, holdEnd: continues ? next!.at : row.at))
-            if !continues { closeRun() }
+            points.append(Point(at: row.at, home: home, away: away, holdEnd: continues ? next!.at : row.at))
         }
-        closeRun()
+        let segments: [[Point]] = points.isEmpty ? [] : [points]
         // #12578 — the projection the game began with: the last drawn point at or
         // before kickoff, held to the kickoff instant (the line's own step rule).
         var kickoffPoint: Point?

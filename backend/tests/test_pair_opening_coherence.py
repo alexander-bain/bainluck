@@ -230,8 +230,8 @@ class TestResolverNamesItsSource:
 
         m = _market(outcome_prices=[], best_bid=0.01, best_ask=0.99, last_trade_price=0.17)
         prob, source = _resolve_market_probability_with_source(m)
-        assert prob == pytest.approx(0.17)
-        assert source == "last_trade_price"
+        assert prob is None
+        assert source is None
         assert source != PAIRED_PRICE_SOURCE
 
     def test_a_declined_price_carries_no_source(self):

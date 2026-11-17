@@ -61,7 +61,7 @@ async def build_digest_content(db: AsyncSession) -> dict:
             row.current_probability,
             row.probability_change_24h,
         )
-        if row.source == DATAGOLF_MARKET_SOURCE and not change:
+        if row.source in (DATAGOLF_MARKET_SOURCE, "polymarket") and not change:
             continue
         movers.append({
             "outcome": row.name,

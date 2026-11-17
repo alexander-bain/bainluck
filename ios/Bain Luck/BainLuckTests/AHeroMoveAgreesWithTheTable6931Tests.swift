@@ -40,38 +40,42 @@ final class AHeroMoveAgreesWithTheTable6931Tests: XCTestCase {
     // MARK: - The specimen
 
     /// The whole point, in one assertion: the number that was printed twice on one
-    /// screen is now printed once.
+    /// screen shares one magnitude (`0.5`), and the move chip states it in points
+    /// (`"0.5 pts"`, never `"0.5%"` or `"1%"`).
     func testCirylGanesMoveReadsTheSameInBothPlacesOnOneScreen() throws {
         let served = 0.005
 
         let hero = try XCTUnwrap(heroBadgeText(served))
         let table = EvolutionLeaderboardGeometry.changeLabel(served * 100)
 
-        XCTAssertEqual(hero, "0.5%")
+        XCTAssertEqual(hero, "0.5 pts")
         XCTAssertEqual(table, "+0.5%")
+        XCTAssertFalse(hero.contains("%"), "a probability change on the move chip is in points, not percent")
         XCTAssertNotEqual(hero, "1%", "the hero doubled the smallest move it can show (#6931)")
-        XCTAssertEqual(hero, String(table.dropFirst()),
-                       "hero and chart table disagree about one field again (#6931)")
+        XCTAssertNotEqual(hero, "1 pts", "the hero doubled the smallest move it can show (#6931)")
+        XCTAssertEqual(hero.replacingOccurrences(of: " pts", with: ""),
+                       String(table.dropFirst().dropLast()),
+                       "hero and chart table disagree about one field's magnitude again (#6931)")
     }
 
     /// The defect's other end. The two renderings AGREE at exactly 1.0 point, which
     /// is why a test fed only a round number cannot see this bug at all — feed it
     /// the band's ends or it is vacuous.
     func testTheBandEndsWhereTheIntegerRoundingWouldHaveUnderstatedInstead() {
-        XCTAssertEqual(heroBadgeText(0.0149), "1.5%",
-                       "1.49 points rounded DOWN to the same `1%` the floor rounded UP to")
-        XCTAssertEqual(heroBadgeText(0.010), "1.0%")
+        XCTAssertEqual(heroBadgeText(0.0149), "1.5 pts",
+                       "1.49 points rounded DOWN to the same integer the floor rounded UP to")
+        XCTAssertEqual(heroBadgeText(0.010), "1.0 pts")
 
         // The mutant this kills: restoring `Int((m * 100).rounded())`. At 1.0 point
         // both spellings say "1", so this is the pair that separates them.
         let atFloor = heroBadgeText(0.005)
         let atCeiling = heroBadgeText(0.0149)
         XCTAssertNotEqual(atFloor, atCeiling,
-                          "0.5 and 1.49 points both printed `1%` before #6931")
+                          "0.5 and 1.49 points both collapsed to one integer before #6931")
     }
 
     /// Every admissible move in the band the integer rule flattened now prints a
-    /// distinct, true magnitude rather than a single `1%`.
+    /// distinct, true magnitude rather than a single `1%` / `1 pts`.
     func testTheWholeFlattenedBandNoLongerCollapsesToOnePercent() {
         let band = stride(from: 0.005, to: 0.0150, by: 0.0005).map { heroBadgeText($0) }
 
@@ -80,13 +84,15 @@ final class AHeroMoveAgreesWithTheTable6931Tests: XCTestCase {
                              "the band collapsed to one string again (#6931)")
         for value in band {
             XCTAssertNotEqual(value, "1%", "the flattened spelling is back (#6931)")
+            XCTAssertNotEqual(value, "1 pts", "the flattened spelling is back (#6931)")
+            XCTAssertFalse(value?.contains("%") ?? true, "move chip must print points (`pts`), not `%`")
         }
     }
 
     // MARK: - The direction still reads, and the gate did not move
 
     /// The arrow carries the sign, so the magnitude is unsigned — a badge reading
-    /// `↓ -0.8%` would be a double negative. Down moves print the bare magnitude.
+    /// `↓ -0.8 pts` would be a double negative. Down moves print the bare magnitude.
     ///
     /// The specimen's own down-mover is NOT usable here and that is worth recording:
     /// `Josh Hokit` is served `-0.0035`, which the chart table draws as `-0.4%`
@@ -94,8 +100,8 @@ final class AHeroMoveAgreesWithTheTable6931Tests: XCTestCase {
     /// gate at `abs >= 0.005` and draw nothing. That asymmetry is real, predates
     /// this ship and is not touched by it — the gate is pinned below.
     func testADownMovePrintsAMagnitudeBecauseTheArrowAlreadySaidDown() {
-        XCTAssertEqual(heroBadgeText(-0.008), "0.8%")
-        XCTAssertEqual(heroBadgeText(-0.012), "1.2%")
+        XCTAssertEqual(heroBadgeText(-0.008), "0.8 pts")
+        XCTAssertEqual(heroBadgeText(-0.012), "1.2 pts")
         XCTAssertFalse(heroBadgeText(-0.008)?.contains("-") ?? true)
 
         // Served, drawn by the table, below the badge's floor — both are correct.

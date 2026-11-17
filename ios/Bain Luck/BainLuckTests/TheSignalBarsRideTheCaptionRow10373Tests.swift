@@ -42,10 +42,11 @@ final class TheSignalBarsRideTheCaptionRow10373Tests: XCTestCase {
 
     func testThereIsOneFooterDefinition() throws {
         let s = try source()
-        // One ShareLink and one SignalBarsView on the card: the two layouts call
-        // the same `footerMarks`, so they cannot draw two different footers.
+        // One ShareLink on the card (signal bars removed from game cards under
+        // Ruling 182-A): the two layouts call the same `footerMarks`, so they
+        // cannot draw two different footers.
         XCTAssertEqual(s.components(separatedBy: "ShareLink(").count - 1, 1)
-        XCTAssertEqual(s.components(separatedBy: "SignalBarsView(tier: event.confidenceTier)").count - 1, 1)
+        XCTAssertEqual(s.components(separatedBy: "SignalBarsView(").count - 1, 0)
         // The 44pt tap target is kept — the row it shares is the caption's.
         XCTAssertTrue(s.contains(".frame(minWidth: 44, minHeight: 44)"))
     }

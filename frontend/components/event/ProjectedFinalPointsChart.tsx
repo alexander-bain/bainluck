@@ -19,7 +19,7 @@
  * where they were observed.
  */
 
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 import { format } from "date-fns";
 import {
   buildProjectedFinalPointsSeries,
@@ -46,6 +46,7 @@ export interface ProjectedFinalPointsChartProps {
   awayTeam: string;
   homeColor?: string | null;
   awayColor?: string | null;
+  awaySecondaryColor?: string | null;
   /**
    * The game's final score as the page's hero prints it, or null when the page has none it would
    * show. It is the only thing that lets the last recorded score be called final. It is printed in
@@ -180,6 +181,7 @@ export default function ProjectedFinalPointsChart({
   awayTeam,
   homeColor,
   awayColor,
+  awaySecondaryColor,
   finalScore = null,
   projectedFinal = null,
   periodBoundaries,
@@ -190,7 +192,7 @@ export default function ProjectedFinalPointsChart({
   // The league's own period word: men's college basketball plays halves, never quarters.
   const firstPeriodWord = projectedFinalPointsLeague(input.sportKey)?.firstPeriod === "1H" ? "half" : "quarter";
 
-  const { home: homeStroke, away: awayStroke } = projectedTeamStrokes(homeColor, awayColor);
+  const { home: homeStroke, away: awayStroke } = projectedTeamStrokes(homeColor, awayColor, awaySecondaryColor);
   const span = Math.max(1, full.end - full.start);
   const x = (t: number) => LEFT + ((Math.min(Math.max(t, full.start), full.end) - full.start) / span) * (RIGHT - LEFT);
   const y = (v: number) => BOTTOM - (v / full.yMax) * (BOTTOM - TOP);
@@ -371,15 +373,27 @@ export default function ProjectedFinalPointsChart({
                   vectorEffect="non-scaling-stroke"
                 />
               ) : (
-                <path
-                  key={`${key}-${i}`}
-                  data-series={`forecast-${key}`}
-                  d={stepPath(seg, key, x, y)}
-                  fill="none"
-                  stroke={stroke}
-                  strokeWidth={3}
-                  vectorEffect="non-scaling-stroke"
-                />
+                <Fragment key={`${key}-${i}`}>
+                  <path
+                    data-series={`forecast-${key}`}
+                    d={stepPath(seg, key, x, y)}
+                    fill="none"
+                    stroke={stroke}
+                    strokeWidth={3}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  {seg.map((pt, j) => (
+                    <path
+                      key={`${key}-${i}-pt-${j}`}
+                      data-forecast-mark={key}
+                      d={`M${x(pt.at).toFixed(1)},${y(pt[key]).toFixed(1)} h0.01`}
+                      stroke={stroke}
+                      strokeWidth={6}
+                      strokeLinecap="round"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  ))}
+                </Fragment>
               ),
             ),
           )}

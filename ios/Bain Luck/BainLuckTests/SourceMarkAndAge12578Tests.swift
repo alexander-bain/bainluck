@@ -151,6 +151,10 @@ final class SourceMark12581Tests: XCTestCase {
         XCTAssertNil(SourceMarkButton(nil, numberSize: 20), "an unserved mark draws nothing: the app never infers one")
         XCTAssertNil(SourceMarkButton(try decode(fixture("none")).sourceMark, numberSize: 20))
         XCTAssertNil(SourceMarkButton(try decode(fixture("someday")).sourceMark, numberSize: 20), "an unknown state")
+        let blended = try XCTUnwrap(try decode(fixture("blended")).sourceMark)
+        XCTAssertEqual(blended.state, .unknown, "the contract value is 'blend'; 'blended' is not a source_mark state")
+        XCTAssertFalse(blended.draws)
+        XCTAssertNil(SourceMarkButton(blended, numberSize: 20), "1.0.7 draws no mark on 'blended'")
         XCTAssertNil(SourceMarkButton(SourceMark(state: .blend, sources: []), numberSize: 20), "never an empty sheet")
         XCTAssertNotNil(SourceMarkButton(try decode(fixture()).sourceMark, numberSize: 20))
     }

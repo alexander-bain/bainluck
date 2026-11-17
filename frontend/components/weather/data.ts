@@ -120,6 +120,7 @@ export type RainDay = ServedPercent & {
    *  has no such field; a row without one is never labelled "Today". */
   iso?: string;
   icon: string;
+  market_id?: number | null;
 };
 
 /** Today's date in New York, `YYYY-MM-DD`.
@@ -144,6 +145,7 @@ export type MonthlyRain = ServedPercent & {
   period?: string | null;
   src: Source;
   delta24h?: number;
+  market_id?: number | null;
 };
 
 export type EventMarket = ServedPercent & {

@@ -10,7 +10,7 @@ Tests:
 Uses the shared ``client`` fixture from conftest.py (mock empty DB session).
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -179,10 +179,12 @@ class TestFuturesBrowseEndpoint:
         assert body["total"] == 12
         assert body["has_more"] is False
 
+    @pytest.mark.parametrize("dated_basis", [True, False])
     async def test_mocked_item_shape_sorts_top_outcomes_and_filters_garbage(
         self,
         client,
         mock_db,
+        dated_basis,
     ):
         resolution_date = datetime(2026, 10, 31, tzinfo=timezone.utc)
         market = _market(
@@ -199,6 +201,13 @@ class TestFuturesBrowseEndpoint:
                 _outcome(5, "Braves", current_probability=None, probability_change_24h=None),
             ],
         )
+        if dated_basis:
+            from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
+            stamp = (datetime.now(timezone.utc) - timedelta(hours=18)).isoformat()
+            market.market_metadata = {DATED_BASIS_METADATA_KEY: {
+                "1": [0.28, stamp], "2": [0.43, stamp],
+            }}
         mock_db.execute.side_effect = [
             _page_result([market], total=1),
         ]
@@ -215,8 +224,8 @@ class TestFuturesBrowseEndpoint:
                 "source": "polymarket",
                 "resolution_date": "2026-10-31T00:00:00+00:00",
                 "top_outcomes": [
-                    {"id": 2, "name": "Yankees", "probability": 0.41, "movement": -0.02},
-                    {"id": 1, "name": "Dodgers", "probability": 0.32, "movement": 0.04},
+                    {"id": 2, "name": "Yankees", "probability": 0.41, "movement": pytest.approx(-0.02) if dated_basis else None},
+                    {"id": 1, "name": "Dodgers", "probability": 0.32, "movement": pytest.approx(0.04) if dated_basis else None},
                     {"id": 4, "name": "Mets", "probability": 0.18, "movement": None},
                 ],
                 "outcome_count": 4,

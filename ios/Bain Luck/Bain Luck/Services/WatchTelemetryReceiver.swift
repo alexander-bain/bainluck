@@ -10,6 +10,7 @@ final class WatchTelemetryReceiver: NSObject, WCSessionDelegate, @unchecked Send
     @MainActor private var observer: NSObjectProtocol?
     private let defaults: UserDefaults
     private static let seenKey = "bainluck_watch_telemetry_seen_v1"
+    private static let pinsContextKey = "bainluck_watch_pins_context_v1"
 
     private override init() { defaults = .standard; super.init() }
 
@@ -31,10 +32,32 @@ final class WatchTelemetryReceiver: NSObject, WCSessionDelegate, @unchecked Send
         return (try? JSONEncoder().encode(grant)) ?? Data()
     }
 
+    @MainActor private func pinsData() -> Data? {
+        guard let raw = defaults.data(forKey: Self.pinsContextKey),
+              raw.count <= WatchPinsWire12640.maxBytes else { return nil }
+        return raw
+    }
+
+    /// #12640 — sends the phone's current pin IDs alongside the existing telemetry grant
+    /// without creating a second `WCSession` delegate.
+    @MainActor func publishWatchPins(_ items: [WatchPinWireItem12640]) {
+        let encoded = WatchPinsWire12640.encode(items)
+        defaults.set(encoded, forKey: Self.pinsContextKey)
+        start()
+        guard WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
+        var context = WCSession.default.applicationContext
+        context["watch_telemetry_grant"] = grantData()
+        context[WatchPinsWire12640.contextKey] = encoded
+        try? WCSession.default.updateApplicationContext(context)
+    }
+
     @MainActor private func publishGrant() {
         guard WCSession.default.activationState == .activated else { return }
         var context = WCSession.default.applicationContext
         context["watch_telemetry_grant"] = grantData()
+        if let pins = pinsData() {
+            context[WatchPinsWire12640.contextKey] = pins
+        }
         // The latest context replaces the previous grant; no unlimited transfer queue.
         try? WCSession.default.updateApplicationContext(context)
         if !TelemetryConsent.shared.isGranted { defaults.removeObject(forKey: Self.seenKey) }
@@ -75,14 +98,25 @@ final class WatchTelemetryReceiver: NSObject, WCSessionDelegate, @unchecked Send
                  replyHandler: @escaping ([String: Any]) -> Void) {
         // Extract only the typed, bounded protocol values before crossing actors.
         let handshake = message["watch_telemetry_handshake"] as? Int == 1
+        let pullPins = message[WatchPinsWire12640.pullMessageKey] as? Int == 1
         let data = message["watch_telemetry_batch"] as? Data
         Task { @MainActor in
-            if handshake { replyHandler(["watch_telemetry_grant": self.grantData()]) }
-            else if let data {
-                replyHandler(["watch_telemetry_ack": self.receive(data),
-                              "watch_telemetry_grant": self.grantData()])
+            if handshake {
+                var reply: [String: Any] = ["watch_telemetry_grant": self.grantData()]
+                if let pins = self.pinsData() { reply[WatchPinsWire12640.contextKey] = pins }
+                replyHandler(reply)
+            } else if pullPins {
+                var reply: [String: Any] = [:]
+                if let pins = self.pinsData() { reply[WatchPinsWire12640.contextKey] = pins }
+                replyHandler(reply)
+            } else if let data {
+                var reply: [String: Any] = ["watch_telemetry_ack": self.receive(data),
+                                            "watch_telemetry_grant": self.grantData()]
+                if let pins = self.pinsData() { reply[WatchPinsWire12640.contextKey] = pins }
+                replyHandler(reply)
+            } else {
+                replyHandler([:])
             }
-            else { replyHandler([:]) }
         }
     }
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState,

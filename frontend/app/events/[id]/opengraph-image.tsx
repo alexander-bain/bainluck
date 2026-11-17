@@ -4,7 +4,7 @@ import { UnfurlCard } from "@/components/og/UnfurlCard";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { getSportLabel } from "@/lib/sportCategories";
 import { shippableCrestBadge } from "@/lib/teamShortName";
-import { teamTextColor } from "@/lib/teamColors";
+import { resolveMatchupTeamColors, teamTextColor } from "@/lib/teamColors";
 import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
 import { unfurlImageOptions } from "@/lib/unfurlImageCache";
@@ -420,8 +420,14 @@ export default async function Image({ params }: { params: { id: string } }) {
   // "nobody won". A tie reaches here the same way: `resolveEventOutcome`
   // returns `null` on equal scores rather than crowning the home side.
   const decided = final && outcome?.winnerSide != null;
-  const homeColor = event.home_team_data?.primary_color || "#2563eb";
-  const awayColor = event.away_team_data?.primary_color || "#dc2626";
+  const resolvedTeamColors = resolveMatchupTeamColors({
+    homePrimary: event.home_team_data?.primary_color,
+    awayPrimary: event.away_team_data?.primary_color,
+    homeSecondary: event.home_team_data?.secondary_color,
+    awaySecondary: event.away_team_data?.secondary_color,
+  });
+  const homeColor = resolvedTeamColors.home || "#2563eb";
+  const awayColor = resolvedTeamColors.away || "#dc2626";
   // #5696 — the crest tiles and the split bar keep the raw brand colour as a
   // FILL; the two big percents are TEXT and take #5165's floor. This canvas is
   // `#f8fafc` rather than `--surface-card`'s `#FFFFFF`, so the helper's ratio
@@ -498,7 +504,11 @@ export default async function Image({ params }: { params: { id: string } }) {
                 fontWeight: 900,
               }}
             >
-              {shippableCrestBadge(awayTeam, event.sport_key || event.sport)}
+              {shippableCrestBadge(
+                awayTeam,
+                event.sport_key || event.sport,
+                event.away_team_data?.abbreviation,
+              )}
             </div>
             <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05, color: awayNameColor }}>{awayTeam}</div>
             {awayHero !== null && (
@@ -535,7 +545,11 @@ export default async function Image({ params }: { params: { id: string } }) {
                 fontWeight: 900,
               }}
             >
-              {shippableCrestBadge(homeTeam, event.sport_key || event.sport)}
+              {shippableCrestBadge(
+                homeTeam,
+                event.sport_key || event.sport,
+                event.home_team_data?.abbreviation,
+              )}
             </div>
             <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05, textAlign: "right", color: homeNameColor }}>{homeTeam}</div>
             {homeHero !== null && (
@@ -600,7 +614,7 @@ export default async function Image({ params }: { params: { id: string } }) {
                   makes the label load-bearing rather than a caveat: unlabelled,
                   96px of "54%" over "No result reported" reads as a live call. */}
               {forecastWithheld && prematch?.label && prematch.awayPercent != null && (
-                <div style={{ fontSize: 20 }}>{`Pre-match · ${prematch.label}`}</div>
+                <div style={{ fontSize: 20 }}>Pregame</div>
               )}
             </div>
             {/* #4957: the bare wordmark, matching the other three share cards. This card is

@@ -237,7 +237,8 @@ class TestClosureIsNeverInferred:
         detroit = payload["markets"][2]
         detroit.update({
             "outcomePrices": '["0.995", "0.005"]',
-            "bestBid": 0.99, "bestAsk": 1.0, "lastTradePrice": 0.995,
+            # A genuine near-certain two-sided quote, not a terminal ask.
+            "bestBid": 0.994, "bestAsk": 0.996, "lastTradePrice": 0.995,
         })
         fake, stats = await _run_batch(monkeypatch, _parse(payload))
         yes_snaps, no_snaps = _decomposed_snaps(fake, 3)

@@ -127,7 +127,7 @@ final class AFavouritesWinIsNotAnUpset9490Tests: XCTestCase {
                                   "the scan is not reading EventCardView.swift")
         let body = String(code[start.upperBound...].prefix(1200))
         XCTAssertTrue(body.contains(
-            "letisUpset=won&&(reading?.winnerWasUnderdog(homeWon:homeWon,awayWon:awayWon,pricesADraw:awayIsWithheld)??false)"))
+            "letisUpset=won&&(reading?.winnerWasUnderdog(homeWon:homeWon,awayWon:awayWon,pricesADraw:prematchAwayIsWithheld)??false)"))
         XCTAssertFalse(body.contains("prob<0.4"), "the fixed cut is back")
         XCTAssertFalse(body.contains("wasUnderdog"), "a second winner-alone cut is back")
     }

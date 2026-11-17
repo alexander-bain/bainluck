@@ -12,6 +12,7 @@ import Foundation
 nonisolated struct SavedWidgetEventDetail10875: Decodable, Equatable, Sendable {
     let id: Int
     let sport: String?
+    var sportName: String? = nil
     let homeTeam: String
     let awayTeam: String
     let status: String?
@@ -20,6 +21,9 @@ nonisolated struct SavedWidgetEventDetail10875: Decodable, Equatable, Sendable {
     let homeScore: Int?
     let awayScore: Int?
     let currentOdds: SavedWidgetEventOdds10875?
+    var prematchOdds: SavedWidgetEventOdds10875? = nil
+    var pregameProjection: SavedWidgetPregameProjection10875? = nil
+    var espn: SavedWidgetESPN10875? = nil
     let heroProbability: Double?
     let heroProbabilityAway: Double?
     let heroProbabilitySource: String?
@@ -37,12 +41,155 @@ nonisolated struct SavedWidgetEventDetail10875: Decodable, Equatable, Sendable {
 nonisolated struct SavedWidgetEventOdds10875: Decodable, Equatable, Sendable {
     let homeProbability: Double?
     let awayProbability: Double?
+    var drawProbability: Double? = nil
     let homeRenderedPercent: Int?
     let awayRenderedPercent: Int?
+    var projectedHomeScore: Double? = nil
+    var projectedAwayScore: Double? = nil
+    var liveProjection: SavedWidgetLiveProjection10875? = nil
+}
+
+nonisolated struct SavedWidgetLiveProjection10875: Decodable, Equatable, Sendable {
+    var projectedHomeScore: Double? = nil
+    var projectedAwayScore: Double? = nil
+    var kind: String? = nil
+    var boundary: String? = nil
+    var boundaryAt: String? = nil
+    var earliestConfirmedAt: String? = nil
+    var latestCapturedAt: String? = nil
+    var source: String? = nil
+    var basis: String? = nil
+    var bookmakerCount: Double? = nil
+    var unit: String? = nil
+    var period: String? = nil
+
+    init(
+        projectedHomeScore: Double? = nil,
+        projectedAwayScore: Double? = nil,
+        kind: String? = nil,
+        boundary: String? = nil,
+        boundaryAt: String? = nil,
+        earliestConfirmedAt: String? = nil,
+        latestCapturedAt: String? = nil,
+        source: String? = nil,
+        basis: String? = nil,
+        bookmakerCount: Double? = nil,
+        unit: String? = nil,
+        period: String? = nil
+    ) {
+        self.projectedHomeScore = projectedHomeScore
+        self.projectedAwayScore = projectedAwayScore
+        self.kind = kind
+        self.boundary = boundary
+        self.boundaryAt = boundaryAt
+        self.earliestConfirmedAt = earliestConfirmedAt
+        self.latestCapturedAt = latestCapturedAt
+        self.source = source
+        self.basis = basis
+        self.bookmakerCount = bookmakerCount
+        self.unit = unit
+        self.period = period
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        projectedHomeScore = try? c.decodeIfPresent(Double.self, forKey: .projectedHomeScore)
+        projectedAwayScore = try? c.decodeIfPresent(Double.self, forKey: .projectedAwayScore)
+        kind = try? c.decodeIfPresent(String.self, forKey: .kind)
+        boundary = try? c.decodeIfPresent(String.self, forKey: .boundary)
+        boundaryAt = try? c.decodeIfPresent(String.self, forKey: .boundaryAt)
+        earliestConfirmedAt = try? c.decodeIfPresent(String.self, forKey: .earliestConfirmedAt)
+        latestCapturedAt = try? c.decodeIfPresent(String.self, forKey: .latestCapturedAt)
+        source = try? c.decodeIfPresent(String.self, forKey: .source)
+        basis = try? c.decodeIfPresent(String.self, forKey: .basis)
+        bookmakerCount = try? c.decodeIfPresent(Double.self, forKey: .bookmakerCount)
+        unit = try? c.decodeIfPresent(String.self, forKey: .unit)
+        period = try? c.decodeIfPresent(String.self, forKey: .period)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case projectedHomeScore, projectedAwayScore, kind, boundary, boundaryAt
+        case earliestConfirmedAt, latestCapturedAt, source, basis, bookmakerCount, unit, period
+    }
+}
+
+nonisolated struct SavedWidgetPregameProjection10875: Decodable, Equatable, Sendable {
+    var projectedHomeScore: Double? = nil
+    var projectedAwayScore: Double? = nil
+    var kind: String? = nil
+    var boundary: String? = nil
+    var boundaryAt: String? = nil
+    var earliestCapturedAt: String? = nil
+    var latestCapturedAt: String? = nil
+    var source: String? = nil
+    var basis: String? = nil
+    var bookmakerCount: Double? = nil
+    var unit: String? = nil
+    var period: String? = nil
+
+    init(
+        projectedHomeScore: Double? = nil,
+        projectedAwayScore: Double? = nil,
+        kind: String? = nil,
+        boundary: String? = nil,
+        boundaryAt: String? = nil,
+        earliestCapturedAt: String? = nil,
+        latestCapturedAt: String? = nil,
+        source: String? = nil,
+        basis: String? = nil,
+        bookmakerCount: Double? = nil,
+        unit: String? = nil,
+        period: String? = nil
+    ) {
+        self.projectedHomeScore = projectedHomeScore
+        self.projectedAwayScore = projectedAwayScore
+        self.kind = kind
+        self.boundary = boundary
+        self.boundaryAt = boundaryAt
+        self.earliestCapturedAt = earliestCapturedAt
+        self.latestCapturedAt = latestCapturedAt
+        self.source = source
+        self.basis = basis
+        self.bookmakerCount = bookmakerCount
+        self.unit = unit
+        self.period = period
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        projectedHomeScore = try? c.decodeIfPresent(Double.self, forKey: .projectedHomeScore)
+        projectedAwayScore = try? c.decodeIfPresent(Double.self, forKey: .projectedAwayScore)
+        kind = try? c.decodeIfPresent(String.self, forKey: .kind)
+        boundary = try? c.decodeIfPresent(String.self, forKey: .boundary)
+        boundaryAt = try? c.decodeIfPresent(String.self, forKey: .boundaryAt)
+        earliestCapturedAt = try? c.decodeIfPresent(String.self, forKey: .earliestCapturedAt)
+        latestCapturedAt = try? c.decodeIfPresent(String.self, forKey: .latestCapturedAt)
+        source = try? c.decodeIfPresent(String.self, forKey: .source)
+        basis = try? c.decodeIfPresent(String.self, forKey: .basis)
+        bookmakerCount = try? c.decodeIfPresent(Double.self, forKey: .bookmakerCount)
+        unit = try? c.decodeIfPresent(String.self, forKey: .unit)
+        period = try? c.decodeIfPresent(String.self, forKey: .period)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case projectedHomeScore, projectedAwayScore, kind, boundary, boundaryAt
+        case earliestCapturedAt, latestCapturedAt, source, basis, bookmakerCount, unit, period
+    }
+}
+
+nonisolated struct SavedWidgetESPN10875: Decodable, Equatable, Sendable {
+    var period: String? = nil
+    var gameClock: String? = nil
 }
 
 nonisolated struct SavedWidgetTeamData10875: Decodable, Equatable, Sendable {
     let abbreviation: String?
+    /// #12466 — the team's own colours and crest, the fields the event page
+    /// draws its hero with. A team without them gets its slot's default colour
+    /// and a monogram, never a colour nobody chose.
+    var primaryColor: String? = nil
+    var secondaryColor: String? = nil
+    var logoSmall: String? = nil
 }
 
 nonisolated struct SavedWidgetMarketDetail10875: Decodable, Equatable, Sendable {

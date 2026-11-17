@@ -1702,6 +1702,7 @@ async def _sync_statpal_livescores() -> dict:
     # because another writer moved the row first. Kept apart from the counter
     # above so a quiet confirmation race never reads as a lost score write.
     livescore_confirmation_lost_race = 0
+    tennis_refused: dict[str, int] = {}
     _now = datetime.now(timezone.utc)
 
     # Only poll sports that are likely to have live games right now.
@@ -1723,7 +1724,7 @@ async def _sync_statpal_livescores() -> dict:
             live_sports = {
                 row.key: row.id
                 for row in live_sport_result.all()
-                if row.key in STATPAL_SPORT_MAPPING
+                if row.key in STATPAL_SPORT_MAPPING or row.key.startswith("tennis")
             }
 
             if not live_sports:
@@ -1733,14 +1734,18 @@ async def _sync_statpal_livescores() -> dict:
             seen_statpal_sports: set[str] = set()
 
             for our_key, sport_id in live_sports.items():
-                statpal_sport = STATPAL_SPORT_MAPPING[our_key]
+                statpal_sport = "tennis" if our_key.startswith("tennis") else STATPAL_SPORT_MAPPING[our_key]
 
                 # Skip if we already polled this StatPal sport (e.g., multiple soccer leagues)
                 if statpal_sport in seen_statpal_sports:
                     continue
                 seen_statpal_sports.add(statpal_sport)
 
-                live_fixtures = await service.get_live_scores(statpal_sport)
+                live_fixtures = (
+                    await service.get_live_fixtures("tennis")
+                    if statpal_sport == "tennis"
+                    else await service.get_live_scores(statpal_sport)
+                )
                 # #4571: when THIS board was read — the clock its scores are
                 # stamped with. Not `_now`, which is pass entry: a later sport's
                 # board is read after earlier sports were processed.
@@ -1759,8 +1764,8 @@ async def _sync_statpal_livescores() -> dict:
 
                 # Find our live events for ALL sport keys that map to this StatPal sport
                 matching_sport_keys = [
-                    k for k, v in STATPAL_SPORT_MAPPING.items()
-                    if v == statpal_sport and k in live_sports
+                    k for k in live_sports
+                    if ("tennis" if k.startswith("tennis") else STATPAL_SPORT_MAPPING[k]) == statpal_sport
                 ]
                 sport_ids = [live_sports[k] for k in matching_sport_keys]
 
@@ -1777,6 +1782,32 @@ async def _sync_statpal_livescores() -> dict:
                 sport_anchor_skips = 0
 
                 for event in live_events:
+                    if statpal_sport == "tennis":
+                        from app.utils.live_state_write import write_row_if_unmoved
+                        from app.utils.tennis_live_score import statpal_tennis_values
+
+                        if live_write_is_premature(event.commence_time, _read_at):
+                            premature_live_skipped += 1
+                            continue
+                        values, reason = statpal_tennis_values(event, live_fixtures, _read_at)
+                        if reason:
+                            tennis_refused[reason] = tennis_refused.get(reason, 0) + 1
+                            continue
+                        observed = {
+                            key: getattr(event, key)
+                            for key in ("status", "statpal_fixture_id", "home_team_name", "away_team_name",
+                                        "home_score", "away_score", "box_score_data", "score_observed_at")
+                        }
+                        landed = await write_row_if_unmoved(
+                            session, event, values, observed=observed, what="StatPal tennis score",
+                        )
+                        if landed:
+                            sport_updated += 1
+                        else:
+                            livescore_live_write_lost_race += 1
+                        # Never run the generic name matcher or period/clock
+                        # writer on tennis. Its entire score came from one read.
+                        continue
                     match_key = _fixture_match_key(
                         event.home_team_name or "",
                         event.away_team_name or "",
@@ -2178,6 +2209,7 @@ async def _sync_statpal_livescores() -> dict:
     return {
         "events_updated": total_updated,
         "score_snapshots_created": total_score_snaps,
+        "tennis_refused": tennis_refused,
         "sports_polled": len(details),
         "sports": details,
         "premature_live_skipped": premature_live_skipped,

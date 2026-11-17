@@ -304,8 +304,11 @@ struct NBALadderCardView9483: View {
         let ticks = Self.ticks(card, domain: domain)
         let drawn = card.points.filter { $0.chance != nil || (card.phase == .during && $0.now != nil) }
         let hasDots = !drawn.isEmpty
+        let observedChances = card.points.compactMap(\.chance)
+            + (card.phase == .during ? card.points.compactMap(\.now) : [])
+        let yScale = ChartScaleRule201.manyWayWindow(values: observedChances)
         return Chart {
-            if hasDots {
+            if hasDots && yScale.domain.contains(0.5) {
                 RuleMark(y: .value("Chance", 0.5))
                     .foregroundStyle(Color.secondary.opacity(0.35))
                     .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
@@ -351,17 +354,17 @@ struct NBALadderCardView9483: View {
                 if isSelected && point.chance == nil && (card.phase != .during || point.now == nil) {
                     // A selected line with no number still shows where it is.
                     RuleMark(x: .value("Line", point.x),
-                             yStart: .value("Chance", 0), yEnd: .value("Chance", 0.12))
+                             yStart: .value("Chance", 0), yEnd: .value("Chance", 0.12 * yScale.ceilingFraction))
                         .foregroundStyle(color(point))
                         .lineStyle(StrokeStyle(lineWidth: 2.5))
                 }
             }
         }
         .chartXScale(domain: domain)
-        .chartYScale(domain: 0...1)
+        .chartYScale(domain: yScale.domain)
         // With no chance drawn there is no chance axis to label.
         .chartYAxis {
-            AxisMarks(position: .leading, values: hasDots ? [0, 0.5, 1] : [Double]()) { value in
+            AxisMarks(position: .leading, values: hasDots ? yScale.ticks : [Double]()) { value in
                 AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
                 AxisValueLabel {
                     if let chance = value.as(Double.self) { Text("\(Int((chance * 100).rounded()))%") }

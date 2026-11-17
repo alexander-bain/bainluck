@@ -779,7 +779,8 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
 
         XCTAssertEqual(fake.requestedOffsets, [12, 0], "one pinned ask, then one page 0 — no scan")
         XCTAssertEqual(fake.requestedEditions, ["ed-1", nil], "the replacement is unpinned")
-        XCTAssertEqual(ids(vm), Array(201...212), "the replacement deck lands whole")
+        XCTAssertEqual(ids(vm), Array(1...12) + Array(201...212),
+                       "#11984 Path 2: painted 1...12 keep their seats and replacement 201...212 append")
         XCTAssertFalse(ids(vm).contains(900), "the retired page never appends")
         XCTAssertEqual(vm.acceptedSeatedEdition, "ed-2")
         XCTAssertFalse(vm.awaitingEditionReplacement)
@@ -789,7 +790,7 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
         await vm.loadMoreIfNeeded()
         XCTAssertEqual(fake.requestedOffsets, [12])
         XCTAssertEqual(fake.requestedEditions, ["ed-2"])
-        XCTAssertEqual(ids(vm), Array(201...213))
+        XCTAssertEqual(ids(vm), Array(1...12) + Array(201...213))
     }
 
     /// The replacement is refused: the cards stay, nothing ends the feed, and
@@ -819,7 +820,7 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
         fake.append([.ok(try Self.seatedPage(ids: Array(301...312), offset: 0, edition: "ed-3"))])
         await vm.loadMoreIfNeeded()
         XCTAssertEqual(fake.requestedOffsets, [0])
-        XCTAssertEqual(ids(vm), Array(301...312))
+        XCTAssertEqual(ids(vm), Array(1...12) + Array(301...312))
         XCTAssertEqual(vm.acceptedSeatedEdition, "ed-3")
         XCTAssertFalse(vm.awaitingEditionReplacement)
     }
@@ -923,7 +924,7 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
 
         XCTAssertEqual(fake.requestedOffsets, [12, 0])
         XCTAssertEqual(fake.requestedEditions, ["ed-1", nil])
-        XCTAssertEqual(ids(vm), Array(201...212))
+        XCTAssertEqual(ids(vm), Array(1...12) + Array(201...212))
         XCTAssertEqual(vm.acceptedSeatedEdition, "ed-2")
         XCTAssertFalse(vm.awaitingEditionReplacement)
     }
@@ -1100,19 +1101,25 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
         await vm.load()
         XCTAssertEqual(vm.acceptedSeatedEdition, "d31e2f0e879afa1c")
 
+        let initialPainted = ids(vm)
         await vm.loadMoreIfNeeded()
         XCTAssertEqual(vm.acceptedSeatedEdition, "c3fbea5ff011f662", "the replacement edition")
         XCTAssertFalse(vm.awaitingEditionReplacement)
+        XCTAssertEqual(Array(ids(vm).prefix(initialPainted.count)), initialPainted,
+                       "#11984 Path 2: painted page-0 cards keep their seats on retired-edition reconcile")
         XCTAssertTrue(ids(vm).contains(500), "the replacement deck landed")
-        XCTAssertEqual(Set(ids(vm)), Set(steps[2].response.items.compactMap(\.futures?.id)),
-                       "nothing from the retired page appended")
+        let retiredOnly = Set(steps[1].response.items.compactMap(\.futures?.id))
+            .subtracting(initialPainted)
+            .subtracting(steps[2].response.items.compactMap(\.futures?.id))
+        XCTAssertTrue(Set(ids(vm)).isDisjoint(with: retiredOnly),
+                      "nothing from the retired page appended")
 
         await vm.loadMoreIfNeeded()
         await vm.loadMoreIfNeeded()
         assertRequests(fake, steps)
         XCTAssertFalse(vm.hasMore)
         let served = steps[2...].flatMap { $0.response.items.compactMap(\.futures?.id) }
-        XCTAssertEqual(Set(ids(vm)), Set(served))
+        XCTAssertEqual(Set(ids(vm)), Set(initialPainted).union(served))
         XCTAssertTrue(vm.items.allSatisfy { vm.seatedSection(of: $0) == .opening }, "no heading")
     }
 
@@ -1212,8 +1219,10 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
         XCTAssertEqual(fake.requestedOffsets, [12, 0])
         XCTAssertEqual(fake.requestedEditions, ["ed-1", nil])
         XCTAssertFalse(ids(vm).contains(13), "a page from another boundary never appends")
-        XCTAssertEqual(ids(vm), Array(201...212))
+        XCTAssertEqual(ids(vm), Array(1...12) + Array(201...212),
+                       "#11984 Path 2: painted 1...12 keep their seats and replacement 201...212 append")
         XCTAssertEqual(section(vm, 201), .continuation, "the replacement's own record: E=0, all continuation")
+        assertSectionsContiguous(vm)
     }
 
     /// A page 0 whose boundary cannot be backed — malformed, out of range, or

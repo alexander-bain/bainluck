@@ -193,36 +193,45 @@ d("a draw is not the away team on iOS", () => {
    * other direction.
    */
   it("the hero asks the rule and names the side it keeps", () => {
-    const code = stripComments(detail());
-
-    expect(code).toMatch(
-      /else if let odds = event\.currentOdds,[\s\S]{0,200}DrawPricedWinner\.printablePair\([\s\S]{0,200}sport: event\.sport\)/
+    const headlineCode = stripComments(
+      readFileSync(join(IOS_ROOT, "Utilities/EventSportHeadlines12472.swift"), "utf8")
     );
-    // The withheld arm: a named short pair, then the one number.
-    expect(code).toMatch(
-      // The span inside `shortPair(` was 120 and is now 220: #7163 added a
-      // `sportKey: event.sport` argument (a person's surname keeps its
-      // particles, and the pair rule has to know whether the competitors are
-      // people). Only the call's LENGTH moved — the arm, its order and the
-      // named `Text(named.home)` it ends on are asserted exactly as before.
-      /if let away = pair\.away \{[\s\S]{0,2400}\} else \{[\s\S]{0,900}TeamShortName\.shortPair\([\s\S]{0,220}\)[\s\S]{0,400}Text\(named\.home\)/
+
+    // Direction 199 RE-ANCHORED: `EventSportHeadlines12472.swift` resolves every
+    // sport and state (`resolveBefore`, `resolveDuring`, `resolveAfter`). All
+    // 2-row arms ask `DrawPricedWinner.printablePair`, and when `pair.away == nil`
+    // (a draw-priced sport without 3-way shares), only the named `homeRow`'s cell
+    // receives the probability while `awayRow`'s cell stays `""` (never `1 - home`).
+    const printableCalls =
+      headlineCode.match(
+        /DrawPricedWinner\.printablePair\(\s*away: (?:shown|strictPregame)\.awayProbability,\s*home: (?:shown|strictPregame)\.homeProbability,\s*sport: event\.sport\s*\)/g
+      ) ?? [];
+    expect(printableCalls.length).toBeGreaterThanOrEqual(4);
+    expect(headlineCode).toMatch(
+      /if let away = pair\.away \{[\s\S]{0,600}\} else \{[\s\S]{0,300}homeChance =/
+    );
+    expect(headlineCode).toMatch(
+      /if let away = pair\.away \{[\s\S]{0,700}\} else \{\s*homeNow = EventHeadlineTenths10090\.pair\(home: pair\.home, away: nil\)\.home\s*\}/
     );
   });
 
-  /** Both "Opened …" captions, settled and live, go through the same rule. */
+  /** Both pregame/opening-line captions withhold the same slot. */
   it("both opening-line captions withhold the same slot", () => {
     const code = stripComments(detail());
-    // #8622: the settled caption now prints the resolved pre-match reading
-    // (`pregame`), the live one still the opening line — both through the rule.
-    const opened =
-      code.match(
-        /DrawPricedWinner\.printablePair\(\s*away: (?:event\.openingOdds\?|pregame)\.awayProbability,\s*home: (?:event\.openingOdds\?|pregame)\.homeProbability,\s*sport: event\.sport\)/g
+    const headlineCode = stripComments(
+      readFileSync(join(IOS_ROOT, "Utilities/EventSportHeadlines12472.swift"), "utf8")
+    );
+    // Direction 199 RE-ANCHORED: `EventSportHeadlines12472` (`resolveAfter` and
+    // `buildLivePregameSummary`) gates pregame probabilities through
+    // `DrawPricedWinner.printablePair`, and `EventDetailView.openedText` does the same.
+    const headlinePregame =
+      headlineCode.match(
+        /DrawPricedWinner\.printablePair\(\s*away: strictPregame\.awayProbability,\s*home: strictPregame\.homeProbability,\s*sport: event\.sport\s*\)/g
       ) ?? [];
-    expect(opened).toHaveLength(2);
-    expect(code).toMatch(/printablePair\(\s*away: pregame\.awayProbability/);
+    expect(headlinePregame).toHaveLength(3);
     expect(code).toMatch(/printablePair\(\s*away: event\.openingOdds\?\.awayProbability/);
 
-    // Neither caption reads the opening pair straight off the model any more.
+    // Neither file reads the opening pair straight off the model any more.
     expect(code).not.toMatch(
       /let awayOpeningProbability = event\.openingOdds\?\.awayProbability/
     );
@@ -235,22 +244,15 @@ d("a draw is not the away team on iOS", () => {
    * who to name is the rule's call and the sign survives.
    */
   it("the since-open caption asks the rule who moved", () => {
-    // #3051 MOVED THIS DECISION, AND THE GUARD FOLLOWED IT RATHER THAN BEING
-    // DELETED. The caption used to be built inline in the view, so this test
-    // read the view. It now lives in `Utilities/SinceOpenCaption.swift`,
-    // because the caption stopped printing a delta and started printing the
-    // two LEVELS ("Sabalenka 91% → 95% since open") — the raw-vs-rendered
-    // double rounding this file's sibling defect is made of. #5271's claim is
-    // unchanged and is asserted at its new address: WHO the caption names is
-    // still the rule's call, never the view's, and never `1 − home`.
     const helper = stripComments(sinceOpen());
     const code = stripComments(detail());
+    const headlineCode = stripComments(
+      readFileSync(join(IOS_ROOT, "Utilities/EventSportHeadlines12472.swift"), "utf8")
+    );
 
     expect(helper).toMatch(
       /DrawPricedWinner\.trendSubject\(\s*homeDelta: pair\.home - openingHome, sport: sport\)/
     );
-    // Both pairs — the live one and the opening one — go through the rule, so
-    // the withheld slot is withheld at both ends of the journey.
     expect(helper).toMatch(
       /DrawPricedWinner\.printablePair\(\s*away: away, home: home, sport: sport\)/
     );
@@ -258,13 +260,13 @@ d("a draw is not the away team on iOS", () => {
       /DrawPricedWinner\.printablePair\(\s*away: openingAway, home: openingHome, sport: sport\)/
     );
 
-    // The view delegates and does not keep a second copy of the decision.
-    expect(code).toMatch(/SinceOpenCaption\.caption\(/);
+    // Direction 199 retired the legacy hero's "since open" caption in favour of
+    // the unified single-line pregame summary (`buildLivePregameSummary`), and
+    // neither `EventDetailView` nor `EventSportHeadlines12472` keeps a second copy
+    // of `trendSubject`.
     expect(code).not.toMatch(/DrawPricedWinner\.trendSubject\(/);
+    expect(headlineCode).not.toMatch(/DrawPricedWinner\.trendSubject\(/);
 
-    // Neither the shipped defect nor the `pts`/`pp` repair #5995 withdrew: the
-    // caption names no unit and prints no difference. Asserted on the TEMPLATE
-    // rather than on rendered output, which is `SinceOpenCaptionTests`' job.
     expect(code).not.toMatch(/\\\(subject\) \+\\\(points\)% since open/);
     expect(helper).not.toMatch(/signedPoints/);
     expect(helper).not.toMatch(/\b(pts?|pp)\b since open/);
@@ -494,25 +496,27 @@ d("a draw is not the away team on iOS", () => {
     const code = stripComments(eventCard());
 
     expect(code).toMatch(
-      /private var awayIsWithheld: Bool \{\s*DrawPricedWinner\.sportPricesADraw\(event\.sport\)/
+      /private var currentAwayIsWithheld: Bool \{\s*DrawPricedWinner\.sportPricesADraw\(event\.sport\)\s*&&\s*!CompactGameCard12616\.hasExplicitThreeWayCurrent\(event\)/
     );
-    // Both per-side readers gate the AWAY branch and neither touches home.
     expect(code).toMatch(
-      /side == \.home\s*\?\s*event\.currentOdds\?\.homeProbability\s*:\s*\(awayIsWithheld \? nil : event\.currentOdds\?\.awayProbability\)/
+      /private var prematchAwayIsWithheld: Bool \{\s*DrawPricedWinner\.sportPricesADraw\(event\.sport\)\s*&&\s*!CompactGameCard12616\.hasExplicitThreeWayPrematch\(event\)/
     );
-    // #8622: the settled row reads the resolved pre-match reading, same gate.
+    // Both per-side readers gate the AWAY branch on their OWN reading and neither touches home.
     expect(code).toMatch(
-      /side == \.home\s*\?\s*reading\?\.homeProbability\s*:\s*\(awayIsWithheld \? nil : reading\?\.awayProbability\)/
+      /side == \.home\s*\?\s*event\.currentOdds\?\.homeProbability\s*:\s*\(currentAwayIsWithheld \? nil : event\.currentOdds\?\.awayProbability\)/
     );
-    // Both bars keep the remainder and drop the colour.
-    const neutralised =
-      code.match(/awayIsWithheld\s*\r?\n?\s*\?\s*Color\.secondary\.opacity\(0\.25\)/g) ??
-      code.match(/awayIsWithheld \? Color\.secondary\.opacity\(0\.25\)/g) ??
-      [];
+    // #8622: the settled row reads the resolved pre-match reading, gated on prematch withholding.
+    expect(code).toMatch(
+      /side == \.home\s*\?\s*reading\?\.homeProbability\s*:\s*\(prematchAwayIsWithheld \? nil : reading\?\.awayProbability\)/
+    );
+    // Finished cards draw no probability bar; the active bar keeps the remainder and drops the colour when away is withheld.
+    expect(code).toMatch(/if isFinished \{\s*EmptyView\(\)\s*\}/);
+    expect(code).toMatch(
+      /currentAwayIsWithheld \? Color\.secondary\.opacity\(0\.25\) : awayColor/
+    );
     expect(
       (code.match(/Color\.secondary\.opacity\(0\.25\)/g) ?? []).length
-    ).toBe(2);
-    expect(neutralised.length).toBeGreaterThan(0);
+    ).toBe(1);
   });
 
   /**
@@ -521,21 +525,21 @@ d("a draw is not the away team on iOS", () => {
    * and is not on any other. A `hasContent` that ignored the sport would leave
    * the 8pt dead strip #4094 removed, on soccer only.
    */
-  it("the footer's caption and its emptiness gate move together", () => {
+  it("the live pregame context clause goes through the rule and names its survivor", () => {
     const code = stripComments(eventCard());
 
-    expect(code).toMatch(/sport: String\?\s*\)\s*-> Bool/);
+    expect(code).toMatch(/sport: String\? = nil\s*\)\s*-> Bool/);
+    // #12616 + #11422 + #5363 — `livePregameContext12616` steps aside when the
+    // reason already states the opening, routes two-way soccer through
+    // `DrawPricedWinner.printablePair`, and names the surviving home side.
     expect(code).toMatch(
-      /return awayOpening != nil \|\| DrawPricedWinner\.sportPricesADraw\(sport\)/
-    );
-    // The caption itself goes through the rule and names its survivor.
-    // #11422 — it also steps aside when the reason already states the
-    // opening; that clause sits between the live test and the pair.
-    expect(code).toMatch(
-      /if isLive,\s*!EventCardFooter\.reasonStatesTheOpening\(reason\),\s*let opened = DrawPricedWinner\.printablePair\(/
+      /guard isLive,\s*!isSuspended,\s*!EventCardFooter\.reasonStatesTheOpening\(reason\),\s*let reading = prematch else \{ return nil \}/
     );
     expect(code).toMatch(
-      /Text\("Opened \\\(named\.home\) \\\(formatProbability\(opened\.home\)\)"\)/
+      /guard let opened = DrawPricedWinner\.printablePair\(/
+    );
+    expect(code).toMatch(
+      /visible: "Pregame \\\(named\.home\) \\\(homeText\)"/
     );
   });
 

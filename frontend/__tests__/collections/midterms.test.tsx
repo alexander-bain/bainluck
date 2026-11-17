@@ -20,7 +20,7 @@ function fixture() {
 
 beforeEach(() => forgetAcceptedCollections());
 
-test("the phone page shows the curated sections with both names, whole numbers and attribution", () => {
+test("the phone page shows the curated sections, names and whole numbers without venue chips", () => {
   const raw = fixture();
   const hub = parseCollection(raw, raw.slug);
   settleCollectionRead(hub.slug, { hub });
@@ -33,7 +33,7 @@ test("the phone page shows the curated sections with both names, whole numbers a
   expect(html).toContain("Graham Platner");
   expect(html).toContain("59%");
   expect(html).toContain("41%");
-  expect(html).toContain("Kalshi");
+  expect(html).not.toMatch(/Kalshi|Polymarket|>Both</);
   expect(html.replace(/<[^>]*>/g, "")).not.toMatch(/\d\.\d+%/);
   expect(html).not.toMatch(/\bquestions?\b/i);
   expect(collectionRefreshInterval(hub)).toBe(30000);

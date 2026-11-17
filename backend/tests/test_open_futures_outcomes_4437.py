@@ -139,6 +139,41 @@ def test_the_search_arm_reads_the_copy_only_when_current(state):
     assert "open_futures_outcomes" in on and "futures_outcomes.id > 800" in on
 
 
+def test_split_search_uses_the_maintained_copy_and_keeps_the_recent_overlay(state):
+    from app.routes.events import _split_futures_arms
+
+    state["state"] = _state()
+    arms = _split_futures_arms([("arizona", None), ("cardinals", None)])
+    for arm in arms:
+        sql = _sql(select(FuturesMarket.id).where(arm))
+        assert "open_futures_outcomes" in sql
+        assert "futures_outcomes.id > 800" in sql
+        assert "UNION ALL" in sql
+        assert "ANY (array(" in sql
+        assert " ~* " in sql, "a split term must remain a whole word"
+
+
+@pytest.mark.parametrize("mode", ["absent", "stale", "incomplete", "disabled"])
+def test_split_search_keeps_the_original_correlated_lookup_without_a_current_copy(
+    state, monkeypatch, mode,
+):
+    from app.routes.events import _split_futures_arms
+
+    if mode != "absent":
+        state["state"] = _state(
+            pass_at=time.time() - ofo.STALE_AFTER_SECONDS - 1
+            if mode == "stale" else time.time(),
+            cycle_complete=mode != "incomplete",
+        )
+    if mode == "disabled":
+        monkeypatch.setenv("OPEN_FUTURES_OUTCOMES_READ", "0")
+    for arm in _split_futures_arms([("arizona", None), ("cardinals", None)]):
+        sql = _sql(select(FuturesMarket.id).where(arm))
+        assert "open_futures_outcomes" not in sql
+        assert "EXISTS (SELECT futures_outcomes.id" in sql
+        assert "futures_outcomes.market_id = futures_markets.id" in sql
+
+
 def test_the_headline_lane_narrows_by_the_copy_and_still_judges_real_rows(state):
     from app.routes.events import _headline_contender_outcome_clause
 

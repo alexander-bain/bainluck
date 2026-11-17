@@ -850,7 +850,7 @@ class TestGameMarketsPopulatedShape:
             "_market_id": 202,
             "contributor_outcome_ids": [302],
             "source_mark": {
-                "state": "blend",
+                "state": "single",
                 "sources": [{
                     "key": "kalshi",
                     "name": "Kalshi",

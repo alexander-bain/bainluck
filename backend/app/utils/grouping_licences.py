@@ -707,7 +707,7 @@ def promote_licensed_proposal_to_definition(
         ),
         "footer": str(
             proposal.get("footer")
-            or "Combined win probability · next 3 games in schedule order"
+            or "Next 3 games in schedule order"
         ),
     }
     if proposal.get("destination_href"):
@@ -864,7 +864,7 @@ def build_lakers_next_3_games_proposal() -> dict[str, Any]:
         "category": "nba",
         "tag": "NBA",
         "section_title": "Next 3 games",
-        "footer": "Combined win probability · next 3 games in schedule order",
+        "footer": "Next 3 games in schedule order",
         "destination_href": "/sport/basketball/nba/team/los-angeles-lakers",
         "rule": {
             "producer": "subject_sequence",

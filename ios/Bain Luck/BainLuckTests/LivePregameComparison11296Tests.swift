@@ -647,24 +647,22 @@ final class LivePregameComparison11296Tests: XCTestCase {
 
     func testTheGenericHeroPrintsTheLiveForecastAndGameInfoStopsRepeatingIt() throws {
         let page = try source("Views/EventDetailView.swift")
-        let mount = "ifletliveForecast=genericLiveForecast11296(event,hasScore:hasScore){LiveHeadlineForecast11296(forecast:liveForecast,awayName:event.awayTeam,homeName:event.homeTeam)}"
-        XCTAssertEqual(occurrences("LiveHeadlineForecast11296(", in: page), 1, "drawn once")
-        XCTAssertEqual(occurrences(mount, in: page), 1, "each name beside its own number")
-        // In the hero, after its arms (the final line's slot), before its padding.
+        // #12771 — `heroSection` mounts the single unified `EventSportHeadlineCard12472`
+        // for every sport and state, passing `revealForecast: revealForecast11296` for
+        // the info popover while `gameInfoSuppressesProjection199` prevents Game Info
+        // from repeating a projection the headline already carries.
         let hero = try XCTUnwrap(page.range(of: "privatefuncheroSection(_event:EventDetail)->someView{"))
-        let arms = try XCTUnwrap(page.range(of: "ifletpaired=nflPairedHeadline(event,hasScore:hasScore){", range: hero.upperBound..<page.endIndex))
-        let final = try XCTUnwrap(page.range(of: "ifletfinalForecast=Self.finalForecast11296(event){"))
-        let line = try XCTUnwrap(page.range(of: mount))
-        let heroEnd = try XCTUnwrap(page.range(of: ".padding(approvedPair?.horizontal:.all)", range: hero.upperBound..<page.endIndex))
-        XCTAssertTrue(arms.upperBound < final.lowerBound && final.upperBound < line.lowerBound && line.upperBound < heroEnd.lowerBound,
-                      "the live forecast left the hero's shared slot under the arms")
+        let resolve = try XCTUnwrap(page.range(of: "letsportHeadline12472=EventSportHeadlines12472.resolve(", range: hero.upperBound..<page.endIndex))
+        let card = try XCTUnwrap(page.range(of: "EventSportHeadlineCard12472(model:sportHeadline12472,", range: resolve.upperBound..<page.endIndex))
+        let revealArg = try XCTUnwrap(page.range(of: "revealForecast:revealForecast11296)", range: card.upperBound..<page.endIndex))
+        XCTAssertTrue(resolve.upperBound < card.lowerBound && card.upperBound < revealArg.lowerBound)
         // Only where the paired headline does not print its own.
         let body = try XCTUnwrap(page.range(of: "privatefuncgenericLiveForecast11296(_event:EventDetail,hasScore:Bool)->LivePregameComparison11296.Headline?{"))
         XCTAssertTrue(page[body.upperBound...].hasPrefix(
             "guardnflPairedHeadline(event,hasScore:hasScore)==nilelse{returnnil}returnliveForecast11296(event,hasScore:hasScore)}"))
-        // Game Info drops its copy exactly when the hero printed it, by the same call.
+        // Game Info drops its copy whenever the headline printed it.
         XCTAssertTrue(page.contains("letheroLiveForecast=genericLiveForecast11296(event,hasScore:gameInfoHasScore)!=nil"))
-        XCTAssertTrue(page.contains("nflHeadline||heroLiveForecast?nil:projectionText(event,hasScore:gameInfoHasScore).map{(\"chart.line.uptrend.xyaxis\",$0)}"))
+        XCTAssertTrue(page.contains("EventDetailView.gameInfoSuppressesProjection199(headlineKind12472:headlineKind12472,sport:event.sport,nflHeadline:nflHeadline,heroLiveForecast:heroLiveForecast)?nil:projectionText(event,hasScore:gameInfoHasScore).map{(\"chart.line.uptrend.xyaxis\",$0)}"))
     }
 
     func testTheGenericHeadlineLeadsWithTheCurrentLabelAndNamesEachTeam() throws {
@@ -705,7 +703,7 @@ final class LivePregameComparison11296Tests: XCTestCase {
         // covered (a link pushed another game) or changes game. #10090 (Alex 67)
         // adds one more: a tap on the EKG opens this same popover. It also hands
         // that state, read-only, to the page's `PageDetailsCloser`.
-        XCTAssertEqual(occurrences("showProbabilityDetails", in: page), 7, "the one existing open/close state")
+        XCTAssertEqual(occurrences("showProbabilityDetails", in: page), 9, "the one existing open/close state")
         // The same decision, on the same headline row, both hosts mount from.
         let reveal = try XCTUnwrap(page.range(of: "privatevarrevealForecast11296:LivePregameComparison11296.Headline?{"))
         XCTAssertTrue(page[reveal.upperBound...].hasPrefix(

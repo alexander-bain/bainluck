@@ -164,7 +164,7 @@ async def _send_big_move_alerts() -> dict:
             # fires on the number it prints, so the dated move must clear the
             # same bar (either sign). No dated move, nothing to alert on.
             change = _served_change(row)
-            if row[6] == DATAGOLF_MARKET_SOURCE and (
+            if row[6] in (DATAGOLF_MARKET_SOURCE, "polymarket") and (
                 change is None or abs(float(change)) < BIG_MOVE_THRESHOLD
             ):
                 continue

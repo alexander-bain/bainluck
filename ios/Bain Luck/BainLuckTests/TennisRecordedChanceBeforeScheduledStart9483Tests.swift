@@ -242,14 +242,16 @@ final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
                                                          in: try consensusHistory(rows: rows.map { ($0.0, $0.1, $0.2) })))
     }
 
-    // MARK: - Gaps are never filled
+    // MARK: - Decision 164 (#12639): bridged straight segment snaps to real readings
 
     func testALiftInsideABreakHoldsTheBreakNotANeighbour() throws {
         let s = try series(scheduledStart: start)
-        XCTAssertEqual(s.segments.count, 2, "fixture: the chart's own rule breaks the line once")
-        XCTAssertEqual(s.inspect(at: at(100)), .gap(at(100)))
+        XCTAssertEqual(s.segments.count, 1, "Decision 164 (#12639): one connected line across the 160m stretch")
+        // Scrubbing inside the bridged stretch snaps to the nearest recorded reading, never inventing an interpolated timestamp.
+        XCTAssertEqual(reading(s.resolve(s.inspect(at: at(80))))?.date, at(20))
+        XCTAssertEqual(reading(s.resolve(s.inspect(at: at(120))))?.date, at(180))
         XCTAssertEqual(s.resolve(.gap(at(100))), .gap(at(100)))
-        // CONTROL — inside a run the nearest observation in that run is held.
+        // CONTROL — inside a dense stretch the nearest observation is held.
         XCTAssertEqual(reading(s.resolve(s.inspect(at: at(13))))?.date, at(10))
         XCTAssertEqual(reading(s.resolve(s.inspect(at: at(186))))?.date, at(190))
         // Past either end the scrub reads that end, as `scrubbedDate` clamps.

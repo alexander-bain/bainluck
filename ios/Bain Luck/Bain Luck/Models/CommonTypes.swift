@@ -152,6 +152,9 @@ nonisolated struct CurrentOdds: Decodable, Sendable {
     /// `var` with a default only so the memberwise initializer keeps every
     /// existing call shape; the synthesized decoder still reads the key.
     var liveProjection: LiveProjection? = nil
+    /// #12616 — optional draw probability when a three-way match-winner reading
+    /// carries an explicit draw share (never derived from `1 - home`).
+    var drawProbability: Double? = nil
 }
 
 /// `current_odds.live_projection`, field for field (#2920). The marked
@@ -274,6 +277,9 @@ nonisolated struct PrematchOdds: Decodable, Sendable {
     let awayRenderedPercent: Int?
     /// The rung: `kalshi`, `polymarket` or `books`.
     let source: String?
+    /// #12616 — optional draw probability when a three-way pre-match reading
+    /// carries an explicit draw share (never derived from `1 - home`).
+    var drawProbability: Double? = nil
 }
 
 // MARK: - Excitement Index

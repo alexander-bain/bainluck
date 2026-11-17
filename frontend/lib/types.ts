@@ -1624,6 +1624,8 @@ export interface SearchTeam {
   logo: string | null;
   record: string | null;
   sport_key: string | null;
+  /** Server-owned whole-name, nickname or curated misspelling match. */
+  query_names_team?: boolean;
 }
 
 /** #993 L2-41: a backend-composed topical family of related futures markets.
@@ -1649,7 +1651,13 @@ export interface SearchEventConcept {
   market_id: number;
 }
 
+export interface SearchGameSet {
+  title: string;
+  selector: { team_id: number | null; count: number; state: "scheduled" };
+}
+
 export interface SearchResponse {
+  game_set?: SearchGameSet;
   results: Event[];
   futures: FuturesMarket[];
   futures_families?: FuturesFamily[]; // #993: composed topical families (additive)
@@ -1893,6 +1901,8 @@ export interface FeedEventData {
 export interface FeedFuturesOutcome {
   id: number;
   name: string;
+  /** Verified Wikipedia identity, when the collection register supplies one. */
+  image_title?: string | null;
   probability: number | null;
   rank: number | null;
   movement: number | null;
@@ -1964,6 +1974,7 @@ export interface FeedFuturesData {
    */
   image_width?: number | null;
   image_height?: number | null;
+  image_presentation?: "portrait" | "logo" | "cover" | "photo" | "backdrop" | null;
   hook_description?: string | null;
   temporal_badge?: "Live" | "Closing Soon" | "New" | null;
   /** #490 — confidence signal (1-3 bars): how much we trust the probability. */
@@ -2269,6 +2280,10 @@ export interface FeedBundleData {
   roundup?: FeedRoundupContract | null;
   /** Producer-verified cumulative deadline-family payload (#9878 / #11040). */
   deadline_family?: FeedDeadlineFamilyContract | null;
+  /** Resolved Discover bundle hero image URL (#12825). */
+  image_url?: string | null;
+  image_presentation?: "portrait" | "logo" | "cover" | "photo" | "backdrop" | null;
+  image_credit?: string | null;
 }
 
 // #10357 — a round-up card ("NFL division front-runners", "The closest games
@@ -2317,6 +2332,7 @@ export interface FeedRoundupContract {
   order?: string | null;
   presentation?: string | null;
   destination_href?: string | null;
+  paired_metric_set?: import("@/lib/discover/visualForms").PairedMetricSet | null;
   rows: FeedRoundupRow[];
 }
 
@@ -3667,7 +3683,9 @@ export interface EventTournamentResponse {
 }
 /** #12581: the server's selected contributors; clients do not reconstruct them. */
 export interface SourceMark {
-  state: "blend" | "settled" | "none";
+  state: "single" | "blend" | "settled" | "none";
+  /** The actual server calculation, without inferred weights or depth. */
+  method?: string;
   sources: {
     key: string;
     name: string;

@@ -33,6 +33,25 @@ struct GolfTournamentView: View {
         _vm = StateObject(wrappedValue: GolfTournamentViewModel(slug: slug))
     }
 
+    #if DEBUG
+    init(
+        slug: String,
+        displayName: String,
+        loadedPresentationForTest: GolfTournamentPresentation,
+        atlasDataForTest: EventAtlasGolfTournament11666.TournamentAtlasData = .init()
+    ) {
+        self.slug = slug
+        self.displayName = displayName
+        _vm = StateObject(
+            wrappedValue: GolfTournamentViewModel(
+                slug: slug,
+                loadedPresentation: loadedPresentationForTest,
+                atlasData: atlasDataForTest
+            )
+        )
+    }
+    #endif
+
     var body: some View {
         Group {
             switch vm.state {
@@ -60,9 +79,8 @@ struct GolfTournamentView: View {
     private func loaded(_ presentation: GolfTournamentPresentation) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                header(presentation)
-
                 if presentation.field.isEmpty {
+                    header(presentation)
                     // The tournament is real and the field is not published yet
                     // — a normal state for an event days out, and it is said in
                     // one short line rather than explained (notice 34).
@@ -73,15 +91,21 @@ struct GolfTournamentView: View {
                         .padding(.top, 8)
                 } else if ReleaseSurfaces.isEventPageAtlasEnabled() {
                     atlasSection(presentation)
+                        .padding(.top, 8)
                 } else {
+                    header(presentation)
                     fieldSection(presentation)
                 }
             }
             .padding(.horizontal)
             .padding(.bottom, 40)
+            .frame(maxWidth: Self.readableDetailMaxWidth)
+            .frame(maxWidth: .infinity)
         }
         .refreshable { await vm.load() }
     }
+
+    static let readableDetailMaxWidth: CGFloat = 720
 
     @inline(never)
     private func atlasSection(_ presentation: GolfTournamentPresentation) -> some View {

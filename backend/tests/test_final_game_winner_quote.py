@@ -69,7 +69,7 @@ def test_final_game_keeps_separate_open_quote_and_does_not_mutate_inputs():
     ]
     assert not {"home_score", "away_score", "winner", "win_probability"} & body.keys()
     assert body["closed_winner_market_ids"] == []
-    assert [r["source_mark"]["state"] for r in quote["outcomes"]] == ["blend", "blend"]
+    assert [r["source_mark"]["state"] for r in quote["outcomes"]] == ["single", "single"]
     assert [r["source_mark"]["sources"][0]["probability"] for r in quote["outcomes"]] == [0.99, 0.01]
     assert all(r["source_mark"]["sources"][0]["key"] == "kalshi" for r in quote["outcomes"])
 

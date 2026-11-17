@@ -76,7 +76,15 @@ final class TeamShortNameTwoWordNickname5634Tests: XCTestCase {
 
     func testEveryProductionNameKeepsItsLastTwoWords() {
         for (sport, name) in Self.productionNames {
-            XCTAssertEqual(TeamShortName.short(name, sportKey: sport), Self.lastTwo(name), "\(sport) · \(name)")
+            if TeamShortName.isCollegeSport(sportKey: sport) {
+                XCTAssertEqual(
+                    TeamShortName.short(name, sportKey: sport),
+                    TeamShortName.collegeSchoolName(name),
+                    "\(sport) · \(name)"
+                )
+            } else {
+                XCTAssertEqual(TeamShortName.short(name, sportKey: sport), Self.lastTwo(name), "\(sport) · \(name)")
+            }
             // A caller that does not know its sport gets the same label: the
             // gate only ever CLOSES the list, for a person's sport.
             XCTAssertEqual(TeamShortName.short(name), Self.lastTwo(name), name)

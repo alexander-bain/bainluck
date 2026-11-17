@@ -1,0 +1,1031 @@
+{
+ "schema": "reader-walk-queries/2",
+ "issue": "https://github.com/alexander-bain/bainluck/issues/12528",
+ "reading": "each check names the object the reader asked for; 'example' is a canned answer row that must pass; 'valid_until' is the last day a calendar-bound check means what it says",
+ "queries": [
+  {
+   "class": "entity",
+   "q": "celtics",
+   "expect": "the Boston Celtics, first among teams",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "where": {
+     "slug": [
+      "boston-celtics"
+     ]
+    },
+    "rank_in_list_max": 1
+   },
+   "example": {
+    "kind": "teams",
+    "item": {
+     "slug": "boston-celtics",
+     "name": "Boston Celtics"
+    }
+   }
+  },
+  {
+   "class": "entity",
+   "q": "patriots",
+   "expect": "the New England Patriots, first among teams",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "where": {
+     "slug": [
+      "new-england-patriots"
+     ]
+    },
+    "rank_in_list_max": 1
+   },
+   "example": {
+    "kind": "teams",
+    "item": {
+     "slug": "new-england-patriots",
+     "name": "New England Patriots"
+    }
+   }
+  },
+  {
+   "class": "entity",
+   "q": "lakers",
+   "expect": "the Los Angeles Lakers, first among teams",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "where": {
+     "slug": [
+      "los-angeles-lakers"
+     ]
+    },
+    "rank_in_list_max": 1
+   },
+   "example": {
+    "kind": "teams",
+    "item": {
+     "slug": "los-angeles-lakers",
+     "name": "Los Angeles Lakers"
+    }
+   }
+  },
+  {
+   "class": "entity",
+   "q": "chiefs",
+   "expect": "the Kansas City Chiefs, first among teams",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "where": {
+     "slug": [
+      "kansas-city-chiefs"
+     ]
+    },
+    "rank_in_list_max": 1
+   },
+   "example": {
+    "kind": "teams",
+    "item": {
+     "slug": "kansas-city-chiefs",
+     "name": "Kansas City Chiefs"
+    }
+   }
+  },
+  {
+   "class": "entity",
+   "q": "bruins",
+   "expect": "the Boston Bruins, first among teams",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "where": {
+     "slug": [
+      "boston-bruins"
+     ]
+    },
+    "rank_in_list_max": 1
+   },
+   "example": {
+    "kind": "teams",
+    "item": {
+     "slug": "boston-bruins",
+     "name": "Boston Bruins"
+    }
+   }
+  },
+  {
+   "class": "alias",
+   "q": "pats",
+   "expect": "the New England Patriots",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "where": {
+     "slug": [
+      "new-england-patriots"
+     ]
+    },
+    "rank_in_list_max": 3
+   },
+   "example": {
+    "kind": "teams",
+    "item": {
+     "slug": "new-england-patriots",
+     "name": "New England Patriots"
+    }
+   }
+  },
+  {
+   "class": "alias",
+   "q": "patroits",
+   "expect": "the New England Patriots, despite the typo",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "where": {
+     "slug": [
+      "new-england-patriots"
+     ]
+    },
+    "rank_in_list_max": 3
+   },
+   "example": {
+    "kind": "teams",
+    "item": {
+     "slug": "new-england-patriots",
+     "name": "New England Patriots"
+    }
+   }
+  },
+  {
+   "class": "alias",
+   "q": "niners",
+   "expect": "the San Francisco 49ers",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "where": {
+     "slug": [
+      "san-francisco-49ers"
+     ]
+    },
+    "rank_in_list_max": 3
+   },
+   "example": {
+    "kind": "teams",
+    "item": {
+     "slug": "san-francisco-49ers",
+     "name": "San Francisco 49ers"
+    }
+   }
+  },
+  {
+   "class": "alias",
+   "q": "celts",
+   "expect": "the Boston Celtics",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "where": {
+     "slug": [
+      "boston-celtics"
+     ]
+    },
+    "rank_in_list_max": 3
+   },
+   "example": {
+    "kind": "teams",
+    "item": {
+     "slug": "boston-celtics",
+     "name": "Boston Celtics"
+    }
+   }
+  },
+  {
+   "class": "alias",
+   "q": "man u",
+   "expect": "Manchester United",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "where": {
+     "slug": [
+      "manchester-united"
+     ]
+    },
+    "rank_in_list_max": 3
+   },
+   "example": {
+    "kind": "teams",
+    "item": {
+     "slug": "manchester-united",
+     "name": "Manchester United"
+    }
+   }
+  },
+  {
+   "class": "alias",
+   "q": "KC chiefs",
+   "expect": "the Kansas City Chiefs",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "where": {
+     "slug": [
+      "kansas-city-chiefs"
+     ]
+    },
+    "rank_in_list_max": 3
+   },
+   "example": {
+    "kind": "teams",
+    "item": {
+     "slug": "kansas-city-chiefs",
+     "name": "Kansas City Chiefs"
+    }
+   }
+  },
+  {
+   "class": "entity+market",
+   "q": "superbowl patriots",
+   "expect": "the Super Bowl winner market, showing the Patriots' chance",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "where": {
+     "id": [
+      86832,
+      129037,
+      40533
+     ]
+    },
+    "outcome_has_any": [
+     "patriots"
+    ]
+   },
+   "example": {
+    "kind": "futures",
+    "item": {
+     "id": 86832,
+     "name": "NFL Super Bowl Winner",
+     "top_outcomes": [
+      {
+       "name": "New England Patriots"
+      },
+      {
+       "name": "Buffalo Bills"
+      }
+     ]
+    }
+   },
+   "refresh": "each season: the market ids change"
+  },
+  {
+   "class": "entity+market",
+   "q": "super bowl patriots",
+   "expect": "the Super Bowl winner market, showing the Patriots' chance",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "where": {
+     "id": [
+      86832,
+      129037,
+      40533
+     ]
+    },
+    "outcome_has_any": [
+     "patriots"
+    ]
+   },
+   "example": {
+    "kind": "futures",
+    "item": {
+     "id": 86832,
+     "name": "NFL Super Bowl Winner",
+     "top_outcomes": [
+      {
+       "name": "New England Patriots"
+      },
+      {
+       "name": "Buffalo Bills"
+      }
+     ]
+    }
+   },
+   "refresh": "each season: the market ids change"
+  },
+  {
+   "class": "entity+market",
+   "q": "patriots super bowl",
+   "expect": "the Super Bowl winner market, showing the Patriots' chance",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "where": {
+     "id": [
+      86832,
+      129037,
+      40533
+     ]
+    },
+    "outcome_has_any": [
+     "patriots"
+    ]
+   },
+   "example": {
+    "kind": "futures",
+    "item": {
+     "id": 86832,
+     "name": "NFL Super Bowl Winner",
+     "top_outcomes": [
+      {
+       "name": "New England Patriots"
+      },
+      {
+       "name": "Buffalo Bills"
+      }
+     ]
+    }
+   },
+   "refresh": "each season: the market ids change"
+  },
+  {
+   "class": "entity+market",
+   "q": "super bowl",
+   "expect": "the Super Bowl winner market",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "where": {
+     "id": [
+      86832,
+      129037,
+      40533
+     ]
+    },
+    "rank_in_list_max": 5
+   },
+   "example": {
+    "kind": "futures",
+    "item": {
+     "id": 86832,
+     "name": "NFL Super Bowl Winner",
+     "top_outcomes": [
+      {
+       "name": "New England Patriots"
+      },
+      {
+       "name": "Buffalo Bills"
+      }
+     ]
+    }
+   },
+   "refresh": "each season: the market ids change"
+  },
+  {
+   "class": "entity+market",
+   "q": "who will win the super bowl",
+   "expect": "the Super Bowl winner market",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "where": {
+     "id": [
+      86832,
+      129037,
+      40533
+     ]
+    },
+    "rank_in_list_max": 5
+   },
+   "example": {
+    "kind": "futures",
+    "item": {
+     "id": 86832,
+     "name": "NFL Super Bowl Winner",
+     "top_outcomes": [
+      {
+       "name": "New England Patriots"
+      },
+      {
+       "name": "Buffalo Bills"
+      }
+     ]
+    }
+   },
+   "refresh": "each season: the market ids change"
+  },
+  {
+   "class": "entity+market",
+   "q": "celtics championship",
+   "expect": "the NBA champion market",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "where": {
+     "id": [
+      20569230,
+      52755651
+     ]
+    }
+   },
+   "example": {
+    "kind": "futures",
+    "item": {
+     "id": 20569230,
+     "name": "NBA: 2027 Champion",
+     "top_outcomes": [
+      {
+       "name": "New England Patriots"
+      },
+      {
+       "name": "Buffalo Bills"
+      }
+     ]
+    }
+   },
+   "refresh": "each season: the market ids change"
+  },
+  {
+   "class": "entity+market",
+   "q": "nba champion",
+   "expect": "the NBA champion market",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "where": {
+     "id": [
+      20569230,
+      52755651
+     ]
+    },
+    "rank_in_list_max": 5
+   },
+   "example": {
+    "kind": "futures",
+    "item": {
+     "id": 20569230,
+     "name": "NBA: 2027 Champion",
+     "top_outcomes": [
+      {
+       "name": "New England Patriots"
+      },
+      {
+       "name": "Buffalo Bills"
+      }
+     ]
+    }
+   },
+   "refresh": "each season: the market ids change"
+  },
+  {
+   "class": "entity+market",
+   "q": "best picture",
+   "expect": "the Oscars Best Picture market",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "where": {
+     "id": [
+      6173044
+     ]
+    },
+    "rank_in_list_max": 5
+   },
+   "example": {
+    "kind": "futures",
+    "item": {
+     "id": 6173044,
+     "name": "Oscar Winner: Best Picture",
+     "top_outcomes": [
+      {
+       "name": "New England Patriots"
+      },
+      {
+       "name": "Buffalo Bills"
+      }
+     ]
+    }
+   },
+   "refresh": "each season: the market ids change"
+  },
+  {
+   "class": "entity+market",
+   "q": "oscars",
+   "expect": "the Oscars, as an event or a collection",
+   "check": {
+    "any_of": [
+     {
+      "kinds": [
+       "event_concepts"
+      ],
+      "where": {
+       "key": [
+        "event:awards:oscars"
+       ]
+      }
+     },
+     {
+      "kinds": [
+       "collections"
+      ],
+      "where": {
+       "slug": [
+        "oscars-*"
+       ]
+      }
+     }
+    ]
+   },
+   "example": {
+    "kind": "event_concepts",
+    "item": {
+     "key": "event:awards:oscars",
+     "name": "The Oscars"
+    }
+   }
+  },
+  {
+   "class": "set",
+   "q": "celtics next three games",
+   "expect": "the Celtics' next three games, as one set",
+   "check": {
+    "kinds": [
+     "collections"
+    ],
+    "where": {
+     "slug": [
+      "celtics-next-3-games"
+     ]
+    }
+   },
+   "example": {
+    "kind": "collections",
+    "item": {
+     "slug": "celtics-next-3-games",
+     "name": "Boston Celtics: next 3 games"
+    }
+   }
+  },
+  {
+   "class": "set",
+   "q": "celtics next 3 games",
+   "expect": "the Celtics' next three games, as one set",
+   "check": {
+    "kinds": [
+     "collections"
+    ],
+    "where": {
+     "slug": [
+      "celtics-next-3-games"
+     ]
+    }
+   },
+   "example": {
+    "kind": "collections",
+    "item": {
+     "slug": "celtics-next-3-games",
+     "name": "Boston Celtics: next 3 games"
+    }
+   }
+  },
+  {
+   "class": "set",
+   "q": "close games tonight",
+   "expect": "tonight's closest games, as one set",
+   "check": {
+    "kinds": [
+     "collections"
+    ],
+    "where": {
+     "slug": [
+      "roundup-closest-games-tonight"
+     ]
+    }
+   },
+   "example": {
+    "kind": "collections",
+    "item": {
+     "slug": "roundup-closest-games-tonight",
+     "name": "The closest games tonight"
+    }
+   }
+  },
+  {
+   "class": "set",
+   "q": "games tonight",
+   "expect": "games starting tonight",
+   "check": {
+    "kinds": [
+     "results"
+    ],
+    "starts_within_hours": 18
+   },
+   "example": {
+    "kind": "results",
+    "item": {
+     "sport": "basketball_nba",
+     "home_team": "Philadelphia 76ers",
+     "away_team": "Boston Celtics"
+    },
+    "starts_in_hours": 3
+   }
+  },
+  {
+   "class": "set",
+   "q": "nba tonight",
+   "expect": "NBA games starting tonight",
+   "check": {
+    "kinds": [
+     "results"
+    ],
+    "where": {
+     "sport": [
+      "basketball_nba"
+     ]
+    },
+    "starts_within_hours": 18
+   },
+   "example": {
+    "kind": "results",
+    "item": {
+     "sport": "basketball_nba",
+     "home_team": "Philadelphia 76ers",
+     "away_team": "Boston Celtics"
+    },
+    "starts_in_hours": 3
+   }
+  },
+  {
+   "class": "set",
+   "q": "nfl week 10",
+   "expect": "the NFL Week 10 page",
+   "check": {
+    "kinds": [
+     "collections"
+    ],
+    "where": {
+     "slug": [
+      "nfl-2026-week-10"
+     ]
+    }
+   },
+   "example": {
+    "kind": "collections",
+    "item": {
+     "slug": "nfl-2026-week-10",
+     "name": "NFL 2026 · Week 10"
+    }
+   },
+   "refresh": "weekly: the week number moves",
+   "valid_until": "2026-11-16"
+  },
+  {
+   "class": "set",
+   "q": "nfl this week",
+   "expect": "this week's NFL page (Week 10), first among collections",
+   "check": {
+    "kinds": [
+     "collections"
+    ],
+    "where": {
+     "slug": [
+      "nfl-2026-week-10"
+     ]
+    },
+    "rank_in_list_max": 1
+   },
+   "example": {
+    "kind": "collections",
+    "item": {
+     "slug": "nfl-2026-week-10",
+     "name": "NFL 2026 · Week 10"
+    }
+   },
+   "refresh": "weekly: the week number moves",
+   "valid_until": "2026-11-16"
+  },
+  {
+   "class": "set",
+   "q": "awards season",
+   "expect": "an awards collection (the Oscars or the Golden Globes)",
+   "check": {
+    "any_of": [
+     {
+      "kinds": [
+       "collections"
+      ],
+      "where": {
+       "slug": [
+        "oscars-*"
+       ]
+      }
+     },
+     {
+      "kinds": [
+       "collections"
+      ],
+      "where": {
+       "slug": [
+        "roundup-awards-*",
+        "roundup-golden-globes-*"
+       ]
+      }
+     }
+    ]
+   },
+   "example": {
+    "kind": "collections",
+    "item": {
+     "slug": "oscars-2027",
+     "name": "Oscars 2027"
+    }
+   },
+   "note": "No awards-season page exists yet. Until one does, an awards collection is the right answer."
+  },
+  {
+   "class": "other topics",
+   "q": "will the fed cut rates",
+   "expect": "the Fed's next rate decision",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "where": {
+     "id": [
+      57574250
+     ]
+    }
+   },
+   "example": {
+    "kind": "futures",
+    "item": {
+     "id": 57574250,
+     "name": "Fed Decision in December?",
+     "top_outcomes": [
+      {
+       "name": "New England Patriots"
+      },
+      {
+       "name": "Buffalo Bills"
+      }
+     ]
+    }
+   },
+   "refresh": "after each Fed meeting"
+  },
+  {
+   "class": "other topics",
+   "q": "fed december",
+   "expect": "a market on the Fed's December meeting",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "where": {
+     "id": [
+      57574250,
+      57574208,
+      61484907
+     ]
+    },
+    "rank_in_list_max": 5
+   },
+   "example": {
+    "kind": "futures",
+    "item": {
+     "id": 57574250,
+     "name": "Fed Decision in December?",
+     "top_outcomes": [
+      {
+       "name": "New England Patriots"
+      },
+      {
+       "name": "Buffalo Bills"
+      }
+     ]
+    }
+   },
+   "refresh": "after each Fed meeting"
+  },
+  {
+   "class": "other topics",
+   "q": "gemini",
+   "expect": "a market about a Gemini model",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "where": {
+     "id": [
+      22737639,
+      56916351,
+      52755940,
+      57566334
+     ]
+    }
+   },
+   "example": {
+    "kind": "futures",
+    "item": {
+     "id": 22737639,
+     "name": "Next Google Gemini Pro Model: Arena Debut?"
+    }
+   },
+   "refresh": "when these markets settle"
+  },
+  {
+   "class": "other topics",
+   "q": "snow boston",
+   "expect": "a market on snow in Boston",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "where": {
+     "id": [
+      65536398,
+      60087436
+     ]
+    }
+   },
+   "example": {
+    "kind": "futures",
+    "item": {
+     "id": 65536398,
+     "name": "Snow in Boston in Dec 2026?"
+    }
+   },
+   "refresh": "monthly: each month has its own market",
+   "valid_until": "2026-12-31"
+  },
+  {
+   "class": "other topics",
+   "q": "ufo",
+   "expect": "the UFO-files markets",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "where": {
+     "id": [
+      67734839,
+      67741087,
+      67741088,
+      67741089
+     ]
+    }
+   },
+   "example": {
+    "kind": "futures",
+    "item": {
+     "id": 67734839,
+     "name": "Trump declassifies new UFO files by...?"
+    }
+   },
+   "refresh": "when these markets settle"
+  },
+  {
+   "class": "other topics",
+   "q": "largest ipo 2026",
+   "expect": "the largest-IPO market",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "where": {
+     "id": [
+      115608
+     ]
+    }
+   },
+   "example": {
+    "kind": "futures",
+    "item": {
+     "id": 115608,
+     "name": "Largest IPO by market cap in 2026?",
+     "top_outcomes": [
+      {
+       "name": "New England Patriots"
+      },
+      {
+       "name": "Buffalo Bills"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "class": "honesty",
+   "q": "giants",
+   "expect": "both Giants teams, New York and San Francisco",
+   "check": {
+    "all_of": [
+     {
+      "kinds": [
+       "teams"
+      ],
+      "where": {
+       "slug": [
+        "new-york-giants"
+       ]
+      }
+     },
+     {
+      "kinds": [
+       "teams"
+      ],
+      "where": {
+       "slug": [
+        "san-francisco-giants-mlb"
+       ]
+      }
+     }
+    ]
+   },
+   "example": {
+    "kind": "teams",
+    "items": [
+     {
+      "slug": "new-york-giants",
+      "name": "New York Giants"
+     },
+     {
+      "slug": "san-francisco-giants-mlb",
+      "name": "San Francisco Giants"
+     }
+    ]
+   }
+  },
+  {
+   "class": "honesty",
+   "q": "rangers",
+   "expect": "both Rangers teams, New York and Texas",
+   "check": {
+    "all_of": [
+     {
+      "kinds": [
+       "teams"
+      ],
+      "where": {
+       "slug": [
+        "new-york-rangers"
+       ]
+      }
+     },
+     {
+      "kinds": [
+       "teams"
+      ],
+      "where": {
+       "slug": [
+        "texas-rangers-mlb"
+       ]
+      }
+     }
+    ]
+   },
+   "example": {
+    "kind": "teams",
+    "items": [
+     {
+      "slug": "new-york-rangers",
+      "name": "New York Rangers"
+     },
+     {
+      "slug": "texas-rangers-mlb",
+      "name": "Texas Rangers"
+     }
+    ]
+   }
+  },
+  {
+   "class": "honesty",
+   "q": "asdfgh",
+   "expect": "an honest empty state",
+   "check": {
+    "empty": true
+   }
+  }
+ ]
+}

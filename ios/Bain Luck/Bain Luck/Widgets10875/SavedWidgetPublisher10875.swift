@@ -57,10 +57,15 @@ private struct SavedItemWidgetsModifier10875: ViewModifier {
         content
             .task { publish() }
             .onChange(of: snapshot) { _, _ in publish() }
+            .onChange(of: watchPins) { _, _ in publishWatchPinsOnly() }
     }
 
     private var snapshot: SavedWidgetSnapshot10875 {
         .from(boundUserID: pins.boundUserID, savedPins: pins.savedPins, loadState: pins.loadState)
+    }
+
+    private var watchPins: [WatchPinWireItem12640] {
+        pins.watchPinItems12640
     }
 
     private func publish() {
@@ -69,6 +74,16 @@ private struct SavedItemWidgetsModifier10875: ViewModifier {
         if PinManagementRuntime9875.shared != nil { return }
         #endif
         publisher.publish(snapshot)
+        publishWatchPinsOnly()
+    }
+
+    private func publishWatchPinsOnly() {
+        #if DEBUG
+        if PinManagementRuntime9875.shared != nil { return }
+        #endif
+        #if os(iOS)
+        WatchTelemetryReceiver.shared.publishWatchPins(watchPins)
+        #endif
     }
 }
 

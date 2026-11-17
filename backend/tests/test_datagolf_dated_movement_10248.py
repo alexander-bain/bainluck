@@ -96,7 +96,7 @@ def test_the_mark_is_read_without_a_lazy_load() -> None:
 
 @pytest.mark.parametrize("stored", [None, Decimal("0"), 0.0, Decimal("0.031"), -0.4])
 def test_every_other_source_keeps_its_stored_value_untouched(stored) -> None:
-    for source in ("kalshi", "polymarket", "odds_api", None):
+    for source in ("kalshi", "odds_api", None):
         market = _market(source=source)
         assert reader_change_24h(market, 7, 0.15, stored, now=NOW) is stored
 
@@ -357,7 +357,7 @@ _RAW_PRINT = re.compile(r"float\(\s*\w+\.probability_change_24h\s*\)")
 
 #: (module, function, reader calls expected, raw prints allowed and why)
 D5_SITES = [
-    ("app.routes.futures", "_movers_payload", 1, 0),
+    ("app.routes.futures", "_movers_payload", 2, 0),
     ("app.routes.futures", "browse_futures", 1, 0),
     ("app.routes.futures", "faceted_futures_search", 1, 0),
     ("app.routes.futures", "get_playoff_grid", 1, 0),

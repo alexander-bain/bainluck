@@ -153,3 +153,10 @@ d54c97d3403d8973d11dd640a39ee7105c74e638:frontend/lib/evals/data/twin-exam-2026-
 d6ebef9997e3cb2aec9d2c5947855748b67b5d09:evals/ranking/grades/2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json:generic-api-key:32
 d6ebef9997e3cb2aec9d2c5947855748b67b5d09:evals/ranking/grades/2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json:generic-api-key:67
 d6ebef9997e3cb2aec9d2c5947855748b67b5d09:evals/ranking/grades/2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json:generic-api-key:123
+
+# #9937: the same three exam item-key slugs, at their line numbers in #12590's
+# squash commit on master (one lower, after `graded_on`). Exact findings from
+# gitleaks run 43078241574.
+82991146764941c51a9e1366d9cc3c957db72b4a:evals/ranking/grades/2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json:generic-api-key:33
+82991146764941c51a9e1366d9cc3c957db72b4a:evals/ranking/grades/2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json:generic-api-key:68
+82991146764941c51a9e1366d9cc3c957db72b4a:evals/ranking/grades/2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json:generic-api-key:124

@@ -30,8 +30,13 @@ SCHEDULED_FULL_MARKET_SPORTS = frozenset({"americanfootball_nfl", "basketball_nb
 SCHEDULED_FULL_MARKETS = "h2h,spreads,totals"
 MONEYLINE_ONLY = "h2h"
 
-#: Once an hour. No other cadence.
-SCHEDULED_FULL_MARKETS_INTERVAL_SECONDS = 3600
+#: Once an hour. The stamp is 55 minutes, not 60, because discovery runs at :05
+#: and :35 and its fetch lands a minute or so into the run: with 60, the run an
+#: hour after a fetch came 59 minutes later and stayed moneyline-only, so lines
+#: refreshed every ~90 minutes, matching #12599's 90-minute bound, and the
+#: projected final blinked out at each refresh (Nov 12 reads, #11286). 55 lets that
+#: run take it, so lines refresh every 60 minutes and never twice in 55.
+SCHEDULED_FULL_MARKETS_INTERVAL_SECONDS = 55 * 60
 
 STAMP_PREFIX = "bainluck:scheduled_full_markets:"
 

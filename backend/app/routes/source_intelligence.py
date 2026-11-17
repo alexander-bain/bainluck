@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _cache: dict = {"data": None, "timestamp": 0}
-CACHE_TTL = 21600  # 6 hours
+CACHE_TTL = 50 * 3600  # 215-B: the precompute is daily; one missed night still serves
 
 # L2-129 / #206: the Measure page reads a PRECOMPUTED Redis snapshot (warmed every
 # 6h by app.tasks.precompute_source_intelligence — the fair-fight pattern) so the 4

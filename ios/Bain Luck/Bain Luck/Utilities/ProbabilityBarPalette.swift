@@ -48,6 +48,18 @@ enum ProbabilityBarPalette {
     /// leaves genuinely different crests alone (`#552583` vs `#FDB927`, 240).
     static let minimumDistance = 60.0
 
+    /// Ruling 197 — discrete chromatic hue families shared verbatim with the
+    /// website (`frontend/lib/teamColors.ts` `colorHueFamily`, `#12757`), so
+    /// native and web agree on every matchup:
+    /// - neutral/achromatic (`lightness < 6%`, `lightness > 94%`, or HSL
+    ///   `saturation < 22%`) returns `nil`
+    /// - `red` (`>= 335°` or `< 15°`), `orange` (`15°..<38°`),
+    ///   `yellow` (`38°..<70°`), `green` (`70°..<168°`), `teal` (`168°..<196°`),
+    ///   `blue` (`196°..<245°`), `purple` (`245°..<305°`), `magenta` (`305°..<335°`).
+    enum HueFamily: String, Equatable, Sendable {
+        case red, orange, yellow, green, teal, blue, purple, magenta
+    }
+
     // MARK: - Pure colour maths (the part the tests drive)
 
     /// `(r, g, b)` in 0…255, or `nil` when `hex` is absent or unparseable.
@@ -79,20 +91,83 @@ enum ProbabilityBarPalette {
         return d >= minimumDistance
     }
 
+    /// Ruling 197 — chromatic hue family of `hex`, matching website
+    /// `colorHueFamily` (`frontend/lib/teamColors.ts`, `#12757`).
+    static func colorHueFamily(_ hex: String?) -> HueFamily? {
+        guard let c = rgb(hex) else { return nil }
+        let r = Double(c.r) / 255.0
+        let g = Double(c.g) / 255.0
+        let b = Double(c.b) / 255.0
+        let hi = max(r, g, b)
+        let lo = min(r, g, b)
+        let lightness = (hi + lo) / 2.0
+        let delta = hi - lo
+        if delta == 0 || lightness < 0.06 || lightness > 0.94 {
+            return nil
+        }
+        let saturation = lightness > 0.5 ? delta / (2.0 - hi - lo) : delta / (hi + lo)
+        if saturation < 0.22 {
+            return nil
+        }
+        let hue: Double
+        if hi == r {
+            let raw = 60.0 * ((g - b) / delta)
+            hue = raw < 0 ? raw + 360.0 : raw
+        } else if hi == g {
+            hue = 60.0 * (((b - r) / delta) + 2.0)
+        } else {
+            hue = 60.0 * (((r - g) / delta) + 4.0)
+        }
+        if hue >= 335.0 || hue < 15.0 { return .red }
+        if hue < 38.0 { return .orange }
+        if hue < 70.0 { return .yellow }
+        if hue < 168.0 { return .green }
+        if hue < 196.0 { return .teal }
+        if hue < 245.0 { return .blue }
+        if hue < 305.0 { return .purple }
+        return .magenta
+    }
+
+    /// Ruling 197 — whether two parseable chromatic brand colours belong to the
+    /// same hue family (for example navy + royal blue in `.blue`, or two reds in
+    /// `.red`). Neutral greys/blacks return `false`.
+    static func sameHueFamily(_ a: String?, _ b: String?) -> Bool {
+        guard let fa = colorHueFamily(a), let fb = colorHueFamily(b) else { return false }
+        return fa == fb
+    }
+
     /// The two segment hexes, away first — the order they are drawn in.
     ///
     /// Total: every input, including two nils and two identical hexes, returns
     /// a pair. Deterministic: the same input always returns the same pair, so a
     /// card does not change colour between renders.
-    static func pair(awayHex: String?, homeHex: String?) -> (away: String, home: String) {
+    ///
+    /// Ruling 197 (enabled by default, `checkHueFamily == true`): when both
+    /// primary colours are usable and either fail `distinguishable` or share a
+    /// hue family (`sameHueFamily`), home keeps its primary colour and away
+    /// switches to `awaySecondaryHex` when usable, distinguishable from home,
+    /// and outside home's hue family; otherwise away switches to
+    /// `partner(for: home, preferring: awayDefault)` (slate grey).
+    static func pair(
+        awayHex: String?,
+        homeHex: String?,
+        awaySecondaryHex: String? = nil,
+        checkHueFamily: Bool = true
+    ) -> (away: String, home: String) {
         let away = usable(awayHex)
         let home = usable(homeHex)
 
         switch (away, home) {
-        case let (a?, h?) where distinguishable(a, h):
+        case let (a?, h?) where distinguishable(a, h) && (!checkHueFamily || !sameHueFamily(a, h)):
             return (a, h)                                   // rule 1
         case (_?, let h?):
-            // rule 3 — two crests that do not read apart. Home keeps its own.
+            // rule 3 (+ Ruling 197 when opted in) — two crests that collide.
+            // Home keeps its own; away tries its own second colour, else slate grey.
+            if let sec = usable(awaySecondaryHex),
+               distinguishable(sec, h),
+               (!checkHueFamily || !sameHueFamily(sec, h)) {
+                return (sec, h)
+            }
             return (partner(for: h, preferring: awayDefault), h)
         case let (a?, nil):
             return (a, partner(for: a, preferring: homeDefault))   // rule 2
@@ -124,8 +199,18 @@ enum ProbabilityBarPalette {
     // MARK: - What the views call
 
     /// The two `Color`s, away first.
-    static func colors(awayHex: String?, homeHex: String?) -> (away: Color, home: Color) {
-        let hexes = pair(awayHex: awayHex, homeHex: homeHex)
+    static func colors(
+        awayHex: String?,
+        homeHex: String?,
+        awaySecondaryHex: String? = nil,
+        checkHueFamily: Bool = true
+    ) -> (away: Color, home: Color) {
+        let hexes = pair(
+            awayHex: awayHex,
+            homeHex: homeHex,
+            awaySecondaryHex: awaySecondaryHex,
+            checkHueFamily: checkHueFamily
+        )
         return (Color(hex: hexes.away), Color(hex: hexes.home))
     }
 }

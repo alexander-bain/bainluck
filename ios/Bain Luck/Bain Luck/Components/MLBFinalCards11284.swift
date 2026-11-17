@@ -316,15 +316,18 @@ struct MLBMilestoneCardView11284: View {
 
     private func chart(selected: MLBMilestoneCard11284.Target?) -> some View {
         let milestones = card.targets.map { Double($0.milestone) }
+        let yScale = ChartScaleRule201.manyWayWindow(values: card.targets.compactMap(\.pregame))
         return Chart {
             if let final = card.finalCount {
                 RuleMark(x: .value("Final", Double(final)))
                     .foregroundStyle(Color.primary)
                     .lineStyle(StrokeStyle(lineWidth: 2))
             }
-            RuleMark(y: .value("Chance", 0.5))
-                .foregroundStyle(Color.secondary.opacity(0.35))
-                .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+            if yScale.domain.contains(0.5) {
+                RuleMark(y: .value("Chance", 0.5))
+                    .foregroundStyle(Color.secondary.opacity(0.35))
+                    .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+            }
             ForEach(card.targets.filter { $0.pregame != nil }) { target in
                 let isSelected = target.rowID == selected?.rowID
                 PointMark(x: .value("Count", Double(target.milestone)), y: .value("Chance", target.pregame ?? 0))
@@ -337,9 +340,9 @@ struct MLBMilestoneCardView11284: View {
             }
         }
         .chartXScale(domain: domain)
-        .chartYScale(domain: 0...1)
+        .chartYScale(domain: yScale.domain)
         .chartYAxis {
-            AxisMarks(position: .leading, values: [0, 0.5, 1]) { value in
+            AxisMarks(position: .leading, values: yScale.ticks) { value in
                 AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
                 AxisValueLabel {
                     if let chance = value.as(Double.self) { Text("\(Int((chance * 100).rounded()))%") }
