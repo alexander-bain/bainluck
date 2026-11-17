@@ -199,3 +199,53 @@ def test_domain_fallback_is_positive_match_only_and_never_mismatches_unclassifie
     assert gdp["image_url"] is not None
     assert gdp["image_presentation"] == "backdrop"
     assert "image_credit" not in gdp
+
+
+def test_non_sports_place_and_common_word_titles_never_get_team_crests_or_wrong_flags():
+    # Weather in Buffalo -> NOAA weather backdrop, NEVER Buffalo Bulls NCAA crest
+    buffalo_snow = resolve_discover_market_image(
+        name="Will it snow in Buffalo this week?",
+        category="weather",
+        top_outcomes=[{"name": "Yes"}],
+        allow_domain_fallback=True,
+    )
+    assert buffalo_snow["image_url"] is not None
+    assert "espncdn.com" not in buffalo_snow["image_url"]
+    assert buffalo_snow["image_presentation"] == "backdrop"
+
+    # Politics in Indiana / Toledo -> politics backdrop (or candidate monogram), NEVER Hoosiers / Rockets crests
+    indiana_gov = resolve_discover_market_image(
+        name="Indiana governor race winner?",
+        category="politics",
+        top_outcomes=[{"name": "Democratic"}],
+        allow_domain_fallback=True,
+    )
+    assert "espncdn.com" not in (indiana_gov["image_url"] or "")
+
+    toledo_mayor = resolve_discover_market_image(
+        name="Mayor of Toledo election",
+        category="politics",
+        top_outcomes=[{"name": "Incumbent"}],
+        allow_domain_fallback=True,
+    )
+    assert "espncdn.com" not in (toledo_mayor["image_url"] or "")
+
+    # Science / wildlife "bald eagles" -> NEVER Philadelphia Eagles NFL crest
+    bald_eagles = resolve_discover_market_image(
+        name="Will bald eagles be delisted?",
+        category="science",
+        top_outcomes=[{"name": "Yes"}],
+        allow_domain_fallback=True,
+    )
+    assert "espncdn.com" not in (bald_eagles["image_url"] or "")
+
+    # Economics "China's GDP" with empty category -> economics backdrop, NEVER national flag
+    china_gdp = resolve_discover_market_image(
+        name="Will China's GDP grow above 5% in 2026?",
+        category="",
+        top_outcomes=[{"name": "Yes"}],
+        allow_domain_fallback=True,
+    )
+    assert "flagcdn.com" not in (china_gdp["image_url"] or "")
+    assert china_gdp["image_presentation"] == "backdrop"
+

@@ -292,12 +292,72 @@ _ESPN_TEAM_LOGOS: dict[str, str] = {
     "oilers": "nhl/500/edm",
 }
 
+_EXACT_ONLY_TEAM_ALIASES: frozenset[str] = frozenset(
+    {
+        "indiana",
+        "oregon",
+        "texas",
+        "georgia",
+        "alabama",
+        "tennessee",
+        "clemson",
+        "toledo",
+        "ohio",
+        "buffalo",
+        "akron",
+        "barcelona",
+        "liverpool",
+        "eagles",
+        "warriors",
+        "chiefs",
+        "ravens",
+    }
+)
+
 _SORTED_SUBSTRING_TEAM_ALIASES: tuple[tuple[str, str], ...] = tuple(
     sorted(
-        ((k, v) for k, v in _ESPN_TEAM_LOGOS.items() if len(k) >= 6),
+        (
+            (k, v)
+            for k, v in _ESPN_TEAM_LOGOS.items()
+            if len(k) >= 6 and k not in _EXACT_ONLY_TEAM_ALIASES
+        ),
         key=lambda kv: len(kv[0]),
         reverse=True,
     )
+)
+
+_SPORTS_IMAGE_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "sports",
+        "football",
+        "basketball",
+        "baseball",
+        "hockey",
+        "soccer",
+        "mma",
+        "golf",
+        "tennis",
+        "nfl",
+        "nba",
+        "mlb",
+        "nhl",
+        "ncaaf",
+        "ncaab",
+        "ufc",
+        "f1",
+        "motorsport",
+        "boxing",
+        "cricket",
+        "rugby",
+    }
+)
+_SPORTS_CONTEXT_RE = re.compile(
+    r"\b("
+    r"beat|defeat|vs\.?|versus|playoffs?|championship|super\s+bowl|world\s+series|"
+    r"stanley\s+cup|nba|nfl|nhl|mlb|ncaa|premier\s+league|champions\s+league|"
+    r"liga\s+profesional|coach\s+of|heisman"
+    r")\b",
+    re.IGNORECASE,
 )
 
 _DISCOVER_COUNTRY_ISO: dict[str, str] = {
@@ -1093,28 +1153,64 @@ def resolve_discover_market_image(
             "image_monogram": None,
         }
 
-    # 4b. On Discover feed serving (#12825), resolve team logos mentioned anywhere in
-    # the title, country flags for national elections/politics, or positively matched
-    # domain backdrops (marked `image_presentation: "backdrop"` without claiming entity credit).
+    # 4b. On Discover feed serving (#12825), resolve team logos mentioned in sports titles,
+    # country flags for national elections/politics, or positively matched domain backdrops
+    # (marked `image_presentation: "backdrop"` without claiming entity credit).
     if allow_domain_fallback:
-        any_team_logo = _lookup_team_or_nation_logo(name)
-        if any_team_logo and _url_host_matches(any_team_logo, "espncdn.com"):
-            return {
-                "image_url": any_team_logo,
-                "image_width": 500,
-                "image_height": 500,
-                "image_presentation": "logo",
-                "image_monogram": None,
-            }
-        country_flag = _extract_country_flag_url(name)
-        if country_flag and (category or "").strip().lower() in {"politics", "geopolitics", "world", ""}:
-            return {
-                "image_url": country_flag,
-                "image_width": 320,
-                "image_height": 213,
-                "image_presentation": "logo",
-                "image_monogram": None,
-            }
+        cat_low = (category or "").strip().lower()
+        title_str = name or ""
+        is_sports_context = (
+            subject.kind == "team"
+            or cat_low in _SPORTS_IMAGE_CATEGORIES
+            or (
+                not cat_low
+                and bool(_SPORTS_CONTEXT_RE.search(title_str))
+                and not _WEATHER_KEYWORD_RE.search(title_str)
+                and not _POLITICS_KEYWORD_RE.search(title_str)
+                and not _ECONOMICS_KEYWORD_RE.search(title_str)
+            )
+        )
+        if is_sports_context:
+            any_team_logo = _lookup_team_or_nation_logo(name)
+            if not any_team_logo and top_outcomes:
+                for out in top_outcomes[:3]:
+                    if isinstance(out, dict):
+                        any_team_logo = _lookup_team_or_nation_logo(out.get("name") or out.get("label"))
+                        if any_team_logo:
+                            break
+            if any_team_logo and _url_host_matches(any_team_logo, "espncdn.com"):
+                return {
+                    "image_url": any_team_logo,
+                    "image_width": 500,
+                    "image_height": 500,
+                    "image_presentation": "logo",
+                    "image_monogram": None,
+                }
+        is_political_flag_context = (
+            (
+                cat_low in {"politics", "geopolitics", "world"}
+                or (
+                    not cat_low
+                    and bool(
+                        _POLITICS_KEYWORD_RE.search(title_str)
+                        or _GEOPOLITICS_KEYWORD_RE.search(title_str)
+                        or _PERSON_ELECTION_OR_ROLE_RE.search(title_str)
+                    )
+                )
+            )
+            and not _ECONOMICS_KEYWORD_RE.search(title_str)
+            and not _WEATHER_KEYWORD_RE.search(title_str)
+        )
+        if is_political_flag_context:
+            country_flag = _extract_country_flag_url(name)
+            if country_flag:
+                return {
+                    "image_url": country_flag,
+                    "image_width": 320,
+                    "image_height": 213,
+                    "image_presentation": "logo",
+                    "image_monogram": None,
+                }
         fallback_match = _lookup_domain_fallback_entry(name, category, subject)
         if fallback_match:
             fallback_entry, is_ceremony_art = fallback_match
