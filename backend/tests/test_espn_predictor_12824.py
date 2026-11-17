@@ -357,3 +357,132 @@ def test_mode_defaults_on_and_only_withdraw_switches_it(monkeypatch):
     assert ep.predictor_mode() == "on"
     monkeypatch.setenv("ESPN_PREDICTOR_MODE", " Withdraw ")
     assert ep.predictor_mode() == "withdraw"
+
+
+class TestNeverStepBack:
+    """Fable 10:04 PM: a read never moves us backwards (Aug 31 vs Nov 16 copies)."""
+
+    def _held(self, modified: datetime, at: datetime = NOW) -> ep.PredictorRow:
+        return _row({"espn": {"value": 0.1415, "updated_at": at.isoformat(),
+                              "predictor_last_modified": _stamp(modified)}})
+
+    def test_fresh_reading_then_an_older_copy_is_not_a_refresh(self):
+        row = self._held(NOW - timedelta(hours=10))
+        assert ep.older_copy(row, _nfl_payload(NOW - timedelta(days=77)))
+
+    def test_same_or_newer_copy_is_a_refresh(self):
+        row = self._held(NOW - timedelta(hours=10))
+        assert not ep.older_copy(row, _nfl_payload(NOW - timedelta(hours=10)))
+        assert not ep.older_copy(row, _nfl_payload(NOW - timedelta(hours=1)))
+
+    def test_undated_or_missing_copy_is_not_a_refresh_when_we_hold_a_dated_reading(self):
+        row = self._held(NOW - timedelta(hours=10))
+        undated = _nfl_payload(NOW)
+        undated.pop("lastModified")
+        assert ep.older_copy(row, undated)
+        assert ep.older_copy(row, None)
+
+    def test_nothing_held_means_nothing_to_step_back_from(self):
+        assert not ep.older_copy(_row({}), _nfl_payload(NOW - timedelta(days=77)))
+
+    @pytest.mark.asyncio
+    async def test_old_copy_writes_and_withdraws_nothing_then_two_hours_retires_it(self, monkeypatch):
+        """The specimen: an 86% from a Nov-16 copy, then ESPN's edge serves Aug 31."""
+        from contextlib import asynccontextmanager
+
+        from app.services import espn_api
+
+        when = NOW + timedelta(days=20)
+        fresh = _db_row(1, {"espn": {"value": 0.1415, "updated_at": (NOW - timedelta(minutes=15)).isoformat(),
+                                     "predictor_last_modified": _stamp(NOW - timedelta(hours=10))}}, when)
+        unconfirmed = _db_row(2, {"espn": {"value": 0.1415, "updated_at": (NOW - timedelta(hours=3)).isoformat(),
+                                           "predictor_last_modified": _stamp(NOW - timedelta(hours=10))}}, when)
+        session = _FakeSession([fresh, unconfirmed])
+
+        @asynccontextmanager
+        async def fake_session(**_kw):
+            yield session
+
+        class _FakeESPN:
+            def __init__(self, *a, **k):
+                pass
+
+            async def get_scoreboard(self, *a, **k):
+                return [_game(PATS, BILLS, when)]
+
+            async def get_predictor(self, *a, **k):
+                return _nfl_payload(NOW - timedelta(days=77))  # the stale edge copy
+
+            async def close(self):
+                pass
+
+        writes = []
+
+        async def fake_write(session_, target, source, value, **kw):
+            writes.append((target.id, value))
+
+        async def fake_publish(_session):
+            return None
+
+        class _Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return NOW
+
+        monkeypatch.delenv("ESPN_PREDICTOR_MODE", raising=False)
+        monkeypatch.setattr(espn_api, "ESPNAPIService", _FakeESPN)
+        monkeypatch.setattr("app.tasks.base.get_task_session", fake_session)
+        monkeypatch.setattr("app.utils.nonvenue_live_push.write_nonvenue_probability", fake_write)
+        monkeypatch.setattr("app.utils.nonvenue_live_push.publish_committed_nonvenue_frames", fake_publish)
+        monkeypatch.setattr(ep, "datetime", _Clock)
+
+        stats = await ep._run_refresh_espn_predictor()
+
+        # Row 1: refreshed 15 min ago, older copy -> no write, no withdraw.
+        # Row 2: nobody has confirmed it for 3 h -> the 2-hour rule withdraws it.
+        assert writes == [(2, None)]
+        assert stats["older_copy"] == 2 and stats["kept"] == 1 and stats["removed"] == 1
+
+
+def test_a_write_carries_espns_last_modified_inside_the_entry(monkeypatch):
+    """So the next run can tell an older copy from a refresh."""
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    session = _FakeSession([_db_row(1, {})])
+
+    @asynccontextmanager
+    async def fake_session(**_kw):
+        yield session
+
+    async def fake_read(rows, now, stats):
+        return {1: ("write", 0.1415, {"basis": "espn_predictor", "espn_id": "401873105",
+                                      "last_modified": "2031-03-04T02:00Z"})}
+
+    seen = {}
+
+    async def fake_write(session_, target, source, value, **kw):
+        seen.update(kw)
+
+    async def fake_publish(_session):
+        return None
+
+    monkeypatch.delenv("ESPN_PREDICTOR_MODE", raising=False)
+    monkeypatch.setattr("app.tasks.base.get_task_session", fake_session)
+    monkeypatch.setattr(ep, "_read_espn", fake_read)
+    monkeypatch.setattr("app.utils.nonvenue_live_push.write_nonvenue_probability", fake_write)
+    monkeypatch.setattr("app.utils.nonvenue_live_push.publish_committed_nonvenue_frames", fake_publish)
+    asyncio.run(ep._run_refresh_espn_predictor())
+    assert seen["entry_extra"] == {"predictor_last_modified": "2031-03-04T02:00Z"}
+
+
+def test_the_writer_refuses_an_unlisted_entry_key():
+    import asyncio
+
+    from app.utils import nonvenue_live_push as nlp
+
+    assert nlp.ENTRY_EXTRA_KEYS == frozenset({"predictor_last_modified"})
+    with pytest.raises(ValueError):
+        asyncio.run(nlp.write_nonvenue_probability(
+            None, SimpleNamespace(id=1), "espn", 0.4, entry_extra={"value": 0.9},
+        ))

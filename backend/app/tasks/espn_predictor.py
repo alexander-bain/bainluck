@@ -207,6 +207,31 @@ def stored_reading_age(row: PredictorRow, now: datetime) -> Optional[timedelta]:
     return now - stamp
 
 
+def stored_last_modified(row: PredictorRow) -> Optional[datetime]:
+    """ESPN's ``lastModified`` for the reading we hold, ``None`` if not recorded."""
+    raw = (row.sources or {}).get("espn")
+    if not isinstance(raw, dict):
+        return None
+    return _parse_modified(raw.get("predictor_last_modified"))
+
+
+def older_copy(row: PredictorRow, payload: Any) -> bool:
+    """A read that would move our reading BACKWARDS (Fable, 10:04 PM Nov 16).
+
+    ESPN's edge serves cached copies: two readers fetched the same predictor URL
+    tonight and got Aug 31 and Nov 16. When we hold a reading dated by ESPN, a
+    copy that is older than it, or carries no date, is not a refresh: nothing is
+    written and nothing is withdrawn, and the 2-hour unrefreshed rule is what
+    retires a reading no copy can confirm. A missing body (404) is treated the
+    same way, for the same reason.
+    """
+    held = stored_last_modified(row)
+    if held is None:
+        return False
+    read = _parse_modified(payload.get("lastModified")) if isinstance(payload, dict) else None
+    return read is None or read < held
+
+
 def board_days(commence_time: datetime) -> list[str]:
     """The ESPN boards a game can sit on, as ``YYYYMMDD``, in reading order.
 
@@ -344,6 +369,10 @@ async def _read_espn(rows: list[PredictorRow], now: datetime, stats: dict) -> di
                 plans[row.event_id] = ("keep", "predictor-error")
                 continue
             stats["predictors_read"] += 1
+            if older_copy(row, payload):
+                stats["older_copy"] += 1
+                plans[row.event_id] = ("keep", "older-copy")
+                continue
             value, why = predictor_home_probability(payload, now)
             if value is None:
                 stats[f"absent_{why}"] = stats.get(f"absent_{why}", 0) + 1
@@ -372,7 +401,7 @@ async def _run_refresh_espn_predictor() -> dict:
     stats: dict[str, Any] = {
         "candidates": 0, "wanted": 0, "boards_read": 0, "boards_dark": 0,
         "not_matched": 0, "board_dark_rows": 0, "predictor_dark": 0,
-        "predictors_read": 0, "written": 0, "removed": 0, "kept": 0,
+        "predictors_read": 0, "older_copy": 0, "written": 0, "removed": 0, "kept": 0,
         "write_errors": 0, "written_ids": [], "removed_ids": [], "errors": [],
     }
 
@@ -423,6 +452,10 @@ async def _run_refresh_espn_predictor() -> dict:
                 if plan[0] == "write":
                     await write_nonvenue_probability(
                         session, target, "espn", plan[1], evidence=plan[2],
+                        entry_extra=(
+                            {"predictor_last_modified": plan[2]["last_modified"]}
+                            if plan[2].get("last_modified") else None
+                        ),
                     )
                     stats["written"] += 1
                     if len(stats["written_ids"]) < 40:
