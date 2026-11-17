@@ -1,4 +1,4 @@
-"""Preparation and upload cannot reset the50m gate or consume an hour silently."""
+"""Preparation and upload cannot reset the 90m gate or consume an hour silently."""
 
 import json
 import os
@@ -20,7 +20,7 @@ class StageTests(unittest.TestCase):
         self.root = Path(self.temp.name)
 
     def prepare(self):
-        self.assertEqual(stage.admission(self.root, "prepare", 100), 1200)
+        self.assertEqual(stage.admission(self.root, "prepare", 100), 1800)
         path = self.root / "global-deadline.json"
         data = json.loads(path.read_text())
         data["stages"]["prepare"] = 0
@@ -32,7 +32,7 @@ class StageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "reset"):
             stage.admission(self.root, "prepare", 701)
         with self.assertRaisesRegex(ValueError, "admission"):
-            stage.admission(self.root, "execute", 1301)
+            stage.admission(self.root, "execute", 1901)
         with self.assertRaisesRegex(ValueError, "exhausted"):
             stage.admission(self.root, "execute", 5501)
 
@@ -96,7 +96,7 @@ class ExecutionGuardTests(unittest.TestCase):
 
     def test_guard_covers_inner_budget_and_shutdown_without_resetting_global(self):
         original = (self.root / "global-deadline.json").read_bytes()
-        for now in (100, 135, 700, 780.392925333, 1299.9, 1300):
+        for now in (100, 135, 700, 780.392925333, 1899.9, 1900):
             with self.subTest(now=now):
                 remaining = 5400 - (now - 100)
                 minutes = stage.execution_timeout(self.root, now)
@@ -113,7 +113,7 @@ class ExecutionGuardTests(unittest.TestCase):
                 )
 
     def test_insufficient_reserve_and_expired_budget_cannot_emit_timeout(self):
-        for now in (1300.01, 4600, 4700):
+        for now in (1900.01, 4600, 4700):
             with self.subTest(now=now), self.assertRaises(ValueError):
                 stage.execution_timeout(self.root, now)
         self.assertFalse((self.root / "execution-step-guard.json").exists())

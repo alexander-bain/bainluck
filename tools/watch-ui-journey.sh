@@ -48,10 +48,15 @@ boot_until_ready() {
   local attempt before
   for attempt in 1 2 3; do
     before="$(wc -c < "$OUT/preflight.log")"
+    # Run 44157478340 spent 6 min between a finished bootstatus and the next phase;
+    # stamp each step so the slow one is named next time.
+    echo "$(date -u +%H:%M:%S) bootstatus attempt $attempt for $udid" >> "$OUT/preflight.log"
     # A failed boot exits non-zero; under set -e that ended the job on attempt 3.
     xcrun simctl bootstatus "$udid" -b >> "$OUT/preflight.log" 2>&1 \
       || echo "bootstatus exited $? for $udid" >> "$OUT/preflight.log"
+    echo "$(date -u +%H:%M:%S) bootstatus returned for $udid" >> "$OUT/preflight.log"
     if is_booted "$udid"; then
+      echo "$(date -u +%H:%M:%S) $udid Booted" >> "$OUT/preflight.log"
       return 0
     fi
     echo "bootstatus ended with $udid not Booted (attempt $attempt); retrying..." >> "$OUT/preflight.log"

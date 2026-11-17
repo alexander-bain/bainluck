@@ -13,10 +13,13 @@ except ImportError:
     from watch_ui_deadline import Interrupted, MAX_SECONDS, _write, run_gate
 
 # Retained e356 setup consumed 2213.570s including successful compilation.
-# With compilation removed, allow at most20m for infrastructure preparation,
-# leaving at least 70m for unchanged cases; upload time also consumes that 90m.
-PREPARATION_SECONDS = 20 * 60
-MIN_EXECUTION_SECONDS = 70 * 60
+# With compilation removed, allow at most 30m for infrastructure preparation,
+# leaving at least 60m for unchanged cases; upload time also consumes that 90m.
+# Run 44157478340 (readings): on a slow hosted runner each new simulator took
+# 7.5 min to boot (corner, same run: 3.5 min), and 20m ended preparation 3 min
+# before the cases. The longest shard (widgets) executes in about 36 min.
+PREPARATION_SECONDS = 30 * 60
+MIN_EXECUTION_SECONDS = 60 * 60
 
 
 def admission(output, stage, now):
@@ -44,7 +47,7 @@ def admission(output, stage, now):
         raise ValueError("Global gate deadline exhausted or invalid")
     if stage == "execute" and remaining < MIN_EXECUTION_SECONDS:
         raise ValueError(
-            "Preparation/upload exceeded20m admission; insufficient full-shard reserve"
+            "Preparation/upload exceeded 30m admission; insufficient full-shard reserve"
         )
     return min(remaining, PREPARATION_SECONDS) if stage == "prepare" else remaining
 
