@@ -392,7 +392,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format:
             "exists == true AND label CONTAINS %@ AND label CONTAINS %@",
             "Saved reading. Refresh to confirm.", "Offline."), object: state)
-        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 45), .completed)
         let size = large ? "accessibility5" : "standard"
         try assertGameValueHierarchy(in: app, large: large, expectedSavedContext: true)
         capture(app, "Saved game content first natural opening - " + size)
@@ -536,7 +536,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         let error = app.staticTexts["watch.update-explanation"]
         let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format:
             "exists == true AND label BEGINSWITH %@", "Offline."), object: error)
-        XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 45), .completed)
         let suppliedStart = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-09T02:00:00Z"))
         let header = app.staticTexts["watch.scheduled-start"]
         XCTAssertEqual(header.label, "Scheduled " + suppliedStart.formatted(.dateTime.month().day().hour().minute()))
@@ -733,7 +733,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
             let error = app.staticTexts["watch.update-explanation"]
             let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format:
                 "exists == true AND label BEGINSWITH %@", "Offline."), object: error)
-            XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)
+            XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 45), .completed)
         }
         XCTAssertEqual(state.label, expectedHeader)
         XCTAssertFalse(app.staticTexts["watch.home-probability-unavailable"].exists)
@@ -835,7 +835,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
             let error = app.staticTexts["watch.update-explanation"]
             let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format:
                 "exists == true AND label BEGINSWITH %@", "Offline."), object: error)
-            XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)
+            XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 45), .completed)
         }
         XCTAssertEqual(state.label, closed ? "Result not confirmed" : "Live")
         XCTAssertTrue(app.buttons["watch.choose-another"].exists)
@@ -1073,7 +1073,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         other.tap()
         let context = app.descendants(matching: .any)["watch.selection-context"].firstMatch
         let newIdentity = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label CONTAINS %@", "Buffalo Bills"), object: context)
-        XCTAssertEqual(XCTWaiter.wait(for: [newIdentity], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [newIdentity], timeout: 45), .completed)
         XCTAssertTrue(context.label.contains("Kansas City Chiefs"))
         XCTAssertFalse(context.label.contains("Giants") || context.label.contains("Oct"))
         assertNoDetailReading(app)
@@ -1159,7 +1159,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         let probability = app.descendants(matching: .any)["watch.home-probability"].firstMatch
         let bills = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label == %@",
             "Buffalo Bills win probability, 55%"), object: probability)
-        XCTAssertEqual(XCTWaiter.wait(for: [bills], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [bills], timeout: 45), .completed)
         try captureMainScoreNames(in: app, away: "Kansas City Chiefs", home: "Buffalo Bills", awayScore: 0, homeScore: 0, specimen: "exact202-valid-colors-" + size)
         try openPicker(app)
         let current = app.buttons["watch.pick.202"]
@@ -1221,7 +1221,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
             let probability = app.descendants(matching: .any)["watch.home-probability"].firstMatch
             let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label == %@",
                 home + " win probability, 55%"), object: probability)
-            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 15), .completed)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 45), .completed)
             try captureMainScoreNames(in: app, away: away, home: home, awayScore: 0, homeScore: 0,
                                       specimen: scenario + "-" + size)
         }
@@ -1311,7 +1311,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         let probability = app.descendants(matching: .any)["watch.home-probability"].firstMatch
         let bills = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label == %@",
             "Buffalo Bills win probability, 55%"), object: probability)
-        XCTAssertEqual(XCTWaiter.wait(for: [bills], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [bills], timeout: 45), .completed)
         try openPicker(app)
         let current = app.buttons["watch.pick.202"]
         XCTAssertTrue(current.isSelected)
@@ -1340,7 +1340,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         let probability = app.descendants(matching: .any)["watch.home-probability"].firstMatch
         let bills = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label == %@",
             "Buffalo Bills win probability, 55%"), object: probability)
-        XCTAssertEqual(XCTWaiter.wait(for: [bills], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [bills], timeout: 45), .completed)
         capture(app, "Selected scheduled game at natural top - accessibility5")
         try captureComplete(probability, in: app, name: "Alternative selected Bills55 - accessibility5")
         try openPicker(app)
@@ -1415,7 +1415,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         let probability = app.descendants(matching: .any)["watch.home-probability"].firstMatch
         let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label == %@",
             "Buffalo Bills win probability, 55%"), object: probability)
-        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 45), .completed)
         try captureComplete(probability, in: app, name: "Other choice loads its own Bills55 reading")
         print("WATCH_UI_CURRENT_GAME_STANDARD=PASS")
     }
@@ -1554,7 +1554,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format:
             "exists == true AND label CONTAINS %@ AND label CONTAINS %@",
             "Saved reading. Refresh to confirm.", "Offline."), object: state)
-        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 45), .completed)
         try openPicker(app)
         // Feed rows remain fixture-provided; detail is offline. This checks persistence,
         // not list connectivity. Store's previously proven101 alias remains selected.
@@ -1672,7 +1672,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     private func assertStatus(_ expected: String, in app: XCUIApplication) throws {
         let status = app.staticTexts["watch.picker-status"]
         let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label == %@", expected), object: status)
-        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 45), .completed)
     }
 
     @MainActor

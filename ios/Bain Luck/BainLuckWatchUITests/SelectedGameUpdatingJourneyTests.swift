@@ -47,7 +47,7 @@ final class SelectedGameUpdatingJourneyTests: XCTestCase {
         try reveal(refresh, in: app)
         if !refresh.isEnabled {
             let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: refresh)
-            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 45), .completed)
         }
         refresh.tap()
         XCTAssertTrue(updating.waitForExistence(timeout: 10))

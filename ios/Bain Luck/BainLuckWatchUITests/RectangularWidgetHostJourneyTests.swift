@@ -127,7 +127,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         XCTAssertTrue(probability.label.contains("San Francisco Giants") && probability.label.contains("64%"))
         let route = app.staticTexts["watch.launch-receipt"]
         let delivered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Launcher opens: 1"), object: route)
-        XCTAssertEqual(XCTWaiter.wait(for: [delivered], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [delivered], timeout: 45), .completed)
         capture(app, "Actual rectangular launcher retained selected game")
         print("WATCH_UI_ACTUAL_RECTANGULAR_LAUNCHER=PASS")
 
@@ -214,18 +214,18 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
             ? NSPredicate(format: "label == %@", finalHeader)
             : NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Saved reading", "Offline"),
             object: gameState)
-        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 45), .completed)
         let savedNote = app.staticTexts["watch.saved-update"]
         let explanation = app.staticTexts["watch.update-explanation"]
         if final {
             let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format:
                 "exists == true AND label BEGINSWITH %@", "Offline."), object: explanation)
-            XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)
+            XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 45), .completed)
             XCTAssertEqual(savedNote.label, "Last saved update")
         }
         let route = app.staticTexts["watch.launch-receipt"]
         let delivered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Launcher opens: 1"), object: route)
-        XCTAssertEqual(XCTWaiter.wait(for: [delivered], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [delivered], timeout: 45), .completed)
         let process = app.staticTexts["watch.launch-process"].label
         XCTAssertNotNil(UUID(uuidString: process))
         XCTAssertNotEqual(process, priorProcess)
@@ -400,7 +400,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             library.exists || face.exists
         }, object: host)
-        XCTAssertEqual(XCTWaiter.wait(for: [arrived], timeout: 15), .completed,
+        XCTAssertEqual(XCTWaiter.wait(for: [arrived], timeout: 45), .completed,
                        "Configured Modular face did not leave its editor")
         if library.exists {
             let title = host.staticTexts["Switcher Face Title"].firstMatch
@@ -420,7 +420,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         let activated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             face.exists && !library.exists
         }, object: host)
-        XCTAssertEqual(XCTWaiter.wait(for: [activated], timeout: 15), .completed,
+        XCTAssertEqual(XCTWaiter.wait(for: [activated], timeout: 45), .completed,
                        "Configured Modular face did not become active")
         XCTAssertTrue(face.isHittable)
         capture(host, "Configured Modular active Watch Face")

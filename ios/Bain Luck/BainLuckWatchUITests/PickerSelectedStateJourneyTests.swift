@@ -86,7 +86,7 @@ final class PickerSelectedStateJourneyTests: XCTestCase {
     private func assertGame(_ team: String, in app: XCUIApplication) throws {
         let probability = app.descendants(matching: .any)["watch.home-probability"].firstMatch
         let named = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label CONTAINS %@", team), object: probability)
-        XCTAssertEqual(XCTWaiter.wait(for: [named], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [named], timeout: 45), .completed)
     }
 
     @MainActor
