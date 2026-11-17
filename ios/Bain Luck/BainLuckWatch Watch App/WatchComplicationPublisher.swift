@@ -238,7 +238,7 @@ nonisolated enum WatchComplicationPublisher {
                existing.observedAt == valid.observedAt,
                existing.circularReading == valid.circularReading,
                (valid.rectangularReading == nil || existing.rectangularReading == valid.rectangularReading),
-               existing.matchup == valid.matchup {
+               (valid.matchup == nil || existing.matchup == valid.matchup) {
                 return false // A newer fetch alone is not a newer reading.
             }
             // A tombstone replaces the previous reading atomically on selection change.
