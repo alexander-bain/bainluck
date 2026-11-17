@@ -164,9 +164,13 @@ export function futuresDistributionBoard(data: FeedFuturesData): FuturesBoard | 
   // keep their probability order. The server keeps probability order on the wire
   // because shipped iPhone builds paint row 0 as the leader.
   const chronological = card.distribution_order === "chronological";
+  const ladderRefused = Boolean(
+    (card as { ladder_treatment_refused?: boolean }).ladder_treatment_refused,
+  );
   const marketType = (data as { market_type?: string | null }).market_type;
   const scaleOrdered =
     !chronological &&
+    !ladderRefused &&
     numericalScaleOrderIndices(priced, { marketType }) !== null;
   let order = leaderFirstRows.map((_, index) => index);
   if (chronological) {

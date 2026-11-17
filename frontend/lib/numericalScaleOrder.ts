@@ -316,6 +316,15 @@ export function numericalScaleOrderIndices<T extends ScaleLabelItem>(
 
   // Scale coherence check so two unrelated digit-bearing labels never collide:
   const allSignedMove = parsed.every((p) => p.key.kind === "signed_move");
+  if (!allSignedMove) {
+    // Cumulative threshold ladders ("Above 3.50%", "Above 3.75%", "Above 4.00%")
+    // have >=2 open bounds on the same side and are governed by `inThresholdOrder`
+    // (#8834) and `ladder_treatment_refused` (#4610), whereas partition scales have
+    // at most one lower tail ("< 3.5%") and at most one upper tail ("≥ 4.5%").
+    const lowerBounds = parsed.filter((p) => p.key.boundRank === -1).length;
+    const upperBounds = parsed.filter((p) => p.key.boundRank === 1).length;
+    if (lowerBounds >= 2 || upperBounds >= 2) return null;
+  }
   const hasNonZeroSigned =
     allSignedMove && parsed.some((p) => p.key.primary !== 0);
 
