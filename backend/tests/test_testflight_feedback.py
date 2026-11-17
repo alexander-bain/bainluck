@@ -51,6 +51,26 @@ def test_a_pem_pasted_with_escaped_newlines_still_loads():
     assert config is not None and "\n" in config.private_key
 
 
+@pytest.mark.parametrize("form", ["multi-line", "multi-line CRLF", "literal backslash-n", "newlines as spaces"])
+def test_the_key_signs_in_every_form_the_heroku_config_vars_box_can_hold(form):
+    """Fable, Nov 17: Alex pastes the .p8 into the dashboard's Config Vars box, either
+    as the file's lines or as one line with literal \\n. Each must sign a token App
+    Store Connect can verify, not only parse."""
+    key, pem = _pem()
+    lines = pem.strip().splitlines()
+    value = {
+        "multi-line": pem,
+        "multi-line CRLF": "\r\n".join(lines) + "\r\n",
+        "literal backslash-n": "\\n".join(lines),
+        "newlines as spaces": " ".join(lines),
+    }[form]
+    config = tf.config_from_env(_env(value))
+    assert config is not None, form
+    claims = jwt.decode(tf.api_token(config), key.public_key(), algorithms=["ES256"],
+                        audience="appstoreconnect-v1")
+    assert claims["iss"] == "issuer-1"
+
+
 def test_only_apples_hmac_of_the_exact_body_passes():
     secret, body = "s" * 32, b'{"data":{}}'
     digest = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
