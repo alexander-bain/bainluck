@@ -182,7 +182,19 @@
                   "name": "Buffalo Bills",
                   "probability": 0.55,
                   "rank": null,
-                  "resolution_source": null
+                  "resolution_source": null,
+                  "source_mark": {
+                    "sources": [
+                      {
+                        "key": "kalshi",
+                        "name": "Kalshi",
+                        "observed_at": null,
+                        "probability": 0.55,
+                        "reason": "observation_unknown"
+                      }
+                    ],
+                    "state": "single"
+                  }
                 },
                 {
                   "american_odds": null,
@@ -192,7 +204,19 @@
                   "name": "Kansas City Chiefs",
                   "probability": 0.45,
                   "rank": null,
-                  "resolution_source": null
+                  "resolution_source": null,
+                  "source_mark": {
+                    "sources": [
+                      {
+                        "key": "kalshi",
+                        "name": "Kalshi",
+                        "observed_at": null,
+                        "probability": 0.45,
+                        "reason": "observation_unknown"
+                      }
+                    ],
+                    "state": "single"
+                  }
                 }
               ],
               "updated_at": null
@@ -236,7 +260,19 @@
                   "name": "Philadelphia Eagles",
                   "probability": 0.62,
                   "rank": null,
-                  "resolution_source": null
+                  "resolution_source": null,
+                  "source_mark": {
+                    "sources": [
+                      {
+                        "key": "kalshi",
+                        "name": "Kalshi",
+                        "observed_at": null,
+                        "probability": 0.62,
+                        "reason": "observation_unknown"
+                      }
+                    ],
+                    "state": "single"
+                  }
                 },
                 {
                   "american_odds": null,
@@ -246,7 +282,19 @@
                   "name": "Dallas Cowboys",
                   "probability": 0.38,
                   "rank": null,
-                  "resolution_source": null
+                  "resolution_source": null,
+                  "source_mark": {
+                    "sources": [
+                      {
+                        "key": "kalshi",
+                        "name": "Kalshi",
+                        "observed_at": null,
+                        "probability": 0.38,
+                        "reason": "observation_unknown"
+                      }
+                    ],
+                    "state": "single"
+                  }
                 }
               ],
               "updated_at": null
@@ -296,7 +344,19 @@
                   "name": "Yes",
                   "probability": 0.6,
                   "rank": null,
-                  "resolution_source": null
+                  "resolution_source": null,
+                  "source_mark": {
+                    "sources": [
+                      {
+                        "key": "kalshi",
+                        "name": "Kalshi",
+                        "observed_at": null,
+                        "probability": 0.6,
+                        "reason": "observation_unknown"
+                      }
+                    ],
+                    "state": "single"
+                  }
                 },
                 {
                   "american_odds": null,
@@ -306,7 +366,19 @@
                   "name": "No",
                   "probability": 0.4,
                   "rank": null,
-                  "resolution_source": null
+                  "resolution_source": null,
+                  "source_mark": {
+                    "sources": [
+                      {
+                        "key": "kalshi",
+                        "name": "Kalshi",
+                        "observed_at": null,
+                        "probability": 0.4,
+                        "reason": "observation_unknown"
+                      }
+                    ],
+                    "state": "single"
+                  }
                 }
               ],
               "updated_at": null
