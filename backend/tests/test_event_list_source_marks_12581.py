@@ -113,3 +113,49 @@ def test_a_card_with_no_current_or_historical_price_has_an_explicit_mark():
     assert data["source_mark"] == data["away_source_mark"] == {
         "state": "none", "sources": [], "reason": "no_probability",
     }
+
+
+@pytest.mark.parametrize("compact", [False, True])
+async def test_container_game_cards_keep_both_marks_when_an_unchanged_price_is_read_again(
+    monkeypatch, compact,
+):
+    from contextlib import asynccontextmanager
+
+    from app.routes import events as event_route
+    from app.services import database
+    from tests.test_container_compact_week_12337 import CompactSession, read_week
+    from tests.test_container_hydrated_reader_9636 import _Session, _nfl_week
+
+    @asynccontextmanager
+    async def reference_session():
+        yield _Session()
+
+    monkeypatch.setattr(database, "async_session_maker", reference_session)
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "false")
+    now = datetime.now(timezone.utc)
+    hub, events, markets = _nfl_week()
+    live = next(event for event in events if event.status == "live")
+    reads = []
+    for minutes in (3, 1):
+        monkeypatch.setattr(event_route, "_ei_cache", {})
+        monkeypatch.setattr(event_route, "_team_cache", {})
+        live.win_probability_sources = quote({}, "kalshi", .62, now, minutes)
+        session = CompactSession(hub, events=events, markets=markets)
+        payload = await read_week(session, compact=compact)
+        served = next(
+            member["card"] for section in payload["sections"]
+            for member in section["members"]
+            if member["type"] == "event" and member["id"] == live.id
+        )
+        assert served["hero_probability"] == .62
+        assert served["hero_probability_away"] == .38
+        for field, probability in (("source_mark", .62), ("away_source_mark", .38)):
+            mark = served[field]
+            assert mark["state"] == "single"
+            assert mark["sources"] == [{
+                "key": "kalshi", "name": "Kalshi", "probability": probability,
+                "observed_at": (now - timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z"),
+            }]
+        reads.append(len(session.statements))
+    assert reads[0] == reads[1]
