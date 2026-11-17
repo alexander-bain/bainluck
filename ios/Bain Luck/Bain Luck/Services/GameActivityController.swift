@@ -164,7 +164,8 @@ struct GameActivityRecord {
         do {
             try service.request(snapshot, staleDate: staleDate(for: snapshot))
             beginViewing(eventID: snapshot.eventID)
-            setStatus("Live Activity started. Updates arrive while this game is open.", for: snapshot.eventID)
+            // #12827: success needs no sentence; the button now reads "Stop Live Activity".
+            feedback = nil
         } catch {
             setStatus("Couldn't start the Live Activity. Try again.", for: snapshot.eventID)
         }

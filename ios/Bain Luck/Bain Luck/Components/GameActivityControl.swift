@@ -52,14 +52,14 @@ struct GameActivityControl: View {
                                 learned: ContextualTipEligibility10876.followLiveLearned(
                                     activeActivityCount: controller.activeEventIDs.count))
                         if !controller.activeEventIDs.isEmpty {
-                            Text("Another game has a Live Activity. Stop it before starting this game.")
+                            Text("Stop the other game's Live Activity first.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                     }
-                    if presentation.showsUpdateNote {
-                        Text("Updates while this game is open. After you leave, the reading can become stale.")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
+                    // #12827 (Alex, TestFlight 5733): "We don't need a wall of grey
+                    // text when someone wants a Live Activity." No standing note;
+                    // the button itself says Start or Stop, and only a failure
+                    // prints a line under it.
                     if let status = controller.status(for: snapshot.eventID) {
                         Text(status).font(.footnote).foregroundStyle(.secondary)
                             .accessibilityIdentifier("game.activity.status")
@@ -112,6 +112,5 @@ nonisolated struct GameActivityControlPresentation {
     let isActive: Bool
 
     var showsControl: Bool { isPhone && isEnabled && (!isTerminal || isActive) }
-    var showsUpdateNote: Bool { showsControl && isActive && !isTerminal }
 }
 #endif
