@@ -493,9 +493,10 @@ async def test_deep_history_is_not_read_to_break_a_latest_clock_tie(seeded_db):
     await session.execute(text(
         "CREATE INDEX odds_seek_test ON odds_snapshots (event_id, bookmaker, captured_at)"
     ))
+    # Raw SQL bypasses the model's client-side default for this NOT NULL column.
     await session.execute(text("""
-        INSERT INTO odds_snapshots (event_id, bookmaker, captured_at, home_moneyline)
-        SELECT :event_id, 'deep', cast(:start AS timestamptz) + n * interval '1 second', -110
+        INSERT INTO odds_snapshots (event_id, bookmaker, captured_at, home_moneyline, reading_count)
+        SELECT :event_id, 'deep', cast(:start AS timestamptz) + n * interval '1 second', -110, 1
         FROM generate_series(1, 8192) n
     """), {"event_id": event_id, "start": _T0})
     tied = OddsSnapshot(event_id=event_id, bookmaker="deep",
