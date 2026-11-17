@@ -90,8 +90,18 @@ struct WatchWristTileModel12616: Equatable, Sendable {
 
         // MARK: - After (Settled Final)
         if input.isFinal, let hs = input.homeScore, let ascore = input.awayScore {
+            let pregamePair = resolvePregamePercents(input)
             if hs == ascore {
                 let homeBadge = badgeFills.home
+                let drawSupporting: String = {
+                    if let drawPct = renderedPercent(input.prematchDrawProbability) {
+                        return "Pregame Draw \(drawPct)%"
+                    }
+                    if let homePct = pregamePair.home {
+                        return "Pregame \(abbrs.home) \(homePct)%"
+                    }
+                    return ""
+                }()
                 return WatchWristTileModel12616(
                     stage: .after,
                     topMetaText: "FINAL · DRAW",
@@ -104,7 +114,7 @@ struct WatchWristTileModel12616: Equatable, Sendable {
                     heroInkHex: "#E5E7EB",
                     badgeFillHex: homeBadge,
                     badgeInkHex: badgeInk(on: homeBadge),
-                    supportingLine: "Final · Draw"
+                    supportingLine: drawSupporting
                 )
             }
 
@@ -113,7 +123,6 @@ struct WatchWristTileModel12616: Equatable, Sendable {
             let opponentUpper = (winnerIsHome ? names.away : names.home).uppercased()
             let preposition = winnerIsHome ? "VS" : "AT"
             let badgeFill = winnerIsHome ? badgeFills.home : badgeFills.away
-            let pregamePair = resolvePregamePercents(input)
             let winnerPrePct = winnerIsHome ? pregamePair.home : pregamePair.away
 
             let supporting: String = {
@@ -121,9 +130,9 @@ struct WatchWristTileModel12616: Equatable, Sendable {
                     if pct < 50 {
                         return "Won from \(pct)% pregame chance"
                     }
-                    return "Pregame \(pct)% · Final"
+                    return "Pregame \(pct)%"
                 }
-                return "Final"
+                return ""
             }()
 
             return WatchWristTileModel12616(
@@ -173,14 +182,14 @@ struct WatchWristTileModel12616: Equatable, Sendable {
                 if let cur = resolved.percent, let pre = leaderPrePct {
                     let delta = cur - pre
                     if delta > 0 {
-                        let unit = delta == 1 ? "pt" : "pts"
-                        return "Up +\(delta) \(unit) from \(pre)% pregame"
+                        let unit = delta == 1 ? "point" : "points"
+                        return "Up \(delta) \(unit) from \(pre)%"
                     } else if delta < 0 {
                         let drop = abs(delta)
-                        let unit = drop == 1 ? "pt" : "pts"
-                        return "Down \(drop) \(unit) from \(pre)% pregame"
+                        let unit = drop == 1 ? "point" : "points"
+                        return "Down \(drop) \(unit) from \(pre)%"
                     } else {
-                        return "Even with \(pre)% pregame"
+                        return "Even with \(pre)%"
                     }
                 }
                 if let obs = input.probabilityObservedAt, obs <= now {
@@ -462,12 +471,14 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                     monogramBadge
                 }
             }
-            Text(model.supportingLine)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.68))
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .modifier(OptionalIdentifier12616(id: identifierPrefix.map { "\($0).clock" }))
+            if !model.supportingLine.isEmpty {
+                Text(model.supportingLine)
+                    .font(HeadlineStyleTable199.quietText(.wristTile, monospacedDigits: true, scaledSize: HeadlineStyleTable199.quietTextBaseSize(.wristTile)))
+                    .foregroundStyle(Color.white.opacity(0.68))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .modifier(OptionalIdentifier12616(id: identifierPrefix.map { "\($0).clock" }))
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
@@ -493,7 +504,7 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                         .fill(Color.white)
                         .frame(width: 4, height: 4)
                     Text(liveBadge)
-                        .font(.system(size: 9, weight: .bold).monospacedDigit())
+                        .font(HeadlineStyleTable199.headers(.wristTile, scaledSize: 9).monospacedDigit())
                         .foregroundStyle(Color.white)
                         .lineLimit(1)
                 }
@@ -506,7 +517,7 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                 ))
 
                 Text(model.topMetaText)
-                    .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
+                    .font(HeadlineStyleTable199.headers(.wristTile, scaledSize: 9.5).monospacedDigit())
                     .foregroundStyle(Color.white.opacity(0.78))
                     .lineLimit(1)
                     .minimumScaleFactor(0.70)
@@ -521,7 +532,7 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                         .foregroundStyle(Self.rgbColor("#34D399"))
                 }
                 Text(model.topMetaText)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(HeadlineStyleTable199.headers(.wristTile, scaledSize: HeadlineStyleTable199.headerBaseSize(.wristTile)))
                     .tracking(0.25)
                     .foregroundStyle(
                         model.showsFinalCheckmark
@@ -547,7 +558,7 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                     .foregroundStyle(Color.white)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(model.heroFigureText)
-                    .font(.title2.weight(.bold).monospacedDigit())
+                    .font(.system(.title2, design: .rounded, weight: model.stage == .after ? .bold : .heavy).monospacedDigit())
                     .foregroundStyle(Self.rgbColor(model.heroInkHex))
                     .modifier(OptionalIdentifier12616(id: heroID))
             }
@@ -555,12 +566,12 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .lastTextBaseline, spacing: 4) {
                     Text(model.leaderName)
-                        .font(.system(size: 15, weight: .bold))
+                        .font(HeadlineStyleTable199.names(.wristTile, scaledSize: HeadlineStyleTable199.nameBaseSize(.wristTile)))
                         .foregroundStyle(Color.white)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                     Text(model.heroFigureText)
-                        .font(.system(size: 25, weight: .bold, design: .rounded).monospacedDigit())
+                        .font(heroFigureFont(size: HeadlineStyleTable199.nowBaseSize(.wristTile)))
                         .foregroundStyle(Self.rgbColor(model.heroInkHex))
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
@@ -568,12 +579,12 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                 }
                 HStack(alignment: .lastTextBaseline, spacing: 4) {
                     Text(model.leaderName)
-                        .font(.system(size: 13, weight: .bold))
+                        .font(HeadlineStyleTable199.names(.wristTile, scaledSize: 13))
                         .foregroundStyle(Color.white)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                     Text(model.heroFigureText)
-                        .font(.system(size: 21, weight: .bold, design: .rounded).monospacedDigit())
+                        .font(heroFigureFont(size: 21))
                         .foregroundStyle(Self.rgbColor(model.heroInkHex))
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
@@ -581,12 +592,12 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                 }
                 HStack(alignment: .lastTextBaseline, spacing: 4) {
                     Text(model.leaderAbbreviation)
-                        .font(.system(size: 14.5, weight: .bold))
+                        .font(HeadlineStyleTable199.names(.wristTile, scaledSize: 14.5))
                         .foregroundStyle(Color.white)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                     Text(model.heroFigureText)
-                        .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
+                        .font(heroFigureFont(size: 24))
                         .foregroundStyle(Self.rgbColor(model.heroInkHex))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
@@ -594,6 +605,12 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                 }
             }
         }
+    }
+
+    private func heroFigureFont(size: CGFloat) -> Font {
+        model.stage == .after
+            ? HeadlineStyleTable199.secondNumbers(.wristTile, prominent: true, scaledSize: size)
+            : HeadlineStyleTable199.now(.wristTile, scaledSize: size)
     }
 
     private var monogramBadge: some View {

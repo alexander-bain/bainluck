@@ -78,7 +78,9 @@ nonisolated struct GameOrMarketQuery10873: EntityStringQuery {
         return found
     }
 
-    /// Every match the canonical search returns, ranked as search ranks them.
+    /// Every match the canonical search returns: games first (live, then the
+    /// soonest upcoming, then the rest, ruling 208-A), then markets as search
+    /// ranks them.
     /// Never narrowed to the first hit: when more than one comes back, the
     /// system asks the reader which one.
     func entities(matching string: String) async throws -> [GameOrMarketEntity10873] {
@@ -98,15 +100,68 @@ enum GameOrMarketCatalog10873 {
     static let perKindLimit = 10
 
     static func search(_ text: String) async throws -> [GameOrMarketEntity10873] {
-        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = spokenQuery(text)
         guard !query.isEmpty else { return [] }
         let response = try await APIClient.shared.fetchSearch(query: query)
         return entities(from: response)
     }
 
-    static func entities(from response: SearchResponse) -> [GameOrMarketEntity10873] {
+    /// Ruling 208-A — what a reader says, reduced to what search can match.
+    /// Siri hands over the whole reply ("the next Patriots game"), and search
+    /// finds nothing for that phrase but 24 games for "Patriots" (Nov 16). The
+    /// words that only say "a game, soon" are dropped; team names, "vs" and
+    /// "at" stay, since search reads matchups. If nothing is left, the reply
+    /// is searched as said.
+    nonisolated static let spokenFillers: Set<String> = [
+        "the", "a", "an", "next", "upcoming", "coming", "live", "current", "latest", "now",
+        "tonight", "today", "tomorrow", "this", "week", "weekend", "game", "games", "match",
+        "matchup", "fixture", "chance", "chances", "probability", "of", "for", "on", "in",
+        "please", "what", "whats", "is", "are", "their", "my",
+    ]
+
+    nonisolated static func spokenQuery(_ text: String) -> String {
+        let said = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = said.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let kept = words.filter { word in
+            let bare = word.lowercased()
+                .replacingOccurrences(of: "\u{2019}", with: "'")
+                .replacingOccurrences(of: "'s", with: "")
+                .trimmingCharacters(in: .punctuationCharacters)
+            return !bare.isEmpty && !spokenFillers.contains(bare)
+        }.map { word -> String in
+            // "Patriots'" / "Patriots's" → "Patriots".
+            var trimmed = word.replacingOccurrences(of: "\u{2019}", with: "'")
+            if trimmed.lowercased().hasSuffix("'s") { trimmed.removeLast(2) }
+            return trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "'?.,!"))
+        }
+        let query = kept.joined(separator: " ")
+        return query.isEmpty ? said : query
+    }
+
+    /// Ruling 208-A — a team's games in the order a reader means "its game":
+    /// a live game first, then the soonest upcoming one, then everything else
+    /// in search's own order (finished games last). Futures come after games.
+    nonisolated static func gameOrder(_ events: [SearchEvent], now: Date = Date()) -> [SearchEvent] {
+        func rank(_ event: SearchEvent) -> (Int, TimeInterval) {
+            let status = (event.status ?? "").lowercased()
+            let start = event.commenceTime?.asDate
+            if status == "live" || status == "in_progress" || status == "suspended" { return (0, 0) }
+            if status == "scheduled" || status == "upcoming" || status == "pregame" {
+                return (1, start?.timeIntervalSince(now) ?? .greatestFiniteMagnitude)
+            }
+            return (2, 0)
+        }
+        return events.enumerated().sorted { a, b in
+            let ra = rank(a.element), rb = rank(b.element)
+            if ra.0 != rb.0 { return ra.0 < rb.0 }
+            if ra.1 != rb.1 { return ra.1 < rb.1 }
+            return a.offset < b.offset
+        }.map(\.element)
+    }
+
+    static func entities(from response: SearchResponse, now: Date = Date()) -> [GameOrMarketEntity10873] {
         let facets = response.sports ?? []
-        let games = response.results.prefix(perKindLimit).map { event in
+        let games = gameOrder(response.results, now: now).prefix(perKindLimit).map { event in
             GameOrMarketEntity10873(
                 kind: .game,
                 recordID: event.id,

@@ -1835,8 +1835,8 @@ export interface WinProbYAxis {
   ticks: number[];
 }
 
-/** Below this many samples a percentile is not a percentile — keep the full axis. */
-const WIN_PROB_Y_MIN_SAMPLES = 12;
+/** Ruling 201 (#12750): fit two-team game charts from the first reading (empty -> full axis). */
+const WIN_PROB_Y_MIN_SAMPLES = 1;
 /** Narrowest window we will ever show, so a 2-point wobble is not magnified into drama. */
 const WIN_PROB_Y_MIN_SPAN = 20;
 /**

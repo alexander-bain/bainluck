@@ -117,8 +117,8 @@ test("the real page reports the displayed preview observation before any commit,
   expect(after).toContain('data-observation-delivery="dnpl"');
   expect(after).toContain(`data-observation-at="${OBSERVED}"`);
   expect(after).toContain(`data-observation-event-id="${ID}"`);
-  expect(before.match(/data-hero-digits="">([^<]+)/g)).toEqual(after.match(/data-hero-digits="">([^<]+)/g));
-  expect(after).toContain('data-hero-digits="">60</span>');
+  expect(before.match(/data-hero-digits=""[^>]*>([^<]+)/g)).toEqual(after.match(/data-hero-digits=""[^>]*>([^<]+)/g));
+  expect(after).toMatch(/data-hero-digits=""[^>]*>60%<\/span>/);
   expect(priceDetails(after)).toContain(`dateTime="${OBSERVED}"`);
   expect(priceDetails(after)).toContain("8s ago");
   expect(priceDetails(after)).not.toContain(COMMITTED);

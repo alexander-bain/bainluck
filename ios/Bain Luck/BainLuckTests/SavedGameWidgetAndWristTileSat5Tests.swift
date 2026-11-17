@@ -257,7 +257,7 @@ final class SavedGameWidgetAndWristTileSat5Tests: XCTestCase {
         XCTAssertEqual(duringLive.topMetaText, "PHI 100–98 BOS")
         XCTAssertEqual(duringLive.leaderName, "76ers")
         XCTAssertEqual(duringLive.heroFigureText, "59%")
-        XCTAssertEqual(duringLive.supportingLine, "Up +8 pts from 51% pregame")
+        XCTAssertEqual(duringLive.supportingLine, "Up 8 points from 51%")
 
         // 4. After (Upset win: winner's score first + pregame improbability)
         let afterUpset = WatchWristTileModel12616.build(
