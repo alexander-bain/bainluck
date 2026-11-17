@@ -589,7 +589,15 @@ async def load_live_paired_metric_sets(
             .where(FuturesMarket.id.in_(sorted(market_ids)))
         )
         rows = (await db.execute(stmt)).scalars().all()
-        markets_by_id = {int(fm.id): serialize_futures_market_for_pairing(fm) for fm in rows}
+        for fm in rows:
+            if isinstance(fm, Mapping):
+                mid = fm.get("id")
+                if isinstance(mid, int) and not isinstance(mid, bool) and mid in market_ids:
+                    markets_by_id[int(mid)] = fm
+            elif getattr(fm, "id", None) is not None:
+                mid = int(fm.id)
+                if mid in market_ids:
+                    markets_by_id[mid] = serialize_futures_market_for_pairing(fm)
 
     hydrated_sets: dict[str, dict[str, Any]] = {}
     for sid, sdata in selected_raw.items():
