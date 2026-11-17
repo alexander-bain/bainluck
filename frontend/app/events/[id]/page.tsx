@@ -24,7 +24,7 @@ import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { eventPageProjectedPair } from "@/lib/projectedFinalPair";
 import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastComparison";
 import { livePregameComparison } from "@/lib/livePregameComparison";
-import { resolveMatchupTeamColors } from "@/lib/teamColors";
+import { effectiveAwaySecondaryColor, lookupTeamColors, resolveMatchupTeamColors } from "@/lib/teamColors";
 import { heldFrameAfter, useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
 import { createReconnectCatchup } from "@/lib/reconnectCatchup";
 import {
@@ -2721,11 +2721,17 @@ export default function EventPage({ params }: EventPageProps) {
     actualSeriesDrawn: drawsActualScore,
   });
 
+  const curatedHome = lookupTeamColors(event.home_team);
+  const curatedAway = lookupTeamColors(event.away_team);
+  const resolvedAwaySecondary = effectiveAwaySecondaryColor(
+    event.away_team,
+    event.away_team_data?.secondary_color,
+  );
   const matchupColors = resolveMatchupTeamColors({
-    homePrimary: event.home_team_data?.primary_color,
-    awayPrimary: event.away_team_data?.primary_color,
-    homeSecondary: event.home_team_data?.secondary_color,
-    awaySecondary: event.away_team_data?.secondary_color,
+    homePrimary: event.home_team_data?.primary_color ?? curatedHome?.primary,
+    awayPrimary: event.away_team_data?.primary_color ?? curatedAway?.primary,
+    homeSecondary: event.home_team_data?.secondary_color ?? curatedHome?.secondary,
+    awaySecondary: resolvedAwaySecondary,
   });
   const effectiveHomePrimary = matchupColors.home ?? event.home_team_data?.primary_color ?? undefined;
   const effectiveAwayPrimary = matchupColors.away ?? event.away_team_data?.primary_color ?? undefined;
@@ -3221,7 +3227,7 @@ export default function EventPage({ params }: EventPageProps) {
               periodBoundaries={periodBoundaries}
               homeTeamColor={effectiveHomePrimary}
               awayTeamColor={effectiveAwayPrimary}
-              awayTeamSecondaryColor={event.away_team_data?.secondary_color || undefined}
+              awayTeamSecondaryColor={resolvedAwaySecondary || event.away_team_data?.secondary_color || undefined}
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
               homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
@@ -3251,7 +3257,7 @@ export default function EventPage({ params }: EventPageProps) {
               awayTeam={event.away_team}
               homeTeamColor={effectiveHomePrimary}
               awayTeamColor={effectiveAwayPrimary}
-              awayTeamSecondaryColor={event.away_team_data?.secondary_color || undefined}
+              awayTeamSecondaryColor={resolvedAwaySecondary || event.away_team_data?.secondary_color || undefined}
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
               lastPoint={lastChartPoint}
@@ -3892,7 +3898,7 @@ export default function EventPage({ params }: EventPageProps) {
               periodBoundaries={periodBoundaries}
               homeTeamColor={effectiveHomePrimary}
               awayTeamColor={effectiveAwayPrimary}
-              awayTeamSecondaryColor={event.away_team_data?.secondary_color || undefined}
+              awayTeamSecondaryColor={resolvedAwaySecondary || event.away_team_data?.secondary_color || undefined}
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
               homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}

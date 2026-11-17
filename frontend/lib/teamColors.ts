@@ -482,11 +482,29 @@ const KNOWN_TEAM_COLORS: Record<string, { primary: string; secondary?: string }>
   "washington nationals": { primary: "#AB0003", secondary: "#14225A" },
   // Major European football & NCAA clubs
   "arsenal": { primary: "#EF0107", secondary: "#063672" },
+  "aston villa": { primary: "#670E36", secondary: "#95BFE5" },
+  "bournemouth": { primary: "#DA291C", secondary: "#64748B" },
+  "afc bournemouth": { primary: "#DA291C", secondary: "#64748B" },
+  "brentford": { primary: "#E30613", secondary: "#64748B" },
+  "brighton": { primary: "#0057B8", secondary: "#FFCD00" },
+  "brighton & hove albion": { primary: "#0057B8", secondary: "#FFCD00" },
   "chelsea": { primary: "#034694", secondary: "#DBA111" },
+  "coventry city": { primary: "#87CCED", secondary: "#1E293B" },
+  "crystal palace": { primary: "#1B458F", secondary: "#C4122E" },
+  "everton": { primary: "#003399", secondary: "#64748B" },
+  "fulham": { primary: "#FFFFFF", secondary: "#CC0000" },
+  "ipswich town": { primary: "#3A64A3", secondary: "#DE2C37" },
+  "leicester city": { primary: "#003090", secondary: "#FDBE11" },
   "liverpool": { primary: "#C8102E", secondary: "#00B2A9" },
   "manchester city": { primary: "#6CABDD", secondary: "#1C2C5B" },
   "manchester united": { primary: "#DA291C", secondary: "#000000" },
+  "newcastle united": { primary: "#241F20", secondary: "#41B6E6" },
+  "nottingham forest": { primary: "#DD0000", secondary: "#64748B" },
+  "southampton": { primary: "#D71920", secondary: "#64748B" },
   "tottenham hotspur": { primary: "#132257", secondary: "#64748B" },
+  "west ham united": { primary: "#7A263A", secondary: "#1BB1E7" },
+  "wolverhampton wanderers": { primary: "#FDB913", secondary: "#231F20" },
+  "wolves": { primary: "#FDB913", secondary: "#231F20" },
   "real madrid": { primary: "#1E293B", secondary: "#FEBE10" },
   "barcelona": { primary: "#A50044", secondary: "#004D98" },
   "bayern munich": { primary: "#DC052D", secondary: "#0066B2" },
@@ -503,4 +521,26 @@ export function lookupTeamColors(
   if (!teamName) return null;
   const norm = teamName.trim().toLowerCase();
   return KNOWN_TEAM_COLORS[norm] ?? null;
+}
+
+/**
+ * Ruling 197 — resolves an away club's second colour for same-family disambiguation:
+ * prefers our curated `KNOWN_TEAM_COLORS` secondary when recorded (e.g. Crystal Palace
+ * `#C4122E` Eagle Red over ESPN's generic `#000000`), and ignores generic `#000000`
+ * wire placeholders on uncurated clubs so Ruling 197 falls back to slate (`#64748B`)
+ * rather than painting an unverified black line.
+ */
+export function effectiveAwaySecondaryColor(
+  awayTeamName: string | null | undefined,
+  wireSecondary: string | null | undefined,
+): string | undefined {
+  const trimmedWire = wireSecondary?.trim();
+  if (trimmedWire && trimmedWire.toLowerCase() !== "#000000") {
+    return trimmedWire;
+  }
+  const known = lookupTeamColors(awayTeamName);
+  if (known?.secondary && known.secondary.toLowerCase() !== "#000000") {
+    return known.secondary;
+  }
+  return undefined;
 }
