@@ -397,7 +397,7 @@ final class OscarsPairedSurfaces12577Tests: XCTestCase {
         let bestPicture = setsToRender[0]
         let bestDirector = setsToRender.count > 1 ? setsToRender[1] : nil
 
-        func renderSlice<V: View>(_ content: V, scheme: ColorScheme) -> UIImage {
+        func renderSlice<V: View>(_ content: V, scheme: ColorScheme, dynamicType: DynamicTypeSize = .large) -> UIImage {
             let bg = scheme == .dark
                 ? Color(red: 0.05, green: 0.06, blue: 0.09)
                 : Color(red: 0.965, green: 0.969, blue: 0.976)
@@ -407,10 +407,11 @@ final class OscarsPairedSurfaces12577Tests: XCTestCase {
                 .frame(width: 390, alignment: .topLeading)
                 .background(bg)
                 .environment(\.colorScheme, scheme)
-            let host = hostForMeasurement(wrapped, at: .large)
+                .environment(\.dynamicTypeSize, dynamicType)
+            let host = hostForMeasurement(wrapped, at: dynamicType)
             host.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
-            let fitting = host.sizeThatFits(in: CGSize(width: 390, height: 3200))
-            let size = CGSize(width: 390, height: ceil(fitting.height) + 20)
+            let fitting = host.sizeThatFits(in: CGSize(width: 390, height: 2400))
+            let size = CGSize(width: 390, height: min(2400, ceil(fitting.height) + 20))
             host.view.frame = CGRect(origin: .zero, size: size)
 
             let window: UIWindow
@@ -435,9 +436,14 @@ final class OscarsPairedSurfaces12577Tests: XCTestCase {
             } while Date() < until
 
             let fmt = UIGraphicsImageRendererFormat()
-            fmt.scale = 3.0
-            return UIGraphicsImageRenderer(bounds: host.view.bounds, format: fmt).image { _ in
-                _ = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+            fmt.scale = 2.0
+            fmt.opaque = true
+            return UIGraphicsImageRenderer(bounds: host.view.bounds, format: fmt).image { ctx in
+                UIColor.white.setFill()
+                ctx.fill(host.view.bounds)
+                if !host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) {
+                    host.view.layer.render(in: ctx.cgContext)
+                }
             }
         }
 
@@ -536,6 +542,8 @@ final class OscarsPairedSurfaces12577Tests: XCTestCase {
         XCTAssertTrue(joined.contains("The Odyssey"), "Expected contender title in OCR: \(joined)")
         XCTAssertTrue(joined.contains("Nominated"), "Expected Nominated label in OCR: \(joined)")
         XCTAssertTrue(joined.contains("Wins"), "Expected Wins label in OCR: \(joined)")
+        XCTAssertTrue(joined.contains("nominated"), "Expected full word 'nominated' (never 'nom') in OCR: \(joined)")
+        XCTAssertFalse(joined.contains("% nom "), "Must never abbreviate 'nominated' to 'nom': \(joined)")
         XCTAssertFalse(joined.contains("…"), "Found ellipsis truncation in OCR: \(joined)")
         XCTAssertFalse(joined.lowercased().contains("kalshi"), "Leaked Kalshi on card face: \(joined)")
         XCTAssertFalse(joined.lowercased().contains("polymarket"), "Leaked Polymarket on card face: \(joined)")
@@ -545,7 +553,7 @@ final class OscarsPairedSurfaces12577Tests: XCTestCase {
             try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
             let totalHeight = slices.reduce(CGFloat(0)) { $0 + $1.size.height }
             let fmt = UIGraphicsImageRendererFormat()
-            fmt.scale = 3.0
+            fmt.scale = 2.0
             let combined = UIGraphicsImageRenderer(size: CGSize(width: 390, height: totalHeight), format: fmt).image { _ in
                 var y: CGFloat = 0
                 for s in slices {
@@ -555,6 +563,38 @@ final class OscarsPairedSurfaces12577Tests: XCTestCase {
             }
             if let png = combined.pngData() {
                 try png.write(to: dirURL.appendingPathComponent("12577-oscars-paired-discover-and-category-390.png"))
+            }
+
+            // Export largest-text (.xxxLarge & AX5) render of "46% nominated" (Fable look on #12863)
+            let xxxLargeSlice = renderSlice(
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("390 PX · .xxxLarge ('46% nominated' in full)")
+                        .font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary)
+                    DiscoverPairedMetricCardView(
+                        set: bestPicture, form: .pairedBarsTop5Expandable,
+                        initialExpanded: false, preloadedImages: preloaded
+                    )
+                },
+                scheme: .light, dynamicType: .xxxLarge
+            )
+            let ax5Slice = renderSlice(
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("390 PX · AX5 Largest Accessibility Size ('46% nominated' in full)")
+                        .font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary)
+                    DiscoverPairedMetricCardView(
+                        set: bestPicture, form: .pairedBarsTop5Expandable,
+                        initialExpanded: false, preloadedImages: preloaded
+                    )
+                },
+                scheme: .light, dynamicType: .accessibility5
+            )
+            let largestH = xxxLargeSlice.size.height + ax5Slice.size.height
+            let largestCombined = UIGraphicsImageRenderer(size: CGSize(width: 390, height: largestH), format: fmt).image { _ in
+                xxxLargeSlice.draw(in: CGRect(x: 0, y: 0, width: 390, height: xxxLargeSlice.size.height))
+                ax5Slice.draw(in: CGRect(x: 0, y: xxxLargeSlice.size.height, width: 390, height: ax5Slice.size.height))
+            }
+            if let png = largestCombined.pngData() {
+                try png.write(to: dirURL.appendingPathComponent("12577-oscars-nominated-largest-text-390.png"))
             }
         }
     }

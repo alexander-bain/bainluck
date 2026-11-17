@@ -262,13 +262,11 @@ struct PairedQuietNumberBox<Label: View>: View {
     var body: some View {
         let resolvedWidth: CGFloat? = dynamicTypeSize.isAccessibilitySize ? nil : fixedWidth
         label()
+            .fixedSize(horizontal: !expandToFillWidth, vertical: false)
             .padding(.horizontal, horizontalPadding)
             .padding(.vertical, verticalPadding)
             .frame(
-                width: resolvedWidth,
-                alignment: contentAlignment
-            )
-            .frame(
+                minWidth: resolvedWidth,
                 maxWidth: expandToFillWidth ? .infinity : nil,
                 alignment: contentAlignment
             )
@@ -716,6 +714,7 @@ struct DiscoverPairedMetricCardView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 10)
                 .accessibilityIdentifier("discover.pairedMetric.expander")
             }

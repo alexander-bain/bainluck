@@ -247,10 +247,11 @@ nonisolated enum PairedMetricPresentation {
             || lower.contains("ties broken by")
     }
 
-    /// Short Stage-1 qualifier tag (`"nom"`, `"playoff"`, or lowercased `stage1Label`).
+    /// Stage-1 qualifier tag (`"nominated"`, `"playoff"`, or lowercased `stage1Label`).
+    /// Never abbreviates `"nominated"` to `"nom"` (Fable look on `#12863`).
     static func shortStage1Tag(for set: PairedMetricSet) -> String {
         let lower = set.stage1Label.lowercased()
-        if lower.contains("nominat") { return "nom" }
+        if lower.contains("nominat") { return "nominated" }
         if lower.contains("playoff") { return "playoff" }
         return lower
     }
@@ -312,7 +313,7 @@ nonisolated enum PairedMetricPresentation {
             let left = isLockTier
                 ? "LIKELY NOMINEES (70%+ TO BE NOMINATED · LONGSHOT TO WIN)"
                 : "ON THE NOMINATION BUBBLE (<70% TO BE NOMINATED)"
-            return (left, "NOM · WIN")
+            return (left, "NOMINATED · WIN")
         }
         if lowerS1.contains("playoff") {
             let left = isLockTier
