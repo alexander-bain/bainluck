@@ -320,7 +320,7 @@ class WatchUIShardTests(unittest.TestCase):
         matrix = re.search(r"shard: \[(.*?)\]", split).group(1)
         self.assertEqual(set(matrix.split(", ")), set(self.groups))
         self.assertIn("fail-fast: false", split)
-        self.assertIn("timeout-minutes: 90", split)
+        self.assertIn("timeout-minutes: 105", split)
         self.assertIn("group: watch-ui-${{ matrix.shard }}-", split)
         complete = workflow.split("  watch-ui-complete:", 1)[1].split(
             "  companion-archive:", 1

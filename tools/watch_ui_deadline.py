@@ -14,7 +14,9 @@ import signal
 import subprocess
 import time
 
-MAX_SECONDS = 75 * 60
+# 90 min (was 75): run 44071241979 ran navigation's 39 cases on a slow runner
+# and the 75-minute budget ended during the last case.
+MAX_SECONDS = 90 * 60
 
 
 class Interrupted(Exception):

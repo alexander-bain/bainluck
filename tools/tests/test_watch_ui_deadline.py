@@ -202,7 +202,7 @@ print('only once',flush=True); time.sleep(20)
         job = workflow.split("  watch-ui-journey:", 1)[1].split(
             "  companion-archive:", 1
         )[0]
-        self.assertIn("timeout-minutes: 90", job)
+        self.assertIn("timeout-minutes: 105", job)
         self.assertIn(
             "python3 tools/watch_ui_stage.py execute --output-dir build/watch-ui-journey -- bash tools/watch-ui-journey.sh execute",
             job,
@@ -218,7 +218,7 @@ print('only once',flush=True); time.sleep(20)
         self.assertNotIn("-only-testing", measured)
         self.assertEqual(harness.count("-only-testing"), 1)
         self.assertIn('"-only-testing:$WARMUP_CASE"', harness)
-        self.assertLess(MODULE.MAX_SECONDS + 30, 90 * 60 - 5 * 60)
+        self.assertLess(MODULE.MAX_SECONDS + 30, 105 * 60 - 5 * 60)
 
 
 if __name__ == "__main__":
