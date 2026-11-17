@@ -1,0 +1,71 @@
+{
+  "slug": "machinery-fed-and-macro",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "same_measure",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ECONOMICS · FEDERAL RESERVE",
+  "name": "Fed & U.S. Macro: rate path and recession watch",
+  "category": "economics",
+  "tag": "ECONOMICS",
+  "section_title": "January FOMC Decision",
+  "footer": "Each market settles from official Federal Reserve and national statistics releases.",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 4,
+    "card_section_key": "jan_fomc",
+    "sections": [
+      {
+        "key": "jan_fomc",
+        "title": "January 2027 FOMC Rate Decision",
+        "note": "Priced probabilities for the Federal Open Market Committee's January policy move.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["fed", "decision", "jan", "2027"],
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 5
+        }
+      },
+      {
+        "key": "rate_path",
+        "title": "Year-End Rate & Hike Count",
+        "note": "Mutually exclusive year-end target rate and 2026 rate-hike count fields.",
+        "atom_query": {
+          "kind": "markets",
+          "any_tokens": ["fed rate be at the end of 2026", "fed rate hikes in 2026"],
+          "exclude_tokens": ["above", "below", "hit"],
+          "shape": "field",
+          "order_by": "closeness_to_50",
+          "min_items": 2,
+          "max_items": 2,
+          "max_outcomes": 4
+        }
+      },
+      {
+        "key": "recession_benchmarks",
+        "title": "G7 & U.S. Recession Benchmarks",
+        "note": "Yes-or-no markets on official recession calls across major economies.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["recession"],
+          "any_tokens": ["recession in 2027", "us recession", "japan recession", "canada recession"],
+          "exclude_tokens": ["sweep", "which countries"],
+          "shape": "binary",
+          "order_by": "lead_prob_desc",
+          "min_items": 2,
+          "max_items": 3,
+          "max_outcomes": 1
+        }
+      }
+    ]
+  }
+}

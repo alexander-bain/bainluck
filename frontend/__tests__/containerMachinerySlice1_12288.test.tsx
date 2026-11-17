@@ -236,6 +236,28 @@ describe("#12288 Slice 1 — topic-free container machinery renderer", () => {
             ],
           }}
         />
+        <MachinerySectionRenderer
+          members={[]}
+          visualBlock={{
+            form_id: "benchmark_strip",
+            items: [
+              {
+                market_id: 131074,
+                title: "Will the 2028 Democratic Presidential nominee be a woman",
+                href: "/futures/131074",
+                outcomes: [
+                  {
+                    outcome_id: 101,
+                    name: "Yes",
+                    probability: 0.23,
+                    rendered_percent: 23,
+                    art: { url: null, kind: "none", detail: "", accent_color: "", initials: "WW" },
+                  },
+                ],
+              },
+            ],
+          }}
+        />
       </div>,
     );
     expect(html).toContain('data-testid="machinery-discover-card"');
@@ -244,5 +266,8 @@ describe("#12288 Slice 1 — topic-free container machinery renderer", () => {
     expect(html).toContain("One Battle After Another");
     expect(html).toContain("Buffalo Bills");
     expect(html).toContain("Open all 4 sections");
+    // Bar #2: never print placeholder letters (WW / JO / BUF) when real art is absent
+    expect(html).not.toContain(">WW<");
+    expect(html).not.toContain(">BUF<");
   });
 });

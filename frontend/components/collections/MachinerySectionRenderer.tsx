@@ -40,27 +40,19 @@ function SubjectAvatar({
   poster?: boolean;
 }) {
   const url = art?.url;
-  const kind = art?.kind ?? "monogram";
+  if (!url) return null;
+  const kind = art?.kind ?? "person";
   const isLogo = kind === "team_logo";
   const shapeClass = poster ? "rounded-md" : "rounded-full";
-  if (url) {
-    return (
-      <span
-        className={`inline-flex shrink-0 items-center justify-center overflow-hidden border border-surface-border bg-surface-elevated ${shapeClass} ${sizeClass}`}
-      >
-        <img
-          src={url}
-          alt={label}
-          className={isLogo ? "h-4/5 w-4/5 object-contain" : "h-full w-full object-cover object-top"}
-        />
-      </span>
-    );
-  }
   return (
     <span
-      className={`inline-flex shrink-0 items-center justify-center border border-surface-border bg-surface-elevated font-semibold text-xs text-text-primary ${shapeClass} ${sizeClass}`}
+      className={`inline-flex shrink-0 items-center justify-center overflow-hidden border border-surface-border bg-surface-elevated ${shapeClass} ${sizeClass}`}
     >
-      {art?.initials || label.slice(0, 2).toUpperCase()}
+      <img
+        src={url}
+        alt={label}
+        className={isLogo ? "h-4/5 w-4/5 object-contain" : "h-full w-full object-cover object-top"}
+      />
     </span>
   );
 }

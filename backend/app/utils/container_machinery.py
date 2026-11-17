@@ -82,6 +82,51 @@ _PLACEHOLDER_OUTCOME_RE = re.compile(
     r"^(?:other|any\s+other|field|none(?:\s+of\s+the\s+above)?|someone\s+else|tbd)$",
     re.IGNORECASE,
 )
+_LOWER_PROPER_NAME_RE = re.compile(r"^[A-Z][a-z'’-]+(?:\s+[A-Za-z'’-]+)+$")
+_NON_NAME_TAIL_WORDS: frozenset[str] = frozenset(
+    {
+        "party",
+        "maintains",
+        "rate",
+        "rates",
+        "cuts",
+        "cut",
+        "hikes",
+        "hike",
+        "holds",
+        "hold",
+        "wins",
+        "win",
+        "of",
+        "the",
+        "in",
+        "and",
+        "to",
+        "for",
+        "at",
+        "by",
+        "or",
+    }
+)
+_FORBIDDEN_COPY_QUESTION_RE = re.compile(r"\bquestions?\b", re.IGNORECASE)
+
+
+def _proper_case_outcome_label(label: str) -> str:
+    """Capitalize miscased proper names (e.g. ``'Anne hathaway'`` -> ``'Anne Hathaway'``)
+    without altering numeric brackets, units, or plain sentence outcomes."""
+    trimmed = label.strip()
+    if not _LOWER_PROPER_NAME_RE.match(trimmed):
+        return trimmed
+    parts = trimmed.split(" ")
+    if any(p.lower() in _NON_NAME_TAIL_WORDS for p in parts[1:]):
+        return trimmed
+    fixed: list[str] = [parts[0]]
+    for tok in parts[1:]:
+        if len(tok) >= 2 and tok.islower():
+            fixed.append(tok[0].upper() + tok[1:])
+        else:
+            fixed.append(tok)
+    return " ".join(fixed)
 
 _PALETTE_FALLBACK: tuple[str, ...] = (
     "#059669",
@@ -315,6 +360,12 @@ def _clean_section_market_label(name: str) -> str:
     return cleaned.strip() or name.strip()
 
 
+_CUMULATIVE_OUTCOME_RE = re.compile(
+    r"^(?:above|below|over|under|at\s+least|more\s+than|fewer\s+than)\b",
+    re.IGNORECASE,
+)
+
+
 def _market_matches_query(market: Mapping[str, Any], query: Mapping[str, Any]) -> bool:
     status = str(market.get("status") or "open").lower()
     if status not in {"open", "active"}:
@@ -352,6 +403,14 @@ def _market_matches_query(market: Mapping[str, Any], query: Mapping[str, Any]) -
         return False
     if shape == "field" and len(priced) < 3:
         return False
+    if shape == "field" and not query.get("allow_cumulative"):
+        cum_hits = sum(
+            1
+            for o in priced
+            if _CUMULATIVE_OUTCOME_RE.match(str(o.get("name") or "").strip())
+        )
+        if cum_hits >= 2:
+            return False
     if shape == "binary" and len(priced) > 2:
         # Binary yes/no markets carry 1 ("Yes") or 2 ("Yes"/"No") outcomes
         names = {str(o.get("name") or "").strip().lower() for o in priced}
@@ -393,21 +452,25 @@ def _hydrate_market_visual_item(
             valid[0],
         )
         p = float(yes_row["probability"])
-        m_name = str(market.get("name") or "")
-        art = resolver.resolve(m_name, explicit_url=market.get("image_url"))
         outcomes_out = [
             {
                 "outcome_id": int(yes_row.get("id") or (mid * 10 + 1)),
                 "name": "Yes",
                 "probability": p,
                 "rendered_percent": _half_up_pct(p),
-                "art": art,
+                "art": {
+                    "url": None,
+                    "kind": "none",
+                    "detail": "",
+                    "accent_color": "",
+                    "initials": "",
+                },
             }
         ]
     else:
         outcomes_out = []
         for idx, o in enumerate(valid[:max_outcomes]):
-            o_name = str(o.get("name") or "").strip()
+            o_name = _proper_case_outcome_label(str(o.get("name") or "").strip())
             p = float(o["probability"])
             art = resolver.resolve(
                 o_name,
@@ -971,6 +1034,11 @@ async def produce_container_machinery(
     )
 
 
+def discover_machinery_candidate_paths() -> tuple[Path, ...]:
+    """Discover all ``machinery-*.json`` definitions in ``data/groupings/candidates/``."""
+    return tuple(sorted(_CANDIDATES_DIR.glob("machinery-*.json")))
+
+
 def load_machinery_definition(path: Path | str) -> dict[str, Any]:
     from app.utils.roundup_containers import validate_roundup_definition
 
@@ -978,6 +1046,21 @@ def load_machinery_definition(path: Path | str) -> dict[str, Any]:
     validated = validate_roundup_definition(raw, path=path)
     if validated["rule"].get("producer") != PRODUCER_KIND_CONTAINER_MACHINERY:
         raise ValueError(f"Expected producer='container_machinery' at {path}")
+    copy_fields: list[str] = [
+        str(validated.get("name") or ""),
+        str(validated.get("kicker") or ""),
+        str(validated.get("section_title") or ""),
+        str(validated.get("footer") or ""),
+    ]
+    for sec in validated["rule"].get("sections") or ():
+        if isinstance(sec, Mapping):
+            copy_fields.append(str(sec.get("title") or ""))
+            copy_fields.append(str(sec.get("note") or ""))
+    for text_val in copy_fields:
+        if _FORBIDDEN_COPY_QUESTION_RE.search(text_val):
+            raise ValueError(
+                f"Definition {path} calls a market a 'question' ({text_val!r}); say 'market(s)'."
+            )
     return validated
 
 
@@ -1014,11 +1097,11 @@ def build_container_machinery_producer(
 
 
 def register_machinery_slice1_candidates(*, enabled: Optional[Any] = None) -> list[str]:
-    """Register the three Slice-1 candidate definitions into ``ROUNDUP_PRODUCERS``."""
+    """Register all ``machinery-*.json`` candidate definitions into ``ROUNDUP_PRODUCERS``."""
     from app.utils.roundup_containers import register_roundup_producer
 
     slugs: list[str] = []
-    for path in MACHINERY_CANDIDATE_PATHS:
+    for path in discover_machinery_candidate_paths():
         defn = load_machinery_definition(path)
         prod = build_container_machinery_producer(defn, enabled=enabled)
         register_roundup_producer(prod)

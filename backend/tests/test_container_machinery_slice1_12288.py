@@ -399,3 +399,36 @@ def test_subject_art_resolver_excludes_horror_and_falls_back_to_monogram() -> No
     unknown = resolver.resolve("Unlisted Challenger")
     assert unknown["url"] is None
     assert unknown["initials"] == "UC"
+
+
+def test_slice2_bar_no_question_word_proper_case_and_definition_only_fourth_grouping(
+    tmp_path: Any,
+) -> None:
+    from app.utils.container_machinery import (
+        _proper_case_outcome_label,
+        discover_machinery_candidate_paths,
+    )
+
+    # 1. All 4 unlike groupings discovered automatically (including machinery-fed-and-macro.json)
+    paths = discover_machinery_candidate_paths()
+    slugs = [load_machinery_definition(p)["slug"] for p in paths]
+    assert slugs == [
+        "machinery-2028-presidential",
+        "machinery-fed-and-macro",
+        "machinery-nfl-week",
+        "machinery-oscars-best-picture",
+    ]
+
+    # 2. Proper-casing miscased names without mangling numeric/rate brackets
+    assert _proper_case_outcome_label("Anne hathaway") == "Anne Hathaway"
+    assert _proper_case_outcome_label("Hike 25bps") == "Hike 25bps"
+    assert _proper_case_outcome_label("Fed maintains rate") == "Fed maintains rate"
+    assert _proper_case_outcome_label("Democratic party") == "Democratic party"
+
+    # 3. Calling a market a 'question' in definition copy is rejected
+    bad = json.loads(CANDIDATE_2028_PRESIDENTIAL_PATH.read_text(encoding="utf-8"))
+    bad["rule"]["sections"][-1]["note"] = "Yes-or-no questions on the ticket."
+    bad_path = tmp_path / "machinery-bad.json"
+    bad_path.write_text(json.dumps(bad), encoding="utf-8")
+    with pytest.raises(ValueError, match="question"):
+        load_machinery_definition(bad_path)
