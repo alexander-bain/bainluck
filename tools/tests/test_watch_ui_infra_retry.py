@@ -141,6 +141,17 @@ class LaunchNeverAcceptedTests(unittest.TestCase):
                   "testScheduledStartBoundariesAtStandardSize] : XCTAssertTrue failed\n")
         self.assertIsNone(infra.infra_abort(LAUNCH_NEVER_ACCEPTED + failed))
 
+    def test_a_lost_simulator_service_is_restarted_once_on_hosted_runners_only(self):
+        harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        restart = harness.split("restart_simulator_service_once() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn('[[ "${GITHUB_ACTIONS:-}" == true && "$SIM_SERVICE_RESTARTED" -eq 0 ]] || return 1', restart)
+        self.assertIn("SIM_SERVICE_RESTARTED=1", restart, "once, never a loop")
+        boot = harness.split("boot_until_ready() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("for attempt in 1 2 3; do", boot, "still three boots at most")
+        self.assertIn("-e 'SimLaunchHostService' -e 'Status=4294967295, isTerminal=YES'", boot,
+                      "only when the boot ended at once or the launch host connection was lost")
+        self.assertIn('|| echo "bootstatus exited $? for $udid"', boot, "a failed boot must not end the job under set -e")
+
     def test_the_harness_runs_xcodebuild_beside_the_hang_watchdog(self):
         harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
         suite = harness.split("run_xctest_suite() {", 1)[1].split("\n}\n", 1)[0]

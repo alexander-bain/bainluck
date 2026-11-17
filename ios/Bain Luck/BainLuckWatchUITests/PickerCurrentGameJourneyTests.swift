@@ -185,7 +185,9 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
                 let state = app.state
                 return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning
             }, object: app)
-            XCTAssertEqual(XCTWaiter.wait(for: [backgrounded], timeout: 5), .completed,
+            // Run 44131976001 (controls): Home took 2.4 s on a loaded simulator and the
+            // state reads ~1 s each, so 5 s ran out after every check had passed.
+            XCTAssertEqual(XCTWaiter.wait(for: [backgrounded], timeout: 45), .completed,
                            "Layout fixture must leave foreground before cleanup")
             if app.state != .notRunning { app.terminate() }
             XCTAssertEqual(app.state, .notRunning, "Layout fixture cleanup must stop the app")

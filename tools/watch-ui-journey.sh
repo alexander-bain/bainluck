@@ -29,15 +29,39 @@ for devs in json.load(sys.stdin).get("devices", {}).values():
 raise SystemExit(1)
 ' "$1"
 }
+# Run 44131976001 (widgets): all three boots of a brand-new phone failed with
+# "XPC error talking to SimLaunchHostService ... Connection interrupted". The
+# runner's simulator service was broken, and booting again cannot repair it.
+# On a hosted runner only (never a Mac with someone's simulators), restart the
+# service once per stage and boot again.
+SIM_SERVICE_RESTARTED=0
+restart_simulator_service_once() {
+  [[ "${GITHUB_ACTIONS:-}" == true && "$SIM_SERVICE_RESTARTED" -eq 0 ]] || return 1
+  SIM_SERVICE_RESTARTED=1
+  echo 'SimLaunchHostService connection lost; restarting CoreSimulatorService once' >> "$OUT/preflight.log"
+  killall -9 com.apple.CoreSimulator.CoreSimulatorService >> "$OUT/preflight.log" 2>&1 || true
+  sleep 5
+  xcrun simctl list devices > /dev/null 2>> "$OUT/preflight.log" || true
+}
 boot_until_ready() {
   local udid="$1"
-  local attempt
+  local attempt before
   for attempt in 1 2 3; do
-    xcrun simctl bootstatus "$udid" -b >> "$OUT/preflight.log" 2>&1
+    before="$(wc -c < "$OUT/preflight.log")"
+    # A failed boot exits non-zero; under set -e that ended the job on attempt 3.
+    xcrun simctl bootstatus "$udid" -b >> "$OUT/preflight.log" 2>&1 \
+      || echo "bootstatus exited $? for $udid" >> "$OUT/preflight.log"
     if is_booted "$udid"; then
       return 0
     fi
-    echo "bootstatus exited 0 with $udid not Booted (attempt $attempt); retrying..." >> "$OUT/preflight.log"
+    echo "bootstatus ended with $udid not Booted (attempt $attempt); retrying..." >> "$OUT/preflight.log"
+    # Attempts 1 and 2 of that run ended at once with "Status=4294967295, isTerminal=YES";
+    # attempt 3 named the lost SimLaunchHostService.
+    if tail -c "+$((before + 1))" "$OUT/preflight.log" \
+        | grep -q -e 'SimLaunchHostService' -e 'Status=4294967295, isTerminal=YES' \
+      && restart_simulator_service_once; then
+      continue
+    fi
     sleep 2
   done
   return 1
