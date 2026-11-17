@@ -155,6 +155,38 @@ def test_tvmaze_picker_enforces_exact_title_kid_safe_horror_gate_and_cc_by_sa_at
     assert h_url is None
     assert h_meta is None
 
+    # Documentary crime / true-crime TVMaze show about a real victim (#12850) is refused
+    dc_url, dc_meta = enrich_tmdb._pick_tvmaze_image(
+        {
+            "id": 95389,
+            "name": "Taken: Natalee Holloway",
+            "type": "Documentary",
+            "genres": ["Crime"],
+            "url": "https://www.tvmaze.com/shows/95389/taken-natalee-holloway",
+            "image": {
+                "original": "https://static.tvmaze.com/uploads/images/original_untouched/649/1624431.jpg"
+            },
+        },
+        expected_title="Taken: Natalee Holloway",
+    )
+    assert dc_url is None
+    assert dc_meta is None
+
+    # TMDB Documentary (99) + Crime (80) is also refused
+    tmdb_dc_url, tmdb_dc_meta = enrich_tmdb._pick_tmdb_image(
+        [
+            {
+                "media_type": "tv",
+                "id": 95389,
+                "name": "Taken: Natalee Holloway",
+                "genre_ids": [99, 80],
+                "poster_path": "/victim.jpg",
+            }
+        ]
+    )
+    assert tmdb_dc_url is None
+    assert tmdb_dc_meta is None
+
 
 def test_discover_image_policy_withholds_tmdb_art_on_music_markets_at_serve_time() -> None:
     tmdb_url = "https://image.tmdb.org/t/p/w1280/xcSH4KdTxvVmLARyrEeZOYrHjGR.jpg"
@@ -176,17 +208,30 @@ def test_discover_image_policy_withholds_tmdb_art_on_music_markets_at_serve_time
         assert resolved.get("image_credit") != "TMDB"
 
 
-def test_netflix_season_outcomes_resolve_verified_tvmaze_portraits_and_gravity() -> None:
-    res = resolve_discover_market_image(
+def test_netflix_season_outcomes_resolve_verified_tvmaze_portraits_and_exclude_true_crime() -> None:
+    # True-crime documentary series ("Taken: Natalee Holloway") is omitted from the poster register
+    # and takes the neutral fallback rather than displaying a real victim's photograph (#12850).
+    res_true_crime = resolve_discover_market_image(
         name="What will be the top global Netflix show this week? (November 17)",
         category="entertainment",
-        top_outcomes=[{"name": "Taken: Natalee Holloway: Season 1", "probability": 0.97}],
+        top_outcomes=[{"name": "Taken: Natalee Holloway: Season 1", "probability": 0.98}],
         image_url=None,
     )
-    assert res["image_url"] == "https://static.tvmaze.com/uploads/images/original_untouched/649/1624431.jpg"
-    assert res["image_presentation"] == "portrait"
-    assert res["image_license"] == "CC BY-SA 4.0"
-    assert res["image_source_page"] == "https://www.tvmaze.com/shows/95389/taken-natalee-holloway"
+    assert res_true_crime["image_url"] is None
+    assert res_true_crime["image_monogram"] is not None
+
+    res_true_crime_discover = resolve_discover_market_image(
+        name="What will be the top global Netflix show this week? (November 17)",
+        category="entertainment",
+        top_outcomes=[{"name": "Taken: Natalee Holloway: Season 1", "probability": 0.98}],
+        image_url=None,
+        allow_domain_fallback=True,
+    )
+    assert res_true_crime_discover["image_url"] != "https://static.tvmaze.com/uploads/images/original_untouched/649/1624431.jpg"
+    assert (
+        res_true_crime_discover["image_presentation"] in {"backdrop", None}
+        or res_true_crime_discover["image_monogram"] is not None
+    )
 
     res_bd = resolve_discover_market_image(
         name="What will be the #2 global Netflix show this week? (November 17)",
@@ -196,6 +241,8 @@ def test_netflix_season_outcomes_resolve_verified_tvmaze_portraits_and_gravity()
     )
     assert res_bd["image_url"] == "https://static.tvmaze.com/uploads/images/original_untouched/642/1607270.jpg"
     assert res_bd["image_presentation"] == "portrait"
+    assert res_bd["image_license"] == "CC BY-SA 4.0"
+    assert res_bd["image_source_page"] == "https://www.tvmaze.com/shows/68407/black-doves"
 
     assert _CULTURAL_GRAVITY_T2.search("What will be the top global Netflix show this week? (November 17)")
     assert _CULTURAL_GRAVITY_T2.search("What will be the top US Netflix movie this week? (November 17)")

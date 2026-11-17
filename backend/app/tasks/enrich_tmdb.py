@@ -67,6 +67,14 @@ def _pick_tmdb_image(results: list[dict]) -> tuple[str | None, dict | None]:
     for r in results or []:
         if r.get("media_type") not in ("movie", "tv"):
             continue
+        genre_ids = {
+            int(g)
+            for g in (r.get("genre_ids") or [])
+            if isinstance(g, int) or (isinstance(g, str) and g.isdigit())
+        }
+        # #7461 / #12850: skip Horror (27) and Documentary Crime (99 + 80)
+        if 27 in genre_ids or {99, 80} <= genre_ids:
+            continue
         backdrop = r.get("backdrop_path")
         poster = r.get("poster_path")
         path = backdrop or poster
@@ -123,7 +131,18 @@ def _pick_tvmaze_image(
         if not want or got != want:
             return None, None
     genres = [str(g).strip().lower() for g in (payload.get("genres") or [])]
-    if "horror" in genres:
+    show_type = str(payload.get("type") or "").strip().lower()
+    summary_low = str(payload.get("summary") or "").lower()
+    is_documentary_crime = (
+        "true crime" in genres
+        or "true-crime" in summary_low
+        or "true crime" in summary_low
+        or (
+            "crime" in genres
+            and (show_type == "documentary" or "documentary" in genres)
+        )
+    )
+    if "horror" in genres or is_documentary_crime:
         return None, None
     img_obj = payload.get("image") or {}
     if not isinstance(img_obj, dict):
