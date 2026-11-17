@@ -7,6 +7,9 @@ import { CollectionMemberCard } from "./CollectionMemberCard";
 import PartyControlRow from "@/components/politics/PartyControlRow";
 import { MidtermsAtlasChamberControl, MidtermsAtlasMemberCard } from "./MidtermsAtlasSection";
 import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
+import AwardCategoryPairedCard from "@/components/discover/forms/AwardCategoryPairedCard";
+import { fetchPairedMetricsByCeremony } from "@/lib/api";
+import type { PairedMetricSet } from "@/lib/discover/visualForms";
 import type { FeedFuturesData, FeedItem } from "@/lib/types";
 import { useDiscoverPriceStream } from "@/hooks/useDiscoverPriceStream";
 import { usePriceVisibility } from "@/hooks/usePriceVisibility";
@@ -96,6 +99,41 @@ export default function CollectionHub({ slug }: { slug: string }) {
   // Never draw another slug's hub, even for the frame before the reset effect.
   const shown = hub?.slug === slug ? hub : null;
   latest.current = shown;
+
+  // #12577: Oscars collection surfaces paired Nominated % + Wins % category cards with posters
+  const isOscarsHub = slug === "oscars-2027" || slug === "oscars" || slug === "the-oscars";
+  const [oscarsPairedSets, setOscarsPairedSets] = useState<PairedMetricSet[]>([]);
+  useEffect(() => {
+    if (!isOscarsHub) {
+      setOscarsPairedSets([]);
+      return;
+    }
+    const ctrl = new AbortController();
+    fetchPairedMetricsByCeremony("oscars", ctrl.signal)
+      .then((res) => {
+        if (!ctrl.signal.aborted) setOscarsPairedSets(res.sets ?? []);
+      })
+      .catch(() => {
+        if (!ctrl.signal.aborted) setOscarsPairedSets([]);
+      });
+    return () => ctrl.abort();
+  }, [isOscarsHub]);
+
+  const activePairedSets: PairedMetricSet[] = useMemo(() => {
+    if (isOscarsHub && oscarsPairedSets.length > 0) return oscarsPairedSets;
+    if (shown?.pairedMetricSet) return [shown.pairedMetricSet];
+    return [];
+  }, [isOscarsHub, oscarsPairedSets, shown?.pairedMetricSet]);
+
+  const pairedCoveredMarketIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const ps of activePairedSets) {
+      if (ps.stage_1_market?.id) ids.add(ps.stage_1_market.id);
+      if (ps.stage_1_market?.companion_polymarket_id) ids.add(ps.stage_1_market.companion_polymarket_id);
+      if (ps.stage_2_market?.id) ids.add(ps.stage_2_market.id);
+    }
+    return ids;
+  }, [activePairedSets]);
 
   // #10090: the same price stream Discover and Sports run. On-screen members
   // get a fresh price read, then live pushes (event frames, market
@@ -302,6 +340,26 @@ export default function CollectionHub({ slug }: { slug: string }) {
     {shown?.note && <p role="status" className="text-sm text-text-secondary">{shown.note}</p>}
     {shown?.theme && !shown.theme.inventoryComplete && <p className="text-sm text-text-secondary">This list may not include every market yet.</p>}
     {shown?.children.map((child) => <Link key={child.key} id={collectionMemberDomId(child.key)} data-collection-child={child.key.replace(/^container:/, "")} href={child.href} onClick={() => remember(child.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card p-4 font-semibold text-text-primary hover:bg-surface-elevated">{child.name}<span aria-hidden>›</span></Link>)}
+    {activePairedSets.length > 0 && (
+      <section data-testid="collection-paired-award-categories" className="space-y-4">
+        {isOscarsHub && (
+          <div className="space-y-0.5">
+            <h2 className="text-lg font-semibold text-text-primary">Nominated &amp; Wins by Category</h2>
+            <p className="text-sm text-text-secondary">Each contender&apos;s chance of being nominated and chance of winning side by side.</p>
+          </div>
+        )}
+        <div className="grid grid-cols-1 gap-4">
+          {activePairedSets.map((ps) => (
+            <AwardCategoryPairedCard
+              key={ps.set_id}
+              set={ps}
+              surface="collection"
+              defaultExpanded={!isOscarsHub && activePairedSets.length === 1}
+            />
+          ))}
+        </div>
+      </section>
+    )}
     {/* #10985: a hub served as one unclassified list (every provider event) has no
         section to name, so "More" would follow nothing; the page title names it. */}
     <div data-collection-sections className={shown?.slug === "midterms-2026" ? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-start" : "space-y-6"}>
@@ -309,6 +367,10 @@ export default function CollectionHub({ slug }: { slug: string }) {
       ? [shown.sections.slice(0, 2), ...shown.sections.slice(2).map(section => [section])]
       : [shown?.sections ?? []]).map((group, groupIndex) => <div key={group[0]?.key ?? groupIndex} className={shown?.slug === "midterms-2026" && groupIndex === 0 ? "grid grid-cols-1 md:col-span-2 md:grid-cols-2 xl:col-span-1 xl:grid-cols-1 gap-6 items-start" : "space-y-6 min-w-0"}>
     {group.map((section) => {
+      const visibleSectionMembers = pairedCoveredMarketIds.size > 0
+        ? section.members.filter((m) => !(m.type === "market" && pairedCoveredMarketIds.has(m.id)))
+        : section.members;
+      if (visibleSectionMembers.length === 0 && section.layout !== "party") return null;
       const lone = shown?.sections.length === 1 && section.cls === "unclassified";
       const midterms = shown?.slug === "midterms-2026";
       return <section key={section.key} className="min-w-0 space-y-3" aria-labelledby={lone ? "collection-title" : `section-${section.key}`}>
@@ -325,7 +387,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
         )
       ) : (
         <div className={midterms && atlasEnabled ? "grid grid-cols-1 gap-4 items-start" : midterms && section.cls === "senate_races" ? "divide-y divide-surface-border overflow-hidden rounded-card border border-surface-border bg-surface-card" : midterms ? "grid grid-cols-1 gap-3 items-start" : "grid grid-cols-1 sm:grid-cols-2 gap-4 items-start"}>
-          {section.members.map((member) => <div key={member.key} className="min-w-0 space-y-3">
+          {visibleSectionMembers.map((member) => <div key={member.key} className="min-w-0 space-y-3">
             {midterms && atlasEnabled && member.item.type === "futures" ? (
               <div id={collectionMemberDomId(member.key)} data-collection-member={member.key}>
                 <PricedMemberShell owner={member.key} item={member.item} report={reportPriceVisibility}>

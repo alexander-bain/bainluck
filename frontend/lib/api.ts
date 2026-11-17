@@ -3200,3 +3200,18 @@ export async function fetchEventTournament(
 ): Promise<EventTournamentResponse> {
   return apiFetch<EventTournamentResponse>(`/api/tournaments/by-event/${eventId}`);
 }
+
+export async function fetchPairedMetricsByCeremony(
+  ceremony: string,
+  signal?: AbortSignal,
+): Promise<{ sets: import("@/lib/discover/visualForms").PairedMetricSet[]; count: number }> {
+  return apiFetch(`/api/paired-metrics?ceremony=${encodeURIComponent(ceremony)}`, {
+    signal,
+  });
+}
+
+export async function fetchPairedMetricByMarket(
+  marketId: number,
+): Promise<{ set: import("@/lib/discover/visualForms").PairedMetricSet | null }> {
+  return apiFetch(`/api/paired-metrics/by-market/${marketId}`);
+}
