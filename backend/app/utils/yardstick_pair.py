@@ -31,6 +31,7 @@ from app.utils.futures_liveness import leg_is_graded
 from app.utils.same_deadline_board import (
     EXCLUDED_CLASSES,
     _QualifiedDeadlineMarket,
+    _binary_source_marks,
     _build_binary_member_card,
     _effective_category,
     _excluded_class_reason,
@@ -292,6 +293,8 @@ class _QualifiedYardstickMember:
     row_label: str
     probability: float
     no_probability: Optional[float]
+    yes_source_mark: dict[str, Any]
+    no_source_mark: dict[str, Any]
     rendered_percent: int
     observed_at: str
     raw_market: Mapping[str, Any]
@@ -496,6 +499,9 @@ def _qualify_yardstick_member(
         return None, "forbidden_narrative_token"
 
     source = str(market.get("source") or "polymarket").strip().lower() or "polymarket"
+    yes_mark, no_mark = _binary_source_marks(
+        market.get("source"), yes_outcome, no_outcome, prob, no_prob
+    )
     return (
         _QualifiedYardstickMember(
             market_id=market_id,
@@ -506,6 +512,8 @@ def _qualify_yardstick_member(
             row_label=row_label,
             probability=prob,
             no_probability=no_prob,
+            yes_source_mark=yes_mark,
+            no_source_mark=no_mark,
             rendered_percent=pct,
             observed_at=obs,
             raw_market=market,
@@ -523,6 +531,8 @@ def _to_deadline_market_shim(member: _QualifiedYardstickMember) -> _QualifiedDea
         label=member.row_label,
         probability=member.probability,
         no_probability=member.no_probability,
+        yes_source_mark=member.yes_source_mark,
+        no_source_mark=member.no_source_mark,
         movement=None,
         observed_at=member.observed_at,
         template_key="",
@@ -716,6 +726,7 @@ def select_yardstick_pair(
             "market_id": target_member.market_id,
             "label": target_member.row_label,
             "probability": target_member.probability,
+            "source_mark": target_member.yes_source_mark,
             "rendered_percent": target_member.rendered_percent,
             "observed_at": target_member.observed_at,
         },
@@ -723,6 +734,7 @@ def select_yardstick_pair(
             "market_id": anchor_member.market_id,
             "label": anchor_member.row_label,
             "probability": anchor_member.probability,
+            "source_mark": anchor_member.yes_source_mark,
             "rendered_percent": anchor_member.rendered_percent,
             "observed_at": anchor_member.observed_at,
         },

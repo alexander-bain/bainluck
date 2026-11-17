@@ -684,7 +684,7 @@ def _classify_candidate(
     if category == "uncategorized":
         return None, "missing_category"
 
-    yes_mark, no_mark = _deadline_source_marks(
+    yes_mark, no_mark = _binary_source_marks(
         market.get("source"), yes_outcome, no_outcome, prob, no_prob
     )
     return (
@@ -715,7 +715,7 @@ def _half_up_percent(prob: float) -> int:
     return int(math.floor(prob * 100.0 + 0.5))
 
 
-def _deadline_source_marks(
+def _binary_source_marks(
     source: Any,
     yes_outcome: Mapping[str, Any],
     no_outcome: Optional[Mapping[str, Any]],
@@ -739,7 +739,9 @@ def _deadline_source_marks(
         )
 
     yes_mark = quote(yes_outcome, yes_probability)
-    if no_probability is None:
+    if no_outcome is not None and no_outcome.get("resolution_source") == "ungradeable_result":
+        no_mark = no_source_mark("result_unknown")
+    elif no_probability is None:
         # The existing card computes No from Yes. Name the input it actually
         # used, rather than presenting the complement as a separate venue quote.
         no_mark = deepcopy(yes_mark)
