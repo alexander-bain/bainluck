@@ -56,33 +56,64 @@ struct WatchMatchupLookSheet217: View {
         return FileManager.default.contents(atPath: "\(folder)/\(abbr.lowercased()).png")
     }
 
-    static func reading(_ stage: String, logos: String?) -> WatchMatchupReading217? {
-        typealias R = WatchMatchupReading217
-        func side(_ abbr: String, _ primary: String, _ secondary: String, score: Int? = nil, winner: Bool = false) -> R.Side {
-            R.Side(abbreviation: abbr, inkHex: R.ink(primary: primary, secondary: secondary),
-                   crestPNG: crest(abbr, in: logos), score: score, isWinner: winner)
+    /// Builds a published snapshot exactly as the Watch app writes it and draws
+    /// it through `WatchMatchupReading217.make`, the same path the complication uses.
+    static func reading(_ stage: String, logos: String?, now: Date = Date()) -> WatchMatchupReading217? {
+        let teams: [Int: (abbr: String, name: String, primary: String, secondary: String)] = [
+            1: ("NE", "New England Patriots", "#002a5c", "#c60c30"),
+            2: ("LAC", "Los Angeles Chargers", "#0080c6", "#ffc20e"),
+            3: ("BAL", "Baltimore Ravens", "#241773", "#9e7c0c"),
+            4: ("DET", "Detroit Lions", "#0076b6", "#b0b7bc"),
+        ]
+        func id(_ n: Int) -> WatchCompactTeamIdentity { WatchCompactTeamIdentity(teamID: n, abbreviation: teams[n]!.abbr) }
+        func facts(away: Int, home: Int, pregameHome: Int? = nil, clock: String? = nil) -> WatchMatchupFacts217 {
+            WatchMatchupFacts217(homePrimary: teams[home]!.primary, homeSecondary: teams[home]!.secondary,
+                                 awayPrimary: teams[away]!.primary, awaySecondary: teams[away]!.secondary,
+                                 pregameHomePercent: pregameHome, pregameAwayPercent: pregameHome.map { 100 - $0 },
+                                 clock: clock)
         }
+        let observed = now.addingTimeInterval(-30)
+        let snapshot: WatchComplicationSnapshot
         switch stage {
         case "before":
             // Real: Patriots at Chargers, Sun Nov 29 5:20 PM PT, LAC 56% (production, Nov 16).
-            return R(stage: .before,
-                     away: side("NE", "#002a5c", "#c60c30"), home: side("LAC", "#0080c6", "#ffc20e"),
-                     bigText: "56%", bigIsHome: true, smallLine: "Sun 5:20 PM",
-                     accessibilityText: "Patriots at Chargers. Chargers 56% to win. Sunday 5:20 PM.")
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = .current
+            let start = calendar.nextDate(after: now.addingTimeInterval(86_400), matching: DateComponents(hour: 17, minute: 20, weekday: 1),
+                                          matchingPolicy: .nextTime) ?? now.addingTimeInterval(3 * 86_400)
+            let reading = WatchRectangularReading(
+                version: 1, eventID: 21701, kind: .scheduledForecast,
+                homeName: teams[2]!.name, awayName: teams[1]!.name, home: id(2), away: id(1),
+                homePercent: 56, homeScore: nil, awayScore: nil, commenceTime: start,
+                stateLabel: "Scheduled", observedAt: observed, scoreObservedAt: nil)
+            snapshot = WatchComplicationSnapshot(eventID: 21701, title: "\(teams[2]!.name) win", detail: "56% · Scheduled",
+                                                 observedAt: observed, savedAt: now, rectangularReading: reading,
+                                                 matchup: facts(away: 1, home: 2))
         case "during":
-            // Tonight's game, Chargers at Ravens; example score and chance until kickoff.
-            return R(stage: .during,
-                     away: side("LAC", "#0080c6", "#ffc20e", score: 10), home: side("BAL", "#241773", "#9e7c0c", score: 17),
-                     bigText: "74%", bigIsHome: true, smallLine: "Now · Q3 4:12",
-                     accessibilityText: "Chargers 10, Ravens 17, third quarter 4:12. Ravens 74% now.")
+            // Chargers at Ravens; example score, chance and clock.
+            let reading = WatchRectangularReading(
+                version: 1, eventID: 21702, kind: .liveForecast,
+                homeName: teams[3]!.name, awayName: teams[2]!.name, home: id(3), away: id(2),
+                homePercent: 74, homeScore: 17, awayScore: 10, commenceTime: nil,
+                stateLabel: "Live", observedAt: observed, scoreObservedAt: observed)
+            snapshot = WatchComplicationSnapshot(eventID: 21702, title: "\(teams[3]!.name) win", detail: "74% · Live",
+                                                 observedAt: observed, savedAt: now, rectangularReading: reading,
+                                                 matchup: facts(away: 2, home: 3, clock: "Q3 4:12"))
         case "after":
             // Real: Patriots 10 at Lions 35, final Nov 15; Lions 58% before the game.
-            return R(stage: .after,
-                     away: side("NE", "#002a5c", "#c60c30", score: 10), home: side("DET", "#0076b6", "#b0b7bc", score: 35, winner: true),
-                     bigText: "58%", bigIsHome: true, smallLine: "Final · pregame",
-                     accessibilityText: "Final. Lions 35, Patriots 10. Lions were 58% before the game.")
+            let reading = WatchRectangularReading(
+                version: 1, eventID: 21703, kind: .finalResult,
+                homeName: teams[4]!.name, awayName: teams[1]!.name, home: id(4), away: id(1),
+                homePercent: nil, homeScore: 35, awayScore: 10, commenceTime: nil,
+                stateLabel: "Final", observedAt: observed, scoreObservedAt: observed)
+            snapshot = WatchComplicationSnapshot(eventID: 21703, title: "\(teams[4]!.name) won", detail: "Final · 35–10",
+                                                 observedAt: observed, savedAt: now, rectangularReading: reading,
+                                                 matchup: facts(away: 1, home: 4, pregameHome: 58))
         default:
             return nil
+        }
+        return WatchMatchupReading217.make(snapshot: snapshot, now: now) { teamID in
+            teams[teamID].flatMap { crest($0.abbr, in: logos) }
         }
     }
 }

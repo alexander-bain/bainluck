@@ -97,10 +97,23 @@ nonisolated enum WatchComplicationProjection {
         }
         let parent = WatchComplicationSnapshot(version: 1, eventID: game.id, title: title,
             detail: detail, observedAt: observed, savedAt: savedAt)
+        let checkedRectangular = rectangular.flatMap { $0.matches(parent) ? $0 : nil }
         return WatchComplicationSnapshot(version: 1, eventID: game.id, title: title,
             detail: detail, observedAt: observed, savedAt: savedAt,
             circularReading: compact.matches(parent) ? compact : nil,
-            rectangularReading: rectangular.flatMap { $0.matches(parent) ? $0 : nil })
+            rectangularReading: checkedRectangular,
+            matchup: checkedRectangular == nil ? nil : matchupFacts(game))
+    }
+
+    /// Direction 217: what the Matchup look needs beyond the rectangular reading.
+    static func matchupFacts(_ game: WatchSelectedGame) -> WatchMatchupFacts217 {
+        let pregame = game.pregameRenderedPercents
+        return WatchMatchupFacts217(
+            homePrimary: game.homePrimaryColor, homeSecondary: game.homeSecondaryColor,
+            awayPrimary: game.awayPrimaryColor, awaySecondary: game.awaySecondaryColor,
+            homeLogo: game.homeLogoURL, awayLogo: game.awayLogoURL,
+            pregameHomePercent: pregame.home, pregameAwayPercent: pregame.away,
+            clock: game.isLive ? game.liveClockText : nil)
     }
 
     /// #12640 — projects a pinned market outcome onto the rectangular Watch face slot ("Newsom 23%").
@@ -189,10 +202,27 @@ nonisolated enum WatchComplicationPublisher {
 
     static func publishSnapshot(_ snapshot: WatchComplicationSnapshot?) {
         let directory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.bainluck.watch")
+        fetchMatchupCrests(for: snapshot)
         guard write(snapshot, to: directory) else { return }
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckComplication")
         #endif
+    }
+
+    /// Direction 217: the complication can't fetch while it draws, so the app
+    /// saves both crests to the shared container and reloads the slot once a
+    /// new one lands. A crest that never arrives leaves the abbreviation disc.
+    static func fetchMatchupCrests(for snapshot: WatchComplicationSnapshot?) {
+        guard let snapshot, let facts = snapshot.matchup, let reading = snapshot.rectangularReading,
+              let home = reading.home, let away = reading.away else { return }
+        let wanted = [(teamID: home.teamID, logo: facts.homeLogo), (teamID: away.teamID, logo: facts.awayLogo)]
+        guard wanted.contains(where: { $0.logo != nil && WatchMatchupCrests217.data(teamID: $0.teamID) == nil }) else { return }
+        Task.detached(priority: .utility) {
+            guard await WatchMatchupCrests217.fetchMissing(wanted) else { return }
+            #if canImport(WidgetKit)
+            WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckComplication")
+            #endif
+        }
     }
 
     /// Returns true only when shared bytes changed; unchanged observations need no reload.
@@ -207,7 +237,8 @@ nonisolated enum WatchComplicationPublisher {
                existing.title == valid.title, existing.detail == valid.detail,
                existing.observedAt == valid.observedAt,
                existing.circularReading == valid.circularReading,
-               (valid.rectangularReading == nil || existing.rectangularReading == valid.rectangularReading) {
+               (valid.rectangularReading == nil || existing.rectangularReading == valid.rectangularReading),
+               existing.matchup == valid.matchup {
                 return false // A newer fetch alone is not a newer reading.
             }
             // A tombstone replaces the previous reading atomically on selection change.
