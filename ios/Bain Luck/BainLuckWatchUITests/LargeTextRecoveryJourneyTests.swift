@@ -208,7 +208,12 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
             let appFrame = app.frame
             let frame = element.frame
             if element.isHittable && appFrame.contains(frame) { return }
+            // Inside the window but not hittable means the blurred navigation
+            // chrome covers it (run 44013241432: the sheet heading sat at y 9,
+            // under "Your game", and a drag up hid it further each turn). An
+            // element in the top half is scrolled down, below the chrome.
             let earlier = frame.minY < appFrame.minY
+                || (appFrame.contains(frame) && frame.midY < appFrame.midY)
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
             let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.75 : 0.45))
             start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
