@@ -97,19 +97,28 @@ function draw(): string {
 }
 
 
-/** Each hero tile: the <img> src it draws (if any) and whether its letters are hidden. */
+/** Each hero row (`[away, home]` in Direction 199): the <img> src it draws (if any) and whether its letters are hidden. */
 function heroTiles(html: string): Array<{ src: string | null; letters: string; lettersHidden: boolean }> {
-  const tiles = html.split('class="w-14 h-14 rounded-2xl').slice(1);
-  return tiles.map(tile => {
-    const img = tile.match(/^[^]*?<img[^>]*src="([^"]+)"/);
-    const span = tile.match(/<span class="([^"]*font-extrabold[^"]*)"[^>]*>([^<]*)<\/span>/);
-    const imgBeforeSpan = img && span && tile.indexOf(img[0]) < tile.indexOf(span[0]) ? img[1] : null;
+  const awayIdx = html.indexOf('data-testid="headline-12472-away-row"');
+  const homeIdx = html.indexOf('data-testid="headline-12472-home-row"');
+  if (awayIdx === -1 || homeIdx === -1) return [];
+  const parseRow = (slice: string) => {
+    const img = slice.match(/<img[^>]*src="([^"]+)"/);
+    const span = slice.match(/<span class="([^"]*font-extrabold[^"]*)"[^>]*>([^<]*)<\/span>/);
+    const imgBeforeSpan =
+      img && span && slice.indexOf(img[0]) < slice.indexOf(span[0]) ? img[1] : null;
     return {
       src: imgBeforeSpan,
       letters: span ? span[2].trim() : "",
       lettersHidden: span ? /\bhidden\b/.test(span[1]) : false,
     };
-  });
+  };
+  const endIdx = html.indexOf('data-testid="win-probability-card"');
+  const tail = endIdx > homeIdx ? endIdx : html.length;
+  // Return `[home, away]` so existing destructuring `const [home, away] = heroTiles(draw())` stays unchanged.
+  const awaySlice = awayIdx < homeIdx ? html.slice(awayIdx, homeIdx) : html.slice(awayIdx, tail);
+  const homeSlice = homeIdx < awayIdx ? html.slice(homeIdx, awayIdx) : html.slice(homeIdx, tail);
+  return [parseRow(homeSlice), parseRow(awaySlice)];
 }
 
 describe("#8677 the hero draws a national team's flag, not a letter tile", () => {

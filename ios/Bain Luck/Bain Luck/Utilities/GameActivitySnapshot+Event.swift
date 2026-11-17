@@ -54,7 +54,30 @@ extension GameActivitySnapshot {
         // currentOdds. A hero timestamp can date it only when the values agree.
         let home = current ?? hero
         let away = current != nil ? event.currentOdds?.awayProbability : event.heroProbabilityAway
-        let matchingHeroClock = home != nil && home == hero && away == event.heroProbabilityAway
+        // #10864 — a pushed frame moves the hero to its own `p` and clock and
+        // derives the away side as `1 - p` (clearing the served pair), leaving
+        // the served `heroProbabilityAway` behind. That complement is the
+        // frame's own value, so the frame's clock dates it too. Without this,
+        // every update after the first push was sent already stale, and an
+        // activity that has never been active is not shown at all.
+        let pushedPair = event.currentOdds.map {
+            $0.homeRenderedPercent == nil && $0.awayRenderedPercent == nil
+        } == true
+        let awayAgrees = away == event.heroProbabilityAway
+            || (current != nil && pushedPair && home.map { away == 1 - $0 } == true)
+        let matchingHeroClock = home != nil && home == hero && awayAgrees
+        // #10864 — the period chip, never a clock: a Live Activity repaints only
+        // when an update arrives, so "5:26" or soccer's "67'" would sit frozen.
+        // The scoreboard chip ("Q4", "7th") stays true longest, and a period
+        // that IS a clock is dropped.
+        let chip = PeriodLabel.normalize(event.espn?.period ?? "", sport: event.sport)
+        let period = chip.isEmpty || chip.contains(":") || chip.contains("'") ? nil : chip
+        // #10864 — the page's own admitted in-play pair (Alex, Oct 23: "Prominent
+        // probabilities and projected final scores"). A withheld or absent
+        // object prints nothing here, as it prints nothing on the page.
+        var projected: LiveProjectedFinalAdmission2920.Printed?
+        if case .admitted(let printed) = LiveProjectedFinal2920.page(event, now: now) { projected = printed }
+        let pregame = pregamePercents(for: event)
         return GameActivitySnapshot(
             eventID: event.id, homeTeam: event.homeTeam, awayTeam: event.awayTeam,
             lifecycle: lifecycle, homeScore: event.homeScore, awayScore: event.awayScore,
@@ -66,7 +89,36 @@ extension GameActivitySnapshot {
                 && event.awayScore.map({ $0 >= 0 }) == true
                 && event.scoreSource?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
                 ? event.scoreObservedAt?.asDate : nil,
-            probabilityObservedAt: matchingHeroClock ? event.heroProbabilityObservedAt?.asDate : nil
+            probabilityObservedAt: matchingHeroClock ? event.heroProbabilityObservedAt?.asDate : nil,
+            homeAbbreviation: event.homeTeamData?.abbreviation,
+            awayAbbreviation: event.awayTeamData?.abbreviation,
+            homeColorHex: event.homeTeamData?.primaryColor,
+            awayColorHex: event.awayTeamData?.primaryColor,
+            periodLabel: period,
+            projectedHomeScore: projected?.home,
+            projectedAwayScore: projected?.away,
+            projectionLabel: projected?.label,
+            // #10864 — the server's verdict on a final; the snapshot keeps it only then.
+            servedResult: event.heroSettledResult,
+            awaySecondaryColorHex: event.awayTeamData?.secondaryColor,
+            pregameAwayPercent: pregame?.away,
+            pregameHomePercent: pregame?.home
         )
+    }
+
+    /// Direction 209 — the page's after-game "Pregame" pair, by the page's own
+    /// rule (`EventSportHeadlines12472`'s two-row after phase): the strict
+    /// pregame reading (`prematch_odds`, never the opening line), only for a
+    /// two-way game, in the pair's served whole percents.
+    nonisolated static func pregamePercents(for event: EventDetail) -> (away: Int, home: Int)? {
+        guard let pregame = PrematchReading.resolve(prematch: event.prematchOdds, opening: nil),
+              let pair = DrawPricedWinner.printablePair(away: pregame.awayProbability,
+                                                        home: pregame.homeProbability, sport: event.sport),
+              pair.away != nil else { return nil }
+        let served = pregame.percents
+        if served.count > 1, let away = served[0], let home = served[1] { return (away, home) }
+        let duel = renderedDuelPercents(away: pregame.awayProbability, home: pregame.homeProbability)
+        guard let away = duel[0], let home = duel[1] else { return nil }
+        return (away, home)
     }
 }

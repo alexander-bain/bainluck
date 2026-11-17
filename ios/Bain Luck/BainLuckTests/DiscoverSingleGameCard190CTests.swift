@@ -60,7 +60,8 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
             prematch: prematch(liveGame),
             usesPictureLayout: true
         )
-        XCTAssertNil(livePictureModel.bar, "191-A chart panel replaces the 5pt bar on live games")
+        XCTAssertNotNil(livePictureModel.bar, "Ruling 204-C: live Discover card keeps the segmented bar with pregame tick above the 191-A chart panel")
+        XCTAssertEqual(livePictureModel.bar?.pregameNotch ?? -1, 0.64, accuracy: 0.001)
 
         // Finished game: carries the 191-A chart panel under the rows.
         let finishedGame = try decodeEvent("""
@@ -117,12 +118,12 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
                           "projected_away_score": 19.6, "projected_home_score": 22.6}}
         """)
         let nflModel = DiscoverSingleGameCard190C.build(event: beforeNFL, prematch: prematch(beforeNFL))
-        XCTAssertEqual(nflModel.headers, .init(score: nil, pregame: nil, primary: "Chance"), "Before kickoff, show Chance only (no Pregame column, never Now)")
+        XCTAssertEqual(nflModel.headers, .init(score: nil, pregame: "Proj.", primary: "Chance"), "Before kickoff: Proj. · Chance columns everywhere")
         XCTAssertEqual(nflModel.rows.map(\.shortName), ["Vikings", "Packers"])
-        XCTAssertEqual(nflModel.rows.map(\.pregameText), [nil, nil])
+        XCTAssertEqual(nflModel.rows.map(\.pregameText), ["20", "23"])
         XCTAssertEqual(nflModel.rows.map(\.primaryCell), [.probability("41%"), .probability("59%")])
         XCTAssertNotNil(nflModel.bar)
-        XCTAssertEqual(nflModel.scheduledProjectedLine, "Projected: VIK 20 \u{2013} GBP 23")
+        XCTAssertNil(nflModel.scheduledProjectedLine)
 
         // 2. Before (187-A Three-Way Soccer: Draw in the middle of both rows and bar, Chance only before kickoff!)
         let soccerThreeWay = try decodeEvent("""
@@ -153,7 +154,7 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
         XCTAssertEqual(complementModel.rows[1].primaryCell, .probability("68%"))
         XCTAssertEqual(complementModel.bar?.awayIsWithheld, true)
 
-        // 3. During (Live NBA: Score | Pregame | Now, streaming tenths summing to 100.0%)
+        // 3. During (Ruling 204-C Live NBA: Score | Proj. | Now, no Pregame column, pregame tick on bar)
         let liveNBA = try decodeEvent("""
         {"id": 15346136, "sport": "basketball_nba", "sport_name": "NBA",
          "away_team": "Boston Celtics", "home_team": "Toronto Raptors",
@@ -162,20 +163,30 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
          "espn": {"period": "Halftime"},
          "prematch_odds": {"away_probability": 0.64, "home_probability": 0.36,
                            "away_rendered_percent": 64, "home_rendered_percent": 36, "source": "kalshi"},
-         "current_odds": {"away_probability": 0.429, "home_probability": 0.571}}
+         "current_odds": {"away_probability": 0.429, "home_probability": 0.571,
+                          "live_projection": {
+                              "projected_away_score": 112.4, "projected_home_score": 116.8,
+                              "kind": "in_play", "boundary": "commence_time",
+                              "boundary_at": "2026-11-13T18:00:00Z",
+                              "earliest_confirmed_at": "2026-11-13T18:35:00Z",
+                              "latest_captured_at": "2026-11-13T18:36:00Z",
+                              "source": "sportsbooks", "basis": "consensus_spread_total",
+                              "bookmaker_count": 4, "unit": "points", "period": "full_game"
+                          }}}
         """)
         let liveModel = DiscoverSingleGameCard190C.build(
             event: liveNBA,
             prematch: prematch(liveNBA),
-            usesPictureLayout: false
+            usesPictureLayout: true
         )
-        XCTAssertEqual(liveModel.headers, .init(score: "Score", pregame: "Pregame", primary: "Now"))
+        XCTAssertEqual(liveModel.headers, .init(score: "Score", pregame: "Proj.", primary: "Now"))
         XCTAssertEqual(liveModel.rows.map(\.scoreText), ["54", "61"])
-        XCTAssertEqual(liveModel.rows.map(\.pregameText), ["64%", "36%"])
+        XCTAssertEqual(liveModel.rows.map(\.pregameText), ["112", "117"])
         XCTAssertEqual(liveModel.rows.map(\.primaryCell), [.probability("42.9%"), .probability("57.1%")])
         XCTAssertNotNil(liveModel.bar)
+        XCTAssertEqual(liveModel.bar?.pregameNotch ?? -1, 0.64, accuracy: 0.001)
 
-        // 4. After (Finished NBA: Score | Pregame | Result, Won ✓ on winner, — on loser, NO bar)
+        // 4. After (One layout per state: Pregame · Final, tick after winner's score, no bar, no Result column)
         let afterNBA = try decodeEvent("""
         {"id": 15346137, "sport": "basketball_nba", "sport_name": "NBA",
          "away_team": "Boston Celtics", "home_team": "Toronto Raptors",
@@ -185,10 +196,16 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
                            "away_rendered_percent": 64, "home_rendered_percent": 36, "source": "kalshi"}}
         """)
         let afterModel = DiscoverSingleGameCard190C.build(event: afterNBA, prematch: prematch(afterNBA))
-        XCTAssertEqual(afterModel.headers, .init(score: "Score", pregame: "Pregame", primary: "Result"))
-        XCTAssertEqual(afterModel.rows.map(\.scoreText), ["98", "93"])
+        XCTAssertEqual(afterModel.headers, .init(score: nil, pregame: "Pregame", primary: "Final"))
+        XCTAssertEqual(afterModel.rows.map(\.scoreText), [nil, nil])
         XCTAssertEqual(afterModel.rows.map(\.pregameText), ["64%", "36%"])
-        XCTAssertEqual(afterModel.rows.map(\.primaryCell), [.won("Won \u{2713}"), .settledDash])
+        XCTAssertEqual(
+            afterModel.rows.map(\.primaryCell),
+            [
+                .finalScore(text: "98", won: true, isDrawOutcome: false),
+                .finalScore(text: "93", won: false, isDrawOutcome: false)
+            ]
+        )
         XCTAssertNil(afterModel.bar, "Finished Discover card draws no settled probability bar")
 
         // 5. Suspended-and-started (#6010): withholds `Now` and bar even if stale `current_odds` exist.
@@ -640,6 +657,7 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
             now: ISO8601DateFormatter().date(from: "2026-11-15T12:00:00Z")!
         )
         XCTAssertEqual(discoverHeaders.primary, "Chance")
+        XCTAssertEqual(compactHeaders.medium, "Proj.")
         XCTAssertEqual(compactHeaders.large, "Chance")
         XCTAssertEqual(headlineNFL.pregameColumnHeaders?.chance, "Chance")
     }

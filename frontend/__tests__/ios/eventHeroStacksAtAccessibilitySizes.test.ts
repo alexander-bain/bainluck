@@ -91,8 +91,9 @@ d("#3978 — the event hero restacks at accessibility text sizes", () => {
 
   it("heroSection unconditionally mounts EventSportHeadlineCard12472 with one shared stacking predicate", () => {
     expect(heroBody()).toMatch(/EventSportHeadlineCard12472\(/);
+    expect(cardCode()).toContain("isAccessibilitySize: dynamicTypeSize.isAccessibilitySize");
     expect(cardCode()).toMatch(
-      /private var stacksRowsVertically: Bool \{\s*dynamicTypeSize\.isAccessibilitySize\s*\}/
+      /private var stacksRowsVertically: Bool \{\s*cellLayout\.stacksRowsVertically\s*\}/
     );
   });
 

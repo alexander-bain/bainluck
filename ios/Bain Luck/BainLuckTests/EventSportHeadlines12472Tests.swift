@@ -292,8 +292,8 @@ final class EventSportHeadlines12472Tests: XCTestCase {
         let streaming = try XCTUnwrap(
             resolveHeadline(event, hasScore: false, numberStreams: true)
         )
-        XCTAssertEqual(streaming.away.winChanceText, "34.2%")
-        XCTAssertEqual(streaming.home.winChanceText, "65.8%")
+        XCTAssertEqual(streaming.away.winChanceText, "34%", "#12822: before kickoff Chance stays whole percents even while streaming")
+        XCTAssertEqual(streaming.home.winChanceText, "66%", "#12822: before kickoff Chance stays whole percents even while streaming")
     }
 
     func testNFLBeforeGameMetaUsesPlainDateWhenDaysAwayAndCountdownInsideLastHour() throws {

@@ -55,9 +55,13 @@ struct GolfCategoryView: View {
             }
             .padding(.horizontal)
             .padding(.bottom, 40)
+            .frame(maxWidth: Self.readableDetailMaxWidth)
+            .frame(maxWidth: .infinity)
         }
         .refreshable { await vm.load() }
     }
+
+    static let readableDetailMaxWidth: CGFloat = 720
 
     // MARK: - Live Section
 

@@ -63,6 +63,12 @@ def _row(status):
         row.home_score = None
         row.away_score = None
         row.period = None
+        # A scheduled cache specimen needs an admitted current source. An
+        # opening-only row no longer qualifies as a priced card (#12824).
+        row.win_probability_sources = {
+            "betting": {"value": 0.55, "updated_at": datetime.now(timezone.utc).isoformat()},
+            "betting_book_count": 4,
+        }
     return row
 
 

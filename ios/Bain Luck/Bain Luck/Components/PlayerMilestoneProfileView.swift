@@ -20,10 +20,13 @@ struct PlayerMilestoneProfileView: View {
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
+        let yScale = ChartScaleRule201.manyWayWindow(values: profile.milestones.map(\.probability))
         Chart {
-            RuleMark(y: .value("Chance", 0.5))
-                .foregroundStyle(Color.secondary.opacity(0.35))
-                .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+            if yScale.domain.contains(0.5) {
+                RuleMark(y: .value("Chance", 0.5))
+                    .foregroundStyle(Color.secondary.opacity(0.35))
+                    .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+            }
             ForEach(profile.milestones) { milestone in
                 let isSelected = milestone.index == selectedIndex
                 RuleMark(
@@ -47,9 +50,9 @@ struct PlayerMilestoneProfileView: View {
             }
         }
         .chartXScale(domain: profile.domain)
-        .chartYScale(domain: 0...1)
+        .chartYScale(domain: yScale.domain)
         .chartYAxis {
-            AxisMarks(position: .leading, values: [0, 0.5, 1]) { value in
+            AxisMarks(position: .leading, values: yScale.ticks) { value in
                 AxisGridLine()
                     .foregroundStyle(Color.secondary.opacity(0.15))
                 AxisValueLabel {

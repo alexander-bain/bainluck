@@ -48,6 +48,8 @@ interface ThemeBundleCardProps {
   collectionRef?: FeedThemeCollectionRef | null;
   /** Producer-verified cumulative deadline-family contract (#9878 / #11040). */
   deadlineFamily?: FeedDeadlineFamilyContract | null;
+  imageUrl?: string | null;
+  imagePresentation?: string | null;
   nowIso?: string;
   timeZone?: string;
 }
@@ -79,6 +81,8 @@ export function ThemeBundleCard({
   bundleId,
   collectionRef,
   deadlineFamily,
+  imageUrl,
+  imagePresentation,
   nowIso,
   timeZone,
 }: ThemeBundleCardProps) {
@@ -142,7 +146,11 @@ export function ThemeBundleCard({
     }
   }
   const primary = items[0];
-  const cat = primary?.type === "futures" ? (primary.data as FeedFuturesData).llm_sport_category : null;
+  const primaryFutures = primary?.type === "futures" ? (primary.data as FeedFuturesData) : null;
+  const cat = primaryFutures?.llm_sport_category ?? null;
+  const resolvedImageUrl = imageUrl ?? primaryFutures?.image_url ?? null;
+  const resolvedImagePresentation =
+    imagePresentation ?? primaryFutures?.image_presentation ?? null;
   const analytics = primary ? getDiscoverItemAnalytics(primary) : { category: "geopolitics" };
   const peek = items.slice(0, bundleSeatCount(items.length));
 
@@ -176,6 +184,8 @@ export function ThemeBundleCard({
         sharedQuestion={sharedQuestion}
         fallbackCount={`· ${items.length} related`}
         category={cat}
+        imageUrl={resolvedImageUrl}
+        imagePresentation={resolvedImagePresentation}
         expanded={expanded}
         canExpand
         onToggle={toggleExpanded}

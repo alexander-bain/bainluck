@@ -199,7 +199,10 @@ async def test_event_opening_only_is_withheld_not_new_current_quote(monkeypatch)
     items, states = await route._event_cards(db, [1], NOW)
     assert states == {"event-1": "withheld"}
     assert "current_odds" not in items[0]["data"]
-    assert items[0]["data"]["hero_probability_source"] == "opening"
+    assert "hero_probability" not in items[0]["data"]
+    assert "hero_probability_away" not in items[0]["data"]
+    assert "hero_probability_source" not in items[0]["data"]
+    assert items[0]["data"]["opening_odds"]["home_probability"] == 0.55
     assert items[0]["data"]["hero_probability_observed_at"] is None
 
 

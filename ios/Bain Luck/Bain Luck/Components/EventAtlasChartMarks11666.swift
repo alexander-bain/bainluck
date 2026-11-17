@@ -365,6 +365,7 @@ struct EventAtlasChartHeaderView11666: View {
         EventAtlasSelectedReadingSlot11666(
             selection: selection,
             baseRows: baseRows,
+            checkpoints: checkpoints,
             outcomeName: homeName,
             includesOpening: includesOpening,
             openingLabel: "Pregame",
@@ -379,21 +380,78 @@ struct EventAtlasChartHeaderView11666: View {
 private struct EventAtlasSelectedReadingSlot11666: View {
     @ObservedObject var selection: OddsChartSelection
     let baseRows: [EventAtlasObservationRow11666]
+    let checkpoints: PublicationCheckpointMount4974?
     let outcomeName: String
     let includesOpening: Bool
     let openingLabel: String
     let primaryColor: Color
 
-    var body: some View {
-        let selectedModel = EventAtlasChartMarks11666.selectedReading(
+    private enum ResolvedSlotState {
+        case idle
+        case withheld
+        case reading(EventAtlasSelectedReadingModel11666)
+    }
+
+    private var resolvedState: ResolvedSlotState {
+        if let checkpoints {
+            guard selection.date != nil || selection.checkpoint != nil else { return .idle }
+            switch checkpoints.readout(date: selection.date, scrub: selection.checkpoint) {
+            case .withheld:
+                return .withheld
+            case .checkpoint(let cp):
+                return .reading(EventAtlasSelectedReadingModel11666(
+                    outcomeName: outcomeName,
+                    badgeText: "Recorded",
+                    probabilityText: formatProbability(cp.vertex.p),
+                    timestampTextPT: EventAtlasChartMarks11666.formatExactTimestampPT(cp.date),
+                    isOpening: false
+                ))
+            case .legacy(let pt):
+                let effectiveOpening = includesOpening
+                    && baseRows.first.map { $0.isOpening && $0.date == pt.date } == true
+                return .reading(EventAtlasSelectedReadingModel11666(
+                    outcomeName: outcomeName,
+                    badgeText: effectiveOpening ? openingLabel : "Recorded",
+                    probabilityText: formatProbability(pt.probability),
+                    timestampTextPT: EventAtlasChartMarks11666.formatExactTimestampPT(pt.date),
+                    isOpening: effectiveOpening
+                ))
+            }
+        }
+        if selection.checkpoint == .withheld {
+            return .withheld
+        }
+        if let selectedModel = EventAtlasChartMarks11666.selectedReading(
             rows: baseRows,
             selectedDate: selection.date,
             outcomeName: outcomeName,
             includesOpening: includesOpening,
             openingLabel: openingLabel
-        )
+        ) {
+            return .reading(selectedModel)
+        }
+        return .idle
+    }
 
-        if let selectedModel {
+    var body: some View {
+        switch resolvedState {
+        case .idle:
+            EmptyView()
+        case .withheld:
+            Text(PublicationCheckpointReadoutSlot4974.withheldText)
+                .font(.caption2)
+                .foregroundStyle(DS.textSecondaryReadable)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                .background(Color.systemBackground.opacity(0.95), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.secondary.opacity(0.18), lineWidth: 1)
+                )
+                .padding(.bottom, 2)
+                .accessibilityIdentifier("event.atlas.selectedReading")
+        case .reading(let selectedModel):
             ViewThatFits(in: .horizontal) {
                 singleLineReadout(selectedModel)
                 twoLineReadout(selectedModel)
@@ -568,6 +626,8 @@ struct EventAtlasChartOverlay11666: View {
             EventAtlasSelectedMarkOverlay11666(
                 selection: selection,
                 baseRows: baseRows,
+                checkpoints: checkpoints,
+                includesOpening: includesOpening,
                 proxy: proxy,
                 plotFrame: plotFrame,
                 primaryColor: primaryColor
@@ -605,21 +665,41 @@ struct EventAtlasChartOverlay11666: View {
 private struct EventAtlasSelectedMarkOverlay11666: View {
     @ObservedObject var selection: OddsChartSelection
     let baseRows: [EventAtlasObservationRow11666]
+    let checkpoints: PublicationCheckpointMount4974?
+    let includesOpening: Bool
     let proxy: ChartProxy
     let plotFrame: CGRect
     let primaryColor: Color
 
-    var body: some View {
+    private var selectedTarget: (date: Date, probability: Double, isOpening: Bool)? {
+        if let checkpoints {
+            guard selection.date != nil || selection.checkpoint != nil else { return nil }
+            switch checkpoints.readout(date: selection.date, scrub: selection.checkpoint) {
+            case .withheld:
+                return nil
+            case .checkpoint(let cp):
+                return (cp.date, cp.vertex.p, false)
+            case .legacy(let pt):
+                let isOpening = includesOpening
+                    && baseRows.first.map { $0.isOpening && $0.date == pt.date } == true
+                return (pt.date, pt.probability, isOpening)
+            }
+        }
         let rows = EventAtlasChartMarks11666.applyingSelection(to: baseRows, selectedDate: selection.date)
-        if let row = rows.first(where: \.isSelected),
-           let x = proxy.position(forX: row.date),
-           let y = proxy.position(forY: row.probability),
+        guard let row = rows.first(where: \.isSelected) else { return nil }
+        return (row.date, row.probability, row.isOpening)
+    }
+
+    var body: some View {
+        if let target = selectedTarget,
+           let x = proxy.position(forX: target.date),
+           let y = proxy.position(forY: target.probability),
            x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
             let screenX = plotFrame.minX + x
             let screenY = plotFrame.minY + y
 
             ZStack {
-                if row.isOpening {
+                if target.isOpening {
                     Circle()
                         .fill(Color.systemBackground)
                         .overlay(

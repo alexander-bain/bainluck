@@ -1656,6 +1656,36 @@ _TENNIS_TOUR_STOP_RE = re.compile(
 )
 
 
+_LISTING_QUALIFIER_RE = re.compile(r"\s*\(([^()]*)\)\s*\Z")
+
+
+def _norm_title(data: dict[str, Any]) -> str:
+    return " ".join(str(data.get("name") or "").split()).casefold()
+
+
+def _same_listing_with_a_qualifier(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """One venue's two listings of ONE market, told apart only by a note in
+    brackets at the END of one title — Saturday's sheet, seat 26: "Anthropic IPO
+    Closing Market Cap" at 46% and "Anthropic IPO Closing Market Cap (Middle
+    Brackets)" at 51% in one card. Different bracket sets, so they cannot be
+    blended (Alex's "near"), but two rows for one market is the duplicate the
+    card exists to fold: the better-ranked one stays.
+
+    The rule is narrow on purpose: one title must be EXACTLY the other plus a
+    trailing "(...)". Brackets inside a title name the thing itself — Monday's
+    relegation card lists "Will Estudiantes (LP) be relegated ..." and "Will
+    Estudiantes (RC) ...", two different clubs — and "Men's ... (Tennis)" vs
+    "Women's ... (Tennis)" differ outside the brackets, so neither ever folds."""
+    if str(a.get("source") or "") != str(b.get("source") or ""):
+        return False
+    ta, tb = _norm_title(a), _norm_title(b)
+    if not ta or not tb or ta == tb:
+        return False
+    short, long_ = (ta, tb) if len(ta) < len(tb) else (tb, ta)
+    match = _LISTING_QUALIFIER_RE.search(long_)
+    return bool(match) and bool(match.group(1).strip()) and long_[: match.start()].strip() == short
+
+
 def _dedupe_same_question_members(
     members: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1709,11 +1739,14 @@ def _dedupe_same_question_members(
         data = _futures_data(item)
         source = str(data.get("source") or "")
         duplicate = any(
-            str(_futures_data(k).get("source") or "") != source
-            and is_same_question(
-                _comparison_title(_futures_data(k), data),
-                _comparison_title(data, _futures_data(k)),
+            (
+                str(_futures_data(k).get("source") or "") != source
+                and is_same_question(
+                    _comparison_title(_futures_data(k), data),
+                    _comparison_title(data, _futures_data(k)),
+                )
             )
+            or _same_listing_with_a_qualifier(_futures_data(k), data)
             for k in kept
         )
         (folded if duplicate else kept).append(item)
@@ -1931,6 +1964,9 @@ def assemble_story_theme_bundles(
 
     bundle_by_story: dict[str, dict[str, Any]] = {}
     represented_ids: set[str] = set()
+    # Duplicates folded into a survivor that goes out as its own card (no
+    # bundle formed): never emitted, so the survivor is the only copy.
+    folded_into_single: set[str] = set()
     for story_key, members in groups.items():
         if len(members) < min_items:
             continue
@@ -1952,6 +1988,16 @@ def assemble_story_theme_bundles(
                 continue
             members = verified_members
         if len(members) < min_items:
+            # Monday's render (Nov 16, seat 22): "IPOs" held only Polymarket's two
+            # Anthropic market-cap listings. Folding one left one member, no card
+            # formed, and BOTH came back as standalone cards at 45% and 51%. A
+            # venue's second listing of ONE market goes with the card: the
+            # survivor emits on its own below. Two venues' copies of a question
+            # keep #4446's floor (both ship) — that fold is not this one.
+            folded_into_single.update(
+                _item_id(f) for f in folded
+                if any(_same_listing_with_a_qualifier(_futures_data(k), _futures_data(f)) for k in members)
+            )
             continue
         chosen = members[:max_items_per_bundle]
         if len(chosen) < min_items:
@@ -1975,12 +2021,14 @@ def assemble_story_theme_bundles(
         # represent it.
         represented_ids.update(_item_id(item) for item in folded)
 
-    if not represented_ids:
+    if not represented_ids and not folded_into_single:
         return items
 
     emitted: set[str] = set()
     output: list[dict[str, Any]] = []
     for item in items:
+        if _item_id(item) in folded_into_single:
+            continue
         if _item_id(item) not in represented_ids:
             output.append(item)
             continue

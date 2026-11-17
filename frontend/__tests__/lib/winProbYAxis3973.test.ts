@@ -120,13 +120,15 @@ describe("#3973 — the ways zooming could itself become the lie", () => {
     expect(49.8).toBeLessThan(hi - span(axis) * 0.25);
   });
 
-  test("too few samples to have a percentile keeps the full axis", () => {
-    // 22/23/24/25 and not, say, 22/23/24/91: with four samples spanning the
-    // range the derived axis snaps back to [0, 100] anyway, and the case would
-    // pass with no sample floor at all.
+  test("Ruling 201 (#12750): sparse early readings fit from the first sample with >=20pt minimum span", () => {
+    // Under Ruling 201 (matching iOS ChartScaleRule201), early two-team games fit
+    // immediately rather than falling back to [0, 100] until sample 12.
     const axis = computeWinProbYAxis([22, 23, 24, 25]);
 
-    expect(axis).toEqual(FULL_WIN_PROB_Y_AXIS);
+    expect(axis.domain[0]).toBeLessThanOrEqual(22);
+    expect(axis.domain[1]).toBeGreaterThanOrEqual(25);
+    expect(span(axis)).toBeGreaterThanOrEqual(20);
+    expect(span(axis)).toBeLessThan(100);
   });
 
   test("no samples at all keeps the full axis", () => {

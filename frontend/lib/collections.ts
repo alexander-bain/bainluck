@@ -57,6 +57,7 @@ export interface CollectionHub {
   subtitle?: string | null;
   caption?: CollectionCaption | null;
   pin?: CollectionPin | null;
+  pairedMetricSet?: import("@/lib/discover/visualForms").PairedMetricSet | null;
   relatedSummary?: { count: number; unclassifiedCount: number };
 }
 export interface CollectionReadingContext {
@@ -298,8 +299,11 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
       };
     }
   }
+  const admittedPairedSet = object(row.paired_metric_set) && Array.isArray(object(row.paired_metric_set)?.entries)
+    ? (row.paired_metric_set as unknown as CollectionHub["pairedMetricSet"])
+    : null;
   return { ...base, members, related, children, parent: admittedParent, theme, family, relatedSummary, dek: family ? familyDek[family] ?? null : null,
-    subtitle: text(row.subtitle) ? row.subtitle : null, caption: admittedCaption, pin: admittedPin,
+    subtitle: text(row.subtitle) ? row.subtitle : null, caption: admittedCaption, pin: admittedPin, pairedMetricSet: admittedPairedSet,
     sections: sections.map((section) => ({ ...section, members: section.members.filter((m) => !relatedKeys.has(m.key)) })).filter((s) => s.members.length > 0),
     note: partial ? (slug === "midterms-2026" || isRoundup ? "Some markets aren't available right now." : "Some games or markets aren't available right now.") : !members.length && !children.length ? "No markets are available right now." : null };
 }
