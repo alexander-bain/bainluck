@@ -58,7 +58,7 @@ _MUSIC_MARKET_RE = re.compile(
     r"|\brelease\s+[\"“][^\"”]+[\"”].*\b(album|song|single|ep|track|taylor['’]s\s+version)\b"
     r"|\b(taylor\s+swift|drake|kendrick\s+lamar|beyonc[eé]|sabrina\s+carpenter|bad\s+bunny|billie\s+eilish|"
     r"chappell\s+roan|charli\s+xcx|olivia\s+rodrigo|morgan\s+wallen|the\s+weeknd|ariana\s+grande|lady\s+gaga|"
-    r"travis\s+scott|kanye|ye|rihanna|cardi\s+b|nicki\s+minaj|justin\s+bieber|bruno\s+mars|ed\s+sheeran|"
+    r"travis\s+scott|kanye(?:\s+west)?|rihanna|cardi\s+b|nicki\s+minaj|justin\s+bieber|bruno\s+mars|ed\s+sheeran|"
     r"harry\s+styles|dua\s+lipa|post\s+malone|sza|zach\s+bryan|lana\s+del\s+rey|playboi\s+carti|frank\s+ocean|"
     r"bts|blackpink|olivia\s+dean|tate\s+mcrae)\b.*\brelease\s+[\"“]"
     r")",

@@ -87,8 +87,8 @@ def test_genuine_film_and_tv_markets_keep_tmdb_art(name: str) -> None:
     )
 
 
-def test_tvmaze_picker_enforces_kid_safe_horror_gate_and_cc_by_sa_attribution() -> None:
-    # Non-horror TVMaze show returns CC BY-SA 4.0 portrait + source_page
+def test_tvmaze_picker_enforces_exact_title_kid_safe_horror_gate_and_cc_by_sa_attribution() -> None:
+    # Non-horror TVMaze show with matching title returns CC BY-SA 4.0 portrait + source_page
     url, meta = enrich_tmdb._pick_tvmaze_image(
         {
             "id": 68407,
@@ -98,12 +98,46 @@ def test_tvmaze_picker_enforces_kid_safe_horror_gate_and_cc_by_sa_attribution() 
             "image": {
                 "original": "https://static.tvmaze.com/uploads/images/original_untouched/642/1607270.jpg"
             },
-        }
+        },
+        expected_title="Black Doves",
     )
     assert url == "https://static.tvmaze.com/uploads/images/original_untouched/642/1607270.jpg"
     assert meta is not None
     assert meta["license"] == "CC BY-SA 4.0"
     assert meta["source_page"] == "https://www.tvmaze.com/shows/68407/black-doves"
+
+    # Fuzzy singlesearch mismatch ("Moneyball" -> "Money Heist") is refused
+    mismatch_url, mismatch_meta = enrich_tmdb._pick_tvmaze_image(
+        {
+            "id": 27436,
+            "name": "Money Heist",
+            "genres": ["Drama", "Crime", "Thriller"],
+            "url": "https://www.tvmaze.com/shows/27436/money-heist",
+            "image": {
+                "original": "https://static.tvmaze.com/uploads/images/original_untouched/163/408479.jpg"
+            },
+        },
+        expected_title="Moneyball",
+    )
+    assert mismatch_url is None
+    assert mismatch_meta is None
+
+    # Narrow TV series hint regex rejects sports World Series, talk shows, halftime shows, and TV ratings
+    for non_series_market in (
+        'Will "Moneyball" win the World Series?',
+        'Will "Umbrella" be played at the Super Bowl halftime show?',
+        'Will "The Daily" talk show host announce a tour?',
+        'Will "Monday Night" beat 15M in TV ratings?',
+    ):
+        assert enrich_tmdb._TV_SERIES_HINT_RE.search(non_series_market) is None
+
+    for valid_series_market in (
+        'New "Black Doves" episode released by December 31?',
+        'Will "Severance" Season 3 premiere in 2027?',
+        'Will "The Bear" win an Emmy?',
+        'Will "Squid Game" top Netflix show rankings?',
+    ):
+        assert enrich_tmdb._TV_SERIES_HINT_RE.search(valid_series_market) is not None
 
     # Horror TVMaze show (#7461) is refused
     h_url, h_meta = enrich_tmdb._pick_tvmaze_image(
@@ -115,10 +149,31 @@ def test_tvmaze_picker_enforces_kid_safe_horror_gate_and_cc_by_sa_attribution() 
             "image": {
                 "original": "https://static.tvmaze.com/uploads/images/original_untouched/595/1489169.jpg"
             },
-        }
+        },
+        expected_title="Stranger Things",
     )
     assert h_url is None
     assert h_meta is None
+
+
+def test_discover_image_policy_withholds_tmdb_art_on_music_markets_at_serve_time() -> None:
+    tmdb_url = "https://image.tmdb.org/t/p/w1280/xcSH4KdTxvVmLARyrEeZOYrHjGR.jpg"
+    for market_name, cat in (
+        ('Will "Stay" by The Kid LAROI (with Justin Bieber) be on the radio in GTA VI at launch?', "culture"),
+        ('"FRESH" First Week Album Sales?', "entertainment"),
+        ('Will Taylor Swift release "Taylor Swift (Taylor\'s Version)" in 2026?', "pop_culture"),
+        ('Will "Umbrella" be played at the 2027 Big Game halftime show?', None),
+    ):
+        resolved = resolve_discover_market_image(
+            name=market_name,
+            category=cat,
+            top_outcomes=[{"name": "Yes", "probability": 0.35}],
+            image_url=tmdb_url,
+            image_width=1280,
+            image_height=720,
+        )
+        assert resolved["image_url"] != tmdb_url
+        assert resolved.get("image_credit") != "TMDB"
 
 
 def test_netflix_season_outcomes_resolve_verified_tvmaze_portraits_and_gravity() -> None:
@@ -243,3 +298,77 @@ async def test_enrich_tmdb_clears_existing_music_false_positives_and_falls_back_
     tvmaze_mock.assert_awaited_once_with("Black Doves")
     assert len(executed_statements) == 3
     assert fake_session.committed is True
+
+
+@pytest.mark.asyncio
+async def test_enrich_tmdb_cleanup_paginates_past_500_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(enrich_tmdb, "TMDB_READ_TOKEN", "fake-token")
+    first_batch = [
+        (
+            idx,
+            f'"Ebenezer {idx}" Opening Weekend Box Office',
+            "https://image.tmdb.org/t/p/w1280/ebenezer.jpg",
+            {},
+        )
+        for idx in range(1, 501)
+    ]
+    second_batch = [
+        (
+            501,
+            '"FRESH" First Week Album Sales?',
+            "https://image.tmdb.org/t/p/w1280/xcSH4KdTxvVmLARyrEeZOYrHjGR.jpg",
+            {},
+        ),
+        (
+            502,
+            'Will "Stay" by The Kid LAROI (with Justin Bieber) be on the radio in GTA VI at launch?',
+            "https://image.tmdb.org/t/p/w1280/stay.jpg",
+            {},
+        ),
+    ]
+
+    class _FakeResult:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return self._rows
+
+    class _PagingSession:
+        def __init__(self):
+            self.select_calls = 0
+            self.updates = 0
+            self.committed = False
+
+        async def execute(self, stmt):
+            sql_str = str(stmt)
+            if sql_str.lstrip().upper().startswith("SELECT"):
+                self.select_calls += 1
+                if self.select_calls == 1:
+                    return _FakeResult(first_batch)
+                if self.select_calls == 2:
+                    return _FakeResult(second_batch)
+                return _FakeResult([])
+            self.updates += 1
+            return MagicMock()
+
+        async def commit(self):
+            self.committed = True
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    paging_session = _PagingSession()
+    with patch.object(enrich_tmdb, "get_task_session", return_value=paging_session):
+        stats = await enrich_tmdb.enrich_tmdb_images(limit=10)
+
+    # 2 cleanup pages (500 + 2) + 1 enrichment candidate query = 3 SELECTs
+    assert paging_session.select_calls == 3
+    assert stats["cleared_music_false_positives"] == 2
+    assert paging_session.updates == 2
+    assert paging_session.committed is True

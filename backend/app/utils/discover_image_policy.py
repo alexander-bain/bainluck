@@ -29,6 +29,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from app.utils.music_image_guard import sanitize_market_image_fields
+
 from app.utils.nation_flags import flag_url as nation_flag_url
 
 logger = logging.getLogger(__name__)
@@ -1096,6 +1098,9 @@ def resolve_discover_market_image(
     """Return resolved `{image_url, image_width, image_height, image_presentation, image_monogram, image_credit}`."""
     subject = classify_market_visual_subject(name, category, top_outcomes)
     existing = normalize_archive_image_url((image_url or "").strip() or None)
+    existing, image_width, image_height = sanitize_market_image_fields(
+        existing, image_width, image_height, name
+    )
 
     # 1. Keep existing real non-stock art if valid for this subject
     if existing and not is_pexels_url(existing):

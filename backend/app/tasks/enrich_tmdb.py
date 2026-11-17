@@ -37,7 +37,7 @@ TMDB_READ_TOKEN = os.getenv("TMDB_READ_ACCESS_TOKEN")  # v4 bearer (preferred)
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")  # v3 key (fallback)
 
 _TV_SERIES_HINT_RE = re.compile(
-    r"\b(episode|season\s+\d+|show|series|emmys?|netflix\s+show|tv)\b",
+    r"\b(episode|season\s+\d+|tv\s+series|limited\s+series|netflix\s+(?:show|series)|emmys?)\b",
     re.IGNORECASE,
 )
 
@@ -110,10 +110,18 @@ async def _fetch_tmdb_image(title: str) -> tuple[str | None, dict | None]:
         return None, None
 
 
-def _pick_tvmaze_image(payload: dict | None) -> tuple[str | None, dict | None]:
+def _pick_tvmaze_image(
+    payload: dict | None,
+    expected_title: str | None = None,
+) -> tuple[str | None, dict | None]:
     """Extract a kid-safe (#7461) CC BY-SA 4.0 portrait poster from TVMaze."""
     if not isinstance(payload, dict):
         return None, None
+    if expected_title is not None:
+        want = _normalize_title(expected_title)
+        got = _normalize_title(str(payload.get("name") or ""))
+        if not want or got != want:
+            return None, None
     genres = [str(g).strip().lower() for g in (payload.get("genres") or [])]
     if "horror" in genres:
         return None, None
@@ -143,7 +151,7 @@ async def _fetch_tvmaze_image(title: str) -> tuple[str | None, dict | None]:
             resp = await client.get(TVMAZE_SINGLE_SEARCH, params={"q": title})
             if resp.status_code != 200:
                 return None, None
-            return _pick_tvmaze_image(resp.json())
+            return _pick_tvmaze_image(resp.json(), expected_title=title)
     except Exception as e:  # noqa: BLE001
         logger.error("TVMaze fetch error for %r: %s", title, e)
         return None, None
@@ -236,38 +244,49 @@ async def enrich_tmdb_images(limit: int = 50):
 
     async with get_task_session() as session:
         # #12659: clear any previously attached TMDB film backdrops on music/song/
-        # album/chart markets so stored rows match serve-time withholding.
-        existing_tmdb_result = await session.execute(
-            select(
-                FuturesMarket.id,
-                FuturesMarket.name,
-                FuturesMarket.image_url,
-                FuturesMarket.market_metadata,
-            )
-            .where(
-                FuturesMarket.status == "open",
-                FuturesMarket.llm_sport_category == "entertainment",
-                FuturesMarket.image_url.like("%image.tmdb.org%"),
-            )
-            .limit(500)
-        )
-        for m_id, m_name, m_img, m_meta in existing_tmdb_result.all():
-            if m_img and sanitize_market_image_url(m_img, m_name) is None:
-                clean_meta = m_meta if isinstance(m_meta, dict) else {}
-                await session.execute(
-                    update(FuturesMarket)
-                    .where(FuturesMarket.id == m_id)
-                    .values(
-                        image_url=None,
-                        image_width=None,
-                        image_height=None,
-                        market_metadata={
-                            **clean_meta,
-                            "tmdb": {"skipped_music": True},
-                        },
-                    )
+        # album/chart markets across all categories via keyset pagination so stored
+        # rows match serve-time withholding in discover_image_policy.py.
+        cleanup_batch_size = 500
+        last_seen_id = 0
+        while True:
+            existing_tmdb_result = await session.execute(
+                select(
+                    FuturesMarket.id,
+                    FuturesMarket.name,
+                    FuturesMarket.image_url,
+                    FuturesMarket.market_metadata,
                 )
-                stats["cleared_music_false_positives"] += 1
+                .where(
+                    FuturesMarket.status == "open",
+                    FuturesMarket.id > last_seen_id,
+                    FuturesMarket.image_url.like("%image.tmdb.org%"),
+                )
+                .order_by(FuturesMarket.id.asc())
+                .limit(cleanup_batch_size)
+            )
+            batch = existing_tmdb_result.all()
+            if not batch:
+                break
+            for m_id, m_name, m_img, m_meta in batch:
+                last_seen_id = int(m_id)
+                if m_img and sanitize_market_image_url(m_img, m_name) is None:
+                    clean_meta = m_meta if isinstance(m_meta, dict) else {}
+                    await session.execute(
+                        update(FuturesMarket)
+                        .where(FuturesMarket.id == m_id)
+                        .values(
+                            image_url=None,
+                            image_width=None,
+                            image_height=None,
+                            market_metadata={
+                                **clean_meta,
+                                "tmdb": {"skipped_music": True},
+                            },
+                        )
+                    )
+                    stats["cleared_music_false_positives"] += 1
+            if len(batch) < cleanup_batch_size:
+                break
 
         result = await session.execute(
             select(
