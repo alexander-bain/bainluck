@@ -172,3 +172,15 @@ def test_true_token_replacement_resets_exhaustion_but_not_configuration_halt():
     assert rebind_token(exhausted, token_changed=True).halted is None
     configuration = replace(exhausted, halted="permanent")
     assert rebind_token(configuration, token_changed=True) == configuration
+
+
+def test_a_new_token_gets_the_current_reading_at_once_not_after_the_quiet_wait():
+    """#10542 step 3: the phone re-registered, so it has shown nothing; its first
+    update goes now at priority 10, not held as a same-screen refresh."""
+    sent, attempt = state().observe(snapshot(), revision=1).dispatch(now=NOW)
+    done = sent.complete(attempt.attempt_id, now=NOW)
+    t30 = NOW + timedelta(seconds=30)
+    again = done.observe(snapshot(score_observed_at=t30, probability_observed_at=t30), revision=2)
+    assert again.dispatch(now=t30)[1] is None  # same token: held for the refresh
+    _, fresh = rebind_token(again, token_changed=True).dispatch(now=t30)
+    assert fresh.push.headers["apns-priority"] == "10"
