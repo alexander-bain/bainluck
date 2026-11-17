@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Verified non-stock entity and landmark artwork for Discover cards (#12659). A person, team, film, or song never gets a stock photo.",
+  "description": "Verified non-stock entity, series, and landmark artwork for Discover cards (#12659). A person, team, film, series, or song never gets a stock photo.",
   "allowed_hosts": [
     "upload.wikimedia.org",
     "thumb.wikimedia.org",
