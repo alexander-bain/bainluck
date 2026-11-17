@@ -62,7 +62,7 @@ MACHINERY_FORM_IDS: frozenset[str] = frozenset(
 )
 
 _DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-_CANDIDATES_DIR = _DATA_DIR / "discover" / "candidates"
+_CANDIDATES_DIR = _DATA_DIR / "groupings" / "candidates"
 _VERIFIED_ART_PATH = _DATA_DIR / "discover" / "verified_discover_art.json"
 _PAIRED_REGISTER_PATH = _DATA_DIR / "groupings" / "paired_metric_register.json"
 _SUBJECT_ART_PATH = _DATA_DIR / "groupings" / "machinery_subject_art.json"
