@@ -40,17 +40,21 @@ from app.utils.grouping_kind_proposer import (
     DEFAULT_NEW_KINDS_EXAM_JSON_PATH,
     DOCS_KIND_PROPOSALS_JSON_PATH,
     DOCS_NEW_KINDS_EXAM_JSON_PATH,
+    DOCS_NEW_KINDS_EXAM_RECEIPT_MD_PATH,
     KIND_PROPOSER_MONTHLY_CAP_USD,
     KIND_PROPOSER_RUN_CAP_USD,
     MIN_GRADED_CARDS_FOR_CATALOG,
     NEW_KINDS_EXAM_SLATE_ID,
     REQUIRED_EXAMPLE_CARDS_PER_KIND,
     KindProposalSpendCapExceededError,
+    apply_stat_leader_selection_guards,
     compute_selection_carrying_title,
     evaluate_kind_catalog_admission,
     load_committed_kind_proposals,
     load_new_kinds_exam_cards,
     propose_new_grouping_kinds,
+    score_new_kinds_exam,
+    select_bubble_50_rows,
     validate_proposed_grouping_kind,
 )
 from app.utils.grouping_licences import UNLICENSED_PROPOSED_KINDS, is_kind_licensed
@@ -572,3 +576,142 @@ class TestKindProposerSpendAndCatalogAdmission:
             assert any(str(r).startswith("missing_observed_at:") for r in reasons)
         finally:
             refused_exam_path.unlink(missing_ok=True)
+
+
+class TestScoredNewKindsExamAndPreLicensingGuards:
+    """#9937: scores Alex's 20-card exam and enforces pre-licensing selection guards (#08, #09, #10, #18)."""
+
+    def test_score_new_kinds_exam_matches_committed_grades_and_receipt(self) -> None:
+        assert DOCS_NEW_KINDS_EXAM_RECEIPT_MD_PATH.exists()
+        summary = score_new_kinds_exam()
+        assert summary["slate_id"] == NEW_KINDS_EXAM_SLATE_ID
+        assert summary["total_graded"] == 20
+        assert summary["total_yes"] == 20
+        assert summary["total_no"] == 0
+
+        stat = summary["kinds"]["season_stat_leaders"]
+        assert stat["graded"] == 10
+        assert stat["amazing"] == 8
+        assert stat["fine"] == 2
+        assert stat["no"] == 0
+        assert stat["passes_80pct_bar"] is True
+        assert stat["passes_catalog_bar"] is True
+        assert stat["can_reach_readers"] is False
+
+        qual = summary["kinds"]["qualification_stage_board"]
+        assert qual["graded"] == 10
+        assert qual["amazing"] == 10
+        assert qual["fine"] == 0
+        assert qual["no"] == 0
+        assert qual["passes_80pct_bar"] is True
+        assert qual["passes_catalog_bar"] is True
+        assert qual["can_reach_readers"] is False
+
+        bubble = summary["bubble_50"]
+        assert bubble["graded"] == 3
+        assert bubble["amazing"] == 3
+        assert bubble["no"] == 0
+        assert bubble["verdict"] == "PASS"
+
+    def test_stat_leader_guards_trim_cliff_drop_tails_and_label_subset_denominators(self) -> None:
+        # #08 shape: 6-player RB pool with a 3% 5th row -> drops <10% tail and requires qualifier on <8 pool
+        rb_pool = [
+            {"label": "Jahmyr Gibbs", "probability": 0.96},
+            {"label": "Tony Pollard", "probability": 0.88},
+            {"label": "Kyren Williams", "probability": 0.87},
+            {"label": "D'Andre Swift", "probability": 0.85},
+            {"label": "De'Von Achane", "probability": 0.03},
+        ]
+        refused_no_qual = apply_stat_leader_selection_guards(
+            rb_pool,
+            total_member_count=6,
+            subject_unit="players",
+            race_name="NFL 800-rushing-yard race",
+            question_subtitle="Which NFL players reach 800+ rushing yards?",
+            selection_type="top_5",
+        )
+        assert refused_no_qual["ok"] is False
+        assert refused_no_qual["reason"] == "player_pool_below_8_without_qualifier"
+
+        guarded_rb = apply_stat_leader_selection_guards(
+            rb_pool,
+            total_member_count=6,
+            subject_unit="players",
+            race_name="NFL 800-rushing-yard race",
+            question_subtitle="Which NFL players reach 800+ rushing yards?",
+            selection_type="top_5",
+            market_qualifier="an 800+ rushing yards market",
+        )
+        assert guarded_rb["ok"] is True
+        assert [r["label"] for r in guarded_rb["rows"]] == [
+            "Jahmyr Gibbs",
+            "Tony Pollard",
+            "Kyren Williams",
+            "D'Andre Swift",
+        ]
+        assert guarded_rb["meta"]["count_line"] == "Showing 4 of 6 players with an 800+ rushing yards market"
+
+        # #09 shape: 5-QB complete_group with a 2% 5th row -> trims 2% row and never claims complete_group
+        qb_pool = [
+            {"label": "Joe Burrow", "probability": 0.87},
+            {"label": "Matthew Stafford", "probability": 0.82},
+            {"label": "Dak Prescott", "probability": 0.79},
+            {"label": "Bo Nix", "probability": 0.35},
+            {"label": "Jalen Hurts", "probability": 0.02},
+        ]
+        guarded_qb = apply_stat_leader_selection_guards(
+            qb_pool,
+            total_member_count=5,
+            subject_unit="quarterbacks",
+            race_name="NFL 3,500-passing-yard race",
+            question_subtitle="Which NFL quarterbacks reach 3,500+ passing yards?",
+            selection_type="complete_group",
+            market_qualifier="a 3,500+ passing yards market",
+        )
+        assert guarded_qb["ok"] is True
+        assert len(guarded_qb["rows"]) == 4
+        assert guarded_qb["meta"]["selection_type"] == "top_5"
+        assert guarded_qb["meta"]["count_line"] == "Showing 4 of 5 quarterbacks with a 3,500+ passing yards market"
+
+        # #10 shape: 21 of 32 NFL teams with a 9+ win market -> honest league-subset denominator
+        nfl_9w_pool = [
+            {"label": "Jacksonville Jaguars", "probability": 0.99},
+            {"label": "San Francisco 49ers", "probability": 0.96},
+            {"label": "Cincinnati Bengals", "probability": 0.96},
+            {"label": "Chicago Bears", "probability": 0.95},
+            {"label": "Denver Broncos", "probability": 0.94},
+        ]
+        guarded_nfl = apply_stat_leader_selection_guards(
+            nfl_9w_pool,
+            total_member_count=21,
+            subject_unit="teams",
+            race_name="NFL 9-win race",
+            question_subtitle="Which NFL teams reach 9+ wins?",
+            selection_type="top_5",
+            league_team_count=32,
+            market_qualifier="a 9+ win market",
+        )
+        assert guarded_nfl["ok"] is True
+        assert guarded_nfl["meta"]["count_line"] == "Showing 5 of 21 teams with a 9+ win market"
+
+    def test_select_bubble_50_rows_picks_closest_to_fifty_ordered_highest_first(self) -> None:
+        nhl_pool = [
+            {"label": "Carolina Hurricanes", "probability": 0.94},
+            {"label": "Anaheim Ducks", "probability": 0.51},
+            {"label": "Buffalo Sabres", "probability": 0.45},
+            {"label": "Nashville Predators", "probability": 0.42},
+            {"label": "Los Angeles Kings", "probability": 0.41},
+            {"label": "New York Rangers", "probability": 0.37},
+            {"label": "Utah Mammoth", "probability": 0.31},
+            {"label": "San Jose Sharks", "probability": 0.04},
+        ]
+        bub = select_bubble_50_rows(nhl_pool, max_rows=5)
+        assert bub["ok"] is True
+        assert [r["label"] for r in bub["rows"]] == [
+            "Anaheim Ducks",
+            "Buffalo Sabres",
+            "Nashville Predators",
+            "Los Angeles Kings",
+            "New York Rangers",
+        ]
+
