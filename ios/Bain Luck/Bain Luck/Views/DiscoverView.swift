@@ -1103,7 +1103,8 @@ struct DiscoverView: View {
                     },
                     onRequiresSignIn: inviteSignInForFeedback
                 ) {
-                    if let pairedBundle = vm.items.first(where: { $0.bundle?.pairedMetricSet != nil && $0.bundle?.title == title && $0.bundle?.kind == kind })?.bundle,
+                    if let pairedBundle = (items.first?.bundle?.pairedMetricSet != nil ? items.first?.bundle : nil)
+                        ?? vm.items.first(where: { $0.bundle?.pairedMetricSet != nil && $0.bundle?.title == title && $0.bundle?.kind == kind })?.bundle,
                        let pairedSet = pairedBundle.pairedMetricSet,
                        !pairedSet.entries.isEmpty {
                         DiscoverPairedMetricCardView(
@@ -1114,6 +1115,12 @@ struct DiscoverView: View {
                                     recordInteraction(for: primary, action: .detailOpen, source: "card")
                                 }
                                 navigationPath.append(Route.futuresDetail(id: marketId))
+                            },
+                            onOpenCollection: { slug, name in
+                                if let primary = items.first {
+                                    recordInteraction(for: primary, action: .detailOpen, source: "card")
+                                }
+                                navigationPath.append(Route.containerHub(slug: slug, name: name))
                             }
                         )
                     } else if kind == "roundup",
@@ -1177,6 +1184,10 @@ struct DiscoverView: View {
                             onOpenMarket: { marketId in
                                 recordInteraction(for: item, action: .detailOpen, source: "card")
                                 navigationPath.append(Route.futuresDetail(id: marketId))
+                            },
+                            onOpenCollection: { slug, name in
+                                recordInteraction(for: item, action: .detailOpen, source: "card")
+                                navigationPath.append(Route.containerHub(slug: slug, name: name))
                             }
                         )
                     }
@@ -2070,7 +2081,8 @@ struct DiscoverView: View {
             if item.type == "bundle", let bundle = item.bundle {
                 let eligibleChildren = eligibleBundleItems(bundle, retainingIds: retainingIds)
                 if bundle.kind == "roundup" {
-                    guard bundle.admitsRoundupCard else { continue }
+                    let hasPairedEntries = (bundle.pairedMetricSet?.entries.isEmpty == false)
+                    guard bundle.admitsRoundupCard || hasPairedEntries else { continue }
                     let members = eligibleChildren.isEmpty ? [item] : eligibleChildren
                     let candidate = DiscoverGroupedItem.group(
                         title: bundle.title,
