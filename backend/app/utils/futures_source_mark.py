@@ -14,6 +14,7 @@ from app.utils.resolution_authority import (
     PRICE_DERIVED_SOURCES,
 )
 from app.utils.source_mark import no_source_mark, quote_source_mark, settled_source_mark
+from app.utils.settlement_display import applies_to_market, settlement_display
 
 _RESULT_SOURCES = (
     AUTHORITATIVE_SOURCES - PRICE_DERIVED_SOURCES
@@ -85,3 +86,52 @@ def verified_futures_source_mark(
         ),
         method=method,
     )
+
+
+def futures_card_source_mark(
+    market: Any, outcome: Any, row: dict, *, verified: Any = None
+) -> dict:
+    """Explain a card's final value using its original row or held composition.
+
+    Cards do not all carry the detail settlement object, so ask that same
+    contract before calling a stored grade official. No clock or read is added.
+    """
+    evidence = row
+    if applies_to_market(market):
+        evidence = {
+            **row,
+            "settlement_display": settlement_display(
+                is_winner=getattr(outcome, "is_winner", None),
+                resolution_source=getattr(outcome, "resolution_source", None),
+                stored_probability=getattr(outcome, "current_probability", None),
+            ),
+        }
+    mark = futures_outcome_source_mark(market, outcome, evidence)
+    input_probability = getattr(outcome, "current_probability", None)
+    if (
+        verified is not None
+        and mark["state"] != "settled"
+        and mark.get("reason") != "result_unknown"
+    ):
+        overlay = verified.overlay.get(outcome.id)
+        mark = verified_futures_source_mark(
+            overlay.source_inputs if overlay is not None else (),
+            row["probability"],
+            overlay.aggregation_rule if overlay is not None else "unsupported",
+        )
+        input_probability = overlay.probability if overlay is not None else None
+    describe_field_normalization(
+        mark,
+        input_probability=input_probability,
+        displayed_probability=row["probability"],
+    )
+    return mark
+
+
+def mark_futures_card_rows(market: Any, rows: list[dict]) -> None:
+    """Attach marks to the already selected source-card rows, without repricing."""
+    outcomes = {o.id: o for o in market.outcomes}
+    for row in rows:
+        row["source_mark"] = futures_card_source_mark(
+            market, outcomes[row["id"]], row,
+        )
