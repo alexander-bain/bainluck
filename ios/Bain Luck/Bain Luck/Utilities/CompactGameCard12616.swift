@@ -372,11 +372,14 @@ enum CompactGameCard12616 {
         case .xxLarge: scale = 1.15
         default: return false // .xxxLarge drops Pregame column to context fallback
         }
-        // Crest (28) + Score (40) + Pregame column (48) + Now (82) + 4 gaps (24) = 222pt at .large.
-        let nonNameBudget: CGFloat = 28 + (40 + 48 + 82) * scale + 24
+        // Crest + gaps (42) + Score (52 cap) + gutter (18) + Proj/Pregame (58 cap) + gap (14) + Now (90 cap).
+        let scoreW = min(44 * scale, 52)
+        let midW = min(48 * scale, 58)
+        let nowW = min(82 * scale, 90)
+        let nonNameBudget: CGFloat = 42 + scoreW + 18 + midW + 14 + nowW
         let availableNameWidth = availableRowWidth - nonNameBudget
         guard availableNameWidth >= 56 else { return false }
-        let approxCharWidth = 9.4 * scale
+        let approxCharWidth = 10.2 * scale
         for shortName in [awayShortName, homeShortName] {
             for word in shortName.split(separator: " ") {
                 if CGFloat(word.count) * approxCharWidth > availableNameWidth {

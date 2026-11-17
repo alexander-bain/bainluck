@@ -155,7 +155,8 @@ def test_the_closing_steps_keep_their_reserve_under_the_soft_limit():
     from app.tasks import poll_polymarket_markets
 
     assert poll_polymarket_markets.soft_time_limit == pm.POLYMARKET_POLL_SOFT_LIMIT_S
-    assert pm.POLYMARKET_CLOSING_RESERVE_S >= 120
+    # Measured: the closing steps took 172 s on Nov 16 at 3:45 PM.
+    assert pm.POLYMARKET_CLOSING_RESERVE_S >= 172
     assert pm.POLYMARKET_POLL_PAGE_BUDGET_S + pm.POLYMARKET_CLOSING_RESERVE_S <= (
         pm.POLYMARKET_POLL_SOFT_LIMIT_S
     )

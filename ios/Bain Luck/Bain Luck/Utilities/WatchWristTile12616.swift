@@ -66,9 +66,6 @@ struct WatchWristTileModel12616: Equatable, Sendable {
     /// WCAG luminance of the dark Watch card surface (`#14161C`).
     static let watchSurfaceLuminance = 0.016
     private static let emeraldBrightHex = "#34D399"
-    private static let darkFallbackSkyHex = "#38BDF8"
-    private static let darkFallbackCoralHex = "#F87171"
-    private static let darkClashSlateHex = "#94A3B8"
 
     static func build(
         _ input: WatchWristTileInput12616,
@@ -167,37 +164,17 @@ struct WatchWristTileModel12616: Equatable, Sendable {
         let leaderAbbr = leaderIsHome ? abbrs.home : abbrs.away
         let opponentAbbr = leaderIsHome ? abbrs.away : abbrs.home
         let badgeFill = leaderIsHome ? badgeFills.home : badgeFills.away
-        let awayClashedToSlate = badgeFills.away.uppercased() == ProbabilityBarPalette.awayDefault.uppercased()
-            && (input.awayPrimaryColor?.uppercased() != ProbabilityBarPalette.awayDefault.uppercased())
-            && input.awayPrimaryColor != nil
-        let awayClashedToSecondary = input.awayPrimaryColor != nil
-            && badgeFills.away.uppercased() != input.awayPrimaryColor?.uppercased()
-            && !awayClashedToSlate
-
-        let awayWatchHex: String = {
-            if awayClashedToSlate { return darkClashSlateHex }
-            if awayClashedToSecondary {
-                return readableDarkSurfaceHex(
-                    primary: badgeFills.away,
-                    secondary: nil,
-                    badgeFallback: darkFallbackCoralHex
-                )
-            }
-            return readableDarkSurfaceHex(
-                primary: input.awayPrimaryColor,
-                secondary: input.awaySecondaryColor,
-                badgeFallback: badgeFills.away,
-                ultimateFallback: darkFallbackCoralHex
-            )
-        }()
-        let homeWatchHex = readableDarkSurfaceHex(
-            primary: input.homePrimaryColor,
-            secondary: input.homeSecondaryColor,
-            badgeFallback: badgeFills.home,
-            ultimateFallback: darkFallbackSkyHex
+        let watchHexes = TeamTextContrast.darkSurfaceColorHexes(
+            awayHex: input.awayPrimaryColor,
+            homeHex: input.homePrimaryColor,
+            awaySecondaryHex: input.awaySecondaryColor,
+            homeSecondaryHex: input.homeSecondaryColor,
+            surfaceLuminance: watchSurfaceLuminance
         )
-        let heroHex = leaderIsHome ? homeWatchHex : awayWatchHex
-        let oppHex = leaderIsHome ? awayWatchHex : homeWatchHex
+        let heroHex = leaderIsHome ? watchHexes.home : watchHexes.away
+        let oppHex = leaderIsHome
+            ? TeamTextContrast.quietLineHex(watchHexes.away, surfaceLuminance: watchSurfaceLuminance)
+            : TeamTextContrast.quietLineHex(watchHexes.home, surfaceLuminance: watchSurfaceLuminance)
         let heroFigure = resolved.percent.map { "\($0)%" } ?? "—"
 
         // MARK: - During (Live)
@@ -277,10 +254,11 @@ struct WatchWristTileModel12616: Equatable, Sendable {
             // the favourite's first, and no team abbreviation after it.
             let leaderScore = leaderIsHome ? proj.home : proj.away
             let oppScore = leaderIsHome ? proj.away : proj.home
+            let quietHeroHex = TeamTextContrast.quietLineHex(heroHex, surfaceLuminance: watchSurfaceLuminance)
             supporting = "\(statusWord) · Proj. \(leaderScore)\u{2013}\(oppScore)"
             supportingSegs = [
                 SupportingSegment(text: "\(statusWord) · Proj. ", hex: nil),
-                SupportingSegment(text: "\(leaderScore)", hex: heroHex),
+                SupportingSegment(text: "\(leaderScore)", hex: quietHeroHex),
                 SupportingSegment(text: "\u{2013}", hex: nil),
                 SupportingSegment(text: "\(oppScore)", hex: oppHex),
             ]
@@ -439,24 +417,7 @@ struct WatchWristTileModel12616: Equatable, Sendable {
     }
 
     private static func contrast(_ hex: String?, against backgroundLuminance: Double) -> Double? {
-        guard let l = TeamTextContrast.relativeLuminance(hex) else { return nil }
-        return (max(l, backgroundLuminance) + 0.05) / (min(l, backgroundLuminance) + 0.05)
-    }
-
-    private static func readableDarkSurfaceHex(
-        primary: String?,
-        secondary: String?,
-        badgeFallback: String,
-        ultimateFallback: String = darkFallbackSkyHex
-    ) -> String {
-        for candidate in [primary, secondary, badgeFallback] {
-            if let c = candidate,
-               let ratio = contrast(c, against: watchSurfaceLuminance),
-               ratio >= TeamTextContrast.minimumRatio {
-                return c
-            }
-        }
-        return ultimateFallback
+        TeamTextContrast.contrast(hex, againstSurfaceLuminance: backgroundLuminance)
     }
 
     private static func badgeInk(on hex: String) -> String {
