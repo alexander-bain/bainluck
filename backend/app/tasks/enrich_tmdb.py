@@ -224,6 +224,54 @@ async def _fetch_music_charts() -> set[str]:
     return titles
 
 
+async def _clear_music_false_positive_tmdb_art(session) -> int:
+    """Clear previously attached TMDB film backdrops on music markets via keyset pagination."""
+    from app.models.models import FuturesMarket
+
+    cleared = 0
+    cleanup_batch_size = 500
+    last_seen_id = 0
+    while True:
+        stmt = (
+            select(
+                FuturesMarket.id,
+                FuturesMarket.name,
+                FuturesMarket.image_url,
+                FuturesMarket.market_metadata,
+            )
+            .where(
+                FuturesMarket.id > last_seen_id,
+                FuturesMarket.image_url.like("%image.tmdb.org%"),
+            )
+            .order_by(FuturesMarket.id.asc())
+            .limit(cleanup_batch_size)
+        )
+        batch = (await session.execute(stmt)).all()
+        if not batch:
+            break
+        for m_id, m_name, m_img, m_meta in batch:
+            last_seen_id = int(m_id)
+            if m_img and sanitize_market_image_url(m_img, m_name) is None:
+                clean_meta = m_meta if isinstance(m_meta, dict) else {}
+                await session.execute(
+                    update(FuturesMarket)
+                    .where(FuturesMarket.id == m_id)
+                    .values(
+                        image_url=None,
+                        image_width=None,
+                        image_height=None,
+                        market_metadata={
+                            **clean_meta,
+                            "tmdb": {"skipped_music": True},
+                        },
+                    )
+                )
+                cleared += 1
+        if len(batch) < cleanup_batch_size:
+            break
+    return cleared
+
+
 async def enrich_tmdb_images(limit: int = 50):
     """Enrich quoted-title entertainment markets with real TMDB artwork."""
     from app.models.models import FuturesMarket
@@ -243,50 +291,9 @@ async def enrich_tmdb_images(limit: int = 50):
     }
 
     async with get_task_session() as session:
-        # #12659: clear any previously attached TMDB film backdrops on music/song/
-        # album/chart markets across all categories via keyset pagination so stored
-        # rows match serve-time withholding in discover_image_policy.py.
-        cleanup_batch_size = 500
-        last_seen_id = 0
-        while True:
-            existing_tmdb_result = await session.execute(
-                select(
-                    FuturesMarket.id,
-                    FuturesMarket.name,
-                    FuturesMarket.image_url,
-                    FuturesMarket.market_metadata,
-                )
-                .where(
-                    FuturesMarket.status == "open",
-                    FuturesMarket.id > last_seen_id,
-                    FuturesMarket.image_url.like("%image.tmdb.org%"),
-                )
-                .order_by(FuturesMarket.id.asc())
-                .limit(cleanup_batch_size)
-            )
-            batch = existing_tmdb_result.all()
-            if not batch:
-                break
-            for m_id, m_name, m_img, m_meta in batch:
-                last_seen_id = int(m_id)
-                if m_img and sanitize_market_image_url(m_img, m_name) is None:
-                    clean_meta = m_meta if isinstance(m_meta, dict) else {}
-                    await session.execute(
-                        update(FuturesMarket)
-                        .where(FuturesMarket.id == m_id)
-                        .values(
-                            image_url=None,
-                            image_width=None,
-                            image_height=None,
-                            market_metadata={
-                                **clean_meta,
-                                "tmdb": {"skipped_music": True},
-                            },
-                        )
-                    )
-                    stats["cleared_music_false_positives"] += 1
-            if len(batch) < cleanup_batch_size:
-                break
+        stats["cleared_music_false_positives"] = (
+            await _clear_music_false_positive_tmdb_art(session)
+        )
 
         result = await session.execute(
             select(
