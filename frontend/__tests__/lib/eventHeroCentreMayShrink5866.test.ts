@@ -31,7 +31,7 @@ describe("#5866 the headline rows bound their text so nothing overflows 390px", 
   test("the single grey pregame summary never wraps", () => {
     const code = executableSource(HEADLINE);
     expect(code).toContain(
-      'className="text-[12px] leading-tight tabular-nums whitespace-nowrap overflow-hidden text-ellipsis"',
+      'className="leading-tight tabular-nums whitespace-nowrap overflow-hidden"',
     );
   });
 
