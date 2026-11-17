@@ -47,13 +47,15 @@ nonisolated struct ProTeam208B: Equatable, Sendable {
         }
     }
 
-    static func nickname(for name: String) -> String {
-        multiWordNicknames[name] ?? String(name.split(separator: " ").last ?? Substring(name))
+    /// The app's one short-name rule (`TeamShortName.short`), except the
+    /// nicknames longer than one word, which a person says whole.
+    static func nickname(for name: String, sportKey: String) -> String {
+        multiWordNicknames[name] ?? TeamShortName.short(name, sportKey: sportKey)
     }
 
     private static func league(_ key: String, _ names: String) -> [ProTeam208B] {
         names.split(separator: "|").map { name in
-            ProTeam208B(name: String(name), nickname: nickname(for: String(name)), sportKey: key)
+            ProTeam208B(name: String(name), nickname: nickname(for: String(name), sportKey: key), sportKey: key)
         }
     }
 
@@ -170,7 +172,7 @@ enum TeamGameResolver208B {
             ($0.commenceTime?.asDate ?? .distantFuture) < ($1.commenceTime?.asDate ?? .distantFuture)
         }
         if let next = upcoming.first { return next }
-        return own.filter { $0.status == "completed" || $0.status == "closed" }.max {
+        return own.filter { EventState.isFinished($0.status) }.max {
             ($0.commenceTime?.asDate ?? .distantPast) < ($1.commenceTime?.asDate ?? .distantPast)
         }
     }
