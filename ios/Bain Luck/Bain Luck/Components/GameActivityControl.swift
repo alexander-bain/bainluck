@@ -6,7 +6,14 @@ import UIKit
 struct GameActivityControl: View {
     let snapshot: GameActivitySnapshot
     @Environment(\.scenePhase) private var scenePhase
-    @ObservedObject private var controller = GameActivityController.shared
+    @ObservedObject private var controller: GameActivityController
+
+    /// The app always uses the shared controller; a test passes one over a fake
+    /// service to draw the failed state (#12827's render).
+    init(snapshot: GameActivitySnapshot, controller: GameActivityController = .shared) {
+        self.snapshot = snapshot
+        self._controller = ObservedObject(wrappedValue: controller)
+    }
 
     private var presentation: GameActivityControlPresentation {
         GameActivityControlPresentation(
