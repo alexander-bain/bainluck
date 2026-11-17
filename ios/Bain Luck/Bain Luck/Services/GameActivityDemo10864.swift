@@ -89,6 +89,11 @@ enum GameActivityDemo10864 {
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
         guard let live = snapshot(first) else { return }
+        // The crests a real game page would have fetched (GameActivityCrests).
+        await GameActivityCrests.prefetch(
+            eventID: live.eventID,
+            away: EventDetailView.activityCrestURL(served: nil, team: live.awayTeam),
+            home: EventDetailView.activityCrestURL(served: nil, team: live.homeTeam))
         let content = ActivityContent(state: GameActivityAttributes.ContentState(snapshot: live),
                                       staleDate: Date().addingTimeInterval(15 * 60))
         let activity: Activity<GameActivityAttributes>
