@@ -89,19 +89,28 @@ function runTsc() {
     console.error('typescript is not installed — run `npm ci` in frontend/ first.');
     process.exit(2);
   }
-  const res = spawnSync(process.execPath, [tsc, '--noEmit', '--incremental', 'false'], {
+  const res = spawnSync(process.execPath, [tsc, '--noEmit', '--incremental', 'false', '--pretty', 'false'], {
     cwd: FRONTEND,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
-  if (res.error) {
-    console.error(`could not run tsc: ${res.error.message}`);
+  const output = `${res.stdout || ''}${res.stderr || ''}`;
+  let refusal;
+  if (res.error) refusal = res.error.message;
+  else if (res.signal || res.status === null) refusal = 'compiler did not finish';
+  else if (![0, 1, 2].includes(res.status)) refusal = 'unexpected compiler exit';
+  else if (/^error TS\d+:/m.test(output)) refusal = 'global diagnostic is outside the per-file census';
+  else if (res.status !== 0 && parse(output).total === 0) refusal = 'diagnostic exit has no countable diagnostics';
+  else if (res.status === 0 && parse(output).total !== 0) refusal = 'successful exit conflicts with diagnostics';
+  if (refusal) {
+    console.error(`::error::TypeScript census unavailable (status=${res.status}, signal=${res.signal || 'none'}): ${refusal}.`);
+    if (output) console.error(output.trimEnd());
     process.exit(2);
   }
-  // tsc exits non-zero whenever it finds errors, and finding errors is the
-  // point — the exit code is deliberately not treated as failure here. Only
-  // the census comparison decides pass or fail.
-  return `${res.stdout || ''}${res.stderr || ''}`;
+  // TypeScript's ordinary diagnostic exits (1/2) are valid measurements;
+  // a signal, fatal exit or uncounted global error is not. In particular a
+  // killed compiler must never look like zero errors or rewrite the baseline.
+  return output;
 }
 
 // --delta before.json after.json — informational, but fails if AFTER is worse.
