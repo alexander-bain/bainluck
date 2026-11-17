@@ -168,8 +168,8 @@ export default function ForwardRecordSection({ state }: { state: ForwardRecordSt
                       ))}
                   </ul>
                   {ready.view.smallSampleSlices.length > 0 && ready.view.minCategoryOutcomes !== null && (
-                    <div className="mt-3 border-t border-surface-border pt-2" data-testid="evals-forward-small-slices">
-                      <p className="text-micro uppercase tracking-wide text-text-tertiary">
+                    <details className="mt-3 border-t border-surface-border pt-2" data-testid="evals-forward-small-slices">
+                      <summary className="cursor-pointer text-micro uppercase tracking-wide text-text-tertiary">
                         {FORWARD_COPY.smallSlicesBefore}{" "}
                         <Figure truth={ready.truth} value={String(ready.view.minCategoryOutcomes)}>
                           {ready.view.minCategoryOutcomes.toLocaleString()}
@@ -179,9 +179,9 @@ export default function ForwardRecordSection({ state }: { state: ForwardRecordSt
                           {String(ready.view.smallSampleSlices.length)}
                         </Figure>{" "}
                         {FORWARD_COPY.smallSlicesAfter}
-                      </p>
+                      </summary>
                       <ul className="mt-1.5 divide-y divide-surface-border">
-                        {ready.view.smallSampleSlices.slice(0, 8).map((s) => (
+                        {ready.view.smallSampleSlices.map((s) => (
                           <li
                             key={s.key}
                             data-small-slice={s.key}
@@ -202,7 +202,7 @@ export default function ForwardRecordSection({ state }: { state: ForwardRecordSt
                           </li>
                         ))}
                       </ul>
-                    </div>
+                    </details>
                   )}
                 </details>
               </div>

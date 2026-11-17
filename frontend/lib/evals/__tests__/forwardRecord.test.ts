@@ -95,16 +95,20 @@ describe("the categories meter reads the scorecard, all three numbers", () => {
     }
   });
 
-  it("classifies outside-the-bar slices into thin (too few to say) and partly-ungraded (#12421), reads small_sample_categories below min_category_outcomes, and spells out digits in labels", () => {
+  it("marks partly_ungraded only from explicit server flags, marks uncertain only when n < min_category_outcomes or within 2-sigma, and keeps clear misses over_bar", () => {
     const view = forwardRecordView(calibrationFixture());
     const slices = view.categorySlices;
     expect(slices.length).toBeGreaterThan(0);
+    const mlbPre = slices.find((s) => s.key === "baseball_mlb_preseason");
+    expect(mlbPre?.status).toBe("partly_ungraded");
+    expect(mlbPre?.ungradedIssue).toBe(UNGRADED_OUTCOMES_ISSUE);
     const nfl = slices.find((s) => s.key === "americanfootball_nfl");
-    expect(nfl?.status).toBe("partly_ungraded");
-    expect(nfl?.ungradedIssue).toBe(UNGRADED_OUTCOMES_ISSUE);
-    const thin = slices.find((s) => s.key === "tennis_wta_canadian_open");
-    expect(thin?.status).toBe("uncertain");
-    expect(thin?.uncertaintyPp).toBeGreaterThan(3);
+    expect(nfl?.status).toBe("over_bar");
+    expect(nfl?.ungradedIssue).toBeNull();
+    const wtaCan = slices.find((s) => s.key === "tennis_wta_canadian_open");
+    expect(wtaCan?.status).toBe("over_bar");
+    const chess = slices.find((s) => s.key === "chess");
+    expect(chess?.status).toBe("uncertain");
     expect(view.minCategoryOutcomes).toBe(1000);
     expect(view.smallSampleSlices.map((s) => s.key)).toEqual(["tennis_atp_canadian_open", "lacrosse_ncaa"]);
     expect(view.smallSampleSlices.every((s) => s.status === "uncertain")).toBe(true);

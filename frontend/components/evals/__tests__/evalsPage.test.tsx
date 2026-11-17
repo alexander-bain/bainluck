@@ -529,24 +529,28 @@ describe("S3: the forward record", () => {
     expect(meter?.textContent).toMatch(/^24\s*of\s*53\s*kinds of market come within\s*3\s*points of what happened\.$/);
   });
 
-  it("explains the slices outside the 3-point bar: thin slices say too few to say and NFL links #12421", async () => {
+  it("explains the slices outside the 3-point bar: thin slices say too few to say, explicit partly_ungraded links #12421, and unaccounted squares stay red", async () => {
     const page = await mountPage();
     const chapterPicture = page.querySelector('[data-evals-chapter="coming-true"] [data-chapter-picture="kinds"]');
     expect(chapterPicture?.querySelector("[data-kinds-note]")?.textContent).toContain("#12421");
     expect(chapterPicture?.querySelector('a[data-evals-ref]')?.getAttribute("href")).toBe(
       "https://github.com/alexander-bain/bainluck/issues/12421"
     );
+    // Unaccounted outside-bar squares (29 outside, 19 listed in fixture) remain "outside" (red), never defaulting to neutral.
+    expect(chapterPicture?.querySelectorAll('[data-kind-square="outside"]').length).toBeGreaterThanOrEqual(10);
     const slices = page.querySelector('[data-testid="evals-forward-category-slices"]');
     expect(slices).not.toBeNull();
-    const nfl = slices?.querySelector('[data-category-slice="americanfootball_nfl"]');
-    expect(nfl?.getAttribute("data-slice-status")).toBe("partly_ungraded");
-    expect(nfl?.textContent).toContain("outcomes partly ungraded");
-    expect(nfl?.querySelector('a[data-evals-ref]')?.getAttribute("href")).toBe(
+    const mlbPre = slices?.querySelector('[data-category-slice="baseball_mlb_preseason"]');
+    expect(mlbPre?.getAttribute("data-slice-status")).toBe("partly_ungraded");
+    expect(mlbPre?.textContent).toContain("outcomes partly ungraded");
+    expect(mlbPre?.querySelector('a[data-evals-ref]')?.getAttribute("href")).toBe(
       "https://github.com/alexander-bain/bainluck/issues/12421"
     );
-    const thin = slices?.querySelector('[data-category-slice="tennis_wta_canadian_open"]');
-    expect(thin?.getAttribute("data-slice-status")).toBe("uncertain");
-    expect(thin?.textContent).toContain("too few to say");
+    const nfl = slices?.querySelector('[data-category-slice="americanfootball_nfl"]');
+    expect(nfl?.getAttribute("data-slice-status")).toBe("over_bar");
+    const chess = slices?.querySelector('[data-category-slice="chess"]');
+    expect(chess?.getAttribute("data-slice-status")).toBe("uncertain");
+    expect(chess?.textContent).toContain("too few to say");
     const small = slices?.querySelector('[data-small-slice="tennis_atp_canadian_open"]');
     expect(small?.getAttribute("data-slice-status")).toBe("uncertain");
     expect(small?.textContent).toContain("too few to say");

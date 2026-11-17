@@ -107,7 +107,7 @@ export function KindsPicture({ state }: { state: ForwardRecordState }) {
   const squareState = (i: number): "inside" | "uncertain" | "partly_ungraded" | "outside" => {
     if (i < atBar) return "inside";
     const s = outsideSlices[i - atBar];
-    if (!s) return "uncertain";
+    if (!s) return "outside";
     if (s.status === "over_bar") return "outside";
     if (s.status === "partly_ungraded") return "partly_ungraded";
     return "uncertain";

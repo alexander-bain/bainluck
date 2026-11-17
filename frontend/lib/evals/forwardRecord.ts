@@ -42,15 +42,9 @@ import {
 export const CHART_THIN_FLOOR = 1000;
 
 /**
- * Sample bar above which a category slice's 2σ binomial uncertainty (100/√n pp)
- * drops to ≤ 2.0 points. Slices below this bar (or whose miss above the bar is
- * within their 2σ uncertainty) read as "too few to say" rather than red (#12468).
- */
-export const CATEGORY_SAMPLE_BAR = 2500;
-
-/**
  * Issue tracking resolved outcomes where ungraded winners or zero-price winners
- * lean high-probability bands one way (#12468, #12421).
+ * lean high-probability bands one way (#12468, #12421). Only attached when the
+ * server explicitly marks a slice `partly_ungraded: true`.
  */
 export const UNGRADED_OUTCOMES_ISSUE = 12421;
 
@@ -117,17 +111,12 @@ function readCategories(scorecard: unknown): ForwardRecordView["categories"] {
 
 interface CategoryBucketStats {
   tradedOutcomes: Map<string, number>;
-  ungradedCats: Set<string>;
   measuredTwoSigmaPp: Map<string, number>;
 }
 
 function analyzeCategoryEvidence(buckets: unknown[], scorecard: unknown): CategoryBucketStats {
   const tradedOutcomes = new Map<string, number>();
-  const ungradedCats = new Set<string>();
   const measuredTwoSigmaPp = new Map<string, number>();
-
-  const totalByCat = new Map<string, { n: number; winners: number; sumProb: number }>();
-  const highByCat = new Map<string, { n: number; winners: number; sumProb: number }>();
 
   for (const row of buckets) {
     if (!row || typeof row !== "object") continue;
@@ -135,36 +124,8 @@ function analyzeCategoryEvidence(buckets: unknown[], scorecard: unknown): Catego
     if (b.price_moved === false) continue;
     const cat = typeof b.category === "string" ? b.category : null;
     const n = b.n;
-    const winners = b.winners;
-    const sumProb = b.sum_prob;
-    if (!cat || !finite(n) || !finite(winners) || !finite(sumProb) || n <= 0) continue;
-
+    if (!cat || !finite(n) || n <= 0) continue;
     tradedOutcomes.set(cat, (tradedOutcomes.get(cat) ?? 0) + n);
-
-    const tot = totalByCat.get(cat) ?? { n: 0, winners: 0, sumProb: 0 };
-    tot.n += n;
-    tot.winners += winners;
-    tot.sumProb += sumProb;
-    totalByCat.set(cat, tot);
-
-    if (sumProb / n >= 0.85) {
-      const hi = highByCat.get(cat) ?? { n: 0, winners: 0, sumProb: 0 };
-      hi.n += n;
-      hi.winners += winners;
-      hi.sumProb += sumProb;
-      highByCat.set(cat, hi);
-    }
-  }
-
-  for (const [cat, tot] of totalByCat.entries()) {
-    if (tot.n >= 200 && (tot.sumProb - tot.winners) / tot.n >= 0.05) {
-      ungradedCats.add(cat);
-    }
-  }
-  for (const [cat, hi] of highByCat.entries()) {
-    if (hi.n >= 50 && (hi.sumProb - hi.winners) / hi.n >= 0.15) {
-      ungradedCats.add(cat);
-    }
   }
 
   if (scorecard && typeof scorecard === "object") {
@@ -177,9 +138,6 @@ function analyzeCategoryEvidence(buckets: unknown[], scorecard: unknown): Catego
         if (!cell) continue;
         const slash = cell.indexOf("/");
         const cat = slash >= 0 ? cell.slice(slash + 1) : cell;
-        if (finite(q.gap) && q.gap >= 5.0) {
-          ungradedCats.add(cat);
-        }
         if (finite(q.se_measured_pp) && q.se_measured_pp > 0) {
           const twoSigma = Math.round(q.se_measured_pp * 2 * 10) / 10;
           measuredTwoSigmaPp.set(cat, Math.max(measuredTwoSigmaPp.get(cat) ?? 0, twoSigma));
@@ -188,7 +146,7 @@ function analyzeCategoryEvidence(buckets: unknown[], scorecard: unknown): Catego
     }
   }
 
-  return { tradedOutcomes, ungradedCats, measuredTwoSigmaPp };
+  return { tradedOutcomes, measuredTwoSigmaPp };
 }
 
 function readMinCategoryOutcomes(data: Record<string, unknown>): number {
@@ -207,41 +165,31 @@ function readCategorySlices(
   const barPp = categories.barPp;
   const scorecard = data.scorecard && typeof data.scorecard === "object" ? (data.scorecard as Record<string, unknown>) : null;
   const minFloor = readMinCategoryOutcomes(data);
-  const sampleBar = Math.max(minFloor, CATEGORY_SAMPLE_BAR);
 
-  const rawRows: { key: string; n: number; ece: number; partlyUngraded: boolean }[] = [];
+  const rawRows: { key: string; n: number; ece: number; partlyUngraded: boolean; ungradedIssue: number | null }[] = [];
+  const pushRow = (r: Record<string, unknown>) => {
+    if (r.gated === true) return;
+    const key = typeof r.category === "string" ? r.category : null;
+    const rawN = finite(r.n) ? r.n : finite(r.outcomes) ? r.outcomes : null;
+    const ece = finite(r.ece) ? r.ece : null;
+    if (!key || rawN === null || ece === null || rawN <= 0) return;
+    const effectiveN = evidence.tradedOutcomes.get(key) ?? rawN;
+    const partlyUngraded = r.partly_ungraded === true;
+    const ungradedIssue = partlyUngraded
+      ? finite(r.ungraded_issue) && r.ungraded_issue > 0
+        ? r.ungraded_issue
+        : UNGRADED_OUTCOMES_ISSUE
+      : null;
+    rawRows.push({ key, n: effectiveN, ece, partlyUngraded, ungradedIssue });
+  };
+
   if (Array.isArray(data.by_category) && data.by_category.length > 0) {
     for (const item of data.by_category) {
-      if (!item || typeof item !== "object") continue;
-      const r = item as Record<string, unknown>;
-      if (r.gated === true) continue;
-      const key = typeof r.category === "string" ? r.category : null;
-      const rawN = finite(r.n) ? r.n : finite(r.outcomes) ? r.outcomes : null;
-      const ece = finite(r.ece) ? r.ece : null;
-      if (!key || rawN === null || ece === null || rawN <= 0) continue;
-      const effectiveN = evidence.tradedOutcomes.get(key) ?? rawN;
-      rawRows.push({
-        key,
-        n: effectiveN,
-        ece,
-        partlyUngraded: r.partly_ungraded === true || evidence.ungradedCats.has(key),
-      });
+      if (item && typeof item === "object") pushRow(item as Record<string, unknown>);
     }
   } else if (scorecard && Array.isArray(scorecard.categories_over_bar)) {
     for (const item of scorecard.categories_over_bar) {
-      if (!item || typeof item !== "object") continue;
-      const r = item as Record<string, unknown>;
-      const key = typeof r.category === "string" ? r.category : null;
-      const rawN = finite(r.n) ? r.n : finite(r.outcomes) ? r.outcomes : null;
-      const ece = finite(r.ece) ? r.ece : null;
-      if (!key || rawN === null || ece === null || rawN <= 0) continue;
-      const effectiveN = evidence.tradedOutcomes.get(key) ?? rawN;
-      rawRows.push({
-        key,
-        n: effectiveN,
-        ece,
-        partlyUngraded: r.partly_ungraded === true || evidence.ungradedCats.has(key),
-      });
+      if (item && typeof item === "object") pushRow(item as Record<string, unknown>);
     }
   }
 
@@ -256,12 +204,10 @@ function readCategorySlices(
       let status: CalibrationCategoryStatus;
       if (r.ece <= barPp) {
         status = "at_bar";
-      } else if (r.partlyUngraded && r.n >= sampleBar) {
-        status = "partly_ungraded";
-      } else if (r.n < sampleBar || r.ece - barPp <= uncertaintyPp) {
-        status = "uncertain";
       } else if (r.partlyUngraded) {
         status = "partly_ungraded";
+      } else if (r.n < minFloor || r.ece - barPp <= uncertaintyPp) {
+        status = "uncertain";
       } else {
         status = "over_bar";
       }
@@ -274,7 +220,7 @@ function readCategorySlices(
         uncertaintyPp,
         uncertaintyText: uncertaintyPp.toFixed(1),
         status,
-        ungradedIssue: status === "partly_ungraded" ? UNGRADED_OUTCOMES_ISSUE : null,
+        ungradedIssue: status === "partly_ungraded" ? r.ungradedIssue : null,
       };
     });
 }
