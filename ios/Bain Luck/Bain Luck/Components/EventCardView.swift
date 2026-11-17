@@ -609,7 +609,7 @@ struct EventCardView: View {
             return min(compactProjectedWidth, 92)
         }
         if isFinished {
-            return min(compactPregameWidth, 66)
+            return min(max(compactPregameWidth, 60), 70)
         }
         return min(compactLiveScoreWidth, 52)
     }
@@ -672,8 +672,7 @@ struct EventCardView: View {
                         .font(compactHeaderFont12616)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.45)
-                        .allowsTightening(true)
+                        .fixedSize(horizontal: true, vertical: false)
                         .frame(width: effectiveMediumColWidth, alignment: .trailing)
                 }
                 if showsInlineLiveProjected204C {
@@ -681,8 +680,7 @@ struct EventCardView: View {
                         .font(compactHeaderFont12616)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.45)
-                        .allowsTightening(true)
+                        .fixedSize(horizontal: true, vertical: false)
                         .frame(width: effectiveLiveProjectedColWidth204C, alignment: .trailing)
                         .padding(.leading, pregameColumnLeadingGap12616)
                 }
@@ -691,8 +689,7 @@ struct EventCardView: View {
                         .font(compactHeaderFont12616)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.45)
-                        .allowsTightening(true)
+                        .fixedSize(horizontal: true, vertical: false)
                         .frame(width: effectiveLargeColWidth, alignment: .trailing)
                         .padding(.leading, largeColumnLeadingGap12616)
                 }
@@ -875,8 +872,7 @@ struct EventCardView: View {
                 .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactScoreSize, 20)))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.45)
-                .allowsTightening(true)
+                .fixedSize(horizontal: true, vertical: false)
         }
     }
 
@@ -889,8 +885,7 @@ struct EventCardView: View {
                     .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactScoreSize, 20)))
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         } else if isFinished {
             settledMediumOddsLabel(for: side)
@@ -901,8 +896,7 @@ struct EventCardView: View {
                 // the one settled arm that moves.
                 .foregroundStyle(isLive ? .primary : (won || outcome == .draw ? .primary : .secondary))
                 .lineLimit(1)
-                .minimumScaleFactor(0.45)
-                .allowsTightening(true)
+                .fixedSize(horizontal: true, vertical: false)
         }
     }
 
@@ -923,8 +917,7 @@ struct EventCardView: View {
                     ))
                     .foregroundStyle(prominent ? .primary : .secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         } else {
             chanceSlotView(for: side)
@@ -984,8 +977,7 @@ struct EventCardView: View {
                                 .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactPregameSize, 18)))
                                 .foregroundStyle(DS.textSecondaryReadable)
                                 .lineLimit(1)
-                                .minimumScaleFactor(0.45)
-                                .allowsTightening(true)
+                                .fixedSize(horizontal: true, vertical: false)
                         }
                     }
                     .frame(width: effectiveMediumColWidth, alignment: .trailing)
@@ -1009,8 +1001,7 @@ struct EventCardView: View {
                                 .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                                 .foregroundStyle(DS.textSecondaryReadable)
                                 .lineLimit(1)
-                                .minimumScaleFactor(0.45)
-                                .allowsTightening(true)
+                                .fixedSize(horizontal: true, vertical: false)
                         }
                     }
                     .frame(width: effectiveLargeColWidth, alignment: .trailing)
@@ -1410,13 +1401,6 @@ struct EventCardView: View {
             ? reading?.homeProbability
             : (prematchAwayIsWithheld ? nil : reading?.awayProbability)
         if let prob {
-            let wasHeavyFavorite = prob > 0.7
-            let won = (side == .home && homeWon) || (side == .away && awayWon)
-            // #9490 — against the side it beat on the same reading, not a
-            // fixed cut: on a three-way board 39.5% can be the favourite.
-            let isUpset = won && (reading?.winnerWasUnderdog(
-                homeWon: homeWon, awayWon: awayWon, pricesADraw: prematchAwayIsWithheld) ?? false)
-
             let text = formatProbability(prob, renderedPercent: reading?.percents[side == .home ? 1 : 0])
             if labelled {
                 let number = HStack(spacing: 2) {
@@ -1425,11 +1409,7 @@ struct EventCardView: View {
                         .fontWeight(.semibold)
                         .monospacedDigit()
                 }
-                .foregroundStyle(
-                    isUpset ? .orange :
-                    (won && wasHeavyFavorite) ? .secondary :
-                    .secondary.opacity(0.7)
-                )
+                .foregroundStyle(DS.textSecondaryReadable)
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Pregame win chance")
                         .font(.caption)
@@ -1441,7 +1421,7 @@ struct EventCardView: View {
             } else if isFinished {
                 Text(text)
                     .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactPregameSize, 18)))
-                    .foregroundStyle(isUpset ? Color.orange : DS.textSecondaryReadable)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
                     .fixedSize()
             } else {
