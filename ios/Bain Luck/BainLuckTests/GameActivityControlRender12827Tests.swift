@@ -33,7 +33,7 @@ import UIKit
             .padding(.horizontal, 16).padding(.vertical, 8)
             .frame(width: 390, alignment: .leading)
             .background(Color(uiColor: .systemBackground))
-        let renderer = ImageRenderer(content: view)
+        let renderer = rendererForMeasurement(view)
         renderer.scale = 3
         let image = try XCTUnwrap(renderer.uiImage, name)
         if let dir = ProcessInfo.processInfo.environment["BAINLUCK_RENDER_DIR"], !dir.isEmpty {
