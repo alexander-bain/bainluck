@@ -208,6 +208,16 @@ final class GameActivitySnapshotTests: XCTestCase {
         XCTAssertTrue(source.contains("if let footer = reading.footer {"), "a nil footer draws nothing")
     }
 
+    // Fable 10:04 PM Nov 16: Alex's 5:55 PM gap was Apple delivering our pushes at
+    // priority 5. Frequent updates let the server's priority-10 pushes through (#12844).
+    func testTheAppAsksForFrequentLiveActivityUpdates() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Bain-Luck-Info.plist")
+        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(contentsOf: url), format: nil) as? [String: Any])
+        XCTAssertEqual(plist["NSSupportsLiveActivities"] as? Bool, true)
+        XCTAssertEqual(plist["NSSupportsLiveActivitiesFrequentUpdates"] as? Bool, true)
+    }
+
     func testDecodedHeadlineTenthsOutOfRangeOrOneSidedAreDropped() throws {
         let value = try snapshot(sport: "americanfootball_nfl")
         var payload = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
