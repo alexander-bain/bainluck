@@ -31,3 +31,7 @@
    - When `league_team_count > total_member_count` on a `teams` / `clubs` race, `compute_selection_carrying_title` prints `"Showing 5 of 21 teams with a 9+ win market"` (or `"with an open market"`), never implying the league itself has `21` teams.
 3. **First-class `bubble_50` selection (`select_bubble_50_rows`)**:
    - Selects the `3–5` contenders closest to `50%` within `[25%, 75%]` and orders them highest-probability-first for display.
+
+## Seen-Set Record for Future Licensing
+
+Because the three pre-licensing selection guards above were written from Alex's grading notes on this 20-card slate (`#08`, `#09`, `#10`, `#18`), **these 20 exam cards have now been seen**. They remain frozen on disk as the historical November 2026 exam record, and the next licensing evaluation for `season_stat_leaders` or `qualification_stage_board` must draw a fresh, disjoint held-out card set.
