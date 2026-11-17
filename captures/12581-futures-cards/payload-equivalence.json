@@ -1,0 +1,212 @@
+[
+  {
+    "market": 86832,
+    "surface": "browse",
+    "mode": "source",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 1,
+    "before_bytes": 526,
+    "after_bytes": 1234
+  },
+  {
+    "market": 86832,
+    "surface": "faceted",
+    "mode": "source",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 3,
+    "before_bytes": 523,
+    "after_bytes": 994
+  },
+  {
+    "market": 86832,
+    "surface": "list",
+    "mode": "source",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 0,
+    "before_bytes": 851,
+    "after_bytes": 1628
+  },
+  {
+    "market": 86832,
+    "surface": "search",
+    "mode": "source",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 0,
+    "before_bytes": 1267,
+    "after_bytes": 2439
+  },
+  {
+    "market": 86832,
+    "surface": "typeahead",
+    "mode": "source",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 0,
+    "before_bytes": 461,
+    "after_bytes": 1633
+  },
+  {
+    "market": 86832,
+    "surface": "search",
+    "mode": "verified_title",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 3,
+    "before_bytes": 1358,
+    "after_bytes": 3813
+  },
+  {
+    "market": 86832,
+    "surface": "typeahead",
+    "mode": "verified_title",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 3,
+    "before_bytes": 460,
+    "after_bytes": 2915
+  },
+  {
+    "market": 40533,
+    "surface": "browse",
+    "mode": "source",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 1,
+    "before_bytes": 534,
+    "after_bytes": 1213
+  },
+  {
+    "market": 40533,
+    "surface": "faceted",
+    "mode": "source",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 3,
+    "before_bytes": 520,
+    "after_bytes": 962
+  },
+  {
+    "market": 40533,
+    "surface": "list",
+    "mode": "source",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 0,
+    "before_bytes": 832,
+    "after_bytes": 1569
+  },
+  {
+    "market": 40533,
+    "surface": "search",
+    "mode": "source",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 0,
+    "before_bytes": 1259,
+    "after_bytes": 2391
+  },
+  {
+    "market": 40533,
+    "surface": "typeahead",
+    "mode": "source",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 0,
+    "before_bytes": 442,
+    "after_bytes": 1574
+  },
+  {
+    "market": 40533,
+    "surface": "search",
+    "mode": "verified_title",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 3,
+    "before_bytes": 1353,
+    "after_bytes": 3808
+  },
+  {
+    "market": 40533,
+    "surface": "typeahead",
+    "mode": "verified_title",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 3,
+    "before_bytes": 460,
+    "after_bytes": 2915
+  },
+  {
+    "market": 129037,
+    "surface": "browse",
+    "mode": "source",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 1,
+    "before_bytes": 478,
+    "after_bytes": 947
+  },
+  {
+    "market": 129037,
+    "surface": "faceted",
+    "mode": "source",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 3,
+    "before_bytes": 547,
+    "after_bytes": 1016
+  },
+  {
+    "market": 129037,
+    "surface": "list",
+    "mode": "source",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 0,
+    "before_bytes": 877,
+    "after_bytes": 1658
+  },
+  {
+    "market": 129037,
+    "surface": "search",
+    "mode": "source",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 0,
+    "before_bytes": 1157,
+    "after_bytes": 1938
+  },
+  {
+    "market": 129037,
+    "surface": "typeahead",
+    "mode": "source",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 0,
+    "before_bytes": 328,
+    "after_bytes": 1109
+  },
+  {
+    "market": 129037,
+    "surface": "search",
+    "mode": "verified_title",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 3,
+    "before_bytes": 1358,
+    "after_bytes": 3813
+  },
+  {
+    "market": 129037,
+    "surface": "typeahead",
+    "mode": "verified_title",
+    "old_fields_unchanged": true,
+    "queries_unchanged": true,
+    "query_count": 3,
+    "before_bytes": 460,
+    "after_bytes": 2915
+  }
+]
