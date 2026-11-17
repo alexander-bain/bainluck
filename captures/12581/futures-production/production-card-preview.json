@@ -1,0 +1,156 @@
+{
+  "market_id": 59567948,
+  "name": "Pro Football: Colts 2026 Win Total",
+  "source": "polymarket",
+  "observed_at": null,
+  "outcome_count": 5,
+  "top_outcomes": [
+    {
+      "id": 233493037,
+      "name": "5.5+ Wins",
+      "probability": 0.495,
+      "movement": null,
+      "source_mark": {
+        "state": "single",
+        "sources": [
+          {
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": 0.495,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          }
+        ]
+      }
+    },
+    {
+      "id": 233493038,
+      "name": "6.5+ Wins",
+      "probability": 0.195,
+      "movement": null,
+      "source_mark": {
+        "state": "single",
+        "sources": [
+          {
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": 0.195,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          }
+        ]
+      }
+    },
+    {
+      "id": 233493039,
+      "name": "7.5+ Wins",
+      "probability": 0.085,
+      "movement": null,
+      "source_mark": {
+        "state": "single",
+        "sources": [
+          {
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": 0.085,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          }
+        ]
+      }
+    }
+  ],
+  "all_outcomes": [
+    {
+      "id": 233493037,
+      "name": "5.5+ Wins",
+      "probability": 0.495,
+      "movement": null,
+      "source_mark": {
+        "state": "single",
+        "sources": [
+          {
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": 0.495,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          }
+        ]
+      }
+    },
+    {
+      "id": 233493038,
+      "name": "6.5+ Wins",
+      "probability": 0.195,
+      "movement": null,
+      "source_mark": {
+        "state": "single",
+        "sources": [
+          {
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": 0.195,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          }
+        ]
+      }
+    },
+    {
+      "id": 233493039,
+      "name": "7.5+ Wins",
+      "probability": 0.085,
+      "movement": null,
+      "source_mark": {
+        "state": "single",
+        "sources": [
+          {
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": 0.085,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          }
+        ]
+      }
+    },
+    {
+      "id": 233493040,
+      "name": "8.5+ Wins",
+      "probability": 0.0195,
+      "movement": null,
+      "source_mark": {
+        "state": "single",
+        "sources": [
+          {
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": 0.0195,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          }
+        ]
+      }
+    },
+    {
+      "id": 233493041,
+      "name": "9.5+ Wins",
+      "probability": 0.012,
+      "movement": null,
+      "source_mark": {
+        "state": "single",
+        "sources": [
+          {
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": 0.012,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          }
+        ]
+      }
+    }
+  ],
+  "normalization_applied": false
+}
