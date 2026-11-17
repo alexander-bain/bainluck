@@ -55,6 +55,10 @@ from app.routes.futures import withheld_price_outcome_ids_for_markets
 # to bound its Redis key + process-local map), so there is one definition.
 from app.utils import candidate_base as _cb_limits
 from app.utils import championship_probs_cache as champ_cache
+from app.utils.futures_source_mark import (
+    futures_card_source_mark,
+    mark_futures_card_rows,
+)
 from app.utils.canonical_market_key import canonical_key_identifies_one_question
 from app.utils.graded_out_field_legs import (
     drop_graded_out_legs,
@@ -13652,6 +13656,7 @@ async def _score_sports_mode_futures(
             mutually_exclusive=_market_exclusivity(market),
             field_complete=not _field_incomplete,
         )
+        mark_futures_card_rows(market, top_outcomes_data)
         _full_field_rendered = bool(top_outcomes_data) and all(
             o.get("rendered_percent") is not None for o in top_outcomes_data
         )
@@ -13860,6 +13865,10 @@ async def _score_sports_mode_futures(
             }
             for o in card_outcomes
         ]
+        # Carry provenance with the row before labels are humanized and rungs
+        # are sorted. Canonical membership does not make this source a blend.
+        for outcome, row in zip(card_outcomes, all_outcomes_for_card, strict=True):
+            row["source_mark"] = futures_card_source_mark(market, outcome, row)
         discover_card = classify_discover_card_archetype(
             name=market.name,
             category=market.llm_sport_category,
@@ -15394,6 +15403,7 @@ async def _score_futures(
                 mutually_exclusive=_market_exclusivity(market),
                 field_complete=not _field_incomplete,
             )
+            mark_futures_card_rows(market, top_outcomes_data)
             _full_field_rendered = bool(top_outcomes_data) and all(
                 o.get("rendered_percent") is not None for o in top_outcomes_data
             )
@@ -15900,6 +15910,8 @@ async def _score_futures(
                 }
                 for o in card_outcomes
             ]
+            for outcome, row in zip(card_outcomes, all_outcomes_for_card, strict=True):
+                row["source_mark"] = futures_card_source_mark(market, outcome, row)
             is_effectively_resolved = market.status == "resolved"
             discover_card = classify_discover_card_archetype(
                 name=market.name,

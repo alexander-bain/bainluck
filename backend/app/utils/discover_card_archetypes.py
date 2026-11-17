@@ -503,6 +503,10 @@ def _date_bucket_points(outcomes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         points.append(
             {
                 "source": "date_bucket",
+                **(
+                    {"source_mark": outcome["source_mark"]}
+                    if "source_mark" in outcome else {}
+                ),
                 "label": _clean_text(outcome.get("name") or outcome.get("label")),
                 # #7403 -- YYYYMMDD, widened from YYYYMM so two rungs in one
                 # month cannot tie. `value` is an ordering key and nothing else
@@ -625,6 +629,10 @@ def _threshold_points(
         (zero_points if is_zero_rung else points).append(
             {
                 "source": "outcome",
+                **(
+                    {"source_mark": outcome["source_mark"]}
+                    if "source_mark" in outcome else {}
+                ),
                 "label": outcome_name,
                 "value": value,
                 "unit": unit,
@@ -788,6 +796,10 @@ def _distribution_outcomes(outcomes: list[dict[str, Any]]) -> list[dict[str, Any
         rows.append(
             {
                 "label": label,
+                **(
+                    {"source_mark": outcome["source_mark"]}
+                    if "source_mark" in outcome else {}
+                ),
                 "probability": (
                     outcome.get("probability")
                     if outcome.get("probability") is not None
