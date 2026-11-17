@@ -4924,7 +4924,7 @@ jobs:
       - name: "#10556 durable ActivityKit reservations (real Postgres)"
         id: db_301_10556_durable_activitykit_reservations_r
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-        run: "python -m pytest tests/integration/test_activitykit_worker_pg.py -v -rs > /tmp/activitykit-worker10556.txt 2>&1 || {\n  cat /tmp/activitykit-worker10556.txt\n  exit 1\n}\ncat /tmp/activitykit-worker10556.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/activitykit-worker10556.txt; then\n  echo \"::error::#10556 durable worker gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]17 passed([,[:space:]]|$)\" /tmp/activitykit-worker10556.txt || {\n  echo \"::error::#10556 durable worker gate did not run all seventeen cases\"\n  exit 1\n}\n"
+        run: "python -m pytest tests/integration/test_activitykit_worker_pg.py -v -rs > /tmp/activitykit-worker10556.txt 2>&1 || {\n  cat /tmp/activitykit-worker10556.txt\n  exit 1\n}\ncat /tmp/activitykit-worker10556.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/activitykit-worker10556.txt; then\n  echo \"::error::#10556 durable worker gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]18 passed([,[:space:]]|$)\" /tmp/activitykit-worker10556.txt || {\n  echo \"::error::#10556 durable worker gate did not run all eighteen cases\"\n  exit 1\n}\n"
       - name: "#10564 abandoned ActivityKit credentials expire (real Postgres)"
         id: db_302_10564_abandoned_activitykit_credentials_
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
