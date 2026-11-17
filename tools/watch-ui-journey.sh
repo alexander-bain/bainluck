@@ -17,12 +17,9 @@ if [[ "$SHARD" != full ]]; then
 fi
 STAGE="${1:?Expected prepare or execute}"
 if [[ "$STAGE" != prepare && "$STAGE" != execute ]]; then exit 2; fi
-boot_until_ready() {
-  local udid="$1"
-  local attempt
-  for attempt in 1 2 3; do
-    xcrun simctl bootstatus "$udid" -b >> "$OUT/preflight.log" 2>&1
-    if xcrun simctl list devices --json 2>> "$OUT/preflight.log" | python3 -c '
+# True only while this device's state is "Booted".
+is_booted() {
+  xcrun simctl list devices --json 2>> "$OUT/preflight.log" | python3 -c '
 import json, sys
 target = sys.argv[1]
 for devs in json.load(sys.stdin).get("devices", {}).values():
@@ -30,7 +27,14 @@ for devs in json.load(sys.stdin).get("devices", {}).values():
         if d.get("udid") == target and d.get("state") == "Booted":
             raise SystemExit(0)
 raise SystemExit(1)
-' "$udid"; then
+' "$1"
+}
+boot_until_ready() {
+  local udid="$1"
+  local attempt
+  for attempt in 1 2 3; do
+    xcrun simctl bootstatus "$udid" -b >> "$OUT/preflight.log" 2>&1
+    if is_booted "$udid"; then
       return 0
     fi
     echo "bootstatus exited 0 with $udid not Booted (attempt $attempt); retrying..." >> "$OUT/preflight.log"
@@ -50,6 +54,12 @@ wait_services_ready() {
       && printf '%s\n' "$listing" | grep -q 'com\.apple\.instruments\.deviceservice'; then
       echo "$udid ready: $home running, instruments device service loaded (check $i)" >> "$OUT/preflight.log"
       return 0
+    fi
+    # A device that has left Booted will not come back by waiting (run
+    # 43990443905 spent 120 s on "device is not booted"); say so now.
+    if ! is_booted "$udid"; then
+      echo "$udid is no longer Booted (check $i)" >> "$OUT/preflight.log"
+      return 1
     fi
     sleep 2
   done
@@ -196,6 +206,14 @@ boot_until_ready "$TEST_UDID"
 boot_until_ready "$PHONE_UDID"
 ready_or_reboot_once "$PHONE_UDID" com.apple.SpringBoard
 ready_or_reboot_once "$TEST_UDID" com.apple.Carousel
+# Run 43990443905 (corner): the Watch left Booted right after its boot, and while
+# it was rebooted the companion phone shut down too, so the runtime check below
+# found a Shutdown phone. After set-up both members must still be Booted and
+# ready; if either is not, the pair gets one shutdown and boot.
+if ! is_booted "$PHONE_UDID" || ! is_booted "$TEST_UDID"; then
+  echo 'a pair member left Booted during set-up; one shutdown and boot of this pair' >> "$OUT/preflight.log"
+  reboot_pair_until_ready
+fi
 # Resolve the exact devices through their available booted runtime metadata.
 # uname inside a simulator can report x86_64 on an arm64-only runtime.
 PHASE='verify exact paired simulator runtime architecture'

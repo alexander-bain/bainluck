@@ -60,6 +60,16 @@ class InfraRetryTests(unittest.TestCase):
         self.assertEqual(harness.count("install_pair\n"), 1, "one retried install, never a loop")
         self.assertIn("if ! install_pair; then", harness)
 
+    def test_setup_rechecks_both_members_and_reboots_the_pair_at_most_once(self):
+        # Run 43990443905 (corner): the phone shut down while the Watch was rebooted.
+        harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        prepare = harness.split("ready_or_reboot_once \"$TEST_UDID\" com.apple.Carousel\n", 1)[1]
+        recheck, rest = prepare.split("PHASE='verify exact paired simulator runtime architecture'", 1)
+        self.assertIn('if ! is_booted "$PHONE_UDID" || ! is_booted "$TEST_UDID"; then', recheck)
+        self.assertEqual(recheck.count("reboot_pair_until_ready"), 1, "one pair reboot, never a loop")
+        waiter = harness.split("wait_services_ready() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn('if ! is_booted "$udid"; then', waiter, "a device that left Booted stops the wait at once")
+
     def test_the_warm_up_runs_once_before_the_measured_suite_and_judges_nothing(self):
         harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
         execute = harness.split("XCODE_ARGS=(-xctestrun", 1)[1]
