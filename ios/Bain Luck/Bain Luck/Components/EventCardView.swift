@@ -601,13 +601,13 @@ struct EventCardView: View {
 
     private var sharedCompactTeamNameFontSize: CGFloat {
         let reservedChrome: CGFloat = isFinished ? 57 : 42
-        let availableWidth = max(330 - reservedChrome - trailingColumnsClusterWidth12616, 72)
+        let availableWidth = max(330 - reservedChrome - trailingColumnsClusterWidth12616, 48)
         return CardTeamNameSizing.sharedWordSafeFontSize(
             names: [shortTeamNames.away, shortTeamNames.home],
             baseSize: min(compactNameSize, 21),
             weight: .bold,
             availableWidth: availableWidth,
-            minimumScale: 0.72
+            minimumScale: 0.65
         )
     }
 
@@ -772,6 +772,8 @@ struct EventCardView: View {
                 // teams.
                 .foregroundStyle(won ? .primary : (isFinished && outcome != .draw ? .secondary : .primary))
                 .lineLimit(singleWord ? 1 : 2)
+                .minimumScaleFactor(0.65)
+                .allowsTightening(true)
                 .fixedSize(horizontal: false, vertical: !singleWord)
             Spacer(minLength: 8)
             HStack(alignment: .firstTextBaseline, spacing: 0) {

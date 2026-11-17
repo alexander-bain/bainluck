@@ -323,8 +323,16 @@ final class HeadlineNeverTruncates12822Tests: XCTestCase {
         let req = VNRecognizeTextRequest()
         req.recognitionLevel = .accurate
         req.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([req])
-        let lines = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        req.minimumTextHeight = 0.0
+        let reqFast = VNRecognizeTextRequest()
+        reqFast.recognitionLevel = .fast
+        reqFast.usesLanguageCorrection = false
+        reqFast.minimumTextHeight = 0.0
+        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([req, reqFast])
+        let accurateLines = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        let fastLines = (reqFast.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        var seen = Set<String>()
+        let lines = (accurateLines + fastLines).filter { seen.insert($0).inserted }
         return (image, lines)
     }
 
@@ -559,6 +567,213 @@ final class HeadlineNeverTruncates12822Tests: XCTestCase {
         XCTAssertFalse(cardLines.contains(where: containsEllipsis), "EventCardView before @ xxxLarge: \(cardLines)")
         XCTAssertTrue(cardLines.joined(separator: " ").contains("23%"), "EventCardView whole 23%: \(cardLines)")
         XCTAssertTrue(cardLines.joined(separator: " ").contains("77%"), "EventCardView whole 77%: \(cardLines)")
+    }
+
+    // MARK: - 2B. Alex's Build-5760 Live Q4 3:16 Specimen (Magic 106 / Celtics 99, Proj. 112 / 108, Now 90.3% / 9.7%)
+
+    func testMagicAtCelticsQ4_106_99_Proj112_108_Now90_3_NeverTruncatesHeadersOrScores() throws {
+        let q4JSON = magicAtCelticsDuringJSON(
+            awayScore: 106,
+            homeScore: 99,
+            projAway: 112.0,
+            projHome: 108.0,
+            awayProb: 0.903,
+            homeProb: 0.097
+        ).replacingOccurrences(of: "\"period\": \"3:11 - 1st Quarter\"", with: "\"period\": \"3:16 - 4th Quarter\"")
+         .replacingOccurrences(of: "\"game_clock\": \"3:11\"", with: "\"game_clock\": \"3:16\"")
+
+        let q4PageEvent = try decodeEventDetail(q4JSON)
+        let q4Model = EventSportHeadlines12472.resolve(
+            event: q4PageEvent,
+            awayFullName: q4PageEvent.awayTeam,
+            homeFullName: q4PageEvent.homeTeam,
+            liveStatusText: "Q4 · 3:16",
+            hasScore: true,
+            numberStreams: true,
+            now: fixedLive
+        )
+        XCTAssertEqual(q4Model.columns.map(\.header), ["Score", "Proj.", "Now"])
+        XCTAssertEqual(q4Model.rows[0].cells, ["106", "112", "90.3%"])
+        XCTAssertEqual(q4Model.rows[1].cells, ["99", "108", "9.7%"])
+
+        // Screen widths -> card outer widths (screen - 32pt page horizontal padding):
+        // 320pt (288), 375pt (343), 390pt (358), 393pt iPhone 16/17 (361), 402pt iPhone19,3 Pro (370)
+        let phoneOuterWidths: [(CGFloat, String)] = [
+            (288, "320w"),
+            (343, "375w"),
+            (358, "390w"),
+            (361, "393w"),
+            (370, "402w-iPhone19,3"),
+        ]
+        let typeSizes: [(DynamicTypeSize, String)] = [
+            (.large, "large"),
+            (.xLarge, "xl"),
+            (.xxLarge, "xxl"),
+            (.xxxLarge, "xxxl"),
+            (.accessibility1, "ax1"),
+            (.accessibility3, "ax3"),
+            (.accessibility5, "ax5"),
+        ]
+
+        for (outerW, wLabel) in phoneOuterWidths {
+            for (dtSize, sLabel) in typeSizes {
+                let (_, lines) = try renderAndReadLines(makeHeadlineCard(q4Model), outerWidth: outerW, at: dtSize)
+                let joined = lines.joined(separator: " ")
+                XCTAssertFalse(
+                    lines.contains(where: containsEllipsis),
+                    "Q4 106-99 headline @ \(wLabel)/\(sLabel) must NEVER render '…' (headers included), got: \(lines)"
+                )
+                for token in ["Score", "106", "112", "90.3%", "99", "108", "9.7%"] {
+                    XCTAssertTrue(
+                        joined.contains(token),
+                        "Q4 106-99 headline @ \(wLabel)/\(sLabel) must read '\(token)' whole, got: \(lines)"
+                    )
+                }
+            }
+        }
+
+        // Also verify Sports feed card (EventCardView) and Discover card (DiscoverCompactSingleGameCard190C)
+        // on the exact same Q4 106-99 state at .large, .xxLarge, and .xxxLarge on 390w and 402w (iPhone19,3).
+        let pinManager = PinManager()
+        let authManager = AuthManager()
+        let navCoordinator = NavigationCoordinator()
+        let q4FeedEvent = try decodeFeedEvent(q4JSON)
+        let q4FeedCard = EventCardView(event: q4FeedEvent, reason: nil)
+            .padding(.horizontal, 14)
+            .environmentObject(pinManager)
+            .environmentObject(authManager)
+            .environmentObject(navCoordinator)
+        let q4DiscoverCard = DiscoverCompactSingleGameCard190CView(
+            event: q4FeedEvent,
+            prematch: nil,
+            awayColor: Color(hex: "#0150B5"),
+            homeColor: Color(hex: "#008348")
+        ) {
+            EmptyView()
+        } footerRow: {
+            EmptyView()
+        }
+
+        for (outerW, wLabel) in [(358 as CGFloat, "390w"), (370 as CGFloat, "402w-iPhone19,3")] {
+            for (dtSize, sLabel) in [(.large as DynamicTypeSize, "large"), (.xxLarge, "xxl"), (.xxxLarge, "xxxl")] {
+                let showsInlineProj = CompactGameCard12616.liveInlinePregameFits(
+                    awayShortName: "Magic",
+                    homeShortName: "Celtics",
+                    typeSize: dtSize
+                )
+                let expectedTokens = showsInlineProj
+                    ? ["Score", "106", "112", "90.3%", "99", "108", "9.7%"]
+                    : ["Score", "106", "90.3%", "99", "9.7%"]
+
+                let (_, feedLines) = try renderAndReadLines(q4FeedCard, outerWidth: outerW, at: dtSize)
+                let feedJoined = feedLines.joined(separator: " ")
+                XCTAssertFalse(feedLines.contains(where: containsEllipsis), "EventCardView Q4 @ \(wLabel)/\(sLabel): \(feedLines)")
+                for token in expectedTokens {
+                    XCTAssertTrue(feedJoined.contains(token), "EventCardView Q4 @ \(wLabel)/\(sLabel) missing \(token): \(feedLines)")
+                }
+
+                let (_, discLines) = try renderAndReadLines(q4DiscoverCard, outerWidth: outerW, at: dtSize)
+                let discJoined = discLines.joined(separator: " ")
+                XCTAssertFalse(discLines.contains(where: containsEllipsis), "DiscoverCard Q4 @ \(wLabel)/\(sLabel): \(discLines)")
+                for token in expectedTokens {
+                    XCTAssertTrue(discJoined.contains(token), "DiscoverCard Q4 @ \(wLabel)/\(sLabel) missing \(token): \(discLines)")
+                }
+            }
+        }
+
+        // Export dedicated 390 px sheet of the exact Magic 106 / Celtics 99 Q4 3:16 state
+        let imgPageDefault = try renderAndReadLines(makeHeadlineCard(q4Model), outerWidth: 358, at: .large).image
+        let imgPageXXL = try renderAndReadLines(makeHeadlineCard(q4Model), outerWidth: 358, at: .xxLarge).image
+        let imgPageXXXL = try renderAndReadLines(makeHeadlineCard(q4Model), outerWidth: 358, at: .xxxLarge).image
+        let imgFeedXXXL = try renderAndReadLines(q4FeedCard, outerWidth: 358, at: .xxxLarge).image
+        let imgDiscoverXXXL = try renderAndReadLines(q4DiscoverCard, outerWidth: 358, at: .xxxLarge).image
+
+        func label(_ text: String) -> some View {
+            Text(text)
+                .font(.system(size: 11.5, weight: .bold))
+                .foregroundStyle(Color(hex: "#475569"))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        let q4Sheet = VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Magic 106 @ Celtics 99 (Q4 · 3:16) — Proj. 112/108 · Now 90.3%/9.7%")
+                    .font(.system(size: 13.5, weight: .bold))
+                    .foregroundStyle(Color(hex: "#0F172A"))
+                Text("Build 5761 / 5763 (#12837) · Zero '…' on Score header, 106, Proj. 112/108, or Now 90.3%/9.7% (390 px)")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Color(hex: "#64748B"))
+            }
+
+            label("1. Game Page Headline — Default Text (.large)")
+            Image(uiImage: imgPageDefault).resizable().aspectRatio(contentMode: .fit).frame(width: 358)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            label("2. Game Page Headline — Larger Text (.xxLarge)")
+            Image(uiImage: imgPageXXL).resizable().aspectRatio(contentMode: .fit).frame(width: 358)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            label("3. Game Page Headline — Largest Non-AX Text (.xxxLarge)")
+            Image(uiImage: imgPageXXXL).resizable().aspectRatio(contentMode: .fit).frame(width: 358)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            label("4. Sports / My Stuff Feed Card (EventCardView) — .xxxLarge")
+            Image(uiImage: imgFeedXXXL).resizable().aspectRatio(contentMode: .fit).frame(width: 358)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            label("5. Discover Single-Game Card — .xxxLarge")
+            Image(uiImage: imgDiscoverXXXL).resizable().aspectRatio(contentMode: .fit).frame(width: 358)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .padding(16)
+        .frame(width: 390)
+        .background(Color(UIColor.systemGroupedBackground))
+        .environment(\.colorScheme, .light)
+
+        let host = hostForMeasurement(q4Sheet, at: .large)
+        host.overrideUserInterfaceStyle = .light
+        let fitting = min(max(host.sizeThatFits(in: CGSize(width: 390, height: 2_600)).height + 80, 400), 2_600)
+        let targetFrame = CGRect(x: 0, y: 0, width: 390, height: fitting)
+        let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first
+        let window: UIWindow = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: targetFrame)
+        window.frame = targetFrame
+        host.view.frame = targetFrame
+        window.overrideUserInterfaceStyle = .light
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        let until = Date().addingTimeInterval(0.30)
+        repeat {
+            let nextH = min(max(host.sizeThatFits(in: CGSize(width: 390, height: 2_600)).height + 80, 400), 2_600)
+            if abs(host.view.frame.height - nextH) > 0.5 {
+                host.view.frame = CGRect(x: 0, y: 0, width: 390, height: nextH)
+                window.frame = host.view.frame
+            }
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        } while Date() < until
+
+        let topInset = host.view.safeAreaInsets.top
+        let croppedSize = CGSize(width: 390, height: max(host.view.bounds.height - topInset, 300))
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = 3.0
+        fmt.opaque = true
+        let q4Image = UIGraphicsImageRenderer(size: croppedSize, format: fmt).image { _ in
+            _ = host.view.drawHierarchy(
+                in: CGRect(x: 0, y: -topInset, width: 390, height: host.view.bounds.height),
+                afterScreenUpdates: true
+            )
+        }
+
+        let outDir = URL(fileURLWithPath: "/Users/bain/.gemini/antigravity/brain/4c590449-f20c-4ff4-921d-f7e1343a4327/renders-12822")
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        let outFile = outDir.appendingPathComponent("12837-magic-celtics-q4-106-99-390.png")
+        try XCTUnwrap(q4Image.pngData()).write(to: outFile)
     }
 
     // MARK: - 3. Export 390 px Render Sheet for Fable
