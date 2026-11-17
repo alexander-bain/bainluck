@@ -382,7 +382,7 @@ enum TeamFutureRowPresentation {
         //    and market is "<Team> Next Head Coach / Starting QB / General Manager".
         if !outcomeNamesTeam(outTrimmed, team: team, matchedTeam: matchedTeam),
            let regex = try? NSRegularExpression(
-            pattern: #"^(.+?)(?:'s|’s)?\s+Next\s+(Head\s+Coach|Coach|Manager|General\s+Manager|GM|Starting\s+QB|Starting\s+Quarterback)\??$"#,
+            pattern: #"^(.+?)(?:'s|’s)?\s+Next\s+(Head\s+Coach|Coach|Manager|General\s+Manager|GM|Starting\s+QB)\??$"#,
             options: [.caseInsensitive]
            ),
            let match = regex.firstMatch(in: capTrimmed, range: NSRange(capTrimmed.startIndex..., in: capTrimmed)),
