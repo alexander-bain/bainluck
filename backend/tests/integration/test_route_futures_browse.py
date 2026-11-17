@@ -224,9 +224,12 @@ class TestFuturesBrowseEndpoint:
                 "source": "polymarket",
                 "resolution_date": "2026-10-31T00:00:00+00:00",
                 "top_outcomes": [
-                    {"id": 2, "name": "Yankees", "probability": 0.41, "movement": pytest.approx(-0.02) if dated_basis else None},
-                    {"id": 1, "name": "Dodgers", "probability": 0.32, "movement": pytest.approx(0.04) if dated_basis else None},
-                    {"id": 4, "name": "Mets", "probability": 0.18, "movement": None},
+                    {"id": 2, "name": "Yankees", "probability": 0.41, "movement": pytest.approx(-0.02) if dated_basis else None,
+                     "source_mark": {"state": "single", "sources": [{"key": "polymarket", "name": "Polymarket", "probability": 0.41, "observed_at": None, "reason": "observation_unknown"}]}},
+                    {"id": 1, "name": "Dodgers", "probability": 0.32, "movement": pytest.approx(0.04) if dated_basis else None,
+                     "source_mark": {"state": "single", "sources": [{"key": "polymarket", "name": "Polymarket", "probability": 0.32, "observed_at": None, "reason": "observation_unknown"}]}},
+                    {"id": 4, "name": "Mets", "probability": 0.18, "movement": None,
+                     "source_mark": {"state": "single", "sources": [{"key": "polymarket", "name": "Polymarket", "probability": 0.18, "observed_at": None, "reason": "observation_unknown"}]}},
                 ],
                 "outcome_count": 4,
             }
