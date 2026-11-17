@@ -670,7 +670,7 @@ final class OneTypeTableEverywhere199Tests: XCTestCase {
         let widgetSource = try String(contentsOf: iosRoot.appendingPathComponent("Bain Luck/Widgets10875/SavedGameHeadlineWidget12616.swift"), encoding: .utf8)
         XCTAssertTrue(widgetSource.contains("case .before:\n            return row.figure == \"—\" ? inkSecondary : Color(hex: row.teamInkHex)"))
 
-        // 3. During, medium widget: HELD on `Score · Pregame · Now` while Decision 204 is reopened with Alex.
+        // 3. During, medium widget (`213-A` + `214-A1`): `Score · Proj. · Now`, bar with pregame tick, and grey pregame line with team-coloured numbers.
         let duringWidgetDetail = try decodeWidgetEvent("""
         {
           "id": 99005,
@@ -686,11 +686,39 @@ final class OneTypeTableEverywhere199Tests: XCTestCase {
           "away_team_data": { "abbreviation": "NE", "primary_color": "#002244", "secondary_color": "#C60C30" },
           "home_team_data": { "abbreviation": "DET", "primary_color": "#0076B6" },
           "prematch_odds": { "away_probability": 0.42, "home_probability": 0.58 },
+          "pregame_projection": {
+            "projected_away_score": 21.0,
+            "projected_home_score": 27.0,
+            "kind": "last_before_scheduled_start",
+            "boundary": "scheduled_start",
+            "boundary_at": "2026-11-16T18:00:00Z",
+            "earliest_captured_at": "2026-11-16T17:30:00Z",
+            "latest_captured_at": "2026-11-16T17:58:00Z",
+            "source": "sportsbooks",
+            "basis": "consensus_spread_total",
+            "bookmaker_count": 5,
+            "unit": "points",
+            "period": "full_game"
+          },
           "current_odds": {
             "away_probability": 0.338,
             "home_probability": 0.662,
             "away_rendered_percent": 34,
-            "home_rendered_percent": 66
+            "home_rendered_percent": 66,
+            "live_projection": {
+              "projected_away_score": 23.0,
+              "projected_home_score": 30.0,
+              "kind": "in_play",
+              "boundary": "commence_time",
+              "boundary_at": "2026-11-16T18:00:00Z",
+              "earliest_confirmed_at": "2026-11-16T19:10:00Z",
+              "latest_captured_at": "\(freshStamp)",
+              "source": "sportsbooks",
+              "basis": "consensus_spread_total",
+              "bookmaker_count": 5,
+              "unit": "points",
+              "period": "full_game"
+            }
           },
           "hero_probability_observed_at": "\(freshStamp)"
         }
@@ -706,9 +734,11 @@ final class OneTypeTableEverywhere199Tests: XCTestCase {
             now: fixedNow,
             timeZone: pacific
         )
-        XCTAssertEqual(duringWidgetModel.headers, .init(leading: "Score", pregame: "Pregame", primary: "Now"))
-        XCTAssertEqual(duringWidgetModel.away.pregameText, "42%")
-        XCTAssertEqual(duringWidgetModel.home.pregameText, "58%")
+        XCTAssertEqual(duringWidgetModel.headers, .init(leading: "Score", pregame: "Proj.", primary: "Now"))
+        XCTAssertEqual(duringWidgetModel.away.liveProjectedText, "23")
+        XCTAssertEqual(duringWidgetModel.home.liveProjectedText, "30")
+        XCTAssertEqual(duringWidgetModel.pregameAwayBarShare ?? 0, 0.42, accuracy: 0.001)
+        XCTAssertEqual(duringWidgetModel.mediumFooter, "Pregame  Lions 58% · projected 27–21")
 
         // 5. Watch tile: `"Up 8 points from 58%"` (no `+`, `"points"` / `"point"`, no `"pregame"`).
         let watchUp = WatchWristTileModel12616.build(

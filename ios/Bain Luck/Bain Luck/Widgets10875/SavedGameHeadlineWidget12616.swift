@@ -25,6 +25,20 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
         case after
     }
 
+    nonisolated enum SegmentInk: Equatable, Sendable {
+        case quietLead
+        case quiet
+        case awayTeam
+        case homeTeam
+        case drawOutcome
+        case emerald
+    }
+
+    nonisolated struct TextSegment: Equatable, Sendable {
+        let text: String
+        let ink: SegmentInk
+    }
+
     struct ColumnHeaders: Equatable, Sendable {
         let leading: String?
         let pregame: String?
@@ -38,6 +52,7 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
         let teamInkHex: String
         let figure: String
         let projectedText: String?
+        let liveProjectedText: String?
         let liveScoreText: String?
         let pregameText: String?
         let isEmphasized: Bool
@@ -51,12 +66,18 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
     let smallTopMeta: String
     let mediumTopMeta: String
     let smallTopTrailing: String?
+    var smallTopTrailingInkHex: String? = nil
     let liveBadgeText: String?
     let headers: ColumnHeaders
     let away: SideRow
     let home: SideRow
+    var quietAwayInkHex: String = "#64748B"
+    var quietHomeInkHex: String = "#2563EB"
+    var pregameAwayBarShare: Double? = nil
     let smallFooter: String
     let mediumFooter: String
+    var smallFooterSegments: [TextSegment] = []
+    var mediumFooterSegments: [TextSegment] = []
     let footerIsEmeraldCallout: Bool
     let clearsRefreshTrailing: Bool
 
@@ -76,6 +97,8 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
         }()
 
         let lightHexes = art.barHexes(surfaceLuminance: SavedWidgetArt12466.lightSurfaceLuminance)
+        let quietAwayHex = TeamTextContrast.quietLineHex(lightHexes.away)
+        let quietHomeHex = TeamTextContrast.quietLineHex(lightHexes.home)
         let badgeHexes = art.fillHexes()
 
         let awayRow = reading.rows[0]
@@ -85,6 +108,7 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
 
         let pregame = art.pregameChances
         let hasAnyPregame = (pregame?.awayText != nil || pregame?.homeText != nil)
+        let liveProjected = stage == .during ? art.resolveLiveProjectedDuring(now: now) : nil
 
         let headers: ColumnHeaders = {
             switch stage {
@@ -95,9 +119,10 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
                     primary: "Chance"
                 )
             case .during:
+                // Rulings 213-A + 214-A1: Score · Proj. · Now during a game (no Pregame column).
                 return ColumnHeaders(
                     leading: art.scores != nil ? "Score" : nil,
-                    pregame: hasAnyPregame ? "Pregame" : nil,
+                    pregame: liveProjected != nil ? "Proj." : nil,
                     primary: "Now"
                 )
             case .after:
@@ -114,6 +139,7 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
             let abbr = isHome ? art.home.short : art.away.short
             let shortName = isHome ? homeShortName : awayShortName
             let proj = art.projectedBefore.map { String(isHome ? $0.home : $0.away) }
+            let liveProj = liveProjected.map { isHome ? $0.homeText : $0.awayText }
             let liveScore = art.scores.map { String(isHome ? $0.home : $0.away) }
             let preText = isHome ? pregame?.homeText : pregame?.awayText
             let won = r.verdict == "Won"
@@ -126,6 +152,7 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
                 teamInkHex: isHome ? lightHexes.home : lightHexes.away,
                 figure: r.figure ?? "—",
                 projectedText: proj,
+                liveProjectedText: liveProj,
                 liveScoreText: liveScore,
                 pregameText: preText,
                 isEmphasized: r.emphasized,
@@ -183,6 +210,10 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
             guard stage == .after, let text = winnerPregameText else { return nil }
             return "Pregame \(text)"
         }()
+        let smallTopTrailingInkHex: String? = {
+            guard stage == .after, let winnerIsHome, winnerPregameText != nil else { return nil }
+            return winnerIsHome ? quietHomeHex : quietAwayHex
+        }()
 
         // Truth guard: offline, last-recorded, and opening-line readings always keep their clock caption.
         let requiresClockOverride = isOffline || reading.phase == .lastRecorded || reading.phase == .openingLine
@@ -190,23 +221,29 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
 
         let smallFooter: String
         let mediumFooter: String
+        let smallFooterSegments: [TextSegment]
+        let mediumFooterSegments: [TextSegment]
         let footerIsEmerald: Bool
 
         if requiresClockOverride {
             smallFooter = fallbackClock
             mediumFooter = fallbackClock
+            smallFooterSegments = fallbackClock.isEmpty ? [] : [TextSegment(text: fallbackClock, ink: .quiet)]
+            mediumFooterSegments = fallbackClock.isEmpty ? [] : [TextSegment(text: fallbackClock, ink: .quiet)]
             footerIsEmerald = false
         } else {
             switch stage {
             case .after:
+                smallFooter = ""
+                smallFooterSegments = []
                 if let winnerIsHome, let pct = winnerPregamePct, pct < 50 {
                     let winnerName = winnerIsHome ? homeSide.shortName : awaySide.shortName
-                    smallFooter = "Won from \(pct)% pregame"
                     mediumFooter = "\(winnerName) won from a \(pct)% pregame chance"
+                    mediumFooterSegments = [TextSegment(text: mediumFooter, ink: .emerald)]
                     footerIsEmerald = true
                 } else {
-                    smallFooter = ""
                     mediumFooter = ""
+                    mediumFooterSegments = []
                     footerIsEmerald = false
                 }
             case .during:
@@ -215,24 +252,46 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
                 let leaderPre = leaderIsHome ? pregame?.homeText : pregame?.awayText
                 if let leaderPre {
                     smallFooter = "Pregame \(leaderAbbr) \(leaderPre)"
+                    smallFooterSegments = [
+                        TextSegment(text: "Pregame ", ink: .quiet),
+                        TextSegment(text: "\(leaderAbbr) \(leaderPre)", ink: leaderIsHome ? .homeTeam : .awayTeam),
+                    ]
                 } else {
                     smallFooter = ""
+                    smallFooterSegments = []
                 }
-                mediumFooter = ""
+                let liveSummary = Self.buildMediumLivePregameFooter(
+                    art: art,
+                    shortNames: (away: awayShortName, home: homeShortName)
+                )
+                mediumFooter = liveSummary.text
+                mediumFooterSegments = liveSummary.segments
                 footerIsEmerald = false
             case .before:
                 if let proj = art.projectedBefore {
-                    let homeFav = proj.home >= proj.away
-                    let high = max(proj.away, proj.home)
-                    let low = min(proj.away, proj.home)
-                    let favAbbr = homeFav ? homeSide.abbreviation : awaySide.abbreviation
-                    smallFooter = proj.home == proj.away
-                        ? "Proj. \(proj.away)–\(proj.home)"
-                        : "Proj. \(high)–\(low) \(favAbbr)"
+                    // Ruling 214-A1: "Proj. 27–21" with each number in its team's colour,
+                    // the favourite's first, and no team abbreviation after it.
+                    let homeFav: Bool = {
+                        if homeSide.isEmphasized != awaySide.isEmphasized {
+                            return homeSide.isEmphasized
+                        }
+                        return proj.home >= proj.away
+                    }()
+                    let favScore = homeFav ? proj.home : proj.away
+                    let dogScore = homeFav ? proj.away : proj.home
+                    smallFooter = "Proj. \(favScore)\u{2013}\(dogScore)"
+                    smallFooterSegments = [
+                        TextSegment(text: "Proj. ", ink: .quiet),
+                        TextSegment(text: "\(favScore)", ink: homeFav ? .homeTeam : .awayTeam),
+                        TextSegment(text: "\u{2013}", ink: .quiet),
+                        TextSegment(text: "\(dogScore)", ink: homeFav ? .awayTeam : .homeTeam),
+                    ]
                 } else {
                     smallFooter = ""
+                    smallFooterSegments = []
                 }
                 mediumFooter = ""
+                mediumFooterSegments = []
                 footerIsEmerald = false
             }
         }
@@ -243,15 +302,145 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
             smallTopMeta: smallTop,
             mediumTopMeta: mediumTop,
             smallTopTrailing: smallTopTrailing,
+            smallTopTrailingInkHex: smallTopTrailingInkHex,
             liveBadgeText: art.liveBadgeText,
             headers: headers,
             away: awaySide,
             home: homeSide,
+            quietAwayInkHex: quietAwayHex,
+            quietHomeInkHex: quietHomeHex,
+            pregameAwayBarShare: stage == .during ? art.pregameAwayBarShare : nil,
             smallFooter: smallFooter,
             mediumFooter: mediumFooter,
+            smallFooterSegments: smallFooterSegments,
+            mediumFooterSegments: mediumFooterSegments,
             footerIsEmeraldCallout: footerIsEmerald,
             clearsRefreshTrailing: clearsRefreshTrailing
         )
+    }
+
+    /// Builds the Medium Widget's single-line live pregame summary (`"Pregame  Lions 58% · projected 27–24"`)
+    /// matching `EventSportHeadlines12472.formatLivePregameSummary` & Rulings 213-A / 214-A1.
+    private static func buildMediumLivePregameFooter(
+        art: SavedWidgetArt12466,
+        shortNames: (away: String, home: String)
+    ) -> (text: String, segments: [TextSegment]) {
+        let projPair = art.pregameDuringProjection.map { (away: $0.away, home: $0.home) }
+        var chanceInfo: (namedInk: SegmentInk, homeIsFav: Bool, favName: String, favChanceText: String)?
+
+        if let threeWay = art.pregameThreeWay {
+            let percents = renderedCardPercents([threeWay.home, threeWay.draw, threeWay.away])
+            let homeText = formatProbability(threeWay.home, renderedPercent: percents.count > 0 ? percents[0] : nil)
+            let drawText = formatProbability(threeWay.draw, renderedPercent: percents.count > 1 ? percents[1] : nil)
+            let awayText = formatProbability(threeWay.away, renderedPercent: percents.count > 2 ? percents[2] : nil)
+            if threeWay.home >= threeWay.away && threeWay.home >= threeWay.draw {
+                chanceInfo = (.homeTeam, true, shortNames.home, homeText)
+            } else if threeWay.away >= threeWay.home && threeWay.away >= threeWay.draw {
+                chanceInfo = (.awayTeam, false, shortNames.away, awayText)
+            } else {
+                chanceInfo = (.drawOutcome, projPair.map { $0.home >= $0.away } ?? true, "Draw", drawText)
+            }
+        } else if let pre = art.pregameChances {
+            if let awayP = pre.awayProbability, let homeP = pre.homeProbability {
+                let homeIsFav: Bool
+                if homeP > awayP {
+                    homeIsFav = true
+                } else if awayP > homeP {
+                    homeIsFav = false
+                } else if let projPair, projPair.home != projPair.away {
+                    homeIsFav = projPair.home > projPair.away
+                } else {
+                    homeIsFav = true
+                }
+                let favName = homeIsFav ? shortNames.home : shortNames.away
+                let favText = (homeIsFav ? pre.homeText : pre.awayText)
+                    ?? formatProbability(homeIsFav ? homeP : awayP)
+                chanceInfo = (
+                    namedInk: homeIsFav ? .homeTeam : .awayTeam,
+                    homeIsFav: homeIsFav,
+                    favName: favName,
+                    favChanceText: favText
+                )
+            } else if let homeText = pre.homeText {
+                chanceInfo = (
+                    namedInk: .homeTeam,
+                    homeIsFav: true,
+                    favName: shortNames.home,
+                    favChanceText: homeText
+                )
+            }
+        }
+
+        switch (chanceInfo, projPair) {
+        case let (chance?, proj?):
+            let favScore = chance.homeIsFav ? proj.home : proj.away
+            let dogScore = chance.homeIsFav ? proj.away : proj.home
+            let favScoreInk: SegmentInk = chance.homeIsFav ? .homeTeam : .awayTeam
+            let dogScoreInk: SegmentInk = chance.homeIsFav ? .awayTeam : .homeTeam
+            let text = "Pregame  \(chance.favName) \(chance.favChanceText) · projected \(favScore)\u{2013}\(dogScore)"
+            return (
+                text,
+                [
+                    TextSegment(text: "Pregame", ink: .quietLead),
+                    TextSegment(text: "  ", ink: .quiet),
+                    TextSegment(text: "\(chance.favName) \(chance.favChanceText)", ink: chance.namedInk),
+                    TextSegment(text: " · projected ", ink: .quiet),
+                    TextSegment(text: "\(favScore)", ink: favScoreInk),
+                    TextSegment(text: "\u{2013}", ink: .quiet),
+                    TextSegment(text: "\(dogScore)", ink: dogScoreInk),
+                ]
+            )
+        case let (chance?, nil):
+            let text = "Pregame  \(chance.favName) \(chance.favChanceText)"
+            return (
+                text,
+                [
+                    TextSegment(text: "Pregame", ink: .quietLead),
+                    TextSegment(text: "  ", ink: .quiet),
+                    TextSegment(text: "\(chance.favName) \(chance.favChanceText)", ink: chance.namedInk),
+                ]
+            )
+        case let (nil, proj?):
+            if proj.home > proj.away {
+                let text = "Pregame  projected \(shortNames.home) \(proj.home)\u{2013}\(proj.away)"
+                return (
+                    text,
+                    [
+                        TextSegment(text: "Pregame", ink: .quietLead),
+                        TextSegment(text: "  projected ", ink: .quiet),
+                        TextSegment(text: "\(shortNames.home) \(proj.home)", ink: .homeTeam),
+                        TextSegment(text: "\u{2013}", ink: .quiet),
+                        TextSegment(text: "\(proj.away)", ink: .awayTeam),
+                    ]
+                )
+            } else if proj.away > proj.home {
+                let text = "Pregame  projected \(shortNames.away) \(proj.away)\u{2013}\(proj.home)"
+                return (
+                    text,
+                    [
+                        TextSegment(text: "Pregame", ink: .quietLead),
+                        TextSegment(text: "  projected ", ink: .quiet),
+                        TextSegment(text: "\(shortNames.away) \(proj.away)", ink: .awayTeam),
+                        TextSegment(text: "\u{2013}", ink: .quiet),
+                        TextSegment(text: "\(proj.home)", ink: .homeTeam),
+                    ]
+                )
+            } else {
+                let text = "Pregame  projected \(proj.home)\u{2013}\(proj.away)"
+                return (
+                    text,
+                    [
+                        TextSegment(text: "Pregame", ink: .quietLead),
+                        TextSegment(text: "  projected ", ink: .quiet),
+                        TextSegment(text: "\(proj.home)", ink: .homeTeam),
+                        TextSegment(text: "\u{2013}", ink: .quiet),
+                        TextSegment(text: "\(proj.away)", ink: .awayTeam),
+                    ]
+                )
+            }
+        case (nil, nil):
+            return ("", [])
+        }
     }
 
     private static func shortMonthDay(_ date: Date, timeZone: TimeZone) -> String {
@@ -348,6 +537,7 @@ private enum SavedHeadlineTokens12616 {
     static let inkPrimary = Color(hex: "#111827")
     static let inkSecondary = Color(hex: "#6B7280")
     static let inkContext = Color(hex: "#374151")
+    static let quietConnectorInk = Color(red: 118.0 / 255.0, green: 124.0 / 255.0, blue: 133.0 / 255.0)
     static let liveRed = Color(hex: "#DC2626")
     static let wonEmerald = Color(hex: "#059669")
 
@@ -394,12 +584,12 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
             }
             Spacer(minLength: 4)
             if model.stage != .after {
-                bar()
+                barWithPregameTick
                     .padding(.bottom, model.smallFooter.isEmpty ? 0 : 5)
                     .padding(.trailing, model.smallFooter.isEmpty && model.clearsRefreshTrailing ? 22 : 0)
             }
             if !model.smallFooter.isEmpty {
-                footerText(model.smallFooter)
+                footerText(model.smallFooter, segments: model.smallFooterSegments)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -425,9 +615,15 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                     .minimumScaleFactor(0.75)
                 Spacer(minLength: 3)
                 if let trailing = model.smallTopTrailing {
+                    let trailingColor: Color = {
+                        if fullColor, let hex = model.smallTopTrailingInkHex {
+                            return Color(hex: hex)
+                        }
+                        return inkSecondary
+                    }()
                     Text(trailing)
-                        .font(HeadlineStyleTable199.quietText(.widget, monospacedDigits: true, scaledSize: 9.5))
-                        .foregroundStyle(inkSecondary)
+                        .font(HeadlineStyleTable199.quietText(.widget, monospacedDigits: true, scaledSize: 9.5).weight(model.smallTopTrailingInkHex != nil ? .bold : .medium))
+                        .foregroundStyle(trailingColor)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                         .fixedSize(horizontal: true, vertical: false)
@@ -501,7 +697,7 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
     private var mediumBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             mediumHeader
-            Spacer(minLength: 4)
+            Spacer(minLength: model.mediumFooter.isEmpty ? 4 : 2)
             // Both team names at ONE size: full short-names if both fit whole,
             // otherwise both abbreviations — never shrinking one side on its own.
             ViewThatFits(in: .horizontal) {
@@ -514,14 +710,14 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                     mediumTeamRow(model.home, logo: homeLogo, useAbbreviation: true)
                 }
             }
-            Spacer(minLength: 4)
+            Spacer(minLength: model.mediumFooter.isEmpty ? 4 : 2)
             if model.stage != .after {
-                bar()
+                barWithPregameTick
                     .padding(.bottom, model.mediumFooter.isEmpty ? 2 : 5)
                     .padding(.trailing, model.mediumFooter.isEmpty && model.clearsRefreshTrailing ? 22 : 0)
             }
             if !model.mediumFooter.isEmpty {
-                footerText(model.mediumFooter)
+                footerText(model.mediumFooter, segments: model.mediumFooterSegments)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -613,13 +809,16 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                 }
 
                 if model.headers.pregame != nil {
-                    Text(row.pregameText ?? "")
+                    let isLiveProj = model.stage == .during
+                    Text((isLiveProj ? row.liveProjectedText : row.pregameText) ?? "")
                         .font(HeadlineStyleTable199.secondNumbers(
                             .widget,
                             prominent: false,
-                            scaledSize: HeadlineStyleTable199.pregameNumberBaseSize(.widget)
+                            scaledSize: isLiveProj
+                                ? HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: false)
+                                : HeadlineStyleTable199.pregameNumberBaseSize(.widget)
                         ))
-                        .foregroundStyle(inkSecondary)
+                        .foregroundStyle(isLiveProj ? inkPrimary : inkSecondary)
                         .frame(width: mediumPregameColWidth, alignment: .trailing)
                         .lineLimit(1)
                 }
@@ -694,17 +893,86 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
         }
     }
 
-    private func footerText(_ text: String) -> some View {
-        Text(text)
-            .font(model.footerIsEmeraldCallout
-                ? HeadlineStyleTable199.headers(.widget, scaledSize: 10.5)
-                : HeadlineStyleTable199.quietText(.widget, monospacedDigits: true, scaledSize: HeadlineStyleTable199.quietTextBaseSize(.widget)))
-            .foregroundStyle(
-                fullColor && model.footerIsEmeraldCallout ? wonEmerald : inkSecondary
-            )
-            .lineLimit(1)
-            .minimumScaleFactor(0.75)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.trailing, model.clearsRefreshTrailing ? 24 : 0)
+    @ViewBuilder
+    private var barWithPregameTick: some View {
+        bar()
+            .overlay {
+                if model.stage == .during,
+                   let notch = model.pregameAwayBarShare,
+                   notch.isFinite, notch > 0, notch < 1 {
+                    GeometryReader { geo in
+                        if geo.size.width > 8 {
+                            let clampedX = min(max(geo.size.width * notch, 3), geo.size.width - 3)
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 1)
+                                    .fill(Color.white)
+                                    .frame(width: 4, height: 7)
+                                RoundedRectangle(cornerRadius: 0.75)
+                                    .fill(Color.primary.opacity(0.72))
+                                    .frame(width: 1.5, height: 7)
+                            }
+                            .position(x: clampedX, y: geo.size.height / 2)
+                        }
+                    }
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private func footerText(_ text: String, segments: [SavedGameHeadlineWidgetModel12616.TextSegment]) -> some View {
+        let baseFont = model.footerIsEmeraldCallout
+            ? HeadlineStyleTable199.headers(.widget, scaledSize: 10.5)
+            : HeadlineStyleTable199.quietText(.widget, monospacedDigits: true, scaledSize: HeadlineStyleTable199.quietTextBaseSize(.widget))
+        Group {
+            if !fullColor || segments.isEmpty || model.footerIsEmeraldCallout {
+                Text(text)
+                    .font(baseFont)
+                    .foregroundStyle(fullColor && model.footerIsEmeraldCallout ? wonEmerald : inkSecondary)
+            } else {
+                composedSegmentsText(segments)
+                    .font(baseFont)
+            }
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+        .allowsTightening(true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.trailing, model.clearsRefreshTrailing ? 24 : 0)
+        .accessibilityLabel(text)
+    }
+
+    private func composedSegmentsText(_ segments: [SavedGameHeadlineWidgetModel12616.TextSegment]) -> Text {
+        let awayInk = Color(hex: model.quietAwayInkHex)
+        let homeInk = Color(hex: model.quietHomeInkHex)
+        return segments.reduce(Text("")) { partial, seg in
+            switch seg.ink {
+            case .quietLead:
+                return partial + Text(seg.text)
+                    .fontWeight(.semibold)
+                    .foregroundColor(HeadlineStyleTable199.quietInk)
+            case .quiet:
+                return partial + Text(seg.text)
+                    .fontWeight(.regular)
+                    .foregroundColor(SavedHeadlineTokens12616.quietConnectorInk)
+            case .awayTeam:
+                return partial + Text(seg.text)
+                    .fontWeight(.bold)
+                    .foregroundColor(awayInk)
+            case .homeTeam:
+                return partial + Text(seg.text)
+                    .fontWeight(.bold)
+                    .foregroundColor(homeInk)
+            case .drawOutcome:
+                return partial + Text(seg.text)
+                    .fontWeight(.bold)
+                    .foregroundColor(HeadlineStyleTable199.drawInk)
+            case .emerald:
+                return partial + Text(seg.text)
+                    .fontWeight(.semibold)
+                    .foregroundColor(wonEmerald)
+            }
+        }
     }
 }

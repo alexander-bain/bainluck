@@ -63,12 +63,12 @@ final class SavedGameWidgetAndWristTileSat5Tests: XCTestCase {
         XCTAssertEqual(beforeModel.home.projectedText, "25")
         XCTAssertEqual(beforeModel.away.figure, "34%")
         XCTAssertEqual(beforeModel.home.figure, "66%")
-        XCTAssertEqual(beforeModel.smallFooter, "Proj. 25–20 CIN")
+        XCTAssertEqual(beforeModel.smallFooter, "Proj. 25–20")
         XCTAssertEqual(beforeModel.mediumFooter, "")
         XCTAssertTrue(TeamTextContrast.readableOnCard(beforeModel.away.teamInkHex))
         XCTAssertTrue(TeamTextContrast.readableOnCard(beforeModel.home.teamInkHex))
 
-        // 2. During: Celtics at 76ers, live Q4 02:14
+        // 2. During: Celtics at 76ers, live Q4 02:14 (213-A + 214-A1: Score · Proj. · Now + grey pregame line)
         let duringEvent = try decodeWidgetEvent("""
         {
           "id": 91002,
@@ -84,11 +84,39 @@ final class SavedGameWidgetAndWristTileSat5Tests: XCTestCase {
           "away_team_data": {"abbreviation": "BOS", "primary_color": "#007A33", "secondary_color": "#BA9653"},
           "home_team_data": {"abbreviation": "PHI", "primary_color": "#006BB6", "secondary_color": "#ED174C"},
           "prematch_odds": {"away_probability": 0.49, "home_probability": 0.51},
+          "pregame_projection": {
+            "projected_away_score": 108.0,
+            "projected_home_score": 111.0,
+            "kind": "last_before_scheduled_start",
+            "boundary": "scheduled_start",
+            "boundary_at": "2026-11-14T17:30:00Z",
+            "earliest_captured_at": "2026-11-14T16:30:00Z",
+            "latest_captured_at": "2026-11-14T17:28:00Z",
+            "source": "sportsbooks",
+            "basis": "consensus_spread_total",
+            "bookmaker_count": 5,
+            "unit": "points",
+            "period": "full_game"
+          },
           "current_odds": {
             "away_probability": 0.412,
             "home_probability": 0.588,
             "away_rendered_percent": 41,
-            "home_rendered_percent": 59
+            "home_rendered_percent": 59,
+            "live_projection": {
+              "projected_away_score": 106.0,
+              "projected_home_score": 109.0,
+              "kind": "in_play",
+              "boundary": "commence_time",
+              "boundary_at": "2026-11-14T17:30:00Z",
+              "earliest_confirmed_at": "2026-11-14T18:55:00Z",
+              "latest_captured_at": "\(freshStamp)",
+              "source": "sportsbooks",
+              "basis": "consensus_spread_total",
+              "bookmaker_count": 5,
+              "unit": "points",
+              "period": "full_game"
+            }
           },
           "hero_probability_observed_at": "\(freshStamp)"
         }
@@ -106,16 +134,17 @@ final class SavedGameWidgetAndWristTileSat5Tests: XCTestCase {
         )
 
         XCTAssertEqual(duringModel.stage, .during)
-        XCTAssertEqual(duringModel.headers, .init(leading: "Score", pregame: "Pregame", primary: "Now"))
+        XCTAssertEqual(duringModel.headers, .init(leading: "Score", pregame: "Proj.", primary: "Now"))
         XCTAssertEqual(duringModel.liveBadgeText, "Q4 02:14")
         XCTAssertEqual(duringModel.away.liveScoreText, "98")
         XCTAssertEqual(duringModel.home.liveScoreText, "100")
-        XCTAssertEqual(duringModel.away.pregameText, "49%")
-        XCTAssertEqual(duringModel.home.pregameText, "51%")
+        XCTAssertEqual(duringModel.away.liveProjectedText, "106")
+        XCTAssertEqual(duringModel.home.liveProjectedText, "109")
         XCTAssertEqual(duringModel.away.figure, "41%")
         XCTAssertEqual(duringModel.home.figure, "59%")
+        XCTAssertEqual(duringModel.pregameAwayBarShare ?? 0, 0.49, accuracy: 0.001)
         XCTAssertEqual(duringModel.smallFooter, "Pregame PHI 51%")
-        XCTAssertEqual(duringModel.mediumFooter, "")
+        XCTAssertEqual(duringModel.mediumFooter, "Pregame  76ers 51% · projected 111–108")
 
         // 3. After: Patriots at Packers upset win (Packers 38% pregame, won 45–27)
         let afterEvent = try decodeWidgetEvent("""
@@ -154,7 +183,8 @@ final class SavedGameWidgetAndWristTileSat5Tests: XCTestCase {
         XCTAssertTrue(afterModel.home.isWinner)
         XCTAssertTrue(afterModel.away.isLoser)
         XCTAssertEqual(afterModel.smallTopTrailing, "Pregame 38%")
-        XCTAssertEqual(afterModel.smallFooter, "Won from 38% pregame")
+        XCTAssertEqual(afterModel.smallFooter, "", "Upset small widget keeps Pregame 38% in header without repeating Won from 38% pregame in footer")
+        XCTAssertTrue(afterModel.smallFooterSegments.isEmpty)
         XCTAssertEqual(afterModel.mediumFooter, "Packers won from a 38% pregame chance")
         XCTAssertTrue(afterModel.footerIsEmeraldCallout)
 
