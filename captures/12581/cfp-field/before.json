@@ -1,0 +1,981 @@
+{
+  "page": {
+    "state": "published",
+    "slug": "roundup-cfp-picture",
+    "revision": 1123058707,
+    "relations": [
+      "same_event",
+      "same_window"
+    ],
+    "level": "member",
+    "reason": null,
+    "edition": null,
+    "container": {
+      "id": 3629359314,
+      "slug": "roundup-cfp-picture",
+      "name": "College Football Playoff picture",
+      "kind": "roundup",
+      "category": "ncaaf",
+      "status": "open",
+      "window_start": null,
+      "window_end": null,
+      "parent_container_id": null
+    },
+    "subtitle": "Chance to make the 12-team field \u00b7 teams between 20% and 80%",
+    "caption": null,
+    "sections": [
+      {
+        "class": "advancement",
+        "title": "On the bubble",
+        "layout": "field",
+        "count": 1,
+        "members": [
+          {
+            "type": "market",
+            "id": 227,
+            "destination": {
+              "kind": "market",
+              "id": 227,
+              "web": "/futures/227",
+              "api": "/api/futures/227"
+            },
+            "card": {
+              "id": 227,
+              "name": "College Football Playoff Qualifiers",
+              "sport": "americanfootball_ncaaf",
+              "sport_name": "NCAAF",
+              "category": "championship",
+              "llm_sport_category": "football",
+              "market_tier": 1,
+              "market_type_label": "Championship",
+              "market_type": "field",
+              "status": "open",
+              "source": "kalshi",
+              "sources": [
+                "kalshi"
+              ],
+              "source_count": 1,
+              "mutually_exclusive": false,
+              "resolution_date": "2026-12-15T15:00:00+00:00",
+              "top_outcomes": [
+                {
+                  "id": 1831,
+                  "name": "Tennessee",
+                  "probability": 0.705,
+                  "american_odds": null,
+                  "rank": 1,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 1829,
+                  "name": "Texas Tech",
+                  "probability": 0.52,
+                  "american_odds": null,
+                  "rank": 2,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 1861,
+                  "name": "BYU",
+                  "probability": 0.415,
+                  "american_odds": null,
+                  "rank": 3,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 1838,
+                  "name": "Oregon",
+                  "probability": 0.33,
+                  "american_odds": null,
+                  "rank": 4,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 1852,
+                  "name": "Iowa",
+                  "probability": 0.265,
+                  "american_odds": null,
+                  "rank": 5,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                }
+              ],
+              "outcome_count": 5,
+              "updated_at": "2026-11-17T12:59:06.039232+00:00",
+              "prices_updated_at": "2026-11-17T21:20:20.229360+00:00",
+              "discover_card": {
+                "suggested_format": "outcome_distribution",
+                "distribution_outcomes": [
+                  {
+                    "label": "Tennessee",
+                    "probability": 0.705,
+                    "movement": null
+                  },
+                  {
+                    "label": "Texas Tech",
+                    "probability": 0.52,
+                    "movement": null
+                  },
+                  {
+                    "label": "BYU",
+                    "probability": 0.415,
+                    "movement": null
+                  },
+                  {
+                    "label": "Oregon",
+                    "probability": 0.33,
+                    "movement": null
+                  }
+                ],
+                "remaining_outcome_count": 1,
+                "field_is_a_race": false
+              }
+            },
+            "event_id": null
+          }
+        ]
+      },
+      {
+        "class": "title",
+        "title": "Title contenders",
+        "layout": "field",
+        "count": 1,
+        "members": [
+          {
+            "type": "market",
+            "id": 181,
+            "destination": {
+              "kind": "market",
+              "id": 181,
+              "web": "/futures/181",
+              "api": "/api/futures/181"
+            },
+            "card": {
+              "id": 181,
+              "name": "College Football National Championship Winner",
+              "sport": "americanfootball_ncaaf",
+              "sport_name": "NCAAF",
+              "category": "championship",
+              "llm_sport_category": "football",
+              "market_tier": 1,
+              "market_type_label": "Championship",
+              "market_type": "field",
+              "status": "open",
+              "source": "kalshi",
+              "sources": [
+                "kalshi"
+              ],
+              "source_count": 1,
+              "mutually_exclusive": true,
+              "resolution_date": "2027-01-26T04:00:00+00:00",
+              "top_outcomes": [
+                {
+                  "id": 973,
+                  "name": "Georgia",
+                  "probability": 0.325,
+                  "american_odds": null,
+                  "rank": 1,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 988,
+                  "name": "Notre Dame",
+                  "probability": 0.155,
+                  "american_odds": null,
+                  "rank": 2,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 1014,
+                  "name": "Alabama",
+                  "probability": 0.115,
+                  "american_odds": null,
+                  "rank": 3,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 977,
+                  "name": "Texas",
+                  "probability": 0.095,
+                  "american_odds": null,
+                  "rank": 4,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 994,
+                  "name": "Miami (FL)",
+                  "probability": 0.085,
+                  "american_odds": null,
+                  "rank": 5,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                }
+              ],
+              "outcome_count": 53,
+              "updated_at": "2026-11-17T18:30:39.964311+00:00",
+              "prices_updated_at": "2026-11-17T21:20:18.982717+00:00",
+              "discover_card": {
+                "suggested_format": "outcome_distribution",
+                "distribution_outcomes": [
+                  {
+                    "label": "Georgia",
+                    "probability": 0.325,
+                    "movement": null
+                  },
+                  {
+                    "label": "Notre Dame",
+                    "probability": 0.155,
+                    "movement": null
+                  },
+                  {
+                    "label": "Alabama",
+                    "probability": 0.115,
+                    "movement": null
+                  },
+                  {
+                    "label": "Texas",
+                    "probability": 0.095,
+                    "movement": null
+                  }
+                ],
+                "remaining_outcome_count": 49,
+                "field_is_a_race": true
+              }
+            },
+            "event_id": null
+          }
+        ]
+      }
+    ],
+    "member_count": 2,
+    "withheld": [],
+    "withheld_count": 0,
+    "children": [],
+    "assembled": true
+  },
+  "feed": {
+    "type": "bundle",
+    "score": 0.0,
+    "reason": "College Football Playoff picture",
+    "headline": "College Football Playoff picture",
+    "context_summary": null,
+    "data": {
+      "id": "roundup:cfp-picture",
+      "title": "College Football Playoff picture",
+      "kind": "roundup",
+      "story_key": "roundup:cfp-picture",
+      "shared_question": null,
+      "item_count": 2,
+      "member_ids": [
+        227,
+        181
+      ],
+      "items": [
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Tennessee",
+          "headline": "Tennessee",
+          "data": {
+            "id": 227,
+            "name": "College Football Playoff Qualifiers",
+            "sport": "americanfootball_ncaaf",
+            "sport_name": "NCAAF",
+            "category": "championship",
+            "llm_sport_category": "football",
+            "market_tier": 1,
+            "market_type_label": "Championship",
+            "market_type": "field",
+            "status": "open",
+            "source": "kalshi",
+            "sources": [
+              "kalshi"
+            ],
+            "source_count": 1,
+            "mutually_exclusive": false,
+            "resolution_date": "2026-12-15T15:00:00+00:00",
+            "top_outcomes": [
+              {
+                "id": 1831,
+                "name": "Tennessee",
+                "probability": 0.705,
+                "american_odds": null,
+                "rank": 1,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              },
+              {
+                "id": 1829,
+                "name": "Texas Tech",
+                "probability": 0.52,
+                "american_odds": null,
+                "rank": 2,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              },
+              {
+                "id": 1861,
+                "name": "BYU",
+                "probability": 0.415,
+                "american_odds": null,
+                "rank": 3,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              },
+              {
+                "id": 1838,
+                "name": "Oregon",
+                "probability": 0.33,
+                "american_odds": null,
+                "rank": 4,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              },
+              {
+                "id": 1852,
+                "name": "Iowa",
+                "probability": 0.265,
+                "american_odds": null,
+                "rank": 5,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              }
+            ],
+            "outcome_count": 5,
+            "updated_at": "2026-11-17T12:59:06.039232+00:00",
+            "prices_updated_at": "2026-11-17T21:20:20.229360+00:00",
+            "discover_card": {
+              "suggested_format": "outcome_distribution",
+              "distribution_outcomes": [
+                {
+                  "label": "Tennessee",
+                  "probability": 0.705,
+                  "movement": null
+                },
+                {
+                  "label": "Texas Tech",
+                  "probability": 0.52,
+                  "movement": null
+                },
+                {
+                  "label": "BYU",
+                  "probability": 0.415,
+                  "movement": null
+                },
+                {
+                  "label": "Oregon",
+                  "probability": 0.33,
+                  "movement": null
+                }
+              ],
+              "remaining_outcome_count": 1,
+              "field_is_a_race": false
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Texas Tech",
+          "headline": "Texas Tech",
+          "data": {
+            "id": 181,
+            "name": "College Football National Championship Winner",
+            "sport": "americanfootball_ncaaf",
+            "sport_name": "NCAAF",
+            "category": "championship",
+            "llm_sport_category": "football",
+            "market_tier": 1,
+            "market_type_label": "Championship",
+            "market_type": "field",
+            "status": "open",
+            "source": "kalshi",
+            "sources": [
+              "kalshi"
+            ],
+            "source_count": 1,
+            "mutually_exclusive": true,
+            "resolution_date": "2027-01-26T04:00:00+00:00",
+            "top_outcomes": [
+              {
+                "id": 973,
+                "name": "Georgia",
+                "probability": 0.325,
+                "american_odds": null,
+                "rank": 1,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              },
+              {
+                "id": 988,
+                "name": "Notre Dame",
+                "probability": 0.155,
+                "american_odds": null,
+                "rank": 2,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              },
+              {
+                "id": 1014,
+                "name": "Alabama",
+                "probability": 0.115,
+                "american_odds": null,
+                "rank": 3,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              },
+              {
+                "id": 977,
+                "name": "Texas",
+                "probability": 0.095,
+                "american_odds": null,
+                "rank": 4,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              },
+              {
+                "id": 994,
+                "name": "Miami (FL)",
+                "probability": 0.085,
+                "american_odds": null,
+                "rank": 5,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              }
+            ],
+            "outcome_count": 53,
+            "updated_at": "2026-11-17T18:30:39.964311+00:00",
+            "prices_updated_at": "2026-11-17T21:20:18.982717+00:00",
+            "discover_card": {
+              "suggested_format": "outcome_distribution",
+              "distribution_outcomes": [
+                {
+                  "label": "Georgia",
+                  "probability": 0.325,
+                  "movement": null
+                },
+                {
+                  "label": "Notre Dame",
+                  "probability": 0.155,
+                  "movement": null
+                },
+                {
+                  "label": "Alabama",
+                  "probability": 0.115,
+                  "movement": null
+                },
+                {
+                  "label": "Texas",
+                  "probability": 0.095,
+                  "movement": null
+                }
+              ],
+              "remaining_outcome_count": 49,
+              "field_is_a_race": true
+            }
+          }
+        }
+      ],
+      "collection_ref": {
+        "slug": "roundup-cfp-picture",
+        "href": "/collections/roundup-cfp-picture",
+        "name": "College Football Playoff picture",
+        "revision": 1123058707,
+        "collection_count": 2
+      },
+      "roundup": {
+        "kicker": "Round-up",
+        "tag": "NCAAF",
+        "footer": "Chance to make the 12-team field \u00b7 teams between 20% and 80%",
+        "rows": [
+          {
+            "market_id": 227,
+            "outcome_id": 1831,
+            "label": "Tennessee",
+            "probability": 0.705,
+            "observed_at": "2026-11-17T21:20:20.229360+00:00"
+          },
+          {
+            "market_id": 227,
+            "outcome_id": 1829,
+            "label": "Texas Tech",
+            "probability": 0.52,
+            "observed_at": "2026-11-17T21:20:20.229360+00:00"
+          },
+          {
+            "market_id": 227,
+            "outcome_id": 1861,
+            "label": "BYU",
+            "probability": 0.415,
+            "observed_at": "2026-11-17T21:20:20.229360+00:00"
+          },
+          {
+            "market_id": 227,
+            "outcome_id": 1838,
+            "label": "Oregon",
+            "probability": 0.33,
+            "observed_at": "2026-11-17T21:20:20.229360+00:00"
+          }
+        ],
+        "relations": [
+          "same_event",
+          "same_window"
+        ],
+        "level": "member"
+      }
+    }
+  },
+  "confirmed_fixture": [
+    {
+      "type": "market",
+      "id": 227,
+      "destination": {
+        "kind": "market",
+        "id": 227,
+        "web": "/futures/227",
+        "api": "/api/futures/227"
+      },
+      "card": {
+        "id": 227,
+        "name": "College Football Playoff Qualifiers 2026-27",
+        "sport": "americanfootball_ncaaf",
+        "sport_name": "NCAAF",
+        "category": "sports",
+        "llm_sport_category": "football",
+        "market_tier": 1,
+        "market_type_label": "Championship",
+        "market_type": "playoff",
+        "status": "resolved",
+        "source": "kalshi",
+        "sources": [
+          "kalshi"
+        ],
+        "source_count": 1,
+        "mutually_exclusive": false,
+        "resolution_date": "2026-12-15T17:00:00+00:00",
+        "top_outcomes": [
+          {
+            "id": 22707,
+            "name": "Alabama",
+            "probability": null,
+            "american_odds": null,
+            "rank": null,
+            "movement": null,
+            "is_winner": true,
+            "resolution_source": "api_settlement"
+          },
+          {
+            "id": 22712,
+            "name": "Boise State",
+            "probability": null,
+            "american_odds": null,
+            "rank": null,
+            "movement": null,
+            "is_winner": true,
+            "resolution_source": "api_settlement"
+          },
+          {
+            "id": 22704,
+            "name": "Georgia",
+            "probability": null,
+            "american_odds": null,
+            "rank": null,
+            "movement": null,
+            "is_winner": true,
+            "resolution_source": "api_settlement"
+          },
+          {
+            "id": 22709,
+            "name": "Indiana",
+            "probability": null,
+            "american_odds": null,
+            "rank": null,
+            "movement": null,
+            "is_winner": true,
+            "resolution_source": "api_settlement"
+          },
+          {
+            "id": 22708,
+            "name": "Miami",
+            "probability": null,
+            "american_odds": null,
+            "rank": null,
+            "movement": null,
+            "is_winner": true,
+            "resolution_source": "api_settlement"
+          },
+          {
+            "id": 22706,
+            "name": "Notre Dame",
+            "probability": null,
+            "american_odds": null,
+            "rank": null,
+            "movement": null,
+            "is_winner": true,
+            "resolution_source": "api_settlement"
+          },
+          {
+            "id": 22702,
+            "name": "Ohio State",
+            "probability": null,
+            "american_odds": null,
+            "rank": null,
+            "movement": null,
+            "is_winner": true,
+            "resolution_source": "api_settlement"
+          },
+          {
+            "id": 22711,
+            "name": "Ole Miss",
+            "probability": null,
+            "american_odds": null,
+            "rank": null,
+            "movement": null,
+            "is_winner": true,
+            "resolution_source": "api_settlement"
+          },
+          {
+            "id": 22701,
+            "name": "Oregon",
+            "probability": null,
+            "american_odds": null,
+            "rank": null,
+            "movement": null,
+            "is_winner": true,
+            "resolution_source": "api_settlement"
+          },
+          {
+            "id": 22705,
+            "name": "Penn State",
+            "probability": null,
+            "american_odds": null,
+            "rank": null,
+            "movement": null,
+            "is_winner": true,
+            "resolution_source": "api_settlement"
+          },
+          {
+            "id": 22710,
+            "name": "Tennessee",
+            "probability": null,
+            "american_odds": null,
+            "rank": null,
+            "movement": null,
+            "is_winner": true,
+            "resolution_source": "api_settlement"
+          },
+          {
+            "id": 22703,
+            "name": "Texas",
+            "probability": null,
+            "american_odds": null,
+            "rank": null,
+            "movement": null,
+            "is_winner": true,
+            "resolution_source": "api_settlement"
+          }
+        ],
+        "outcome_count": 12,
+        "updated_at": "2026-11-03T20:45:00+00:00",
+        "prices_updated_at": "2026-11-03T20:45:00+00:00",
+        "discover_card": {
+          "suggested_format": "outcome_distribution",
+          "distribution_outcomes": [],
+          "remaining_outcome_count": 12,
+          "field_is_a_race": false
+        }
+      },
+      "event_id": null
+    },
+    {
+      "type": "market",
+      "id": 181,
+      "destination": {
+        "kind": "market",
+        "id": 181,
+        "web": "/futures/181",
+        "api": "/api/futures/181"
+      },
+      "card": {
+        "id": 181,
+        "name": "College Football National Championship Winner 2026-27",
+        "sport": "americanfootball_ncaaf",
+        "sport_name": "NCAAF",
+        "category": "sports",
+        "llm_sport_category": "football",
+        "market_tier": 1,
+        "market_type_label": "Championship",
+        "market_type": "championship",
+        "status": "open",
+        "source": "kalshi",
+        "sources": [
+          "kalshi"
+        ],
+        "source_count": 1,
+        "mutually_exclusive": true,
+        "resolution_date": "2027-01-20T04:00:00+00:00",
+        "top_outcomes": [
+          {
+            "id": 18101,
+            "name": "Ohio State",
+            "probability": 0.24,
+            "american_odds": null,
+            "rank": 1,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18102,
+            "name": "Oregon",
+            "probability": 0.21,
+            "american_odds": null,
+            "rank": 2,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18103,
+            "name": "Texas",
+            "probability": 0.17,
+            "american_odds": null,
+            "rank": 3,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18104,
+            "name": "Georgia",
+            "probability": 0.14,
+            "american_odds": null,
+            "rank": 4,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18105,
+            "name": "Alabama",
+            "probability": 0.08,
+            "american_odds": null,
+            "rank": 5,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18106,
+            "name": "Penn State",
+            "probability": 0.06,
+            "american_odds": null,
+            "rank": 6,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18107,
+            "name": "Notre Dame",
+            "probability": 0.05,
+            "american_odds": null,
+            "rank": 7,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18108,
+            "name": "Miami",
+            "probability": 0.03,
+            "american_odds": null,
+            "rank": 8,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18201,
+            "name": "Contender 10",
+            "probability": 0.01,
+            "american_odds": null,
+            "rank": 9,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18202,
+            "name": "Contender 11",
+            "probability": 0.01,
+            "american_odds": null,
+            "rank": 10,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18203,
+            "name": "Contender 12",
+            "probability": 0.01,
+            "american_odds": null,
+            "rank": 11,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18204,
+            "name": "Contender 13",
+            "probability": 0.01,
+            "american_odds": null,
+            "rank": 12,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18205,
+            "name": "Contender 14",
+            "probability": 0.01,
+            "american_odds": null,
+            "rank": 13,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18206,
+            "name": "Contender 15",
+            "probability": 0.01,
+            "american_odds": null,
+            "rank": 14,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18207,
+            "name": "Contender 16",
+            "probability": 0.01,
+            "american_odds": null,
+            "rank": 15,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18208,
+            "name": "Contender 17",
+            "probability": 0.01,
+            "american_odds": null,
+            "rank": 16,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18209,
+            "name": "Contender 18",
+            "probability": 0.01,
+            "american_odds": null,
+            "rank": 17,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18210,
+            "name": "Contender 19",
+            "probability": 0.01,
+            "american_odds": null,
+            "rank": 18,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18211,
+            "name": "Contender 20",
+            "probability": 0.01,
+            "american_odds": null,
+            "rank": 19,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          },
+          {
+            "id": 18200,
+            "name": "Contender 9",
+            "probability": 0.01,
+            "american_odds": null,
+            "rank": 20,
+            "movement": null,
+            "is_winner": false,
+            "resolution_source": null
+          }
+        ],
+        "outcome_count": 20,
+        "updated_at": "2026-11-03T20:45:00+00:00",
+        "prices_updated_at": "2026-11-03T20:45:00+00:00",
+        "discover_card": {
+          "suggested_format": "outcome_distribution",
+          "distribution_outcomes": [
+            {
+              "label": "Ohio State",
+              "probability": 0.24,
+              "movement": null
+            },
+            {
+              "label": "Oregon",
+              "probability": 0.21,
+              "movement": null
+            },
+            {
+              "label": "Texas",
+              "probability": 0.17,
+              "movement": null
+            },
+            {
+              "label": "Georgia",
+              "probability": 0.14,
+              "movement": null
+            }
+          ],
+          "remaining_outcome_count": 16,
+          "field_is_a_race": true
+        }
+      },
+      "event_id": null
+    }
+  ]
+}
