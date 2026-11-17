@@ -193,6 +193,7 @@
 				WatchSavedComplicationContent.swift,
 				WatchComplicationSnapshot.swift,
 				WatchLaunchRoute.swift,
+				WatchMatchupComplication217.swift,
 			);
 			target = A7C0000000000000000000D1 /* BainLuckComplication */;
 		};
