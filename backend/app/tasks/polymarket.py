@@ -1100,7 +1100,7 @@ POLYMARKET_KEYSET_CURSOR_TTL_S = 2 * 86400
 #: Nov 16 2026: 300 -> 240. At 300 the 6:15 AM poll hit the 540 s soft limit
 #: and skipped its three closing steps; the 7:15 AM run's walk ended 46 s past
 #: 300 on one slow page. The walk is the part that gives way first.
-POLYMARKET_KEYSET_STOP_AT_S = 240
+POLYMARKET_KEYSET_STOP_AT_S = 210  # Nov 16 4 PM: 240 -> 210 with the wider closing reserve below
 
 #: The poll's soft limit (``poll_polymarket_markets``) and the time held back
 #: for its three closing steps (sub-market link sweep, re-date, stuck-status
@@ -1109,7 +1109,9 @@ POLYMARKET_KEYSET_STOP_AT_S = 240
 #: also stops early when its slowest page so far would carry it past that line,
 #: so one slow page cannot eat the closing steps' time.
 POLYMARKET_POLL_SOFT_LIMIT_S = 540
-POLYMARKET_CLOSING_RESERVE_S = 120
+#: Nov 16 2026, 3:45 PM run: the closing steps took 172 s, over the 120 s first
+#: reserved. 210 = the measured 172 s plus about a fifth.
+POLYMARKET_CLOSING_RESERVE_S = 210
 POLYMARKET_POLL_PAGE_BUDGET_S = POLYMARKET_POLL_SOFT_LIMIT_S - POLYMARKET_CLOSING_RESERVE_S
 
 
@@ -1337,7 +1339,7 @@ async def _poll_polymarket_markets():
         # runs instead of re-scanning the same early pages each time.
         import time as _time
         _start = _time.monotonic()
-        _MAX_SECONDS = POLYMARKET_POLL_PAGE_BUDGET_S  # 420: the closing steps keep 120 s
+        _MAX_SECONDS = POLYMARKET_POLL_PAGE_BUDGET_S  # 330: the closing steps keep 210 s
         from app.tasks.redis_state import get_redis_client
         _rc = get_redis_client()
         _poll_cursor_key = "bainluck:polymarket_poll_page"
