@@ -162,7 +162,10 @@ async def test_every_remaining_market_is_reachable_once_even_if_activity_changes
             ).items()
         }
         params.pop("include_children")
-        payload = await get(session, **params, limit="7")
+        assert set(params) == {"market_cursor", "market_revision", "market_limit"}
+        params["market_limit"] = "7"
+        payload = await get(session, **params)
+        assert payload["page"]["limit"] == 7
         assert all(m["type"] == "market" for m in all_members(payload))
         assert len(session.hydrated[-1]) <= 7
         seen.extend(m["id"] for m in all_members(payload))
@@ -174,18 +177,50 @@ async def test_every_remaining_market_is_reachable_once_even_if_activity_changes
     assert all(len(ids) <= 7 for ids in session.descriptors[1:])
 
 
+async def test_http_continuation_ignores_theme_params_and_keeps_its_market_page_size():
+    session = WeekSession(count=45)
+    app = FastAPI()
+    app.include_router(route.router, prefix="/api/containers")
+
+    async def database():
+        yield session
+
+    app.dependency_overrides[route.get_db] = database
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://fixture.invalid"
+    ) as client:
+        entry = await client.get(f"/api/containers/{session.hub.slug}")
+        next_url = entry.json()["page"]["next_url"]
+        params = {k: values[0] for k, values in parse_qs(urlparse(next_url).query).items()}
+        assert params["market_limit"] == "50"
+        params.update(market_limit="7", revision="invalid", cursor="!!", limit="0")
+        response = await client.get(urlparse(next_url).path, params=params)
+        assert response.status_code == 200
+        page = response.json()
+        assert page["member_count"] == 7
+        assert all(member["type"] == "market" for member in all_members(page))
+        assert len(session.hydrated[-1]) == 7
+        following = await client.get(page["page"]["next_url"])
+        assert following.status_code == 200
+        assert following.json()["page"]["limit"] == 7
+        assert following.json()["member_count"] == 7
+        assert {m["id"] for m in all_members(page)}.isdisjoint(
+            {m["id"] for m in all_members(following.json())}
+        )
+
+
 async def test_cursor_refuses_a_changed_revision_and_another_scope():
     session = WeekSession(count=45)
     payload = await get(session)
     cursor = payload["page"]["next_cursor"]
     session.hub.revision += 1
     with pytest.raises(HTTPException) as error:
-        await get(session, cursor=cursor)
+        await get(session, market_cursor=cursor)
     assert error.value.status_code == 409
     session.hub.revision -= 1
     wrong_scope = encode_cursor(session.hub.id, session.hub.revision, True, 0, [])
     with pytest.raises(HTTPException) as error:
-        await get(session, cursor=wrong_scope)
+        await get(session, market_cursor=wrong_scope)
     assert error.value.status_code == 422
 
 
@@ -195,7 +230,7 @@ async def test_pagination_never_bypasses_a_withdrawal(state):
     payload = await get(session)
     session.hub.publication = state
     session.hydrated.clear()
-    result = await get(session, cursor=payload["page"]["next_cursor"])
+    result = await get(session, market_cursor=payload["page"]["next_cursor"])
     assert result["state"] == state and result["sections"] == []
     assert session.hydrated == []
 
@@ -204,7 +239,7 @@ async def test_pagination_never_bypasses_a_withdrawal(state):
 async def test_limit_cannot_trigger_an_unbounded_read(limit):
     session = WeekSession(count=45)
     with pytest.raises(HTTPException) as error:
-        await get(session, limit=limit)
+        await get(session, market_limit=limit)
     assert error.value.status_code == 422 and session.hydrated == []
 
 

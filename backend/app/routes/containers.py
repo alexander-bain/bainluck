@@ -481,10 +481,13 @@ async def get_container(
     include_children: bool = Query(
         True, description="Include members of nested containers (draws)."
     ),
-    # Raw strings, validated only for editions with continuation pages.
+    # Theme parameters remain ignored by sports hubs (#9935).
     revision: Annotated[Optional[str], Query(description="The revision paged so far.")] = None,
     cursor: Annotated[Optional[str], Query(description="The previous page's next_cursor.")] = None,
     limit: Annotated[Optional[str], Query(description="Markets per continuation page.")] = None,
+    market_revision: Annotated[Optional[str], Query(description="The NFL market page's revision.")] = None,
+    market_cursor: Annotated[Optional[str], Query(description="The NFL market page's next_cursor.")] = None,
+    market_limit: Annotated[Optional[str], Query(description="NFL markets per continuation page.")] = None,
     compact: bool = True,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -493,8 +496,8 @@ async def get_container(
 
     ``include_children=false`` keeps only the collection's own members; the
     published read itself is unchanged, so the revision still covers the draws.
-    ``revision`` / ``cursor`` / ``limit`` page theme collections and NFL-week
-    markets; other editions ignore them.
+    ``revision`` / ``cursor`` / ``limit`` page theme collections; sports hubs
+    ignore them. NFL-week markets use the separate ``market_`` parameters.
 
     NFL weeks default to all games plus twelve ranked market cards. Remaining
     markets are requested through ``page.next_url``. ``compact=false`` retains
@@ -554,11 +557,13 @@ async def get_container(
 
     compact = compact and (edition or {}).get("kind") == EDITION_NFL_WEEK
     if (edition or {}).get("kind") == EDITION_NFL_WEEK and any(
-        value is not None for value in (revision, cursor, limit)
+        value is not None for value in (market_revision, market_cursor, market_limit)
     ):
         if not compact:
             raise _bad_request("paging_requires_compact")
-        page = _week_page_params(published, include_children, revision, cursor, limit)
+        page = _week_page_params(
+            published, include_children, market_revision, market_cursor, market_limit
+        )
         return await _build_published_payload(
             db, published, include_children, compact=True, week_page=page
         )
@@ -668,7 +673,8 @@ async def _build_published_payload(
                        "deferred_market_count": len(remaining)},
             "page": {"kind": "nfl_week_markets", "limit": page_limit, "next_cursor": next_cursor,
                      "next_url": f"/api/containers/{published.slug}?" + urlencode({
-                         "cursor": next_cursor, "revision": published.revision,
+                         "market_cursor": next_cursor, "market_revision": published.revision,
+                         "market_limit": page_limit if week_page is not None else PAGE_DEFAULT,
                          "include_children": str(include_children).lower(),
                      }) if next_cursor else None},
         }
