@@ -1,0 +1,65 @@
+{
+  "title": "Cumulative deadlines",
+  "context": "Historical scorer fixture · Local 390 pt preview",
+  "cards": [
+    {
+      "title": "Zacharia issues public apology by…?",
+      "rows": [
+        {
+          "title": "By Oct 31",
+          "text": "7%",
+          "number": 0.07,
+          "mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.073,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          }
+        },
+        {
+          "title": "By Dec 31",
+          "text": "24%",
+          "number": 0.24,
+          "mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.245,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ],
+            "method": "The source gave 24.5%. The card rounds it to 24%."
+          }
+        }
+      ]
+    }
+  ],
+  "sheetTitle": "December 31 · Yes",
+  "sheetRow": {
+    "title": "By Dec 31",
+    "text": "24%",
+    "number": 0.24,
+    "mark": {
+      "state": "single",
+      "sources": [
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.245,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        }
+      ],
+      "method": "The source gave 24.5%. The card rounds it to 24%."
+    }
+  }
+}

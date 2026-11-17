@@ -1,0 +1,1427 @@
+[
+  {
+    "inputs": [
+      {
+        "id": 60087427,
+        "name": "Will it snow in Buffalo, NY by November 15?",
+        "status": "open",
+        "source": "polymarket",
+        "category": "weather",
+        "llm_sport_category": "weather",
+        "market_tier": 2,
+        "market_type": "container_member",
+        "mutually_exclusive": true,
+        "resolution_date": "2026-11-19T04:59:00Z",
+        "updated_at": "2026-11-04T20:15:00Z",
+        "outcomes": [
+          {
+            "id": 600874271,
+            "name": "Yes",
+            "probability": 0.42,
+            "is_winner": false,
+            "resolution_source": null,
+            "observed_at": "2026-11-04T20:15:00Z"
+          },
+          {
+            "id": 600874272,
+            "name": "No",
+            "probability": 0.58,
+            "is_winner": false,
+            "resolution_source": null,
+            "observed_at": "2026-11-04T20:15:00Z"
+          }
+        ]
+      },
+      {
+        "id": 8422080,
+        "name": "Pete Hegseth out as Secretary of Defense by December 31?",
+        "status": "open",
+        "source": "polymarket",
+        "category": "politics",
+        "llm_sport_category": "politics",
+        "market_tier": 2,
+        "market_type": "container_member",
+        "mutually_exclusive": true,
+        "resolution_date": "2026-12-31T00:00:00Z",
+        "updated_at": "2026-11-04T20:15:00Z",
+        "outcomes": [
+          {
+            "id": 84220801,
+            "name": "Yes",
+            "probability": 0.425,
+            "is_winner": false,
+            "resolution_source": null,
+            "observed_at": "2026-11-04T20:15:00Z"
+          },
+          {
+            "id": 84220802,
+            "name": "No",
+            "probability": 0.575,
+            "is_winner": false,
+            "resolution_source": null,
+            "observed_at": "2026-11-04T20:15:00Z"
+          }
+        ]
+      }
+    ],
+    "output": {
+      "members": [
+        {
+          "type": "market",
+          "id": 8422080,
+          "destination": {
+            "kind": "market",
+            "id": 8422080,
+            "web": "/futures/8422080",
+            "api": "/api/futures/8422080"
+          },
+          "card": {
+            "id": 8422080,
+            "name": "Pete Hegseth out as Secretary of Defense by December 31?",
+            "sport": null,
+            "sport_name": null,
+            "category": "politics",
+            "llm_sport_category": "politics",
+            "market_tier": 2,
+            "market_type_label": "Yes / No",
+            "market_type": "yes_no",
+            "status": "open",
+            "source": "polymarket",
+            "sources": [
+              "polymarket"
+            ],
+            "source_count": 1,
+            "mutually_exclusive": true,
+            "resolution_date": "2026-12-31T00:00:00+00:00",
+            "top_outcomes": [
+              {
+                "id": 84220801,
+                "name": "Yes",
+                "probability": 0.425,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.425,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "rendered_percent": 43,
+                "american_odds": null,
+                "rank": 1,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              },
+              {
+                "id": 84220802,
+                "name": "No",
+                "probability": 0.575,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.575,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "rendered_percent": 57,
+                "american_odds": null,
+                "rank": 2,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              }
+            ],
+            "outcome_count": 2,
+            "updated_at": "2026-11-04T20:15:00+00:00",
+            "prices_updated_at": "2026-11-04T20:15:00+00:00",
+            "price_observed_at": "2026-11-04T20:15:00+00:00"
+          },
+          "event_id": null
+        },
+        {
+          "type": "market",
+          "id": 60087427,
+          "destination": {
+            "kind": "market",
+            "id": 60087427,
+            "web": "/futures/60087427",
+            "api": "/api/futures/60087427"
+          },
+          "card": {
+            "id": 60087427,
+            "name": "Will it snow in Buffalo, NY by November 15?",
+            "sport": null,
+            "sport_name": null,
+            "category": "weather",
+            "llm_sport_category": "weather",
+            "market_tier": 2,
+            "market_type_label": "Yes / No",
+            "market_type": "yes_no",
+            "status": "open",
+            "source": "polymarket",
+            "sources": [
+              "polymarket"
+            ],
+            "source_count": 1,
+            "mutually_exclusive": true,
+            "resolution_date": "2026-11-19T04:59:00+00:00",
+            "top_outcomes": [
+              {
+                "id": 600874271,
+                "name": "Yes",
+                "probability": 0.42,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.42,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "rendered_percent": 42,
+                "american_odds": null,
+                "rank": 1,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              },
+              {
+                "id": 600874272,
+                "name": "No",
+                "probability": 0.58,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.58,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "rendered_percent": 58,
+                "american_odds": null,
+                "rank": 2,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              }
+            ],
+            "outcome_count": 2,
+            "updated_at": "2026-11-04T20:15:00+00:00",
+            "prices_updated_at": "2026-11-04T20:15:00+00:00",
+            "price_observed_at": "2026-11-04T20:15:00+00:00"
+          },
+          "event_id": null
+        }
+      ],
+      "rows": [
+        {
+          "market_id": 8422080,
+          "label": "Pete Hegseth out as Secretary of Defense by Dec 31",
+          "probability": 0.425,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.425,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "rendered_percent": 43,
+          "observed_at": "2026-11-04T20:15:00+00:00"
+        },
+        {
+          "market_id": 60087427,
+          "label": "Snow in Buffalo by Nov 15",
+          "probability": 0.42,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.42,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "rendered_percent": 42,
+          "observed_at": "2026-11-04T20:15:00+00:00"
+        }
+      ],
+      "feed_item": null,
+      "footer": "Two unrelated markets with the same chance.",
+      "count_line": null,
+      "title": "Pete Hegseth out by Dec 31: as likely as snow in Buffalo by Nov 15",
+      "kicker": "FOR SCALE",
+      "destination_href": null,
+      "sections": [
+        {
+          "class": "title",
+          "title": "For scale",
+          "layout": "field",
+          "count": 2,
+          "members": [
+            {
+              "type": "market",
+              "id": 8422080,
+              "destination": {
+                "kind": "market",
+                "id": 8422080,
+                "web": "/futures/8422080",
+                "api": "/api/futures/8422080"
+              },
+              "card": {
+                "id": 8422080,
+                "name": "Pete Hegseth out as Secretary of Defense by December 31?",
+                "sport": null,
+                "sport_name": null,
+                "category": "politics",
+                "llm_sport_category": "politics",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2026-12-31T00:00:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 84220801,
+                    "name": "Yes",
+                    "probability": 0.425,
+                    "source_mark": {
+                      "state": "single",
+                      "sources": [
+                        {
+                          "key": "polymarket",
+                          "name": "Polymarket",
+                          "probability": 0.425,
+                          "observed_at": null,
+                          "reason": "observation_unknown"
+                        }
+                      ]
+                    },
+                    "rendered_percent": 43,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 84220802,
+                    "name": "No",
+                    "probability": 0.575,
+                    "source_mark": {
+                      "state": "single",
+                      "sources": [
+                        {
+                          "key": "polymarket",
+                          "name": "Polymarket",
+                          "probability": 0.575,
+                          "observed_at": null,
+                          "reason": "observation_unknown"
+                        }
+                      ]
+                    },
+                    "rendered_percent": 57,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-04T20:15:00+00:00",
+                "prices_updated_at": "2026-11-04T20:15:00+00:00",
+                "price_observed_at": "2026-11-04T20:15:00+00:00"
+              },
+              "event_id": null
+            },
+            {
+              "type": "market",
+              "id": 60087427,
+              "destination": {
+                "kind": "market",
+                "id": 60087427,
+                "web": "/futures/60087427",
+                "api": "/api/futures/60087427"
+              },
+              "card": {
+                "id": 60087427,
+                "name": "Will it snow in Buffalo, NY by November 15?",
+                "sport": null,
+                "sport_name": null,
+                "category": "weather",
+                "llm_sport_category": "weather",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2026-11-19T04:59:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 600874271,
+                    "name": "Yes",
+                    "probability": 0.42,
+                    "source_mark": {
+                      "state": "single",
+                      "sources": [
+                        {
+                          "key": "polymarket",
+                          "name": "Polymarket",
+                          "probability": 0.42,
+                          "observed_at": null,
+                          "reason": "observation_unknown"
+                        }
+                      ]
+                    },
+                    "rendered_percent": 42,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 600874272,
+                    "name": "No",
+                    "probability": 0.58,
+                    "source_mark": {
+                      "state": "single",
+                      "sources": [
+                        {
+                          "key": "polymarket",
+                          "name": "Polymarket",
+                          "probability": 0.58,
+                          "observed_at": null,
+                          "reason": "observation_unknown"
+                        }
+                      ]
+                    },
+                    "rendered_percent": 58,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-04T20:15:00+00:00",
+                "prices_updated_at": "2026-11-04T20:15:00+00:00",
+                "price_observed_at": "2026-11-04T20:15:00+00:00"
+              },
+              "event_id": null
+            }
+          ]
+        }
+      ],
+      "revision_ids": [
+        8422080,
+        60087427
+      ],
+      "suppress_feed_item": false,
+      "caption": null,
+      "parent_slug": null,
+      "parent_name": null,
+      "children": [],
+      "paired_metric_set": null
+    }
+  },
+  {
+    "inputs": [
+      {
+        "id": 60104328,
+        "name": "Will it snow in Washington, DC by November 30?",
+        "status": "open",
+        "source": "polymarket",
+        "category": "weather",
+        "llm_sport_category": "weather",
+        "market_tier": 2,
+        "market_type": "container_member",
+        "mutually_exclusive": true,
+        "resolution_date": "2026-12-04T04:59:00Z",
+        "updated_at": "2026-11-04T20:15:00Z",
+        "outcomes": [
+          {
+            "id": 601043281,
+            "name": "Yes",
+            "probability": 0.39,
+            "is_winner": false,
+            "resolution_source": null,
+            "observed_at": "2026-11-04T20:15:00Z"
+          },
+          {
+            "id": 601043282,
+            "name": "No",
+            "probability": 0.61,
+            "is_winner": false,
+            "resolution_source": null,
+            "observed_at": "2026-11-04T20:15:00Z"
+          }
+        ]
+      },
+      {
+        "id": 60880786,
+        "name": "Will Gavin Newsom announce a Presidential run before 2028?",
+        "status": "open",
+        "source": "polymarket",
+        "category": "politics",
+        "llm_sport_category": "politics",
+        "market_tier": 2,
+        "market_type": "container_member",
+        "mutually_exclusive": true,
+        "resolution_date": "2026-12-31T00:00:00Z",
+        "updated_at": "2026-11-04T20:15:00Z",
+        "outcomes": [
+          {
+            "id": 608807861,
+            "name": "Yes",
+            "probability": 0.4,
+            "is_winner": false,
+            "resolution_source": null,
+            "observed_at": "2026-11-04T20:15:00Z"
+          },
+          {
+            "id": 608807862,
+            "name": "No",
+            "probability": 0.6,
+            "is_winner": false,
+            "resolution_source": null,
+            "observed_at": "2026-11-04T20:15:00Z"
+          }
+        ]
+      },
+      {
+        "id": 8422080,
+        "name": "Pete Hegseth out as Secretary of Defense by December 31?",
+        "status": "open",
+        "source": "polymarket",
+        "category": "politics",
+        "llm_sport_category": "politics",
+        "market_tier": 2,
+        "market_type": "container_member",
+        "mutually_exclusive": true,
+        "resolution_date": "2026-12-31T00:00:00Z",
+        "updated_at": "2026-11-04T20:15:00Z",
+        "outcomes": [
+          {
+            "id": 84220801,
+            "name": "Yes",
+            "probability": 0.44,
+            "is_winner": false,
+            "resolution_source": null,
+            "observed_at": "2026-11-04T20:15:00Z"
+          },
+          {
+            "id": 84220802,
+            "name": "No",
+            "probability": 0.56,
+            "is_winner": false,
+            "resolution_source": null,
+            "observed_at": "2026-11-04T20:15:00Z"
+          }
+        ]
+      }
+    ],
+    "output": {
+      "members": [
+        {
+          "type": "market",
+          "id": 60880786,
+          "destination": {
+            "kind": "market",
+            "id": 60880786,
+            "web": "/futures/60880786",
+            "api": "/api/futures/60880786"
+          },
+          "card": {
+            "id": 60880786,
+            "name": "Will Gavin Newsom announce a Presidential run before 2028?",
+            "sport": null,
+            "sport_name": null,
+            "category": "politics",
+            "llm_sport_category": "politics",
+            "market_tier": 2,
+            "market_type_label": "Yes / No",
+            "market_type": "yes_no",
+            "status": "open",
+            "source": "polymarket",
+            "sources": [
+              "polymarket"
+            ],
+            "source_count": 1,
+            "mutually_exclusive": true,
+            "resolution_date": "2026-12-31T00:00:00+00:00",
+            "top_outcomes": [
+              {
+                "id": 608807861,
+                "name": "Yes",
+                "probability": 0.4,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.4,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "rendered_percent": 40,
+                "american_odds": null,
+                "rank": 1,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              },
+              {
+                "id": 608807862,
+                "name": "No",
+                "probability": 0.6,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.6,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "rendered_percent": 60,
+                "american_odds": null,
+                "rank": 2,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              }
+            ],
+            "outcome_count": 2,
+            "updated_at": "2026-11-04T20:15:00+00:00",
+            "prices_updated_at": "2026-11-04T20:15:00+00:00",
+            "price_observed_at": "2026-11-04T20:15:00+00:00"
+          },
+          "event_id": null
+        },
+        {
+          "type": "market",
+          "id": 60104328,
+          "destination": {
+            "kind": "market",
+            "id": 60104328,
+            "web": "/futures/60104328",
+            "api": "/api/futures/60104328"
+          },
+          "card": {
+            "id": 60104328,
+            "name": "Will it snow in Washington, DC by November 30?",
+            "sport": null,
+            "sport_name": null,
+            "category": "weather",
+            "llm_sport_category": "weather",
+            "market_tier": 2,
+            "market_type_label": "Yes / No",
+            "market_type": "yes_no",
+            "status": "open",
+            "source": "polymarket",
+            "sources": [
+              "polymarket"
+            ],
+            "source_count": 1,
+            "mutually_exclusive": true,
+            "resolution_date": "2026-12-04T04:59:00+00:00",
+            "top_outcomes": [
+              {
+                "id": 601043281,
+                "name": "Yes",
+                "probability": 0.39,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.39,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "rendered_percent": 39,
+                "american_odds": null,
+                "rank": 1,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              },
+              {
+                "id": 601043282,
+                "name": "No",
+                "probability": 0.61,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.61,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "rendered_percent": 61,
+                "american_odds": null,
+                "rank": 2,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              }
+            ],
+            "outcome_count": 2,
+            "updated_at": "2026-11-04T20:15:00+00:00",
+            "prices_updated_at": "2026-11-04T20:15:00+00:00",
+            "price_observed_at": "2026-11-04T20:15:00+00:00"
+          },
+          "event_id": null
+        }
+      ],
+      "rows": [
+        {
+          "market_id": 60880786,
+          "label": "Gavin Newsom announces a 2028 run",
+          "probability": 0.4,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.4,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "rendered_percent": 40,
+          "observed_at": "2026-11-04T20:15:00+00:00"
+        },
+        {
+          "market_id": 60104328,
+          "label": "Snow in Washington, DC by Nov 30",
+          "probability": 0.39,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.39,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "rendered_percent": 39,
+          "observed_at": "2026-11-04T20:15:00+00:00"
+        }
+      ],
+      "feed_item": null,
+      "footer": "Two unrelated markets with the same chance.",
+      "count_line": null,
+      "title": "Gavin Newsom announces a 2028 run: as likely as snow in DC by Nov 30",
+      "kicker": "FOR SCALE",
+      "destination_href": null,
+      "sections": [
+        {
+          "class": "title",
+          "title": "For scale",
+          "layout": "field",
+          "count": 2,
+          "members": [
+            {
+              "type": "market",
+              "id": 60880786,
+              "destination": {
+                "kind": "market",
+                "id": 60880786,
+                "web": "/futures/60880786",
+                "api": "/api/futures/60880786"
+              },
+              "card": {
+                "id": 60880786,
+                "name": "Will Gavin Newsom announce a Presidential run before 2028?",
+                "sport": null,
+                "sport_name": null,
+                "category": "politics",
+                "llm_sport_category": "politics",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2026-12-31T00:00:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 608807861,
+                    "name": "Yes",
+                    "probability": 0.4,
+                    "source_mark": {
+                      "state": "single",
+                      "sources": [
+                        {
+                          "key": "polymarket",
+                          "name": "Polymarket",
+                          "probability": 0.4,
+                          "observed_at": null,
+                          "reason": "observation_unknown"
+                        }
+                      ]
+                    },
+                    "rendered_percent": 40,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 608807862,
+                    "name": "No",
+                    "probability": 0.6,
+                    "source_mark": {
+                      "state": "single",
+                      "sources": [
+                        {
+                          "key": "polymarket",
+                          "name": "Polymarket",
+                          "probability": 0.6,
+                          "observed_at": null,
+                          "reason": "observation_unknown"
+                        }
+                      ]
+                    },
+                    "rendered_percent": 60,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-04T20:15:00+00:00",
+                "prices_updated_at": "2026-11-04T20:15:00+00:00",
+                "price_observed_at": "2026-11-04T20:15:00+00:00"
+              },
+              "event_id": null
+            },
+            {
+              "type": "market",
+              "id": 60104328,
+              "destination": {
+                "kind": "market",
+                "id": 60104328,
+                "web": "/futures/60104328",
+                "api": "/api/futures/60104328"
+              },
+              "card": {
+                "id": 60104328,
+                "name": "Will it snow in Washington, DC by November 30?",
+                "sport": null,
+                "sport_name": null,
+                "category": "weather",
+                "llm_sport_category": "weather",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2026-12-04T04:59:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 601043281,
+                    "name": "Yes",
+                    "probability": 0.39,
+                    "source_mark": {
+                      "state": "single",
+                      "sources": [
+                        {
+                          "key": "polymarket",
+                          "name": "Polymarket",
+                          "probability": 0.39,
+                          "observed_at": null,
+                          "reason": "observation_unknown"
+                        }
+                      ]
+                    },
+                    "rendered_percent": 39,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 601043282,
+                    "name": "No",
+                    "probability": 0.61,
+                    "source_mark": {
+                      "state": "single",
+                      "sources": [
+                        {
+                          "key": "polymarket",
+                          "name": "Polymarket",
+                          "probability": 0.61,
+                          "observed_at": null,
+                          "reason": "observation_unknown"
+                        }
+                      ]
+                    },
+                    "rendered_percent": 61,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-04T20:15:00+00:00",
+                "prices_updated_at": "2026-11-04T20:15:00+00:00",
+                "price_observed_at": "2026-11-04T20:15:00+00:00"
+              },
+              "event_id": null
+            }
+          ]
+        }
+      ],
+      "revision_ids": [
+        60880786,
+        60104328
+      ],
+      "suppress_feed_item": false,
+      "caption": null,
+      "parent_slug": null,
+      "parent_name": null,
+      "children": [],
+      "paired_metric_set": null
+    }
+  },
+  {
+    "inputs": [
+      {
+        "id": 113012,
+        "name": "US recession by end of 2026?",
+        "status": "open",
+        "source": "polymarket",
+        "category": "economy",
+        "llm_sport_category": "economy",
+        "market_tier": 2,
+        "market_type": "binary",
+        "mutually_exclusive": true,
+        "resolution_date": "2027-07-31T00:00:00Z",
+        "updated_at": "2026-11-04T20:15:00Z",
+        "outcomes": [
+          {
+            "id": 1130121,
+            "name": "Yes",
+            "probability": 0.055,
+            "is_winner": false,
+            "resolution_source": null,
+            "observed_at": "2026-11-04T20:15:00Z"
+          },
+          {
+            "id": 1130122,
+            "name": "No",
+            "probability": 0.945,
+            "is_winner": false,
+            "resolution_source": null,
+            "observed_at": "2026-11-04T20:15:00Z"
+          }
+        ]
+      },
+      {
+        "id": 113200,
+        "name": "Will the Iranian regime fall before 2027?",
+        "status": "open",
+        "source": "polymarket",
+        "category": "geopolitics",
+        "llm_sport_category": "geopolitics",
+        "market_tier": 2,
+        "market_type": "binary",
+        "mutually_exclusive": true,
+        "resolution_date": "2026-12-31T00:00:00Z",
+        "updated_at": "2026-11-04T20:15:00Z",
+        "outcomes": [
+          {
+            "id": 1132001,
+            "name": "Yes",
+            "probability": 0.036,
+            "is_winner": false,
+            "resolution_source": null,
+            "observed_at": "2026-11-04T20:15:00Z"
+          },
+          {
+            "id": 1132002,
+            "name": "No",
+            "probability": 0.964,
+            "is_winner": false,
+            "resolution_source": null,
+            "observed_at": "2026-11-04T20:15:00Z"
+          }
+        ]
+      }
+    ],
+    "output": {
+      "members": [
+        {
+          "type": "market",
+          "id": 113200,
+          "destination": {
+            "kind": "market",
+            "id": 113200,
+            "web": "/futures/113200",
+            "api": "/api/futures/113200"
+          },
+          "card": {
+            "id": 113200,
+            "name": "Will the Iranian regime fall before 2027?",
+            "sport": null,
+            "sport_name": null,
+            "category": "geopolitics",
+            "llm_sport_category": "geopolitics",
+            "market_tier": 2,
+            "market_type_label": "Yes / No",
+            "market_type": "yes_no",
+            "status": "open",
+            "source": "polymarket",
+            "sources": [
+              "polymarket"
+            ],
+            "source_count": 1,
+            "mutually_exclusive": true,
+            "resolution_date": "2026-12-31T00:00:00+00:00",
+            "top_outcomes": [
+              {
+                "id": 1132001,
+                "name": "Yes",
+                "probability": 0.036,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.036,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "rendered_percent": 4,
+                "american_odds": null,
+                "rank": 1,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              },
+              {
+                "id": 1132002,
+                "name": "No",
+                "probability": 0.964,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.964,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "rendered_percent": 96,
+                "american_odds": null,
+                "rank": 2,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              }
+            ],
+            "outcome_count": 2,
+            "updated_at": "2026-11-04T20:15:00+00:00",
+            "prices_updated_at": "2026-11-04T20:15:00+00:00",
+            "price_observed_at": "2026-11-04T20:15:00+00:00"
+          },
+          "event_id": null
+        },
+        {
+          "type": "market",
+          "id": 113012,
+          "destination": {
+            "kind": "market",
+            "id": 113012,
+            "web": "/futures/113012",
+            "api": "/api/futures/113012"
+          },
+          "card": {
+            "id": 113012,
+            "name": "US recession by end of 2026?",
+            "sport": null,
+            "sport_name": null,
+            "category": "economy",
+            "llm_sport_category": "economy",
+            "market_tier": 2,
+            "market_type_label": "Yes / No",
+            "market_type": "yes_no",
+            "status": "open",
+            "source": "polymarket",
+            "sources": [
+              "polymarket"
+            ],
+            "source_count": 1,
+            "mutually_exclusive": true,
+            "resolution_date": "2027-07-31T00:00:00+00:00",
+            "top_outcomes": [
+              {
+                "id": 1130121,
+                "name": "Yes",
+                "probability": 0.055,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.055,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "rendered_percent": 6,
+                "american_odds": null,
+                "rank": 1,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              },
+              {
+                "id": 1130122,
+                "name": "No",
+                "probability": 0.945,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.945,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ],
+                  "method": "Rounded with Yes so the two rows total 100%"
+                },
+                "rendered_percent": 94,
+                "american_odds": null,
+                "rank": 2,
+                "movement": null,
+                "is_winner": false,
+                "resolution_source": null
+              }
+            ],
+            "outcome_count": 2,
+            "updated_at": "2026-11-04T20:15:00+00:00",
+            "prices_updated_at": "2026-11-04T20:15:00+00:00",
+            "price_observed_at": "2026-11-04T20:15:00+00:00"
+          },
+          "event_id": null
+        }
+      ],
+      "rows": [
+        {
+          "market_id": 113200,
+          "label": "The Iranian regime falls before 2027",
+          "probability": 0.036,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.036,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "rendered_percent": 4,
+          "observed_at": "2026-11-04T20:15:00+00:00"
+        },
+        {
+          "market_id": 113012,
+          "label": "US recession by end of 2026",
+          "probability": 0.055,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.055,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "rendered_percent": 6,
+          "observed_at": "2026-11-04T20:15:00+00:00"
+        }
+      ],
+      "feed_item": null,
+      "footer": "Two unrelated markets with the same chance.",
+      "count_line": null,
+      "title": "The Iranian regime falls before 2027: as likely as a US recession by end of 2026",
+      "kicker": "FOR SCALE",
+      "destination_href": null,
+      "sections": [
+        {
+          "class": "title",
+          "title": "For scale",
+          "layout": "field",
+          "count": 2,
+          "members": [
+            {
+              "type": "market",
+              "id": 113200,
+              "destination": {
+                "kind": "market",
+                "id": 113200,
+                "web": "/futures/113200",
+                "api": "/api/futures/113200"
+              },
+              "card": {
+                "id": 113200,
+                "name": "Will the Iranian regime fall before 2027?",
+                "sport": null,
+                "sport_name": null,
+                "category": "geopolitics",
+                "llm_sport_category": "geopolitics",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2026-12-31T00:00:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 1132001,
+                    "name": "Yes",
+                    "probability": 0.036,
+                    "source_mark": {
+                      "state": "single",
+                      "sources": [
+                        {
+                          "key": "polymarket",
+                          "name": "Polymarket",
+                          "probability": 0.036,
+                          "observed_at": null,
+                          "reason": "observation_unknown"
+                        }
+                      ]
+                    },
+                    "rendered_percent": 4,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 1132002,
+                    "name": "No",
+                    "probability": 0.964,
+                    "source_mark": {
+                      "state": "single",
+                      "sources": [
+                        {
+                          "key": "polymarket",
+                          "name": "Polymarket",
+                          "probability": 0.964,
+                          "observed_at": null,
+                          "reason": "observation_unknown"
+                        }
+                      ]
+                    },
+                    "rendered_percent": 96,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-04T20:15:00+00:00",
+                "prices_updated_at": "2026-11-04T20:15:00+00:00",
+                "price_observed_at": "2026-11-04T20:15:00+00:00"
+              },
+              "event_id": null
+            },
+            {
+              "type": "market",
+              "id": 113012,
+              "destination": {
+                "kind": "market",
+                "id": 113012,
+                "web": "/futures/113012",
+                "api": "/api/futures/113012"
+              },
+              "card": {
+                "id": 113012,
+                "name": "US recession by end of 2026?",
+                "sport": null,
+                "sport_name": null,
+                "category": "economy",
+                "llm_sport_category": "economy",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2027-07-31T00:00:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 1130121,
+                    "name": "Yes",
+                    "probability": 0.055,
+                    "source_mark": {
+                      "state": "single",
+                      "sources": [
+                        {
+                          "key": "polymarket",
+                          "name": "Polymarket",
+                          "probability": 0.055,
+                          "observed_at": null,
+                          "reason": "observation_unknown"
+                        }
+                      ]
+                    },
+                    "rendered_percent": 6,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 1130122,
+                    "name": "No",
+                    "probability": 0.945,
+                    "source_mark": {
+                      "state": "single",
+                      "sources": [
+                        {
+                          "key": "polymarket",
+                          "name": "Polymarket",
+                          "probability": 0.945,
+                          "observed_at": null,
+                          "reason": "observation_unknown"
+                        }
+                      ],
+                      "method": "Rounded with Yes so the two rows total 100%"
+                    },
+                    "rendered_percent": 94,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-04T20:15:00+00:00",
+                "prices_updated_at": "2026-11-04T20:15:00+00:00",
+                "price_observed_at": "2026-11-04T20:15:00+00:00"
+              },
+              "event_id": null
+            }
+          ]
+        }
+      ],
+      "revision_ids": [
+        113200,
+        113012
+      ],
+      "suppress_feed_item": false,
+      "caption": null,
+      "parent_slug": null,
+      "parent_name": null,
+      "children": [],
+      "paired_metric_set": null
+    }
+  }
+]

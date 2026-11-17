@@ -1,0 +1,1562 @@
+{
+  "historical_scorer_bundles": [
+    {
+      "type": "bundle",
+      "score": 73.0,
+      "_rank_score": 73.0,
+      "reason": "Zacharia issues public apology by…?",
+      "headline": "Zacharia issues public apology",
+      "data": {
+        "id": "theme:story:deadline_family:polymarket:256241:65678073-65678074",
+        "title": "Zacharia issues public apology",
+        "kind": "theme",
+        "story_key": "story:deadline_family:polymarket:256241",
+        "group_id": "polymarket:256241",
+        "shared_question": "Zacharia issues public apology by…?",
+        "item_count": 2,
+        "member_ids": [
+          65678073,
+          65678074
+        ],
+        "items": [
+          {
+            "type": "futures",
+            "score": 73,
+            "reason": "Zacharia issues public apology by October 31: 7% chance, resolves within a month",
+            "headline": "Resolving within a month",
+            "context_summary": "7% chance, resolves within a month",
+            "data": {
+              "id": 65678073,
+              "name": "Zacharia issues public apology by October 31?",
+              "sport": null,
+              "sport_name": null,
+              "llm_sport_category": "politics",
+              "source": "polymarket",
+              "source_count": 1,
+              "sources": [
+                "polymarket"
+              ],
+              "market_tier": 2,
+              "market_type": "binary",
+              "status": "open",
+              "resolution_date": "2026-11-01T03:59:00+00:00",
+              "price_observed_at": "2026-10-14T13:20:41+00:00",
+              "top_outcomes": [
+                {
+                  "id": 246879006,
+                  "name": "No",
+                  "probability": 0.927,
+                  "rank": 1,
+                  "movement": null,
+                  "rendered_percent": 93
+                },
+                {
+                  "id": 246879005,
+                  "name": "Yes",
+                  "probability": 0.073,
+                  "rank": 2,
+                  "movement": null,
+                  "rendered_percent": 7
+                }
+              ],
+              "full_field_rendered": true,
+              "display_scale": 1.0,
+              "card_sum_reason": null,
+              "outcome_count": 2,
+              "canonical_market_key": null,
+              "group_id": "polymarket:256241",
+              "group_type": "polymarket_sub_market",
+              "discover_card": {
+                "suggested_format": "binary_probability",
+                "bundle_candidate": false,
+                "comparison_theme": null,
+                "threshold_points": [],
+                "ladder_treatment_refused": false,
+                "field_is_a_race": true,
+                "distribution_outcomes": [
+                  {
+                    "label": "No",
+                    "probability": 0.927,
+                    "movement": null,
+                    "rendered_percent": 93
+                  },
+                  {
+                    "label": "Yes",
+                    "probability": 0.073,
+                    "movement": null,
+                    "rendered_percent": 7
+                  }
+                ],
+                "distribution_order": "probability",
+                "remaining_outcome_count": 0,
+                "qa_signals": [],
+                "public_source_disagreement": false,
+                "reasons": []
+              },
+              "image_url": null,
+              "image_width": null,
+              "image_height": null,
+              "hook_description": null,
+              "temporal_badge": "New",
+              "external_id": "0x42cb81f5eb2fe892f7b1851a8ca9c54f513328b8bc55ff07825a1df5ebdf5f6d",
+              "deadline_member": {
+                "market_id": 65678073,
+                "name": "Zacharia issues public apology by October 31?",
+                "source": "polymarket",
+                "external_id": "0x42cb81f5eb2fe892f7b1851a8ca9c54f513328b8bc55ff07825a1df5ebdf5f6d",
+                "group_id": "polymarket:256241",
+                "group_type": "polymarket_sub_market",
+                "market_type": "binary",
+                "stem_key": "zacharia issues public apology",
+                "display_stem": "Zacharia issues public apology",
+                "shared_question": "Zacharia issues public apology by…?",
+                "preposition": "by",
+                "deadline_text": "October 31",
+                "short_deadline": "Oct 31",
+                "deadline_label": "By Oct 31",
+                "calendar_date": "2026-10-31",
+                "deadline_instant": "2026-11-01T03:59:00+00:00",
+                "deadline_epoch": 1793505540.0,
+                "cutoff_timezone": "America/New_York",
+                "cutoff_local_time": "23:59",
+                "rule_template_hash": "9451bfbc5ee8d5ea",
+                "rule_verification": {
+                  "verified": true,
+                  "status": "verified",
+                  "rule_template_hash": "9451bfbc5ee8d5ea",
+                  "predicate_hash": "787d1efb05266b08",
+                  "window_kind": "cumulative_from_creation",
+                  "window_start_kind": "market_creation",
+                  "window_start_instant": null,
+                  "nested_window_proven": false,
+                  "cutoff_timezone": "America/New_York",
+                  "cutoff_local_time": "23:59",
+                  "group_item_title": "October 31",
+                  "condition_id": "0x42cb81f5eb2fe892f7b1851a8ca9c54f513328b8bc55ff07825a1df5ebdf5f6d",
+                  "question_sha256": "bd85d3c8c5b46464e380b9756b5a3bd82c9eb89832dce13cc1d639f682258765",
+                  "description_sha256": null,
+                  "end_date_iso": "2026-11-01T03:59:00+00:00",
+                  "missing_producer_fields": []
+                },
+                "yes_outcome_id": 246879005,
+                "yes_outcome_name": "Yes",
+                "yes_external_id": "74167794401960881962150670422546952062478246672716256803305946716278016867432",
+                "no_outcome_id": 246879006,
+                "no_external_id": "23750296999441781140845142318022266810772441561257322279207268816415471449435",
+                "yes_probability": 0.073,
+                "yes_rendered_percent": 7,
+                "no_probability": 0.927,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.073,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "no_source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.927,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "price_observed_at": "2026-10-14T13:20:41+00:00",
+                "yes_price_observed_at": "2026-10-14T13:20:41+00:00",
+                "yes_observation_fresh": true,
+                "stored_movement_claim": null,
+                "movement_basis": null,
+                "movement_status": "no_stored_claim",
+                "supported_move": null,
+                "supported_move_points": null,
+                "show_hero_movement_chip": false,
+                "show_row_movement_badge": false,
+                "timeframe": null,
+                "settlement": {
+                  "state": "open",
+                  "is_settled": false,
+                  "is_trading_closed": false,
+                  "is_deadline_passed": false,
+                  "venue_closure_evidence": false,
+                  "conflicting_settlement_evidence": false,
+                  "status": "open",
+                  "result": null,
+                  "authoritative_source": null,
+                  "lagging_local_status": false
+                },
+                "is_near_certain": false,
+                "near_certain_open_eligible": false,
+                "provider_market_count": 2,
+                "verified_family_count": 2,
+                "detail_href": "/futures/65678073"
+              },
+              "confidence_tier": "low",
+              "confidence_score": 0.3529,
+              "confidence_signals": {
+                "has_closing_line": false
+              },
+              "market_tags": [
+                "category:conference",
+                "market_status:open",
+                "source:polymarket",
+                "sport:politics",
+                "tier:2"
+              ]
+            }
+          },
+          {
+            "type": "futures",
+            "score": 73,
+            "reason": "",
+            "headline": null,
+            "context_summary": "",
+            "data": {
+              "id": 65678074,
+              "name": "Zacharia issues public apology by December 31?",
+              "sport": null,
+              "sport_name": null,
+              "llm_sport_category": "politics",
+              "source": "polymarket",
+              "source_count": 1,
+              "sources": [
+                "polymarket"
+              ],
+              "market_tier": 2,
+              "market_type": "binary",
+              "status": "open",
+              "resolution_date": "2027-01-01T04:59:00+00:00",
+              "price_observed_at": "2026-10-14T13:20:41+00:00",
+              "top_outcomes": [
+                {
+                  "id": 246879008,
+                  "name": "No",
+                  "probability": 0.755,
+                  "rank": 1,
+                  "movement": null,
+                  "rendered_percent": 76
+                },
+                {
+                  "id": 246879007,
+                  "name": "Yes",
+                  "probability": 0.245,
+                  "rank": 2,
+                  "movement": null,
+                  "rendered_percent": 24
+                }
+              ],
+              "full_field_rendered": true,
+              "display_scale": 1.0,
+              "card_sum_reason": null,
+              "outcome_count": 2,
+              "canonical_market_key": null,
+              "group_id": "polymarket:256241",
+              "group_type": "polymarket_sub_market",
+              "discover_card": {
+                "suggested_format": "binary_probability",
+                "bundle_candidate": false,
+                "comparison_theme": null,
+                "threshold_points": [],
+                "ladder_treatment_refused": false,
+                "field_is_a_race": true,
+                "distribution_outcomes": [
+                  {
+                    "label": "No",
+                    "probability": 0.755,
+                    "movement": null,
+                    "rendered_percent": 76
+                  },
+                  {
+                    "label": "Yes",
+                    "probability": 0.245,
+                    "movement": null,
+                    "rendered_percent": 24
+                  }
+                ],
+                "distribution_order": "probability",
+                "remaining_outcome_count": 0,
+                "qa_signals": [],
+                "public_source_disagreement": false,
+                "reasons": []
+              },
+              "image_url": null,
+              "image_width": null,
+              "image_height": null,
+              "hook_description": null,
+              "temporal_badge": "New",
+              "external_id": "0x28561992978d9dc04ab0b039d7b6390cd6116ef60d1ce3ed2da5328d73bc8ef9",
+              "deadline_member": {
+                "market_id": 65678074,
+                "name": "Zacharia issues public apology by December 31?",
+                "source": "polymarket",
+                "external_id": "0x28561992978d9dc04ab0b039d7b6390cd6116ef60d1ce3ed2da5328d73bc8ef9",
+                "group_id": "polymarket:256241",
+                "group_type": "polymarket_sub_market",
+                "market_type": "binary",
+                "stem_key": "zacharia issues public apology",
+                "display_stem": "Zacharia issues public apology",
+                "shared_question": "Zacharia issues public apology by…?",
+                "preposition": "by",
+                "deadline_text": "December 31",
+                "short_deadline": "Dec 31",
+                "deadline_label": "By Dec 31",
+                "calendar_date": "2026-12-31",
+                "deadline_instant": "2027-01-01T04:59:00+00:00",
+                "deadline_epoch": 1798779540.0,
+                "cutoff_timezone": "America/New_York",
+                "cutoff_local_time": "23:59",
+                "rule_template_hash": "9451bfbc5ee8d5ea",
+                "rule_verification": {
+                  "verified": true,
+                  "status": "verified",
+                  "rule_template_hash": "9451bfbc5ee8d5ea",
+                  "predicate_hash": "787d1efb05266b08",
+                  "window_kind": "cumulative_from_creation",
+                  "window_start_kind": "market_creation",
+                  "window_start_instant": null,
+                  "nested_window_proven": false,
+                  "cutoff_timezone": "America/New_York",
+                  "cutoff_local_time": "23:59",
+                  "group_item_title": "December 31",
+                  "condition_id": "0x28561992978d9dc04ab0b039d7b6390cd6116ef60d1ce3ed2da5328d73bc8ef9",
+                  "question_sha256": "f6515645004fd91e24b8a36562244d3be2e051f479f6dbadcd172e657a11bee4",
+                  "description_sha256": null,
+                  "end_date_iso": "2027-01-01T04:59:00+00:00",
+                  "missing_producer_fields": []
+                },
+                "yes_outcome_id": 246879007,
+                "yes_outcome_name": "Yes",
+                "yes_external_id": "109248864950550918456926707901283260679215457211637114746364964324227495763694",
+                "no_outcome_id": 246879008,
+                "no_external_id": "52010207094808582680015014179469522027848394847004098667580388318701129457468",
+                "yes_probability": 0.245,
+                "yes_rendered_percent": 24,
+                "no_probability": 0.755,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.245,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ],
+                  "method": "The source gave 24.5%. The card rounds it to 24%."
+                },
+                "no_source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.755,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "price_observed_at": "2026-10-14T13:20:41+00:00",
+                "yes_price_observed_at": "2026-10-14T13:20:41+00:00",
+                "yes_observation_fresh": true,
+                "stored_movement_claim": null,
+                "movement_basis": null,
+                "movement_status": "no_stored_claim",
+                "supported_move": null,
+                "supported_move_points": null,
+                "show_hero_movement_chip": false,
+                "show_row_movement_badge": false,
+                "timeframe": null,
+                "settlement": {
+                  "state": "open",
+                  "is_settled": false,
+                  "is_trading_closed": false,
+                  "is_deadline_passed": false,
+                  "venue_closure_evidence": false,
+                  "conflicting_settlement_evidence": false,
+                  "status": "open",
+                  "result": null,
+                  "authoritative_source": null,
+                  "lagging_local_status": false
+                },
+                "is_near_certain": false,
+                "near_certain_open_eligible": false,
+                "provider_market_count": 2,
+                "verified_family_count": 2,
+                "detail_href": "/futures/65678074"
+              },
+              "confidence_tier": "low",
+              "confidence_score": 0.3529,
+              "confidence_signals": {
+                "has_closing_line": false
+              },
+              "market_tags": [
+                "category:conference",
+                "market_status:open",
+                "source:polymarket",
+                "sport:politics",
+                "tier:2"
+              ]
+            }
+          }
+        ],
+        "deadline_family": {
+          "story_key": "story:deadline_family:polymarket:256241",
+          "source": "polymarket",
+          "group_id": "polymarket:256241",
+          "title": "Zacharia issues public apology",
+          "shared_question": "Zacharia issues public apology by…?",
+          "family_state": "open",
+          "rule_template_hash": "9451bfbc5ee8d5ea",
+          "window_start_kind": "market_creation",
+          "nested_window_proven": false,
+          "cutoff_timezone": "America/New_York",
+          "cutoff_local_time": "23:59",
+          "representative_market_id": 65678074,
+          "representative_outcome_id": 246879007,
+          "representative_deadline_label": "By Dec 31",
+          "selection_reason": "nearest_50_pct_fallback",
+          "tie_break_rule": "abs_supported_move_desc -> distance_from_50pct_asc -> deadline_instant_asc -> market_id_asc",
+          "hero_min_movement_points": 5.0,
+          "moderate_min_movement_points": 2.0,
+          "represented_count": 2,
+          "verified_family_count": 2,
+          "provider_market_count": 2,
+          "inventory_complete": true,
+          "representative_timeframe": null,
+          "members": [
+            {
+              "market_id": 65678073,
+              "name": "Zacharia issues public apology by October 31?",
+              "source": "polymarket",
+              "external_id": "0x42cb81f5eb2fe892f7b1851a8ca9c54f513328b8bc55ff07825a1df5ebdf5f6d",
+              "group_id": "polymarket:256241",
+              "group_type": "polymarket_sub_market",
+              "market_type": "binary",
+              "stem_key": "zacharia issues public apology",
+              "display_stem": "Zacharia issues public apology",
+              "shared_question": "Zacharia issues public apology by…?",
+              "preposition": "by",
+              "deadline_text": "October 31",
+              "short_deadline": "Oct 31",
+              "deadline_label": "By Oct 31",
+              "calendar_date": "2026-10-31",
+              "deadline_instant": "2026-11-01T03:59:00+00:00",
+              "deadline_epoch": 1793505540.0,
+              "cutoff_timezone": "America/New_York",
+              "cutoff_local_time": "23:59",
+              "rule_template_hash": "9451bfbc5ee8d5ea",
+              "rule_verification": {
+                "verified": true,
+                "status": "verified",
+                "rule_template_hash": "9451bfbc5ee8d5ea",
+                "predicate_hash": "787d1efb05266b08",
+                "window_kind": "cumulative_from_creation",
+                "window_start_kind": "market_creation",
+                "window_start_instant": null,
+                "nested_window_proven": false,
+                "cutoff_timezone": "America/New_York",
+                "cutoff_local_time": "23:59",
+                "group_item_title": "October 31",
+                "condition_id": "0x42cb81f5eb2fe892f7b1851a8ca9c54f513328b8bc55ff07825a1df5ebdf5f6d",
+                "question_sha256": "bd85d3c8c5b46464e380b9756b5a3bd82c9eb89832dce13cc1d639f682258765",
+                "description_sha256": null,
+                "end_date_iso": "2026-11-01T03:59:00+00:00",
+                "missing_producer_fields": []
+              },
+              "yes_outcome_id": 246879005,
+              "yes_outcome_name": "Yes",
+              "yes_external_id": "74167794401960881962150670422546952062478246672716256803305946716278016867432",
+              "no_outcome_id": 246879006,
+              "no_external_id": "23750296999441781140845142318022266810772441561257322279207268816415471449435",
+              "yes_probability": 0.073,
+              "yes_rendered_percent": 7,
+              "no_probability": 0.927,
+              "source_mark": {
+                "state": "single",
+                "sources": [
+                  {
+                    "key": "polymarket",
+                    "name": "Polymarket",
+                    "probability": 0.073,
+                    "observed_at": null,
+                    "reason": "observation_unknown"
+                  }
+                ]
+              },
+              "no_source_mark": {
+                "state": "single",
+                "sources": [
+                  {
+                    "key": "polymarket",
+                    "name": "Polymarket",
+                    "probability": 0.927,
+                    "observed_at": null,
+                    "reason": "observation_unknown"
+                  }
+                ]
+              },
+              "price_observed_at": "2026-10-14T13:20:41+00:00",
+              "yes_price_observed_at": "2026-10-14T13:20:41+00:00",
+              "yes_observation_fresh": true,
+              "stored_movement_claim": null,
+              "movement_basis": null,
+              "movement_status": "no_stored_claim",
+              "supported_move": null,
+              "supported_move_points": null,
+              "show_hero_movement_chip": false,
+              "show_row_movement_badge": false,
+              "timeframe": null,
+              "settlement": {
+                "state": "open",
+                "is_settled": false,
+                "is_trading_closed": false,
+                "is_deadline_passed": false,
+                "venue_closure_evidence": false,
+                "conflicting_settlement_evidence": false,
+                "status": "open",
+                "result": null,
+                "authoritative_source": null,
+                "lagging_local_status": false
+              },
+              "is_near_certain": false,
+              "near_certain_open_eligible": false,
+              "provider_market_count": 2,
+              "verified_family_count": null,
+              "detail_href": "/futures/65678073"
+            },
+            {
+              "market_id": 65678074,
+              "name": "Zacharia issues public apology by December 31?",
+              "source": "polymarket",
+              "external_id": "0x28561992978d9dc04ab0b039d7b6390cd6116ef60d1ce3ed2da5328d73bc8ef9",
+              "group_id": "polymarket:256241",
+              "group_type": "polymarket_sub_market",
+              "market_type": "binary",
+              "stem_key": "zacharia issues public apology",
+              "display_stem": "Zacharia issues public apology",
+              "shared_question": "Zacharia issues public apology by…?",
+              "preposition": "by",
+              "deadline_text": "December 31",
+              "short_deadline": "Dec 31",
+              "deadline_label": "By Dec 31",
+              "calendar_date": "2026-12-31",
+              "deadline_instant": "2027-01-01T04:59:00+00:00",
+              "deadline_epoch": 1798779540.0,
+              "cutoff_timezone": "America/New_York",
+              "cutoff_local_time": "23:59",
+              "rule_template_hash": "9451bfbc5ee8d5ea",
+              "rule_verification": {
+                "verified": true,
+                "status": "verified",
+                "rule_template_hash": "9451bfbc5ee8d5ea",
+                "predicate_hash": "787d1efb05266b08",
+                "window_kind": "cumulative_from_creation",
+                "window_start_kind": "market_creation",
+                "window_start_instant": null,
+                "nested_window_proven": false,
+                "cutoff_timezone": "America/New_York",
+                "cutoff_local_time": "23:59",
+                "group_item_title": "December 31",
+                "condition_id": "0x28561992978d9dc04ab0b039d7b6390cd6116ef60d1ce3ed2da5328d73bc8ef9",
+                "question_sha256": "f6515645004fd91e24b8a36562244d3be2e051f479f6dbadcd172e657a11bee4",
+                "description_sha256": null,
+                "end_date_iso": "2027-01-01T04:59:00+00:00",
+                "missing_producer_fields": []
+              },
+              "yes_outcome_id": 246879007,
+              "yes_outcome_name": "Yes",
+              "yes_external_id": "109248864950550918456926707901283260679215457211637114746364964324227495763694",
+              "no_outcome_id": 246879008,
+              "no_external_id": "52010207094808582680015014179469522027848394847004098667580388318701129457468",
+              "yes_probability": 0.245,
+              "yes_rendered_percent": 24,
+              "no_probability": 0.755,
+              "source_mark": {
+                "state": "single",
+                "sources": [
+                  {
+                    "key": "polymarket",
+                    "name": "Polymarket",
+                    "probability": 0.245,
+                    "observed_at": null,
+                    "reason": "observation_unknown"
+                  }
+                ],
+                "method": "The source gave 24.5%. The card rounds it to 24%."
+              },
+              "no_source_mark": {
+                "state": "single",
+                "sources": [
+                  {
+                    "key": "polymarket",
+                    "name": "Polymarket",
+                    "probability": 0.755,
+                    "observed_at": null,
+                    "reason": "observation_unknown"
+                  }
+                ]
+              },
+              "price_observed_at": "2026-10-14T13:20:41+00:00",
+              "yes_price_observed_at": "2026-10-14T13:20:41+00:00",
+              "yes_observation_fresh": true,
+              "stored_movement_claim": null,
+              "movement_basis": null,
+              "movement_status": "no_stored_claim",
+              "supported_move": null,
+              "supported_move_points": null,
+              "show_hero_movement_chip": false,
+              "show_row_movement_badge": false,
+              "timeframe": null,
+              "settlement": {
+                "state": "open",
+                "is_settled": false,
+                "is_trading_closed": false,
+                "is_deadline_passed": false,
+                "venue_closure_evidence": false,
+                "conflicting_settlement_evidence": false,
+                "status": "open",
+                "result": null,
+                "authoritative_source": null,
+                "lagging_local_status": false
+              },
+              "is_near_certain": false,
+              "near_certain_open_eligible": false,
+              "provider_market_count": 2,
+              "verified_family_count": null,
+              "detail_href": "/futures/65678074"
+            }
+          ]
+        },
+        "debug_bundles": {
+          "grouped_by": "deadline_family",
+          "story_key": "story:deadline_family:polymarket:256241",
+          "group_id": "polymarket:256241",
+          "member_ids": [
+            65678073,
+            65678074
+          ],
+          "representative_market_id": 65678074,
+          "representative_outcome_id": 246879007,
+          "selection_reason": "nearest_50_pct_fallback",
+          "question_source": "deadline_stem"
+        }
+      },
+      "_sort_time": 1793129732.0
+    },
+    {
+      "type": "bundle",
+      "score": 73.0,
+      "_rank_score": 73.0,
+      "reason": "Zacharia issues public apology by…?",
+      "headline": "Zacharia issues public apology",
+      "data": {
+        "id": "theme:story:deadline_family:polymarket:256241:65678073-65678074",
+        "title": "Zacharia issues public apology",
+        "kind": "theme",
+        "story_key": "story:deadline_family:polymarket:256241",
+        "group_id": "polymarket:256241",
+        "shared_question": "Zacharia issues public apology by…?",
+        "item_count": 2,
+        "member_ids": [
+          65678073,
+          65678074
+        ],
+        "items": [
+          {
+            "type": "futures",
+            "score": 73,
+            "reason": "Zacharia issues public apology by October 31: 7% chance, resolves within a month",
+            "headline": "Resolving within a month",
+            "context_summary": "7% chance, resolves within a month",
+            "data": {
+              "id": 65678073,
+              "name": "Zacharia issues public apology by October 31?",
+              "sport": null,
+              "sport_name": null,
+              "llm_sport_category": "politics",
+              "source": "polymarket",
+              "source_count": 1,
+              "sources": [
+                "polymarket"
+              ],
+              "market_tier": 2,
+              "market_type": "binary",
+              "status": "open",
+              "resolution_date": "2026-11-01T03:59:00+00:00",
+              "price_observed_at": "2026-10-14T13:20:41+00:00",
+              "top_outcomes": [
+                {
+                  "id": 246879006,
+                  "name": "No",
+                  "probability": 0.927,
+                  "rank": 1,
+                  "movement": null,
+                  "rendered_percent": 93
+                },
+                {
+                  "id": 246879005,
+                  "name": "Yes",
+                  "probability": 0.073,
+                  "rank": 2,
+                  "movement": null,
+                  "rendered_percent": 7
+                }
+              ],
+              "full_field_rendered": true,
+              "display_scale": 1.0,
+              "card_sum_reason": null,
+              "outcome_count": 2,
+              "canonical_market_key": null,
+              "group_id": "polymarket:256241",
+              "group_type": "polymarket_sub_market",
+              "discover_card": {
+                "suggested_format": "binary_probability",
+                "bundle_candidate": false,
+                "comparison_theme": null,
+                "threshold_points": [],
+                "ladder_treatment_refused": false,
+                "field_is_a_race": true,
+                "distribution_outcomes": [
+                  {
+                    "label": "No",
+                    "probability": 0.927,
+                    "movement": null,
+                    "rendered_percent": 93
+                  },
+                  {
+                    "label": "Yes",
+                    "probability": 0.073,
+                    "movement": null,
+                    "rendered_percent": 7
+                  }
+                ],
+                "distribution_order": "probability",
+                "remaining_outcome_count": 0,
+                "qa_signals": [],
+                "public_source_disagreement": false,
+                "reasons": []
+              },
+              "image_url": null,
+              "image_width": null,
+              "image_height": null,
+              "hook_description": null,
+              "temporal_badge": "New",
+              "external_id": "0x42cb81f5eb2fe892f7b1851a8ca9c54f513328b8bc55ff07825a1df5ebdf5f6d",
+              "deadline_member": {
+                "market_id": 65678073,
+                "name": "Zacharia issues public apology by October 31?",
+                "source": "polymarket",
+                "external_id": "0x42cb81f5eb2fe892f7b1851a8ca9c54f513328b8bc55ff07825a1df5ebdf5f6d",
+                "group_id": "polymarket:256241",
+                "group_type": "polymarket_sub_market",
+                "market_type": "binary",
+                "stem_key": "zacharia issues public apology",
+                "display_stem": "Zacharia issues public apology",
+                "shared_question": "Zacharia issues public apology by…?",
+                "preposition": "by",
+                "deadline_text": "October 31",
+                "short_deadline": "Oct 31",
+                "deadline_label": "By Oct 31",
+                "calendar_date": "2026-10-31",
+                "deadline_instant": "2026-11-01T03:59:00+00:00",
+                "deadline_epoch": 1793505540.0,
+                "cutoff_timezone": "America/New_York",
+                "cutoff_local_time": "23:59",
+                "rule_template_hash": "9451bfbc5ee8d5ea",
+                "rule_verification": {
+                  "verified": true,
+                  "status": "verified",
+                  "rule_template_hash": "9451bfbc5ee8d5ea",
+                  "predicate_hash": "787d1efb05266b08",
+                  "window_kind": "cumulative_from_creation",
+                  "window_start_kind": "market_creation",
+                  "window_start_instant": null,
+                  "nested_window_proven": false,
+                  "cutoff_timezone": "America/New_York",
+                  "cutoff_local_time": "23:59",
+                  "group_item_title": "October 31",
+                  "condition_id": "0x42cb81f5eb2fe892f7b1851a8ca9c54f513328b8bc55ff07825a1df5ebdf5f6d",
+                  "question_sha256": "bd85d3c8c5b46464e380b9756b5a3bd82c9eb89832dce13cc1d639f682258765",
+                  "description_sha256": null,
+                  "end_date_iso": "2026-11-01T03:59:00+00:00",
+                  "missing_producer_fields": []
+                },
+                "yes_outcome_id": 246879005,
+                "yes_outcome_name": "Yes",
+                "yes_external_id": "74167794401960881962150670422546952062478246672716256803305946716278016867432",
+                "no_outcome_id": 246879006,
+                "no_external_id": "23750296999441781140845142318022266810772441561257322279207268816415471449435",
+                "yes_probability": 0.073,
+                "yes_rendered_percent": 7,
+                "no_probability": 0.927,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.073,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "no_source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.927,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "price_observed_at": "2026-10-14T13:20:41+00:00",
+                "yes_price_observed_at": "2026-10-14T13:20:41+00:00",
+                "yes_observation_fresh": true,
+                "stored_movement_claim": -0.011,
+                "movement_basis": {
+                  "outcome_id": 246879005,
+                  "basis_price": 0.084,
+                  "observed_at": "2026-10-14T00:30:00+00:00",
+                  "age_hours": 23.2878,
+                  "in_window": true,
+                  "admits_zero": false
+                },
+                "movement_status": "sub_threshold",
+                "supported_move": -0.011,
+                "supported_move_points": -1.1,
+                "show_hero_movement_chip": false,
+                "show_row_movement_badge": false,
+                "timeframe": {
+                  "valid": true,
+                  "calendar_day_diff": 0,
+                  "crosses_previous_calendar_day": false,
+                  "chip_timeframe": "since 12:30 AM",
+                  "sentence_timeframe": "today since 12:30 AM",
+                  "timezone": "UTC"
+                },
+                "settlement": {
+                  "state": "open",
+                  "is_settled": false,
+                  "is_trading_closed": false,
+                  "is_deadline_passed": false,
+                  "venue_closure_evidence": false,
+                  "conflicting_settlement_evidence": false,
+                  "status": "open",
+                  "result": null,
+                  "authoritative_source": null,
+                  "lagging_local_status": false
+                },
+                "is_near_certain": false,
+                "near_certain_open_eligible": false,
+                "provider_market_count": 2,
+                "verified_family_count": 2,
+                "detail_href": "/futures/65678073"
+              },
+              "confidence_tier": "moderate",
+              "confidence_score": 0.6471,
+              "confidence_signals": {
+                "has_closing_line": false
+              },
+              "market_tags": [
+                "category:conference",
+                "market_status:open",
+                "source:polymarket",
+                "sport:politics",
+                "tier:2"
+              ]
+            }
+          },
+          {
+            "type": "futures",
+            "score": 73,
+            "reason": "",
+            "headline": "Big odds movement",
+            "context_summary": "",
+            "data": {
+              "id": 65678074,
+              "name": "Zacharia issues public apology by December 31?",
+              "sport": null,
+              "sport_name": null,
+              "llm_sport_category": "politics",
+              "source": "polymarket",
+              "source_count": 1,
+              "sources": [
+                "polymarket"
+              ],
+              "market_tier": 2,
+              "market_type": "binary",
+              "status": "open",
+              "resolution_date": "2027-01-01T04:59:00+00:00",
+              "price_observed_at": "2026-10-14T13:20:41+00:00",
+              "top_outcomes": [
+                {
+                  "id": 246879008,
+                  "name": "No",
+                  "probability": 0.755,
+                  "rank": 1,
+                  "movement": null,
+                  "rendered_percent": 76
+                },
+                {
+                  "id": 246879007,
+                  "name": "Yes",
+                  "probability": 0.245,
+                  "rank": 2,
+                  "movement": null,
+                  "rendered_percent": 24
+                }
+              ],
+              "full_field_rendered": true,
+              "display_scale": 1.0,
+              "card_sum_reason": null,
+              "outcome_count": 2,
+              "canonical_market_key": null,
+              "group_id": "polymarket:256241",
+              "group_type": "polymarket_sub_market",
+              "discover_card": {
+                "suggested_format": "probability_timeline",
+                "bundle_candidate": false,
+                "comparison_theme": null,
+                "threshold_points": [],
+                "ladder_treatment_refused": false,
+                "field_is_a_race": true,
+                "distribution_outcomes": [
+                  {
+                    "label": "No",
+                    "probability": 0.755,
+                    "movement": null,
+                    "rendered_percent": 76
+                  },
+                  {
+                    "label": "Yes",
+                    "probability": 0.245,
+                    "movement": null,
+                    "rendered_percent": 24
+                  }
+                ],
+                "distribution_order": "probability",
+                "remaining_outcome_count": 0,
+                "qa_signals": [],
+                "public_source_disagreement": false,
+                "reasons": [
+                  "recent_movement"
+                ]
+              },
+              "image_url": null,
+              "image_width": null,
+              "image_height": null,
+              "hook_description": null,
+              "temporal_badge": "New",
+              "external_id": "0x28561992978d9dc04ab0b039d7b6390cd6116ef60d1ce3ed2da5328d73bc8ef9",
+              "deadline_member": {
+                "market_id": 65678074,
+                "name": "Zacharia issues public apology by December 31?",
+                "source": "polymarket",
+                "external_id": "0x28561992978d9dc04ab0b039d7b6390cd6116ef60d1ce3ed2da5328d73bc8ef9",
+                "group_id": "polymarket:256241",
+                "group_type": "polymarket_sub_market",
+                "market_type": "binary",
+                "stem_key": "zacharia issues public apology",
+                "display_stem": "Zacharia issues public apology",
+                "shared_question": "Zacharia issues public apology by…?",
+                "preposition": "by",
+                "deadline_text": "December 31",
+                "short_deadline": "Dec 31",
+                "deadline_label": "By Dec 31",
+                "calendar_date": "2026-12-31",
+                "deadline_instant": "2027-01-01T04:59:00+00:00",
+                "deadline_epoch": 1798779540.0,
+                "cutoff_timezone": "America/New_York",
+                "cutoff_local_time": "23:59",
+                "rule_template_hash": "9451bfbc5ee8d5ea",
+                "rule_verification": {
+                  "verified": true,
+                  "status": "verified",
+                  "rule_template_hash": "9451bfbc5ee8d5ea",
+                  "predicate_hash": "787d1efb05266b08",
+                  "window_kind": "cumulative_from_creation",
+                  "window_start_kind": "market_creation",
+                  "window_start_instant": null,
+                  "nested_window_proven": false,
+                  "cutoff_timezone": "America/New_York",
+                  "cutoff_local_time": "23:59",
+                  "group_item_title": "December 31",
+                  "condition_id": "0x28561992978d9dc04ab0b039d7b6390cd6116ef60d1ce3ed2da5328d73bc8ef9",
+                  "question_sha256": "f6515645004fd91e24b8a36562244d3be2e051f479f6dbadcd172e657a11bee4",
+                  "description_sha256": null,
+                  "end_date_iso": "2027-01-01T04:59:00+00:00",
+                  "missing_producer_fields": []
+                },
+                "yes_outcome_id": 246879007,
+                "yes_outcome_name": "Yes",
+                "yes_external_id": "109248864950550918456926707901283260679215457211637114746364964324227495763694",
+                "no_outcome_id": 246879008,
+                "no_external_id": "52010207094808582680015014179469522027848394847004098667580388318701129457468",
+                "yes_probability": 0.245,
+                "yes_rendered_percent": 24,
+                "no_probability": 0.755,
+                "source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.245,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ],
+                  "method": "The source gave 24.5%. The card rounds it to 24%."
+                },
+                "no_source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "polymarket",
+                      "name": "Polymarket",
+                      "probability": 0.755,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "price_observed_at": "2026-10-14T13:20:41+00:00",
+                "yes_price_observed_at": "2026-10-14T13:20:41+00:00",
+                "yes_observation_fresh": true,
+                "stored_movement_claim": -0.065,
+                "movement_basis": {
+                  "outcome_id": 246879007,
+                  "basis_price": 0.31,
+                  "observed_at": "2026-10-14T00:30:00+00:00",
+                  "age_hours": 23.2878,
+                  "in_window": true,
+                  "admits_zero": false
+                },
+                "movement_status": "hero",
+                "supported_move": -0.065,
+                "supported_move_points": -6.5,
+                "show_hero_movement_chip": true,
+                "show_row_movement_badge": true,
+                "timeframe": {
+                  "valid": true,
+                  "calendar_day_diff": 0,
+                  "crosses_previous_calendar_day": false,
+                  "chip_timeframe": "since 12:30 AM",
+                  "sentence_timeframe": "today since 12:30 AM",
+                  "timezone": "UTC"
+                },
+                "settlement": {
+                  "state": "open",
+                  "is_settled": false,
+                  "is_trading_closed": false,
+                  "is_deadline_passed": false,
+                  "venue_closure_evidence": false,
+                  "conflicting_settlement_evidence": false,
+                  "status": "open",
+                  "result": null,
+                  "authoritative_source": null,
+                  "lagging_local_status": false
+                },
+                "is_near_certain": false,
+                "near_certain_open_eligible": false,
+                "provider_market_count": 2,
+                "verified_family_count": 2,
+                "detail_href": "/futures/65678074"
+              },
+              "confidence_tier": "moderate",
+              "confidence_score": 0.6471,
+              "confidence_signals": {
+                "has_closing_line": false
+              },
+              "market_tags": [
+                "category:conference",
+                "market_status:open",
+                "source:polymarket",
+                "sport:politics",
+                "tier:2"
+              ]
+            }
+          }
+        ],
+        "deadline_family": {
+          "story_key": "story:deadline_family:polymarket:256241",
+          "source": "polymarket",
+          "group_id": "polymarket:256241",
+          "title": "Zacharia issues public apology",
+          "shared_question": "Zacharia issues public apology by…?",
+          "family_state": "open",
+          "rule_template_hash": "9451bfbc5ee8d5ea",
+          "window_start_kind": "market_creation",
+          "nested_window_proven": false,
+          "cutoff_timezone": "America/New_York",
+          "cutoff_local_time": "23:59",
+          "representative_market_id": 65678074,
+          "representative_outcome_id": 246879007,
+          "representative_deadline_label": "By Dec 31",
+          "selection_reason": "largest_supported_dated_move",
+          "tie_break_rule": "abs_supported_move_desc -> distance_from_50pct_asc -> deadline_instant_asc -> market_id_asc",
+          "hero_min_movement_points": 5.0,
+          "moderate_min_movement_points": 2.0,
+          "represented_count": 2,
+          "verified_family_count": 2,
+          "provider_market_count": 2,
+          "inventory_complete": true,
+          "representative_timeframe": {
+            "valid": true,
+            "calendar_day_diff": 0,
+            "crosses_previous_calendar_day": false,
+            "chip_timeframe": "since 12:30 AM",
+            "sentence_timeframe": "today since 12:30 AM",
+            "timezone": "UTC"
+          },
+          "members": [
+            {
+              "market_id": 65678073,
+              "name": "Zacharia issues public apology by October 31?",
+              "source": "polymarket",
+              "external_id": "0x42cb81f5eb2fe892f7b1851a8ca9c54f513328b8bc55ff07825a1df5ebdf5f6d",
+              "group_id": "polymarket:256241",
+              "group_type": "polymarket_sub_market",
+              "market_type": "binary",
+              "stem_key": "zacharia issues public apology",
+              "display_stem": "Zacharia issues public apology",
+              "shared_question": "Zacharia issues public apology by…?",
+              "preposition": "by",
+              "deadline_text": "October 31",
+              "short_deadline": "Oct 31",
+              "deadline_label": "By Oct 31",
+              "calendar_date": "2026-10-31",
+              "deadline_instant": "2026-11-01T03:59:00+00:00",
+              "deadline_epoch": 1793505540.0,
+              "cutoff_timezone": "America/New_York",
+              "cutoff_local_time": "23:59",
+              "rule_template_hash": "9451bfbc5ee8d5ea",
+              "rule_verification": {
+                "verified": true,
+                "status": "verified",
+                "rule_template_hash": "9451bfbc5ee8d5ea",
+                "predicate_hash": "787d1efb05266b08",
+                "window_kind": "cumulative_from_creation",
+                "window_start_kind": "market_creation",
+                "window_start_instant": null,
+                "nested_window_proven": false,
+                "cutoff_timezone": "America/New_York",
+                "cutoff_local_time": "23:59",
+                "group_item_title": "October 31",
+                "condition_id": "0x42cb81f5eb2fe892f7b1851a8ca9c54f513328b8bc55ff07825a1df5ebdf5f6d",
+                "question_sha256": "bd85d3c8c5b46464e380b9756b5a3bd82c9eb89832dce13cc1d639f682258765",
+                "description_sha256": null,
+                "end_date_iso": "2026-11-01T03:59:00+00:00",
+                "missing_producer_fields": []
+              },
+              "yes_outcome_id": 246879005,
+              "yes_outcome_name": "Yes",
+              "yes_external_id": "74167794401960881962150670422546952062478246672716256803305946716278016867432",
+              "no_outcome_id": 246879006,
+              "no_external_id": "23750296999441781140845142318022266810772441561257322279207268816415471449435",
+              "yes_probability": 0.073,
+              "yes_rendered_percent": 7,
+              "no_probability": 0.927,
+              "source_mark": {
+                "state": "single",
+                "sources": [
+                  {
+                    "key": "polymarket",
+                    "name": "Polymarket",
+                    "probability": 0.073,
+                    "observed_at": null,
+                    "reason": "observation_unknown"
+                  }
+                ]
+              },
+              "no_source_mark": {
+                "state": "single",
+                "sources": [
+                  {
+                    "key": "polymarket",
+                    "name": "Polymarket",
+                    "probability": 0.927,
+                    "observed_at": null,
+                    "reason": "observation_unknown"
+                  }
+                ]
+              },
+              "price_observed_at": "2026-10-14T13:20:41+00:00",
+              "yes_price_observed_at": "2026-10-14T13:20:41+00:00",
+              "yes_observation_fresh": true,
+              "stored_movement_claim": -0.011,
+              "movement_basis": {
+                "outcome_id": 246879005,
+                "basis_price": 0.084,
+                "observed_at": "2026-10-14T00:30:00+00:00",
+                "age_hours": 23.2878,
+                "in_window": true,
+                "admits_zero": false
+              },
+              "movement_status": "sub_threshold",
+              "supported_move": -0.011,
+              "supported_move_points": -1.1,
+              "show_hero_movement_chip": false,
+              "show_row_movement_badge": false,
+              "timeframe": {
+                "valid": true,
+                "calendar_day_diff": 0,
+                "crosses_previous_calendar_day": false,
+                "chip_timeframe": "since 12:30 AM",
+                "sentence_timeframe": "today since 12:30 AM",
+                "timezone": "UTC"
+              },
+              "settlement": {
+                "state": "open",
+                "is_settled": false,
+                "is_trading_closed": false,
+                "is_deadline_passed": false,
+                "venue_closure_evidence": false,
+                "conflicting_settlement_evidence": false,
+                "status": "open",
+                "result": null,
+                "authoritative_source": null,
+                "lagging_local_status": false
+              },
+              "is_near_certain": false,
+              "near_certain_open_eligible": false,
+              "provider_market_count": 2,
+              "verified_family_count": null,
+              "detail_href": "/futures/65678073"
+            },
+            {
+              "market_id": 65678074,
+              "name": "Zacharia issues public apology by December 31?",
+              "source": "polymarket",
+              "external_id": "0x28561992978d9dc04ab0b039d7b6390cd6116ef60d1ce3ed2da5328d73bc8ef9",
+              "group_id": "polymarket:256241",
+              "group_type": "polymarket_sub_market",
+              "market_type": "binary",
+              "stem_key": "zacharia issues public apology",
+              "display_stem": "Zacharia issues public apology",
+              "shared_question": "Zacharia issues public apology by…?",
+              "preposition": "by",
+              "deadline_text": "December 31",
+              "short_deadline": "Dec 31",
+              "deadline_label": "By Dec 31",
+              "calendar_date": "2026-12-31",
+              "deadline_instant": "2027-01-01T04:59:00+00:00",
+              "deadline_epoch": 1798779540.0,
+              "cutoff_timezone": "America/New_York",
+              "cutoff_local_time": "23:59",
+              "rule_template_hash": "9451bfbc5ee8d5ea",
+              "rule_verification": {
+                "verified": true,
+                "status": "verified",
+                "rule_template_hash": "9451bfbc5ee8d5ea",
+                "predicate_hash": "787d1efb05266b08",
+                "window_kind": "cumulative_from_creation",
+                "window_start_kind": "market_creation",
+                "window_start_instant": null,
+                "nested_window_proven": false,
+                "cutoff_timezone": "America/New_York",
+                "cutoff_local_time": "23:59",
+                "group_item_title": "December 31",
+                "condition_id": "0x28561992978d9dc04ab0b039d7b6390cd6116ef60d1ce3ed2da5328d73bc8ef9",
+                "question_sha256": "f6515645004fd91e24b8a36562244d3be2e051f479f6dbadcd172e657a11bee4",
+                "description_sha256": null,
+                "end_date_iso": "2027-01-01T04:59:00+00:00",
+                "missing_producer_fields": []
+              },
+              "yes_outcome_id": 246879007,
+              "yes_outcome_name": "Yes",
+              "yes_external_id": "109248864950550918456926707901283260679215457211637114746364964324227495763694",
+              "no_outcome_id": 246879008,
+              "no_external_id": "52010207094808582680015014179469522027848394847004098667580388318701129457468",
+              "yes_probability": 0.245,
+              "yes_rendered_percent": 24,
+              "no_probability": 0.755,
+              "source_mark": {
+                "state": "single",
+                "sources": [
+                  {
+                    "key": "polymarket",
+                    "name": "Polymarket",
+                    "probability": 0.245,
+                    "observed_at": null,
+                    "reason": "observation_unknown"
+                  }
+                ],
+                "method": "The source gave 24.5%. The card rounds it to 24%."
+              },
+              "no_source_mark": {
+                "state": "single",
+                "sources": [
+                  {
+                    "key": "polymarket",
+                    "name": "Polymarket",
+                    "probability": 0.755,
+                    "observed_at": null,
+                    "reason": "observation_unknown"
+                  }
+                ]
+              },
+              "price_observed_at": "2026-10-14T13:20:41+00:00",
+              "yes_price_observed_at": "2026-10-14T13:20:41+00:00",
+              "yes_observation_fresh": true,
+              "stored_movement_claim": -0.065,
+              "movement_basis": {
+                "outcome_id": 246879007,
+                "basis_price": 0.31,
+                "observed_at": "2026-10-14T00:30:00+00:00",
+                "age_hours": 23.2878,
+                "in_window": true,
+                "admits_zero": false
+              },
+              "movement_status": "hero",
+              "supported_move": -0.065,
+              "supported_move_points": -6.5,
+              "show_hero_movement_chip": true,
+              "show_row_movement_badge": true,
+              "timeframe": {
+                "valid": true,
+                "calendar_day_diff": 0,
+                "crosses_previous_calendar_day": false,
+                "chip_timeframe": "since 12:30 AM",
+                "sentence_timeframe": "today since 12:30 AM",
+                "timezone": "UTC"
+              },
+              "settlement": {
+                "state": "open",
+                "is_settled": false,
+                "is_trading_closed": false,
+                "is_deadline_passed": false,
+                "venue_closure_evidence": false,
+                "conflicting_settlement_evidence": false,
+                "status": "open",
+                "result": null,
+                "authoritative_source": null,
+                "lagging_local_status": false
+              },
+              "is_near_certain": false,
+              "near_certain_open_eligible": false,
+              "provider_market_count": 2,
+              "verified_family_count": null,
+              "detail_href": "/futures/65678074"
+            }
+          ]
+        },
+        "debug_bundles": {
+          "grouped_by": "deadline_family",
+          "story_key": "story:deadline_family:polymarket:256241",
+          "group_id": "polymarket:256241",
+          "member_ids": [
+            65678073,
+            65678074
+          ],
+          "representative_market_id": 65678074,
+          "representative_outcome_id": 246879007,
+          "selection_reason": "largest_supported_dated_move",
+          "question_source": "deadline_stem"
+        }
+      },
+      "_sort_time": 1793129732.0
+    }
+  ],
+  "public_detail_members": [
+    {
+      "market_id": 65678073,
+      "name": "Katie Zacharia out as Press Secretary by October 31?",
+      "source": "polymarket",
+      "external_id": "0x57e97ab7f68a11013e7e4096ce6b0601b40b9e5a8609c4cb4196ef1b753e6953",
+      "group_id": "polymarket:1183118",
+      "group_type": null,
+      "market_type": null,
+      "stem_key": "katie zacharia out as press secretary",
+      "display_stem": "Katie Zacharia out as Press Secretary",
+      "shared_question": "Katie Zacharia out as Press Secretary by…?",
+      "preposition": "by",
+      "deadline_text": "October 31",
+      "short_deadline": "Oct 31",
+      "deadline_label": "By Oct 31",
+      "calendar_date": "2026-10-31",
+      "deadline_instant": "2026-11-01T03:59:00+00:00",
+      "deadline_epoch": 1793505540.0,
+      "cutoff_timezone": null,
+      "cutoff_local_time": null,
+      "rule_template_hash": null,
+      "rule_verification": {
+        "verified": false,
+        "status": "missing_upstream_rule_text",
+        "rule_template_hash": null,
+        "predicate_hash": null,
+        "window_kind": null,
+        "window_start_kind": null,
+        "window_start_instant": null,
+        "nested_window_proven": false,
+        "cutoff_timezone": null,
+        "cutoff_local_time": null,
+        "missing_producer_fields": [
+          "FuturesMarket.description",
+          "market_metadata.deadline_rule_contract"
+        ]
+      },
+      "yes_outcome_id": 246879005,
+      "yes_outcome_name": "Yes",
+      "yes_external_id": null,
+      "no_outcome_id": 246879006,
+      "no_external_id": null,
+      "yes_probability": 1.0,
+      "yes_rendered_percent": 100,
+      "no_probability": 0.0,
+      "source_mark": {
+        "state": "settled",
+        "sources": [],
+        "settled": {
+          "source": "api_settlement",
+          "result": "Won",
+          "at": null
+        }
+      },
+      "no_source_mark": {
+        "state": "settled",
+        "sources": [],
+        "settled": {
+          "source": "api_settlement",
+          "result": "Lost",
+          "at": null
+        }
+      },
+      "price_observed_at": "2026-10-19T11:53:54.465334+00:00",
+      "yes_price_observed_at": "2026-10-19T11:53:54.465334+00:00",
+      "yes_observation_fresh": false,
+      "stored_movement_claim": null,
+      "movement_basis": null,
+      "movement_status": "settled_suppressed",
+      "supported_move": null,
+      "supported_move_points": null,
+      "show_hero_movement_chip": false,
+      "show_row_movement_badge": false,
+      "timeframe": null,
+      "settlement": {
+        "state": "resolved",
+        "is_settled": true,
+        "is_trading_closed": false,
+        "is_deadline_passed": false,
+        "venue_closure_evidence": true,
+        "conflicting_settlement_evidence": false,
+        "status": "resolved",
+        "result": "Yes",
+        "authoritative_source": "api_settlement",
+        "lagging_local_status": false
+      },
+      "is_near_certain": true,
+      "near_certain_open_eligible": false,
+      "provider_market_count": null,
+      "verified_family_count": null,
+      "detail_href": "/futures/65678073"
+    },
+    {
+      "market_id": 65678074,
+      "name": "Katie Zacharia out as Press Secretary by December 31?",
+      "source": "polymarket",
+      "external_id": "0xc587f97b3eaac5948ed7e148bb5248f51f98795ea0e1c3bc9acf635b0a2f95b0",
+      "group_id": "polymarket:1183118",
+      "group_type": null,
+      "market_type": null,
+      "stem_key": "katie zacharia out as press secretary",
+      "display_stem": "Katie Zacharia out as Press Secretary",
+      "shared_question": "Katie Zacharia out as Press Secretary by…?",
+      "preposition": "by",
+      "deadline_text": "December 31",
+      "short_deadline": "Dec 31",
+      "deadline_label": "By Dec 31",
+      "calendar_date": "2026-12-31",
+      "deadline_instant": "2027-01-01T04:59:00+00:00",
+      "deadline_epoch": 1798779540.0,
+      "cutoff_timezone": null,
+      "cutoff_local_time": null,
+      "rule_template_hash": null,
+      "rule_verification": {
+        "verified": false,
+        "status": "missing_upstream_rule_text",
+        "rule_template_hash": null,
+        "predicate_hash": null,
+        "window_kind": null,
+        "window_start_kind": null,
+        "window_start_instant": null,
+        "nested_window_proven": false,
+        "cutoff_timezone": null,
+        "cutoff_local_time": null,
+        "missing_producer_fields": [
+          "FuturesMarket.description",
+          "market_metadata.deadline_rule_contract"
+        ]
+      },
+      "yes_outcome_id": 246879007,
+      "yes_outcome_name": "Yes",
+      "yes_external_id": null,
+      "no_outcome_id": 246879008,
+      "no_external_id": null,
+      "yes_probability": 1.0,
+      "yes_rendered_percent": 100,
+      "no_probability": 0.0,
+      "source_mark": {
+        "state": "settled",
+        "sources": [],
+        "settled": {
+          "source": "api_settlement",
+          "result": "Won",
+          "at": null
+        }
+      },
+      "no_source_mark": {
+        "state": "settled",
+        "sources": [],
+        "settled": {
+          "source": "api_settlement",
+          "result": "Lost",
+          "at": null
+        }
+      },
+      "price_observed_at": "2026-10-19T11:53:54.465334+00:00",
+      "yes_price_observed_at": "2026-10-19T11:53:54.465334+00:00",
+      "yes_observation_fresh": false,
+      "stored_movement_claim": null,
+      "movement_basis": null,
+      "movement_status": "settled_suppressed",
+      "supported_move": null,
+      "supported_move_points": null,
+      "show_hero_movement_chip": false,
+      "show_row_movement_badge": false,
+      "timeframe": null,
+      "settlement": {
+        "state": "resolved",
+        "is_settled": true,
+        "is_trading_closed": false,
+        "is_deadline_passed": false,
+        "venue_closure_evidence": true,
+        "conflicting_settlement_evidence": false,
+        "status": "resolved",
+        "result": "Yes",
+        "authoritative_source": "api_settlement",
+        "lagging_local_status": false
+      },
+      "is_near_certain": true,
+      "near_certain_open_eligible": false,
+      "provider_market_count": null,
+      "verified_family_count": null,
+      "detail_href": "/futures/65678074"
+    }
+  ],
+  "public_detail_group_refusal": "missing_rule_equivalence_proof"
+}

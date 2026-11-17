@@ -1,0 +1,87 @@
+{
+  "title": "Settled market details",
+  "context": "Nov 17 public detail data · Local 390 pt preview. The detail responses omit the rules needed to group these markets.",
+  "cards": [
+    {
+      "title": "Katie Zacharia out as Press Secretary by October 31?",
+      "rows": [
+        {
+          "title": "Yes",
+          "text": "Won",
+          "number": null,
+          "mark": {
+            "state": "settled",
+            "sources": [],
+            "settled": {
+              "source": "api_settlement",
+              "result": "Won",
+              "at": null
+            }
+          }
+        },
+        {
+          "title": "No",
+          "text": "Lost",
+          "number": null,
+          "mark": {
+            "state": "settled",
+            "sources": [],
+            "settled": {
+              "source": "api_settlement",
+              "result": "Lost",
+              "at": null
+            }
+          }
+        }
+      ]
+    },
+    {
+      "title": "Katie Zacharia out as Press Secretary by December 31?",
+      "rows": [
+        {
+          "title": "Yes",
+          "text": "Won",
+          "number": null,
+          "mark": {
+            "state": "settled",
+            "sources": [],
+            "settled": {
+              "source": "api_settlement",
+              "result": "Won",
+              "at": null
+            }
+          }
+        },
+        {
+          "title": "No",
+          "text": "Lost",
+          "number": null,
+          "mark": {
+            "state": "settled",
+            "sources": [],
+            "settled": {
+              "source": "api_settlement",
+              "result": "Lost",
+              "at": null
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "sheetTitle": "October 31 · No",
+  "sheetRow": {
+    "title": "No",
+    "text": "Lost",
+    "number": null,
+    "mark": {
+      "state": "settled",
+      "sources": [],
+      "settled": {
+        "source": "api_settlement",
+        "result": "Lost",
+        "at": null
+      }
+    }
+  }
+}

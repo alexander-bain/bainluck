@@ -1,0 +1,141 @@
+{
+  "title": "For scale",
+  "context": "Historical Nov 3–4 fixtures · Local 390 pt preview",
+  "cards": [
+    {
+      "title": "Pete Hegseth out by Dec 31: as likely as snow in Buffalo by Nov 15",
+      "rows": [
+        {
+          "title": "Pete Hegseth out as Secretary of Defense by Dec 31",
+          "text": "43%",
+          "number": 0.43,
+          "mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.425,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Snow in Buffalo by Nov 15",
+          "text": "42%",
+          "number": 0.42,
+          "mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.42,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "title": "Gavin Newsom announces a 2028 run: as likely as snow in DC by Nov 30",
+      "rows": [
+        {
+          "title": "Gavin Newsom announces a 2028 run",
+          "text": "40%",
+          "number": 0.4,
+          "mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.4,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Snow in Washington, DC by Nov 30",
+          "text": "39%",
+          "number": 0.39,
+          "mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.39,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "title": "The Iranian regime falls before 2027: as likely as a US recession by end of 2026",
+      "rows": [
+        {
+          "title": "The Iranian regime falls before 2027",
+          "text": "4%",
+          "number": 0.04,
+          "mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.036,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          }
+        },
+        {
+          "title": "US recession by end of 2026",
+          "text": "6%",
+          "number": 0.06,
+          "mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.055,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "sheetTitle": "Gavin Newsom announces a 2028 run",
+  "sheetRow": {
+    "title": "Gavin Newsom announces a 2028 run",
+    "text": "40%",
+    "number": 0.4,
+    "mark": {
+      "state": "single",
+      "sources": [
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.4,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        }
+      ]
+    }
+  }
+}
