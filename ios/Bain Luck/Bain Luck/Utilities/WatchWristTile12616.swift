@@ -90,8 +90,18 @@ struct WatchWristTileModel12616: Equatable, Sendable {
 
         // MARK: - After (Settled Final)
         if input.isFinal, let hs = input.homeScore, let ascore = input.awayScore {
+            let pregamePair = resolvePregamePercents(input)
             if hs == ascore {
                 let homeBadge = badgeFills.home
+                let drawSupporting: String = {
+                    if let drawPct = renderedPercent(input.prematchDrawProbability) {
+                        return "Pregame Draw \(drawPct)%"
+                    }
+                    if let homePct = pregamePair.home {
+                        return "Pregame \(abbrs.home) \(homePct)%"
+                    }
+                    return ""
+                }()
                 return WatchWristTileModel12616(
                     stage: .after,
                     topMetaText: "FINAL · DRAW",
@@ -104,7 +114,7 @@ struct WatchWristTileModel12616: Equatable, Sendable {
                     heroInkHex: "#E5E7EB",
                     badgeFillHex: homeBadge,
                     badgeInkHex: badgeInk(on: homeBadge),
-                    supportingLine: "Final · Draw"
+                    supportingLine: drawSupporting
                 )
             }
 
@@ -113,7 +123,6 @@ struct WatchWristTileModel12616: Equatable, Sendable {
             let opponentUpper = (winnerIsHome ? names.away : names.home).uppercased()
             let preposition = winnerIsHome ? "VS" : "AT"
             let badgeFill = winnerIsHome ? badgeFills.home : badgeFills.away
-            let pregamePair = resolvePregamePercents(input)
             let winnerPrePct = winnerIsHome ? pregamePair.home : pregamePair.away
 
             let supporting: String = {
@@ -121,9 +130,9 @@ struct WatchWristTileModel12616: Equatable, Sendable {
                     if pct < 50 {
                         return "Won from \(pct)% pregame chance"
                     }
-                    return "Pregame \(pct)% · Final"
+                    return "Pregame \(pct)%"
                 }
-                return "Final"
+                return ""
             }()
 
             return WatchWristTileModel12616(
@@ -173,14 +182,14 @@ struct WatchWristTileModel12616: Equatable, Sendable {
                 if let cur = resolved.percent, let pre = leaderPrePct {
                     let delta = cur - pre
                     if delta > 0 {
-                        let unit = delta == 1 ? "pt" : "pts"
-                        return "Up +\(delta) \(unit) from \(pre)% pregame"
+                        let unit = delta == 1 ? "point" : "points"
+                        return "Up \(delta) \(unit) from \(pre)%"
                     } else if delta < 0 {
                         let drop = abs(delta)
-                        let unit = drop == 1 ? "pt" : "pts"
-                        return "Down \(drop) \(unit) from \(pre)% pregame"
+                        let unit = drop == 1 ? "point" : "points"
+                        return "Down \(drop) \(unit) from \(pre)%"
                     } else {
-                        return "Even with \(pre)% pregame"
+                        return "Even with \(pre)%"
                     }
                 }
                 if let obs = input.probabilityObservedAt, obs <= now {
@@ -462,12 +471,14 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                     monogramBadge
                 }
             }
-            Text(model.supportingLine)
-                .font(HeadlineStyleTable199.quietText(.wristTile, monospacedDigits: true, scaledSize: HeadlineStyleTable199.quietTextBaseSize(.wristTile)))
-                .foregroundStyle(Color.white.opacity(0.68))
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .modifier(OptionalIdentifier12616(id: identifierPrefix.map { "\($0).clock" }))
+            if !model.supportingLine.isEmpty {
+                Text(model.supportingLine)
+                    .font(HeadlineStyleTable199.quietText(.wristTile, monospacedDigits: true, scaledSize: HeadlineStyleTable199.quietTextBaseSize(.wristTile)))
+                    .foregroundStyle(Color.white.opacity(0.68))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .modifier(OptionalIdentifier12616(id: identifierPrefix.map { "\($0).clock" }))
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)

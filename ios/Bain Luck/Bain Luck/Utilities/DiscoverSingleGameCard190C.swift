@@ -123,7 +123,8 @@ enum DiscoverSingleGameCard190C {
 
     nonisolated enum PrimaryCell: Equatable, Sendable {
         case probability(String)
-        case won(String) // "Won ✓" or "Draw ✓"
+        case finalScore(text: String?, won: Bool, isDrawOutcome: Bool)
+        case won(String) // legacy
         case settledDash // "—"
         case none
     }
@@ -186,6 +187,7 @@ enum DiscoverSingleGameCard190C {
                 homeScore: event.homeScore
               )
             : nil
+        let scheduledProjection = isScheduled ? ScheduledCardProjectedFinal12616.card(event) : nil
 
         let hasPrematchAny = pregameLabels.away != nil || pregameLabels.home != nil || pregameLabels.draw != nil
         let showPregameColumn: Bool = {
@@ -195,6 +197,7 @@ enum DiscoverSingleGameCard190C {
             return showsInlinePregame && hasPrematchAny
         }()
         let showLiveProjectedColumn: Bool = isLive && !isSuspended && showsInlinePregame && liveProjectedLabels != nil
+        let showScheduledProjectedColumn: Bool = isScheduled && showsInlinePregame && scheduledProjection != nil
 
         let hasScore = (isLive || isFinished || isSuspended)
             && (event.awayScore != nil || event.homeScore != nil)
@@ -280,15 +283,16 @@ enum DiscoverSingleGameCard190C {
                 )
             }
             if isFinished {
+                let hasFinalCell = hasScore || outcome != .undecided
                 return ColumnHeaders(
-                    score: hasScore ? "Score" : nil,
+                    score: nil,
                     pregame: showPregameColumn ? "Pregame" : nil,
-                    primary: "Result"
+                    primary: hasFinalCell ? "Final" : nil
                 )
             }
             return ColumnHeaders(
                 score: nil,
-                pregame: showPregameColumn ? "Pregame" : nil,
+                pregame: showScheduledProjectedColumn ? "Proj." : nil,
                 primary: hasCurrentChance ? "Chance" : nil
             )
         }()
@@ -319,7 +323,9 @@ enum DiscoverSingleGameCard190C {
         let awayPrimary: PrimaryCell = {
             if isSuspended { return .none }
             if isFinished {
-                return awayWon ? .won("Won \u{2713}") : .settledDash
+                let text = hasScore ? event.awayScore.map(String.init) : nil
+                if text == nil && !awayWon { return .none }
+                return .finalScore(text: text, won: awayWon, isDrawOutcome: outcome == .draw)
             }
             if let text = currentStrings.away {
                 return text == absentProbabilityMarker ? .settledDash : .probability(text)
@@ -330,7 +336,9 @@ enum DiscoverSingleGameCard190C {
         let homePrimary: PrimaryCell = {
             if isSuspended { return .none }
             if isFinished {
-                return homeWon ? .won("Won \u{2713}") : .settledDash
+                let text = hasScore ? event.homeScore.map(String.init) : nil
+                if text == nil && !homeWon { return .none }
+                return .finalScore(text: text, won: homeWon, isDrawOutcome: outcome == .draw)
             }
             if let text = currentStrings.home {
                 return .probability(text)
@@ -342,10 +350,12 @@ enum DiscoverSingleGameCard190C {
             kind: .away,
             fullName: event.awayTeam,
             shortName: shortPair.away,
-            scoreText: hasScore ? event.awayScore.map(String.init) : nil,
+            scoreText: (!isFinished && hasScore) ? event.awayScore.map(String.init) : nil,
             pregameText: showLiveProjectedColumn
                 ? liveProjectedLabels?.away
-                : pregameCellText(pregameLabels.away, withheld: awayPregameWithheld),
+                : (showScheduledProjectedColumn
+                    ? scheduledProjection.map { String($0.away) }
+                    : pregameCellText(pregameLabels.away, withheld: awayPregameWithheld)),
             primaryCell: awayPrimary,
             isWinner: awayWon,
             isDimmedAfter: isFinished && !awayWon && outcome != .draw
@@ -355,10 +365,12 @@ enum DiscoverSingleGameCard190C {
             kind: .home,
             fullName: event.homeTeam,
             shortName: shortPair.home,
-            scoreText: hasScore ? event.homeScore.map(String.init) : nil,
+            scoreText: (!isFinished && hasScore) ? event.homeScore.map(String.init) : nil,
             pregameText: showLiveProjectedColumn
                 ? liveProjectedLabels?.home
-                : pregameCellText(pregameLabels.home, withheld: false),
+                : (showScheduledProjectedColumn
+                    ? scheduledProjection.map { String($0.home) }
+                    : pregameCellText(pregameLabels.home, withheld: false)),
             primaryCell: homePrimary,
             isWinner: homeWon,
             isDimmedAfter: isFinished && !homeWon && outcome != .draw
@@ -368,7 +380,9 @@ enum DiscoverSingleGameCard190C {
         if showsDrawRow {
             let drawPrimary: PrimaryCell = {
                 if isFinished {
-                    return drawWon ? .won("Draw \u{2713}") : .settledDash
+                    return drawWon
+                        ? .finalScore(text: nil, won: true, isDrawOutcome: true)
+                        : .none
                 }
                 if let text = currentStrings.draw {
                     return .probability(text)
@@ -437,20 +451,9 @@ enum DiscoverSingleGameCard190C {
             )
         }()
 
-        // Scheduled pregame projected score line (when admitted by `ScheduledCardProjectedFinal12616`).
-        let scheduledProjectedLine: String? = {
-            guard isScheduled, let pair = ScheduledCardProjectedFinal12616.card(event) else {
-                return nil
-            }
-            let badges = NativeEventDiscoverCard.cardBadges(
-                away: event.awayTeam,
-                home: event.homeTeam,
-                awayServed: event.awayTeamData?.abbreviation,
-                homeServed: event.homeTeamData?.abbreviation,
-                sportKey: event.sport
-            )
-            return "Projected: \(badges.away) \(pair.away) \u{2013} \(badges.home) \(pair.home)"
-        }()
+        // One layout per state: before a game, `Proj.` is a column (`Proj. · Chance`),
+        // never a separate `"Projected: NE 21 – DET 27"` sentence beneath the bar.
+        let scheduledProjectedLine: String? = nil
 
         let livePregameSummary = LivePregameCardSummary213A.resolve(event: event)
 

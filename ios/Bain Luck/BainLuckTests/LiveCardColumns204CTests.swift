@@ -371,9 +371,10 @@ final class LiveCardColumns204CTests: XCTestCase {
         }
         """)
         let model = DiscoverSingleGameCard190C.build(event: scheduledPackers, prematch: nil)
-        XCTAssertEqual(model.scheduledProjectedLine, "Projected: MIN 21 \u{2013} GB 24")
-        XCTAssertFalse(model.scheduledProjectedLine?.contains("GBP") ?? true)
-        XCTAssertFalse(model.scheduledProjectedLine?.contains("VIK") ?? true)
+        XCTAssertEqual(model.headers, .init(score: nil, pregame: "Proj.", primary: "Chance"))
+        XCTAssertEqual(model.rows.map(\.shortName), ["Vikings", "Packers"])
+        XCTAssertEqual(model.rows.map(\.pregameText), ["21", "24"])
+        XCTAssertNil(model.scheduledProjectedLine)
     }
 
     // MARK: - 3. 390 px Render Sheet (Discover, Feed, Search, 3-Way Soccer, GB Before, Game-Page Control)

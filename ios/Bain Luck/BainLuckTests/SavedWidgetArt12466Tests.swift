@@ -340,7 +340,7 @@ final class SavedWidgetArt12466Tests: XCTestCase {
         XCTAssertTrue(headlineWidget.contains("mediumTeamRow(model.away, logo: awayLogo, useAbbreviation: false)"))
         XCTAssertTrue(headlineWidget.contains("mediumTeamRow(model.away, logo: awayLogo, useAbbreviation: true)"))
         let rowRange = try XCTUnwrap(headlineWidget.range(of: "private func mediumTeamRow("))
-        let checkRange = try XCTUnwrap(headlineWidget.range(of: "if row.isWinner {", range: rowRange.upperBound..<headlineWidget.endIndex))
+        let checkRange = try XCTUnwrap(headlineWidget.range(of: "Spacer(minLength: 6)", range: rowRange.upperBound..<headlineWidget.endIndex))
         let nameBlock = String(headlineWidget[rowRange.upperBound..<checkRange.lowerBound])
         XCTAssertFalse(nameBlock.contains("minimumScaleFactor"), "one name never shrinks on its own")
         // 2. A finished game's footer says "Final", not the score again.
