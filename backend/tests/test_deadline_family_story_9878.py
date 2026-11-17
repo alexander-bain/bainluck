@@ -2027,6 +2027,17 @@ def test_case17_v3_gap3_real_feed_serialization_dedup_and_display_chain_integrat
     # In `_score_futures`, largest-remainder rounding on binary `(0.755, 0.245)` produces `(76, 24)`
     assert rep_item_null["deadline_member"]["yes_rendered_percent"] == 24
     assert rep_item_null["deadline_member"]["movement_status"] == "no_stored_claim"
+    # The family summary and the expanded members explain the same bound legs.
+    # No is first in the source rows but the representative's number is Yes.
+    for summary, item in zip(
+        bundle_null["data"]["deadline_family"]["members"], bundle_null["data"]["items"],
+        strict=True,
+    ):
+        member = item["data"]["deadline_member"]
+        assert summary["market_id"] == member["market_id"]
+        for key, price in (("source_mark", "yes_probability"), ("no_source_mark", "no_probability")):
+            assert summary[key] == member[key]
+            assert member[key]["sources"][0]["probability"] == member[price]
 
     # --- 2. Synthetic positive Zacharia (`-6.5` pt move on Dec 31) ---
     oct31_orm_syn = _make_orm_market(
