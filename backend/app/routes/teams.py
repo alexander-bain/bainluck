@@ -13,7 +13,7 @@ from app.utils.event_rails import (
 )
 from app.utils.event_twin_fold import fold_twin_events, team_name_fold_key
 from app.utils.aggregation import compute_aggregate_probability
-from app.utils.draw_priced_winner import printable_away, sport_prices_a_draw
+from app.utils.draw_priced_winner import sport_prices_a_draw
 from app.utils.game_state import authority_stoppage_label
 from app.utils.lifecycle import served_event_status
 from app.utils.market_team_sport import (
@@ -868,27 +868,6 @@ async def _folded_briefs(
     ]
 
 
-def _away_three_way_price(event: Event, status: str | None, now: datetime) -> float | None:
-    """The away club's own win price on a sport that prices a draw (#11541).
-
-    The blend carries only the home side, so this reads the stored away leg,
-    which #1011 de-vigs over the whole board until kickoff: the club's three-way
-    price, with the draw left out. It is served only before kickoff, because
-    after it the leg is the last pre-match consensus and not a live chance; and
-    only while its pair still leaves a draw, because a pair summing to one is
-    `1 - home` again under another name (`printable_away`). Otherwise None: a
-    card with no number is honest, and one that counts the draw as a win is not.
-    """
-    commence = event.commence_time
-    if status != "scheduled" or commence is None or commence <= now:
-        return None
-    home, away = event.opening_home_probability, event.opening_away_probability
-    if home is None or away is None:
-        return None
-    sport = event.sport
-    return printable_away(float(away), float(home), sport.key if sport else None)
-
-
 def _format_event_brief(
     event: Event, team: Team, club_ids=None, club_names=None, prematch=None
 ) -> dict:
@@ -944,7 +923,10 @@ def _format_event_brief(
         # soccer three-way five days later.
         if not is_home:
             if sport_prices_a_draw(sport.key if sport else None):
-                wp = _away_three_way_price(event, status, now)
+                # #12824: the stored opening away leg is historical, not
+                # a current quote. The shared blend has no admitted away leg;
+                # neither that opening nor 1 - home may fill it.
+                wp = None
             elif wp is not None:
                 wp = 1.0 - wp
 

@@ -12052,7 +12052,12 @@ async def _score_events(
     # unanswered; same answer (see `feed_snapshot_fallback`).
     snapshot_fallbacks: dict[int, float] = {}
     events_needing_fallback = [] if price_refresh_events is not None else [
-        e for e in events if _compute_aggregate_probability(e) is None
+        e for e in events
+        if _compute_aggregate_probability(e) is None
+        # #12824: removing the opening rung must not enroll opening-only
+        # events in a historical fallback they never used before. Their
+        # current chance stays absent until an admitted source returns.
+        and getattr(e, "opening_home_probability", None) is None
     ]
     # #1480: both id sets below come from the candidates alone — after the twin
     # fold, before any per-reader suppression — so every reader of one candidate
@@ -12202,6 +12207,13 @@ async def _score_events(
             # Always compute aggregate from all available sources (ESPN, stat model,
             # Kalshi, Polymarket, sportsbook consensus). Falls back through tiers.
             current_home_prob = _compute_aggregate_probability(event)
+            if current_home_prob is None:
+                # #12824: removing an opening quote must not remove a verified
+                # final. Use the same settled result as the card, never its
+                # historical line, when ranking a finished game.
+                final_hero = resolve_hero(event)
+                if final_hero is not None and final_hero.source == "settled":
+                    current_home_prob = final_hero.home_probability
             if current_home_prob is None and event.id in snapshot_fallbacks:
                 current_home_prob = snapshot_fallbacks[event.id]
             current_away_prob = (
