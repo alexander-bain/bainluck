@@ -106,9 +106,11 @@ d("the iOS event detail hero prints a decided pair", () => {
     // Direction 199 RE-ANCHORED: on a draw-priced sport where `pair.away == nil`,
     // `EventSportHeadlines12472.swift` formats `pair.home` alone (leaving the away
     // cell `""`), never computing `1 - home`.
+    // #12822: before kickoff always uses whole-percent `formatProbability(...)`;
+    // only the live `during` arm formats lone home chances in tenths.
     expect(
       headline.match(/EventHeadlineTenths10090\.pair\(home: pair\.home, away: nil\)\.home/g) ?? [],
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(headline).toMatch(/formatProbability\(pair\.home, renderedPercent: shown\.homeRenderedPercent\)/);
     expect(headline).toMatch(/formatProbability\(pair\.home, renderedPercent: homePct\)/);
 

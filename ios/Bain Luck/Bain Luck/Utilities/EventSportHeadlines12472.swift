@@ -713,14 +713,14 @@ enum EventSportHeadlines12472 {
         let awayRecord = trimmedNonEmpty(event.awayTeamData?.record)
         let homeRecord = trimmedNonEmpty(event.homeTeamData?.record)
 
-        // 3-way soccer before match
+        // 3-way soccer before match: Chance is always whole percents before kickoff (#12822, Direction 199).
         if canGrade, isSoccerSport(event.sport),
            let shares = extractSoccerThreeWayOpenShares(event: event, gameMarkets: gameMarkets, now: now) {
             let formatted = soccerThreeWayChanceTexts(
                 home: shares.home,
                 draw: shares.draw,
                 away: shares.away,
-                numberStreams: numberStreams
+                numberStreams: false
             )
             let confidenceTier = Confidence.fromSources(
                 sourceCount: event.winProbabilitySources?.count,
@@ -808,21 +808,20 @@ enum EventSportHeadlines12472 {
                 homeProb = pair.home
                 if let away = pair.away {
                     awayProb = away
+                    // Before kickoff, Chance always prints whole percents even while streaming (#12822).
                     let texts = nflPregameChanceTexts(
                         shown: shown,
                         away: away,
                         home: pair.home,
-                        numberStreams: numberStreams
+                        numberStreams: false
                     )
                     awayChance = texts.away
                     homeChance = texts.home
                     bar = .twoWay(awayShare: away, homeShare: pair.home, pregameAwayMarker: nil)
                 } else {
                     // Draw-priced sport with only home win chance served (#5271):
-                    // print home chance and leave away cell empty; never invent `1 - home`.
-                    homeChance = numberStreams
-                        ? EventHeadlineTenths10090.pair(home: pair.home, away: nil).home
-                        : formatProbability(pair.home, renderedPercent: shown.homeRenderedPercent)
+                    // print whole-percent home chance before kickoff and leave away cell empty; never invent `1 - home`.
+                    homeChance = formatProbability(pair.home, renderedPercent: shown.homeRenderedPercent)
                 }
                 confidenceTier = Confidence.fromSources(
                     sourceCount: event.winProbabilitySources?.count,
