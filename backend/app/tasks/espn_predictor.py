@@ -16,9 +16,13 @@ Fable's (b), 6:01 PM and 6:36 PM Mon Nov 16:
   ESPN's own ``max-age=900`` on the predictor;
 * ESPN is named only in the "Where this number comes from" sheet: the reading
   is the existing ``espn`` source, which that sheet already labels;
-* when books or a venue price the game, they join through the existing weights
-  and nothing is held at an old value: a game that holds an ESPN reading keeps
-  being read until kickoff, so the reading never freezes beside them;
+* **Alex's ruling 226: A (Tue Nov 17, 5:24 AM): ESPN fills in only while
+  nothing else prices the game.** A game is read only while it has no price
+  source (no ``betting`` at or above the 051 floor, no ``kalshi``, no
+  ``polymarket``). The first run after one appears WITHDRAWS the ESPN reading,
+  so the game's number is built exactly as it was before this task existed,
+  and two otherwise identical games never differ by whether one of them was
+  once unpriced;
 * a predictor ESPN has not updated in :data:`MAX_PREDICTOR_AGE` is treated as
   absent, as ruling 051 treats a source below its floor.
 
@@ -185,8 +189,13 @@ def is_priced(sources: Any) -> bool:
 
 
 def wants_reading(row: PredictorRow) -> bool:
-    """Unpriced, or already holding an ESPN reading this task must keep current."""
-    return not is_priced(row.sources) or "espn" in (row.sources or {})
+    """226: A. Only a game with no price source is read."""
+    return not is_priced(row.sources)
+
+
+def must_leave(row: PredictorRow) -> bool:
+    """226: A. A priced game holding an ESPN pregame reading loses it this run."""
+    return is_priced(row.sources) and "espn" in (row.sources or {})
 
 
 def stored_reading_age(row: PredictorRow, now: datetime) -> Optional[timedelta]:
@@ -421,18 +430,22 @@ async def _run_refresh_espn_predictor() -> dict:
     stats["candidates"] = len(rows)
     stats["mode"] = predictor_mode()
     if stats["mode"] == "withdraw":
-        rows = [row for row in rows if "espn" in (row.sources or {})]
+        leaving = [row for row in rows if "espn" in (row.sources or {})]
+        reading: list[PredictorRow] = []
     else:
-        rows = [row for row in rows if wants_reading(row)]
-    stats["wanted"] = len(rows)
+        leaving = [row for row in rows if must_leave(row)]
+        reading = [row for row in rows if wants_reading(row)]
+    stats["wanted"] = len(reading)
+    stats["leaving_priced"] = 0 if stats["mode"] == "withdraw" else len(leaving)
+    rows = leaving + reading
     if not rows:
         stats["status"] = "no_candidates"
         return stats
 
-    if stats["mode"] == "withdraw":
-        plans = {row.event_id: ("remove", "switched-off") for row in rows}
-    else:
-        plans = await _read_espn(rows, now, stats)
+    reason = "switched-off" if stats["mode"] == "withdraw" else "priced"
+    plans = {row.event_id: ("remove", reason) for row in leaving}
+    if reading:
+        plans.update(await _read_espn(reading, now, stats))
 
     async with get_task_session(reuse_publication_client=True) as session:
         for row in rows:

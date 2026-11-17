@@ -122,8 +122,11 @@ class TestWhichGames:
     def test_priced_game_without_espn_is_left_alone(self):
         assert not ep.wants_reading(_row({"betting": _entry(0.4, NOW)}))
 
-    def test_priced_game_holding_espn_keeps_being_read_so_it_never_freezes(self):
-        assert ep.wants_reading(_row({"betting": _entry(0.4, NOW), "espn": _entry(0.2, NOW)}))
+    def test_226a_a_priced_game_is_never_read_and_its_espn_reading_must_leave(self):
+        row = _row({"betting": _entry(0.4, NOW), "espn": _entry(0.2, NOW)})
+        assert not ep.wants_reading(row)
+        assert ep.must_leave(row)
+        assert not ep.must_leave(_row({"espn": _entry(0.2, NOW)}))  # unpriced: stays
 
     def test_stored_age(self):
         assert ep.stored_reading_age(_row({}), NOW) is None
@@ -486,3 +489,86 @@ def test_the_writer_refuses_an_unlisted_entry_key():
         asyncio.run(nlp.write_nonvenue_probability(
             None, SimpleNamespace(id=1), "espn", 0.4, entry_extra={"value": 0.9},
         ))
+
+
+class TestRuling226A:
+    """Alex 226: A — ESPN fills in only while nothing else prices the game."""
+
+    async def _run(self, monkeypatch, sources: dict):
+        """One run over one game; the fake writer applies its write to the bag."""
+        from contextlib import asynccontextmanager
+
+        bag = {k: (dict(v) if isinstance(v, dict) else v) for k, v in sources.items()}
+        session = _FakeSession([_db_row(1, bag)])
+        read_rows = []
+
+        @asynccontextmanager
+        async def fake_session(**_kw):
+            yield session
+
+        async def fake_read(rows, now, stats):
+            read_rows.extend(r.event_id for r in rows)
+            return {r.event_id: ("write", 0.1415, {"basis": "espn_predictor",
+                                                   "last_modified": _stamp(NOW)}) for r in rows}
+
+        async def fake_write(session_, target, source, value, **kw):
+            if value is None:
+                bag.pop(source, None)
+            else:
+                bag[source] = {"value": value, "updated_at": NOW.isoformat()}
+
+        async def fake_publish(_session):
+            return None
+
+        class _Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return NOW
+
+        monkeypatch.delenv("ESPN_PREDICTOR_MODE", raising=False)
+        monkeypatch.setattr("app.tasks.base.get_task_session", fake_session)
+        monkeypatch.setattr(ep, "_read_espn", fake_read)
+        monkeypatch.setattr("app.utils.nonvenue_live_push.write_nonvenue_probability", fake_write)
+        monkeypatch.setattr("app.utils.nonvenue_live_push.publish_committed_nonvenue_frames", fake_publish)
+        monkeypatch.setattr(ep, "datetime", _Clock)
+        stats = await ep._run_refresh_espn_predictor()
+        return bag, read_rows, stats
+
+    @staticmethod
+    def _served(bag: dict):
+        from app.utils.aggregation import compute_aggregate_probability
+
+        shim = SimpleNamespace(win_probability_sources=bag, espn_win_prob_home=None,
+                               opening_home_probability=None, status="scheduled")
+        return compute_aggregate_probability(shim, "scheduled")
+
+    @pytest.mark.asyncio
+    async def test_a_venue_arrives_and_the_next_run_removes_espn(self, monkeypatch):
+        venue = {"kalshi": _entry(0.31, NOW)}
+        bag, read_rows, stats = await self._run(
+            monkeypatch, {**venue, "espn": _entry(0.1415, NOW - timedelta(minutes=10))},
+        )
+        assert "espn" not in bag and read_rows == [] and stats["removed"] == 1
+        assert self._served(bag) == self._served(venue) == pytest.approx(0.31)
+
+    @pytest.mark.asyncio
+    async def test_three_books_arrive_and_the_next_run_removes_espn(self, monkeypatch):
+        books = {"betting": _entry(0.38, NOW), "betting_book_count": 3}
+        bag, read_rows, stats = await self._run(
+            monkeypatch, {**books, "espn": _entry(0.1415, NOW - timedelta(minutes=10))},
+        )
+        assert "espn" not in bag and read_rows == [] and stats["removed"] == 1
+        assert self._served(bag) == self._served(books) == pytest.approx(0.38)
+
+    @pytest.mark.asyncio
+    async def test_a_game_that_was_never_unpriced_never_gets_espn(self, monkeypatch):
+        priced = {"polymarket": _entry(0.44, NOW)}
+        bag, read_rows, stats = await self._run(monkeypatch, priced)
+        assert bag == priced and read_rows == []
+        assert stats["written"] == 0 and stats["removed"] == 0
+
+    @pytest.mark.asyncio
+    async def test_two_books_under_the_floor_still_get_espn(self, monkeypatch):
+        bag, read_rows, stats = await self._run(monkeypatch, {"betting_book_count": 2})
+        assert read_rows == [1] and bag["espn"]["value"] == 0.1415
+        assert self._served(bag) == pytest.approx(0.1415)
