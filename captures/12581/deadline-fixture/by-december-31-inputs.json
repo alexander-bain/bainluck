@@ -1,0 +1,212 @@
+[
+  {
+    "id": 62162058,
+    "external_id": "ext-62162058",
+    "name": "Next Claude Opus (5.6+) released by December 31, 2026?",
+    "source": "polymarket",
+    "status": "open",
+    "mutually_exclusive": true,
+    "market_tier": 2,
+    "market_type": "yes_no",
+    "category": "tech",
+    "llm_sport_category": "tech",
+    "resolution_date": "2027-01-01T04:59:00+00:00",
+    "updated_at": "2026-11-03T22:30:00+00:00",
+    "prices_updated_at": "2026-11-03T22:30:00+00:00",
+    "outcomes": [
+      {
+        "id": 621620581,
+        "name": "Yes",
+        "probability": 0.885,
+        "movement": 0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "id": 621620582,
+        "name": "No",
+        "probability": 0.115,
+        "movement": -0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      }
+    ]
+  },
+  {
+    "id": 27594137,
+    "external_id": "ext-27594137",
+    "name": "Trump meets with Putin by December 31?",
+    "source": "polymarket",
+    "status": "open",
+    "mutually_exclusive": true,
+    "market_tier": 2,
+    "market_type": "yes_no",
+    "category": "politics",
+    "llm_sport_category": "politics",
+    "resolution_date": "2026-12-31T23:59:00+00:00",
+    "updated_at": "2026-11-03T22:30:00+00:00",
+    "prices_updated_at": "2026-11-03T22:30:00+00:00",
+    "outcomes": [
+      {
+        "id": 275941371,
+        "name": "Yes",
+        "probability": 0.83,
+        "movement": 0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "id": 275941372,
+        "name": "No",
+        "probability": 0.17,
+        "movement": -0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      }
+    ]
+  },
+  {
+    "id": 30587891,
+    "external_id": "ext-30587891",
+    "name": "Will Banksy create a new mural or street artwork by December 31?",
+    "source": "polymarket",
+    "status": "open",
+    "mutually_exclusive": true,
+    "market_tier": 2,
+    "market_type": "yes_no",
+    "category": "entertainment",
+    "llm_sport_category": "entertainment",
+    "resolution_date": "2026-12-31T23:59:00+00:00",
+    "updated_at": "2026-11-03T22:30:00+00:00",
+    "prices_updated_at": "2026-11-03T22:30:00+00:00",
+    "outcomes": [
+      {
+        "id": 305878911,
+        "name": "Yes",
+        "probability": 0.47,
+        "movement": 0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "id": 305878912,
+        "name": "No",
+        "probability": 0.53,
+        "movement": -0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      }
+    ]
+  },
+  {
+    "id": 8422080,
+    "external_id": "ext-8422080",
+    "name": "Pete Hegseth out as Secretary of Defense by December 31?",
+    "source": "polymarket",
+    "status": "open",
+    "mutually_exclusive": true,
+    "market_tier": 2,
+    "market_type": "yes_no",
+    "category": "geopolitics",
+    "llm_sport_category": "geopolitics",
+    "resolution_date": "2026-12-31T23:59:00+00:00",
+    "updated_at": "2026-11-03T22:30:00+00:00",
+    "prices_updated_at": "2026-11-03T22:30:00+00:00",
+    "outcomes": [
+      {
+        "id": 84220801,
+        "name": "Yes",
+        "probability": 0.4,
+        "movement": 0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "id": 84220802,
+        "name": "No",
+        "probability": 0.6,
+        "movement": -0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      }
+    ]
+  },
+  {
+    "id": 13791228,
+    "external_id": "ext-13791228",
+    "name": "SCOTUS accepts sports event contract case by December 31, 2026?",
+    "source": "polymarket",
+    "status": "open",
+    "mutually_exclusive": true,
+    "market_tier": 2,
+    "market_type": "yes_no",
+    "category": "legal",
+    "llm_sport_category": "legal",
+    "resolution_date": "2027-01-01T04:59:00+00:00",
+    "updated_at": "2026-11-03T22:30:00+00:00",
+    "prices_updated_at": "2026-11-03T22:30:00+00:00",
+    "outcomes": [
+      {
+        "id": 137912281,
+        "name": "Yes",
+        "probability": 0.205,
+        "movement": 0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "id": 137912282,
+        "name": "No",
+        "probability": 0.795,
+        "movement": -0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      }
+    ]
+  },
+  {
+    "id": 13794660,
+    "external_id": "ext-13794660",
+    "name": "Will Samuel Alito announce his retirement by December 31, 2026?",
+    "source": "polymarket",
+    "status": "open",
+    "mutually_exclusive": true,
+    "market_tier": 2,
+    "market_type": "yes_no",
+    "category": "politics",
+    "llm_sport_category": "politics",
+    "resolution_date": "2027-01-01T04:59:00+00:00",
+    "updated_at": "2026-11-03T22:30:00+00:00",
+    "prices_updated_at": "2026-11-03T22:30:00+00:00",
+    "outcomes": [
+      {
+        "id": 137946601,
+        "name": "Yes",
+        "probability": 0.185,
+        "movement": 0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "id": 137946602,
+        "name": "No",
+        "probability": 0.815,
+        "movement": -0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      }
+    ]
+  }
+]

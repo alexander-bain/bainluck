@@ -1,0 +1,1607 @@
+[
+  [
+    {
+      "type": "bundle",
+      "score": 0.0,
+      "reason": "By December 31",
+      "headline": "By December 31",
+      "context_summary": null,
+      "data": {
+        "id": "roundup:by-december-31",
+        "title": "By December 31",
+        "kind": "roundup",
+        "story_key": "roundup:by-december-31",
+        "shared_question": null,
+        "item_count": 6,
+        "member_ids": [
+          62162058,
+          27594137,
+          30587891,
+          8422080,
+          13791228,
+          13794660
+        ],
+        "items": [
+          {
+            "type": "futures",
+            "score": 0.0,
+            "reason": "Next Claude Opus (5.6+) released",
+            "headline": "Next Claude Opus (5.6+) released",
+            "data": {
+              "id": 62162058,
+              "name": "Next Claude Opus (5.6+) released by December 31, 2026?",
+              "sport": null,
+              "sport_name": null,
+              "category": "tech",
+              "llm_sport_category": "tech",
+              "market_tier": 2,
+              "market_type_label": "Yes / No",
+              "market_type": "yes_no",
+              "status": "open",
+              "source": "polymarket",
+              "sources": [
+                "polymarket"
+              ],
+              "source_count": 1,
+              "mutually_exclusive": true,
+              "resolution_date": "2027-01-01T04:59:00+00:00",
+              "top_outcomes": [
+                {
+                  "id": 621620581,
+                  "name": "Yes",
+                  "probability": 0.885,
+                  "rendered_percent": 89,
+                  "american_odds": null,
+                  "rank": 1,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 621620582,
+                  "name": "No",
+                  "probability": 0.115,
+                  "rendered_percent": 11,
+                  "american_odds": null,
+                  "rank": 2,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                }
+              ],
+              "outcome_count": 2,
+              "updated_at": "2026-11-03T22:30:00+00:00",
+              "prices_updated_at": "2026-11-03T22:30:00+00:00",
+              "price_observed_at": "2026-11-03T22:30:00+00:00"
+            }
+          },
+          {
+            "type": "futures",
+            "score": 0.0,
+            "reason": "Trump meets with Putin",
+            "headline": "Trump meets with Putin",
+            "data": {
+              "id": 27594137,
+              "name": "Trump meets with Putin by December 31?",
+              "sport": null,
+              "sport_name": null,
+              "category": "politics",
+              "llm_sport_category": "politics",
+              "market_tier": 2,
+              "market_type_label": "Yes / No",
+              "market_type": "yes_no",
+              "status": "open",
+              "source": "polymarket",
+              "sources": [
+                "polymarket"
+              ],
+              "source_count": 1,
+              "mutually_exclusive": true,
+              "resolution_date": "2026-12-31T23:59:00+00:00",
+              "top_outcomes": [
+                {
+                  "id": 275941371,
+                  "name": "Yes",
+                  "probability": 0.83,
+                  "rendered_percent": 83,
+                  "american_odds": null,
+                  "rank": 1,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 275941372,
+                  "name": "No",
+                  "probability": 0.17,
+                  "rendered_percent": 17,
+                  "american_odds": null,
+                  "rank": 2,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                }
+              ],
+              "outcome_count": 2,
+              "updated_at": "2026-11-03T22:30:00+00:00",
+              "prices_updated_at": "2026-11-03T22:30:00+00:00",
+              "price_observed_at": "2026-11-03T22:30:00+00:00"
+            }
+          },
+          {
+            "type": "futures",
+            "score": 0.0,
+            "reason": "Will Banksy create a new mural or street artwork?",
+            "headline": "Will Banksy create a new mural or street artwork?",
+            "data": {
+              "id": 30587891,
+              "name": "Will Banksy create a new mural or street artwork by December 31?",
+              "sport": null,
+              "sport_name": null,
+              "category": "entertainment",
+              "llm_sport_category": "entertainment",
+              "market_tier": 2,
+              "market_type_label": "Yes / No",
+              "market_type": "yes_no",
+              "status": "open",
+              "source": "polymarket",
+              "sources": [
+                "polymarket"
+              ],
+              "source_count": 1,
+              "mutually_exclusive": true,
+              "resolution_date": "2026-12-31T23:59:00+00:00",
+              "top_outcomes": [
+                {
+                  "id": 305878911,
+                  "name": "Yes",
+                  "probability": 0.47,
+                  "rendered_percent": 47,
+                  "american_odds": null,
+                  "rank": 1,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 305878912,
+                  "name": "No",
+                  "probability": 0.53,
+                  "rendered_percent": 53,
+                  "american_odds": null,
+                  "rank": 2,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                }
+              ],
+              "outcome_count": 2,
+              "updated_at": "2026-11-03T22:30:00+00:00",
+              "prices_updated_at": "2026-11-03T22:30:00+00:00",
+              "price_observed_at": "2026-11-03T22:30:00+00:00"
+            }
+          },
+          {
+            "type": "futures",
+            "score": 0.0,
+            "reason": "Pete Hegseth out as Secretary of Defense",
+            "headline": "Pete Hegseth out as Secretary of Defense",
+            "data": {
+              "id": 8422080,
+              "name": "Pete Hegseth out as Secretary of Defense by December 31?",
+              "sport": null,
+              "sport_name": null,
+              "category": "geopolitics",
+              "llm_sport_category": "geopolitics",
+              "market_tier": 2,
+              "market_type_label": "Yes / No",
+              "market_type": "yes_no",
+              "status": "open",
+              "source": "polymarket",
+              "sources": [
+                "polymarket"
+              ],
+              "source_count": 1,
+              "mutually_exclusive": true,
+              "resolution_date": "2026-12-31T23:59:00+00:00",
+              "top_outcomes": [
+                {
+                  "id": 84220801,
+                  "name": "Yes",
+                  "probability": 0.4,
+                  "rendered_percent": 40,
+                  "american_odds": null,
+                  "rank": 1,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 84220802,
+                  "name": "No",
+                  "probability": 0.6,
+                  "rendered_percent": 60,
+                  "american_odds": null,
+                  "rank": 2,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                }
+              ],
+              "outcome_count": 2,
+              "updated_at": "2026-11-03T22:30:00+00:00",
+              "prices_updated_at": "2026-11-03T22:30:00+00:00",
+              "price_observed_at": "2026-11-03T22:30:00+00:00"
+            }
+          },
+          {
+            "type": "futures",
+            "score": 0.0,
+            "reason": "SCOTUS accepts sports event contract case",
+            "headline": "SCOTUS accepts sports event contract case",
+            "data": {
+              "id": 13791228,
+              "name": "SCOTUS accepts sports event contract case by December 31, 2026?",
+              "sport": null,
+              "sport_name": null,
+              "category": "legal",
+              "llm_sport_category": "legal",
+              "market_tier": 2,
+              "market_type_label": "Yes / No",
+              "market_type": "yes_no",
+              "status": "open",
+              "source": "polymarket",
+              "sources": [
+                "polymarket"
+              ],
+              "source_count": 1,
+              "mutually_exclusive": true,
+              "resolution_date": "2027-01-01T04:59:00+00:00",
+              "top_outcomes": [
+                {
+                  "id": 137912281,
+                  "name": "Yes",
+                  "probability": 0.205,
+                  "rendered_percent": 21,
+                  "american_odds": null,
+                  "rank": 1,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 137912282,
+                  "name": "No",
+                  "probability": 0.795,
+                  "rendered_percent": 79,
+                  "american_odds": null,
+                  "rank": 2,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                }
+              ],
+              "outcome_count": 2,
+              "updated_at": "2026-11-03T22:30:00+00:00",
+              "prices_updated_at": "2026-11-03T22:30:00+00:00",
+              "price_observed_at": "2026-11-03T22:30:00+00:00"
+            }
+          },
+          {
+            "type": "futures",
+            "score": 0.0,
+            "reason": "By December 31",
+            "headline": "By December 31",
+            "data": {
+              "id": 13794660,
+              "name": "Will Samuel Alito announce his retirement by December 31, 2026?",
+              "sport": null,
+              "sport_name": null,
+              "category": "politics",
+              "llm_sport_category": "politics",
+              "market_tier": 2,
+              "market_type_label": "Yes / No",
+              "market_type": "yes_no",
+              "status": "open",
+              "source": "polymarket",
+              "sources": [
+                "polymarket"
+              ],
+              "source_count": 1,
+              "mutually_exclusive": true,
+              "resolution_date": "2027-01-01T04:59:00+00:00",
+              "top_outcomes": [
+                {
+                  "id": 137946601,
+                  "name": "Yes",
+                  "probability": 0.185,
+                  "rendered_percent": 19,
+                  "american_odds": null,
+                  "rank": 1,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 137946602,
+                  "name": "No",
+                  "probability": 0.815,
+                  "rendered_percent": 81,
+                  "american_odds": null,
+                  "rank": 2,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                }
+              ],
+              "outcome_count": 2,
+              "updated_at": "2026-11-03T22:30:00+00:00",
+              "prices_updated_at": "2026-11-03T22:30:00+00:00",
+              "price_observed_at": "2026-11-03T22:30:00+00:00"
+            }
+          }
+        ],
+        "collection_ref": {
+          "slug": "by-december-31",
+          "href": "/collections/by-december-31",
+          "name": "By December 31",
+          "revision": 3336258089,
+          "collection_count": 6
+        },
+        "roundup": {
+          "kicker": "SAME DEADLINE",
+          "tag": null,
+          "footer": "Separate markets that settle by the same day.",
+          "rows": [
+            {
+              "market_id": 62162058,
+              "label": "Next Claude Opus (5.6+) released",
+              "probability": 0.885,
+              "rendered_percent": 89,
+              "observed_at": "2026-11-03T22:30:00+00:00"
+            },
+            {
+              "market_id": 27594137,
+              "label": "Trump meets with Putin",
+              "probability": 0.83,
+              "rendered_percent": 83,
+              "observed_at": "2026-11-03T22:30:00+00:00"
+            },
+            {
+              "market_id": 30587891,
+              "label": "Will Banksy create a new mural or street artwork?",
+              "probability": 0.47,
+              "rendered_percent": 47,
+              "observed_at": "2026-11-03T22:30:00+00:00"
+            },
+            {
+              "market_id": 8422080,
+              "label": "Pete Hegseth out as Secretary of Defense",
+              "probability": 0.4,
+              "rendered_percent": 40,
+              "observed_at": "2026-11-03T22:30:00+00:00"
+            },
+            {
+              "market_id": 13791228,
+              "label": "SCOTUS accepts sports event contract case",
+              "probability": 0.205,
+              "rendered_percent": 21,
+              "observed_at": "2026-11-03T22:30:00+00:00"
+            }
+          ],
+          "relations": [
+            "same_window",
+            "by_when"
+          ],
+          "level": "member",
+          "count_line": "Showing 5 of 6"
+        }
+      }
+    },
+    {
+      "state": "published",
+      "slug": "by-december-31",
+      "revision": 3336258089,
+      "relations": [
+        "same_window",
+        "by_when"
+      ],
+      "level": "member",
+      "reason": null,
+      "edition": null,
+      "container": {
+        "id": 2269644014,
+        "slug": "by-december-31",
+        "name": "By December 31",
+        "kind": "roundup",
+        "category": "cross-topic",
+        "status": "open",
+        "window_start": null,
+        "window_end": null,
+        "parent_container_id": null
+      },
+      "subtitle": "Separate markets that settle by the same day.",
+      "caption": null,
+      "sections": [
+        {
+          "class": "title",
+          "title": "Markets settling by December 31",
+          "layout": "field",
+          "count": 6,
+          "members": [
+            {
+              "type": "market",
+              "id": 62162058,
+              "destination": {
+                "kind": "market",
+                "id": 62162058,
+                "web": "/futures/62162058",
+                "api": "/api/futures/62162058"
+              },
+              "card": {
+                "id": 62162058,
+                "name": "Next Claude Opus (5.6+) released by December 31, 2026?",
+                "sport": null,
+                "sport_name": null,
+                "category": "tech",
+                "llm_sport_category": "tech",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2027-01-01T04:59:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 621620581,
+                    "name": "Yes",
+                    "probability": 0.885,
+                    "rendered_percent": 89,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 621620582,
+                    "name": "No",
+                    "probability": 0.115,
+                    "rendered_percent": 11,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-03T22:30:00+00:00",
+                "prices_updated_at": "2026-11-03T22:30:00+00:00",
+                "price_observed_at": "2026-11-03T22:30:00+00:00"
+              },
+              "event_id": null
+            },
+            {
+              "type": "market",
+              "id": 27594137,
+              "destination": {
+                "kind": "market",
+                "id": 27594137,
+                "web": "/futures/27594137",
+                "api": "/api/futures/27594137"
+              },
+              "card": {
+                "id": 27594137,
+                "name": "Trump meets with Putin by December 31?",
+                "sport": null,
+                "sport_name": null,
+                "category": "politics",
+                "llm_sport_category": "politics",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2026-12-31T23:59:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 275941371,
+                    "name": "Yes",
+                    "probability": 0.83,
+                    "rendered_percent": 83,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 275941372,
+                    "name": "No",
+                    "probability": 0.17,
+                    "rendered_percent": 17,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-03T22:30:00+00:00",
+                "prices_updated_at": "2026-11-03T22:30:00+00:00",
+                "price_observed_at": "2026-11-03T22:30:00+00:00"
+              },
+              "event_id": null
+            },
+            {
+              "type": "market",
+              "id": 30587891,
+              "destination": {
+                "kind": "market",
+                "id": 30587891,
+                "web": "/futures/30587891",
+                "api": "/api/futures/30587891"
+              },
+              "card": {
+                "id": 30587891,
+                "name": "Will Banksy create a new mural or street artwork by December 31?",
+                "sport": null,
+                "sport_name": null,
+                "category": "entertainment",
+                "llm_sport_category": "entertainment",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2026-12-31T23:59:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 305878911,
+                    "name": "Yes",
+                    "probability": 0.47,
+                    "rendered_percent": 47,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 305878912,
+                    "name": "No",
+                    "probability": 0.53,
+                    "rendered_percent": 53,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-03T22:30:00+00:00",
+                "prices_updated_at": "2026-11-03T22:30:00+00:00",
+                "price_observed_at": "2026-11-03T22:30:00+00:00"
+              },
+              "event_id": null
+            },
+            {
+              "type": "market",
+              "id": 8422080,
+              "destination": {
+                "kind": "market",
+                "id": 8422080,
+                "web": "/futures/8422080",
+                "api": "/api/futures/8422080"
+              },
+              "card": {
+                "id": 8422080,
+                "name": "Pete Hegseth out as Secretary of Defense by December 31?",
+                "sport": null,
+                "sport_name": null,
+                "category": "geopolitics",
+                "llm_sport_category": "geopolitics",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2026-12-31T23:59:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 84220801,
+                    "name": "Yes",
+                    "probability": 0.4,
+                    "rendered_percent": 40,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 84220802,
+                    "name": "No",
+                    "probability": 0.6,
+                    "rendered_percent": 60,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-03T22:30:00+00:00",
+                "prices_updated_at": "2026-11-03T22:30:00+00:00",
+                "price_observed_at": "2026-11-03T22:30:00+00:00"
+              },
+              "event_id": null
+            },
+            {
+              "type": "market",
+              "id": 13791228,
+              "destination": {
+                "kind": "market",
+                "id": 13791228,
+                "web": "/futures/13791228",
+                "api": "/api/futures/13791228"
+              },
+              "card": {
+                "id": 13791228,
+                "name": "SCOTUS accepts sports event contract case by December 31, 2026?",
+                "sport": null,
+                "sport_name": null,
+                "category": "legal",
+                "llm_sport_category": "legal",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2027-01-01T04:59:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 137912281,
+                    "name": "Yes",
+                    "probability": 0.205,
+                    "rendered_percent": 21,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 137912282,
+                    "name": "No",
+                    "probability": 0.795,
+                    "rendered_percent": 79,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-03T22:30:00+00:00",
+                "prices_updated_at": "2026-11-03T22:30:00+00:00",
+                "price_observed_at": "2026-11-03T22:30:00+00:00"
+              },
+              "event_id": null
+            },
+            {
+              "type": "market",
+              "id": 13794660,
+              "destination": {
+                "kind": "market",
+                "id": 13794660,
+                "web": "/futures/13794660",
+                "api": "/api/futures/13794660"
+              },
+              "card": {
+                "id": 13794660,
+                "name": "Will Samuel Alito announce his retirement by December 31, 2026?",
+                "sport": null,
+                "sport_name": null,
+                "category": "politics",
+                "llm_sport_category": "politics",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2027-01-01T04:59:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 137946601,
+                    "name": "Yes",
+                    "probability": 0.185,
+                    "rendered_percent": 19,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 137946602,
+                    "name": "No",
+                    "probability": 0.815,
+                    "rendered_percent": 81,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-03T22:30:00+00:00",
+                "prices_updated_at": "2026-11-03T22:30:00+00:00",
+                "price_observed_at": "2026-11-03T22:30:00+00:00"
+              },
+              "event_id": null
+            }
+          ]
+        }
+      ],
+      "member_count": 6,
+      "withheld": [],
+      "withheld_count": 0,
+      "children": [
+        {
+          "slug": "by-november-30",
+          "name": "By November 30",
+          "id": 3818257163,
+          "kind": "roundup",
+          "category": "cross-topic",
+          "status": "open",
+          "publication_state": "published",
+          "edition": null,
+          "destination": {
+            "kind": "container",
+            "slug": "by-november-30",
+            "web": "/collections/by-november-30",
+            "api": "/api/containers/by-november-30"
+          }
+        }
+      ],
+      "assembled": true
+    }
+  ],
+  [
+    {
+      "type": "bundle",
+      "score": 0.0,
+      "reason": "By November 30",
+      "headline": "By November 30",
+      "context_summary": null,
+      "data": {
+        "id": "roundup:by-november-30",
+        "title": "By November 30",
+        "kind": "roundup",
+        "story_key": "roundup:by-november-30",
+        "shared_question": null,
+        "item_count": 6,
+        "member_ids": [
+          61341170,
+          62611724,
+          68320839,
+          62141888,
+          63889649,
+          66907859
+        ],
+        "items": [
+          {
+            "type": "futures",
+            "score": 0.0,
+            "reason": "Will Anthropic IPO?",
+            "headline": "Will Anthropic IPO?",
+            "data": {
+              "id": 61341170,
+              "name": "Will Anthropic IPO by November 30, 2026?",
+              "sport": null,
+              "sport_name": null,
+              "category": "economics",
+              "llm_sport_category": "economics",
+              "market_tier": 2,
+              "market_type_label": "Yes / No",
+              "market_type": "yes_no",
+              "status": "open",
+              "source": "polymarket",
+              "sources": [
+                "polymarket"
+              ],
+              "source_count": 1,
+              "mutually_exclusive": true,
+              "resolution_date": "2026-12-01T04:59:00+00:00",
+              "top_outcomes": [
+                {
+                  "id": 613411701,
+                  "name": "Yes",
+                  "probability": 0.855,
+                  "rendered_percent": 86,
+                  "american_odds": null,
+                  "rank": 1,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 613411702,
+                  "name": "No",
+                  "probability": 0.145,
+                  "rendered_percent": 14,
+                  "american_odds": null,
+                  "rank": 2,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                }
+              ],
+              "outcome_count": 2,
+              "updated_at": "2026-11-03T22:30:00+00:00",
+              "prices_updated_at": "2026-11-03T22:30:00+00:00",
+              "price_observed_at": "2026-11-03T22:30:00+00:00"
+            }
+          },
+          {
+            "type": "futures",
+            "score": 0.0,
+            "reason": "Trump meets with Putin",
+            "headline": "Trump meets with Putin",
+            "data": {
+              "id": 62611724,
+              "name": "Trump meets with Putin by November 30?",
+              "sport": null,
+              "sport_name": null,
+              "category": "politics",
+              "llm_sport_category": "politics",
+              "market_tier": 2,
+              "market_type_label": "Yes / No",
+              "market_type": "yes_no",
+              "status": "open",
+              "source": "polymarket",
+              "sources": [
+                "polymarket"
+              ],
+              "source_count": 1,
+              "mutually_exclusive": true,
+              "resolution_date": "2026-11-30T23:59:00+00:00",
+              "top_outcomes": [
+                {
+                  "id": 626117241,
+                  "name": "Yes",
+                  "probability": 0.835,
+                  "rendered_percent": 84,
+                  "american_odds": null,
+                  "rank": 1,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 626117242,
+                  "name": "No",
+                  "probability": 0.165,
+                  "rendered_percent": 16,
+                  "american_odds": null,
+                  "rank": 2,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                }
+              ],
+              "outcome_count": 2,
+              "updated_at": "2026-11-03T22:30:00+00:00",
+              "prices_updated_at": "2026-11-03T22:30:00+00:00",
+              "price_observed_at": "2026-11-03T22:30:00+00:00"
+            }
+          },
+          {
+            "type": "futures",
+            "score": 0.0,
+            "reason": "Will a 7.0+ earthquake occur worldwide?",
+            "headline": "Will a 7.0+ earthquake occur worldwide?",
+            "data": {
+              "id": 68320839,
+              "name": "Will a 7.0+ earthquake occur worldwide by November 30?",
+              "sport": null,
+              "sport_name": null,
+              "category": "weather",
+              "llm_sport_category": "weather",
+              "market_tier": 2,
+              "market_type_label": "Yes / No",
+              "market_type": "yes_no",
+              "status": "open",
+              "source": "polymarket",
+              "sources": [
+                "polymarket"
+              ],
+              "source_count": 1,
+              "mutually_exclusive": true,
+              "resolution_date": "2026-11-30T23:59:00+00:00",
+              "top_outcomes": [
+                {
+                  "id": 683208391,
+                  "name": "Yes",
+                  "probability": 0.66,
+                  "rendered_percent": 66,
+                  "american_odds": null,
+                  "rank": 1,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 683208392,
+                  "name": "No",
+                  "probability": 0.34,
+                  "rendered_percent": 34,
+                  "american_odds": null,
+                  "rank": 2,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                }
+              ],
+              "outcome_count": 2,
+              "updated_at": "2026-11-03T22:30:00+00:00",
+              "prices_updated_at": "2026-11-03T22:30:00+00:00",
+              "price_observed_at": "2026-11-03T22:30:00+00:00"
+            }
+          },
+          {
+            "type": "futures",
+            "score": 0.0,
+            "reason": "Next Claude Opus (5.6+) released",
+            "headline": "Next Claude Opus (5.6+) released",
+            "data": {
+              "id": 62141888,
+              "name": "Next Claude Opus (5.6+) released by November 30, 2026?",
+              "sport": null,
+              "sport_name": null,
+              "category": "tech",
+              "llm_sport_category": "tech",
+              "market_tier": 2,
+              "market_type_label": "Yes / No",
+              "market_type": "yes_no",
+              "status": "open",
+              "source": "polymarket",
+              "sources": [
+                "polymarket"
+              ],
+              "source_count": 1,
+              "mutually_exclusive": true,
+              "resolution_date": "2026-12-01T04:59:00+00:00",
+              "top_outcomes": [
+                {
+                  "id": 621418881,
+                  "name": "Yes",
+                  "probability": 0.595,
+                  "rendered_percent": 60,
+                  "american_odds": null,
+                  "rank": 1,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 621418882,
+                  "name": "No",
+                  "probability": 0.405,
+                  "rendered_percent": 40,
+                  "american_odds": null,
+                  "rank": 2,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                }
+              ],
+              "outcome_count": 2,
+              "updated_at": "2026-11-03T22:30:00+00:00",
+              "prices_updated_at": "2026-11-03T22:30:00+00:00",
+              "price_observed_at": "2026-11-03T22:30:00+00:00"
+            }
+          },
+          {
+            "type": "futures",
+            "score": 0.0,
+            "reason": "Will Valve add sticker trade-ups?",
+            "headline": "Will Valve add sticker trade-ups?",
+            "data": {
+              "id": 63889649,
+              "name": "Will Valve add sticker trade-ups by November 30, 2026?",
+              "sport": null,
+              "sport_name": null,
+              "category": "esports",
+              "llm_sport_category": "esports",
+              "market_tier": 2,
+              "market_type_label": "Yes / No",
+              "market_type": "yes_no",
+              "status": "open",
+              "source": "polymarket",
+              "sources": [
+                "polymarket"
+              ],
+              "source_count": 1,
+              "mutually_exclusive": true,
+              "resolution_date": "2026-12-01T04:59:00+00:00",
+              "top_outcomes": [
+                {
+                  "id": 638896491,
+                  "name": "Yes",
+                  "probability": 0.495,
+                  "rendered_percent": 50,
+                  "american_odds": null,
+                  "rank": 1,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 638896492,
+                  "name": "No",
+                  "probability": 0.505,
+                  "rendered_percent": 50,
+                  "american_odds": null,
+                  "rank": 2,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                }
+              ],
+              "outcome_count": 2,
+              "updated_at": "2026-11-03T22:30:00+00:00",
+              "prices_updated_at": "2026-11-03T22:30:00+00:00",
+              "price_observed_at": "2026-11-03T22:30:00+00:00"
+            }
+          },
+          {
+            "type": "futures",
+            "score": 0.0,
+            "reason": "By November 30",
+            "headline": "By November 30",
+            "data": {
+              "id": 66907859,
+              "name": "Another GTA VI trailer released by November 30?",
+              "sport": null,
+              "sport_name": null,
+              "category": "entertainment",
+              "llm_sport_category": "entertainment",
+              "market_tier": 2,
+              "market_type_label": "Yes / No",
+              "market_type": "yes_no",
+              "status": "open",
+              "source": "polymarket",
+              "sources": [
+                "polymarket"
+              ],
+              "source_count": 1,
+              "mutually_exclusive": true,
+              "resolution_date": "2026-11-30T23:59:00+00:00",
+              "top_outcomes": [
+                {
+                  "id": 669078591,
+                  "name": "Yes",
+                  "probability": 0.17,
+                  "rendered_percent": 17,
+                  "american_odds": null,
+                  "rank": 1,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                },
+                {
+                  "id": 669078592,
+                  "name": "No",
+                  "probability": 0.83,
+                  "rendered_percent": 83,
+                  "american_odds": null,
+                  "rank": 2,
+                  "movement": null,
+                  "is_winner": false,
+                  "resolution_source": null
+                }
+              ],
+              "outcome_count": 2,
+              "updated_at": "2026-11-03T22:30:00+00:00",
+              "prices_updated_at": "2026-11-03T22:30:00+00:00",
+              "price_observed_at": "2026-11-03T22:30:00+00:00"
+            }
+          }
+        ],
+        "collection_ref": {
+          "slug": "by-november-30",
+          "href": "/collections/by-november-30",
+          "name": "By November 30",
+          "revision": 4248763729,
+          "collection_count": 6
+        },
+        "roundup": {
+          "kicker": "SAME DEADLINE",
+          "tag": null,
+          "footer": "Separate markets that settle by the same day.",
+          "rows": [
+            {
+              "market_id": 61341170,
+              "label": "Will Anthropic IPO?",
+              "probability": 0.855,
+              "rendered_percent": 86,
+              "observed_at": "2026-11-03T22:30:00+00:00"
+            },
+            {
+              "market_id": 62611724,
+              "label": "Trump meets with Putin",
+              "probability": 0.835,
+              "rendered_percent": 84,
+              "observed_at": "2026-11-03T22:30:00+00:00"
+            },
+            {
+              "market_id": 68320839,
+              "label": "Will a 7.0+ earthquake occur worldwide?",
+              "probability": 0.66,
+              "rendered_percent": 66,
+              "observed_at": "2026-11-03T22:30:00+00:00"
+            },
+            {
+              "market_id": 62141888,
+              "label": "Next Claude Opus (5.6+) released",
+              "probability": 0.595,
+              "rendered_percent": 60,
+              "observed_at": "2026-11-03T22:30:00+00:00"
+            },
+            {
+              "market_id": 63889649,
+              "label": "Will Valve add sticker trade-ups?",
+              "probability": 0.495,
+              "rendered_percent": 50,
+              "observed_at": "2026-11-03T22:30:00+00:00"
+            }
+          ],
+          "relations": [
+            "same_window",
+            "by_when"
+          ],
+          "level": "member",
+          "count_line": "Showing 5 of 6"
+        }
+      }
+    },
+    {
+      "state": "published",
+      "slug": "by-november-30",
+      "revision": 4248763729,
+      "relations": [
+        "same_window",
+        "by_when"
+      ],
+      "level": "member",
+      "reason": null,
+      "edition": null,
+      "container": {
+        "id": 3818257163,
+        "slug": "by-november-30",
+        "name": "By November 30",
+        "kind": "roundup",
+        "category": "cross-topic",
+        "status": "open",
+        "window_start": null,
+        "window_end": null,
+        "parent_container_id": 2269644014,
+        "parent_slug": "by-december-31",
+        "parent_name": "By December 31"
+      },
+      "subtitle": "Separate markets that settle by the same day.",
+      "caption": null,
+      "sections": [
+        {
+          "class": "title",
+          "title": "Markets settling by November 30",
+          "layout": "field",
+          "count": 6,
+          "members": [
+            {
+              "type": "market",
+              "id": 61341170,
+              "destination": {
+                "kind": "market",
+                "id": 61341170,
+                "web": "/futures/61341170",
+                "api": "/api/futures/61341170"
+              },
+              "card": {
+                "id": 61341170,
+                "name": "Will Anthropic IPO by November 30, 2026?",
+                "sport": null,
+                "sport_name": null,
+                "category": "economics",
+                "llm_sport_category": "economics",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2026-12-01T04:59:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 613411701,
+                    "name": "Yes",
+                    "probability": 0.855,
+                    "rendered_percent": 86,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 613411702,
+                    "name": "No",
+                    "probability": 0.145,
+                    "rendered_percent": 14,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-03T22:30:00+00:00",
+                "prices_updated_at": "2026-11-03T22:30:00+00:00",
+                "price_observed_at": "2026-11-03T22:30:00+00:00"
+              },
+              "event_id": null
+            },
+            {
+              "type": "market",
+              "id": 62611724,
+              "destination": {
+                "kind": "market",
+                "id": 62611724,
+                "web": "/futures/62611724",
+                "api": "/api/futures/62611724"
+              },
+              "card": {
+                "id": 62611724,
+                "name": "Trump meets with Putin by November 30?",
+                "sport": null,
+                "sport_name": null,
+                "category": "politics",
+                "llm_sport_category": "politics",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2026-11-30T23:59:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 626117241,
+                    "name": "Yes",
+                    "probability": 0.835,
+                    "rendered_percent": 84,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 626117242,
+                    "name": "No",
+                    "probability": 0.165,
+                    "rendered_percent": 16,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-03T22:30:00+00:00",
+                "prices_updated_at": "2026-11-03T22:30:00+00:00",
+                "price_observed_at": "2026-11-03T22:30:00+00:00"
+              },
+              "event_id": null
+            },
+            {
+              "type": "market",
+              "id": 68320839,
+              "destination": {
+                "kind": "market",
+                "id": 68320839,
+                "web": "/futures/68320839",
+                "api": "/api/futures/68320839"
+              },
+              "card": {
+                "id": 68320839,
+                "name": "Will a 7.0+ earthquake occur worldwide by November 30?",
+                "sport": null,
+                "sport_name": null,
+                "category": "weather",
+                "llm_sport_category": "weather",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2026-11-30T23:59:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 683208391,
+                    "name": "Yes",
+                    "probability": 0.66,
+                    "rendered_percent": 66,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 683208392,
+                    "name": "No",
+                    "probability": 0.34,
+                    "rendered_percent": 34,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-03T22:30:00+00:00",
+                "prices_updated_at": "2026-11-03T22:30:00+00:00",
+                "price_observed_at": "2026-11-03T22:30:00+00:00"
+              },
+              "event_id": null
+            },
+            {
+              "type": "market",
+              "id": 62141888,
+              "destination": {
+                "kind": "market",
+                "id": 62141888,
+                "web": "/futures/62141888",
+                "api": "/api/futures/62141888"
+              },
+              "card": {
+                "id": 62141888,
+                "name": "Next Claude Opus (5.6+) released by November 30, 2026?",
+                "sport": null,
+                "sport_name": null,
+                "category": "tech",
+                "llm_sport_category": "tech",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2026-12-01T04:59:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 621418881,
+                    "name": "Yes",
+                    "probability": 0.595,
+                    "rendered_percent": 60,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 621418882,
+                    "name": "No",
+                    "probability": 0.405,
+                    "rendered_percent": 40,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-03T22:30:00+00:00",
+                "prices_updated_at": "2026-11-03T22:30:00+00:00",
+                "price_observed_at": "2026-11-03T22:30:00+00:00"
+              },
+              "event_id": null
+            },
+            {
+              "type": "market",
+              "id": 63889649,
+              "destination": {
+                "kind": "market",
+                "id": 63889649,
+                "web": "/futures/63889649",
+                "api": "/api/futures/63889649"
+              },
+              "card": {
+                "id": 63889649,
+                "name": "Will Valve add sticker trade-ups by November 30, 2026?",
+                "sport": null,
+                "sport_name": null,
+                "category": "esports",
+                "llm_sport_category": "esports",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2026-12-01T04:59:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 638896491,
+                    "name": "Yes",
+                    "probability": 0.495,
+                    "rendered_percent": 50,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 638896492,
+                    "name": "No",
+                    "probability": 0.505,
+                    "rendered_percent": 50,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-03T22:30:00+00:00",
+                "prices_updated_at": "2026-11-03T22:30:00+00:00",
+                "price_observed_at": "2026-11-03T22:30:00+00:00"
+              },
+              "event_id": null
+            },
+            {
+              "type": "market",
+              "id": 66907859,
+              "destination": {
+                "kind": "market",
+                "id": 66907859,
+                "web": "/futures/66907859",
+                "api": "/api/futures/66907859"
+              },
+              "card": {
+                "id": 66907859,
+                "name": "Another GTA VI trailer released by November 30?",
+                "sport": null,
+                "sport_name": null,
+                "category": "entertainment",
+                "llm_sport_category": "entertainment",
+                "market_tier": 2,
+                "market_type_label": "Yes / No",
+                "market_type": "yes_no",
+                "status": "open",
+                "source": "polymarket",
+                "sources": [
+                  "polymarket"
+                ],
+                "source_count": 1,
+                "mutually_exclusive": true,
+                "resolution_date": "2026-11-30T23:59:00+00:00",
+                "top_outcomes": [
+                  {
+                    "id": 669078591,
+                    "name": "Yes",
+                    "probability": 0.17,
+                    "rendered_percent": 17,
+                    "american_odds": null,
+                    "rank": 1,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  },
+                  {
+                    "id": 669078592,
+                    "name": "No",
+                    "probability": 0.83,
+                    "rendered_percent": 83,
+                    "american_odds": null,
+                    "rank": 2,
+                    "movement": null,
+                    "is_winner": false,
+                    "resolution_source": null
+                  }
+                ],
+                "outcome_count": 2,
+                "updated_at": "2026-11-03T22:30:00+00:00",
+                "prices_updated_at": "2026-11-03T22:30:00+00:00",
+                "price_observed_at": "2026-11-03T22:30:00+00:00"
+              },
+              "event_id": null
+            }
+          ]
+        }
+      ],
+      "member_count": 6,
+      "withheld": [],
+      "withheld_count": 0,
+      "children": [],
+      "assembled": true,
+      "parent": {
+        "slug": "by-december-31",
+        "name": "By December 31",
+        "destination": {
+          "kind": "container",
+          "slug": "by-december-31",
+          "web": "/collections/by-december-31",
+          "api": "/api/containers/by-december-31"
+        }
+      }
+    }
+  ]
+]

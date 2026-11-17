@@ -1,0 +1,21 @@
+Builder C PR #12878, commit 1b59e048cd, SourceMarkView12581.swift
+    static func method(_ mark: SourceMark) -> String? {
+        let served = mark.method?.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch mark.state {
+        case .blend where mark.sources.count > 1:
+            return (served?.isEmpty == false) ? served : "Bain Luck blend"
+        case .blend, .single:
+            guard let first = mark.sources.first else { return nil }
+            if let served, !served.isEmpty {
+                return served
+            }
+            let name = first.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return nil }
+            return name.lowercased().hasSuffix("s") ? "\(name)' price" : "\(name)'s price"
+        case .settled:
+            return nil
+        case .none, .unknown:
+            return nil
+        }
+    }
+

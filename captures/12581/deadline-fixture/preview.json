@@ -1,0 +1,531 @@
+{
+  "title": "By December 31",
+  "rows": [
+    {
+      "market_id": 62162058,
+      "label": "Next Claude Opus (5.6+) released",
+      "probability": 0.885,
+      "source_mark": {
+        "state": "single",
+        "sources": [
+          {
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": 0.885,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          }
+        ]
+      },
+      "rendered_percent": 89,
+      "observed_at": "2026-11-03T22:30:00+00:00"
+    },
+    {
+      "market_id": 27594137,
+      "label": "Trump meets with Putin",
+      "probability": 0.83,
+      "source_mark": {
+        "state": "single",
+        "sources": [
+          {
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": 0.83,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          }
+        ]
+      },
+      "rendered_percent": 83,
+      "observed_at": "2026-11-03T22:30:00+00:00"
+    },
+    {
+      "market_id": 30587891,
+      "label": "Will Banksy create a new mural or street artwork?",
+      "probability": 0.47,
+      "source_mark": {
+        "state": "single",
+        "sources": [
+          {
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": 0.47,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          }
+        ]
+      },
+      "rendered_percent": 47,
+      "observed_at": "2026-11-03T22:30:00+00:00"
+    },
+    {
+      "market_id": 8422080,
+      "label": "Pete Hegseth out as Secretary of Defense",
+      "probability": 0.4,
+      "source_mark": {
+        "state": "single",
+        "sources": [
+          {
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": 0.4,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          }
+        ]
+      },
+      "rendered_percent": 40,
+      "observed_at": "2026-11-03T22:30:00+00:00"
+    },
+    {
+      "market_id": 13791228,
+      "label": "SCOTUS accepts sports event contract case",
+      "probability": 0.205,
+      "source_mark": {
+        "state": "single",
+        "sources": [
+          {
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": 0.205,
+            "observed_at": null,
+            "reason": "observation_unknown"
+          }
+        ]
+      },
+      "rendered_percent": 21,
+      "observed_at": "2026-11-03T22:30:00+00:00"
+    }
+  ],
+  "cards": [
+    {
+      "id": 62162058,
+      "name": "Next Claude Opus (5.6+) released by December 31, 2026?",
+      "sport": null,
+      "sport_name": null,
+      "category": "tech",
+      "llm_sport_category": "tech",
+      "market_tier": 2,
+      "market_type_label": "Yes / No",
+      "market_type": "yes_no",
+      "status": "open",
+      "source": "polymarket",
+      "sources": [
+        "polymarket"
+      ],
+      "source_count": 1,
+      "mutually_exclusive": true,
+      "resolution_date": "2027-01-01T04:59:00+00:00",
+      "top_outcomes": [
+        {
+          "id": 621620581,
+          "name": "Yes",
+          "probability": 0.885,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.885,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "rendered_percent": 89,
+          "american_odds": null,
+          "rank": 1,
+          "movement": null,
+          "is_winner": false,
+          "resolution_source": null
+        },
+        {
+          "id": 621620582,
+          "name": "No",
+          "probability": 0.115,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.115,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ],
+            "method": "Rounded with Yes so the two rows total 100%"
+          },
+          "rendered_percent": 11,
+          "american_odds": null,
+          "rank": 2,
+          "movement": null,
+          "is_winner": false,
+          "resolution_source": null
+        }
+      ],
+      "outcome_count": 2,
+      "updated_at": "2026-11-03T22:30:00+00:00",
+      "prices_updated_at": "2026-11-03T22:30:00+00:00",
+      "price_observed_at": "2026-11-03T22:30:00+00:00"
+    },
+    {
+      "id": 27594137,
+      "name": "Trump meets with Putin by December 31?",
+      "sport": null,
+      "sport_name": null,
+      "category": "politics",
+      "llm_sport_category": "politics",
+      "market_tier": 2,
+      "market_type_label": "Yes / No",
+      "market_type": "yes_no",
+      "status": "open",
+      "source": "polymarket",
+      "sources": [
+        "polymarket"
+      ],
+      "source_count": 1,
+      "mutually_exclusive": true,
+      "resolution_date": "2026-12-31T23:59:00+00:00",
+      "top_outcomes": [
+        {
+          "id": 275941371,
+          "name": "Yes",
+          "probability": 0.83,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.83,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "rendered_percent": 83,
+          "american_odds": null,
+          "rank": 1,
+          "movement": null,
+          "is_winner": false,
+          "resolution_source": null
+        },
+        {
+          "id": 275941372,
+          "name": "No",
+          "probability": 0.17,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.17,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "rendered_percent": 17,
+          "american_odds": null,
+          "rank": 2,
+          "movement": null,
+          "is_winner": false,
+          "resolution_source": null
+        }
+      ],
+      "outcome_count": 2,
+      "updated_at": "2026-11-03T22:30:00+00:00",
+      "prices_updated_at": "2026-11-03T22:30:00+00:00",
+      "price_observed_at": "2026-11-03T22:30:00+00:00"
+    },
+    {
+      "id": 30587891,
+      "name": "Will Banksy create a new mural or street artwork by December 31?",
+      "sport": null,
+      "sport_name": null,
+      "category": "entertainment",
+      "llm_sport_category": "entertainment",
+      "market_tier": 2,
+      "market_type_label": "Yes / No",
+      "market_type": "yes_no",
+      "status": "open",
+      "source": "polymarket",
+      "sources": [
+        "polymarket"
+      ],
+      "source_count": 1,
+      "mutually_exclusive": true,
+      "resolution_date": "2026-12-31T23:59:00+00:00",
+      "top_outcomes": [
+        {
+          "id": 305878911,
+          "name": "Yes",
+          "probability": 0.47,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.47,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "rendered_percent": 47,
+          "american_odds": null,
+          "rank": 1,
+          "movement": null,
+          "is_winner": false,
+          "resolution_source": null
+        },
+        {
+          "id": 305878912,
+          "name": "No",
+          "probability": 0.53,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.53,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "rendered_percent": 53,
+          "american_odds": null,
+          "rank": 2,
+          "movement": null,
+          "is_winner": false,
+          "resolution_source": null
+        }
+      ],
+      "outcome_count": 2,
+      "updated_at": "2026-11-03T22:30:00+00:00",
+      "prices_updated_at": "2026-11-03T22:30:00+00:00",
+      "price_observed_at": "2026-11-03T22:30:00+00:00"
+    },
+    {
+      "id": 8422080,
+      "name": "Pete Hegseth out as Secretary of Defense by December 31?",
+      "sport": null,
+      "sport_name": null,
+      "category": "geopolitics",
+      "llm_sport_category": "geopolitics",
+      "market_tier": 2,
+      "market_type_label": "Yes / No",
+      "market_type": "yes_no",
+      "status": "open",
+      "source": "polymarket",
+      "sources": [
+        "polymarket"
+      ],
+      "source_count": 1,
+      "mutually_exclusive": true,
+      "resolution_date": "2026-12-31T23:59:00+00:00",
+      "top_outcomes": [
+        {
+          "id": 84220801,
+          "name": "Yes",
+          "probability": 0.4,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.4,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "rendered_percent": 40,
+          "american_odds": null,
+          "rank": 1,
+          "movement": null,
+          "is_winner": false,
+          "resolution_source": null
+        },
+        {
+          "id": 84220802,
+          "name": "No",
+          "probability": 0.6,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.6,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "rendered_percent": 60,
+          "american_odds": null,
+          "rank": 2,
+          "movement": null,
+          "is_winner": false,
+          "resolution_source": null
+        }
+      ],
+      "outcome_count": 2,
+      "updated_at": "2026-11-03T22:30:00+00:00",
+      "prices_updated_at": "2026-11-03T22:30:00+00:00",
+      "price_observed_at": "2026-11-03T22:30:00+00:00"
+    },
+    {
+      "id": 13791228,
+      "name": "SCOTUS accepts sports event contract case by December 31, 2026?",
+      "sport": null,
+      "sport_name": null,
+      "category": "legal",
+      "llm_sport_category": "legal",
+      "market_tier": 2,
+      "market_type_label": "Yes / No",
+      "market_type": "yes_no",
+      "status": "open",
+      "source": "polymarket",
+      "sources": [
+        "polymarket"
+      ],
+      "source_count": 1,
+      "mutually_exclusive": true,
+      "resolution_date": "2027-01-01T04:59:00+00:00",
+      "top_outcomes": [
+        {
+          "id": 137912281,
+          "name": "Yes",
+          "probability": 0.205,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.205,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "rendered_percent": 21,
+          "american_odds": null,
+          "rank": 1,
+          "movement": null,
+          "is_winner": false,
+          "resolution_source": null
+        },
+        {
+          "id": 137912282,
+          "name": "No",
+          "probability": 0.795,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.795,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ],
+            "method": "Rounded with Yes so the two rows total 100%"
+          },
+          "rendered_percent": 79,
+          "american_odds": null,
+          "rank": 2,
+          "movement": null,
+          "is_winner": false,
+          "resolution_source": null
+        }
+      ],
+      "outcome_count": 2,
+      "updated_at": "2026-11-03T22:30:00+00:00",
+      "prices_updated_at": "2026-11-03T22:30:00+00:00",
+      "price_observed_at": "2026-11-03T22:30:00+00:00"
+    },
+    {
+      "id": 13794660,
+      "name": "Will Samuel Alito announce his retirement by December 31, 2026?",
+      "sport": null,
+      "sport_name": null,
+      "category": "politics",
+      "llm_sport_category": "politics",
+      "market_tier": 2,
+      "market_type_label": "Yes / No",
+      "market_type": "yes_no",
+      "status": "open",
+      "source": "polymarket",
+      "sources": [
+        "polymarket"
+      ],
+      "source_count": 1,
+      "mutually_exclusive": true,
+      "resolution_date": "2027-01-01T04:59:00+00:00",
+      "top_outcomes": [
+        {
+          "id": 137946601,
+          "name": "Yes",
+          "probability": 0.185,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.185,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "rendered_percent": 19,
+          "american_odds": null,
+          "rank": 1,
+          "movement": null,
+          "is_winner": false,
+          "resolution_source": null
+        },
+        {
+          "id": 137946602,
+          "name": "No",
+          "probability": 0.815,
+          "source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.815,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ],
+            "method": "Rounded with Yes so the two rows total 100%"
+          },
+          "rendered_percent": 81,
+          "american_odds": null,
+          "rank": 2,
+          "movement": null,
+          "is_winner": false,
+          "resolution_source": null
+        }
+      ],
+      "outcome_count": 2,
+      "updated_at": "2026-11-03T22:30:00+00:00",
+      "prices_updated_at": "2026-11-03T22:30:00+00:00",
+      "price_observed_at": "2026-11-03T22:30:00+00:00"
+    }
+  ]
+}

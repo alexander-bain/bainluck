@@ -1,0 +1,247 @@
+[
+  {
+    "id": 61341170,
+    "external_id": "ext-61341170",
+    "name": "Will Anthropic IPO by November 30, 2026?",
+    "source": "polymarket",
+    "status": "open",
+    "mutually_exclusive": true,
+    "market_tier": 2,
+    "market_type": "yes_no",
+    "category": "economics",
+    "llm_sport_category": "economics",
+    "resolution_date": "2026-12-01T04:59:00+00:00",
+    "updated_at": "2026-11-03T22:30:00+00:00",
+    "prices_updated_at": "2026-11-03T22:30:00+00:00",
+    "outcomes": [
+      {
+        "id": 613411701,
+        "name": "Yes",
+        "probability": 0.855,
+        "movement": 0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "id": 613411702,
+        "name": "No",
+        "probability": 0.145,
+        "movement": -0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      }
+    ]
+  },
+  {
+    "id": 62611724,
+    "external_id": "ext-62611724",
+    "name": "Trump meets with Putin by November 30?",
+    "source": "polymarket",
+    "status": "open",
+    "mutually_exclusive": true,
+    "market_tier": 2,
+    "market_type": "yes_no",
+    "category": "politics",
+    "llm_sport_category": "politics",
+    "resolution_date": "2026-11-30T23:59:00+00:00",
+    "updated_at": "2026-11-03T22:30:00+00:00",
+    "prices_updated_at": "2026-11-03T22:30:00+00:00",
+    "outcomes": [
+      {
+        "id": 626117241,
+        "name": "Yes",
+        "probability": 0.835,
+        "movement": 0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "id": 626117242,
+        "name": "No",
+        "probability": 0.165,
+        "movement": -0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      }
+    ]
+  },
+  {
+    "id": 68320839,
+    "external_id": "ext-68320839",
+    "name": "Will a 7.0+ earthquake occur worldwide by November 30?",
+    "source": "polymarket",
+    "status": "open",
+    "mutually_exclusive": true,
+    "market_tier": 2,
+    "market_type": "yes_no",
+    "category": "weather",
+    "llm_sport_category": "weather",
+    "resolution_date": "2026-11-30T23:59:00+00:00",
+    "updated_at": "2026-11-03T22:30:00+00:00",
+    "prices_updated_at": "2026-11-03T22:30:00+00:00",
+    "outcomes": [
+      {
+        "id": 683208391,
+        "name": "Yes",
+        "probability": 0.66,
+        "movement": 0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "id": 683208392,
+        "name": "No",
+        "probability": 0.34,
+        "movement": -0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      }
+    ]
+  },
+  {
+    "id": 62141888,
+    "external_id": "ext-62141888",
+    "name": "Next Claude Opus (5.6+) released by November 30, 2026?",
+    "source": "polymarket",
+    "status": "open",
+    "mutually_exclusive": true,
+    "market_tier": 2,
+    "market_type": "yes_no",
+    "category": "tech",
+    "llm_sport_category": "tech",
+    "resolution_date": "2026-12-01T04:59:00+00:00",
+    "updated_at": "2026-11-03T22:30:00+00:00",
+    "prices_updated_at": "2026-11-03T22:30:00+00:00",
+    "outcomes": [
+      {
+        "id": 621418881,
+        "name": "Yes",
+        "probability": 0.595,
+        "movement": 0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "id": 621418882,
+        "name": "No",
+        "probability": 0.405,
+        "movement": -0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      }
+    ]
+  },
+  {
+    "id": 63889649,
+    "external_id": "ext-63889649",
+    "name": "Will Valve add sticker trade-ups by November 30, 2026?",
+    "source": "polymarket",
+    "status": "open",
+    "mutually_exclusive": true,
+    "market_tier": 2,
+    "market_type": "yes_no",
+    "category": "esports",
+    "llm_sport_category": "esports",
+    "resolution_date": "2026-12-01T04:59:00+00:00",
+    "updated_at": "2026-11-03T22:30:00+00:00",
+    "prices_updated_at": "2026-11-03T22:30:00+00:00",
+    "outcomes": [
+      {
+        "id": 638896491,
+        "name": "Yes",
+        "probability": 0.495,
+        "movement": 0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "id": 638896492,
+        "name": "No",
+        "probability": 0.505,
+        "movement": -0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      }
+    ]
+  },
+  {
+    "id": 66907859,
+    "external_id": "ext-66907859",
+    "name": "Another GTA VI trailer released by November 30?",
+    "source": "polymarket",
+    "status": "open",
+    "mutually_exclusive": true,
+    "market_tier": 2,
+    "market_type": "yes_no",
+    "category": "entertainment",
+    "llm_sport_category": "entertainment",
+    "resolution_date": "2026-11-30T23:59:00+00:00",
+    "updated_at": "2026-11-03T22:30:00+00:00",
+    "prices_updated_at": "2026-11-03T22:30:00+00:00",
+    "outcomes": [
+      {
+        "id": 669078591,
+        "name": "Yes",
+        "probability": 0.17,
+        "movement": 0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "id": 669078592,
+        "name": "No",
+        "probability": 0.83,
+        "movement": -0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      }
+    ]
+  },
+  {
+    "id": 63790740,
+    "external_id": "ext-63790740",
+    "name": "Will Novak Djokovic announce his retirement by November 30, 2026?",
+    "source": "polymarket",
+    "status": "open",
+    "mutually_exclusive": true,
+    "market_tier": 2,
+    "market_type": "yes_no",
+    "category": "tennis",
+    "llm_sport_category": "tennis",
+    "resolution_date": "2026-12-01T04:59:00+00:00",
+    "updated_at": "2026-11-03T22:30:00+00:00",
+    "prices_updated_at": "2026-11-03T22:30:00+00:00",
+    "outcomes": [
+      {
+        "id": 637907401,
+        "name": "Yes",
+        "probability": 0.048,
+        "movement": 0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "id": 637907402,
+        "name": "No",
+        "probability": 0.952,
+        "movement": -0.02,
+        "last_updated": "2026-11-03T22:30:00+00:00",
+        "is_winner": null,
+        "resolution_source": null
+      }
+    ]
+  }
+]
