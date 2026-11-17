@@ -41,7 +41,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import and_, func, select, true
+from sqlalchemy import and_, func, select, text, true
 from sqlalchemy.orm import aliased
 
 from app.models.models import Event, OddsSnapshot, Sport
@@ -99,17 +99,7 @@ def _replaced_shape_query(event_ids):
 def _key(rows):
     """Order-independent comparison across every column that reaches the response."""
     return sorted(
-        (
-            s.id,
-            s.event_id,
-            s.bookmaker,
-            s.captured_at,
-            s.home_moneyline,
-            s.away_moneyline,
-            s.home_spread,
-            s.over_under,
-            s.home_win_probability,
-        )
+        tuple(getattr(s, column.key) for column in OddsSnapshot.__table__.columns)
         for s in rows
     )
 
@@ -463,3 +453,70 @@ async def test_both_replaced_windows_agree_on_cardinality_even_where_the_tie_was
     ).scalars().all()
 
     assert old_n == len(new_rows) == 1
+
+
+async def test_latest_clock_precedes_id_even_after_an_old_read_is_backfilled(seeded_db):
+    """A larger id is not a newer quote; equal clocks still choose the larger id."""
+    session, event_ids = seeded_db
+    event_id = event_ids[3]
+    quotes = [
+        OddsSnapshot(event_id=event_id, bookmaker="clock", captured_at=_T0,
+                     home_moneyline=-110, away_win_probability=0.49),
+        OddsSnapshot(event_id=event_id, bookmaker="clock", captured_at=_T0,
+                     home_moneyline=-120, away_win_probability=0.48),
+        OddsSnapshot(event_id=event_id, bookmaker="clock", captured_at=_T0-timedelta(days=1),
+                     home_moneyline=-900, away_win_probability=0.1),
+    ]
+    session.add_all(quotes)
+    await session.flush()
+    rows = (await session.execute(latest_odds_per_bookmaker_query([event_id]))).scalars().all()
+    old = (await session.execute(_replaced_shape_query([event_id]))).scalars().all()
+    assert _key(rows) == _key(old)
+    assert len(rows) == 1
+    assert rows[0].id == quotes[1].id
+    assert rows[0].home_moneyline == -120
+
+
+async def test_deep_history_is_not_read_to_break_a_latest_clock_tie(seeded_db):
+    """#12337: bound work on the existing three-column index, not a timer.
+
+    The live Week 10 miss spent 2.46 seconds in bookmaker odds. The old mixed
+    timestamp/id sort can visit a book's whole history; the index has no id key.
+    A real plan must visit fewer than 100 rows of an 8,194-row history here.
+    The generous row bound tolerates planner choices without a flaky time gate.
+    """
+    from sqlalchemy.dialects import postgresql
+
+    session, event_ids = seeded_db
+    event_id = event_ids[3]
+    # This is the existing migration index, not a new production index.
+    await session.execute(text(
+        "CREATE INDEX odds_seek_test ON odds_snapshots (event_id, bookmaker, captured_at)"
+    ))
+    await session.execute(text("""
+        INSERT INTO odds_snapshots (event_id, bookmaker, captured_at, home_moneyline)
+        SELECT :event_id, 'deep', cast(:start AS timestamptz) + n * interval '1 second', -110
+        FROM generate_series(1, 8192) n
+    """), {"event_id": event_id, "start": _T0})
+    tied = OddsSnapshot(event_id=event_id, bookmaker="deep",
+                        captured_at=_T0+timedelta(seconds=8192), home_moneyline=-130)
+    session.add(tied)
+    await session.flush()
+    session.add(OddsSnapshot(event_id=event_id, bookmaker="deep",
+                             captured_at=_T0, home_moneyline=-999))
+    await session.flush()
+    await session.execute(text("ANALYZE odds_snapshots"))
+    query = latest_odds_per_bookmaker_query([event_id])
+    rows = (await session.execute(query)).scalars().all()
+    assert len(rows) == 1 and rows[0].id == tied.id
+    assert rows[0].home_moneyline == -130
+    sql = str(query.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    result = (await session.execute(text("EXPLAIN (ANALYZE, FORMAT JSON) " + sql))).scalar_one()
+
+    def visited(node):
+        own = 0
+        if node.get("Relation Name") == "odds_snapshots":
+            own = (node.get("Actual Rows", 0) + node.get("Rows Removed by Filter", 0)) * node.get("Actual Loops", 0)
+        return own + sum(visited(child) for child in node.get("Plans", []))
+
+    assert visited(result[0]["Plan"]) < 100, result
