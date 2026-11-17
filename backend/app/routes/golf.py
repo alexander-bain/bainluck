@@ -3387,6 +3387,211 @@ def _upcoming_from_schedule(
 GOLF_CATEGORY_CACHE_KEY = "bainluck:category:golf"
 
 
+def _build_one_tournament(tourn_key: str, tourn_markets: list, prob_24h_ago: dict) -> dict | None:
+    """One tournament's entry from its markets: the cross-source aggregation.
+
+    Lifted out of :func:`get_golf` unchanged (#12740) so the same pipeline can
+    run a second time over AS-OF copies of the markets (each outcome priced at
+    the reading in force at the first tee) to produce the "Pregame" number. One
+    pipeline for both numbers is what keeps Pregame and Now comparable: the
+    placeholder rule, the per-market rescale and the field normalization apply
+    to both exactly the same way.
+    """
+    golfer_data: dict[str, dict] = {}
+    prop_markets_list: list[dict] = []
+    market_ids = []
+    market_sources = []
+    earliest_commence = None
+    latest_resolution = None
+    team_format_withheld = 0
+    winner_field_exclusive = True
+    winner_field_complete = True
+
+    source_best, dedup_candidates = _dedup_winner_markets(tourn_key, tourn_markets)
+
+    for market in tourn_markets:
+        market_ids.append(market.id)
+        market_sources.append(market.source or "unknown")
+        source = market.source or "unknown"
+        source_label = "datagolf_model" if source == "datagolf" else source
+
+        if market.commence_time:
+            if earliest_commence is None or market.commence_time < earliest_commence:
+                earliest_commence = market.commence_time
+        if market.resolution_date:
+            if latest_resolution is None or market.resolution_date > latest_resolution:
+                latest_resolution = market.resolution_date
+
+        if market.id in dedup_candidates and market.id != source_best.get(source):
+            continue
+
+        # #7985: the rows the mint guard was too late for. A team match-play
+        # event has no cut and no individual champion, so our own
+        # `datagolf:…:{win,top_5,top_10,top_20,make_cut}` markets for it are
+        # answers to questions it cannot be asked. Withheld here rather than
+        # left to rank, because the aggregation below cannot tell a phantom
+        # 6.1% from a real one — it ranked Jackson Koivun to the top of the
+        # Presidents Cup card out of a 132-player field for a 24-player
+        # event. `withhold_individual_market` can only reach markets we
+        # minted; Kalshi's Team USA v Team World on the same card is out of
+        # its reach by construction.
+        #
+        # Placed AFTER the commence/resolution harvest above on purpose: the
+        # withheld rows still date the card, so the guard changes what the
+        # card SAYS without changing when it thinks the event is.
+        if withhold_individual_market(tourn_key, source, market.external_id):
+            team_format_withheld += 1
+            continue
+
+        # Per-golfer binary markets: drop the winner-field fragments, but
+        # surface NON-winner yes/no questions (playoff, hole-in-one,
+        # first-time winner, albatross, record-low-round) as single-prob
+        # props instead of dropping them entirely (#952).
+        if len(market.outcomes) <= 2:
+            outcome_names = {o.name.strip().lower() for o in market.outcomes if o.name}
+            if outcome_names & {"yes", "no"}:
+                if _NON_WINNER_MARKET_RE.search(market.name):
+                    prop = _extract_yes_no_prop(market, source_label)
+                    if prop:
+                        prop_markets_list.append(prop)
+                continue
+
+        # Skip participation/field markets (prob sum >> 1) — EXCEPT Kalshi
+        # tournament-WINNER fields, which are independent per-golfer binaries
+        # that also sum >100% (gotcha #23); those get renormalized to a real
+        # field instead of dropped (#926). Markets summing <=1.5 are unchanged.
+        #
+        # #4402: and the market's own `mutually_exclusive` flag goes with it. A
+        # name saying "win" does not mean one winner — "Golfers to win a PGA Tour
+        # Major in 2027" has four — and scaling a four-winner field to sum 1.0 put
+        # Scheffler on the Discover hero at 6% against Kalshi's 56.5%.
+        outcome_prob_sum = sum(
+            float(o.current_probability)
+            for o in market.outcomes
+            if o.current_probability is not None
+        )
+        renorm_factor = _golf_winner_renorm_factor(
+            market.name,
+            len(market.outcomes),
+            outcome_prob_sum,
+            # `getattr`, not attribute access: this route's own fixtures build
+            # markets as `SimpleNamespace` and three suites' worth of them predate
+            # the column. Missing reads as UNKNOWN, which is the pre-#4402 path —
+            # the same graceful degradation the default encodes. A test asserts
+            # `FuturesMarket` really has the column, so this can never quietly
+            # become a permanent `None` through a rename.
+            mutually_exclusive=getattr(market, "mutually_exclusive", None),
+        )
+        if renorm_factor is None:
+            continue
+
+        # #9357: the full-field sum above is the GATE (it refuses non-exclusive
+        # and participation fields) and stays exactly as it was. The SCALE is not:
+        # a field that passed as one-winner is rescaled by the sum of the legs this
+        # loop will actually aggregate. Kalshi's Dunhill Links Winner carried 21
+        # bid legs (sum 0.636) under 133 withheld ask-only offers (full sum 6.861),
+        # so 1/6.861 printed Fleetwood's traded 12.5% as 1.8%. Bounded both ways:
+        # the result is never below the old factor and never above 1.0, so no leg
+        # is ever lifted past its own quote (CERT-450's concern is inflation, and
+        # survivors at or under 1.5 are used as-is, as every other field is).
+        if renorm_factor < 1.0:
+            aggregated_prob_sum = sum(
+                float(o.current_probability)
+                for o in market.outcomes
+                if o.current_probability is not None
+                and not _is_placeholder_price(o, source)
+            )
+            traded_factor = _golf_winner_renorm_factor(
+                market.name,
+                len(market.outcomes),
+                aggregated_prob_sum,
+                mutually_exclusive=getattr(market, "mutually_exclusive", None),
+            )
+            if traded_factor is not None:
+                renorm_factor = min(1.0, max(renorm_factor, traded_factor))
+
+        # Non-winner markets go to props
+        if _NON_WINNER_MARKET_RE.search(market.name):
+            prop = _extract_prop_market(market, source_label)
+            if prop:
+                prop_markets_list.append(prop)
+            continue
+
+        # #9766: a board whose ~24h-ago column is not a field has no basis. Read
+        # over the legs the loop below aggregates, so withheld offers weigh on
+        # neither side.
+        market_basis = prob_24h_ago
+        basis_legs = [
+            (float(o.current_probability), prob_24h_ago[o.id])
+            for o in market.outcomes
+            if o.current_probability is not None
+            and o.id in prob_24h_ago
+            and not _is_placeholder_price(o, source)
+        ]
+        if _basis_column_is_not_a_field(basis_legs):
+            market_basis = {}
+            logger.info(
+                "Golf #9766: refused the 24h basis of '%s' (market %s): %d legs "
+                "summed %.3f then, %.3f now",
+                market.name, getattr(market, "id", None), len(basis_legs),
+                sum(b for _, b in basis_legs), sum(c for c, _ in basis_legs),
+            )
+
+        # Aggregate winner outcomes
+        team_match_play = _is_three_way_team_winner(market)
+        winner_field_exclusive &= getattr(market, "mutually_exclusive", None) is True
+        winner_field_complete &= all(
+            o.current_probability is not None and not _is_placeholder_price(o, source)
+            and (
+                not _PROP_OUTCOME_RE.search(o.name)
+                or (team_match_play and is_team_side_name(o.name))
+            )
+            for o in market.outcomes
+        )
+        withheld = 0
+        for outcome in market.outcomes:
+            if outcome.current_probability is None:
+                continue
+            # Skip placeholder prices before any renormalization — an untraded
+            # Kalshi mid, any source's empty book (UX-P070), or a price that is
+            # merely this outcome's own unaccepted ask (CERT-450). The scale
+            # applied here comes from the survivors' own sum (#9357, above), but
+            # only ever downward: survivors summing <= 1.5 are used as-is, so
+            # four 10% quotes stay four 10% quotes and never become four 25%
+            # "forecasts". Scaling by the FULL field's sum, as this used to, let
+            # withheld offers deflate every real quote beside them.
+            if _is_placeholder_price(outcome, source):
+                withheld += 1
+                continue
+            _aggregate_golfer_outcome(
+                outcome, source_label, golfer_data, market_basis,
+                prob_scale=renorm_factor,
+                include_overflow=getattr(market, "mutually_exclusive", None) is True,
+                market=market,
+                team_match_play=team_match_play,
+            )
+        if withheld:
+            logger.debug(
+                "Golf: withheld %d placeholder-priced outcome(s) from field '%s' "
+                "(market %s)",
+                withheld, market.name, getattr(market, "id", None),
+            )
+
+    if team_format_withheld:
+        logger.info(
+            "Golf #7985: withheld %d minted individual stroke-play market(s) "
+            "from team match-play tournament '%s'",
+            team_format_withheld, tourn_key,
+        )
+
+    entry = _build_tournament_entry(
+        tourn_key, tourn_markets, golfer_data, prop_markets_list,
+        market_ids, market_sources, earliest_commence, latest_resolution,
+        mutually_exclusive=winner_field_exclusive, field_complete=winner_field_complete,
+    )
+    return entry
+
+
 @router.get("")
 async def get_golf_cached(
     db: AsyncSession = Depends(get_db),
@@ -3515,198 +3720,7 @@ async def get_golf(
     # Build tournament entries with cross-source aggregation
     tournaments = []
     for tourn_key, tourn_markets in tournament_markets.items():
-        golfer_data: dict[str, dict] = {}
-        prop_markets_list: list[dict] = []
-        market_ids = []
-        market_sources = []
-        earliest_commence = None
-        latest_resolution = None
-        team_format_withheld = 0
-        winner_field_exclusive = True
-        winner_field_complete = True
-
-        source_best, dedup_candidates = _dedup_winner_markets(tourn_key, tourn_markets)
-
-        for market in tourn_markets:
-            market_ids.append(market.id)
-            market_sources.append(market.source or "unknown")
-            source = market.source or "unknown"
-            source_label = "datagolf_model" if source == "datagolf" else source
-
-            if market.commence_time:
-                if earliest_commence is None or market.commence_time < earliest_commence:
-                    earliest_commence = market.commence_time
-            if market.resolution_date:
-                if latest_resolution is None or market.resolution_date > latest_resolution:
-                    latest_resolution = market.resolution_date
-
-            if market.id in dedup_candidates and market.id != source_best.get(source):
-                continue
-
-            # #7985: the rows the mint guard was too late for. A team match-play
-            # event has no cut and no individual champion, so our own
-            # `datagolf:…:{win,top_5,top_10,top_20,make_cut}` markets for it are
-            # answers to questions it cannot be asked. Withheld here rather than
-            # left to rank, because the aggregation below cannot tell a phantom
-            # 6.1% from a real one — it ranked Jackson Koivun to the top of the
-            # Presidents Cup card out of a 132-player field for a 24-player
-            # event. `withhold_individual_market` can only reach markets we
-            # minted; Kalshi's Team USA v Team World on the same card is out of
-            # its reach by construction.
-            #
-            # Placed AFTER the commence/resolution harvest above on purpose: the
-            # withheld rows still date the card, so the guard changes what the
-            # card SAYS without changing when it thinks the event is.
-            if withhold_individual_market(tourn_key, source, market.external_id):
-                team_format_withheld += 1
-                continue
-
-            # Per-golfer binary markets: drop the winner-field fragments, but
-            # surface NON-winner yes/no questions (playoff, hole-in-one,
-            # first-time winner, albatross, record-low-round) as single-prob
-            # props instead of dropping them entirely (#952).
-            if len(market.outcomes) <= 2:
-                outcome_names = {o.name.strip().lower() for o in market.outcomes if o.name}
-                if outcome_names & {"yes", "no"}:
-                    if _NON_WINNER_MARKET_RE.search(market.name):
-                        prop = _extract_yes_no_prop(market, source_label)
-                        if prop:
-                            prop_markets_list.append(prop)
-                    continue
-
-            # Skip participation/field markets (prob sum >> 1) — EXCEPT Kalshi
-            # tournament-WINNER fields, which are independent per-golfer binaries
-            # that also sum >100% (gotcha #23); those get renormalized to a real
-            # field instead of dropped (#926). Markets summing <=1.5 are unchanged.
-            #
-            # #4402: and the market's own `mutually_exclusive` flag goes with it. A
-            # name saying "win" does not mean one winner — "Golfers to win a PGA Tour
-            # Major in 2027" has four — and scaling a four-winner field to sum 1.0 put
-            # Scheffler on the Discover hero at 6% against Kalshi's 56.5%.
-            outcome_prob_sum = sum(
-                float(o.current_probability)
-                for o in market.outcomes
-                if o.current_probability is not None
-            )
-            renorm_factor = _golf_winner_renorm_factor(
-                market.name,
-                len(market.outcomes),
-                outcome_prob_sum,
-                # `getattr`, not attribute access: this route's own fixtures build
-                # markets as `SimpleNamespace` and three suites' worth of them predate
-                # the column. Missing reads as UNKNOWN, which is the pre-#4402 path —
-                # the same graceful degradation the default encodes. A test asserts
-                # `FuturesMarket` really has the column, so this can never quietly
-                # become a permanent `None` through a rename.
-                mutually_exclusive=getattr(market, "mutually_exclusive", None),
-            )
-            if renorm_factor is None:
-                continue
-
-            # #9357: the full-field sum above is the GATE (it refuses non-exclusive
-            # and participation fields) and stays exactly as it was. The SCALE is not:
-            # a field that passed as one-winner is rescaled by the sum of the legs this
-            # loop will actually aggregate. Kalshi's Dunhill Links Winner carried 21
-            # bid legs (sum 0.636) under 133 withheld ask-only offers (full sum 6.861),
-            # so 1/6.861 printed Fleetwood's traded 12.5% as 1.8%. Bounded both ways:
-            # the result is never below the old factor and never above 1.0, so no leg
-            # is ever lifted past its own quote (CERT-450's concern is inflation, and
-            # survivors at or under 1.5 are used as-is, as every other field is).
-            if renorm_factor < 1.0:
-                aggregated_prob_sum = sum(
-                    float(o.current_probability)
-                    for o in market.outcomes
-                    if o.current_probability is not None
-                    and not _is_placeholder_price(o, source)
-                )
-                traded_factor = _golf_winner_renorm_factor(
-                    market.name,
-                    len(market.outcomes),
-                    aggregated_prob_sum,
-                    mutually_exclusive=getattr(market, "mutually_exclusive", None),
-                )
-                if traded_factor is not None:
-                    renorm_factor = min(1.0, max(renorm_factor, traded_factor))
-
-            # Non-winner markets go to props
-            if _NON_WINNER_MARKET_RE.search(market.name):
-                prop = _extract_prop_market(market, source_label)
-                if prop:
-                    prop_markets_list.append(prop)
-                continue
-
-            # #9766: a board whose ~24h-ago column is not a field has no basis. Read
-            # over the legs the loop below aggregates, so withheld offers weigh on
-            # neither side.
-            market_basis = prob_24h_ago
-            basis_legs = [
-                (float(o.current_probability), prob_24h_ago[o.id])
-                for o in market.outcomes
-                if o.current_probability is not None
-                and o.id in prob_24h_ago
-                and not _is_placeholder_price(o, source)
-            ]
-            if _basis_column_is_not_a_field(basis_legs):
-                market_basis = {}
-                logger.info(
-                    "Golf #9766: refused the 24h basis of '%s' (market %s): %d legs "
-                    "summed %.3f then, %.3f now",
-                    market.name, getattr(market, "id", None), len(basis_legs),
-                    sum(b for _, b in basis_legs), sum(c for c, _ in basis_legs),
-                )
-
-            # Aggregate winner outcomes
-            team_match_play = _is_three_way_team_winner(market)
-            winner_field_exclusive &= getattr(market, "mutually_exclusive", None) is True
-            winner_field_complete &= all(
-                o.current_probability is not None and not _is_placeholder_price(o, source)
-                and (
-                    not _PROP_OUTCOME_RE.search(o.name)
-                    or (team_match_play and is_team_side_name(o.name))
-                )
-                for o in market.outcomes
-            )
-            withheld = 0
-            for outcome in market.outcomes:
-                if outcome.current_probability is None:
-                    continue
-                # Skip placeholder prices before any renormalization — an untraded
-                # Kalshi mid, any source's empty book (UX-P070), or a price that is
-                # merely this outcome's own unaccepted ask (CERT-450). The scale
-                # applied here comes from the survivors' own sum (#9357, above), but
-                # only ever downward: survivors summing <= 1.5 are used as-is, so
-                # four 10% quotes stay four 10% quotes and never become four 25%
-                # "forecasts". Scaling by the FULL field's sum, as this used to, let
-                # withheld offers deflate every real quote beside them.
-                if _is_placeholder_price(outcome, source):
-                    withheld += 1
-                    continue
-                _aggregate_golfer_outcome(
-                    outcome, source_label, golfer_data, market_basis,
-                    prob_scale=renorm_factor,
-                    include_overflow=getattr(market, "mutually_exclusive", None) is True,
-                    market=market,
-                    team_match_play=team_match_play,
-                )
-            if withheld:
-                logger.debug(
-                    "Golf: withheld %d placeholder-priced outcome(s) from field '%s' "
-                    "(market %s)",
-                    withheld, market.name, getattr(market, "id", None),
-                )
-
-        if team_format_withheld:
-            logger.info(
-                "Golf #7985: withheld %d minted individual stroke-play market(s) "
-                "from team match-play tournament '%s'",
-                team_format_withheld, tourn_key,
-            )
-
-        entry = _build_tournament_entry(
-            tourn_key, tourn_markets, golfer_data, prop_markets_list,
-            market_ids, market_sources, earliest_commence, latest_resolution,
-            mutually_exclusive=winner_field_exclusive, field_complete=winner_field_complete,
-        )
+        entry = _build_one_tournament(tourn_key, tourn_markets, prob_24h_ago)
         if entry:
             tournaments.append(entry)
 
