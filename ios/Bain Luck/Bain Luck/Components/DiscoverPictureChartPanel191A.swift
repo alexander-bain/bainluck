@@ -28,7 +28,10 @@ enum DiscoverPictureChart191A {
         let perspective: Perspective
         let plottedTeamShortName: String
         let plottedTeamCode: String
+        var awayShortName: String = ""
+        var homeShortName: String = ""
         let points: [Point]
+        var threeWayPoints: [SoccerThreeLineChart211A.Point] = []
         let leftEndLabel: String
         let rightEndLabel: String
         let isFinished: Bool
@@ -177,11 +180,20 @@ enum DiscoverPictureChart191A {
             return ("Now \(tenthsText) \(plottedTeamCode)", true)
         }()
 
+        let threeWayPoints = SoccerThreeLineChart211A.extractCardPoints(
+            event: event,
+            prematch: prematch,
+            history: history
+        )
+
         return Model(
             perspective: perspective,
             plottedTeamShortName: plottedShortName,
             plottedTeamCode: plottedTeamCode,
+            awayShortName: shortPair.away,
+            homeShortName: shortPair.home,
             points: extractedPoints,
+            threeWayPoints: threeWayPoints,
             leftEndLabel: leftEndLabel,
             rightEndLabel: rightEndLabel,
             isFinished: isFinished,
@@ -425,7 +437,7 @@ struct DiscoverPictureChartPanel191AView: View {
 
     var body: some View {
         Group {
-            if !didFinishLoad || !model.points.isEmpty {
+            if !didFinishLoad || !model.points.isEmpty || !model.threeWayPoints.isEmpty {
                 plotCanvas
                     .frame(height: plotHeight)
                 .padding(.horizontal, 10)
@@ -504,7 +516,15 @@ struct DiscoverPictureChartPanel191AView: View {
 
     @ChartContentBuilder
     private func seriesMarks(floorY: Double) -> some ChartContent {
-        if model.points.count >= 2 {
+        if model.threeWayPoints.count >= 2 {
+            SoccerThreeLineChart211A.chartMarks(
+                segments: [model.threeWayPoints],
+                homeColor: homeColor,
+                drawColor: HeadlineStyleTable199.drawInk,
+                awayColor: awayColor,
+                lineWidth: 2.1
+            )
+        } else if model.points.count >= 2 {
             ForEach(model.points) { point in
                 AreaMark(
                     x: .value("Time", point.date),
