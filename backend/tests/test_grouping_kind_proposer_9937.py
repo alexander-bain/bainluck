@@ -584,6 +584,16 @@ class TestScoredNewKindsExamAndPreLicensingGuards:
     def test_score_new_kinds_exam_matches_committed_grades_and_receipt(self) -> None:
         assert DOCS_NEW_KINDS_EXAM_RECEIPT_MD_PATH.exists()
         summary = score_new_kinds_exam()
+        evals_json_path = (
+            Path(__file__).resolve().parents[2]
+            / "frontend"
+            / "lib"
+            / "evals"
+            / "data"
+            / "new-kinds-exam-2026-11.json"
+        )
+        assert evals_json_path.exists()
+        assert json.loads(evals_json_path.read_text(encoding="utf-8")) == summary
         assert summary["slate_id"] == NEW_KINDS_EXAM_SLATE_ID
         assert summary["total_graded"] == 20
         assert summary["total_yes"] == 20
