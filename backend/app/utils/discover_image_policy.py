@@ -253,7 +253,7 @@ _ESPN_TEAM_LOGOS: dict[str, str] = {
     "buffalo": "ncaa/500/2084",
     "buffalo bulls": "ncaa/500/2084",
     "akron": "ncaa/500/2006",
-    # Liga Profesional Argentina & global clubs
+    # Liga Profesional Argentina & global clubs + unambiguous pro nicknames
     "aldosivi": "soccer/500/9739",
     "sarmiento": "soccer/500/10158",
     "velez sarsfield": "soccer/500/21",
@@ -262,11 +262,39 @@ _ESPN_TEAM_LOGOS: dict[str, str] = {
     "racing club": "soccer/500/15",
     "independiente": "soccer/500/11",
     "san lorenzo": "soccer/500/18",
+    "arsenal": "soccer/500/359",
+    "liverpool": "soccer/500/364",
+    "real madrid": "soccer/500/86",
+    "barcelona": "soccer/500/83",
+    "lakers": "nba/500/lal",
+    "celtics": "nba/500/bos",
+    "warriors": "nba/500/gs",
+    "knicks": "nba/500/ny",
+    "timberwolves": "nba/500/min",
+    "mavericks": "nba/500/dal",
+    "nuggets": "nba/500/den",
+    "dodgers": "mlb/500/lad",
+    "yankees": "mlb/500/nyy",
+    "red sox": "mlb/500/bos",
+    "phillies": "mlb/500/phi",
+    "cowboys": "nfl/500/dal",
+    "chiefs": "nfl/500/kc",
+    "eagles": "nfl/500/phi",
+    "patriots": "nfl/500/ne",
+    "packers": "nfl/500/gb",
+    "ravens": "nfl/500/bal",
+    "steelers": "nfl/500/pit",
+    "seahawks": "nfl/500/sea",
+    "bruins": "nhl/500/bos",
+    "maple leafs": "nhl/500/tor",
+    "canadiens": "nhl/500/mtl",
+    "blackhawks": "nhl/500/chi",
+    "oilers": "nhl/500/edm",
 }
 
 _SORTED_SUBSTRING_TEAM_ALIASES: tuple[tuple[str, str], ...] = tuple(
     sorted(
-        ((k, v) for k, v in _ESPN_TEAM_LOGOS.items() if len(k) >= 7 and " " in k),
+        ((k, v) for k, v in _ESPN_TEAM_LOGOS.items() if len(k) >= 6),
         key=lambda kv: len(kv[0]),
         reverse=True,
     )
@@ -802,9 +830,15 @@ def _lookup_team_or_nation_logo(candidate: str | None) -> str | None:
     if flag:
         return flag
     padded = f" {norm} "
+    best_match: tuple[int, int, str] | None = None
     for alias, path in _SORTED_SUBSTRING_TEAM_ALIASES:
-        if f" {alias} " in padded:
-            return f"https://a.espncdn.com/i/teamlogos/{path}.png"
+        pos = padded.find(f" {alias} ")
+        if pos >= 0:
+            cand = (pos, -len(alias), path)
+            if best_match is None or cand < best_match:
+                best_match = cand
+    if best_match is not None:
+        return f"https://a.espncdn.com/i/teamlogos/{best_match[2]}.png"
     return None
 
 
@@ -835,31 +869,81 @@ def _entry_to_resolved_dict(verified: dict[str, str]) -> dict[str, Any]:
     }
 
 
+_AWARDS_CEREMONY_RE = re.compile(
+    r"\b(grammys?|grammy\s+awards?|latin\s+grammys?|oscars?|academy\s+awards?|emmys?|golden\s+globes?)\b",
+    re.IGNORECASE,
+)
+_WEATHER_KEYWORD_RE = re.compile(
+    r"\b(rain|rainfall|snow|snowfall|temperature|hurricane|tornado|storm|earthquake|wildfire|flood|drought|celsius|fahrenheit)\b",
+    re.IGNORECASE,
+)
+_POLITICS_KEYWORD_RE = re.compile(
+    r"\b(election|senate|congress|house\s+of\s+representatives|parliament|governor|mayor|white\s+house|impeach|supreme\s+court|cabinet|confirm(?:ed)?\s+as)\b",
+    re.IGNORECASE,
+)
+_ECONOMICS_KEYWORD_RE = re.compile(
+    r"\b(ipo|inflation|cpi|gdp|recession|tariff|interest\s+rate|fed\s+rate|fomc|treasury|unemployment|crude\s+oil)\b",
+    re.IGNORECASE,
+)
+_GEOPOLITICS_KEYWORD_RE = re.compile(
+    r"\b(strait|canal|ceasefire|nato|sanctions?|treaty|airspace|blockade|territorial)\b",
+    re.IGNORECASE,
+)
+_TECH_KEYWORD_RE = re.compile(
+    r"\b(openai|anthropic|claude|gemini|chatgpt|gpt-\d|semiconductor|data\s+center|valve|steam|gta\s+vi|playstation|nintendo)\b",
+    re.IGNORECASE,
+)
+
+
 def _lookup_domain_fallback_entry(
     name: str | None,
     category: str | None,
     subject: VisualSubject,
-) -> dict[str, str] | None:
+) -> tuple[dict[str, str], bool] | None:
+    """Return `(entry, is_ceremony_art)` ONLY when domain or ceremony positively matches.
+
+    Never falls through to a catch-all photo on unclassified, `crypto`, or `unknown`
+    markets, and never replaces an unregistered `person`, `film`, or `song` monogram
+    with a generic venue photo (only genuine awards ceremonies get TMDB trophy art).
+    """
     reg = _load_verified_register()
     title_low = (name or "").lower()
     cat_low = (category or "").strip().lower()
 
-    if subject.kind == "song" or _MUSIC_TITLE_RE.search(title_low):
-        alias = "domain-fallback-music"
-    elif subject.kind == "film" or _FILM_TITLE_RE.search(title_low):
-        alias = "domain-fallback-entertainment"
-    elif "ipo" in title_low or subject.kind == "organization":
-        alias = (
-            "domain-fallback-tech"
-            if cat_low in {"tech", "ai", "science", "esports"} and "ipo" not in title_low
-            else "domain-fallback-economics"
-        )
+    if cat_low in {"crypto", "cryptocurrency"}:
+        return None
+
+    # Awards ceremonies positively match TMDB ceremony trophy art
+    if _AWARDS_CEREMONY_RE.search(title_low):
+        is_music_award = "grammy" in title_low
+        alias = "domain-fallback-music" if is_music_award else "domain-fallback-entertainment"
+        entry = reg.get(_fold_ascii(alias))
+        return (entry, True) if entry else None
+
+    # Never put generic backdrop photos onto unregistered people, films, or songs
+    if subject.kind in {"person", "film", "song"}:
+        return None
+
+    alias: str | None = None
+    if "ipo" in title_low:
+        alias = "domain-fallback-economics"
+    elif _WEATHER_KEYWORD_RE.search(title_low):
+        alias = "domain-fallback-weather"
+    elif _TECH_KEYWORD_RE.search(title_low):
+        alias = "domain-fallback-tech"
+    elif _GEOPOLITICS_KEYWORD_RE.search(title_low):
+        alias = "domain-fallback-geopolitics"
+    elif _ECONOMICS_KEYWORD_RE.search(title_low):
+        alias = "domain-fallback-economics"
+    elif _POLITICS_KEYWORD_RE.search(title_low):
+        alias = "domain-fallback-politics"
     elif cat_low in _DISCOVER_DOMAIN_FALLBACK_ALIASES:
         alias = _DISCOVER_DOMAIN_FALLBACK_ALIASES[cat_low]
-    else:
-        alias = "domain-fallback-politics"
 
-    return reg.get(_fold_ascii(alias)) or reg.get(_fold_ascii("domain-fallback-politics"))
+    if not alias:
+        return None
+    entry = reg.get(_fold_ascii(alias))
+    return (entry, False) if entry else None
 
 
 def _append_candidate_with_song_parts(candidates: list[str], value: str | None) -> None:
@@ -1009,10 +1093,19 @@ def resolve_discover_market_image(
             "image_monogram": None,
         }
 
-    # 4b. On Discover feed serving (#12825: "every Discover card carries an image"),
-    # resolve country flags for national elections/politics or verified domain art
-    # so zero Discover cards ship imageless.
+    # 4b. On Discover feed serving (#12825), resolve team logos mentioned anywhere in
+    # the title, country flags for national elections/politics, or positively matched
+    # domain backdrops (marked `image_presentation: "backdrop"` without claiming entity credit).
     if allow_domain_fallback:
+        any_team_logo = _lookup_team_or_nation_logo(name)
+        if any_team_logo and _url_host_matches(any_team_logo, "espncdn.com"):
+            return {
+                "image_url": any_team_logo,
+                "image_width": 500,
+                "image_height": 500,
+                "image_presentation": "logo",
+                "image_monogram": None,
+            }
         country_flag = _extract_country_flag_url(name)
         if country_flag and (category or "").strip().lower() in {"politics", "geopolitics", "world", ""}:
             return {
@@ -1022,9 +1115,19 @@ def resolve_discover_market_image(
                 "image_presentation": "logo",
                 "image_monogram": None,
             }
-        fallback_entry = _lookup_domain_fallback_entry(name, category, subject)
-        if fallback_entry:
-            return _entry_to_resolved_dict(fallback_entry)
+        fallback_match = _lookup_domain_fallback_entry(name, category, subject)
+        if fallback_match:
+            fallback_entry, is_ceremony_art = fallback_match
+            if is_ceremony_art:
+                return _entry_to_resolved_dict(fallback_entry)
+            url = normalize_archive_image_url(fallback_entry["url"]) or fallback_entry["url"]
+            return {
+                "image_url": url,
+                "image_width": None,
+                "image_height": None,
+                "image_presentation": "backdrop",
+                "image_monogram": None,
+            }
 
     # 5. Deterministic `initials on a colour` monogram fallback (zero stock photos on entities)
     return {
@@ -1109,7 +1212,7 @@ def dedup_discover_tournament_items(items: list[dict[str, Any]]) -> list[dict[st
 
 
 def resolve_tournament_discover_image(data: dict[str, Any]) -> dict[str, Any]:
-    """Attach verified golfer portrait or golf course art to a Discover tournament `data` dict."""
+    """Attach verified golfer portrait or golfer monogram (or golf backdrop when leaderless) to a Discover tournament `data` dict."""
     out = dict(data)
     golfers = out.get("golfers") or []
     leader_name = (
@@ -1121,8 +1224,17 @@ def resolve_tournament_discover_image(data: dict[str, Any]) -> dict[str, Any]:
         category="golf",
         top_outcomes=[{"name": leader_name}] if leader_name else None,
         image_url=out.get("image_url"),
-        allow_domain_fallback=True,
+        allow_domain_fallback=not bool(leader_name),
     )
+    if leader_name and resolved.get("image_url") is None:
+        bg, acc = ("#14532d", "#16a34a")
+        resolved["image_monogram"] = {
+            "initials": compute_initials(leader_name, ticker_ok=False),
+            "label": leader_name,
+            "kind": "person",
+            "bg_hex": bg,
+            "accent_hex": acc,
+        }
     out["image_url"] = resolved["image_url"]
     out["image_presentation"] = resolved["image_presentation"]
     out["image_monogram"] = resolved["image_monogram"]

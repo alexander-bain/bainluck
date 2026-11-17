@@ -1974,7 +1974,7 @@ export interface FeedFuturesData {
    */
   image_width?: number | null;
   image_height?: number | null;
-  image_presentation?: "portrait" | "logo" | "cover" | "photo" | null;
+  image_presentation?: "portrait" | "logo" | "cover" | "photo" | "backdrop" | null;
   hook_description?: string | null;
   temporal_badge?: "Live" | "Closing Soon" | "New" | null;
   /** #490 — confidence signal (1-3 bars): how much we trust the probability. */
@@ -2282,7 +2282,7 @@ export interface FeedBundleData {
   deadline_family?: FeedDeadlineFamilyContract | null;
   /** Resolved Discover bundle hero image URL (#12825). */
   image_url?: string | null;
-  image_presentation?: "portrait" | "logo" | "cover" | "photo" | null;
+  image_presentation?: "portrait" | "logo" | "cover" | "photo" | "backdrop" | null;
   image_credit?: string | null;
 }
 

@@ -1,8 +1,9 @@
-"""Tests for #12825: every Discover card carries a verified image (TMDB, logos, Commons, domain fallback)."""
+"""Tests for #12825: Discover cards carry verified imagery without mismatched catch-all photos."""
 
 from __future__ import annotations
 
 from app.utils.discover_image_policy import (
+    resolve_discover_market_image,
     sanitize_discover_feed_item,
     sanitize_feed_response_images,
 )
@@ -95,59 +96,106 @@ def test_coinbase_super_bowl_ad_and_mac_football_cards_carry_verified_images():
     assert mac["data"]["image_presentation"] == "logo"
 
 
-def test_every_discover_domain_guarantees_non_null_image_url_even_for_unseen_markets():
-    categories = [
-        "football",
-        "basketball",
-        "baseball",
-        "hockey",
-        "soccer",
-        "golf",
-        "mma",
-        "entertainment",
-        "politics",
-        "geopolitics",
-        "economics",
-        "tech",
-        "weather",
-        "health",
-    ]
-    payload = {
-        "items": [
-            {
-                "type": "futures",
-                "data": {
-                    "id": 1000 + idx,
-                    "name": f"Unseen {cat} outlook before December 2027?",
-                    "llm_sport_category": cat,
-                    "top_outcomes": [{"name": "Yes", "probability": 0.5}],
-                },
-            }
-            for idx, cat in enumerate(categories)
-        ]
-        + [
-            {
-                "type": "futures",
-                "data": {
-                    "id": 2001,
-                    "name": "Next Prime Minister of Spain?",
-                    "llm_sport_category": "politics",
-                    "top_outcomes": [{"name": "Unregistered Candidate One", "probability": 0.48}],
-                },
+def test_domain_fallback_is_positive_match_only_and_never_mismatches_unclassified_or_crypto():
+    # Unclassified / crypto / synthetic entities NEVER receive the U.S. Capitol or mismatched stock art
+    btc = resolve_discover_market_image(
+        name="Will Bitcoin hit 100k?",
+        category="crypto",
+        top_outcomes=[{"name": "Yes"}],
+        allow_domain_fallback=True,
+    )
+    assert btc["image_url"] is None
+    assert btc["image_monogram"] is not None
+
+    zorblax = resolve_discover_market_image(
+        name="Will Zorblax win the Quizbowl?",
+        category=None,
+        top_outcomes=[{"name": "Yes"}],
+        allow_domain_fallback=True,
+    )
+    assert zorblax["image_url"] is None
+    assert zorblax["image_monogram"] is not None
+
+    # Unregistered person NEVER gets a generic venue photo even on Discover feed serving
+    unknown_person = resolve_discover_market_image(
+        name="Will Jane Doe resign before December?",
+        category="politics",
+        top_outcomes=[{"name": "Yes"}],
+        allow_domain_fallback=True,
+    )
+    assert unknown_person["image_url"] is None
+    assert unknown_person["image_monogram"]["initials"] == "JD"
+
+    # Team matchup in title resolves to the official ESPN team crest, not a generic college arena
+    lakers = resolve_discover_market_image(
+        name="Will the Lakers beat the Celtics?",
+        category="basketball",
+        top_outcomes=[{"name": "Yes"}],
+        allow_domain_fallback=True,
+    )
+    assert lakers["image_url"] == "https://a.espncdn.com/i/teamlogos/nba/500/lal.png"
+    assert lakers["image_presentation"] == "logo"
+
+    # Weather keyword on `unknown` category resolves to weather backdrop (not U.S. Capitol),
+    # marked as `"backdrop"` with no entity-art `image_credit`
+    rain = resolve_discover_market_image(
+        name="Will it rain in NYC on Friday?",
+        category="unknown",
+        top_outcomes=[{"name": "Yes"}],
+        allow_domain_fallback=True,
+    )
+    assert rain["image_url"] is not None
+    assert "Lightning_in_Dallas" in rain["image_url"]
+    assert rain["image_presentation"] == "backdrop"
+    assert "image_credit" not in rain
+
+    # Country-level politics resolves to national flag
+    spain = sanitize_discover_feed_item(
+        {
+            "type": "futures",
+            "data": {
+                "id": 2001,
+                "name": "Next Prime Minister of Spain?",
+                "llm_sport_category": "politics",
+                "top_outcomes": [{"name": "Alberto Núñez Feijóo", "probability": 0.48}],
             },
-            {
-                "type": "tournament",
-                "data": {
-                    "name": "Unseen PGA Classic",
-                    "golfers": [{"name": "Unregistered Golfer Name", "probability": 0.14}],
-                },
+        }
+    )
+    assert spain["data"]["image_url"] == "https://flagcdn.com/w320/es.png"
+    assert spain["data"]["image_presentation"] == "logo"
+
+    # Unregistered golfer leader keeps honest golfer monogram rather than generic golf course photo
+    golf_card = sanitize_discover_feed_item(
+        {
+            "type": "tournament",
+            "data": {
+                "name": "Unseen PGA Classic",
+                "golfers": [{"name": "Unregistered Golfer", "probability": 0.14}],
             },
-        ]
-    }
-    clean = sanitize_feed_response_images(payload)
-    assert clean is not None
-    for item in clean["items"]:
-        img = item["data"].get("image_url")
-        assert img and img.startswith("https://"), f"Missing image on {item['data']}"
-    spain_card = [it for it in clean["items"] if it["data"].get("id") == 2001][0]
-    assert spain_card["data"]["image_url"] == "https://flagcdn.com/w320/es.png"
+        }
+    )
+    assert golf_card["data"]["image_url"] is None
+    assert golf_card["data"]["image_monogram"]["initials"] == "UG"
+    assert golf_card["data"]["image_monogram"]["kind"] == "person"
+
+    # Positively matched generic domain topic gets `"backdrop"` presentation without entity credit
+    generic_macro = sanitize_feed_response_images(
+        {
+            "items": [
+                {
+                    "type": "futures",
+                    "data": {
+                        "id": 3001,
+                        "name": "U.S. Q4 GDP growth above 2.5%?",
+                        "llm_sport_category": "economics",
+                        "top_outcomes": [{"name": "Yes", "probability": 0.52}],
+                    },
+                }
+            ]
+        }
+    )
+    assert generic_macro is not None
+    gdp = generic_macro["items"][0]["data"]
+    assert gdp["image_url"] is not None
+    assert gdp["image_presentation"] == "backdrop"
+    assert "image_credit" not in gdp
