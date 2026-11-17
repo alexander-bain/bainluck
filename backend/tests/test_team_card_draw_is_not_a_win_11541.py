@@ -12,10 +12,9 @@ said every sport was two-way normalised, measured 2026-09-11; #1011 made soccer
 three-way five days later.
 
 THE RULE NOW. On a draw-priced sport (the shared `sport_prices_a_draw`) an away
-row never serves `1 - home`. Before kickoff it serves the club's own price: the
-stored away leg, which since #1011 is de-vigged over the whole board, but only
-while its pair still leaves a draw (`printable_away`). Otherwise it serves
-nothing, because a pre-kickoff price is not a live chance.
+row never serves `1 - home`. #12824 also bars the stored opening away leg
+from standing in as a current quote before kickoff. Without an admitted away
+source, the current chance stays absent; historical pregame data stays intact.
 
 The fixture is the production row: its values verbatim, its times as offsets
 from the real clock, because the formatter and the blend read the real clock
@@ -91,12 +90,12 @@ NEWCASTLE = FakeTeam(id=1, name="Newcastle United")
 ARSENAL = FakeTeam(id=2, name="Arsenal")
 
 
-def test_the_away_club_reads_its_own_price_not_the_draw_folded_in():
-    """The headline: 59%, not 82%."""
+def test_the_away_club_does_not_revive_an_opening_or_fold_in_the_draw():
+    """An opening 59% and a derived 82% are both unsupported current chances."""
     card = _format_event_brief(FakeEvent(), ARSENAL)
     assert card["is_home"] is False
-    assert card["win_probability"] == pytest.approx(0.594)
-    assert card["win_probability"] != pytest.approx(0.822, abs=0.01)
+    assert card["win_probability"] is None
+    assert card["pregame_win_probability"] == pytest.approx(0.594)
 
 
 def test_the_home_club_still_reads_the_blend_its_game_page_shows():
@@ -109,11 +108,12 @@ def test_the_home_club_still_reads_the_blend_its_game_page_shows():
     assert card["win_probability"] == pytest.approx(0.178, abs=0.002)
 
 
-def test_the_three_numbers_leave_room_for_the_draw():
+def test_home_source_does_not_license_a_historical_away_number():
     event = FakeEvent()
     home = _format_event_brief(event, NEWCASTLE)["win_probability"]
     away = _format_event_brief(event, ARSENAL)["win_probability"]
-    assert home + away < 0.99, "home and away still sum to one: the draw is folded in"
+    assert home == pytest.approx(0.178, abs=0.002)
+    assert away is None
 
 
 def test_a_live_away_row_serves_nothing():
@@ -154,3 +154,12 @@ def test_a_two_way_sport_keeps_the_complement():
     away = _format_event_brief(event, ARSENAL)["win_probability"]
     assert away == pytest.approx(round(1.0 - compute_aggregate_probability(event), 3))
     assert home + away == pytest.approx(1.0, abs=0.0015)
+
+
+@pytest.mark.parametrize("sport_key", ["soccer_epl", "americanfootball_nfl"])
+@pytest.mark.parametrize("team", [NEWCASTLE, ARSENAL])
+def test_opening_only_team_cards_have_no_current_chance(sport_key, team):
+    event = FakeEvent(sport_key=sport_key, sources={})
+    card = _format_event_brief(event, team)
+    assert card["win_probability"] is None
+    assert card["pregame_win_probability"] is not None

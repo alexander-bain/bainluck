@@ -12052,7 +12052,12 @@ async def _score_events(
     # unanswered; same answer (see `feed_snapshot_fallback`).
     snapshot_fallbacks: dict[int, float] = {}
     events_needing_fallback = [] if price_refresh_events is not None else [
-        e for e in events if _compute_aggregate_probability(e) is None
+        e for e in events
+        if _compute_aggregate_probability(e) is None
+        # #12824: removing the opening rung must not enroll opening-only
+        # events in a historical fallback they never used before. Their
+        # current chance stays absent until an admitted source returns.
+        and getattr(e, "opening_home_probability", None) is None
     ]
     # #1480: both id sets below come from the candidates alone — after the twin
     # fold, before any per-reader suppression — so every reader of one candidate
