@@ -1485,6 +1485,32 @@ def _tier1_readings(
     return prob_readings, stamps
 
 
+def pregame_blend_rests_on_espn_alone(event, event_status: Optional[str] = None) -> bool:
+    """A scheduled game whose chance is ESPN's pregame predictor and nothing else.
+
+    #12824, Alex's ruling 226: A. ESPN's predictor fills in only while nothing
+    else prices a game (`tasks/espn_predictor`), and the run after a book or a
+    venue arrives withdraws it. Two consequences for anything that measures a
+    MOVE (Fable's item 4, Tue Nov 17):
+
+    * while ESPN alone carries the number, it is a model, not a market: its
+      distance from the stored opening line is two different sources
+      disagreeing, never a line that moved, so "odds shifted N% since open"
+      and the swing bonus must not be computed from it;
+    * the step from ESPN's number to the market's is a change of SOURCE. Every
+      move reader compares the market with the market's own opening (or its
+      own history); none compares it with ESPN, and this predicate is how the
+      callers that diff "current" against "opening" leave ESPN out.
+
+    Read over the same tier-1 population the blend uses (`_tier1_readings`).
+    """
+    status = event_status or getattr(event, "status", None)
+    if status != "scheduled":
+        return False
+    values, _ = _tier1_readings(event, status)
+    return set(values) == {"espn"}
+
+
 def newest_source_reading_time(
     event, event_status: Optional[str] = None, *, require_complete: bool = False
 ) -> Optional[datetime]:

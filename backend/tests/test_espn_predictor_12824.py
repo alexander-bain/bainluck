@@ -572,3 +572,48 @@ class TestRuling226A:
         bag, read_rows, stats = await self._run(monkeypatch, {"betting_book_count": 2})
         assert read_rows == [1] and bag["espn"]["value"] == 0.1415
         assert self._served(bag) == pytest.approx(0.1415)
+
+
+class TestNotAMove:
+    """226: A, Fable's item 4: ESPN's number is never measured as a market move."""
+
+    @staticmethod
+    def _event(sources, status="scheduled"):
+        return SimpleNamespace(win_probability_sources=sources, status=status,
+                               espn_win_prob_home=None, opening_home_probability=0.5)
+
+    def test_the_predicate(self):
+        from app.utils.aggregation import pregame_blend_rests_on_espn_alone as alone
+
+        assert alone(self._event({"espn": _entry(0.1415, NOW), "betting_book_count": 2}))
+        assert not alone(self._event({"espn": _entry(0.14, NOW), "kalshi": _entry(0.3, NOW)}))
+        assert not alone(self._event({"kalshi": _entry(0.3, NOW)}))
+        assert not alone(self._event({}))
+        assert not alone(self._event({"espn": _entry(0.6, NOW)}, status="live"))  # ESPN's live model is a real input
+
+    def test_the_hazard_the_gate_exists_for(self):
+        """Fed ESPN's 14% against a 50% opening, the scorer calls it a major swing."""
+        from app.utils.highlights import compute_highlight
+
+        swung = compute_highlight(status="scheduled", commence_time=NOW + timedelta(days=20),
+                                  sport_key="americanfootball_nfl", current_home_prob=0.1415,
+                                  current_away_prob=0.8585, opening_home_prob=0.5,
+                                  opening_away_prob=0.5)
+        assert "major_prob_swing" in swung.reasons
+        gated = compute_highlight(status="scheduled", commence_time=NOW + timedelta(days=20),
+                                  sport_key="americanfootball_nfl", current_home_prob=0.1415,
+                                  current_away_prob=0.8585, opening_home_prob=None,
+                                  opening_away_prob=None)
+        assert "major_prob_swing" not in gated.reasons
+
+    def test_every_current_vs_opening_caller_applies_the_gate(self):
+        """The three callers that hand compute_highlight an opening line."""
+        import inspect
+
+        from app.routes import events, feed
+        from app.tasks import taxonomy
+
+        for module in (feed, events, taxonomy):
+            assert "pregame_blend_rests_on_espn_alone(event)" in inspect.getsource(module), module.__name__
+        src = inspect.getsource(taxonomy._tag_event)
+        assert "pregame_blend_rests_on_espn_alone(event)" in src
