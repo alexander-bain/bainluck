@@ -163,6 +163,7 @@ nonisolated enum PairedMetricPresentation {
         let patterns = [
             "\\s*·\\s*Nominee\\s*%.*$",
             "\\s*·\\s*Paired by club.*$",
+            "\\s*·\\s*Verified [A-Za-z0-9\\s]+$",
             "\\s*\\([^)]*#\\d+[^)]*\\)"
         ]
         for pattern in patterns {
@@ -328,8 +329,10 @@ nonisolated enum PairedMetricPresentation {
     }
 
     /// Resolves which of the two winning grouped looks to draw, honoring explicit server preference
-    /// when valid, falling back to `.pairedBarsTop5Expandable` if `< 3` entries, and alternating
-    /// deterministically across cards when unspecified so adjacent grouped cards differ (`168-A`).
+    /// when valid, defaulting award-category (`Nominated %` + `Wins %`, #12577 / #12849) cards to
+    /// `.pairedBarsTop5Expandable` so every contender's nomination chance draws beside its win chance,
+    /// falling back to `.pairedBarsTop5Expandable` if `< 3` entries, and alternating deterministically
+    /// across other grouped cards when unspecified (`168-A`).
     static func resolvedForm(
         for set: PairedMetricSet,
         preferred: String? = nil,
@@ -341,6 +344,9 @@ nonisolated enum PairedMetricPresentation {
                 return .pairedBarsTop5Expandable
             }
             return explicit
+        }
+        if set.setId.hasPrefix("oscars-") || set.stage1Label.lowercased().contains("nominat") {
+            return .pairedBarsTop5Expandable
         }
         guard set.entries.count >= 3 else {
             return .pairedBarsTop5Expandable

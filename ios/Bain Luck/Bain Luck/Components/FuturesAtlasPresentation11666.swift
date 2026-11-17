@@ -879,6 +879,8 @@ struct FuturesAtlasPageView11666: View {
     let golfTournamentEnd: String?
     let chartRefreshToken: Int
     let representation: FuturesRepresentation
+    var pairedMetricSet: PairedMetricSet? = nil
+    var preloadedPairedImages: [String: PairedPlatformImage] = [:]
     var preloadedTimeline: ProbabilityTimelineResponse? = nil
     var referenceNow: Date? = nil
 
@@ -909,6 +911,17 @@ struct FuturesAtlasPageView11666: View {
                 onOpenFullField: { showFullFieldSheet = true }
             )
             .contextualTipHero10876(type: "future", id: marketId, scrollSpace: FuturesDetailView.scrollSpace)
+
+            if let pairedSet = pairedMetricSet, !pairedSet.entries.isEmpty {
+                DiscoverPairedMetricCardView(
+                    set: pairedSet,
+                    form: .pairedBarsTop5Expandable,
+                    initialExpanded: true,
+                    currentMarketId: marketId,
+                    allowsRouteLinks: true,
+                    preloadedImages: preloadedPairedImages
+                )
+            }
 
             if !market.outcomes.isEmpty {
                 EvolutionChartView(

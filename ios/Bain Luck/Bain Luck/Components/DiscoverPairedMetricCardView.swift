@@ -49,6 +49,19 @@ struct PairedArtThumbnailView: View {
     let entry: PairedSubjectEntry
     let size: PairedArtSlotSize
     var preloadedImages: [String: PairedPlatformImage] = [:]
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var trackBgColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.08) : DS.trackBg
+    }
+
+    private var borderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.14) : DS.border
+    }
+
+    private var secondaryInk: Color {
+        colorScheme == .dark ? Color(white: 0.72) : DS.textSecondaryReadable
+    }
 
     private var kind: PairedArtKind {
         entry.art?.kind ?? .tmdbPoster
@@ -88,50 +101,50 @@ struct PairedArtThumbnailView: View {
                 .scaledToFit()
                 .padding(2)
                 .frame(width: spec.width, height: spec.height)
-                .background(DS.trackBg)
+                .background(trackBgColor)
                 .clipShape(Circle())
-                .overlay(Circle().stroke(DS.border, lineWidth: 1))
+                .overlay(Circle().stroke(borderColor, lineWidth: 1))
         } else if spec.isCircle {
             image
                 .resizable()
                 .scaledToFill()
                 .frame(width: spec.width, height: spec.height)
-                .background(DS.trackBg)
+                .background(trackBgColor)
                 .clipShape(Circle())
-                .overlay(Circle().stroke(DS.border, lineWidth: 1))
+                .overlay(Circle().stroke(borderColor, lineWidth: 1))
         } else {
             image
                 .resizable()
                 .scaledToFill()
                 .frame(width: spec.width, height: spec.height)
-                .background(DS.trackBg)
+                .background(trackBgColor)
                 .clipShape(RoundedRectangle(cornerRadius: spec.cornerRadius))
-                .overlay(RoundedRectangle(cornerRadius: spec.cornerRadius).stroke(DS.border, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: spec.cornerRadius).stroke(borderColor, lineWidth: 1))
         }
     }
 
     private var monogramTile: some View {
         let text = Text(PairedMetricPresentation.initials(for: entry.subject))
             .font(.system(size: spec.initialsSize, weight: .bold))
-            .foregroundStyle(DS.textSecondaryReadable)
+            .foregroundStyle(secondaryInk)
             .lineLimit(1)
             .minimumScaleFactor(0.75)
 
         return Group {
             if spec.isCircle {
                 ZStack {
-                    Circle().fill(DS.trackBg)
+                    Circle().fill(trackBgColor)
                     text
                 }
                 .frame(width: spec.width, height: spec.height)
-                .overlay(Circle().stroke(DS.border, lineWidth: 1))
+                .overlay(Circle().stroke(borderColor, lineWidth: 1))
             } else {
                 ZStack {
-                    RoundedRectangle(cornerRadius: spec.cornerRadius).fill(DS.trackBg)
+                    RoundedRectangle(cornerRadius: spec.cornerRadius).fill(trackBgColor)
                     text
                 }
                 .frame(width: spec.width, height: spec.height)
-                .overlay(RoundedRectangle(cornerRadius: spec.cornerRadius).stroke(DS.border, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: spec.cornerRadius).stroke(borderColor, lineWidth: 1))
             }
         }
     }
@@ -150,10 +163,23 @@ struct PairedArtThumbnailView: View {
 struct PairedTMDBAttributionFooter: View {
     let metricSet: PairedMetricSet
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .caption2) private var attributionSize: CGFloat = 11
 
     init(set: PairedMetricSet) {
         self.metricSet = set
+    }
+
+    private var trackBgColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.08) : DS.trackBg
+    }
+
+    private var borderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.14) : DS.border
+    }
+
+    private var secondaryInk: Color {
+        colorScheme == .dark ? Color(white: 0.68) : DS.textSecondaryReadable
     }
 
     private var attributionBadge: some View {
@@ -164,9 +190,9 @@ struct PairedTMDBAttributionFooter: View {
                 .frame(width: 85, height: 11)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(DS.trackBg)
+                .background(trackBgColor)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(borderColor, lineWidth: 1))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("The Movie Database (TMDB)")
@@ -175,7 +201,7 @@ struct PairedTMDBAttributionFooter: View {
     private var attributionText: some View {
         Text(PairedMetricPresentation.tmdbAttributionLine)
             .font(.system(size: min(attributionSize, 17)))
-            .foregroundStyle(DS.textSecondaryReadable)
+            .foregroundStyle(secondaryInk)
             .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -201,7 +227,7 @@ struct PairedTMDBAttributionFooter: View {
 struct PairedQuietNumberBox<Label: View>: View {
     let fraction: Double
     let isPrimaryStage: Bool
-    var trackColor: Color = DS.trackBg
+    var trackColor: Color? = nil
     var fixedWidth: CGFloat? = nil
     var expandToFillWidth: Bool = false
     var contentAlignment: Alignment = .center
@@ -211,15 +237,26 @@ struct PairedQuietNumberBox<Label: View>: View {
     @ViewBuilder let label: () -> Label
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
 
     private var clampedFraction: CGFloat {
         CGFloat(min(1.0, max(0.0, fraction)))
     }
 
+    private var resolvedTrackColor: Color {
+        if let trackColor { return trackColor }
+        return colorScheme == .dark ? Color.white.opacity(0.08) : DS.trackBg
+    }
+
+    private var borderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.14) : DS.border
+    }
+
     private var fillTint: Color {
-        isPrimaryStage
-            ? DS.emerald.opacity(0.20)
-            : DS.textSecondary.opacity(0.16)
+        if isPrimaryStage {
+            return DS.emerald.opacity(colorScheme == .dark ? 0.28 : 0.20)
+        }
+        return colorScheme == .dark ? Color.white.opacity(0.14) : DS.textSecondary.opacity(0.16)
     }
 
     var body: some View {
@@ -238,7 +275,7 @@ struct PairedQuietNumberBox<Label: View>: View {
             .background {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        trackColor
+                        resolvedTrackColor
                         if clampedFraction > 0 {
                             Rectangle()
                                 .fill(fillTint)
@@ -250,7 +287,7 @@ struct PairedQuietNumberBox<Label: View>: View {
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(DS.border, lineWidth: 1)
+                    .stroke(borderColor, lineWidth: 1)
             )
     }
 }
@@ -260,11 +297,16 @@ struct DiscoverPairedMetricCardView: View {
     let metricSet: PairedMetricSet
     let form: PairedVisualFormId
     var initialExpanded: Bool = false
+    var currentMarketId: Int? = nil
+    var allowsRouteLinks: Bool = false
+    var isOscarsCollectionSurface: Bool = false
     var preloadedImages: [String: PairedPlatformImage] = [:]
     var onOpenMarket: ((Int) -> Void)? = nil
+    var onOpenCollection: ((String, String) -> Void)? = nil
 
     @State private var expanded: Bool
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
 
     @ScaledMetric(relativeTo: .caption2) private var badgeSize: CGFloat = 10
     @ScaledMetric(relativeTo: .caption2) private var kickerSize: CGFloat = 11
@@ -273,18 +315,58 @@ struct DiscoverPairedMetricCardView: View {
     @ScaledMetric(relativeTo: .callout) private var podiumValueSize: CGFloat = 16
     @ScaledMetric(relativeTo: .headline) private var titleSize: CGFloat = 17
 
+    private var cardBgColor: Color {
+        colorScheme == .dark ? Color(red: 0.11, green: 0.11, blue: 0.12) : DS.cardBg
+    }
+
+    private var trackBgColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.08) : DS.trackBg
+    }
+
+    private var borderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.12) : DS.border
+    }
+
+    private var primaryInk: Color {
+        colorScheme == .dark ? Color.white : DS.textPrimary
+    }
+
+    private var secondaryInk: Color {
+        colorScheme == .dark ? Color(white: 0.72) : DS.textSecondaryReadable
+    }
+
+    private var mutedInk: Color {
+        colorScheme == .dark ? Color(white: 0.65) : DS.textSecondary
+    }
+
+    private var stage1BarColor: Color {
+        colorScheme == .dark ? Color(white: 0.62) : DS.textSecondary
+    }
+
+    private var greenReadableInk: Color {
+        colorScheme == .dark ? DS.emerald : DS.greenReadable
+    }
+
     init(
         set: PairedMetricSet,
         form: PairedVisualFormId? = nil,
         initialExpanded: Bool = false,
+        currentMarketId: Int? = nil,
+        allowsRouteLinks: Bool = false,
+        isOscarsCollectionSurface: Bool = false,
         preloadedImages: [String: PairedPlatformImage] = [:],
-        onOpenMarket: ((Int) -> Void)? = nil
+        onOpenMarket: ((Int) -> Void)? = nil,
+        onOpenCollection: ((String, String) -> Void)? = nil
     ) {
         self.metricSet = set
         self.form = form ?? PairedMetricPresentation.resolvedForm(for: set)
         self.initialExpanded = initialExpanded
+        self.currentMarketId = currentMarketId
+        self.allowsRouteLinks = allowsRouteLinks
+        self.isOscarsCollectionSurface = isOscarsCollectionSurface
         self.preloadedImages = preloadedImages
         self.onOpenMarket = onOpenMarket
+        self.onOpenCollection = onOpenCollection
         self._expanded = State(initialValue: initialExpanded)
     }
 
@@ -325,10 +407,10 @@ struct DiscoverPairedMetricCardView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.cardBg)
+        .background(cardBgColor)
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.border, lineWidth: 1))
-        .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 2)
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(borderColor, lineWidth: 1))
+        .shadow(color: .black.opacity(colorScheme == .dark ? 0.22 : 0.04), radius: 6, x: 0, y: 2)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("discover.pairedMetric.\(effectiveForm.rawValue).\(metricSet.setId)")
     }
@@ -344,14 +426,14 @@ struct DiscoverPairedMetricCardView: View {
                     Text(kickerText)
                         .font(.system(size: effectiveKickerSize, weight: .semibold))
                         .tracking(0.4)
-                        .foregroundStyle(DS.textSecondaryReadable)
+                        .foregroundStyle(secondaryInk)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                     Spacer(minLength: 8)
                     Text(stageHeaderText)
                         .font(.system(size: effectiveKickerSize, weight: .semibold))
                         .tracking(0.4)
-                        .foregroundStyle(DS.textSecondaryReadable)
+                        .foregroundStyle(secondaryInk)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                 }
@@ -360,12 +442,12 @@ struct DiscoverPairedMetricCardView: View {
                     Text(kickerText)
                         .font(.system(size: effectiveKickerSize, weight: .semibold))
                         .tracking(0.4)
-                        .foregroundStyle(DS.textSecondaryReadable)
+                        .foregroundStyle(secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(stageHeaderText)
                         .font(.system(size: effectiveKickerSize, weight: .semibold))
                         .tracking(0.4)
-                        .foregroundStyle(DS.textSecondaryReadable)
+                        .foregroundStyle(secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -373,16 +455,123 @@ struct DiscoverPairedMetricCardView: View {
             Text(metricSet.title)
                 .font(.system(size: effectiveTitleSize, weight: .semibold))
                 .lineSpacing(2)
-                .foregroundStyle(DS.textPrimary)
+                .foregroundStyle(primaryInk)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 4)
 
             if !cleanSubtitle.isEmpty {
                 Text(cleanSubtitle)
                     .font(.system(size: effectiveDetailSize, weight: .regular))
-                    .foregroundStyle(DS.textSecondary)
+                    .foregroundStyle(mutedInk)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 2)
+            }
+        }
+    }
+
+    private var isNominationAwardSet: Bool {
+        metricSet.setId.hasPrefix("oscars-") || metricSet.stage1Label.lowercased().contains("nominat")
+    }
+
+    private var hasInteractiveFooterLinks: Bool {
+        onOpenMarket != nil || onOpenCollection != nil || allowsRouteLinks
+    }
+
+    @ViewBuilder
+    private func marketFooterLink(marketId: Int, title: String, identifier: String) -> some View {
+        let label = Text(title)
+            .font(.system(size: effectiveKickerSize, weight: .semibold))
+            .foregroundStyle(DS.emerald)
+            .fixedSize(horizontal: true, vertical: false)
+        if let onOpenMarket {
+            Button {
+                onOpenMarket(marketId)
+            } label: {
+                label.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier(identifier)
+        } else if allowsRouteLinks {
+            NavigationLink(value: Route.futuresDetail(id: marketId)) {
+                label.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier(identifier)
+        }
+    }
+
+    @ViewBuilder
+    private var oscarsCollectionFooterLink: some View {
+        let label = Text("All Oscars categories ›")
+            .font(.system(size: effectiveKickerSize, weight: .semibold))
+            .foregroundStyle(DS.emerald)
+            .fixedSize(horizontal: true, vertical: false)
+        if let onOpenCollection {
+            Button {
+                onOpenCollection("oscars-2027", "Oscars 2027")
+            } label: {
+                label.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("discover.pairedMetric.allOscarsCategories")
+        } else if allowsRouteLinks {
+            NavigationLink(value: Route.containerHub(slug: "oscars-2027", name: "Oscars 2027")) {
+                label.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("discover.pairedMetric.allOscarsCategories")
+        }
+    }
+
+    @ViewBuilder
+    private var traceableMarketLinksRow: some View {
+        let s2Id = metricSet.primaryStage2MarketId.flatMap { $0 != currentMarketId ? $0 : nil }
+        let s1Id = metricSet.primaryStage1MarketId.flatMap { $0 != currentMarketId ? $0 : nil }
+        let showOscarsHub = metricSet.setId.hasPrefix("oscars-")
+            && !isOscarsCollectionSurface
+            && (onOpenCollection != nil || allowsRouteLinks)
+        if hasInteractiveFooterLinks && (s2Id != nil || s1Id != nil || showOscarsHub) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    if let s2Id {
+                        marketFooterLink(
+                            marketId: s2Id,
+                            title: "\(metricSet.stage2Label) market ›",
+                            identifier: "discover.pairedMetric.stage2MarketLink"
+                        )
+                    }
+                    if let s1Id {
+                        marketFooterLink(
+                            marketId: s1Id,
+                            title: "\(metricSet.stage1Label) market ›",
+                            identifier: "discover.pairedMetric.stage1MarketLink"
+                        )
+                    }
+                    if showOscarsHub {
+                        oscarsCollectionFooterLink
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    if let s2Id {
+                        marketFooterLink(
+                            marketId: s2Id,
+                            title: "\(metricSet.stage2Label) market ›",
+                            identifier: "discover.pairedMetric.stage2MarketLink"
+                        )
+                    }
+                    if let s1Id {
+                        marketFooterLink(
+                            marketId: s1Id,
+                            title: "\(metricSet.stage1Label) market ›",
+                            identifier: "discover.pairedMetric.stage1MarketLink"
+                        )
+                    }
+                    if showOscarsHub {
+                        oscarsCollectionFooterLink
+                    }
+                }
             }
         }
     }
@@ -390,20 +579,34 @@ struct DiscoverPairedMetricCardView: View {
     private var footerBlock: some View {
         let showsOrderingFooter = !PairedMetricPresentation.subtitleStatesOrdering(cleanSubtitle)
         let showsTMDBFooter = metricSet.usesTMDBArt
+        let s2Id = metricSet.primaryStage2MarketId.flatMap { $0 != currentMarketId ? $0 : nil }
+        let s1Id = metricSet.primaryStage1MarketId.flatMap { $0 != currentMarketId ? $0 : nil }
+        let showsLinks = hasInteractiveFooterLinks && (
+            s2Id != nil
+            || s1Id != nil
+            || (metricSet.setId.hasPrefix("oscars-") && !isOscarsCollectionSurface && (onOpenCollection != nil || allowsRouteLinks))
+        )
         return Group {
-            if showsOrderingFooter || showsTMDBFooter {
+            if showsOrderingFooter || showsTMDBFooter || showsLinks {
                 VStack(alignment: .leading, spacing: 6) {
                     Rectangle()
-                        .fill(DS.border)
+                        .fill(borderColor)
                         .frame(height: 1)
                         .padding(.bottom, 2)
 
-                    if showsOrderingFooter {
+                    if isNominationAwardSet && showsOrderingFooter {
+                        Text("Several contenders are nominated; one wins.")
+                            .font(.system(size: effectiveKickerSize, weight: .regular))
+                            .foregroundStyle(secondaryInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if showsOrderingFooter {
                         Text("Sorted by \(metricSet.stage2Label.lowercased()) %, ties broken by \(metricSet.stage1Label.lowercased()) %")
                             .font(.system(size: effectiveKickerSize, weight: .regular))
-                            .foregroundStyle(DS.textSecondaryReadable)
+                            .foregroundStyle(secondaryInk)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+
+                    traceableMarketLinksRow
 
                     PairedTMDBAttributionFooter(set: metricSet)
                 }
@@ -415,7 +618,7 @@ struct DiscoverPairedMetricCardView: View {
     // MARK: - Look 1: `paired_bars_top5_expandable`
 
     private var anyStage1Settled: Bool {
-        metricSet.entries.contains { $0.stage1SettledState != nil }
+        metricSet.stage1Settled || metricSet.entries.contains { $0.stage1SettledState != nil }
     }
 
     private var stageLabelWidth: CGFloat {
@@ -428,11 +631,11 @@ struct DiscoverPairedMetricCardView: View {
     private var stage1LegendItem: some View {
         HStack(spacing: 6) {
             RoundedRectangle(cornerRadius: 2.5)
-                .fill(DS.textSecondary)
+                .fill(stage1BarColor)
                 .frame(width: 10, height: 10)
             Text(anyStage1Settled ? "\(metricSet.stage1Label) (✓ / ✗ settled)" : "\(metricSet.stage1Label) %")
                 .font(.system(size: effectiveDetailSize, weight: .medium))
-                .foregroundStyle(DS.textPrimary)
+                .foregroundStyle(primaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -444,7 +647,7 @@ struct DiscoverPairedMetricCardView: View {
                 .frame(width: 10, height: 10)
             Text("\(metricSet.stage2Label) %")
                 .font(.system(size: effectiveDetailSize, weight: .medium))
-                .foregroundStyle(DS.textPrimary)
+                .foregroundStyle(primaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -469,7 +672,7 @@ struct DiscoverPairedMetricCardView: View {
             .padding(.top, 12)
             .padding(.bottom, 8)
             .overlay(alignment: .bottom) {
-                Rectangle().fill(DS.border).frame(height: 1)
+                Rectangle().fill(borderColor).frame(height: 1)
             }
 
             // Contender rows
@@ -477,7 +680,7 @@ struct DiscoverPairedMetricCardView: View {
                 dualBarRow(entry: entry)
                     .padding(.vertical, 10)
                 if idx < visible.count - 1 {
-                    Rectangle().fill(DS.border).frame(height: 1)
+                    Rectangle().fill(borderColor).frame(height: 1)
                 }
             }
 
@@ -495,21 +698,21 @@ struct DiscoverPairedMetricCardView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(copy.primary)
                             .font(.system(size: effectiveDetailSize, weight: .semibold))
-                            .foregroundStyle(DS.textPrimary)
+                            .foregroundStyle(primaryInk)
                             .fixedSize(horizontal: false, vertical: true)
                         if let notice = copy.unpricedNotice {
                             Text(notice)
                                 .font(.system(size: effectiveDetailSize, weight: .regular))
-                                .foregroundStyle(DS.textSecondaryReadable)
+                                .foregroundStyle(secondaryInk)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(DS.trackBg)
+                    .background(trackBgColor)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.border, lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(borderColor, lineWidth: 1))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -531,13 +734,13 @@ struct DiscoverPairedMetricCardView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(entry.subject)
                                 .font(.system(size: effectiveSubjectSize, weight: .semibold))
-                                .foregroundStyle(DS.textPrimary)
+                                .foregroundStyle(primaryInk)
                                 .fixedSize(horizontal: false, vertical: true)
 
                             if !entry.detail.isEmpty {
                                 Text(entry.detail)
                                     .font(.system(size: effectiveDetailSize, weight: .regular))
-                                    .foregroundStyle(DS.textSecondaryReadable)
+                                    .foregroundStyle(secondaryInk)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -557,14 +760,14 @@ struct DiscoverPairedMetricCardView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(entry.subject)
                             .font(.system(size: effectiveSubjectSize, weight: .semibold))
-                            .foregroundStyle(DS.textPrimary)
+                            .foregroundStyle(primaryInk)
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
 
                         if !entry.detail.isEmpty {
                             Text(entry.detail)
                                 .font(.system(size: effectiveDetailSize, weight: .regular))
-                                .foregroundStyle(DS.textSecondaryReadable)
+                                .foregroundStyle(secondaryInk)
                                 .lineLimit(2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -580,13 +783,18 @@ struct DiscoverPairedMetricCardView: View {
             }
         }
 
+        let targetMarketId = entry.stage2Probability != nil ? entry.stage2MarketId : entry.stage1MarketId
         if let onOpenMarket {
-            let targetMarketId = entry.stage2Probability != nil ? entry.stage2MarketId : entry.stage1MarketId
             Button {
                 if targetMarketId > 0 {
                     onOpenMarket(targetMarketId)
                 }
             } label: {
+                rowContent.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        } else if allowsRouteLinks, targetMarketId > 0, targetMarketId != currentMarketId {
+            NavigationLink(value: Route.futuresDetail(id: targetMarketId)) {
                 rowContent.contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -602,7 +810,7 @@ struct DiscoverPairedMetricCardView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(metricSet.stage1Label)
                         .font(.system(size: effectiveDetailSize, weight: .regular))
-                        .foregroundStyle(DS.textSecondary)
+                        .foregroundStyle(mutedInk)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 6)
                     switch s1.kind {
@@ -610,7 +818,7 @@ struct DiscoverPairedMetricCardView: View {
                         PairedQuietNumberBox(
                             fraction: PairedMetricPresentation.quietFillFraction(for: s1) ?? 0,
                             isPrimaryStage: false,
-                            trackColor: DS.trackBg,
+                            trackColor: trackBgColor,
                             fixedWidth: 48,
                             contentAlignment: .trailing,
                             horizontalPadding: 6,
@@ -618,17 +826,17 @@ struct DiscoverPairedMetricCardView: View {
                         ) {
                             Text(s1.label)
                                 .font(.system(size: effectiveDetailSize, weight: .semibold).monospacedDigit())
-                                .foregroundStyle(DS.textPrimary)
+                                .foregroundStyle(primaryInk)
                                 .lineLimit(1)
                         }
                         .fixedSize(horizontal: true, vertical: false)
                     case .tick:
                         Text(s1.label)
                             .font(.system(size: effectiveDetailSize, weight: .semibold))
-                            .foregroundStyle(DS.greenReadable)
+                            .foregroundStyle(greenReadableInk)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 2)
-                            .background(DS.trackBg)
+                            .background(trackBgColor)
                             .clipShape(RoundedRectangle(cornerRadius: 4))
                             .fixedSize(horizontal: true, vertical: false)
                     case .cross:
@@ -636,27 +844,27 @@ struct DiscoverPairedMetricCardView: View {
                             Text(s1.label)
                                 .font(.system(size: effectiveDetailSize, weight: .medium))
                                 .strikethrough()
-                                .foregroundStyle(DS.textSecondaryReadable)
+                                .foregroundStyle(secondaryInk)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 2)
-                                .background(DS.trackBg)
+                                .background(trackBgColor)
                                 .clipShape(RoundedRectangle(cornerRadius: 4))
                             if let sublabel = s1.sublabel {
                                 Text(sublabel)
                                     .font(.system(size: effectiveDetailSize, weight: .regular).monospacedDigit())
-                                    .foregroundStyle(DS.textSecondaryReadable)
+                                    .foregroundStyle(secondaryInk)
                             }
                         }
                         .fixedSize(horizontal: true, vertical: false)
                     case .missing:
                         Text(s1.label)
                             .font(.system(size: effectiveDetailSize, weight: .medium))
-                            .foregroundStyle(DS.textSecondaryReadable)
+                            .foregroundStyle(secondaryInk)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 2)
-                            .background(DS.trackBg)
+                            .background(trackBgColor)
                             .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
+                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(borderColor, lineWidth: 1))
                             .fixedSize(horizontal: true, vertical: false)
                     }
                 }
@@ -664,9 +872,9 @@ struct DiscoverPairedMetricCardView: View {
                     let pct = CGFloat(s1.percent ?? 1)
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
-                            Capsule().fill(DS.trackBg)
+                            Capsule().fill(trackBgColor)
                             Capsule()
-                                .fill(DS.textSecondary)
+                                .fill(stage1BarColor)
                                 .frame(width: max(geo.size.width * 0.04, geo.size.width * min(pct / 100.0, 1.0)))
                         }
                     }
@@ -677,7 +885,7 @@ struct DiscoverPairedMetricCardView: View {
             HStack(alignment: .center, spacing: 8) {
                 Text(metricSet.stage1Label)
                     .font(.system(size: effectiveDetailSize, weight: .regular))
-                    .foregroundStyle(DS.textSecondary)
+                    .foregroundStyle(mutedInk)
                     .frame(width: stageLabelWidth, alignment: .leading)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
@@ -687,9 +895,9 @@ struct DiscoverPairedMetricCardView: View {
                     let pct = CGFloat(s1.percent ?? 1)
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
-                            Capsule().fill(DS.trackBg)
+                            Capsule().fill(trackBgColor)
                             Capsule()
-                                .fill(DS.textSecondary)
+                                .fill(stage1BarColor)
                                 .frame(width: max(geo.size.width * 0.04, geo.size.width * min(pct / 100.0, 1.0)))
                         }
                     }
@@ -698,7 +906,7 @@ struct DiscoverPairedMetricCardView: View {
                     PairedQuietNumberBox(
                         fraction: PairedMetricPresentation.quietFillFraction(for: s1) ?? 0,
                         isPrimaryStage: false,
-                        trackColor: DS.trackBg,
+                        trackColor: trackBgColor,
                         fixedWidth: 48,
                         contentAlignment: .trailing,
                         horizontalPadding: 6,
@@ -706,17 +914,17 @@ struct DiscoverPairedMetricCardView: View {
                     ) {
                         Text(s1.label)
                             .font(.system(size: effectiveDetailSize, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(DS.textPrimary)
+                            .foregroundStyle(primaryInk)
                             .lineLimit(1)
                     }
 
                 case .tick:
                     Text(s1.label)
                         .font(.system(size: effectiveDetailSize, weight: .semibold))
-                        .foregroundStyle(DS.greenReadable)
+                        .foregroundStyle(greenReadableInk)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2)
-                        .background(DS.trackBg)
+                        .background(trackBgColor)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                     Spacer(minLength: 0)
 
@@ -724,27 +932,27 @@ struct DiscoverPairedMetricCardView: View {
                     Text(s1.label)
                         .font(.system(size: effectiveDetailSize, weight: .medium))
                         .strikethrough()
-                        .foregroundStyle(DS.textSecondaryReadable)
+                        .foregroundStyle(secondaryInk)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2)
-                        .background(DS.trackBg)
+                        .background(trackBgColor)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                     Spacer(minLength: 4)
                     if let sublabel = s1.sublabel {
                         Text(sublabel)
                             .font(.system(size: effectiveDetailSize, weight: .regular).monospacedDigit())
-                            .foregroundStyle(DS.textSecondaryReadable)
+                            .foregroundStyle(secondaryInk)
                     }
 
                 case .missing:
                     Text(s1.label)
                         .font(.system(size: effectiveDetailSize, weight: .medium))
-                        .foregroundStyle(DS.textSecondaryReadable)
+                        .foregroundStyle(secondaryInk)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2)
-                        .background(DS.trackBg)
+                        .background(trackBgColor)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(borderColor, lineWidth: 1))
                     Spacer(minLength: 0)
                 }
             }
@@ -758,7 +966,7 @@ struct DiscoverPairedMetricCardView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(metricSet.stage2Label)
                         .font(.system(size: effectiveDetailSize, weight: .medium))
-                        .foregroundStyle(DS.textPrimary)
+                        .foregroundStyle(primaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 6)
                     switch s2.kind {
@@ -766,7 +974,7 @@ struct DiscoverPairedMetricCardView: View {
                         PairedQuietNumberBox(
                             fraction: PairedMetricPresentation.quietFillFraction(for: s2) ?? 0,
                             isPrimaryStage: true,
-                            trackColor: DS.trackBg,
+                            trackColor: trackBgColor,
                             fixedWidth: 48,
                             contentAlignment: .trailing,
                             horizontalPadding: 6,
@@ -774,24 +982,24 @@ struct DiscoverPairedMetricCardView: View {
                         ) {
                             Text(s2.label)
                                 .font(.system(size: effectiveSubjectSize, weight: .bold).monospacedDigit())
-                                .foregroundStyle(DS.textPrimary)
+                                .foregroundStyle(primaryInk)
                                 .lineLimit(1)
                         }
                         .fixedSize(horizontal: true, vertical: false)
                     case .cross:
                         Text(s2.label)
                             .font(.system(size: effectiveDetailSize, weight: .medium))
-                            .foregroundStyle(DS.textSecondaryReadable)
+                            .foregroundStyle(secondaryInk)
                             .fixedSize(horizontal: true, vertical: false)
                     case .missing, .tick:
                         Text(s2.label)
                             .font(.system(size: effectiveDetailSize, weight: .medium))
-                            .foregroundStyle(DS.textSecondaryReadable)
+                            .foregroundStyle(secondaryInk)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 2)
-                            .background(DS.trackBg)
+                            .background(trackBgColor)
                             .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
+                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(borderColor, lineWidth: 1))
                             .fixedSize(horizontal: true, vertical: false)
                     }
                 }
@@ -799,7 +1007,7 @@ struct DiscoverPairedMetricCardView: View {
                     let pct = CGFloat(s2.percent ?? 1)
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
-                            Capsule().fill(DS.trackBg)
+                            Capsule().fill(trackBgColor)
                             Capsule()
                                 .fill(DS.emerald)
                                 .frame(width: max(geo.size.width * 0.04, geo.size.width * min(pct / 100.0, 1.0)))
@@ -812,7 +1020,7 @@ struct DiscoverPairedMetricCardView: View {
             HStack(alignment: .center, spacing: 8) {
                 Text(metricSet.stage2Label)
                     .font(.system(size: effectiveDetailSize, weight: .medium))
-                    .foregroundStyle(DS.textPrimary)
+                    .foregroundStyle(primaryInk)
                     .frame(width: stageLabelWidth, alignment: .leading)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
@@ -822,7 +1030,7 @@ struct DiscoverPairedMetricCardView: View {
                     let pct = CGFloat(s2.percent ?? 1)
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
-                            Capsule().fill(DS.trackBg)
+                            Capsule().fill(trackBgColor)
                             Capsule()
                                 .fill(DS.emerald)
                                 .frame(width: max(geo.size.width * 0.04, geo.size.width * min(pct / 100.0, 1.0)))
@@ -833,7 +1041,7 @@ struct DiscoverPairedMetricCardView: View {
                     PairedQuietNumberBox(
                         fraction: PairedMetricPresentation.quietFillFraction(for: s2) ?? 0,
                         isPrimaryStage: true,
-                        trackColor: DS.trackBg,
+                        trackColor: trackBgColor,
                         fixedWidth: 48,
                         contentAlignment: .trailing,
                         horizontalPadding: 6,
@@ -841,25 +1049,25 @@ struct DiscoverPairedMetricCardView: View {
                     ) {
                         Text(s2.label)
                             .font(.system(size: effectiveSubjectSize, weight: .bold).monospacedDigit())
-                            .foregroundStyle(DS.textPrimary)
+                            .foregroundStyle(primaryInk)
                             .lineLimit(1)
                     }
 
                 case .cross:
                     Text(s2.label)
                         .font(.system(size: effectiveDetailSize, weight: .medium))
-                        .foregroundStyle(DS.textSecondaryReadable)
+                        .foregroundStyle(secondaryInk)
                     Spacer(minLength: 0)
 
                 case .missing, .tick:
                     Text(s2.label)
                         .font(.system(size: effectiveDetailSize, weight: .medium))
-                        .foregroundStyle(DS.textSecondaryReadable)
+                        .foregroundStyle(secondaryInk)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2)
-                        .background(DS.trackBg)
+                        .background(trackBgColor)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(borderColor, lineWidth: 1))
                     Spacer(minLength: 0)
                 }
             }
@@ -1046,13 +1254,18 @@ struct DiscoverPairedMetricCardView: View {
         )
         .shadow(color: spot.elevated ? .black.opacity(0.06) : .clear, radius: 4, x: 0, y: 2)
 
+        let targetMarketId = spot.entry.stage2Probability != nil ? spot.entry.stage2MarketId : spot.entry.stage1MarketId
         if let onOpenMarket {
-            let targetMarketId = spot.entry.stage2Probability != nil ? spot.entry.stage2MarketId : spot.entry.stage1MarketId
             Button {
                 if targetMarketId > 0 {
                     onOpenMarket(targetMarketId)
                 }
             } label: {
+                cardBody.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        } else if allowsRouteLinks, targetMarketId > 0, targetMarketId != currentMarketId {
+            NavigationLink(value: Route.futuresDetail(id: targetMarketId)) {
                 cardBody.contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -1221,13 +1434,18 @@ struct DiscoverPairedMetricCardView: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(DS.border, lineWidth: 1))
 
+        let targetMarketId = entry.stage2Probability != nil ? entry.stage2MarketId : entry.stage1MarketId
         if let onOpenMarket {
-            let targetMarketId = entry.stage2Probability != nil ? entry.stage2MarketId : entry.stage1MarketId
             Button {
                 if targetMarketId > 0 {
                     onOpenMarket(targetMarketId)
                 }
             } label: {
+                rowBody.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        } else if allowsRouteLinks, targetMarketId > 0, targetMarketId != currentMarketId {
+            NavigationLink(value: Route.futuresDetail(id: targetMarketId)) {
                 rowBody.contentShape(Rectangle())
             }
             .buttonStyle(.plain)

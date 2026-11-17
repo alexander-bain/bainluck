@@ -74,19 +74,50 @@ struct ContainerHubView: View {
                     .buttonStyle(.plain)
                     .id("container:\(child.slug)")
                 }
+                if !vm.pairedMetricSets.isEmpty {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if vm.isOscarsHub {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Nominated & Wins by Category")
+                                    .font(.headline)
+                                    .foregroundStyle(DS.textPrimary)
+                                Text("Each contender’s chance of being nominated and chance of winning side by side.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(DS.textSecondary)
+                            }
+                            .padding(.top, 4)
+                        }
+                        ForEach(vm.pairedMetricSets) { pairedSet in
+                            DiscoverPairedMetricCardView(
+                                set: pairedSet,
+                                form: .pairedBarsTop5Expandable,
+                                initialExpanded: !vm.isOscarsHub && vm.pairedMetricSets.count == 1,
+                                allowsRouteLinks: true,
+                                isOscarsCollectionSurface: vm.isOscarsHub
+                            )
+                        }
+                    }
+                    .accessibilityIdentifier("hub.pairedAwardCategories")
+                }
                 // Standalone cards retain published section order. Questions
                 // linked to a rendered event are reached through that game's page.
+                let coveredIds = vm.pairedCoveredMarketIds
                 ForEach(presentation.displaySections) { section in
-                    Section {
-                        ForEach(section.members) { member in
-                            memberCard(member, presentation: presentation)
-                                .id(member.id)
+                    let visibleMembers = coveredIds.isEmpty
+                        ? section.members
+                        : section.members.filter { !($0.type == "market" && coveredIds.contains($0.memberId)) }
+                    if !visibleMembers.isEmpty {
+                        Section {
+                            ForEach(visibleMembers) { member in
+                                memberCard(member, presentation: presentation)
+                                    .id(member.id)
+                            }
+                        } header: {
+                            Text(presentation.sectionTitle(section.sectionClass))
+                                .font(.headline)
+                                .foregroundStyle(DS.textPrimary)
+                                .padding(.top, 8)
                         }
-                    } header: {
-                        Text(presentation.sectionTitle(section.sectionClass))
-                            .font(.headline)
-                            .foregroundStyle(DS.textPrimary)
-                            .padding(.top, 8)
                     }
                 }
                 if vm.pageError != nil {
