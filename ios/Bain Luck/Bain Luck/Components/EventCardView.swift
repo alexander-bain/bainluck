@@ -27,8 +27,8 @@ struct EventCardView: View {
     @ScaledMetric(relativeTo: .body) private var compactLiveScoreWidth: CGFloat = 44
     @ScaledMetric(relativeTo: .body) private var compactProjectedWidth: CGFloat = 78
     @ScaledMetric(relativeTo: .subheadline) private var compactPregameWidth: CGFloat = 58
-    @ScaledMetric(relativeTo: .title3) private var compactLargeChanceWidth: CGFloat = 76
-    @ScaledMetric(relativeTo: .title3) private var compactLargeFinalWidth: CGFloat = 46
+    @ScaledMetric(relativeTo: .title3) private var compactLargeChanceWidth: CGFloat = 82
+    @ScaledMetric(relativeTo: .title3) private var compactLargeFinalWidth: CGFloat = 60
 
     private let scoreToPregameGutter: CGFloat = 18
     private let pregameToNowGap: CGFloat = 10
@@ -576,9 +576,9 @@ struct EventCardView: View {
     }
 
     private var effectiveLargeColWidth: CGFloat {
-        if isFinished { return min(compactLargeFinalWidth, 54) }
+        if isFinished { return min(compactLargeFinalWidth, 68) }
         if isSuspended { return min(compactPregameWidth, 66) }
-        return min(compactLargeChanceWidth, 84)
+        return min(compactLargeChanceWidth, 90)
     }
 
     private var pregameColumnLeadingGap12616: CGFloat {
@@ -601,13 +601,13 @@ struct EventCardView: View {
 
     private var sharedCompactTeamNameFontSize: CGFloat {
         let reservedChrome: CGFloat = isFinished ? 57 : 42
-        let availableWidth = max(330 - reservedChrome - trailingColumnsClusterWidth12616, 72)
+        let availableWidth = max(330 - reservedChrome - trailingColumnsClusterWidth12616, 48)
         return CardTeamNameSizing.sharedWordSafeFontSize(
             names: [shortTeamNames.away, shortTeamNames.home],
             baseSize: min(compactNameSize, 21),
             weight: .bold,
             availableWidth: availableWidth,
-            minimumScale: 0.72
+            minimumScale: 0.65
         )
     }
 
@@ -625,6 +625,8 @@ struct EventCardView: View {
                         .font(compactHeaderFont12616)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.45)
+                        .allowsTightening(true)
                         .frame(width: effectiveMediumColWidth, alignment: .trailing)
                 }
                 if showsInlineLiveProjected204C {
@@ -632,6 +634,8 @@ struct EventCardView: View {
                         .font(compactHeaderFont12616)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.45)
+                        .allowsTightening(true)
                         .frame(width: effectiveLiveProjectedColWidth204C, alignment: .trailing)
                         .padding(.leading, pregameColumnLeadingGap12616)
                 }
@@ -640,6 +644,8 @@ struct EventCardView: View {
                         .font(compactHeaderFont12616)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.45)
+                        .allowsTightening(true)
                         .frame(width: effectiveLargeColWidth, alignment: .trailing)
                         .padding(.leading, largeColumnLeadingGap12616)
                 }
@@ -766,6 +772,8 @@ struct EventCardView: View {
                 // teams.
                 .foregroundStyle(won ? .primary : (isFinished && outcome != .draw ? .secondary : .primary))
                 .lineLimit(singleWord ? 1 : 2)
+                .minimumScaleFactor(0.65)
+                .allowsTightening(true)
                 .fixedSize(horizontal: false, vertical: !singleWord)
             Spacer(minLength: 8)
             HStack(alignment: .firstTextBaseline, spacing: 0) {
@@ -795,6 +803,8 @@ struct EventCardView: View {
                 .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactScoreSize, 20)))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
+                .minimumScaleFactor(0.45)
+                .allowsTightening(true)
         }
     }
 
@@ -807,6 +817,8 @@ struct EventCardView: View {
                     .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactScoreSize, 20)))
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.45)
+                    .allowsTightening(true)
             }
         } else if isFinished {
             settledMediumOddsLabel(for: side)
@@ -817,6 +829,8 @@ struct EventCardView: View {
                 // the one settled arm that moves.
                 .foregroundStyle(isLive ? .primary : (won || outcome == .draw ? .primary : .secondary))
                 .lineLimit(1)
+                .minimumScaleFactor(0.45)
+                .allowsTightening(true)
         }
     }
 
@@ -838,6 +852,8 @@ struct EventCardView: View {
                             ))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
+                            .minimumScaleFactor(0.45)
+                            .allowsTightening(true)
                     }
                     Text("\u{2713}")
                         .font(HeadlineStyleTable199.secondNumbers(
@@ -847,6 +863,7 @@ struct EventCardView: View {
                         ))
                         .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.45)
                         .accessibilityHidden(true)
                 }
             } else if let score {
@@ -859,6 +876,8 @@ struct EventCardView: View {
                     ))
                     .foregroundStyle(prominent ? .primary : .secondary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.45)
+                    .allowsTightening(true)
             }
         } else {
             chanceSlotView(for: side)
@@ -902,6 +921,8 @@ struct EventCardView: View {
                                 .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactPregameSize, 18)))
                                 .foregroundStyle(DS.textSecondaryReadable)
                                 .lineLimit(1)
+                                .minimumScaleFactor(0.45)
+                                .allowsTightening(true)
                         }
                     }
                     .frame(width: effectiveMediumColWidth, alignment: .trailing)
@@ -921,6 +942,7 @@ struct EventCardView: View {
                                     .font(HeadlineStyleTable199.secondNumbers(.card, prominent: true, scaledSize: min(compactLargeSize, 24) * 0.82))
                                     .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
                                     .lineLimit(1)
+                                    .minimumScaleFactor(0.45)
                                     .accessibilityHidden(true)
                             }
                         } else {
@@ -928,6 +950,8 @@ struct EventCardView: View {
                                 .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                                 .foregroundStyle(DS.textSecondaryReadable)
                                 .lineLimit(1)
+                                .minimumScaleFactor(0.45)
+                                .allowsTightening(true)
                         }
                     }
                     .frame(width: effectiveLargeColWidth, alignment: .trailing)
@@ -1281,13 +1305,15 @@ struct EventCardView: View {
                     .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.85)
+                    .minimumScaleFactor(0.45)
+                    .allowsTightening(true)
             } else {
                 Text(formatProbability(prob, renderedPercent: side == .home ? livePercents[1] : livePercents[0]))
                     .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.85)
+                    .minimumScaleFactor(0.45)
+                    .allowsTightening(true)
             }
         }
     }

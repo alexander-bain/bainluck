@@ -25,6 +25,7 @@ import { MarketRow as EconMarketRow } from "@/components/economics/atoms";
 import { SideMarketCard } from "@/components/politics/SideMarketCard";
 import { CrossSourceBadge, SourceBadge as WeatherSourceBadge } from "@/components/weather/SourceBadge";
 import { formatAsOfStamp } from "@/lib/asOfStamp";
+import { rangeMovementCaption } from "@/lib/futuresDetailDisplay";
 import type { PoliticsMarketRow, TeamGameBrief } from "@/lib/api";
 import type { LeagueBinary } from "@/lib/leagueCards";
 import type { Event, FeedEventData, FeedFuturesData, FeedItem, FuturesMarket } from "@/lib/types";
@@ -75,6 +76,7 @@ export function extractCardFaceReadableText(html: string): string {
 const PREGAME_OPENING_RE = /\bopen(?:ed|ing)\b/i;
 const STALE_WORD_RE = /\bstale\b/i;
 const CHECKED_AGE_RE = /\bchecked\b/i;
+const PTS_ABBREV_RE = /[+-]?\d+(?:\.\d+)?\s*pts?\b|\bpts\b/;
 const MARKET_VENUE_FACE_RE =
   /\b(?:Kalshi|Polymarket|DraftKings|FanDuel|BetMGM|Caesars|PointsBet|BetRivers|DataGolf|Cross-source)\b/i;
 const STADIUM_VENUE_SPECIMENS = [
@@ -85,7 +87,12 @@ const STADIUM_VENUE_SPECIMENS = [
 ];
 
 export interface CardWordingViolation {
-  rule: "opening_for_pregame" | "stale" | "checked_for_age" | "venue_on_card_face";
+  rule:
+    | "opening_for_pregame"
+    | "stale"
+    | "checked_for_age"
+    | "venue_on_card_face"
+    | "pts_abbreviation";
   detail: string;
 }
 
@@ -114,6 +121,14 @@ export function detectCardFaceWordingViolations(html: string): CardWordingViolat
     violations.push({
       rule: "checked_for_age",
       detail: `matched "${checkedMatch[0]}" in "${readable}"`,
+    });
+  }
+
+  const ptsMatch = readable.match(PTS_ABBREV_RE);
+  if (ptsMatch) {
+    violations.push({
+      rule: "pts_abbreviation",
+      detail: `matched "${ptsMatch[0]}" in "${readable}"`,
     });
   }
 
@@ -227,11 +242,16 @@ describe("Website CI Wording Guard — card faces never print opening/opened, st
         (v) => v.rule,
       ),
     ).toContain("venue_on_card_face");
+    expect(
+      detectCardFaceWordingViolations("<div>San Antonio Spurs up 2 pts since Nov 9.</div>").map(
+        (v) => v.rule,
+      ),
+    ).toContain("pts_abbreviation");
 
-    // Legitimate copy ("Pregame", "As of Nov 2", "US Open") passes cleanly
+    // Legitimate copy ("Pregame", "As of Nov 2", "US Open", "up 2 points") passes cleanly
     expect(
       detectCardFaceWordingViolations(
-        "<div>US Open · Pregame Lions 58% · As of Nov 2</div>",
+        "<div>US Open · Pregame Lions 58% · up 2 points · As of Nov 2</div>",
       ),
     ).toEqual([]);
   });
@@ -559,5 +579,22 @@ describe("Website CI Wording Guard — card faces never print opening/opened, st
     const ageStamp = formatAsOfStamp(AGED_STAMP, new Date("2026-11-16T17:00:00Z"));
     expect(ageStamp).toBe("As of Nov 2");
     assertCleanCardFace("formatAsOfStamp", `<span>${ageStamp}</span>`);
+
+    const trendCaption = rangeMovementCaption(
+      { id: 1, name: "San Antonio Spurs", probability: 0.24 },
+      [
+        {
+          outcome_id: 1,
+          history: [
+            { timestamp: "2026-11-09T00:00:00Z", probability: 0.22 },
+            { timestamp: "2026-11-16T00:00:00Z", probability: 0.24 },
+          ],
+        },
+      ],
+      null,
+      "UTC",
+    );
+    expect(trendCaption).toBe("San Antonio Spurs up 2 points since Nov 9.");
+    assertCleanCardFace("rangeMovementCaption", `<p>${trendCaption}</p>`);
   });
 });

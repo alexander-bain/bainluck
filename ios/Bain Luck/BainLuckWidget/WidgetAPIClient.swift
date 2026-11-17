@@ -134,6 +134,12 @@ actor WidgetAPIClient {
                 homeHex: event.homeTeamData?.primaryColor,
                 awaySecondaryHex: event.awayTeamData?.secondaryColor
             )
+            let resolvedDarkHexes = TeamTextContrast.darkSurfaceColorHexes(
+                awayHex: event.awayTeamData?.primaryColor,
+                homeHex: event.homeTeamData?.primaryColor,
+                awaySecondaryHex: event.awayTeamData?.secondaryColor,
+                homeSecondaryHex: event.homeTeamData?.secondaryColor
+            )
 
             return WidgetGame(
                 id: event.id,
@@ -151,7 +157,9 @@ actor WidgetAPIClient {
                     period: event.espn?.period, gameClock: event.espn?.gameClock) ?? "",
                 sport: event.sportName ?? event.sport ?? "",
                 homeColor: resolvedHexes.home,
-                awayColor: resolvedHexes.away
+                awayColor: resolvedHexes.away,
+                homeDarkColor: resolvedDarkHexes.home,
+                awayDarkColor: resolvedDarkHexes.away
             )
         }
         }

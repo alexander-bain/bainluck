@@ -117,6 +117,8 @@ export interface PairedMetricSet {
   stage_2_label: string;
   stage_1_settled_yes_label: string;
   stage_1_settled_no_label: string;
+  stage_1_settled?: boolean;
+  stage_2_settled?: boolean;
   stage_1_market: {
     id: number;
     source: string;

@@ -81,51 +81,131 @@ function useHeadlineChangeCue(
   return container;
 }
 
-function columnWidthPx(
+export function columnMinWidthPx199(
   role: HeadlineColumnRole199,
   phase: HeadlineModel199["phase"],
   colCount: number,
 ): number {
-  const manyCols = colCount >= 5;
   switch (role) {
     case "setScore":
-      return 22;
+      if (colCount >= 7) return 19;
+      if (colCount === 6) return 21;
+      return 24;
     case "gamePoints":
-      return 32;
+      return colCount >= 7 ? 30 : 32;
     case "score":
-      return 34;
+      return colCount >= 5 ? 34 : 38;
     case "projected":
-      return phase === "before" ? 46 : 42;
+      return phase === "before" ? 46 : 44;
     case "pregame":
       return colCount >= 4 ? 48 : 56;
     case "finalResult":
-      return 64;
+      return 66;
     case "chance":
-      return 82;
+      return 78;
     case "now":
+      if (colCount >= 7) return 58;
+      if (colCount === 6) return 64;
+      if (colCount === 5) return 70;
+      if (colCount === 4) return 78;
       // Extra breathing room before `Now` during play (Fable note on #12771).
-      return manyCols ? 74 : 92;
+      return 90;
   }
 }
 
-function sharedCompetitorNameFontPx(
+export function pxToRem199(px: number): string {
+  return `${Number((px / 16).toFixed(4))}rem`;
+}
+
+export function primaryHeadlineCellFontPx199(colCount: number): number {
+  if (colCount >= 7) return 17;
+  if (colCount === 6) return 18.5;
+  if (colCount === 5) return 20.5;
+  if (colCount === 4) return 23;
+  return 26;
+}
+
+export function secondaryHeadlineCellFontPx199(colCount: number): number {
+  if (colCount >= 7) return 13.5;
+  return colCount >= 5 ? 15 : 17;
+}
+
+export function columnMinWidthCss199(
+  role: HeadlineColumnRole199,
+  phase: HeadlineModel199["phase"],
+  colCount: number,
+): string {
+  const basePx = columnMinWidthPx199(role, phase, colCount);
+  if (role === "now" || role === "chance") {
+    return `max(${basePx}px, ${pxToRem199(3.45 * primaryHeadlineCellFontPx199(colCount))})`;
+  }
+  if (role === "finalResult") {
+    return `max(${basePx}px, ${pxToRem199(3.35 * (colCount >= 5 ? 19.5 : 22))})`;
+  }
+  if (role === "score" || role === "projected" || role === "pregame") {
+    return `max(${basePx}px, ${pxToRem199(2.25 * secondaryHeadlineCellFontPx199(colCount))})`;
+  }
+  return `${basePx}px`;
+}
+
+export function liveSummaryFontPx199(fullLength: number): number {
+  if (fullLength <= 38) return 12;
+  if (fullLength <= 46) return 11;
+  return 10;
+}
+
+function useFitSingleLineSummary(basePx: number, depKey: string): React.RefObject<HTMLDivElement> {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const fit = () => {
+      const target = ref.current;
+      if (!target || target.clientWidth <= 0) return;
+      target.style.fontSize = pxToRem199(basePx);
+      let currentPx =
+        (typeof window !== "undefined"
+          ? parseFloat(window.getComputedStyle(target).fontSize)
+          : NaN) || basePx;
+      if (target.scrollWidth <= target.clientWidth + 1) return;
+      while (currentPx > 7.5 && target.scrollWidth > target.clientWidth + 1) {
+        currentPx = Math.max(7.5, Number((currentPx - 0.5).toFixed(1)));
+        target.style.fontSize = `${currentPx}px`;
+      }
+    };
+    fit();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
+    if (ro) ro.observe(el);
+    window.addEventListener("resize", fit);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", fit);
+    };
+  }, [basePx, depKey]);
+  return ref;
+}
+
+export function sharedCompetitorNameFontPx199(
   rows: HeadlineCompetitorRow199[],
   colCount: number,
 ): number {
   const maxLen = rows.reduce((m, r) => Math.max(m, r.shortName.length), 0);
   if (colCount >= 5) {
-    if (maxLen <= 12) return 15.5;
-    if (maxLen <= 16) return 14;
-    return 12.5;
+    if (maxLen <= 9) return 15.5;
+    if (maxLen <= 12) return 13.5;
+    if (maxLen <= 16) return 12.5;
+    return 11.5;
   }
   if (colCount >= 3) {
-    if (maxLen <= 13) return 15.5;
-    if (maxLen <= 17) return 14;
-    return 13;
+    if (maxLen <= 10) return 15.5;
+    if (maxLen <= 13) return 14;
+    if (maxLen <= 17) return 13;
+    return 12;
   }
-  if (maxLen <= 16) return 15.5;
-  if (maxLen <= 20) return 14;
-  return 13;
+  if (maxLen <= 11) return 15.5;
+  if (maxLen <= 15) return 14;
+  if (maxLen <= 19) return 13;
+  return 12;
 }
 
 export interface EventPageHeadline199Props {
@@ -165,9 +245,9 @@ export default function EventPageHeadline199({
 }: EventPageHeadline199Props) {
   const colCount = model.columns.length;
   const manyCols = colCount >= 5;
-  const colGapPx = manyCols ? 4 : 8;
+  const colGapPx = colCount >= 7 ? 3 : manyCols ? 4 : 8;
   const crestSize = manyCols ? 24 : model.rows.length >= 3 ? 28 : 30;
-  const nameFontPx = sharedCompetitorNameFontPx(model.rows, colCount);
+  const nameFontPx = sharedCompetitorNameFontPx199(model.rows, colCount);
 
   const primarySignature = model.rows
     .map((r) => r.cells[r.cells.length - 1] ?? "")
@@ -191,6 +271,51 @@ export default function EventPageHeadline199({
         ? winnerRow.fullName
         : "";
   const cueRef = useHeadlineChangeCue(primarySignature, animate);
+  const summaryBasePx = liveSummaryFontPx199(
+    model.livePregameSummary?.fullText.length ?? 0,
+  );
+  const summaryFitRef = useFitSingleLineSummary(
+    summaryBasePx,
+    model.livePregameSummary?.fullText ?? "",
+  );
+  const nameKey = `${colCount}:${model.rows.map((r) => r.shortName).join("|")}`;
+  useEffect(() => {
+    const root = cueRef.current;
+    if (!root) return;
+    const fitNames = () => {
+      const container = cueRef.current;
+      if (!container) return;
+      const spans = Array.from(
+        container.querySelectorAll<HTMLElement>("[data-headline-name]"),
+      );
+      if (spans.length === 0) return;
+      const hasLaidOutBox = spans.some((sp) => (sp.parentElement ?? sp).clientWidth > 0);
+      if (!hasLaidOutBox) return;
+      const baseRem = pxToRem199(nameFontPx);
+      for (const sp of spans) sp.style.fontSize = baseRem;
+      let px =
+        (typeof window !== "undefined"
+          ? parseFloat(window.getComputedStyle(spans[0]).fontSize)
+          : NaN) || nameFontPx;
+      const anyClipped = () =>
+        spans.some((sp) => {
+          const box = sp.parentElement ?? sp;
+          return box.clientWidth > 0 && box.scrollWidth > box.clientWidth + 1;
+        });
+      while (px > 10.5 && anyClipped()) {
+        px = Math.max(10.5, Number((px - 0.5).toFixed(1)));
+        for (const sp of spans) sp.style.fontSize = `${px}px`;
+      }
+    };
+    fitNames();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fitNames) : null;
+    if (ro) ro.observe(root);
+    window.addEventListener("resize", fitNames);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", fitNames);
+    };
+  }, [cueRef, nameFontPx, nameKey]);
 
   const rowTint = (role: HeadlineCompetitorRow199["role"]): string => {
     if (role === "away") return model.colors.away;
@@ -408,9 +533,10 @@ export default function EventPageHeadline199({
             {model.columns.map((col, idx) => (
               <span
                 key={`${col.role}-${col.setIndex ?? idx}`}
-                className="text-[11px] font-semibold leading-none text-right whitespace-nowrap"
+                className="font-semibold leading-none text-right whitespace-nowrap shrink-0"
                 style={{
-                  width: columnWidthPx(col.role, model.phase, colCount),
+                  minWidth: columnMinWidthCss199(col.role, model.phase, colCount),
+                  fontSize: pxToRem199(11),
                   color: HEADLINE_STYLE_199.quietInk,
                 }}
               >
@@ -450,9 +576,10 @@ export default function EventPageHeadline199({
                     <div className="flex flex-col min-w-0">
                       {row.role === "draw" ? (
                         <span
+                          data-headline-name=""
                           className={`${isLoser ? "font-semibold" : "font-bold"} leading-tight truncate`}
                           style={{
-                            fontSize: nameFontPx,
+                            fontSize: pxToRem199(nameFontPx),
                             color: nameColor,
                             opacity: isLoser && row.role !== "draw" ? HEADLINE_STYLE_199.loserOpacity : 1,
                           }}
@@ -466,8 +593,9 @@ export default function EventPageHeadline199({
                           className={`${isLoser ? "font-semibold" : "font-bold"} leading-tight truncate hover:underline`}
                         >
                           <span
+                            data-headline-name=""
                             style={{
-                              fontSize: nameFontPx,
+                              fontSize: pxToRem199(nameFontPx),
                               color: nameColor,
                               opacity: isLoser ? HEADLINE_STYLE_199.loserOpacity : 1,
                             }}
@@ -478,8 +606,11 @@ export default function EventPageHeadline199({
                       )}
                       {row.record ? (
                         <span
-                          className="text-[12px] font-medium tabular-nums leading-tight truncate mt-[1px]"
-                          style={{ color: HEADLINE_STYLE_199.quietInk }}
+                          className="font-medium tabular-nums leading-tight truncate mt-[1px]"
+                          style={{
+                            fontSize: pxToRem199(12),
+                            color: HEADLINE_STYLE_199.quietInk,
+                          }}
                         >
                           {row.record}
                         </span>
@@ -494,17 +625,20 @@ export default function EventPageHeadline199({
                     >
                       {model.columns.map((col, colIdx) => {
                         const text = colIdx < row.cells.length ? row.cells[colIdx] : "";
-                        const width = columnWidthPx(col.role, model.phase, colCount);
+                        const minWidth = columnMinWidthCss199(col.role, model.phase, colCount);
+                        const primaryFontPx = primaryHeadlineCellFontPx199(colCount);
+                        const secondaryFontPx = secondaryHeadlineCellFontPx199(colCount);
 
                         if (col.role === "now" || col.role === "chance") {
                           return (
                             <span
                               key={`${col.role}-${colIdx}`}
+                              data-headline-cell={col.role}
                               data-hero-digits={text ? "" : undefined}
-                              className="font-black tabular-nums leading-none text-right whitespace-nowrap tracking-[-0.02em]"
+                              className="font-black tabular-nums leading-none text-right whitespace-nowrap tracking-[-0.02em] shrink-0"
                               style={{
-                                width,
-                                fontSize: 26,
+                                minWidth,
+                                fontSize: pxToRem199(primaryFontPx),
                                 color: tint,
                               }}
                             >
@@ -517,16 +651,17 @@ export default function EventPageHeadline199({
                           return (
                             <span
                               key={`${col.role}-${colIdx}`}
+                              data-headline-cell={col.role}
                               data-projected-cell={
                                 col.role === "projected" && text ? row.role : undefined
                               }
                               data-score-cell={
                                 col.role === "score" && text ? row.role : undefined
                               }
-                              className="font-semibold tabular-nums leading-none text-right whitespace-nowrap"
+                              className="font-semibold tabular-nums leading-none text-right whitespace-nowrap shrink-0"
                               style={{
-                                width,
-                                fontSize: 17,
+                                minWidth,
+                                fontSize: pxToRem199(secondaryFontPx),
                                 color: HEADLINE_STYLE_199.primaryInk,
                               }}
                             >
@@ -539,10 +674,11 @@ export default function EventPageHeadline199({
                           return (
                             <span
                               key={`${col.role}-${colIdx}`}
-                              className="font-semibold tabular-nums leading-none text-right whitespace-nowrap"
+                              data-headline-cell={col.role}
+                              className="font-semibold tabular-nums leading-none text-right whitespace-nowrap shrink-0"
                               style={{
-                                width,
-                                fontSize: 17,
+                                minWidth,
+                                fontSize: pxToRem199(secondaryFontPx),
                                 color: HEADLINE_STYLE_199.quietInk,
                               }}
                             >
@@ -556,10 +692,11 @@ export default function EventPageHeadline199({
                           return (
                             <span
                               key={`${col.role}-${col.setIndex ?? colIdx}`}
-                              className={`${emph ? "font-extrabold" : "font-semibold"} tabular-nums leading-none text-right whitespace-nowrap`}
+                              data-headline-cell={col.role}
+                              className={`${emph ? "font-extrabold" : "font-semibold"} tabular-nums leading-none text-right whitespace-nowrap shrink-0`}
                               style={{
-                                width,
-                                fontSize: emph ? 18.5 : 17,
+                                minWidth,
+                                fontSize: pxToRem199(emph ? secondaryFontPx + 1.5 : secondaryFontPx),
                                 color: emph
                                   ? HEADLINE_STYLE_199.primaryInk
                                   : HEADLINE_STYLE_199.quietInk,
@@ -574,14 +711,15 @@ export default function EventPageHeadline199({
                           return (
                             <span
                               key={`${col.role}-${colIdx}`}
-                              className="inline-flex justify-end"
-                              style={{ width }}
+                              data-headline-cell={col.role}
+                              className="inline-flex justify-end shrink-0 whitespace-nowrap"
+                              style={{ minWidth }}
                             >
                               {text ? (
                                 <span
                                   className="font-semibold tabular-nums leading-none rounded-[5px] px-1.5 py-[2px]"
                                   style={{
-                                    fontSize: 14.5,
+                                    fontSize: pxToRem199(colCount >= 5 ? 13.5 : 14.5),
                                     color: HEADLINE_STYLE_199.primaryInk,
                                     backgroundColor: "rgba(15, 23, 42, 0.06)",
                                   }}
@@ -598,14 +736,15 @@ export default function EventPageHeadline199({
                           return (
                             <span
                               key={`${col.role}-${colIdx}`}
-                              className="inline-flex items-baseline justify-end gap-[3px] whitespace-nowrap"
-                              style={{ width }}
+                              data-headline-cell={col.role}
+                              className="inline-flex items-baseline justify-end gap-[3px] whitespace-nowrap shrink-0"
+                              style={{ minWidth }}
                             >
                               {text ? (
                                 <span
                                   className="font-extrabold tabular-nums leading-none"
                                   style={{
-                                    fontSize: 22,
+                                    fontSize: pxToRem199(colCount >= 5 ? 19.5 : 22),
                                     color: HEADLINE_STYLE_199.primaryInk,
                                   }}
                                 >
@@ -615,7 +754,7 @@ export default function EventPageHeadline199({
                               <span
                                 className="font-extrabold leading-none"
                                 style={{
-                                  fontSize: 18,
+                                  fontSize: pxToRem199(colCount >= 5 ? 16 : 18),
                                   color: HEADLINE_STYLE_199.winnerTickInk,
                                 }}
                               >
@@ -628,10 +767,11 @@ export default function EventPageHeadline199({
                         return (
                           <span
                             key={`${col.role}-${colIdx}`}
-                            className="font-semibold tabular-nums leading-none text-right whitespace-nowrap"
+                            data-headline-cell={col.role}
+                            className="font-semibold tabular-nums leading-none text-right whitespace-nowrap shrink-0"
                             style={{
-                              width,
-                              fontSize: 17,
+                              minWidth,
+                              fontSize: pxToRem199(secondaryFontPx),
                               color:
                                 row.role === "draw"
                                   ? HEADLINE_STYLE_199.drawTextInk
@@ -746,9 +886,13 @@ export default function EventPageHeadline199({
       {/* Rulings 200-B & 214-A1 Single Non-Wrapping Grey Pregame Summary (`during` only, numbers in team colour) */}
       {model.livePregameSummary ? (
         <div
+          ref={summaryFitRef}
           data-testid="headline-12472-pregame-summary"
-          className="text-[12px] leading-tight tabular-nums whitespace-nowrap overflow-hidden text-ellipsis"
-          style={{ color: HEADLINE_STYLE_199.liveSummaryQuietInk }}
+          className="leading-tight tabular-nums whitespace-nowrap overflow-hidden"
+          style={{
+            fontSize: pxToRem199(summaryBasePx),
+            color: HEADLINE_STYLE_199.liveSummaryQuietInk,
+          }}
         >
           <span className="font-semibold">{model.livePregameSummary.leadWord}</span>
           {"  "}

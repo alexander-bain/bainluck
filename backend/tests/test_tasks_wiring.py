@@ -1031,3 +1031,20 @@ def test_admin_precomputes_give_way_to_readers_overnight_215b():
         assert len(sched.minute) == 1, (name, sched.minute)
     for ttl in (SI_TTL, _ADMIN_LINK_RATE_CACHE_TTL, BP_TTL):
         assert ttl >= 48 * 3600
+
+
+def test_sportsbook_pregame_uses_the_plan_direction_215():
+    """Direction 215 / Fable 3:33 PM Nov 16 2026: pregame odds, long-tail
+    discovery and futures poll faster, inside the plan we already pay for, with
+    the quota guard unchanged; pregame spend carries its window in the task tag
+    so the projection can be checked against real spend."""
+    import inspect
+
+    from app.tasks import celery_app, config, odds_polling
+
+    assert config.SOON_POLL_INTERVAL == 120
+    assert config.LATER_POLL_INTERVAL == 300
+    assert config.DISCOVER_TIER3_INTERVAL == config.DISCOVER_TIER4_INTERVAL == 1800
+    assert celery_app.conf.beat_schedule["poll-futures-every-4h"]["schedule"].hour == set(range(24))
+    src = inspect.getsource(odds_polling)
+    assert '"poll_odds" if tier == "live" else f"poll_odds_{tier}"' in src

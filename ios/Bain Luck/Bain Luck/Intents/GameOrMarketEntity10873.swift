@@ -103,7 +103,35 @@ enum GameOrMarketCatalog10873 {
         let query = spokenQuery(text)
         guard !query.isEmpty else { return [] }
         let response = try await APIClient.shared.fetchSearch(query: query)
+        // Ruling 208-A (second pass): words that name a team answer with that
+        // team's one live or next game, pro team first, so Siri asks nothing
+        // more. Alex's "the next Patriots game" listed George Mason before
+        // New England because their game was sooner.
+        if let game = await TeamGameResolver208B.game(forSaid: query, response: response) {
+            return [entity(from: game, facets: response.sports ?? [])]
+        }
         return entities(from: response)
+    }
+
+    static func entity(from event: SearchEvent, facets: [SportFacet]) -> GameOrMarketEntity10873 {
+        GameOrMarketEntity10873(
+            kind: .game,
+            recordID: event.id,
+            title: ProbabilityAnswer10873.matchup(away: event.awayTeam, home: event.homeTeam),
+            detail: gameDetail(
+                league: leagueName(event.sport, facets: facets),
+                status: event.status,
+                authorityPeriod: event.authorityPeriod,
+                commenceTime: event.commenceTime,
+                startIsTbd: event.startIsTbd == true))
+    }
+
+    /// Ruling 208-A — the league by name. A catch-all key ("basketball_other")
+    /// prints its sport, "Basketball", never the server's "Other Basketball".
+    static func leagueName(_ key: String?, facets: [SportFacet]) -> String? {
+        guard let key, !key.isEmpty else { return nil }
+        if key.hasSuffix("_other") { return sportCategoryDisplayName(key) }
+        return sportKeyDisplayName(key, facets: facets)
     }
 
     /// Ruling 208-A — what a reader says, reduced to what search can match.
@@ -162,16 +190,7 @@ enum GameOrMarketCatalog10873 {
     static func entities(from response: SearchResponse, now: Date = Date()) -> [GameOrMarketEntity10873] {
         let facets = response.sports ?? []
         let games = gameOrder(response.results, now: now).prefix(perKindLimit).map { event in
-            GameOrMarketEntity10873(
-                kind: .game,
-                recordID: event.id,
-                title: ProbabilityAnswer10873.matchup(away: event.awayTeam, home: event.homeTeam),
-                detail: gameDetail(
-                    league: sportKeyDisplayName(event.sport, facets: facets),
-                    status: event.status,
-                    authorityPeriod: event.authorityPeriod,
-                    commenceTime: event.commenceTime,
-                    startIsTbd: event.startIsTbd == true))
+            entity(from: event, facets: facets)
         }
         // Families first, as search draws them, then the flat rows; each market once.
         var seen = Set<Int>()
@@ -214,7 +233,7 @@ enum GameOrMarketCatalog10873 {
             recordID: event.id,
             title: ProbabilityAnswer10873.matchup(away: event.awayTeam, home: event.homeTeam),
             detail: gameDetail(
-                league: sportKeyDisplayName(event.sport, facets: []),
+                league: leagueName(event.sport, facets: []),
                 status: event.status,
                 authorityPeriod: event.espn?.period,
                 commenceTime: event.commenceTime,

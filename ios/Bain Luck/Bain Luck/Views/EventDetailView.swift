@@ -667,6 +667,8 @@ struct EventDetailView: View {
                     GameActivityControl(snapshot: reading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 4)
+                        // The Live Activity's crests, fetched while the page is open.
+                        .task(id: event.id) { await Self.prefetchActivityCrests(event) }
                 }
                 #endif
                 // #9483 — the NFL cards sit directly under the paired chart:
