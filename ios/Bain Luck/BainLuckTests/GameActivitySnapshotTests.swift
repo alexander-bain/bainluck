@@ -111,4 +111,143 @@ final class GameActivitySnapshotTests: XCTestCase {
             status: "completed", homeScore: 1, awayScore: 1, sport: "soccer_epl"))
         XCTAssertEqual(value.resultText, "Final · Arsenal 1, Chelsea 1")
     }
+
+    /// #10864 — a state pushed by a server that predates the display fields still
+    /// decodes, and a bad display field never costs the reader the score and chance.
+    func testDisplayFieldsAreOptionalAndCleanedNeverFatal() throws {
+        let legacy = #"{"eventID":7,"homeTeam":"Chiefs","awayTeam":"Jets","lifecycle":"live","#
+            + #""homeScore":7,"awayScore":9,"homeRenderedPercent":77}"#
+        let old = try JSONDecoder().decode(GameActivitySnapshot.self, from: Data(legacy.utf8))
+        XCTAssertEqual(old.homeRenderedPercent, 77)
+        XCTAssertNil(old.awayRenderedPercent)
+        XCTAssertNil(old.homeAbbreviation)
+        XCTAssertNil(old.periodLabel)
+        XCTAssertNil(old.projectionLabel)
+        let bad = #"{"eventID":7,"homeTeam":"Chiefs","awayTeam":"Jets","lifecycle":"live","homeRenderedPercent":77,"#
+            + #""awayRenderedPercent":140,"homeColorHex":"red","awayColorHex":"125740","homeAbbreviation":"","#
+            + #""periodLabel":4,"projectedHomeScore":26}"#
+        let cleaned = try JSONDecoder().decode(GameActivitySnapshot.self, from: Data(bad.utf8))
+        XCTAssertEqual(cleaned.homeRenderedPercent, 77)
+        XCTAssertNil(cleaned.awayRenderedPercent)
+        XCTAssertNil(cleaned.homeColorHex)
+        XCTAssertEqual(cleaned.awayColorHex, "#125740")
+        XCTAssertNil(cleaned.homeAbbreviation)
+        XCTAssertNil(cleaned.periodLabel)
+        XCTAssertNil(cleaned.projectedHomeScore, "Half a projected pair is no pair")
+    }
+
+    /// #10864 — the projected final travels whole, labeled, and only beside a live reading.
+    func testProjectedFinalIsWholeAndLiveOnly() throws {
+        let live = try XCTUnwrap(GameActivitySnapshot(eventID: 7, homeTeam: "Chiefs", awayTeam: "Jets",
+            lifecycle: .live, homeScore: 7, awayScore: 9, homeProbability: 0.77, awayProbability: 0.23,
+            sport: "americanfootball_nfl", projectedHomeScore: 26, projectedAwayScore: 19,
+            projectionLabel: "Projected final"))
+        XCTAssertEqual(live.awayRenderedPercent, 23)
+        XCTAssertEqual(live.projectedHomeScore, 26)
+        XCTAssertEqual(live.projectedAwayScore, 19)
+        XCTAssertEqual(try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONEncoder().encode(live)), live)
+        let final = try XCTUnwrap(GameActivitySnapshot(eventID: 7, homeTeam: "Chiefs", awayTeam: "Jets",
+            lifecycle: .final, homeScore: 27, awayScore: 20, projectedHomeScore: 26,
+            projectedAwayScore: 19, projectionLabel: "Projected final"))
+        XCTAssertNil(final.projectedHomeScore)
+        XCTAssertNil(final.projectionLabel)
+        XCTAssertNil(final.awayRenderedPercent)
+    }
+
+    // #199 — the Live Activity prints the page headline's tenths, from the same pair rule.
+    func testHeadlineTenthsMatchThePageHeadlinePair() throws {
+        let value = try XCTUnwrap(GameActivitySnapshot(eventID: 101, homeTeam: "Lions", awayTeam: "Patriots",
+            status: "live", homeScore: 21, awayScore: 17, homeProbability: 0.662,
+            awayProbability: 0.338, sport: "americanfootball_nfl"))
+        let page = EventHeadlineTenths10090.pair(home: 0.662, away: 0.338)
+        XCTAssertEqual(value.headlineNowText(home: true), page.home)
+        XCTAssertEqual(value.headlineNowText(home: false), page.away)
+        XCTAssertEqual(value.headlineNowText(home: true), "66.2%")
+        XCTAssertEqual(value.headlineNowText(home: false), "33.8%")
+        // A pair that sums off 100 is normalised exactly as the page normalises it.
+        let loose = try snapshot(home: 0.5, away: 0.505, sport: "americanfootball_nfl")
+        XCTAssertEqual(loose.headlineNowText(home: true),
+                       EventHeadlineTenths10090.pair(home: 0.5, away: 0.505).home)
+        let restored = try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONEncoder().encode(value))
+        XCTAssertEqual(restored.headlineNowText(home: true), "66.2%")
+    }
+
+    func testHeadlineTenthsAbsentWhereThePageHasNoPair() throws {
+        XCTAssertNil(try snapshot(home: 0.5, away: 0.3, draw: 0.2).headlineNowText(home: true),
+                     "A draw-priced reading keeps whole numbers")
+        XCTAssertNil(try snapshot(home: 0.62, away: 0.30).headlineNowText(home: true),
+                     "A pair outside 99-101% has no single tenths line")
+        XCTAssertNil(try snapshot(status: "completed", home: 1, away: 0).headlineNowText(home: true))
+        XCTAssertEqual(try snapshot(home: 0.9997, away: 0.0003).headlineNowText(home: true), ">99%",
+                       "A live reading never prints certainty")
+        XCTAssertEqual(try snapshot(home: 0.9997, away: 0.0003).headlineNowText(home: false), "<1%")
+    }
+
+    // Fable's 6:36 PM look on #12768: whole percents before kickoff (39%, 61%),
+    // tenths only once play starts, as #12822 / #12837 set for the page.
+    func testBeforeKickoffTheChanceIsWholeAndTenthsStartWithPlay() throws {
+        let before = try snapshot(status: "scheduled", home: 0.614, away: 0.386, sport: "americanfootball_nfl")
+        XCTAssertNotNil(before.homeHeadlineTenths, "the tenths still ride along for kickoff")
+        XCTAssertNil(before.headlineNowText(home: true), "so the views print the whole percent")
+        XCTAssertNil(before.headlineNowText(home: false))
+        let live = try snapshot(status: "live", home: 0.614, away: 0.386, sport: "americanfootball_nfl")
+        XCTAssertEqual(live.headlineNowText(home: true), "61.4%")
+    }
+
+    // Fable's 6:36 PM look on #12768: a final score is settled, so no "Score as of"
+    // time goes beside it. The reading is private to the widget, so read its source.
+    func testAFinalCarriesNoTimeOnTheLockScreenOrIsland() throws {
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("BainLuckWidget/GameLiveActivity.swift"), encoding: .utf8)
+        let footer = try XCTUnwrap(source.components(separatedBy: "var footer: Text? {").dropFirst().first)
+        let body = try XCTUnwrap(footer.components(separatedBy: "\n    }\n").first)
+        let finalGuard = try XCTUnwrap(body.range(of: "if snapshot.isFinal { return nil }"))
+        let firstTime = try XCTUnwrap(body.range(of: "style: .time"))
+        XCTAssertLessThan(finalGuard.lowerBound, firstTime.lowerBound, "the final returns before any time is drawn")
+        XCTAssertTrue(source.contains("if let footer = reading.footer {"), "a nil footer draws nothing")
+    }
+
+    // Fable 10:04 PM Nov 16: Alex's 5:55 PM gap was Apple delivering our pushes at
+    // priority 5. Frequent updates let the server's priority-10 pushes through (#12844).
+    func testTheAppAsksForFrequentLiveActivityUpdates() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Bain-Luck-Info.plist")
+        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(contentsOf: url), format: nil) as? [String: Any])
+        XCTAssertEqual(plist["NSSupportsLiveActivities"] as? Bool, true)
+        XCTAssertEqual(plist["NSSupportsLiveActivitiesFrequentUpdates"] as? Bool, true)
+    }
+
+    func testDecodedHeadlineTenthsOutOfRangeOrOneSidedAreDropped() throws {
+        let value = try snapshot(sport: "americanfootball_nfl")
+        var payload = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
+        payload["homeHeadlineTenths"] = 1001
+        var decoded = try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONSerialization.data(withJSONObject: payload))
+        XCTAssertNil(decoded.homeHeadlineTenths)
+        payload["homeHeadlineTenths"] = 455
+        decoded = try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONSerialization.data(withJSONObject: payload))
+        XCTAssertEqual(decoded.headlineNowText(home: false), "54.5%")
+        payload.removeValue(forKey: "awayRenderedPercent")
+        decoded = try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONSerialization.data(withJSONObject: payload))
+        XCTAssertNil(decoded.homeHeadlineTenths, "A one-sided reading has no pair to split")
+    }
+
+    /// Direction 209 — the pregame pair is both sides or neither, each 0–100,
+    /// and it survives a round trip through the activity's content state.
+    func testThePregamePairIsBothOrNeitherAndRoundTrips() throws {
+        let both = try XCTUnwrap(GameActivitySnapshot(eventID: 5, homeTeam: "Detroit Lions", awayTeam: "New England Patriots",
+            lifecycle: .final, homeScore: 27, awayScore: 20, sport: "americanfootball_nfl", servedResult: "home",
+            pregameAwayPercent: 39, pregameHomePercent: 61))
+        let decoded = try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONEncoder().encode(both))
+        XCTAssertEqual(decoded.pregameAwayPercent, 39)
+        XCTAssertEqual(decoded.pregameHomePercent, 61)
+        XCTAssertEqual(decoded.sport, "americanfootball_nfl")
+        let oneSided = try XCTUnwrap(GameActivitySnapshot(eventID: 5, homeTeam: "A", awayTeam: "B", lifecycle: .final,
+            pregameAwayPercent: nil, pregameHomePercent: 61))
+        XCTAssertNil(oneSided.pregameHomePercent)
+        let outOfRange = #"{"eventID":5,"homeTeam":"A","awayTeam":"B","lifecycle":"final","pregameAwayPercent":140,"pregameHomePercent":61}"#
+        let bad = try JSONDecoder().decode(GameActivitySnapshot.self, from: Data(outOfRange.utf8))
+        XCTAssertNil(bad.pregameAwayPercent)
+        XCTAssertNil(bad.pregameHomePercent)
+    }
 }

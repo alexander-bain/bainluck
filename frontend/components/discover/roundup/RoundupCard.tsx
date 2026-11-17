@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { PriceAgeMark } from "@/components/event/PriceAgeMark";
+import AwardCategoryPairedCard from "@/components/discover/forms/AwardCategoryPairedCard";
 import { buildRoundupCardModel } from "@/lib/discover/roundupCard";
 import type { FeedItem, FeedRoundupContract, FeedThemeCollectionRef } from "@/lib/types";
 import { BundleActionBar } from "../BundleActionBar";
@@ -51,6 +52,29 @@ export function RoundupCard({
   const { model } = buildRoundupCardModel(title, contract, now);
   const destination = previewOnly ? null : admitCollectionRef(collectionRef);
   if (!model || (!previewOnly && !destination)) return null;
+
+  // #12577: Award category paired-metric card (Nominated % + Wins %, with TMDB posters & expander)
+  if (contract?.paired_metric_set) {
+    return (
+      <div data-testid="roundup-card-slot">
+        <AwardCategoryPairedCard
+          set={contract.paired_metric_set}
+          surface="discover"
+        />
+        {!previewOnly && (
+          <div className="mt-[10px]">
+            <BundleActionBar
+              items={items}
+              title={contract.paired_metric_set.title || model.title}
+              sharedQuestion={contract.paired_metric_set.title || model.title}
+              storyKey={storyKey ?? bundleId}
+              positionIndex={positionIndex}
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
 
   const label = `${model.title}. ${model.rows
     .map((r) => `${r.label}, ${r.marker === "<" ? "under " : r.marker === ">" ? "over " : ""}${r.digits}%`)

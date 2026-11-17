@@ -14,10 +14,13 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import EventPageHeadline199, {
+  columnMinWidthCss199,
   columnMinWidthPx199,
   liveSummaryFontPx199,
   primaryHeadlineCellFontPx199,
+  pxToRem199,
   secondaryHeadlineCellFontPx199,
+  sharedCompetitorNameFontPx199,
 } from "@/components/event/EventPageHeadline199";
 import EventCard183A, { buildUnifiedCardFromEvent } from "@/components/EventCard183A";
 import { resolveEventPageHeadline199 } from "@/lib/eventPageHeadline199";
@@ -235,5 +238,101 @@ describe("#12822 — Whole percents before kickoff & zero numeric cell truncatio
     expect(liveSummaryFontPx199(32)).toBe(12);
     expect(liveSummaryFontPx199(44)).toBe(11);
     expect(liveSummaryFontPx199(52)).toBe(10);
+  });
+
+  it("renders Alex's 6:23 PM Magic 106 @ Celtics 99 Q4 3:16 (Now 90.3% / 9.7%) and NBA 3OT Timberwolves (148–145) with rem-scaled aligned columns that fit inside 320 px × 135% largest text", () => {
+    const magicCelticsQ4 = makeCelticsEvent({
+      status: "live",
+      away_score: 106,
+      home_score: 99,
+      espn: { period: "4th Quarter", game_clock: "3:16" } as never,
+    });
+    const q4Model = resolveEventPageHeadline199({
+      event: magicCelticsQ4,
+      effectivelyLive: true,
+      isLive: true,
+      isFinished: false,
+      isSuspended: false,
+      venueVoided: false,
+      venueSettledSentence: null,
+      stoppageLabel: null,
+      startClock: "clock",
+      liveClockLabel: "Q4 3:16",
+      bestHomeScore: 99,
+      bestAwayScore: 106,
+      heroScorePairPresent: true,
+      heroScoreIsStoppageFiller: false,
+      projectedPairRaw: { away_score: 112, home_score: 108 },
+      projectedPairAdmitted: true,
+      homeProb: 0.097,
+      servedAwayProb: 0.903,
+      homePct: 10,
+      servedAwayPct: 90,
+      probSourceLabel: "Bain Luck Blend",
+      tenthsOptIn: true,
+      settledWinnerSide: null,
+      nowMs: ONE_MIN_BEFORE_TIP_NOW + 6000_000,
+    });
+
+    const html = renderToStaticMarkup(
+      <EventPageHeadline199
+        event={magicCelticsQ4}
+        model={q4Model}
+        isPinned={false}
+        pinDisabled={false}
+        onPinToggle={() => {}}
+      />,
+    );
+    const visible = visibleTextOnly(html);
+    expect(visible).toContain("Score");
+    expect(visible).toContain("Proj.");
+    expect(visible).toContain("Now");
+    expect(visible).toContain("106");
+    expect(visible).toContain("99");
+    expect(visible).toContain("112");
+    expect(visible).toContain("108");
+    expect(visible).toContain("90.3%");
+    expect(visible).toContain("9.7%");
+    expect(visible).not.toContain("Sco…");
+    expect(visible).not.toContain("1…");
+    expect(visible).not.toContain("…");
+
+    // Header and data cells share identical rem-aware minWidth CSS so columns stay aligned under Larger Text
+    expect(pxToRem199(16)).toBe("1rem");
+    expect(columnMinWidthCss199("now", "during", 3)).toBe("max(90px, 5.6063rem)");
+    expect(columnMinWidthCss199("score", "during", 3)).toBe("max(38px, 2.3906rem)");
+
+    // At 320 px narrowest phone width (248 px inner width) × 135% Largest Text (1rem = 21.6 px):
+    const remAt135 = 21.6;
+    const evalMaxCss = (css: string): number => {
+      const m = css.match(/^max\((\d+(?:\.\d+)?)px,\s*(\d+(?:\.\d+)?)rem\)$/);
+      if (m) return Math.max(parseFloat(m[1]), parseFloat(m[2]) * remAt135);
+      return parseFloat(css);
+    };
+    const nba3ColWidthAt135 =
+      evalMaxCss(columnMinWidthCss199("score", "during", 3)) +
+      8 +
+      evalMaxCss(columnMinWidthCss199("projected", "during", 3)) +
+      8 +
+      evalMaxCss(columnMinWidthCss199("now", "during", 3));
+    expect(nba3ColWidthAt135).toBeLessThanOrEqual(248);
+
+    const tennis7ColWidthAt135 =
+      5 * evalMaxCss(columnMinWidthCss199("setScore", "during", 7)) +
+      evalMaxCss(columnMinWidthCss199("gamePoints", "during", 7)) +
+      6 * 4 +
+      evalMaxCss(columnMinWidthCss199("now", "during", 7));
+    expect(tennis7ColWidthAt135).toBeLessThanOrEqual(248);
+
+    // Timberwolves (12 chars) steps down to 14 px on 3-column live NBA so full name fits at 390 px
+    expect(
+      sharedCompetitorNameFontPx199(
+        [
+          { shortName: "Timberwolves" } as never,
+          { shortName: "Thunder" } as never,
+        ],
+        3,
+      ),
+    ).toBe(14);
   });
 });

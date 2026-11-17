@@ -65,6 +65,10 @@ struct Bain_LuckApp: App {
         // Ruling 208-A — Siri learns the team names its phrases may carry
         // ("Ask Bain Luck about the Patriots") from the app at launch.
         SiriPhrases208B.refreshTeamNames()
+        #if DEBUG && os(iOS) && canImport(ActivityKit)
+        // #10864 — the simulator's Live Activity demo; launch argument only.
+        GameActivityDemo10864.runIfAsked()
+        #endif
         // Decode the last-good deck while Firebase and the window bootstrap run,
         // instead of starting disk I/O only after Discover's appearance task.
         // Detached work enters APIClient's actor; it does not touch UI or relax

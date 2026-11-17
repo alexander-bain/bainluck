@@ -19,7 +19,9 @@ import {
   fetchProgression,
   fetchFuturesGroup,
   fetchEventConcept,
+  fetchPairedMetricByMarket,
 } from "@/lib/api";
+import AwardCategoryPairedCard from "@/components/discover/forms/AwardCategoryPairedCard";
 import type { FuturesOutcome } from "@/lib/types";
 import {
   marketEventKey,
@@ -217,6 +219,20 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // reading as graded, so no surface on this page can call it Lost, 0% or a
   // champion while another says "Result unknown". See `lib/settledResultDisplay`.
   const market = useMemo(() => withSettledResultCertainty(servedMarket), [servedMarket]);
+
+  // #12577: Award category pages (e.g. Best Picture Winner #6173044 or Nominees #5165726)
+  // surface the paired Nominated % + Wins % card with posters alongside the category board.
+  const isPairedCandidateCategory =
+    market?.llm_sport_category === "entertainment" ||
+    market?.category === "entertainment" ||
+    market?.llm_sport_category === "hockey" ||
+    market?.category === "hockey";
+  const { data: pairedMetricData } = useSWR(
+    isValidId && isPairedCandidateCategory ? ["paired-metric-by-market", marketId] : null,
+    () => fetchPairedMetricByMarket(marketId),
+    { revalidateOnFocus: false },
+  );
+  const pairedMetricSet = pairedMetricData?.set ?? null;
 
   // #7545 — the history window is a RUNG THE READER CAN SEE AND MOVE, not a
   // number derived behind the chart.
@@ -1360,6 +1376,17 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           externalId={market.external_id}
           rulesText={market.description}
         />
+      )}
+
+      {pairedMetricSet && (
+        <section data-testid="futures-paired-award-category-section">
+          <AwardCategoryPairedCard
+            set={pairedMetricSet}
+            surface="category"
+            defaultExpanded
+            currentMarketId={market.id}
+          />
+        </section>
       )}
 
       {/* L2-65 / B7 L2-91: breadcrumb UP into the richer event-concept surface

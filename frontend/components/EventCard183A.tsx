@@ -1684,6 +1684,41 @@ export default function EventCard183A({
     isLive && !isSuspended
       ? formatLivePregameSummary(card, awayShort, homeShort)
       : null;
+  const liveSummaryBasePx =
+    livePregameLine == null
+      ? 12
+      : livePregameLine.fullText.length <= 38
+        ? 12
+        : livePregameLine.fullText.length <= 46
+          ? 11
+          : 10;
+  const liveSummaryBaseRem = `${Number((liveSummaryBasePx / 16).toFixed(4))}rem`;
+  const liveSummaryRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    const el = liveSummaryRef.current;
+    if (!el) return;
+    const fit = () => {
+      const target = liveSummaryRef.current;
+      if (!target || target.clientWidth <= 0) return;
+      target.style.fontSize = liveSummaryBaseRem;
+      let px =
+        (typeof window !== "undefined"
+          ? parseFloat(window.getComputedStyle(target).fontSize)
+          : NaN) || liveSummaryBasePx;
+      while (px > 7.5 && target.scrollWidth > target.clientWidth + 1) {
+        px = Math.max(7.5, Number((px - 0.5).toFixed(1)));
+        target.style.fontSize = `${px}px`;
+      }
+    };
+    fit();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
+    if (ro) ro.observe(el);
+    window.addEventListener("resize", fit);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", fit);
+    };
+  }, [liveSummaryBasePx, liveSummaryBaseRem, livePregameLine?.fullText]);
 
   const awaySummaryInk = resolveLiveSummarySideInk(awayInk);
   const homeSummaryInk = resolveLiveSummarySideInk(homeInk);
@@ -2304,14 +2339,10 @@ export default function EventCard183A({
       {/* Rulings 199, 200-B, 213-A & 214-A1: single non-wrapping quiet grey line under the bar during a game, with each team's numbers in its team colour */}
       {livePregameLine && (
         <div
+          ref={liveSummaryRef}
           className="mt-1.5 overflow-hidden whitespace-nowrap leading-tight tabular-nums"
           style={{
-            fontSize:
-              livePregameLine.fullText.length <= 38
-                ? 12
-                : livePregameLine.fullText.length <= 46
-                  ? 11
-                  : 10,
+            fontSize: liveSummaryBaseRem,
             color: HEADLINE_STYLE_199.liveSummaryQuietInk,
           }}
           data-testid="live-pregame-summary-line"
