@@ -1,0 +1,507 @@
+[
+  {
+    "type": "bundle",
+    "score": 0.0,
+    "reason": "NFL division front-runners",
+    "headline": "NFL division front-runners",
+    "context_summary": null,
+    "data": {
+      "id": "roundup:nfl-division-front-runners",
+      "title": "NFL division front-runners",
+      "kind": "roundup",
+      "story_key": "roundup:nfl-division-front-runners",
+      "shared_question": null,
+      "item_count": 4,
+      "member_ids": [
+        53674,
+        53675,
+        53673,
+        53672
+      ],
+      "items": [
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "NFC East: Giants",
+          "headline": "NFC East: Giants",
+          "data": {
+            "id": 53674,
+            "name": "NFC East Division Winner",
+            "sport": "americanfootball_nfl",
+            "sport_name": "NFL",
+            "category": "sports",
+            "llm_sport_category": "nfl",
+            "market_tier": 4,
+            "market_type_label": "Division",
+            "market_type": "field",
+            "status": "open",
+            "source": "both",
+            "resolution_date": "2027-01-11T15:00:00+00:00",
+            "top_outcomes": [
+              {
+                "name": "Giants",
+                "probability": 0.5125
+              },
+              {
+                "name": "Cowboys",
+                "probability": 0.265
+              },
+              {
+                "name": "Commanders",
+                "probability": 0.1795
+              },
+              {
+                "name": "Eagles",
+                "probability": 0.04075
+              }
+            ],
+            "outcome_count": 4,
+            "updated_at": null,
+            "prices_updated_at": "2026-11-02T14:00:33.118175+00:00",
+            "sources": [
+              "kalshi",
+              "polymarket"
+            ],
+            "source_count": 2
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "AFC West: Broncos",
+          "headline": "AFC West: Broncos",
+          "data": {
+            "id": 53675,
+            "name": "AFC West Division Winner",
+            "sport": "americanfootball_nfl",
+            "sport_name": "NFL",
+            "category": "sports",
+            "llm_sport_category": "nfl",
+            "market_tier": 4,
+            "market_type_label": "Division",
+            "market_type": "field",
+            "status": "open",
+            "source": "both",
+            "resolution_date": "2027-01-11T15:00:00+00:00",
+            "top_outcomes": [
+              {
+                "name": "Broncos",
+                "probability": 0.49
+              },
+              {
+                "name": "Chiefs",
+                "probability": 0.4675
+              },
+              {
+                "name": "Raiders",
+                "probability": 0.035
+              },
+              {
+                "name": "Chargers",
+                "probability": 0.0055
+              }
+            ],
+            "outcome_count": 4,
+            "updated_at": null,
+            "prices_updated_at": "2026-11-02T14:00:33.422639+00:00",
+            "sources": [
+              "kalshi",
+              "polymarket"
+            ],
+            "source_count": 2
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "NFC North: Lions",
+          "headline": "NFC North: Lions",
+          "data": {
+            "id": 53673,
+            "name": "NFC North Division Winner",
+            "sport": "americanfootball_nfl",
+            "sport_name": "NFL",
+            "category": "sports",
+            "llm_sport_category": "nfl",
+            "market_tier": 4,
+            "market_type_label": "Division",
+            "market_type": "field",
+            "status": "open",
+            "source": "both",
+            "resolution_date": "2027-01-11T15:00:00+00:00",
+            "top_outcomes": [
+              {
+                "name": "Lions",
+                "probability": 0.3275
+              },
+              {
+                "name": "Vikings",
+                "probability": 0.28
+              },
+              {
+                "name": "Bears",
+                "probability": 0.275
+              },
+              {
+                "name": "Packers",
+                "probability": 0.1075
+              }
+            ],
+            "outcome_count": 4,
+            "updated_at": null,
+            "prices_updated_at": "2026-11-02T14:00:32.842997+00:00",
+            "sources": [
+              "kalshi",
+              "polymarket"
+            ],
+            "source_count": 2
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "NFC South: Panthers and Buccaneers",
+          "headline": "NFC South: Panthers and Buccaneers",
+          "data": {
+            "id": 53672,
+            "name": "NFC South Division Winner",
+            "sport": "americanfootball_nfl",
+            "sport_name": "NFL",
+            "category": "sports",
+            "llm_sport_category": "nfl",
+            "market_tier": 4,
+            "market_type_label": "Division",
+            "market_type": "field",
+            "status": "open",
+            "source": "both",
+            "resolution_date": "2027-01-11T15:00:00+00:00",
+            "top_outcomes": [
+              {
+                "name": "Buccaneers",
+                "probability": 0.3225
+              },
+              {
+                "name": "Panthers",
+                "probability": 0.32
+              },
+              {
+                "name": "Falcons",
+                "probability": 0.21
+              },
+              {
+                "name": "Saints",
+                "probability": 0.1275
+              }
+            ],
+            "outcome_count": 4,
+            "updated_at": null,
+            "prices_updated_at": "2026-11-02T14:00:32.559958+00:00",
+            "sources": [
+              "kalshi",
+              "polymarket"
+            ],
+            "source_count": 2
+          }
+        }
+      ],
+      "collection_ref": {
+        "slug": "roundup-nfl-division-front-runners",
+        "href": "/collections/roundup-nfl-division-front-runners",
+        "name": "NFL division front-runners",
+        "revision": 2122830944,
+        "collection_count": 4
+      },
+      "roundup": {
+        "kicker": "Round-up",
+        "tag": "NFL",
+        "footer": "Bain Luck blend \u00b7 the 4 closest of 8 divisions",
+        "rows": [
+          {
+            "market_id": 53674,
+            "label": "NFC East: Giants",
+            "probability": 0.5125,
+            "observed_at": "2026-11-02T14:00:33.118175+00:00",
+            "pair": {
+              "kalshi_market_id": 53674,
+              "polymarket_market_id": 2248395
+            }
+          },
+          {
+            "market_id": 53675,
+            "label": "AFC West: Broncos",
+            "probability": 0.49,
+            "observed_at": "2026-11-02T14:00:33.422639+00:00",
+            "pair": {
+              "kalshi_market_id": 53675,
+              "polymarket_market_id": 2248392
+            }
+          },
+          {
+            "market_id": 53673,
+            "label": "NFC North: Lions",
+            "probability": 0.3275,
+            "observed_at": "2026-11-02T14:00:32.842997+00:00",
+            "pair": {
+              "kalshi_market_id": 53673,
+              "polymarket_market_id": 2279147
+            }
+          },
+          {
+            "market_id": 53672,
+            "label": "NFC South: Panthers and Buccaneers",
+            "probability": 0.3225,
+            "observed_at": "2026-11-02T14:00:32.559958+00:00",
+            "pair": {
+              "kalshi_market_id": 53672,
+              "polymarket_market_id": 2279151
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "state": "published",
+    "slug": "roundup-nfl-division-front-runners",
+    "revision": 2122830944,
+    "relations": [
+      "same_measure",
+      "same_window"
+    ],
+    "level": "member",
+    "reason": null,
+    "edition": null,
+    "container": {
+      "id": 914075914,
+      "slug": "roundup-nfl-division-front-runners",
+      "name": "NFL division front-runners",
+      "kind": "roundup",
+      "category": "nfl",
+      "status": "open",
+      "window_start": null,
+      "window_end": null,
+      "parent_container_id": null
+    },
+    "subtitle": "Bain Luck blend \u00b7 the 4 closest of 8 divisions",
+    "caption": null,
+    "sections": [
+      {
+        "class": "title",
+        "title": "The 4 closest races",
+        "layout": "field",
+        "count": 4,
+        "members": [
+          {
+            "type": "market",
+            "id": 53674,
+            "destination": {
+              "kind": "market",
+              "id": 53674,
+              "web": "/futures/53674",
+              "api": "/api/futures/53674"
+            },
+            "card": {
+              "id": 53674,
+              "name": "NFC East Division Winner",
+              "sport": "americanfootball_nfl",
+              "sport_name": "NFL",
+              "category": "sports",
+              "llm_sport_category": "nfl",
+              "market_tier": 4,
+              "market_type_label": "Division",
+              "market_type": "field",
+              "status": "open",
+              "source": "both",
+              "resolution_date": "2027-01-11T15:00:00+00:00",
+              "top_outcomes": [
+                {
+                  "name": "Giants",
+                  "probability": 0.5125
+                },
+                {
+                  "name": "Cowboys",
+                  "probability": 0.265
+                },
+                {
+                  "name": "Commanders",
+                  "probability": 0.1795
+                },
+                {
+                  "name": "Eagles",
+                  "probability": 0.04075
+                }
+              ],
+              "outcome_count": 4,
+              "updated_at": null,
+              "prices_updated_at": "2026-11-02T14:00:33.118175+00:00",
+              "sources": [
+                "kalshi",
+                "polymarket"
+              ],
+              "source_count": 2
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 53675,
+            "destination": {
+              "kind": "market",
+              "id": 53675,
+              "web": "/futures/53675",
+              "api": "/api/futures/53675"
+            },
+            "card": {
+              "id": 53675,
+              "name": "AFC West Division Winner",
+              "sport": "americanfootball_nfl",
+              "sport_name": "NFL",
+              "category": "sports",
+              "llm_sport_category": "nfl",
+              "market_tier": 4,
+              "market_type_label": "Division",
+              "market_type": "field",
+              "status": "open",
+              "source": "both",
+              "resolution_date": "2027-01-11T15:00:00+00:00",
+              "top_outcomes": [
+                {
+                  "name": "Broncos",
+                  "probability": 0.49
+                },
+                {
+                  "name": "Chiefs",
+                  "probability": 0.4675
+                },
+                {
+                  "name": "Raiders",
+                  "probability": 0.035
+                },
+                {
+                  "name": "Chargers",
+                  "probability": 0.0055
+                }
+              ],
+              "outcome_count": 4,
+              "updated_at": null,
+              "prices_updated_at": "2026-11-02T14:00:33.422639+00:00",
+              "sources": [
+                "kalshi",
+                "polymarket"
+              ],
+              "source_count": 2
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 53673,
+            "destination": {
+              "kind": "market",
+              "id": 53673,
+              "web": "/futures/53673",
+              "api": "/api/futures/53673"
+            },
+            "card": {
+              "id": 53673,
+              "name": "NFC North Division Winner",
+              "sport": "americanfootball_nfl",
+              "sport_name": "NFL",
+              "category": "sports",
+              "llm_sport_category": "nfl",
+              "market_tier": 4,
+              "market_type_label": "Division",
+              "market_type": "field",
+              "status": "open",
+              "source": "both",
+              "resolution_date": "2027-01-11T15:00:00+00:00",
+              "top_outcomes": [
+                {
+                  "name": "Lions",
+                  "probability": 0.3275
+                },
+                {
+                  "name": "Vikings",
+                  "probability": 0.28
+                },
+                {
+                  "name": "Bears",
+                  "probability": 0.275
+                },
+                {
+                  "name": "Packers",
+                  "probability": 0.1075
+                }
+              ],
+              "outcome_count": 4,
+              "updated_at": null,
+              "prices_updated_at": "2026-11-02T14:00:32.842997+00:00",
+              "sources": [
+                "kalshi",
+                "polymarket"
+              ],
+              "source_count": 2
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 53672,
+            "destination": {
+              "kind": "market",
+              "id": 53672,
+              "web": "/futures/53672",
+              "api": "/api/futures/53672"
+            },
+            "card": {
+              "id": 53672,
+              "name": "NFC South Division Winner",
+              "sport": "americanfootball_nfl",
+              "sport_name": "NFL",
+              "category": "sports",
+              "llm_sport_category": "nfl",
+              "market_tier": 4,
+              "market_type_label": "Division",
+              "market_type": "field",
+              "status": "open",
+              "source": "both",
+              "resolution_date": "2027-01-11T15:00:00+00:00",
+              "top_outcomes": [
+                {
+                  "name": "Buccaneers",
+                  "probability": 0.3225
+                },
+                {
+                  "name": "Panthers",
+                  "probability": 0.32
+                },
+                {
+                  "name": "Falcons",
+                  "probability": 0.21
+                },
+                {
+                  "name": "Saints",
+                  "probability": 0.1275
+                }
+              ],
+              "outcome_count": 4,
+              "updated_at": null,
+              "prices_updated_at": "2026-11-02T14:00:32.559958+00:00",
+              "sources": [
+                "kalshi",
+                "polymarket"
+              ],
+              "source_count": 2
+            },
+            "event_id": null
+          }
+        ]
+      }
+    ],
+    "member_count": 4,
+    "withheld": [],
+    "withheld_count": 0,
+    "children": [],
+    "assembled": true
+  }
+]
