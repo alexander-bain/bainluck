@@ -117,6 +117,7 @@ struct FuturesDetailView: View {
     @State private var showAllOutcomes = false
     #if DEBUG
     private var preloadedTimelineForTest: ProbabilityTimelineResponse? = nil
+    private var preloadedPairedImagesForTest: [String: PairedPlatformImage] = [:]
     #endif
 
     private var chartPreloadedTimeline: ProbabilityTimelineResponse? {
@@ -124,6 +125,14 @@ struct FuturesDetailView: View {
         return preloadedTimelineForTest
         #else
         return nil
+        #endif
+    }
+
+    private var pairedPreloadedImages: [String: PairedPlatformImage] {
+        #if DEBUG
+        return preloadedPairedImagesForTest
+        #else
+        return [:]
         #endif
     }
 
@@ -136,11 +145,13 @@ struct FuturesDetailView: View {
     init(
         marketId: Int,
         viewModelForTest: FuturesDetailViewModel,
-        preloadedTimelineForTest: ProbabilityTimelineResponse? = nil
+        preloadedTimelineForTest: ProbabilityTimelineResponse? = nil,
+        preloadedPairedImagesForTest: [String: PairedPlatformImage] = [:]
     ) {
         self.marketId = marketId
         _viewModel = StateObject(wrappedValue: viewModelForTest)
         self.preloadedTimelineForTest = preloadedTimelineForTest
+        self.preloadedPairedImagesForTest = preloadedPairedImagesForTest
     }
     #endif
 
@@ -202,6 +213,8 @@ struct FuturesDetailView: View {
                                 golfTournamentEnd: golfTournamentEnd(market),
                                 chartRefreshToken: viewModel.chartRefreshToken,
                                 representation: viewModel.representation,
+                                pairedMetricSet: viewModel.pairedMetricSet,
+                                preloadedPairedImages: pairedPreloadedImages,
                                 preloadedTimeline: chartPreloadedTimeline
                             )
                             .padding(.bottom, Self.bottomClearance(horizontalSizeClass: horizontalSizeClass))
@@ -214,6 +227,16 @@ struct FuturesDetailView: View {
                                     .contextualTipHero10876(type: "future", id: marketId, scrollSpace: Self.scrollSpace)
 
                                 VStack(spacing: 20) {
+                                    if let pairedSet = viewModel.pairedMetricSet, !pairedSet.entries.isEmpty {
+                                        DiscoverPairedMetricCardView(
+                                            set: pairedSet,
+                                            form: .pairedBarsTop5Expandable,
+                                            initialExpanded: true,
+                                            currentMarketId: marketId,
+                                            allowsRouteLinks: true,
+                                            preloadedImages: pairedPreloadedImages
+                                        )
+                                    }
                                     // Hook description (journalist-style blurb)
                                     if let hook = market.hookDescription, !hook.isEmpty {
                                         Text(hook)

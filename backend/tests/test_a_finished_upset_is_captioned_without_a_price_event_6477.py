@@ -175,13 +175,9 @@ class TestTheGateIsStructurallyUnreachable:
             self.win_probability_sources = sources
             self.opening_home_probability = opening
 
-    def test_a_completed_pm_only_event_aggregates_to_its_own_opening(self):
-        """The whole cause in one assertion.
-
-        Polymarket says 0.0005 — the game is over and it is right. The
-        aggregate says 0.7618, the opening, because `_EXCLUDE_WHEN_COMPLETED`
-        removed the only speaker and Tier 3 is `opening_home_probability`.
-        `favorite_switched` compares those two numbers.
+    def test_a_completed_pm_only_event_has_no_current_aggregate(self):
+        """#12824 removes the old opening fallback. The upset caption must
+        still use the verified result and pregame prior, without a price move.
         """
         event = self._Event(
             {
@@ -194,15 +190,8 @@ class TestTheGateIsStructurallyUnreachable:
             0.7618,
         )
         aggregate = compute_aggregate_probability(event, "completed")
-        assert aggregate == pytest.approx(0.7618)
-        assert aggregate == pytest.approx(float(event.opening_home_probability))
-
-        opening_favorite = "home" if event.opening_home_probability > 0.5 else "away"
-        current_favorite = "home" if aggregate > 0.5 else "away"
-        assert opening_favorite == current_favorite, (
-            "favorite_switched can never fire for this population, so the "
-            "caption may not be gated on it"
-        )
+        assert aggregate is None
+        assert event.opening_home_probability == pytest.approx(0.7618)
 
 
 # ── D. THE MAGNITUDE BAR (#2753 is NOT re-opened on a silent population) ──────

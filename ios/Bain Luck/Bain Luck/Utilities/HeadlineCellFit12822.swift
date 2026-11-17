@@ -153,9 +153,8 @@ nonisolated enum HeadlineCellFit12822 {
                     return maxCell
 
                 case .finalResult:
-                    let tickW = measureWidth("\u{2713}", fontSize: cappedProminent * 0.82, weight: .heavy, rounded: true, monospacedDigits: false)
                     let maxCell = candidates.map {
-                        measureWidth($0, fontSize: cappedProminent, weight: .heavy, rounded: true, monospacedDigits: true) + 3 + tickW
+                        measureWidth($0, fontSize: cappedProminent, weight: .heavy, rounded: true, monospacedDigits: true)
                     }.max() ?? 0
                     return maxCell
                 }
@@ -170,12 +169,15 @@ nonisolated enum HeadlineCellFit12822 {
 
         let usableWidth = max(innerWidth, 160)
         // Require every competitor short name to fit whole on one line above its 0.80 minimumScaleFactor
-        // alongside the crest (6pt gap), Spacer(minLength: 4) (6pt gap), and the measured columns.
+        // alongside the crest (6pt gap), optional winner tick after name, Spacer(minLength: 4), and measured columns.
         let minReadableNamePt = max(16, min(nameFontSize, 20) * 0.82)
         let widestNameAtReadable = model.rows
             .map { measureWidth($0.shortName, fontSize: minReadableNamePt, weight: .bold, rounded: false, monospacedDigits: false) }
             .max() ?? 68
-        let minIdentityReservation: CGFloat = crestSize + 16 + max(widestNameAtReadable, 64)
+        let nameTickReserve: CGFloat = model.rows.contains(where: { $0.won == true })
+            ? (4 + measureWidth("\u{2713}", fontSize: min(nameFontSize, 20) * 0.85, weight: .heavy, rounded: true, monospacedDigits: false))
+            : 0
+        let minIdentityReservation: CGFloat = crestSize + 16 + max(widestNameAtReadable + nameTickReserve, 64)
         let stacksVertically = isAccessibilitySize || (minIdentityReservation + naturalTotal > usableWidth)
 
         let columnRowBudget: CGFloat = stacksVertically

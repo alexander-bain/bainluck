@@ -1395,6 +1395,38 @@ actor APIClient {
         try await fetch(ContainerDiscoveryRequest.path, query: request.query, requiresNetwork: true)
     }
 
+    // MARK: - Paired-Metric Award & Stage Cards (#12577 / #12849)
+
+    private nonisolated struct PairedMetricByMarketEnvelope: Decodable {
+        let set: PairedMetricSet?
+    }
+
+    private nonisolated struct PairedMetricCeremonyEnvelope: Decodable {
+        let sets: [PairedMetricSet]?
+    }
+
+    /// Fetches the server-hydrated paired-metric set (`Nominated %` + `Wins %`) for a category market,
+    /// or `nil` when the market is not part of a paired award/stage category.
+    func fetchPairedMetricByMarket(marketId: Int) async throws -> PairedMetricSet? {
+        guard marketId > 0 else { return nil }
+        let env: PairedMetricByMarketEnvelope = try await fetch(
+            "/api/paired-metrics/by-market/\(marketId)",
+            cacheTTL: 60
+        )
+        guard let set = env.set, !set.entries.isEmpty else { return nil }
+        return set
+    }
+
+    /// Fetches all server-hydrated paired-metric sets for a ceremony (e.g. `"oscars"`).
+    func fetchPairedMetrics(ceremony: String) async throws -> [PairedMetricSet] {
+        let env: PairedMetricCeremonyEnvelope = try await fetch(
+            "/api/paired-metrics",
+            query: ["ceremony": ceremony],
+            cacheTTL: 60
+        )
+        return (env.sets ?? []).filter { !$0.entries.isEmpty }
+    }
+
     /// Fetches a registered tournament hub (`us-open`, …) — the same payload the
     /// web hub page renders.
     ///

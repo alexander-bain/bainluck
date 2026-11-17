@@ -15,6 +15,17 @@ final class ContainerHubViewModel: ObservableObject {
     @Published private(set) var refreshError: String?
     @Published private(set) var pageError: String?
     @Published private(set) var context = ContainerHubReadingContext()
+    @Published private(set) var pairedMetricSets: [PairedMetricSet] = []
+
+    var isOscarsHub: Bool {
+        slug == "oscars-2027" || slug == "oscars" || slug == "the-oscars"
+    }
+
+    var pairedCoveredMarketIds: Set<Int> {
+        pairedMetricSets.reduce(into: Set<Int>()) { acc, set in
+            acc.formUnion(set.coveredMarketIds)
+        }
+    }
 
     let slug: String
     private let service: any ContainerHubLoading
@@ -44,10 +55,24 @@ final class ContainerHubViewModel: ObservableObject {
         refreshError = nil
         defer { if refreshVersion == version { isRefreshing = false } }
         do {
-            let response = try await service.load(slug: slug)
+            async let responseTask = service.load(slug: slug)
+            async let ceremonySetsTask = service.loadPairedMetrics(slug: slug)
+            let response = try await responseTask
+            let ceremonySets = await ceremonySetsTask
             guard version == refreshVersion, admitted(ticket), !Task.isCancelled else { return }
             try validate(response)
             guard revisionAdmitted(response) else { return }
+            if response.state == .published {
+                if !ceremonySets.isEmpty {
+                    pairedMetricSets = ceremonySets
+                } else if let directSet = response.pairedMetricSet, !directSet.entries.isEmpty {
+                    pairedMetricSets = [directSet]
+                } else {
+                    pairedMetricSets = []
+                }
+            } else {
+                pairedMetricSets = []
+            }
             if case .loaded(let current) = state, current.response.edition?.isTheme == true,
                sameRevision(current.response, response), !response.revisionMoved {
                 // Each visited window owns its server position, including failed
@@ -154,6 +179,7 @@ final class ContainerHubViewModel: ObservableObject {
         isLoadingMore = false
         pageError = nil
         refreshError = nil
+        pairedMetricSets = []
     }
 
     @MainActor

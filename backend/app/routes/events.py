@@ -20748,7 +20748,7 @@ async def get_event(
         hero_home_prob = current_odds_probability(
             agg_prob, agg_tier, aggregated["home_probability"], event.status
         )
-        hero_away_prob = round(1.0 - hero_home_prob, 6) if hero_home_prob is not None else aggregated["away_probability"]
+        hero_away_prob = round(1.0 - hero_home_prob, 6) if hero_home_prob is not None else None
 
         # ── #6238: AND ON A THREE-OUTCOME WINNER MARKET THAT SECOND NUMBER IS
         #    NOT THE AWAY TEAM'S PRICE ────────────────────────────────────────
@@ -37689,11 +37689,11 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         captured_at = odds_data.get("captured_at")
         snapshots = odds_data.get("snapshots", [])
 
-        _hero_home = _blend if _blend is not None else aggregated["home_probability"]
+        _hero_home = _blend
         _hero_away = (
             round(1.0 - _hero_home, 6)
             if _hero_home is not None
-            else aggregated["away_probability"]
+            else None
         )
         current_home_prob = _hero_home
         current_away_prob = _hero_away
@@ -37731,7 +37731,7 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         _served_away = (
             round(1.0 - _served_home, 6)
             if _served_home is not None
-            else aggregated["away_probability"]
+            else None
         )
 
         response["current_odds"] = {
@@ -37837,6 +37837,11 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             response["hero_settled_result"] = _hero.settled_result
 
     # Compute highlight data (Level 1 + Level 2 if time_series available)
+    # #12824 (226: A): an ESPN-only pregame number is never diffed against the
+    # opening line; see `pregame_blend_rests_on_espn_alone`.
+    from app.utils.aggregation import pregame_blend_rests_on_espn_alone
+
+    _espn_alone = pregame_blend_rests_on_espn_alone(event)
     highlight_result = compute_highlight(
         status=event.status,
         commence_time=event.commence_time,
@@ -37845,8 +37850,8 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         current_away_prob=current_away_prob,
         current_home_spread=current_spread,
         current_over_under=current_ou,
-        opening_home_prob=float(_open_home) if _open_home else None,
-        opening_away_prob=float(_open_away) if _open_away else None,
+        opening_home_prob=float(_open_home) if _open_home and not _espn_alone else None,
+        opening_away_prob=float(_open_away) if _open_away and not _espn_alone else None,
         opening_home_spread=float(event.opening_home_spread) if event.opening_home_spread else None,
         opening_over_under=float(event.opening_over_under) if event.opening_over_under else None,
         opening_favorite=event.opening_favorite,

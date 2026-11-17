@@ -6208,6 +6208,27 @@ def create_certain_postseason_games(self, apply=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.refresh_espn_predictor")
+def refresh_espn_predictor(self):
+    """ESPN's matchup predictor as the chance for unpriced scheduled games (#12824).
+
+    Bills at Patriots three weeks out showed no chance at all (TestFlight 5757):
+    no venue listed it and its two sportsbooks are under ruling 051's floor.
+    Reads ESPN's predictor for scheduled NFL, college football, NBA and college
+    basketball games in the next 4 weeks that carry no sportsbook or venue
+    price (or already carry an ESPN reading, so it never freezes) and writes it
+    as the existing `espn` source. A predictor ESPN has not updated in 7 days is
+    absent. See ``tasks/espn_predictor``. Lease: a run never laps the next."""
+    from app.tasks.espn_predictor import _run_refresh_espn_predictor
+    from app.utils.single_flight import single_flight
+
+    with single_flight("app.tasks.refresh_espn_predictor") as lease:
+        if not lease.acquired:
+            return lease.skipped_result()
+        return _tracked_run("refresh_espn_predictor", _run_refresh_espn_predictor())
+
+
 @celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
                  name="app.tasks.stamp_nhl_statpal_fixtures")
 def stamp_nhl_statpal_fixtures(self, apply=True):
@@ -9628,6 +9649,20 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=11),
         "options": {"queue": "background"},
     },
+    "refresh-espn-predictor": {
+        # #12824. About every 15 minutes: ESPN's predictor is served
+        # `max-age=900`, and direction 215 asks pregame numbers to be no older
+        # than our other pregame reads. :01/:16/:34/:49 (gaps 15/18/15/12 min)
+        # carried NO other background crontab, daily ones included, in the
+        # 2026-11-17 census; no exact quarter-hour set is free (:31 is the
+        # nightly settlement sweep's, `test_settlement_sweep_beat` G8). The work
+        # is one board read per (league, Eastern day) holding a candidate and
+        # one predictor read per matched game, with no DB session held across
+        # the reads; the soft limit (300 s) is inside the 15-minute period.
+        "task": "app.tasks.refresh_espn_predictor",
+        "schedule": crontab(minute="1,16,34,49"),
+        "options": {"queue": "background"},
+    },
     "stamp-soccer-statpal-fixtures-hourly": {
         # #3366 / #2867 / D50. The fifth StatPal stamper and the first whose
         # first pass had to be bought before it could be scheduled: soccer went
@@ -10325,16 +10360,14 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(hour=3, minute=0),  # 3:00 AM UTC daily
         "options": {"queue": "heavy"},
     },
-    "daily-challenge-push": {
-        "task": "app.tasks.send_daily_challenge_push",
-        "schedule": crontab(hour=14, minute=0),  # 2:00 PM UTC (10am ET / 7am PT)
-        "options": {"queue": "background"},
-    },
-    "big-move-alerts": {
-        "task": "app.tasks.send_big_move_alerts",
-        "schedule": crontab(minute="*/30"),  # Every 30 minutes
-        "options": {"queue": "background"},
-    },
+    # Ruling 179-A (Alex, Nov 13 2026): the two old push jobs are OFF.
+    # Switching one back is restoring its entry here, as it was:
+    #   "daily-challenge-push": app.tasks.send_daily_challenge_push,
+    #       crontab(hour=14, minute=0), queue background (7 AM PT)
+    #   "big-move-alerts": app.tasks.send_big_move_alerts,
+    #       crontab(minute="*/30"), queue background
+    # plus its line in test_tasks_wiring's allowlist and the background census.
+    # Both tasks stay registered. Guard: tests/test_old_push_jobs_off_179a.py.
     "morning-digest-daily": {
         # Queue #200: notifications v1 — one daily push of the 3-5 most
         # interesting probabilities to opted-in device tokens. Reuses cached

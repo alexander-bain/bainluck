@@ -347,8 +347,7 @@ struct EconomicsView: View {
             }
 
             FooterNote(
-                left: "Resolves post-FOMC",
-                right: "Kalshi"
+                left: "Resolves post-FOMC"
             )
         }
         #if os(macOS)

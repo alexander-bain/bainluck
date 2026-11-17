@@ -12,10 +12,13 @@ nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
     let savedAt: Date
     let circularReading: WatchCircularReading?
     let rectangularReading: WatchRectangularReading?
+    /// Direction 217: colours, crests, pregame chances and the clock for the
+    /// Matchup look. Absent in older snapshots, which keep today's card.
+    let matchup: WatchMatchupFacts217?
 
     init(version: Int = 1, eventID: Int, title: String, detail: String,
          observedAt: Date, savedAt: Date, circularReading: WatchCircularReading? = nil,
-         rectangularReading: WatchRectangularReading? = nil) {
+         rectangularReading: WatchRectangularReading? = nil, matchup: WatchMatchupFacts217? = nil) {
         self.version = version
         self.eventID = eventID
         self.title = title
@@ -24,10 +27,11 @@ nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
         self.savedAt = savedAt
         self.circularReading = circularReading
         self.rectangularReading = rectangularReading
+        self.matchup = matchup
     }
 
     private enum CodingKeys: String, CodingKey {
-        case version, eventID, title, detail, observedAt, savedAt, circularReading, rectangularReading
+        case version, eventID, title, detail, observedAt, savedAt, circularReading, rectangularReading, matchup
     }
 
     init(from decoder: Decoder) throws {
@@ -41,6 +45,7 @@ nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
         // Unknown or malformed optional compact data cannot hide the rectangular reading.
         circularReading = try? c.decode(WatchCircularReading.self, forKey: .circularReading)
         rectangularReading = try? c.decode(WatchRectangularReading.self, forKey: .rectangularReading)
+        matchup = try? c.decode(WatchMatchupFacts217.self, forKey: .matchup)
     }
 
     var validatedCircularReading: WatchCircularReading? {

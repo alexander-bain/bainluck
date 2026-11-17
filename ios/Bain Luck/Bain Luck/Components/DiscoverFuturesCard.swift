@@ -188,12 +188,11 @@ struct NativeFuturesDiscoverCard: View {
     /// uppercasing a name back to `SPORTSBOOKS` would re-create the defect in a
     /// nicer font; D91 asks for a small mark that reads as sourcing, by name.
     private var sourceMark: String? {
-        let keys: [String] = {
-            if let sources = data.sources, sources.count > 1 { return sources }
-            return [data.source].compactMap { $0 }
-        }()
-        let named = keys.compactMap { SourceLabels.label(for: $0) }
-        return named.isEmpty ? nil : named.joined(separator: " + ")
+        SourceLabels.cardFaceLabel(
+            for: data.source,
+            sources: data.sources,
+            sourceCount: data.sourceCount
+        )
     }
 
     /// The source mark (D91): the venue names, small, reading as sourcing. One

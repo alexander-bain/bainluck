@@ -244,7 +244,7 @@ func settledProbabilityText(_ f: RelatedFuture) -> String {
 }
 
 private func sourceLabel(_ source: String?) -> String? {
-    SourceLabels.label(for: source)
+    SourceLabels.cardFaceLabel(for: source)
 }
 
 private func sourceColor(_ source: String?) -> Color {
@@ -2432,11 +2432,9 @@ private struct SeriesMarketsSection: View {
 
                     HStack {
                         Spacer()
-                        // #4351: was `market.source ?? "kalshi"` — a raw key, and
-                        // on the nil branch an outright misattribution: a market
-                        // whose source the payload did not state was labelled
-                        // Kalshi by name. Named or not drawn.
-                        if let mark = SourceLabels.label(for: market.source) {
+                        // #4351: was `market.source ?? "kalshi"` — named or not drawn,
+                        // and card faces omit single-venue Kalshi / Polymarket.
+                        if let mark = SourceLabels.cardFaceLabel(for: market.source) {
                             Text(mark)
                                 .font(.system(size: 9))
                                 .foregroundStyle(.tertiary)
