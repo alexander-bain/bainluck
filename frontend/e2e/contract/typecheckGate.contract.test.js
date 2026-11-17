@@ -4,6 +4,8 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
+const { spawnSync } = require("node:child_process");
 
 /**
  * L2-234 — `tsc --noEmit` must stay on the deploy path.
@@ -147,5 +149,81 @@ describe("L2-234: the typecheck is on the deploy path", () => {
       /github\.com\/.+\/issues\/\d+/,
       "typecheck-baseline.json._meta.owner must point at the issue that owns the debt",
     );
+  });
+});
+
+describe("#12858: only a completed compiler run can be counted", () => {
+  const diagnostic = "app/page.tsx(1,1): error TS2322: fixture type error.\n";
+  const empty = { total: 0, byFile: {}, byCode: {} };
+  const one = { total: 1, byFile: { "app/page.tsx": 1 }, byCode: { TS2322: 1 } };
+
+  function run(t, compiler, { mode = "--check", baseline = one } = {}) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bainluck-tsc-process-"));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    fs.mkdirSync(path.join(root, "scripts"));
+    fs.mkdirSync(path.join(root, "node_modules/typescript/bin"), { recursive: true });
+    fs.copyFileSync(path.join(REPO_ROOT, "frontend/scripts/tsc-census.js"), path.join(root, "scripts/tsc-census.js"));
+    const baselinePath = path.join(root, "typecheck-baseline.json");
+    const before = JSON.stringify({ _meta: { owner: "fixture" }, ...baseline }) + "\n";
+    fs.writeFileSync(baselinePath, before);
+    const invocations = path.join(root, "invocations");
+    fs.writeFileSync(path.join(root, "node_modules/typescript/bin/tsc"),
+      `require('node:fs').appendFileSync(${JSON.stringify(invocations)}, 'run\\n');\n${compiler}\n`);
+    const result = spawnSync(process.execPath, [path.join(root, "scripts/tsc-census.js"), "--run", mode], {
+      encoding: "utf8", timeout: 10000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.signal, null);
+    assert.equal(fs.readFileSync(invocations, "utf8"), "run\n", "one invocation; never retry the compiler");
+    return { ...result, before, after: fs.readFileSync(baselinePath, "utf8") };
+  }
+
+  it("accepts a successful clean compiler with a zero baseline", (t) => {
+    assert.equal(run(t, "process.exitCode = 0;", { baseline: empty }).status, 0);
+  });
+
+  for (const status of [1, 2]) {
+    it(`accepts completed diagnostic exit ${status} when the baseline matches`, (t) => {
+      const result = run(t, `require('node:fs').writeSync(1, ${JSON.stringify(diagnostic)}); process.exitCode = ${status};`);
+      assert.equal(result.status, 0);
+      assert.match(result.stdout, /typecheck errors: 1 \(baseline 1\)/);
+    });
+  }
+
+  for (const mode of ["--check", "--write-baseline", "--census"]) {
+    it(`refuses a killed compiler before ${mode} can report a census`, (t) => {
+      const result = run(t, "process.kill(process.pid, 'SIGKILL');", { mode });
+      assert.equal(result.status, 2);
+      assert.match(result.stderr, /SIGKILL/);
+      assert.doesNotMatch(result.stdout, /typecheck errors:|total errors:|wrote .*errors/);
+      assert.equal(result.after, result.before);
+    });
+  }
+
+  it("refuses a partial matching census if the compiler then dies", (t) => {
+    const result = run(t, `require('node:fs').writeSync(1, ${JSON.stringify(diagnostic)}); process.kill(process.pid, 'SIGKILL');`);
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /SIGKILL/);
+    assert.match(result.stderr, /TS2322/);
+  });
+
+  it("reports a fatal compiler exit with its original stderr", (t) => {
+    const result = run(t, "require('node:fs').writeSync(2, 'fixture compiler failure\\n'); process.exitCode = 3;");
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /status=3/);
+    assert.match(result.stderr, /fixture compiler failure/);
+  });
+
+  it("refuses a diagnostic exit with no countable output", (t) => {
+    const result = run(t, "process.exitCode = 2;", { baseline: empty });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /no countable diagnostics/);
+  });
+
+  it("cannot hide a global configuration error behind matching file counts", (t) => {
+    const output = diagnostic + "error TS6046: Invalid compiler option.\n";
+    const result = run(t, `require('node:fs').writeSync(1, ${JSON.stringify(output)}); process.exitCode = 2;`);
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /TS6046/);
   });
 });
