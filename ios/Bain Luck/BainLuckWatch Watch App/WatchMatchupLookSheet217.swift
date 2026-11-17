@@ -67,19 +67,19 @@ struct WatchMatchupLookSheet217: View {
             // Real: Patriots at Chargers, Sun Nov 29 5:20 PM PT, LAC 56% (production, Nov 16).
             return R(stage: .before,
                      away: side("NE", "#002a5c", "#c60c30"), home: side("LAC", "#0080c6", "#ffc20e"),
-                     bigText: "56%", bigIsHome: true, bigLabel: "LAC to win", caption: "Sun 5:20 PM",
+                     bigText: "56%", bigIsHome: true, smallLine: "Sun 5:20 PM",
                      accessibilityText: "Patriots at Chargers. Chargers 56% to win. Sunday 5:20 PM.")
         case "during":
             // Tonight's game, Chargers at Ravens; example score and chance until kickoff.
             return R(stage: .during,
-                     away: side("LAC", "#0080c6", "#ffc20e", score: 10), home: side("BAL", "#29126f", "#000000", score: 17),
-                     bigText: "74%", bigIsHome: true, bigLabel: "Now · BAL", caption: "Q3 4:12",
+                     away: side("LAC", "#0080c6", "#ffc20e", score: 10), home: side("BAL", "#241773", "#9e7c0c", score: 17),
+                     bigText: "74%", bigIsHome: true, smallLine: "Now · Q3 4:12",
                      accessibilityText: "Chargers 10, Ravens 17, third quarter 4:12. Ravens 74% now.")
         case "after":
             // Real: Patriots 10 at Lions 35, final Nov 15; Lions 58% before the game.
             return R(stage: .after,
                      away: side("NE", "#002a5c", "#c60c30", score: 10), home: side("DET", "#0076b6", "#b0b7bc", score: 35, winner: true),
-                     bigText: "58%", bigIsHome: true, bigLabel: "Pregame · DET", caption: "Final",
+                     bigText: "58%", bigIsHome: true, smallLine: "Final · pregame",
                      accessibilityText: "Final. Lions 35, Patriots 10. Lions were 58% before the game.")
         default:
             return nil

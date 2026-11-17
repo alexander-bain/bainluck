@@ -40,10 +40,8 @@ nonisolated struct WatchMatchupReading217: Equatable, Sendable {
     let bigText: String
     /// Whose number it is, so it takes that team's colour.
     let bigIsHome: Bool
-    /// Above the big number: "LAC", "Now · BAL", "Pregame · DET".
-    let bigLabel: String
-    /// Under it: "Sun 5:20 PM", "Q3 4:12", "Final".
-    let caption: String
+    /// The one small line under it: "Sun 5:20 PM", "Now · Q3 4:12", "Final · pregame".
+    let smallLine: String
     let accessibilityText: String
 
     var bigInkHex: String { bigIsHome ? home.inkHex : away.inkHex }
@@ -52,15 +50,60 @@ nonisolated struct WatchMatchupReading217: Equatable, Sendable {
     /// on black (ruling 197's grey fallback).
     static let neutralInkHex = "#9CA3AF"
 
-    /// Ruling 197 on a black face: the primary if it reads at 3:1, else the
-    /// secondary, else the neutral.
+    /// Ruling 221 on the black face (Fable, 5:17 PM Nov 16): the primary if it reads
+    /// at 3:1; else the secondary if we have one and it reads; else the primary
+    /// lightened just enough to read (same hue and saturation). Never grey unless
+    /// the team has no usable colour at all. The same order as Builder C's
+    /// `TeamTextContrast.usableOnDarkSurface` (#12839), kept here so the
+    /// complication target needs no phone files.
     static func ink(primary: String?, secondary: String?) -> String {
-        for candidate in [primary, secondary] {
-            if let hex = candidate, let l = relativeLuminance(hex), (l + 0.05) / 0.05 >= minimumRatio {
-                return hex
-            }
-        }
+        if let hex = primary, readable(hex) { return normalized(hex) }
+        if let hex = secondary, readable(hex) { return normalized(hex) }
+        if let hex = primary, let lighter = lightened(hex) { return lighter }
         return neutralInkHex
+    }
+
+    static func readable(_ hex: String) -> Bool {
+        guard let l = relativeLuminance(hex) else { return false }
+        return (l + 0.05) / 0.05 >= minimumRatio
+    }
+
+    private static func normalized(_ hex: String) -> String {
+        "#" + hex.trimmingCharacters(in: CharacterSet(charactersIn: "#")).lowercased()
+    }
+
+    /// The primary with its HSL lightness raised in 1% steps until the quantized
+    /// hex reads at 3:1 on black.
+    static func lightened(_ hex: String) -> String? {
+        let clean = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        guard clean.count == 6, let value = UInt32(clean, radix: 16) else { return nil }
+        let r = Double((value >> 16) & 0xFF) / 255, g = Double((value >> 8) & 0xFF) / 255, b = Double(value & 0xFF) / 255
+        let maxC = max(r, g, b), minC = min(r, g, b), l = (maxC + minC) / 2, d = maxC - minC
+        var h = 0.0, sat = 0.0
+        if d > 0 {
+            sat = l > 0.5 ? d / (2 - maxC - minC) : d / (maxC + minC)
+            if maxC == r { h = (g - b) / d + (g < b ? 6 : 0) } else if maxC == g { h = (b - r) / d + 2 } else { h = (r - g) / d + 4 }
+            h /= 6
+        }
+        func hue(_ p: Double, _ q: Double, _ t0: Double) -> Double {
+            var t = t0
+            if t < 0 { t += 1 }
+            if t > 1 { t -= 1 }
+            if t < 1.0 / 6 { return p + (q - p) * 6 * t }
+            if t < 1.0 / 2 { return q }
+            if t < 2.0 / 3 { return p + (q - p) * (2.0 / 3 - t) * 6 }
+            return p
+        }
+        var step = l
+        while step <= 1.0 {
+            let q = step < 0.5 ? step * (1 + sat) : step + sat - step * sat
+            let p = 2 * step - q
+            let rgb = sat == 0 ? (step, step, step) : (hue(p, q, h + 1.0 / 3), hue(p, q, h), hue(p, q, h - 1.0 / 3))
+            let out = String(format: "#%02x%02x%02x", Int((rgb.0 * 255).rounded()), Int((rgb.1 * 255).rounded()), Int((rgb.2 * 255).rounded()))
+            if readable(out) { return out }
+            step += 0.01
+        }
+        return nil
     }
 
     /// WCAG's 3:1 floor for large text, the one `TeamTextContrast` uses on the phone.
@@ -81,6 +124,27 @@ nonisolated struct WatchMatchupReading217: Equatable, Sendable {
     }
 }
 
+/// Ruling 222 (Alex: "Need this to be readable."): crests and names as large as
+/// the slot allows, with the big number still the largest thing in the tile.
+/// Every size is a share of the slot's height, so each watch size gets its own.
+nonisolated struct WatchMatchupMetrics217: Equatable, Sendable {
+    let crest: CGFloat
+    let name: CGFloat
+    let big: CGFloat
+    let small: CGFloat
+    let rowGap: CGFloat
+
+    init(slotHeight h: CGFloat) {
+        // Two crest rows fill the left column; the big number's cap height
+        // (~0.72 of its point size) stays above the crest's diameter.
+        crest = (h * 0.385).rounded()
+        name = (h * 0.27).rounded()
+        big = (h * 0.575).rounded()
+        small = (h * 0.165).rounded()
+        rowGap = max(3, (h * 0.05).rounded())
+    }
+}
+
 /// The Matchup look in the big rectangular slot (`accessoryRectangular`).
 struct WatchMatchupComplication217: View {
     let reading: WatchMatchupReading217
@@ -90,28 +154,23 @@ struct WatchMatchupComplication217: View {
 
     var body: some View {
         GeometryReader { geo in
-            let crest = min(24, max(18, geo.size.height * 0.31))
-            let big = min(38, max(28, geo.size.height * 0.45))
-            HStack(alignment: .center, spacing: 6) {
-                VStack(alignment: .leading, spacing: geo.size.height * 0.07) {
-                    sideRow(reading.away, crest: crest)
-                    sideRow(reading.home, crest: crest)
+            let m = WatchMatchupMetrics217(slotHeight: geo.size.height)
+            HStack(alignment: .center, spacing: 4) {
+                VStack(alignment: .leading, spacing: m.rowGap) {
+                    sideRow(reading.away, m)
+                    sideRow(reading.home, m)
                 }
                 .layoutPriority(1)
                 Spacer(minLength: 2)
                 VStack(alignment: .trailing, spacing: 0) {
-                    Text(reading.bigLabel)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
                     Text(reading.bigText)
-                        .font(.system(size: big, weight: .black, design: .rounded).monospacedDigit())
+                        .font(.system(size: m.big, weight: .black, design: .rounded).monospacedDigit())
                         .foregroundStyle(fullColor ? Self.color(reading.bigInkHex) : .primary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         .widgetAccentable()
-                    Text(reading.caption)
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                    Text(reading.smallLine)
+                        .font(.system(size: m.small, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
@@ -124,17 +183,18 @@ struct WatchMatchupComplication217: View {
         .accessibilityIdentifier("watch.complication.matchup.\(reading.stage.rawValue)")
     }
 
-    private func sideRow(_ side: WatchMatchupReading217.Side, crest: CGFloat) -> some View {
-        HStack(spacing: 5) {
-            crestDisc(side, size: crest)
+    private func sideRow(_ side: WatchMatchupReading217.Side, _ m: WatchMatchupMetrics217) -> some View {
+        HStack(spacing: 4) {
+            crestDisc(side, size: m.crest)
             Text(side.score.map(String.init) ?? side.abbreviation)
-                .font(.system(size: crest * 0.72, weight: side.isWinner || reading.stage != .after ? .heavy : .semibold,
+                .font(.system(size: m.name, weight: side.isWinner || reading.stage != .after ? .heavy : .semibold,
                               design: .rounded).monospacedDigit())
                 .foregroundStyle(reading.stage == .after && !side.isWinner ? .secondary : .primary)
                 .lineLimit(1)
+                .minimumScaleFactor(0.6)
             if side.isWinner {
                 Image(systemName: "checkmark")
-                    .font(.system(size: crest * 0.42, weight: .heavy))
+                    .font(.system(size: m.name * 0.5, weight: .heavy))
                     .foregroundStyle(fullColor ? Color.green : .primary)
                     .accessibilityHidden(true)
             }
