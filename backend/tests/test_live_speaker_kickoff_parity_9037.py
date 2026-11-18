@@ -16,8 +16,10 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import Select, Update
 
+from app.models import Event
 from app.tasks import live_blend_refresh as ws
 from app.utils.aggregation import observation_basis, stamp_source_reading
+from app.utils.dnpl_authority_registry import AuthorityLedgerRegistry
 from tests.test_live_blend_refresh import _RecordingSession, _Result as _WSResult
 from tests.test_live_poll_commit_boundary_5682 import (
     _Event,
@@ -125,6 +127,10 @@ class _SocketSession(_RecordingSession):
         self.stored = deepcopy(population.rows[0][1].win_probability_sources)
         self.writes = []
 
+    async def get(self, model, event_id):
+        assert model is Event
+        return next((event for _, event in self._market_rows if event.id == event_id), None)
+
     async def execute(self, stmt, *args, **kwargs):
         if isinstance(stmt, Update) and stmt.table.name == "events":
             # Read the actual JSON entry bound into atomic_stamp_expression.
@@ -176,6 +182,11 @@ async def _writer(monkeypatch, writer, population, source="polymarket"):
         async def publish(batch):
             frames.extend(batch)
 
+        # The quote and stamp assertions exercise the committed writer. Keep
+        # the separate provisional Redis ledger out of this session fixture.
+        monkeypatch.setattr(
+            "app.utils.blend_preview._REGISTRY", AuthorityLedgerRegistry(sources=frozenset())
+        )
         monkeypatch.setattr("app.tasks.base.get_task_session", get_session)
         refresher = ws.LiveBlendRefresher(source)
         monkeypatch.setattr(refresher, "_publish", publish)
