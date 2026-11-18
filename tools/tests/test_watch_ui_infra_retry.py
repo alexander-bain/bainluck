@@ -160,6 +160,25 @@ class LaunchNeverAcceptedTests(unittest.TestCase):
         self.assertIn('if wait "$xcodebuild_pid"; then', suite, "the judged exit is xcodebuild's own")
         self.assertIn('kill "$watchdog_pid"', suite)
 
+    def test_a_watch_shut_down_after_the_suite_is_booted_before_the_installed_app_reads(self):
+        # Run 44371871767 (navigation): 39 of 39 passed, then the Watch was Shutdown and
+        # the installed-app reads failed. Booting it back keeps the same installed app.
+        harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        recover = harness.index('if ! is_booted "$TEST_UDID"; then\n  echo')
+        self.assertLess(harness.index('printf \'%s\\n\' "$TEST_EXIT" > "$OUT/test-exit.txt"'), recover)
+        self.assertLess(recover, harness.index("<<'REGISTRATION'"))
+        self.assertLess(recover, harness.index("<<'SIMSIGN'"))
+        block = harness[recover:].split("\nfi\n", 1)[0]
+        self.assertIn('boot_until_ready "$TEST_UDID" || true', block, "boot only; the reads still judge")
+        for forbidden in ("install", "erase", "TEST_EXIT=", "run_xctest_suite"):
+            self.assertNotIn(forbidden, block.replace("installed-app", ""))
+
+    def test_the_journey_evidence_upload_outlasts_a_slow_storage_stall(self):
+        workflow = (ROOT / ".github/workflows/watch-mvp.yml").read_text()
+        step = workflow.split("- name: Preserve UI journey evidence", 1)[1].split("\n      - ", 1)[0]
+        self.assertIn("timeout-minutes: 10", step)
+        self.assertIn("if: always()", step)
+
 
 if __name__ == "__main__":
     unittest.main()

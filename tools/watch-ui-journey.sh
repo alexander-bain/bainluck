@@ -365,6 +365,14 @@ if [[ "$TEST_EXIT" -ne 0 ]] \
 fi
 printf '%s\n' "$TEST_EXIT" > "$OUT/test-exit.txt"
 printf 'xcodebuild exit: %s\n' "$TEST_EXIT"
+# Run 44371871767 (navigation): all 39 tests passed, then the Watch was found Shutdown
+# and every installed-app read below failed (simctl error 405). A shutdown keeps the
+# installed app and its group container, so boot the Watch back before those reads;
+# a Watch that will not boot still fails them.
+if ! is_booted "$TEST_UDID"; then
+  echo "$(date -u +%H:%M:%S) $TEST_UDID not Booted after the suite; booting it for the installed-app reads" >> "$OUT/preflight.log"
+  boot_until_ready "$TEST_UDID" || true
+fi
 # Read the app actually installed by this Debug UI run before judging system URL delivery.
 # Diagnostic failure never replaces the real XCTest result or becomes an acceptance pass.
 python3 - "$TEST_UDID" "$OUT/installed-watch-registration.json" "$SHA" <<'REGISTRATION'

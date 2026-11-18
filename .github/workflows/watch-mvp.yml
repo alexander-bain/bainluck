@@ -392,7 +392,9 @@ jobs:
       - name: Preserve UI journey evidence
         if: always()
         uses: actions/upload-artifact@v4
-        timeout-minutes: 2
+        # Run 44371871767 (corner): every case passed, then uploading the 115 evidence
+        # files stalled in GitHub's storage past 2 minutes and the group failed.
+        timeout-minutes: 10
         with:
           name: watch-ui-journey-${{ matrix.shard }}
           path: |
