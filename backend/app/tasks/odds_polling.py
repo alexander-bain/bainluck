@@ -30,7 +30,7 @@ from app.utils.odds_math import (
     project_scores,
     sportsbook_spread_is_a_margin,
 )
-from app.utils.book_consensus import median_invents_its_answer
+from app.utils.book_consensus import BETTING_BOOK_FLOOR, median_invents_its_answer
 from app.utils.name_normalization import names_match, normalize_name
 from app.utils.polling_config import compute_effective_interval
 from app.utils.score_observation import (
@@ -77,18 +77,6 @@ logger = logging.getLogger(__name__)
 #: window has no margin at all — which is what the 72h floor sized off
 #: ``SUSPENDED_RESUME_WINDOW`` alone happened to be.
 ODDS_SCORES_LOOKBACK = timedelta(days=3)
-
-# Ruling 051 (#1841), Alex 2026-08-14: the sportsbook consensus floors at THREE
-# books. At or above the floor `betting` is written as the median; below it the
-# key is DROPPED from `Event.win_probability_sources` and the blend re-weights
-# over whatever remains fresh. Never frozen at a last value.
-#
-# Three, and not two, because the measured failure had three books left and was
-# already broken: fanduel 0.0140, betmgm 0.0288, rebet 0.1347 — a 10x spread in
-# which the median still had to pick one of them. Two books cannot have a median
-# at all in any meaningful sense. Below three there is no consensus to report,
-# and reporting one anyway is what produced 87-13 on event 15192596.
-BETTING_BOOK_FLOOR = 3
 
 
 def tier_adjusted_interval(base_interval: float, tier: str, sport_key: str) -> float:

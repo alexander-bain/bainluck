@@ -3380,7 +3380,7 @@ def _live_inversion_price(
     from app.utils.aggregation import MAX_STALENESS, parse_source_entry, source_price_read_time
 
     if source == "betting":
-        from app.tasks.odds_polling import BETTING_BOOK_FLOOR
+        from app.utils.book_consensus import BETTING_BOOK_FLOOR
 
         count = sources.get("betting_book_count")
         if type(count) is not int or count < BETTING_BOOK_FLOOR:
