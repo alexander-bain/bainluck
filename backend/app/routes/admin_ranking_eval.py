@@ -494,6 +494,8 @@ async def get_grades(
     stmt = select(RankingGrade).where(
         RankingGrade.graded_at >= now - timedelta(days=days),
         RankingGrade.surface != SURFACE_PAIR,
+        # 227-A point 6: a whole-screen look is not a card grade either (/screen-grades).
+        RankingGrade.surface != SURFACE_SCREENS,
     )
     if slate_id:
         stmt = stmt.where(RankingGrade.slate_id == slate_id)
@@ -1510,3 +1512,155 @@ async def get_pair_picks(
             "graded_at": r.graded_at.isoformat() if r.graded_at else None,
         })
     return {"slate_id": slate_id, "surface": SURFACE_PAIR, "picks": picks}
+
+
+# ── 227-A point 6: Alex's eye on ten sampled phone screens a week ────────────
+#
+# A week's ten screens are 390 px phone pictures of public pages, sampled and
+# captured offline (``tools/ranking/capture_screens.mjs``) and shipped by PR in
+# ``data/screen_samples.json``: ``{week: {"screens": [{"id", "image", "counts"}]}}``.
+# The page shows only the pictures, numbered 1 to 10: no page names and no
+# counts, so the counts can't steer the eye. Each grade is stored as what it
+# means through ranking_grades' existing check, as the grouping grades are, so
+# no migration. ``GET /screen-grades`` joins each grade to its screen's counts:
+# "does a count agree with his grades" is then a table.
+
+SURFACE_SCREENS = "screens"
+SCREENS_PATH = Path(__file__).resolve().parents[1] / "data" / "screen_samples.json"
+SCREEN_GRADES = ("fun", "fine", "wall")
+_SCREEN_TO_DB_GRADE: dict[str, str] = {"fun": "shareable", "fine": "interesting", "wall": "neither"}
+_DB_TO_SCREEN_GRADE: dict[str, str] = {v: k for k, v in _SCREEN_TO_DB_GRADE.items()}
+_WEEK_RE = re.compile(r"^[0-9]{4}-w[0-9]{2}$")
+
+
+def load_screen_samples(path: Path | None = None) -> dict[str, list[dict]]:
+    """``{week: [screen, ...]}``; a week whose list is malformed is left out."""
+    try:
+        data = json.loads((path or SCREENS_PATH).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    weeks: dict[str, list[dict]] = {}
+    for week, entry in data.items():
+        screens = entry.get("screens") if isinstance(entry, dict) else None
+        if (
+            isinstance(week, str) and _WEEK_RE.match(week) and isinstance(screens, list)
+            and screens and all(isinstance(s, dict) and s.get("id") and s.get("image") for s in screens)
+        ):
+            weeks[week] = screens
+    return weeks
+
+
+def _screen_slate(week: str) -> str:
+    return f"screens-{week}"
+
+
+@router.get("/screens")
+async def get_screens(
+    request: Request,
+    week: str = Query(None, max_length=8),
+    secret: str = Query(None),
+) -> dict:
+    """The week's ten screens as numbered pictures only (the newest week if none is named)."""
+    _check_admin_secret(secret, request=request)
+    weeks = load_screen_samples()
+    if not weeks:
+        raise HTTPException(status_code=404, detail="no screens have been sampled yet")
+    chosen = week if week is not None else max(weeks)
+    screens = weeks.get(chosen)
+    if screens is None:
+        raise HTTPException(status_code=404, detail=f"no screens for week {chosen!r}")
+    return {
+        "week": chosen,
+        "screens": [{"n": i, "image": s["image"]} for i, s in enumerate(screens, start=1)],
+    }
+
+
+class ScreenGradeIn(BaseModel):
+    week: str = Field(..., min_length=8, max_length=8)
+    n: int = Field(..., ge=1)
+    grader: str = Field(..., min_length=1, max_length=40)
+    grade: str
+
+
+@router.post("/screen-grades")
+async def post_screen_grade(
+    body: ScreenGradeIn,
+    request: Request,
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db_rw),
+) -> dict:
+    """One grader's look at one screen: fun, fine or wall (of numbers). The
+    first grade stands, so a second look can't overwrite the first."""
+    _check_admin_secret(secret, request=request)
+    if not ranking_snapshots_enabled():
+        raise HTTPException(status_code=409, detail="RANKING_SNAPSHOTS is off")
+    if body.grade not in SCREEN_GRADES:
+        raise HTTPException(status_code=422, detail=f"grade must be one of {SCREEN_GRADES}")
+    grader = " ".join(body.grader.split())
+    if not grader:
+        raise HTTPException(status_code=422, detail="grader needs a name")
+    screens = load_screen_samples().get(body.week)
+    if screens is None or body.n > len(screens):
+        raise HTTPException(status_code=404, detail="no such screen this week")
+    screen_id = str(screens[body.n - 1]["id"])
+    earlier = (await db.execute(
+        select(RankingGrade).where(
+            RankingGrade.surface == SURFACE_SCREENS,
+            RankingGrade.slate_id == _screen_slate(body.week),
+            RankingGrade.item_key == f"screen:{screen_id}",
+            RankingGrade.grader == grader,
+        )
+    )).scalars().all()
+    if earlier:
+        raise HTTPException(status_code=409, detail="already graded")
+    db.add(
+        RankingGrade(
+            slate_id=_screen_slate(body.week),
+            surface=SURFACE_SCREENS,
+            grader=grader,
+            expert=True,
+            position=body.n,
+            item_key=f"screen:{screen_id}",
+            grade=_SCREEN_TO_DB_GRADE[body.grade],
+        )
+    )
+    await db.commit()
+    return {"status": "ok"}
+
+
+@router.get("/screen-grades")
+async def get_screen_grades(
+    request: Request,
+    week: str = Query(..., max_length=8),
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Each screen with its counts and every grader's first grade of it. For the
+    report that checks a count against his grades; the page never calls it."""
+    _check_admin_secret(secret, request=request)
+    screens = load_screen_samples().get(week)
+    if screens is None:
+        raise HTTPException(status_code=404, detail=f"no screens for week {week!r}")
+    rows = (await db.execute(
+        select(RankingGrade).where(
+            RankingGrade.surface == SURFACE_SCREENS,
+            RankingGrade.slate_id == _screen_slate(week),
+        )
+    )).scalars().all()
+    first: dict[tuple, Any] = {}
+    for r in sorted(rows, key=lambda r: (r.graded_at, r.id or 0)):
+        first.setdefault((r.grader, r.item_key), r)
+    out = []
+    for i, s in enumerate(screens, start=1):
+        key = f"screen:{s['id']}"
+        out.append({
+            "n": i,
+            "id": s["id"],
+            "page": s.get("page"),
+            "counts": s.get("counts") or {},
+            "grades": {g: _DB_TO_SCREEN_GRADE.get(r.grade, r.grade) for (g, k), r in first.items() if k == key},
+        })
+    return {"week": week, "surface": SURFACE_SCREENS, "screens": out}
+
