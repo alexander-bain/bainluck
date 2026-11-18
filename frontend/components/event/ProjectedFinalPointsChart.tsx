@@ -21,6 +21,7 @@
 
 import { Fragment, useMemo } from "react";
 import { format } from "date-fns";
+import { teamShortNames } from "@/lib/teamShortName";
 import {
   buildProjectedFinalPointsSeries,
   projectedFinalPointsLeague,
@@ -193,6 +194,7 @@ export default function ProjectedFinalPointsChart({
   const firstPeriodWord = projectedFinalPointsLeague(input.sportKey)?.firstPeriod === "1H" ? "half" : "quarter";
 
   const { home: homeStroke, away: awayStroke } = projectedTeamStrokes(homeColor, awayColor, awaySecondaryColor);
+  const shortNames = teamShortNames({ name: homeTeam }, { name: awayTeam }, input.sportKey);
   const span = Math.max(1, full.end - full.start);
   const ySpan = Math.max(1, full.yMax - full.yMin);
   const x = (t: number) => LEFT + ((Math.min(Math.max(t, full.start), full.end) - full.start) / span) * (RIGHT - LEFT);
@@ -226,8 +228,8 @@ export default function ProjectedFinalPointsChart({
 
       <div className="mt-3 grid grid-cols-2 gap-3" aria-live="polite" data-testid="projected-reading">
         {([
-          ["home", homeTeam, homeStroke],
-          ["away", awayTeam, awayStroke],
+          ["home", shortNames.home, homeStroke],
+          ["away", shortNames.away, awayStroke],
         ] as const).map(([key, name, stroke]) => (
           <div key={key} data-side={key}>
             <div className="flex items-center gap-1.5 text-sm font-medium" style={{ color: stroke }}>
