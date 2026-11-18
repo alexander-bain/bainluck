@@ -49,6 +49,70 @@ const FABLE_PATHS = [
   {why: 'destructive (migration, index change or data repair)', re: /^backend\/(alembic\/|scripts\/[^/]*\.sql$|scripts\/[^/]*(repair|restore|backfill|apply|fold|merge|delete|purge|fix|seed|populate|ingest|import|reconcile|settle|cleanup|dedup|prune)[^/]*$|cleanup_soccer\.py$|deduplicate_snapshots\.py$)/},
 ];
 
+// 235: A (Alex, Wed Nov 18 2026, 10:21 AM PT, #12538). A PR may say `Fable: not
+// needed (<category>)` and pass on green checks plus the bot's approval when ALL of
+// it is one of:
+//   (a) tests, CI tooling or docs            `Fable: not needed (tests)` / `(CI tooling)` / `(docs)`
+//   (b) work behind a named switch that is off, and the diff does not turn it on
+//                                            `Fable: not needed (switched off: <switch>)`
+//   (c) server fields no app draws yet, additive only
+//                                            `Fable: not needed (server fields)`
+// The bot's approval must say it confirmed the label (`Label confirmed: ...`); a false
+// label is CHANGES from the bot. Whatever else is true, these still need Fable:
+// anything a reader sees on arrival, migrations and anything destructive, eval
+// changes, and anything that loosens a gate, the Tier-B files included. The paths
+// below are the part a list can check; the bot checks the rest.
+const TIER_B_FILES = /^(tools\/release\/tier_b|\.github\/workflows\/tier-b|docs\/release-loop\/|tests\/release\/tier_b|\.github\/CODEOWNERS$|\.github\/PULL_REQUEST_TEMPLATE)/;
+const ALWAYS_FABLE = [
+  {why: 'destructive (migration, index change or data repair)', re: FABLE_PATHS.find(r => r.why.startsWith('destructive')).re},
+  {why: 'eval or grades', re: /(exam|golden|grade)/i},
+  {why: 'eval', re: /^(evals\/|backend\/scripts\/evals\/|backend\/tests\/evals\/|tools\/ranking\/|tools\/reader_walk\/)/},
+  {why: 'licence', re: /licen[cs]e/i},
+  {why: 'a gate: the Tier-B files', re: TIER_B_FILES},
+];
+const READER_CLIENT = FABLE_PATHS.filter(r => /^reader-visible \((web|iOS)/.test(r.why));
+const READER_ANY = FABLE_PATHS.filter(r => /^reader-visible/.test(r.why));
+const CATEGORY_RULES = {
+  // (a) nothing a reader sees, and no server code at all
+  'tests, CI tooling or docs': [...ALWAYS_FABLE, ...READER_ANY],
+  // (b) reader code is allowed behind the switch; the bot confirms it is off
+  'switched off': ALWAYS_FABLE,
+  // (c) server code is allowed; no web page, component or app change
+  'server fields no app draws yet': [...ALWAYS_FABLE, ...READER_CLIENT],
+};
+
+// `Fable: not needed (<label>)` -> {category, switchName}, or null for a bare or
+// unrecognised label (read as 119-A's path check, unchanged).
+function fableCategory(body) {
+  if (fableLine(body) !== 'not needed') return null;
+  const first = String(body || '').split(/\r?\n/).map(line => line.trim()).find(line => line) || '';
+  const m = first.match(/^\**\s*Fable:\s*not needed\s*\(([^)]*)\)/i);
+  if (!m) return null;
+  const label = m[1].trim();
+  const sw = label.match(/^switched[- ]off\s*:\s*`?([A-Za-z0-9_.:-]+)`?\s*$/i);
+  if (sw) return {category: 'switched off', switchName: sw[1]};
+  if (/^switched[- ]off\b/i.test(label)) return {category: 'switched off', switchName: null};
+  if (/^(new\s+|additive\s+)?server fields\b/i.test(label)) return {category: 'server fields no app draws yet', switchName: null};
+  const parts = label.split(/\s*(?:,|\+|&|\/|\band\b|\bor\b)\s*/i).filter(Boolean);
+  if (parts.length && parts.every(part => /^(tests?|ci( tooling)?|ci|tooling|docs?)$/i.test(part))) {
+    return {category: 'tests, CI tooling or docs', switchName: null};
+  }
+  return null;
+}
+
+// Files a categorized `not needed` PR touches that its category does not allow.
+function categoryHits(category, files) {
+  const rules = CATEGORY_RULES[category];
+  const hits = [];
+  for (const file of files || []) {
+    for (const name of [file.filename || file, file.previous_filename].filter(Boolean)) {
+      const rule = rules.find(rule => rule.re.test(name) && !(rule.unless && rule.unless.test(name)));
+      if (rule) { hits.push(`${name} (${rule.why})`); break; }
+    }
+  }
+  return hits;
+}
+
 // The first non-empty line of the PR body, read as the 119-A declaration.
 function fableLine(body) {
   const first = String(body || '').split(/\r?\n/).map(line => line.trim()).find(line => line) || '';
@@ -85,7 +149,16 @@ function verdict(pr, reviews, files) {
     }
   }
   const declared = fableLine(pr.body);
-  if (declared === 'not needed') {
+  const labelled = fableCategory(pr.body);
+  if (labelled) {
+    if (labelled.category === 'switched off' && !labelled.switchName) {
+      return {conclusion:'failure',summary:'The first line says `Fable: not needed (switched off)` but names no switch. Write `Fable: not needed (switched off: <switch>)` (235: A).'};
+    }
+    const hits = categoryHits(labelled.category, files);
+    if (hits.length) {
+      return {conclusion:'failure',summary:`The first line says \`Fable: not needed (${labelled.category})\`, but this PR touches paths that still need Fable under 235: A: ${hits.slice(0,10).join('; ')}${hits.length>10?` (+${hits.length-10} more)`:''}. Change the first line to \`Fable: needed (...)\`, or take those files out.`};
+    }
+  } else if (declared === 'not needed') {
     const hits = fableHits(files);
     if (hits.length) {
       return {conclusion:'failure',summary:`The first line says \`Fable: not needed\`, but this PR touches paths that need Fable's ACCEPT under 119-A: ${hits.slice(0,10).join('; ')}${hits.length>10?` (+${hits.length-10} more)`:''}. Change the first line to \`Fable: needed (reader-visible | destructive | eval)\`, or take those files out.`};
@@ -95,7 +168,12 @@ function verdict(pr, reviews, files) {
     review.user.login === 'claude[bot]' && review.user.login !== pr.user.login &&
     review.state === 'APPROVED' &&
     review.commit_id === pr.head.sha);
-  const fable = declared === 'not needed'
+  if (approval && labelled && !/\blabel confirmed\b/i.test(String(approval.body || ''))) {
+    return {conclusion:'failure',summary:`Approved at this head by ${approval.user.login}, but under 235: A a \`Fable: not needed (${labelled.category})\` PR needs the bot's approval to confirm the label ("Label confirmed: ..."). Ask for a fresh review, or change the first line to \`Fable: needed (...)\`.`};
+  }
+  const fable = labelled
+    ? `The first line says \`Fable: not needed (${labelled.category}${labelled.switchName ? `: ${labelled.switchName}` : ''})\`, no file needs Fable under 235: A, and the bot confirmed the label, so the author window merges after green CI.`
+    : declared === 'not needed'
     ? 'The first line says `Fable: not needed` and no file is on the 119-A list, so the author window merges after green CI.'
     : declared === 'needed'
       ? 'The first line says `Fable: needed`, so the author window merges after green CI and Fable ACCEPT at this head.'
@@ -195,4 +273,4 @@ async function evaluate(github, context) {
     summary:'PR membership, head or labels changed during both evaluation attempts; re-evaluation required.'});
 }
 
-module.exports = {verdict,evaluate,fableLine,fableHits,FABLE_PATHS,PLUMBING};
+module.exports = {verdict,evaluate,fableLine,fableHits,fableCategory,categoryHits,FABLE_PATHS,ALWAYS_FABLE,PLUMBING};
