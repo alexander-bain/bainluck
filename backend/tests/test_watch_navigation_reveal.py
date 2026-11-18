@@ -900,8 +900,9 @@ CONTROLS_TRAVERSAL = [
 ]
 FLAT_CLEANUP = '        defer {\n            // Let the selected-game foreground task cancel through its normal\n            // scene transition before asking XCTest to terminate this process.\n            // A failed transition or termination still fails this case.\n            XCUIDevice.shared.press(.home)\n            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n                let state = app.state\n                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning\n            }, object: app)\n            XCTAssertEqual(XCTWaiter.wait(for: [backgrounded], timeout: 5), .completed,\n                           "Layout fixture must leave foreground before cleanup")\n            if app.state != .notRunning { app.terminate() }\n            XCTAssertEqual(app.state, .notRunning, "Layout fixture cleanup must stop the app")\n        }\n'
 FLAT_ORIGINAL_CLEANUP = "        defer { app.terminate() }\n"
-# Runs 44131976001 and 44333150411 (controls): the same cleanup, now allowed 20 s to
-# leave the foreground, then one more Home press and 25 s, still failing if it stays.
+# Runs 44131976001, 44333150411 and 44371871767 (controls): the same cleanup, now
+# allowed 20 s to leave the foreground, then the watch face is brought forward and
+# 25 s more, still failing if the app stays.
 FLAT_CLEANUP_NOW = FLAT_CLEANUP.replace(
     """            XCUIDevice.shared.press(.home)
             let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
@@ -921,11 +922,12 @@ FLAT_CLEANUP_NOW = FLAT_CLEANUP.replace(
             }
             // Run 44131976001 (controls): Home took 2.4 s on a loaded simulator and the
             // state reads ~1 s each, so 5 s ran out after every check had passed.
-            // Run 44333150411 (controls): the app then stayed in the foreground for all
-            // 45 s after Home, so the press itself was lost. Press Home once more.
+            // Runs 44333150411 and 44371871767 (controls): the app then stayed on screen
+            // for all 45 s, through a second Home press too. Bring the watch face
+            // (Carousel) forward directly: the same scene change Home asks for.
             var left = leftForeground(within: 20)
             if left != .completed {
-                XCUIDevice.shared.press(.home)
+                XCUIApplication(bundleIdentifier: "com.apple.Carousel").activate()
                 left = leftForeground(within: 25)
             }
             XCTAssertEqual(left, .completed, "Layout fixture must leave foreground before cleanup")
@@ -985,6 +987,7 @@ def test_flat_cleanup_preserves_whole_original_file_and_fails_closed():
         "XCUIDevice.shared.press(.home)",
         "state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning",
         "left = leftForeground(within: 20)",
+        'XCUIApplication(bundleIdentifier: "com.apple.Carousel").activate()',
         "left = leftForeground(within: 25)",
         'XCTAssertEqual(left, .completed, "Layout fixture must leave foreground before cleanup")',
         "if app.state != .notRunning { app.terminate() }",
@@ -1060,7 +1063,7 @@ def test_large_and_small_drag_endpoints_stay_inside_measured_viewport():
 XCODE_27_2_CURRENT_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "267753ce4fd805a4592f9c7f05794a6866d55616919170c64fb13ea82f12a03c",
     "PickerAliasJourneyTests.swift": "3f1f1d4491a5c75a3de6df301190e41b38d81051c639b8039fd6404770b0e230",
-    "PickerCurrentGameJourneyTests.swift": "e8f02ad69bc6c8584ea29001d86a9dd763e89a17ae8b94eea5a070a9506696e2",
+    "PickerCurrentGameJourneyTests.swift": "23b31548ee77d4afa38b4d5327ddae198190639c0e56119b212791806ab1ea95",
     "PickerReturnJourneyTests.swift": "8e23abbce48fc2c47f382fdde2985f414236026caa03987535b91b8524e361bc",
     "PickerSelectedStateJourneyTests.swift": "129ad9836cfe7eee86f8aa024fd09b00e0a8ad2f8c145c19be1d3e7e851073b5",
     "WatchDiagnosticsJourneyTests.swift": "9f6fd014300264b8a817e8b8c42caebc91e15457c1d305ca06018c67c62fdb68",
@@ -1304,7 +1307,7 @@ XCODE_27_2_LATER_TRANSFORMS = {
         ('        let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label CONTAINS %@", "Offline."), object: state)\n        XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)\n        XCTAssertEqual(state.label.contains("Saved reading. Refresh to confirm."), saved)\n', '        let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label CONTAINS %@", "Offline."), object: state)\n        // A state wait passes the moment its predicate holds, so a long ceiling costs\n        // nothing on a healthy run. When the simulator\'s accessibility service stalls,\n        // each query takes about 7 s and 15 s allowed only two looks (run 44042203928).\n        XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 45), .completed)\n        XCTAssertEqual(state.label.contains("Saved reading. Refresh to confirm."), saved)\n', 1),
     ],
     'PickerCurrentGameJourneyTests.swift': [
-        ('            XCUIDevice.shared.press(.home)\n            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n                let state = app.state\n                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning\n            }, object: app)\n            XCTAssertEqual(XCTWaiter.wait(for: [backgrounded], timeout: 5), .completed,\n                           "Layout fixture must leave foreground before cleanup")\n            if app.state != .notRunning { app.terminate() }\n', '            XCUIDevice.shared.press(.home)\n            func leftForeground(within seconds: TimeInterval) -> XCTWaiter.Result {\n                let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n                    let state = app.state\n                    return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning\n                }, object: app)\n                return XCTWaiter.wait(for: [backgrounded], timeout: seconds)\n            }\n            // Run 44131976001 (controls): Home took 2.4 s on a loaded simulator and the\n            // state reads ~1 s each, so 5 s ran out after every check had passed.\n            // Run 44333150411 (controls): the app then stayed in the foreground for all\n            // 45 s after Home, so the press itself was lost. Press Home once more.\n            var left = leftForeground(within: 20)\n            if left != .completed {\n                XCUIDevice.shared.press(.home)\n                left = leftForeground(within: 25)\n            }\n            XCTAssertEqual(left, .completed, "Layout fixture must leave foreground before cleanup")\n            if app.state != .notRunning { app.terminate() }\n', 1),
+        ('            XCUIDevice.shared.press(.home)\n            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n                let state = app.state\n                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning\n            }, object: app)\n            XCTAssertEqual(XCTWaiter.wait(for: [backgrounded], timeout: 5), .completed,\n                           "Layout fixture must leave foreground before cleanup")\n            if app.state != .notRunning { app.terminate() }\n', '            XCUIDevice.shared.press(.home)\n            func leftForeground(within seconds: TimeInterval) -> XCTWaiter.Result {\n                let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n                    let state = app.state\n                    return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning\n                }, object: app)\n                return XCTWaiter.wait(for: [backgrounded], timeout: seconds)\n            }\n            // Run 44131976001 (controls): Home took 2.4 s on a loaded simulator and the\n            // state reads ~1 s each, so 5 s ran out after every check had passed.\n            // Runs 44333150411 and 44371871767 (controls): the app then stayed on screen\n            // for all 45 s, through a second Home press too. Bring the watch face\n            // (Carousel) forward directly: the same scene change Home asks for.\n            var left = leftForeground(within: 20)\n            if left != .completed {\n                XCUIApplication(bundleIdentifier: "com.apple.Carousel").activate()\n                left = leftForeground(within: 25)\n            }\n            XCTAssertEqual(left, .completed, "Layout fixture must leave foreground before cleanup")\n            if app.state != .notRunning { app.terminate() }\n', 1),
         ('            "Saved reading. Refresh to confirm.", "Offline."), object: state)\n        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 15), .completed)\n        let size = large ? "accessibility5" : "standard"\n', '            "Saved reading. Refresh to confirm.", "Offline."), object: state)\n        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 45), .completed)\n        let size = large ? "accessibility5" : "standard"\n', 1),
         ('            "exists == true AND label BEGINSWITH %@", "Offline."), object: error)\n        XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)\n        let suppliedStart = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-09T02:00:00Z"))\n', '            "exists == true AND label BEGINSWITH %@", "Offline."), object: error)\n        XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 45), .completed)\n        let suppliedStart = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-09T02:00:00Z"))\n', 1),
         ('            let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format:\n                "exists == true AND label BEGINSWITH %@", "Offline."), object: error)\n            XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)\n        }\n        XCTAssertEqual(state.label, expectedHeader)\n', '            let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format:\n                "exists == true AND label BEGINSWITH %@", "Offline."), object: error)\n            XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 45), .completed)\n        }\n        XCTAssertEqual(state.label, expectedHeader)\n', 1),

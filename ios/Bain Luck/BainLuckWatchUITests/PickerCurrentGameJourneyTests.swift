@@ -190,11 +190,12 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
             }
             // Run 44131976001 (controls): Home took 2.4 s on a loaded simulator and the
             // state reads ~1 s each, so 5 s ran out after every check had passed.
-            // Run 44333150411 (controls): the app then stayed in the foreground for all
-            // 45 s after Home, so the press itself was lost. Press Home once more.
+            // Runs 44333150411 and 44371871767 (controls): the app then stayed on screen
+            // for all 45 s, through a second Home press too. Bring the watch face
+            // (Carousel) forward directly: the same scene change Home asks for.
             var left = leftForeground(within: 20)
             if left != .completed {
-                XCUIDevice.shared.press(.home)
+                XCUIApplication(bundleIdentifier: "com.apple.Carousel").activate()
                 left = leftForeground(within: 25)
             }
             XCTAssertEqual(left, .completed, "Layout fixture must leave foreground before cleanup")

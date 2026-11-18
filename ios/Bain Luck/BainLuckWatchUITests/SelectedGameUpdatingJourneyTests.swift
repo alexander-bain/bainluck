@@ -26,6 +26,13 @@ final class SelectedGameUpdatingJourneyTests: XCTestCase {
         choice.tap()
         let state = app.descendants(matching: .any)["watch.game-state"].firstMatch
         XCTAssertTrue(state.waitForExistence(timeout: 15))
+        // Run 44371871767 (controls): the pick's own fetch was still showing "Updating…"
+        // when the test began. Let it finish before reading the clocks this request
+        // must not advance; an indicator that never clears still fails here.
+        let updating = app.staticTexts["watch.game-updating"]
+        let pickSettled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: updating)
+        XCTAssertEqual(XCTWaiter.wait(for: [pickSettled], timeout: 45), .completed,
+                       "The pick's own fetch must finish before the refresh is judged")
         let clocks = try XCTUnwrap(state.value as? String)
         let metadata = clocks.split(separator: "|")
         XCTAssertEqual(metadata.count, 4)
@@ -41,7 +48,6 @@ final class SelectedGameUpdatingJourneyTests: XCTestCase {
         let probability = app.descendants(matching: .any)["watch.home-probability"].firstMatch
         XCTAssertEqual(probability.label, "San Francisco Giants win probability, 64%")
         let originalState = state.label
-        let updating = app.staticTexts["watch.game-updating"]
         XCTAssertFalse(updating.exists)
         let refresh = app.buttons["watch.refresh-selected-game"].firstMatch
         try reveal(refresh, in: app)
