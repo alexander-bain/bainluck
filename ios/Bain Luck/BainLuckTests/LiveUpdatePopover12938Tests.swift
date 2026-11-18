@@ -120,9 +120,8 @@ final class LiveUpdatePopover12938Tests: XCTestCase {
     private func renderPopoverToPNG<V: View>(_ view: V, width: CGFloat, at typeSize: DynamicTypeSize, to url: URL) throws -> CGSize {
         let content = view
             .frame(width: width)
-            .environment(\.dynamicTypeSize, typeSize)
             .environment(\.colorScheme, .light)
-        let renderer = ImageRenderer(content: content)
+        let renderer = rendererForMeasurement(content, at: typeSize)
         renderer.scale = 3.0
         let uiImage = try XCTUnwrap(renderer.uiImage)
         try XCTUnwrap(uiImage.pngData()).write(to: url)
