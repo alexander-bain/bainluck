@@ -5,10 +5,13 @@
  */
 import type { FeedBundleData, FeedFuturesData, FeedItem } from "@/lib/types";
 
+// The feed sends `discover_card` on futures items; DiscoverCard reads it the same way.
+type FuturesWithCard = FeedFuturesData & { discover_card?: { suggested_format?: string } };
+
 export function discoverCardForm(item: FeedItem): string {
   if (item.type === "event") return "game";
   if (item.type === "futures") {
-    const d = item.data as FeedFuturesData;
+    const d = item.data as FuturesWithCard;
     return d.discover_card?.suggested_format === "outcome_distribution" && (d.top_outcomes?.length ?? 0) >= 4
       ? "futures-distribution"
       : "futures";
