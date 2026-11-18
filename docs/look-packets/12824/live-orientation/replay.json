@@ -1,0 +1,36 @@
+{
+  "artifact": "Offline component preview from an isolated writer replay",
+  "base_commit": "8b0e6a559381fcbfb69c12e9be1bf005cfcd28c0",
+  "event_id": 15299603,
+  "tour": "US Open ATP",
+  "home_name": "Brandon Nakashima",
+  "away_name": "Alex Michelsen",
+  "venue": "Polymarket",
+  "quote_probability": 0.92,
+  "baseline": {
+    "home_probability": 0.92,
+    "away_probability": 0.08,
+    "hero_source": "blend",
+    "stored_polymarket_home": 0.92,
+    "snapshot_home": 0.92,
+    "opening_home_probability": 0.88
+  },
+  "corrected": {
+    "home_probability": 0.08,
+    "away_probability": 0.92,
+    "hero_source": "blend",
+    "stored_polymarket_home": 0.08,
+    "snapshot_home": 0.08,
+    "opening_home_probability": 0.88
+  },
+  "fixture_name": "test_live_matcher_to_hero[opener-cannot-invert-away-quote]",
+  "fixture_path": "backend/tests/test_live_orientation_12824.py",
+  "fixture_sha256": "dec67e63533f1858623ed016c400cb5eeefb87c3f23df63c37c6b22adeb027e2",
+  "replay_wall_utc": "2026-11-18T13:51:45.937734+00:00",
+  "data_boundary": "Fake session, one seeded away quote, no current sportsbook quote, no score in the fixture",
+  "baseline_matcher_sha256": "318b412b9ca0d0b2fbdfe58ba6da87dc85fd6207c908c1a6dc525be56d284186",
+  "corrected_matcher_sha256": "cea10102263ecab0e529cd62b4de176746af42ec8d9b17d8751bb9b93f8d6abb",
+  "before_log_sha256": "99e74455e7e7c5ad1ff1c19bf99dffb86dba7da65fa25ea1b2cd0c50bf05a04e",
+  "canvas_points": 390,
+  "render_scale": 2
+}
