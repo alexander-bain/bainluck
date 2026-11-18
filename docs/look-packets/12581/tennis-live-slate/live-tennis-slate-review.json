@@ -1,0 +1,533 @@
+{
+  "title": "Tennis slate source marks",
+  "preview_label": "Server fixture preview \u00b7 390 pt",
+  "client_wiring": "Client wiring pending",
+  "base_commit": "8b0e6a559381fcbfb69c12e9be1bf005cfcd28c0",
+  "patch_sha256": "8dfe49e67e1cfdb31a4c37123399fd92c38abea0e9b446023cf87ae29ccb7aec",
+  "now": "2026-11-18T12:00:00+00:00",
+  "cases": [
+    {
+      "id": "normalized-venue",
+      "label": "Polymarket pair",
+      "selected_entity_key": "clara-burel",
+      "inputs": {
+        "register": {
+          "schema_version": "tournament-register/v1",
+          "tournament": "us-open",
+          "season": "2026",
+          "version": 2,
+          "generated_at": "2026-11-18T12:00:00+00:00",
+          "draw_released": false,
+          "players": [
+            {
+              "entity_key": "clara-burel",
+              "display_name": "Clara Burel",
+              "draw": "womens-singles",
+              "role": "participant",
+              "seed": null,
+              "country": null,
+              "draw_slot": null,
+              "section": null,
+              "sources": []
+            },
+            {
+              "entity_key": "yexin-ma",
+              "display_name": "Yexin Ma",
+              "draw": "womens-singles",
+              "role": "participant",
+              "seed": null,
+              "country": null,
+              "draw_slot": null,
+              "section": null,
+              "sources": []
+            }
+          ],
+          "matchups": [
+            {
+              "matchup_key": "womens-singles:clara-burel-vs-yexin-ma:2026-08-30",
+              "draw": "womens-singles",
+              "round": "qualifying",
+              "scheduled_date": "2026-11-18T11:25:00+00:00",
+              "players": [
+                "clara-burel",
+                "yexin-ma"
+              ],
+              "sources": [
+                {
+                  "source": "polymarket",
+                  "kind": "match",
+                  "market_id": 59481742,
+                  "outcome_id": 900001,
+                  "status": "live",
+                  "terminal_result": null,
+                  "evidence": {
+                    "kind": "match-market-census",
+                    "observed_at": "2026-08-25T21:30:00+00:00"
+                  },
+                  "sides": {
+                    "clara-burel": {
+                      "outcome_id": 900001,
+                      "source_label": "Clara Burel"
+                    },
+                    "yexin-ma": {
+                      "outcome_id": 900002,
+                      "source_label": "Yexin Ma"
+                    }
+                  }
+                }
+              ],
+              "evidence": {
+                "kind": "draw-ceremony-espn",
+                "espn_competition_id": "182655",
+                "espn_round": "Round 1",
+                "observed_at": "2026-08-25T21:30:00+00:00"
+              },
+              "event_id": null
+            }
+          ]
+        },
+        "prices": {
+          "900001": {
+            "probability": 0.55,
+            "opening_probability": 0.65,
+            "observed_at": "2026-11-18T11:58:00+00:00"
+          },
+          "900002": {
+            "probability": 0.5,
+            "opening_probability": 0.35,
+            "observed_at": "2026-11-18T11:58:00+00:00"
+          }
+        },
+        "order_of_play": {
+          "182655": {
+            "espn_competition_id": "182655",
+            "draw": "womens-singles",
+            "state": "in_progress",
+            "start_at": "2026-11-18T11:25:00+00:00",
+            "start_is_tbd": false,
+            "status_detail": "2nd Set",
+            "espn_round": "Round 1"
+          }
+        }
+      },
+      "output": {
+        "slate": {
+          "matches": [
+            {
+              "priced": true,
+              "matchup_key": "womens-singles:clara-burel-vs-yexin-ma:2026-08-30",
+              "event_id": null,
+              "draw": "womens-singles",
+              "draw_label": "Women's Singles",
+              "round": "qualifying",
+              "scheduled_date": "2026-11-18T11:25:00+00:00",
+              "live_state": "in_progress",
+              "status_detail": "2nd Set",
+              "start_is_tbd": false,
+              "sides": [
+                {
+                  "entity_key": "clara-burel",
+                  "display_name": "Clara Burel",
+                  "seed": null,
+                  "country": null,
+                  "image": null,
+                  "role": "participant",
+                  "probability": 0.52381,
+                  "opening_probability": 0.65,
+                  "move": -0.12619,
+                  "raw_probability": 0.55,
+                  "raw_opening_probability": 0.65,
+                  "observed_at": "2026-11-18T11:58:00+00:00",
+                  "age_hours": 0.03,
+                  "price_state": "live",
+                  "liquidity": "unknown",
+                  "liquidity_reasons": [],
+                  "source_mark": {
+                    "state": "single",
+                    "sources": [
+                      {
+                        "key": "polymarket",
+                        "name": "Polymarket",
+                        "probability": 0.55,
+                        "observed_at": null,
+                        "reason": "observation_unknown"
+                      }
+                    ],
+                    "method": "Bain Luck field \u00b7 scaled with the other outcomes to total 100%"
+                  }
+                },
+                {
+                  "entity_key": "yexin-ma",
+                  "display_name": "Yexin Ma",
+                  "seed": null,
+                  "country": null,
+                  "image": null,
+                  "role": "participant",
+                  "probability": 0.47619,
+                  "opening_probability": 0.35,
+                  "move": 0.12619,
+                  "raw_probability": 0.5,
+                  "raw_opening_probability": 0.35,
+                  "observed_at": "2026-11-18T11:58:00+00:00",
+                  "age_hours": 0.03,
+                  "price_state": "live",
+                  "liquidity": "unknown",
+                  "liquidity_reasons": [],
+                  "source_mark": {
+                    "state": "single",
+                    "sources": [
+                      {
+                        "key": "polymarket",
+                        "name": "Polymarket",
+                        "probability": 0.5,
+                        "observed_at": null,
+                        "reason": "observation_unknown"
+                      }
+                    ],
+                    "method": "Bain Luck field \u00b7 scaled with the other outcomes to total 100%"
+                  }
+                }
+              ],
+              "coherent": true,
+              "raw_sum": 1.05,
+              "opening_raw_sum": 1.0,
+              "probability_is_live": true,
+              "price_state": "live",
+              "observed_at": "2026-11-18T11:58:00+00:00",
+              "age_hours": 0.03,
+              "freshest_observed_at": "2026-11-18T11:58:00+00:00",
+              "freshest_age_hours": 0.03,
+              "stale_sides": [],
+              "mixed_freshness": false,
+              "favourite": "clara-burel",
+              "has_moved": true,
+              "price_basis": "venue",
+              "blend_refusal": null,
+              "source_count": 1,
+              "liquidity": "unknown",
+              "liquidity_reasons": []
+            }
+          ],
+          "count": 1,
+          "incoherent": 0,
+          "in_progress": 1,
+          "order_of_play_listed": 1,
+          "order_of_play_complete": true,
+          "dropped": {},
+          "withheld_pairings": [],
+          "authority_pairings": 0,
+          "authority_priced": 0,
+          "scoreboard_pairings": 0,
+          "scoreboard_priced": 0,
+          "scoreboard_linked": 0,
+          "books_priced": 0,
+          "price_state": "live",
+          "newest_observed_at": "2026-11-18T11:58:00+00:00",
+          "age_hours": 0.03,
+          "dark_after_hours": 48.0
+        },
+        "linked_event_reads": 0
+      }
+    },
+    {
+      "id": "linked-blend",
+      "label": "Linked game blend",
+      "selected_entity_key": "clara-burel",
+      "inputs": {
+        "register": {
+          "schema_version": "tournament-register/v1",
+          "tournament": "us-open",
+          "season": "2026",
+          "version": 2,
+          "generated_at": "2026-11-18T12:00:00+00:00",
+          "draw_released": false,
+          "players": [
+            {
+              "entity_key": "clara-burel",
+              "display_name": "Clara Burel",
+              "draw": "womens-singles",
+              "role": "participant",
+              "seed": null,
+              "country": null,
+              "draw_slot": null,
+              "section": null,
+              "sources": []
+            },
+            {
+              "entity_key": "yexin-ma",
+              "display_name": "Yexin Ma",
+              "draw": "womens-singles",
+              "role": "participant",
+              "seed": null,
+              "country": null,
+              "draw_slot": null,
+              "section": null,
+              "sources": []
+            }
+          ],
+          "matchups": [
+            {
+              "matchup_key": "womens-singles:clara-burel-vs-yexin-ma:2026-08-30",
+              "draw": "womens-singles",
+              "round": "qualifying",
+              "scheduled_date": "2026-11-18T11:25:00+00:00",
+              "players": [
+                "clara-burel",
+                "yexin-ma"
+              ],
+              "sources": [
+                {
+                  "source": "polymarket",
+                  "kind": "match",
+                  "market_id": 59481742,
+                  "outcome_id": 900001,
+                  "status": "live",
+                  "terminal_result": null,
+                  "evidence": {
+                    "kind": "match-market-census",
+                    "observed_at": "2026-08-25T21:30:00+00:00"
+                  },
+                  "sides": {
+                    "clara-burel": {
+                      "outcome_id": 900001,
+                      "source_label": "Clara Burel"
+                    },
+                    "yexin-ma": {
+                      "outcome_id": 900002,
+                      "source_label": "Yexin Ma"
+                    }
+                  }
+                }
+              ],
+              "evidence": {
+                "kind": "draw-ceremony-espn",
+                "espn_competition_id": "182655",
+                "espn_round": "Round 1",
+                "observed_at": "2026-08-25T21:30:00+00:00"
+              },
+              "event_id": 42
+            }
+          ]
+        },
+        "prices": {
+          "900001": {
+            "probability": 0.55,
+            "opening_probability": 0.65,
+            "observed_at": "2026-11-18T11:58:00+00:00"
+          },
+          "900002": {
+            "probability": 0.5,
+            "opening_probability": 0.35,
+            "observed_at": "2026-11-18T11:58:00+00:00"
+          }
+        },
+        "order_of_play": {
+          "182655": {
+            "espn_competition_id": "182655",
+            "draw": "womens-singles",
+            "state": "in_progress",
+            "start_at": "2026-11-18T11:25:00+00:00",
+            "start_is_tbd": false,
+            "status_detail": "2nd Set",
+            "espn_round": "Round 1"
+          }
+        },
+        "blend_loader": {
+          "canonical_event": {
+            "id": 42,
+            "home_team_name": "Clara Burel",
+            "away_team_name": "Yexin Ma",
+            "status": "live",
+            "commence_time": "2026-11-18T11:25:00+00:00",
+            "home_score": null,
+            "away_score": null,
+            "completed_at": null,
+            "espn_win_prob_home": null,
+            "opening_home_probability": 0.57,
+            "opening_away_probability": 0.43,
+            "win_probability_sources": {
+              "polymarket": {
+                "value": 0.6,
+                "updated_at": "2026-11-18T11:58:00+00:00"
+              },
+              "betting": {
+                "value": 0.63,
+                "updated_at": "2026-11-18T11:58:00+00:00"
+              },
+              "betting_book_count": 5
+            }
+          },
+          "suppressed_twins": [
+            [
+              43,
+              "Clara Burel",
+              "Yexin Ma",
+              {
+                "kalshi": {
+                  "value": 0.58,
+                  "updated_at": "2026-11-18T11:58:00+00:00",
+                  "price_read": {
+                    "value": 0.58,
+                    "observed_at": "2026-11-18T11:58:00+00:00",
+                    "basis": null
+                  }
+                }
+              },
+              [
+                "provenance:duplicate-of:42"
+              ],
+              null,
+              null
+            ]
+          ]
+        }
+      },
+      "output": {
+        "slate": {
+          "matches": [
+            {
+              "priced": true,
+              "matchup_key": "womens-singles:clara-burel-vs-yexin-ma:2026-08-30",
+              "event_id": 42,
+              "draw": "womens-singles",
+              "draw_label": "Women's Singles",
+              "round": "qualifying",
+              "scheduled_date": "2026-11-18T11:25:00+00:00",
+              "live_state": "in_progress",
+              "status_detail": "2nd Set",
+              "start_is_tbd": false,
+              "sides": [
+                {
+                  "entity_key": "clara-burel",
+                  "display_name": "Clara Burel",
+                  "seed": null,
+                  "country": null,
+                  "image": null,
+                  "role": "participant",
+                  "probability": 0.603333,
+                  "opening_probability": 0.57,
+                  "move": 0.033333,
+                  "raw_probability": 0.55,
+                  "raw_opening_probability": 0.65,
+                  "observed_at": "2026-11-18T11:58:00+00:00",
+                  "age_hours": 0.03,
+                  "price_state": "live",
+                  "liquidity": "unknown",
+                  "liquidity_reasons": [],
+                  "source_mark": {
+                    "state": "blend",
+                    "sources": [
+                      {
+                        "key": "kalshi",
+                        "name": "Kalshi",
+                        "probability": 0.58,
+                        "observed_at": "2026-11-18T11:58:00Z"
+                      },
+                      {
+                        "key": "polymarket",
+                        "name": "Polymarket",
+                        "probability": 0.6,
+                        "observed_at": null,
+                        "reason": "observation_unknown"
+                      },
+                      {
+                        "key": "betting",
+                        "name": "Sportsbooks",
+                        "probability": 0.63,
+                        "observed_at": null,
+                        "reason": "observation_unknown",
+                        "count": 5
+                      }
+                    ],
+                    "method": "Bain Luck blend \u00b7 a weighted average of these sources"
+                  }
+                },
+                {
+                  "entity_key": "yexin-ma",
+                  "display_name": "Yexin Ma",
+                  "seed": null,
+                  "country": null,
+                  "image": null,
+                  "role": "participant",
+                  "probability": 0.396667,
+                  "opening_probability": 0.43,
+                  "move": -0.033333,
+                  "raw_probability": 0.5,
+                  "raw_opening_probability": 0.35,
+                  "observed_at": "2026-11-18T11:58:00+00:00",
+                  "age_hours": 0.03,
+                  "price_state": "live",
+                  "liquidity": "unknown",
+                  "liquidity_reasons": [],
+                  "source_mark": {
+                    "state": "blend",
+                    "sources": [
+                      {
+                        "key": "kalshi",
+                        "name": "Kalshi",
+                        "probability": 0.42,
+                        "observed_at": "2026-11-18T11:58:00Z"
+                      },
+                      {
+                        "key": "polymarket",
+                        "name": "Polymarket",
+                        "probability": 0.4,
+                        "observed_at": null,
+                        "reason": "observation_unknown"
+                      },
+                      {
+                        "key": "betting",
+                        "name": "Sportsbooks",
+                        "probability": 0.37,
+                        "observed_at": null,
+                        "reason": "observation_unknown",
+                        "count": 5
+                      }
+                    ],
+                    "method": "Bain Luck blend \u00b7 a weighted average of these sources"
+                  }
+                }
+              ],
+              "coherent": true,
+              "raw_sum": 1.05,
+              "opening_raw_sum": 1.0,
+              "probability_is_live": true,
+              "price_state": "live",
+              "observed_at": "2026-11-18T11:58:00+00:00",
+              "age_hours": 0.03,
+              "freshest_observed_at": "2026-11-18T11:58:00+00:00",
+              "freshest_age_hours": 0.03,
+              "stale_sides": [],
+              "mixed_freshness": false,
+              "favourite": "clara-burel",
+              "has_moved": true,
+              "price_basis": "blend",
+              "blend_refusal": null,
+              "source_count": 3,
+              "liquidity": "unknown",
+              "liquidity_reasons": []
+            }
+          ],
+          "count": 1,
+          "incoherent": 0,
+          "in_progress": 1,
+          "order_of_play_listed": 1,
+          "order_of_play_complete": true,
+          "dropped": {},
+          "withheld_pairings": [],
+          "authority_pairings": 0,
+          "authority_priced": 0,
+          "scoreboard_pairings": 0,
+          "scoreboard_priced": 0,
+          "scoreboard_linked": 0,
+          "books_priced": 0,
+          "price_state": "live",
+          "newest_observed_at": "2026-11-18T11:58:00+00:00",
+          "age_hours": 0.03,
+          "dark_after_hours": 48.0
+        },
+        "linked_event_reads": 2
+      }
+    }
+  ]
+}
