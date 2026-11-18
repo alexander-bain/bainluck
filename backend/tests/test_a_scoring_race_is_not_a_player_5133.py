@@ -72,6 +72,7 @@ a control.
 """
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -173,7 +174,7 @@ def _make_outcome(*, id, market_id, name, probability):
     return outcome
 
 
-def _db_for(event, markets, outcomes):
+def _db_for(event, markets, outcomes, observations=()):
     db = AsyncMock()
     db.execute = AsyncMock(
         side_effect=[
@@ -186,7 +187,7 @@ def _db_for(event, markets, outcomes):
             _make_result(rows=outcomes),
             # #4970 — `load_latest_observed_at`, the newest priced observation per
             # outcome. Positional contract, so it appears even when empty.
-            _make_result(all_rows=[]),
+            _make_result(all_rows=list(observations)),
         ]
     )
     return db
@@ -251,6 +252,84 @@ class TestARaceIsNotAPlayerProp:
 
 
 class TestTheEndpointStopsServingRacesAsProps:
+    @pytest.mark.asyncio
+    async def test_scaled_race_keeps_venue_prices_and_explains_the_display(self, monkeypatch):
+        from app.routes import events as events_route
+
+        class ReceiptClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                observed = cls(2026, 11, 18, 6, 29, 53, tzinfo=timezone.utc)
+                return observed.astimezone(tz) if tz else observed.replace(tzinfo=None)
+
+        monkeypatch.setattr(events_route, "datetime", ReceiptClock)
+        event = _make_event(id=14780580)
+        event.home_team_name = "Houston Texans"
+        event.away_team_name = "Indianapolis Colts"
+        event.commence_time = ReceiptClock(2026, 11, 20, 1, 15, tzinfo=timezone.utc)
+
+        # Public Colts–Texans game-markets read. Race to 21 scales an
+        # underround. Race to 10 keeps its prices because one leg is a bound.
+        specimens = [
+            (70905988, 21, [(267572394, "Houston", 0.68), (267572392, "Neither team", 0.13),
+                          (267572393, "Indianapolis", 0.125)]),
+            (70905986, 10, [(267572386, "Houston", 0.675), (267572387, "Indianapolis", 0.265),
+                          (267572388, "Neither team", 0.01)]),
+        ]
+        markets, outcomes = [], []
+        for market_id, threshold, legs in specimens:
+            market = _make_market(
+                id=market_id, name=f"Indianapolis vs Houston: Race to {threshold} Points",
+                event_id=event.id,
+            )
+            market.mutually_exclusive = True
+            market.commence_time = event.commence_time
+            market.external_id = None
+            markets.append(market)
+            outcomes.extend(
+                _make_outcome(id=oid, market_id=market_id, name=name, probability=price)
+                for oid, name, price in legs
+            )
+        observed_at = datetime(2026, 11, 18, 6, 25, 44, 756924, tzinfo=timezone.utc)
+        observations = [
+            SimpleNamespace(id=row.id, observed_at=observed_at, price_changed_at=None,
+                            resolution_source=None, current_probability=row.current_probability)
+            for row in outcomes
+        ]
+        payload = await get_game_markets(event.id, _db_for(event, markets, outcomes, observations))
+
+        rows = {row["contributor_outcome_ids"][0]: row for row in payload["other"]}
+        assert set(rows) == {row.id for row in outcomes}
+        expected = {
+            267572394: (0.68, 0.72727273, 73),
+            267572392: (0.13, 0.13903743, 14),
+            267572393: (0.125, 0.13368984, 13),
+        }
+        for oid, (raw, display, whole) in expected.items():
+            row = rows[oid]
+            assert row["probability"] == display
+            assert row["rendered_percent"] == whole
+            assert row["source_mark"] == {
+                "state": "single",
+                "sources": [{
+                    "key": "kalshi", "name": "Kalshi", "probability": raw,
+                    "observed_at": "2026-11-18T06:25:44.756924Z",
+                }],
+                "method": "Bain Luck field · scaled with the other outcomes to total 100%",
+            }
+        race = next(
+            question for question in payload["game_question_matrix"]["questions"]
+            if question["market_name"] == markets[0].name
+        )
+        assert len(race["options"]) == len(expected)
+        for option in race["options"]:
+            row = rows[option["contributor_outcome_ids"][0]]
+            assert option["published"]["value"] == row["probability"]
+            assert option["source_mark"] == row["source_mark"]
+        for oid, _name, raw in specimens[1][2]:
+            assert rows[oid]["probability"] == raw
+            assert "method" not in rows[oid]["source_mark"]
+
     @pytest.mark.asyncio
     async def test_no_race_outcome_is_served_as_a_player_prop(self):
         payload = await _payload_for(PRODUCTION_RACE_ROWS)

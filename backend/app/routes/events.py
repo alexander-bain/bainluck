@@ -22793,15 +22793,9 @@ def _squeeze_exclusive_field_markets(other_rows: list, markets: list) -> list:
     rule can reach it (#4724's measurement: DATA +4.00 pts, ROUNDING +0.00).
 
     THE RULE. For a market the venue declares one-winner, with every one of its
-    three or more served legs priced and attributed to it alone, whose legs sum
-    past 1.0: divide each by the sum. Nothing else moves.
-
-    * **Only DOWN.** A subset of a one-winner field can never legitimately sum
-      past 1, so dividing by its own sum moves every leg toward the true share
-      and never past it — even when legs are missing, the true divisor is at
-      least this one. A field summing UNDER 1 is left alone: a partial field is
-      honest as it stands, and inflating it would invent weight for legs nobody
-      priced.
+    three or more served legs priced and attributed to it alone, apply the
+    shared field normalization. A scaled row's mark explains the display
+    transformation using the original quote.
     * **`mutually_exclusive` is the structure; a sum is not** (#7641). The flag
       is what `normalize_display_probs` already trusts (#199: Kalshi flags
       make-cut / top-N / player-prop fields False). A Receptions field summing
@@ -22819,14 +22813,6 @@ def _squeeze_exclusive_field_markets(other_rows: list, markets: list) -> list:
     * **Merged rows abstain.** A row carrying several `_market_ids` speaks for
       more than one market; a market seen through one is never squeezed, the
       same caution `_withhold_partial_field_markets` takes.
-
-    WHY NOT `normalize_display_probs`: its squeeze fires only past 105%
-    (`politics._normalize_outcome_probs`), which leaves Race to 14 printing
-    52 + 42 + 10 = 104 and the Zverev–Khachanov ladder at 104 — the exact
-    readings #4724 was filed on. #6583 records the same threshold leaving
-    102/103 on Discover. The guards above are that function's guards; only
-    the threshold differs, and it differs because a reader of a three-row card
-    adds the rows.
 
     Rows are copied, never mutated, so a caller holding the list it passed in
     keeps the raw prices.
@@ -22856,7 +22842,21 @@ def _squeeze_exclusive_field_markets(other_rows: list, markets: list) -> list:
         if market_id in merged or len(rows) < 3:
             continue
         copies = [dict(row) for row in rows]
-        normalize_display_probs(copies)
+        if normalize_display_probs(copies) and len(copies) == len(rows):
+            for row, copy in zip(rows, copies):
+                mark = row.get("source_mark") or {}
+                sources = mark.get("sources", [])
+                raw = float(row["probability"])
+                if (
+                    mark.get("state") == "single"
+                    and len(sources) == 1
+                    and sources[0]["probability"] == round(raw, 6)
+                    and abs(raw - copy["probability"]) >= 1e-8
+                ):
+                    copy["source_mark"] = {
+                        **mark,
+                        "method": "Bain Luck field · scaled with the other outcomes to total 100%",
+                    }
         normalized.update({id(row): copy for row, copy in zip(rows, copies)})
     return [normalized.get(id(row), row) for row in other_rows]
 
