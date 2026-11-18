@@ -70,6 +70,50 @@ final class GameActivityEventProjectionTests: XCTestCase {
         XCTAssertNil(GameActivitySnapshot.liveActivityReading(for: try event(status: "scheduled")))
     }
 
+    private func liveChanceEvent(source: String, hasCurrentOdds: Bool = true,
+                                 probabilityClock: String? = nil) throws -> EventDetail {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let odds = hasCurrentOdds ? #"{"home_probability":0.58,"away_probability":0.42}"# :
+            #"{"home_probability":null,"away_probability":null}"#
+        let observation = probabilityClock.map { "\"\($0)\"" } ?? "null"
+        return try decoder.decode(EventDetail.self, from: Data("""
+        {"id":101,"home_team":"Giants","away_team":"Dodgers","sport":"baseball_mlb",
+         "status":"live","commence_time":"2026-10-05T12:00:00Z","home_score":7,"away_score":6,
+         "score_source":"espn","score_observed_at":"2026-10-05T12:59:55Z",
+         "hero_probability_source":"\(source)","hero_probability":0.58,"hero_probability_away":0.42,
+         "hero_probability_observed_at":\(observation),"current_odds":\(odds)}
+        """.utf8))
+    }
+
+    func testALiveOpeningSourceWithholdsBothPriceInputsAndKeepsTheScore() throws {
+        for hasOdds in [false, true] {
+            let event = try liveChanceEvent(source: "opening", hasCurrentOdds: hasOdds)
+            let reading = try XCTUnwrap(GameActivitySnapshot.liveActivityReading(for: event))
+            XCTAssertEqual(reading.lifecycle, .live)
+            XCTAssertEqual(reading.homeScore, 7)
+            XCTAssertEqual(reading.awayScore, 6)
+            XCTAssertEqual(reading.scoreObservedAt, "2026-10-05T12:59:55Z".asDate)
+            XCTAssertNil(reading.homeRenderedPercent)
+            XCTAssertNil(reading.awayRenderedPercent)
+            XCTAssertNil(reading.probabilityObservedAt)
+            XCTAssertNil(reading.headlineNowText(home: true))
+        }
+    }
+
+    func testDatedLiveBlendKeepsItsChanceAndClockAtEitherAge() throws {
+        let now = try XCTUnwrap("2026-10-05T13:00:00Z".asDate)
+        for (clock, age) in [("2026-10-05T12:59:45Z", 15.0), ("2026-10-05T12:30:00Z", 1800.0)] {
+            let event = try liveChanceEvent(source: "blend", probabilityClock: clock)
+            let reading = try XCTUnwrap(GameActivitySnapshot.liveActivityReading(for: event, now: now))
+            XCTAssertEqual(reading.homeRenderedPercent, 58)
+            XCTAssertEqual(reading.awayRenderedPercent, 42)
+            XCTAssertEqual(reading.probabilityObservedAt, clock.asDate)
+            XCTAssertEqual(reading.probabilityAge(at: now), age)
+            XCTAssertEqual(reading.scoreAge(at: now), 5)
+        }
+    }
+
     func testFutureSuspendedGameDoesNotOfferStartBeforeKickoff() throws {
         let kickoff = try XCTUnwrap("2026-10-05T12:00:00Z".asDate)
         let paused = try event(status: "suspended")

@@ -44,16 +44,26 @@ extension GameActivitySnapshot {
             "suspended", commenceTime: event.commenceTime?.asDate, now: now) else {
             return nil
         }
-        let hero = event.heroProbability.flatMap {
-            $0.isFinite && (0...1).contains($0) ? $0 : nil
-        }
-        let current = event.currentOdds?.homeProbability.flatMap {
-            $0.isFinite && (0...1).contains($0) ? $0 : nil
+        let hero: Double?
+        let current: Double?
+        if event.heroProbabilitySource == OpeningLineHero.openingSource {
+            // Older detail bodies could put that same opening line in currentOdds.
+            hero = nil
+            current = nil
+        } else {
+            hero = event.heroProbability.flatMap {
+                $0.isFinite && (0...1).contains($0) ? $0 : nil
+            }
+            current = event.currentOdds?.homeProbability.flatMap {
+                $0.isFinite && (0...1).contains($0) ? $0 : nil
+            }
         }
         // Match the phone's live headline, which receives pushed updates through
         // currentOdds. A hero timestamp can date it only when the values agree.
         let home = current ?? hero
-        let away = current != nil ? event.currentOdds?.awayProbability : event.heroProbabilityAway
+        let away = home.flatMap { _ in
+            current != nil ? event.currentOdds?.awayProbability : event.heroProbabilityAway
+        }
         // #10864 — a pushed frame moves the hero to its own `p` and clock and
         // derives the away side as `1 - p` (clearing the served pair), leaving
         // the served `heroProbabilityAway` behind. That complement is the
