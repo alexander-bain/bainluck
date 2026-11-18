@@ -870,10 +870,21 @@ struct RelatedFuturesView: View {
 
             Spacer()
 
-            Text(settledProbabilityText(future))
-                .font(.system(size: 10, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(probColor)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(settledProbabilityText(future))
+                    .font(.system(size: 10, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(probColor)
+                if let mark = SourceMarkButton(
+                    future.sourceMark,
+                    number: (isClinched(future) || future.sourceMark?.state == .settled) ? nil : future.probability,
+                    subject: future.outcomeName,
+                    numberSize: 10,
+                    compactRow: true
+                ) {
+                    mark.buttonStyle(.borderless)
+                }
+            }
         }
     }
 
@@ -902,31 +913,44 @@ struct RelatedFuturesView: View {
 
                 let player = seasonOutlookPlayerName(future, teamName: teamName)
 
-                NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
-                    HStack(spacing: 4) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            if let player {
-                                Text(player)
+                HStack(alignment: .center, spacing: 3) {
+                    NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
+                        HStack(spacing: 4) {
+                            VStack(alignment: .leading, spacing: 0) {
+                                if let player {
+                                    Text(player)
+                                        .font(.caption2)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(isEliminated(future) ? .tertiary : .primary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Text(label)
                                     .font(.caption2)
-                                    .fontWeight(.semibold)
-                                    .foregroundStyle(isEliminated(future) ? .tertiary : .primary)
-                                    .lineLimit(1)
+                                    .foregroundStyle(isEliminated(future) ? Color.secondary.opacity(0.5) : DS.textSecondaryReadable)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
-                            Text(label)
+                            Spacer(minLength: 4)
+                            Text(settledProbabilityText(future))
                                 .font(.caption2)
-                                .foregroundStyle(isEliminated(future) ? .tertiary : .secondary)
-                                .lineLimit(2)
+                                .fontWeight(.bold)
+                                .monospacedDigit()
+                                .foregroundStyle(isClinched(future) ? .green : (isEliminated(future) ? Color.secondary.opacity(0.5) : (future.probability ?? 0) >= 0.10 ? color : .secondary))
                         }
-                        Spacer()
-                        Text(settledProbabilityText(future))
-                            .font(.caption2)
-                            .fontWeight(.bold)
-                            .monospacedDigit()
-                            .foregroundStyle(isClinched(future) ? .green : (isEliminated(future) ? Color.secondary.opacity(0.5) : (future.probability ?? 0) >= 0.10 ? color : .secondary))
+                        .padding(.vertical, 2)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.vertical, 1)
+                    .buttonStyle(.plain)
+
+                    if let mark = SourceMarkButton(
+                        future.sourceMark,
+                        number: (isClinched(future) || future.sourceMark?.state == .settled) ? nil : future.probability,
+                        subject: future.outcomeName,
+                        numberSize: 11,
+                        compactRow: true
+                    ) {
+                        mark.buttonStyle(.borderless)
+                    }
                 }
-                .buttonStyle(.plain)
             }
         }
         .padding(8)
@@ -1035,6 +1059,15 @@ struct PlayerAwardsRow: View {
             Text(formatProbabilityOrDash(award.future.probability))
                 .font(.system(size: typeSize, weight: .bold, design: .monospaced))
                 .foregroundStyle(color)
+            if let mark = SourceMarkButton(
+                award.future.sourceMark,
+                number: award.future.sourceMark?.state == .settled ? nil : award.future.probability,
+                subject: award.future.outcomeName,
+                numberSize: 10,
+                compactRow: true
+            ) {
+                mark.buttonStyle(.borderless)
+            }
         }
     }
 }
@@ -1377,30 +1410,44 @@ private struct TradeWatchPairView: View {
                     .foregroundStyle(.tertiary)
             } else {
                 ForEach(deduped.prefix(4)) { future in
-                    NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
-                        HStack(spacing: 6) {
-                            let playerName = extractTradePlayer(future.marketName)
-                            PlayerHeadshotView(
-                                player: future.matchedPlayer,
-                                name: playerName,
-                                teamColor: color,
-                                size: 20
-                            )
-                            Text(playerName)
-                                .font(.caption2)
-                                .lineLimit(1)
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            if let prob = future.probability {
-                                Text(formatProbability(prob))
+                    HStack(alignment: .center, spacing: 3) {
+                        NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
+                            HStack(spacing: 6) {
+                                let playerName = extractTradePlayer(future.marketName)
+                                PlayerHeadshotView(
+                                    player: future.matchedPlayer,
+                                    name: playerName,
+                                    teamColor: color,
+                                    size: 20
+                                )
+                                Text(playerName)
                                     .font(.caption2)
-                                    .fontWeight(.semibold)
-                                    .monospacedDigit()
-                                    .foregroundStyle(color)
+                                    .lineLimit(1)
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                if let prob = future.probability {
+                                    Text(formatProbability(prob))
+                                        .font(.caption2)
+                                        .fontWeight(.semibold)
+                                        .monospacedDigit()
+                                        .foregroundStyle(color)
+                                }
                             }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        if let prob = future.probability,
+                           let mark = SourceMarkButton(
+                               future.sourceMark,
+                               number: future.sourceMark?.state == .settled ? nil : prob,
+                               subject: future.outcomeName,
+                               numberSize: 11,
+                               compactRow: true
+                           ) {
+                            mark.buttonStyle(.borderless)
                         }
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
@@ -1577,10 +1624,21 @@ private struct NoveltyCardView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 4)
                                 if let prob = leg.probability {
-                                    Text(formatProbability(prob))
-                                        .font(.subheadline)
-                                        .fontWeight(.bold)
-                                        .monospacedDigit()
+                                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                        Text(formatProbability(prob))
+                                            .font(.subheadline)
+                                            .fontWeight(.bold)
+                                            .monospacedDigit()
+                                        if let mark = SourceMarkButton(
+                                            leg.sourceMark,
+                                            number: leg.sourceMark?.state == .settled ? nil : prob,
+                                            subject: leg.outcomeName,
+                                            numberSize: 13,
+                                            compactRow: true
+                                        ) {
+                                            mark.buttonStyle(.borderless)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1599,10 +1657,21 @@ private struct NoveltyCardView: View {
                     Spacer()
                     HStack {
                         if let prob = future.probability {
-                            Text(formatProbability(prob))
-                                .font(.title3)
-                                .fontWeight(.bold)
-                                .monospacedDigit()
+                            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                Text(formatProbability(prob))
+                                    .font(.title3)
+                                    .fontWeight(.bold)
+                                    .monospacedDigit()
+                                if let mark = SourceMarkButton(
+                                    future.sourceMark,
+                                    number: future.sourceMark?.state == .settled ? nil : prob,
+                                    subject: future.outcomeName,
+                                    numberSize: 16,
+                                    compactRow: true
+                                ) {
+                                    mark.buttonStyle(.borderless)
+                                }
+                            }
                         }
                         Spacer()
                         SourceBadge(source: future.source)
