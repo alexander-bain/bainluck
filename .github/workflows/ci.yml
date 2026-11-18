@@ -217,6 +217,25 @@ jobs:
 
   # The two-minute limit includes checkout, dependency installation, syntax,
   # startup and all impacted tests. A timeout fails closed; it is never a pass.
+
+      # Fable, 9:35 PM Nov 17 (#12797): the shard timings are decided ONCE per run, here,
+      # in three GitHub calls, and handed to every shard as a run artifact, instead of each
+      # of the nine test jobs asking GitHub itself. Any failure falls back to the committed
+      # file: one decider, so no shard can disagree with another.
+      - name: Decide this run's shard timings (once)
+        id: shard_timings
+        working-directory: backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci_shard_hints_fetch.py decide "$RUNNER_TEMP/shard-timings/ci_shard_durations.json"
+      - name: Hand the run's shard timings to every shard
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-shard-timings-run
+          path: ${{ runner.temp }}/shard-timings/ci_shard_durations.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
   fast-gate:
     needs: change-scope
     runs-on: ubuntu-latest
@@ -393,11 +412,15 @@ jobs:
           echo "EVENT_FRAME_REDIS_SERVER=$dir/redislite/bin/redis-server" >> "$GITHUB_ENV"
           echo "EVENT_FRAME_REDIS_REQUIRED=1" >> "$GITHUB_ENV"
 
-      - name: Newest master shard timings
+      - name: This run's shard timings (decided once in change-scope)
         if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/ci_shard_hints_fetch.py
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-shard-timings-run
+          path: ${{ runner.temp }}/shard-timings
+      - name: Apply this run's shard timings
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
+        run: python scripts/ci_shard_hints_fetch.py adopt "$RUNNER_TEMP/shard-timings/ci_shard_durations.json"
       - name: Run tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
         if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
         run: |
@@ -513,11 +536,15 @@ jobs:
         if: needs.change-scope.outputs.reuse != 'true'
         run: pip install -r requirements.txt
 
-      - name: Newest master shard timings
+      - name: This run's shard timings (decided once in change-scope)
         if: needs.change-scope.outputs.reuse != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/ci_shard_hints_fetch.py
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-shard-timings-run
+          path: ${{ runner.temp }}/shard-timings
+      - name: Apply this run's shard timings
+        if: needs.change-scope.outputs.reuse != 'true'
+        run: python scripts/ci_shard_hints_fetch.py adopt "$RUNNER_TEMP/shard-timings/ci_shard_durations.json"
       - name: The shards must cover the whole suite, exactly once each
         if: needs.change-scope.outputs.reuse != 'true'
         # Keep --of in step with the matrix above. A mismatch is not a

@@ -134,3 +134,103 @@ def test_a_run_whose_shards_ran_no_tests_holds(tmp_path):
 @pytest.mark.parametrize("jobs", [_jobs(n=7), _jobs(conclusion="failure")])
 def test_a_partial_or_failed_set_of_shards_refuses(tmp_path, jobs):
     assert f.job_logs("o/r", "55", "tok", tmp_path / "x", opener=JobsFake(jobs), sleep=lambda s: None) == 1
+
+
+# ── DECIDE: once per run, in change-scope (Fable, 9:35 PM Nov 17, #12797) ─────
+
+COMMITTED = '{"files": {"tests/committed.py": 1}}'
+
+
+def _decide(fake, tmp_path, rate=None, out=None):
+    committed = tmp_path / "committed.json"
+    committed.write_text(COMMITTED)
+    out = out or (tmp_path / "run" / "ci_shard_durations.json")
+    rc = f.decide("o/r", "77", "tok", out, opener=fake, committed=committed,
+                  sleep=lambda s: None, rate=rate if rate is not None else {})
+    return rc, (json.loads(out.read_text()) if out.exists() else None)
+
+
+def test_decide_writes_the_newest_master_artifact_for_the_whole_run(tmp_path, capsys):
+    arts = [_art(1, "2026-11-16T09:00:00Z"), _art(2, "2026-11-16T11:00:00Z"), _art(3, "2026-11-16T13:00:00Z")]
+    fake = Fake(arts, {"https://dl/2": _zip(GOOD)})
+    rc, written = _decide(fake, tmp_path)
+    assert rc == 0 and written["files"] == GOOD["files"]
+    assert len(fake.calls) == 3  # the run, the list, the download: three calls per run, not 27
+    assert "artifact 2" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("blob", [_zip({"files": {}}), _zip("not json"), b"not a zip"])
+def test_decide_falls_back_to_the_committed_file_when_the_artifact_is_unusable(tmp_path, blob, capsys):
+    rc, written = _decide(Fake([_art(1, "2026-11-16T09:00:00Z")], {"https://dl/1": blob}), tmp_path)
+    assert rc == 0 and written == json.loads(COMMITTED)  # one decider: no sibling can disagree
+    assert "the committed file" in capsys.readouterr().out
+
+
+def test_decide_falls_back_when_github_refuses_the_listing(tmp_path, capsys):
+    url = f"{f.API}/repos/o/r/actions/artifacts?name={f.ARTIFACT}&per_page=100"
+    fake = Fake([], {}, fail={url: urllib.error.HTTPError(url, 403, "rate limited", {}, None)})
+    rc, written = _decide(fake, tmp_path)
+    assert rc == 0 and written == json.loads(COMMITTED)
+    assert "HTTPError" in capsys.readouterr().out
+
+
+def test_decide_never_retries_so_change_scope_cannot_stall(tmp_path):
+    err = urllib.error.HTTPError("https://dl/1", 502, "bad gateway", {}, None)
+    fake = Fake([_art(1, "2026-11-16T09:00:00Z")], {"https://dl/1": _zip(GOOD)}, fail={"https://dl/1": [err, None]})
+    rc, written = _decide(fake, tmp_path)
+    assert rc == 0 and written == json.loads(COMMITTED) and fake.calls.count("https://dl/1") == 1
+
+
+def test_decide_with_no_artifact_writes_the_committed_file(tmp_path):
+    rc, written = _decide(Fake([], {}), tmp_path)
+    assert rc == 0 and written == json.loads(COMMITTED)
+
+
+def test_decide_prints_the_token_budget_left(tmp_path, capsys):
+    rate = {"x-ratelimit-limit": "15000", "x-ratelimit-remaining": "14321", "x-ratelimit-used": "679", "x-ratelimit-resource": "core"}
+    _decide(Fake([], {}), tmp_path, rate=rate)
+    assert "token budget: 14321 of 15000 left (core; 679 used this hour)" in capsys.readouterr().out
+
+
+def test_decide_fails_only_when_it_cannot_write_a_decision(tmp_path):
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x")  # a file where the output's parent directory should be
+    rc, _ = _decide(Fake([], {}), tmp_path, out=blocker / "ci_shard_durations.json")
+    assert rc == 1
+
+
+def test_decide_ends_at_its_deadline_with_the_committed_file(tmp_path, capsys):
+    import time as _t
+
+    class Slow(Fake):
+        def __call__(self, req):
+            _t.sleep(3)  # GitHub stalls; change-scope's step may not be waived
+            return super().__call__(req)
+
+    committed = tmp_path / "committed.json"
+    committed.write_text(COMMITTED)
+    out = tmp_path / "run" / "d.json"
+    started = _t.monotonic()
+    rc = f.decide("o/r", "77", "tok", out, opener=Slow([], {}), committed=committed,
+                  sleep=lambda s: None, rate={}, deadline=1)
+    assert rc == 0 and json.loads(out.read_text()) == json.loads(COMMITTED)
+    assert _t.monotonic() - started < 2.5
+    assert "deadline" in capsys.readouterr().out
+
+
+def test_adopt_writes_only_a_valid_timings_file(tmp_path):
+    src, target = tmp_path / "src.json", tmp_path / "hints.json"
+    src.write_text(json.dumps(GOOD))
+    target.write_text(COMMITTED)
+    assert f.adopt(src, target=target) == 0
+    assert json.loads(target.read_text())["files"] == GOOD["files"]
+
+
+@pytest.mark.parametrize("text", [None, "not json", json.dumps({"files": {"app/x.py": 1}})])
+def test_adopt_refuses_a_missing_or_malformed_file_and_keeps_the_hints(tmp_path, text):
+    src, target = tmp_path / "src.json", tmp_path / "hints.json"
+    if text is not None:
+        src.write_text(text)
+    target.write_text(COMMITTED)
+    assert f.adopt(src, target=target) == 1
+    assert target.read_text() == COMMITTED

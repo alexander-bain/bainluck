@@ -451,19 +451,36 @@ def test_the_refresh_uploads_the_artifact_every_ci_run_applies(workflow):
 
 
 def test_every_ci_partition_applies_the_newest_timings_first():
-    """Each place that partitions or verifies the shards applies the artifact
-    first, so all shards of one run split the suite from the same file."""
+    """#12797 (Fable, 9:35 PM Nov 17): the timings are decided ONCE per run, in
+    ``change-scope`` (three GitHub calls), and handed to every shard as the run
+    artifact ``ci-shard-timings-run``; each place that partitions or verifies the
+    shards downloads that artifact first, so all of them split from one file."""
     wf_dir = BACKEND.parent / ".github" / "workflows"
     for name in ("ci.yml", "live-path-watchdog.yml"):
-        doc = yaml.safe_load((wf_dir / name).read_text())
+        text = (wf_dir / name).read_text()
+        doc = yaml.safe_load(text)
+        assert text.count("ci_shard_hints_fetch.py decide") == 1, f"{name}: one decider per run, not one per shard"
+        assert "ci_shard_hints_fetch.py\n" not in text and 'ci_shard_hints_fetch.py"' not in text, \
+            f"{name}: no shard asks GitHub itself any more"
+        cs = doc["jobs"]["change-scope"]["steps"]
+        dec = next(i for i, st in enumerate(cs) if "ci_shard_hints_fetch.py decide" in str(st.get("run", "")))
+        assert "github.token" in str(cs[dec].get("env", {}).get("GH_TOKEN", ""))
+        assert "continue-on-error" not in cs[dec], "a change-scope step is never waived; the script's own deadline bounds it"
+        up = next(i for i, st in enumerate(cs) if str(st.get("uses", "")).startswith("actions/upload-artifact@")
+                  and st.get("with", {}).get("name") == "ci-shard-timings-run")
+        assert dec < up and cs[up]["with"]["if-no-files-found"] == "error"
         for job_name in ("backend-tests", "shard-completeness"):
+            assert "change-scope" in str(doc["jobs"][job_name].get("needs"))
             steps = doc["jobs"][job_name]["steps"]
             runs = [str(s.get("run", "")) for s in steps]
-            fetch = next(i for i, r in enumerate(runs) if "ci_shard_hints_fetch.py" in r)
+            get = next(i for i, st in enumerate(steps) if str(st.get("uses", "")).startswith("actions/download-artifact@")
+                       and st.get("with", {}).get("name") == "ci-shard-timings-run")
+            assert steps[get]["with"]["path"] == "${{ runner.temp }}/shard-timings"
+            adopt = next(i for i, r in enumerate(runs) if "ci_shard_hints_fetch.py adopt" in r)
             uses = next(i for i, r in enumerate(runs) if "ci_shard.py --shard" in r or "ci_shard.py --verify" in r)
-            assert fetch < uses, f"{name}:{job_name} must apply the timings before partitioning"
-            assert steps[fetch].get("if") == steps[uses].get("if"), f"{name}:{job_name}: same condition as the step it feeds"
-            assert "github.token" in str(steps[fetch].get("env", {}).get("GH_TOKEN", ""))
+            assert get < adopt < uses, f"{name}:{job_name} must take the run's timings before partitioning"
+            assert steps[get].get("if") == steps[adopt].get("if") == steps[uses].get("if"), \
+                f"{name}:{job_name}: same condition as the step it feeds"
 
 
 def test_the_verify_matches_the_eight_shard_matrix(workflow):

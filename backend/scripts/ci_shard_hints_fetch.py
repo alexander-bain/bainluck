@@ -8,8 +8,20 @@ been closed since September, so nothing ever landed and master went red at 601
 (Nov 15). Now every green master run uploads its recorded timings as the
 artifact `ci-shard-durations`, and every CI run applies the newest one.
 
-    python scripts/ci_shard_hints_fetch.py                 # apply (CI shards)
+    python scripts/ci_shard_hints_fetch.py decide OUT      # CI: once per run (change-scope)
+    python scripts/ci_shard_hints_fetch.py adopt FILE      # CI: each shard, from the run artifact
+    python scripts/ci_shard_hints_fetch.py                 # apply (refresh workflow)
     python scripts/ci_shard_hints_fetch.py job-logs OUT    # refresh workflow
+
+DECIDE (Fable, 9:35 PM Nov 17). One job per run, ``change-scope``, makes the
+three GitHub calls (the run, the artifact list, the download) and writes the
+chosen timings to OUT; the run uploads OUT as the artifact
+``ci-shard-timings-run`` and every shard downloads that, through the Actions
+artifact service, not the REST budget. So a run costs three REST calls, not
+twenty-seven, and every shard agrees by construction. Because one job decides
+for all of them, ANY failure here falls back to the committed file safely:
+there is no sibling to disagree with. It prints the token budget left
+(``x-ratelimit-remaining``) so the cost is visible in every run.
 
 APPLY. Reads this run's `created_at`, takes the newest unexpired
 `ci-shard-durations` artifact made on master BEFORE that instant, and writes its
@@ -34,6 +46,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import signal
 import sys
 import time
 import urllib.error
@@ -55,10 +68,19 @@ HOLD = 3
 Opener = Callable[[urllib.request.Request], bytes]
 
 
+#: The REST budget GitHub reported on the last API answer (``x-ratelimit-*``).
+LAST_RATE: dict = {}
+#: Seconds per GitHub call; ``decide`` lowers it so ``change-scope`` (a 2-minute job) can't stall.
+TIMEOUT = 60
+
+
 def _default_open(req: urllib.request.Request) -> bytes:
     url = req.full_url
     tagged_req = urllib.request.Request(url, headers=tagged(url, dict(req.header_items())))
-    with urllib.request.urlopen(tagged_req, timeout=60) as resp:  # redirects are followed
+    with urllib.request.urlopen(tagged_req, timeout=TIMEOUT) as resp:  # redirects are followed
+        for key in ("x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-used", "x-ratelimit-resource"):
+            if resp.headers.get(key) is not None:
+                LAST_RATE[key] = resp.headers.get(key)
         return resp.read()
 
 
@@ -137,6 +159,93 @@ def apply(repo: str, run_id: str, token: str, *, opener: Opener = _default_open,
     return 0
 
 
+def _write_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
+def rate_line(rate: dict) -> str:
+    if not rate.get("x-ratelimit-remaining"):
+        return "token budget: not reported"
+    return (f"token budget: {rate.get('x-ratelimit-remaining')} of {rate.get('x-ratelimit-limit', '?')} "
+            f"left ({rate.get('x-ratelimit-resource', 'core')}; {rate.get('x-ratelimit-used', '?')} used this hour)")
+
+
+def decide(repo: str, run_id: str, token: str, out: Path, *, opener: Opener = _default_open,
+           committed: Path = DURATIONS_FILE, sleep=time.sleep, rate: Optional[dict] = None,
+           deadline: int = 25) -> int:
+    """Once per run: write the timings every shard will use to ``out``.
+
+    The newest master artifact made before this run when it can be read and is
+    valid; otherwise the committed file, with a notice. Exit 1 only if ``out``
+    cannot be written: a decision always exists."""
+    global TIMEOUT
+    rate = LAST_RATE if rate is None else rate
+    # The committed file goes down first, so even a step killed mid-fetch leaves a decision.
+    try:
+        _write_atomic(out, committed.read_text())
+    except OSError as exc:
+        print(f"::error::could not write the run's shard timings to {out}: {exc}")
+        return 1
+    TIMEOUT = 10  # one try per call, 10 s each
+    payload, why = None, ""
+    # A hard deadline for the whole fetch: change-scope is a 2-minute job and its steps
+    # may not be waived, so a stalled GitHub must end here as "use the committed file".
+    alarm = getattr(signal, "SIGALRM", None) if deadline else None
+    if alarm is not None:
+        def _expired(signum, frame):  # noqa: ARG001
+            raise TimeoutError(f"the {deadline} s deadline passed")
+        previous = signal.signal(alarm, _expired)
+        signal.alarm(deadline)
+    try:
+        run = _json(f"{API}/repos/{repo}/actions/runs/{run_id}", token, opener, sleep=sleep, tries=1)
+        listing = _json(f"{API}/repos/{repo}/actions/artifacts?name={ARTIFACT}&per_page=100", token, opener, sleep=sleep, tries=1)
+        chosen = choose(listing.get("artifacts") or [], str(run.get("created_at") or ""))
+        if chosen is None:
+            why = f"no {ARTIFACT} artifact from master before this run"
+        else:
+            blob = _get(chosen["archive_download_url"], token, opener, raw=True, sleep=sleep, tries=1)
+            with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+                candidate = json.loads(zf.read(MEMBER).decode())
+            n = validate(candidate)
+            payload = candidate
+            why = (f"artifact {chosen['id']} ({n} files), made {chosen['created_at']} "
+                   f"by run {(chosen.get('workflow_run') or {}).get('id')}")
+    except Exception as exc:  # noqa: BLE001 — one decider: falling back cannot split the shards
+        why = f"could not use the newest artifact ({type(exc).__name__}: {exc})"
+    finally:
+        if alarm is not None:
+            signal.alarm(0)
+            signal.signal(alarm, previous)
+    if payload is None:
+        print(f"::notice::shard timings for this run: the committed file ({why})")
+    else:
+        try:
+            _write_atomic(out, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            print(f"shard timings for this run: {why}")
+        except OSError as exc:  # the committed copy is still in place
+            print(f"::notice::shard timings for this run: the committed file (could not write the artifact's: {exc})")
+    print(rate_line(rate))
+    return 0
+
+
+def adopt(src: Path, *, target: Path = DURATIONS_FILE) -> int:
+    """In each shard: take the run's decided timings (downloaded to a temp folder)
+    and write ONLY the hints file, after checking it is a timings file."""
+    try:
+        payload = json.loads(src.read_text())
+        n = validate(payload)
+    except (OSError, ValueError) as exc:
+        print(f"::error::the run's shard timings at {src} are missing or malformed ({type(exc).__name__}: {exc}); "
+              "every shard reads the same file, so every shard stops here alike")
+        return 1
+    target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    print(f"shard timings: this run's decision ({n} files)")
+    return 0
+
+
 def job_logs(repo: str, run_id: str, token: str, out: Path, *, expect: int = EXPECTED_SHARDS, opener: Opener = _default_open, sleep=time.sleep) -> int:
     jobs = _json(f"{API}/repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100", token, opener, sleep=sleep)
     shards = [j for j in jobs.get("jobs") or [] if str(j.get("name", "")).startswith("backend-tests")]
@@ -164,11 +273,15 @@ def job_logs(repo: str, run_id: str, token: str, out: Path, *, expect: int = EXP
 
 
 def main(argv: list[str]) -> int:
+    if argv[:1] == ["adopt"] and len(argv) == 2:
+        return adopt(Path(argv[1]))  # no token: it only reads the downloaded file
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
     if not repo or not token:
         print("::error::GITHUB_REPOSITORY and GH_TOKEN are required")
         return 1
+    if argv[:1] == ["decide"] and len(argv) == 2:
+        return decide(repo, os.environ.get("GITHUB_RUN_ID", ""), token, Path(argv[1]))
     if argv[:1] == ["job-logs"] and len(argv) == 2:
         return job_logs(repo, os.environ.get("SOURCE_RUN_ID", ""), token, Path(argv[1]))
     if not argv:
