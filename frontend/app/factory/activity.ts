@@ -1,4 +1,4 @@
-import type { FactoryData, Line, Station, Stop } from "./types";
+import type { Change, FactoryData, Line, Station, Stop } from "./types";
 
 export const stations: Station[] = [
   "Write",
@@ -46,12 +46,14 @@ export function stopText(stop: Stop, now: string) {
   return `${stop.line} review waiting for ${age}, ${stop.count} waiting.`;
 }
 
+function recentlyActive(at: string, now: string) {
+  const age = Date.parse(now) - Date.parse(at);
+  return age >= 0 && age <= 15 * 60_000;
+}
+
 export function recentTransfers(data: FactoryData, now: string) {
   if (readerBehind(data, now)) return [];
-  return (data.transitions ?? []).filter((t) => {
-    const age = Date.parse(now) - Date.parse(t.at);
-    return age >= 0 && age <= 15 * 60_000;
-  });
+  return (data.transitions ?? []).filter((t) => recentlyActive(t.at, now));
 }
 
 export function bayActivity(
@@ -59,7 +61,7 @@ export function bayActivity(
   line: Line,
   station: Station,
   now: string,
-  count: number,
+  changes: Change[],
 ) {
   const stops = (data.stops ?? []).filter(
     (s) => (s.line === null || s.line === line) && s.station === station,
@@ -73,16 +75,21 @@ export function bayActivity(
     recentTransfers(data, now).some(
       (t) => t.line === line && (t.from === station || t.to === station),
     );
+  const activeCrate = changes.some((change) =>
+    recentlyActive(change.last_activity, now),
+  );
+  const working = changes.length > 0 && (activeCrate || flowing);
+  const waiting = changes.length > 0 && station !== "Live";
   const worker =
     stop?.level === "red"
-      ? stop.kind === "announced"
+      ? stop.kind === "announced" && !activeCrate
         ? "asleep"
         : "alarmed"
-      : count === 0 || (station === "Live" && !flowing)
-        ? "idle"
-        : flowing
-          ? "working"
-          : "asleep";
+      : working
+        ? "working"
+        : waiting
+          ? "asleep"
+          : "idle";
   return {
     stop,
     flowing,
@@ -93,9 +100,11 @@ export function bayActivity(
         : "Long wait"
       : flowing
         ? "Flowing"
-        : count && station !== "Live"
-          ? "Waiting"
-          : "Idle",
+        : working
+          ? "Working"
+          : waiting
+            ? "Waiting"
+            : "Idle",
   } as const;
 }
 

@@ -36,7 +36,7 @@ it("draws an old valid floor, dimmed and motionless, with its age", () => {
   expect(html).toContain('data-reader="behind"');
   expect(html).toContain('data-motion="paused"');
   expect(html).toContain(
-    "Last read 7:58 AM PT, 1 hr 51 min ago. The reader is behind.",
+    "Last read 7:58 AM PT, 1 hr 51 min ago. Updates have stopped.",
   );
   expect(html).toContain("On the floor now");
   expect(html).not.toContain("The floor can&#x27;t be read right now");
@@ -110,4 +110,66 @@ it("limits a Live bay to eight crates while retaining its full count", () => {
   expect((html.match(/data-crate=/g) ?? []).length).toBe(8);
   expect(html).toContain("+4 earlier today");
   expect(html).toContain("12 today");
+});
+
+it("shows active workers even when their crates have not changed bays", () => {
+  const now = "2026-11-18T18:00:00Z";
+  const base = {
+    ...data.changes[0],
+    line: "Server" as const,
+    side_track: false,
+    merged_at: null,
+  };
+  const snapshot: FactoryData = {
+    ...data,
+    generated_at: now,
+    stops: [],
+    transitions: [],
+    changes: [
+      {
+        ...base,
+        number: 1,
+        station: "Write",
+        last_activity: "2026-11-18T17:45:00Z",
+      },
+      {
+        ...base,
+        number: 2,
+        station: "Test",
+        last_activity: "2026-11-18T17:44:59Z",
+      },
+    ],
+  };
+  const html = renderToStaticMarkup(
+    <FactoryFloor data={snapshot} lastGoodAt={now} renderedAt={now} />,
+  );
+  expect(html).toContain(
+    'data-bay="Write" data-waiting="1" data-worker-state="working"',
+  );
+  expect(html).toContain(
+    'data-bay="Test" data-waiting="1" data-worker-state="asleep"',
+  );
+  expect(html).not.toContain('data-flowing="true"');
+});
+
+it("omits the question mark on a Ship crate awaiting live confirmation", () => {
+  const now = "2026-11-18T18:00:00Z";
+  const snapshot: FactoryData = {
+    ...data,
+    generated_at: now,
+    changes: [
+      {
+        ...data.changes[0],
+        station: "Ship",
+        side_track: false,
+        unsure: true,
+        reasons: ["Waiting for deployment evidence on this line."],
+      },
+    ],
+  };
+  const html = renderToStaticMarkup(
+    <FactoryFloor data={snapshot} lastGoodAt={now} renderedAt={now} />,
+  );
+  expect(html).toContain("data-crate=");
+  expect(html).not.toContain(">?</span>");
 });

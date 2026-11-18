@@ -3,7 +3,7 @@ import styles from "./factory.module.css";
 
 type WorkerState = "working" | "idle" | "asleep" | "alarmed";
 
-/** Original workshop figures. Only a confirmed transfer animates their hands. */
+/** Original workshop figures. Recent crate activity or a transfer animates their hands. */
 export default function Worker({
   station,
   state,

@@ -16,13 +16,13 @@ The expected rate is 12 timer runs per hour plus one per completed CI run and ma
 
 The collector records station transfers and five stoppage conditions. A merge line with waiting changes and no merge for 30 minutes stops. The newest merging announcement stops after 15 minutes if none of its changes merged. A HOLD persists until a later live line for that delivery line. The latest completed master CI failure stops Test. A Review wait over two hours is amber. Announcement records contain only line, time and change numbers.
 
-The reader draws a valid old copy and marks it behind after 15 minutes. It pauses all motion. Missing or invalid data uses the unreadable state and last good timestamp. Old-format snapshots remain readable.
+The page shows “Not updating,” keeps the last verified floor and pauses motion when a refresh fails or the copy is more than 15 minutes old. An unavailable or invalid file with no verified floor shows the unreadable state.
 
 | Motion | Evidence |
 |---|---|
 | Conveyor segment | A recorded transfer crossed that segment within 15 minutes, with neither endpoint stopped |
 | Crate travel | Its station differs between reads and the collector has a recent transfer for that number |
-| Worker hands | A recent transfer at that occupied station |
+| Worker hands | Crate activity or a transfer at the occupied station within 15 minutes |
 | Steady green lamp | A recent transfer at that station |
 | Red turning beacon | Active red stop at that station |
 | Amber pulse | At least ten visible changes in the bay, or a qualified recorded jam |
@@ -44,7 +44,9 @@ Checks bind to the current head. Bot approval carries across verified test-only 
 
 A live status still requires the merge commit to be included in that line's deployment. Merge-to-live timing includes only changes merged since the first observation. Earlier deliveries still count as delivered, and their elapsed time is omitted. Jam intervals start from observed events and keep the Pacific-day boundary.
 
-A failed, invalid or unavailable live read displays “The floor can't be read right now” with the last good time known to the server or returning reader. The browser retains only that timestamp. A first-time reader with no successful read sees that no good copy has been read. No bundled inventory substitutes for a failed live read. The old `initial.json` lives in test fixtures.
+Each GitHub read has a four-second limit and one retry. On November 18, 15 direct Node reads that followed the redirect and parsed the file took 34–517 ms. Fable measured 320–620 ms from a cloud machine and reported five production reads cut off at the old 800 ms limit. The four-second limit gives those two-hop reads room to finish during publication. Each attempt logs its duration, outcome and HTTP status when available.
+
+Next's 60-second Data Cache stores verified copies. A failed refresh leaves the previous entry available. An open page also keeps its displayed floor when the next render has no copy. The browser saves the last good timestamp between visits.
 
 Bays size to their contents. Only a bay holding at least ten waiting changes gets the amber outline. System jams can pulse their own lamp. Earlier branch families are labelled “Earlier work.” Reduced motion disables the belts, lamps and moving crates.
 
@@ -53,7 +55,7 @@ Bays size to their contents. Only a bay holding at least ten waiting changes get
 ```sh
 python3 -m unittest discover -s scripts/factory/tests -v
 cd frontend
-npx jest --runInBand --testPathPatterns='factoryData|factoryUnavailable'
+npx jest --runInBand --testPathPatterns='factoryData|factoryUnavailable|factoryActivity'
 npm run build
 npm run typecheck
 ```

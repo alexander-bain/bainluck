@@ -79,12 +79,14 @@ function jamTitle(jam: Jam) {
 }
 
 export default function FactoryFloor({
-  data,
+  data: snapshot,
   lastGoodAt,
+  readFailed = false,
   renderedAt,
 }: {
   data: FactoryData | null;
   lastGoodAt: string | null;
+  readFailed?: boolean;
   renderedAt: string;
 }) {
   usePageTracking({ pageType: "home", pageTitle: "The Factory" });
@@ -94,6 +96,14 @@ export default function FactoryFloor({
   const [now, setNow] = useState(renderedAt);
   const [selectedNumber, selectNumber] = useState<number | null>(null);
   const [knownGoodAt, setKnownGoodAt] = useState(lastGoodAt);
+  const [lastShown, setLastShown] = useState(snapshot);
+  // Keep the open page intact if a refresh lands on a server with an empty cache.
+  const data =
+    snapshot &&
+    (!lastShown ||
+      Date.parse(snapshot.generated_at) >= Date.parse(lastShown.generated_at))
+      ? snapshot
+      : lastShown;
   const floor = useRef<HTMLDivElement>(null);
   const oldPositions = useRef(
     new Map<string, { rect: DOMRect; station: string }>(),
@@ -103,8 +113,14 @@ export default function FactoryFloor({
   const [reducedMotion, setReducedMotion] = useState(false);
   const [shippingLines, setShippingLines] = useState<Line[]>([]);
   const lastRefresh = useRef(Date.parse(renderedAt));
-  const behind = data ? readerBehind(data, now) : false;
+  const behind =
+    data !== null &&
+    (readFailed || data !== snapshot || readerBehind(data, now));
   const motion = !behind && tabVisible && !reducedMotion;
+
+  useEffect(() => {
+    if (data) setLastShown(data);
+  }, [data]);
 
   useEffect(() => {
     try {
@@ -287,7 +303,7 @@ export default function FactoryFloor({
           {change.builder === "Other" ? "O" : change.builder}
         </span>
         <span className={styles.crateNumber}>#{change.number}</span>
-        {change.unsure && (
+        {change.unsure && change.station !== "Ship" && (
           <span className={styles.unsureMark} aria-hidden="true">
             ?
           </span>
@@ -316,9 +332,7 @@ export default function FactoryFloor({
         <div className={styles.updated}>
           <span className={styles.statusDot} aria-hidden="true" />
           <div>
-            <strong>
-              {behind ? "The reader is behind" : "Read from GitHub"}
-            </strong>
+            <strong>{behind ? "Not updating" : "Read from GitHub"}</strong>
             <span>
               {new Intl.DateTimeFormat("en-US", {
                 timeZone: "America/Los_Angeles",
@@ -337,7 +351,7 @@ export default function FactoryFloor({
           <p>
             Last read {time(data.generated_at)} PT,{" "}
             {duration((Date.parse(now) - Date.parse(data.generated_at)) / 1000)}{" "}
-            ago. The reader is behind.
+            ago. Updates have stopped.
           </p>
         </div>
       )}
@@ -453,7 +467,7 @@ export default function FactoryFloor({
                         line,
                         station,
                         now,
-                        changes.length,
+                        changes,
                       );
                       const backup = station !== "Live" && changes.length >= 10;
                       const jammed = activeJams.some(
@@ -478,7 +492,7 @@ export default function FactoryFloor({
                                 data-state={
                                   activity.stop?.level === "red"
                                     ? "stopped"
-                                    : activity.flowing
+                                    : !behind && activity.flowing
                                       ? "flowing"
                                       : backup
                                         ? "crowded"
@@ -548,7 +562,9 @@ export default function FactoryFloor({
                         <span
                           key={station}
                           className={styles.beltSegment}
-                          data-flowing={beltFlowing(data, line, segment, now)}
+                          data-flowing={
+                            !behind && beltFlowing(data, line, segment, now)
+                          }
                         >
                           <i />
                           <ChevronRight size={14} />
