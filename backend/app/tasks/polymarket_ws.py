@@ -7069,9 +7069,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         )
         if latest != pair:
             books_by_asset[asset_id] = ((pair, latest), observed_ms)
-        elif observed_ms != book_ms:
-            # An unchanged BBO can carry new evidence even when price buffering
-            # is skipped below. An untimed frame carries no ordering evidence.
+        elif observed_ms != book_ms and (
+            observed_ms is None or book_ms is None or observed_ms > book_ms
+        ):
+            # A timely repeat can advance the witness without buffering a price.
+            # A reconnected socket can repeat the same book with an older stamp.
+            # An untimed frame still carries no ordering evidence.
             books_by_asset[asset_id] = (books, observed_ms)
 
         # #10090: below the raw count, nothing awaited since the generation

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.services.polymarket_ws import PolymarketWebSocket
 from app.tasks import polymarket_ws
 from tests.test_pm_idle_wake_10090 import callbacks
 from tests.test_pm_repeat_skip_10090 import callbacks as repeat_callbacks
@@ -79,6 +80,23 @@ async def test_an_unchanged_book_keeps_its_venue_clock_on_the_repeat_shortcut(mo
 
     assert rig.ns["stats"]["repeats_skipped"] == 1
     assert rig.ns["price_buffer"] == pytest.approx({1: 0.15, 2: 0.85})
+
+
+async def test_a_late_copy_on_a_reconnected_socket_cannot_rewind_the_trade_guard():
+    consumer, _ = callbacks()
+    socket = PolymarketWebSocket()
+    socket.on_price = consumer.ns["handle_price"]
+    for stamp in (BOOK_TIME, "1720000123455"):
+        # The transport drops regressions on one connection. A reconnect
+        # resets its quote-version map while keeping the consumer callback.
+        await socket._price_quotes(
+            [_book("open", stamp)], None, book_snapshot=False,
+            quote_versions={"open": None},
+        )
+    await consumer.ns["handle_trade"](_trade("open"))
+
+    assert consumer.ns["price_buffer"] == pytest.approx({900: 0.15, 901: 0.85})
+    assert consumer.ns["stats"]["trades_older_than_tight_book"] == 1
 
 
 async def test_standalone_flush_stores_the_book_for_both_open_legs():
