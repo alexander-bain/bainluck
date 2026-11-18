@@ -631,6 +631,9 @@ nonisolated struct ChampionshipPathEntry: Decodable, Identifiable, Sendable {
     let movement: Double?
     /// #11493 — the grid's verdict for this step. See ``TeamGridVerdict``.
     var state: String? = nil
+    /// #12959 / #12581 — server-owned provenance mark for this step's displayed
+    /// chance or settled grid verdict. Optional and defaulted to `nil`.
+    var sourceMark: SourceMark? = nil
 
     var id: Int { tier }
 
