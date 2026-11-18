@@ -344,7 +344,7 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
     }
 
     func testEventDetailViewCatalogAndSpecialMarketsWireStepE4BehindFlag11666() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 unified EventDetailView headline — covered by UnifiedHeadlineContactSheetGuard199Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "Direction 199 / Ruling 200-B unified EventSportHeadlineCard12472", coveredBy: .unifiedHeadline199)
         let testFile = URL(fileURLWithPath: #filePath)
         let root = testFile
             .deletingLastPathComponent()

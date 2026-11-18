@@ -390,7 +390,6 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
     }
 
     func testOddsChartViewGatesE2HeaderAndOverlayBehindEventPageAtlasEnabled() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "#12639 / #12750 unified OddsChartView — covered by ConnectedChartLine12639Tests")
         let chartURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()

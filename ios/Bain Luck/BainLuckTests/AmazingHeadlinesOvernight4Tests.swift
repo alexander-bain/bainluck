@@ -398,7 +398,7 @@ final class AmazingHeadlinesOvernight4Tests: XCTestCase {
     }
 
     func testSoccerGameMarketsOnlyAndNonRegulationEdgeCasesAndNoOpenedRow() async throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 / Ruling 200-B soccer settlement rule — covered by UnifiedHeadlineContactSheetGuard199Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "Direction 199 / Ruling 200-B unified EventSportHeadlineCard12472", coveredBy: .unifiedHeadline199)
         // 1. Two-way-only soccer resolves cleanly to 2-row `.soccerBeforeGame` (never nil)
         let twoWayOnly = try soccerBeforeFixture(homeProb: 0.52, drawProb: nil, awayProb: 0.48)
         XCTAssertEqual(EventSportHeadlines12472.kind(for: twoWayOnly, now: fixedNow), .soccerBeforeGame)

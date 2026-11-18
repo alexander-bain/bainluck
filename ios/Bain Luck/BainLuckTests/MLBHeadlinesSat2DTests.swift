@@ -228,7 +228,7 @@ final class MLBHeadlinesSat2DTests: XCTestCase {
     }
 
     func testMLBBeforeAndDuringAdoptCompactHeadlineRules() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 / Ruling 200-B MLB Proj. · Chance & Score · Proj. · Now columns — covered by UnifiedHeadlineContactSheetGuard199Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "Direction 199 / Ruling 200-B unified EventSportHeadlineCard12472", coveredBy: .unifiedHeadline199)
         let before = try mlbBeforeFixture()
         XCTAssertEqual(EventSportHeadlines12472.kind(for: before, now: fixedNow), .mlbBeforeGame)
 

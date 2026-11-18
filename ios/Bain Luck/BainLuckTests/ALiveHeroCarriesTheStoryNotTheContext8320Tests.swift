@@ -92,7 +92,7 @@ final class ALiveHeroCarriesTheStoryNotTheContext8320Tests: XCTestCase {
     }
 
     func testTheHeroGatesEveryPieceOfContextOnTheOneRule() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 / Ruling 200-B unified EventSportHeadlineCard12472 — covered by UnifiedHeadlineContactSheetGuard199Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "Direction 199 / Ruling 200-B unified EventSportHeadlineCard12472", coveredBy: .unifiedHeadline199)
         let hero = try heroCode()
         XCTAssertTrue(hero.contains(
             "letcarriesContext=EventDetailView.heroCarriesGameContext(status:event.status)"))

@@ -646,7 +646,6 @@ final class LivePregameComparison11296Tests: XCTestCase {
     }
 
     func testTheGenericHeroPrintsTheLiveForecastAndGameInfoStopsRepeatingIt() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Ruling 200-B single grey Pregame line on EventSportHeadlineCard12472 — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let page = try source("Views/EventDetailView.swift")
         // #12771 — `heroSection` mounts the single unified `EventSportHeadlineCard12472`
         // for every sport and state, passing `revealForecast: revealForecast11296` for

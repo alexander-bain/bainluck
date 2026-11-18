@@ -220,7 +220,6 @@ final class DiscoverThemeCollectionEntry9925Tests: XCTestCase {
     }
 
     func testTheGroupedPathCarriesOnlyTheThemeRefToTheCard() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "#12840 / #12288 grouped card art & machinery contract — covered by GroupingMachinery12288Tests")
         let text = try discoverViewSource()
         XCTAssertEqual(occurrences(of: "sharedQuestion: bundle.sharedQuestion, collectionRef: bundle.themeCollectionRef )", in: text), 1,
                        "the API bundle's grouped card takes the theme-only ref")

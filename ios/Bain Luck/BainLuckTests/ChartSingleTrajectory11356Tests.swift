@@ -696,7 +696,7 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
     }
 
     func testThePlotDrawsTheFocusedWindowClippedWithFixedWidthTicks() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "#12639 connected chart line & #12750 scale rule — covered by OneScaleRuleEverywhere12750Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "#12750 chart scale rule", coveredBy: .chartScaleRule12750)
         let chart = try chartCode()
         XCTAssertTrue(chart.contains("structOddsChartView:View{"), "control: the scan reads the chart")
         XCTAssertTrue(chart.contains(".chartYScale(domain:axis.window.domain)"))
@@ -745,7 +745,7 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
     }
 
     func testSourcesIsOneToggleThatAddsLinesUnderThePrimary() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "#12639 connected chart line & #12750 scale/key rail — covered by ConnectedChartLine12639Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "#12639 connected chart line", coveredBy: .connectedChartLines12639)
         let chart = try chartCode()
         XCTAssertTrue(chart.contains("sourcesOpen:$inlineSourcesOpen,rail:false)"))
         XCTAssertTrue(chart.contains("sourcesOpen:$fullscreenSourcesOpen,rail:true)"),
@@ -765,7 +765,7 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
     /// own row AFTER the plot's fixed frame, so the extra height never comes
     /// out of the plot box.
     func testTheSourcesToggleHitsA44PointFrameOutsideThePlot() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "#12639 connected chart line & updated chart key layout — covered by ConnectedChartLine12639Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "#12639 connected chart line", coveredBy: .connectedChartLines12639)
         let chart = try chartCode()
         let show = try XCTUnwrap(chart.range(of: "privatefuncsourcesShowButton("))
         let hide = try XCTUnwrap(chart.range(of: "privatefuncsourcesHideButton("))
@@ -787,7 +787,7 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
     /// The four seams UX's later TipKit re-cut attaches to (HOST-COMPOSITION-
     /// CONSTRAINTS-AB5B), held by name.
     func testTheTipKitAttachmentSeamsAreKept() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "#12639 / #12750 unified inline chart container — covered by OneScaleRuleEverywhere12750Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "#12750 chart scale rule", coveredBy: .chartScaleRule12750)
         let chart = try chartCode()
         XCTAssertTrue(chart.contains("staticfuncprimarySource(in"), "(a) the drawn primary line's name")
         XCTAssertTrue(chart.contains("@Environment(\\.chartScrubSurfaces)privatevarscrubSurfaces"), "(a)")
@@ -862,7 +862,7 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
     /// the decision, the end dot never is, and every Sources state hands the
     /// primary key the one reading, taken before it branches.
     func testTheSteepFinishFallbackIsWiredAndTheKeyCarriesTheReading() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "#12639 connected chart line — covered by ConnectedChartLine12639Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "#12639 connected chart line", coveredBy: .connectedChartLines12639)
         let chart = try chartCode()
         let start = try XCTUnwrap(chart.range(of: "privatefuncfinishedEndLabel9483("))
         let end = try XCTUnwrap(chart.range(of: "staticfunclineY9483(", range: start.upperBound..<chart.endIndex))

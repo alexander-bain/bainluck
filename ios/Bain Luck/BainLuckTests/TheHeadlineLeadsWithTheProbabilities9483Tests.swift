@@ -82,7 +82,7 @@ final class TheHeadlineLeadsWithTheProbabilities9483Tests: XCTestCase {
     }
 
     func testBothHeroCrestsReadTheCompactSize() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 baseCrestSize on EventSportHeadlineCard12472 — covered by OneTypeTableEverywhere199Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "Direction 199 / Ruling 197 unified type & badge table", coveredBy: .oneTypeTable199)
         let page = try code("Views", "EventDetailView.swift")
         XCTAssertTrue(page.contains("letheroLogo=Self.heroLogoSize(stacked:stacked,regular:logoSize)"))
         XCTAssertEqual(page.components(separatedBy: "size:heroLogo,").count - 1,

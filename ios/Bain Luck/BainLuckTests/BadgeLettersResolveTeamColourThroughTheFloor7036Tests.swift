@@ -229,7 +229,7 @@ final class BadgeLettersResolveTeamColourThroughTheFloor7036Tests: XCTestCase {
     /// there to be read: a silent deletion would leave the next caller with a
     /// `color:` parameter that looks like a tint and is not.
     func testTheLogoViewStillStatesThatItsColourIsDrawnAsText() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Ruling 197 contrast-safe monogram badge rendering — covered by OneTypeTableEverywhere199Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "Direction 199 / Ruling 197 unified type & badge table", coveredBy: .oneTypeTable199)
         let body = try String(contentsOf: Self.teamLogoURL, encoding: .utf8)
         XCTAssertTrue(body.contains("This is drawn as TEXT, not only as a tint"),
                       "TeamLogoView's #7036 contract has been removed from the parameter it governs")

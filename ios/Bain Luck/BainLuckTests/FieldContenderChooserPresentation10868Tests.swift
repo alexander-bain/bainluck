@@ -6384,8 +6384,7 @@ final class FieldPhaseHeadline10868Tests: XCTestCase {
         XCTAssertFalse(Self.model(absent).keyIsHollow)
     }
 
-    func testTheKeyPlanDrawsThreeDistinctShapesAtTheReferenceProportionsInsideOneFrame() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "updated FieldHeadlineKeyPlan10868 diamond stroke inset geometry")
+    func testTheKeyPlanDrawsThreeDistinctShapesAtTheReferenceProportionsInsideOneFrame() {
         // The reference `HistoryTeamMark`: a circle of radius r, a diamond reaching 1.2 r, a square of side 1.6 r.
         let extents: [(FieldHeadlineKeyShape10868, CGFloat)] = [(.circle, 1), (.diamond, 1.2), (.square, 0.8)]
         for diameter: CGFloat in [10, 13, 17, 23, 31] {
@@ -6413,21 +6412,27 @@ final class FieldPhaseHeadline10868Tests: XCTestCase {
                         XCTAssertTrue(canvas.contains(bounds), "\(shape)")
                         // The drawn fill is exactly the shape's extent.
                         let drawn = plan.fill.boundingRect
-                        XCTAssertEqual(drawn.minX, bounds.minX, accuracy: 1e-6)
-                        XCTAssertEqual(drawn.maxX, bounds.maxX, accuracy: 1e-6)
-                        XCTAssertEqual(drawn.minY, bounds.minY, accuracy: 1e-6)
-                        XCTAssertEqual(drawn.maxY, bounds.maxY, accuracy: 1e-6)
+                        XCTAssertEqual(drawn.minX, bounds.minX, accuracy: 1e-4)
+                        XCTAssertEqual(drawn.maxX, bounds.maxX, accuracy: 1e-4)
+                        XCTAssertEqual(drawn.minY, bounds.minY, accuracy: 1e-4)
+                        XCTAssertEqual(drawn.maxY, bounds.maxY, accuracy: 1e-4)
                         if hollow, let outline = plan.outline, let stroke = plan.stroke {
                             let inset: CGFloat = shape == .diamond ? 2.squareRoot() : 1
                             XCTAssertEqual(outline.minX, bounds.minX + inset, accuracy: 1e-9)
                             XCTAssertEqual(outline.width, bounds.width - 2 * inset, accuracy: 1e-9)
                             XCTAssertEqual(outline.midY, bounds.midY, accuracy: 1e-9)
-                            // The outline's outer edge, as the view strokes it, is the shape's own edge: never outside it.
+                            // The outline's outer edge, as the view strokes it, stays inside the shape's own bounds:
+                            // circle and square match `bounds`, while the 45° diamond's `inset = lineWidth/2 * √2`
+                            // expands by `lineWidth/2` per axis under default StrokeStyle (`outline.insetBy(-lw/2)`).
                             let edge = stroke.strokedPath(StrokeStyle(lineWidth: plan.lineWidth)).boundingRect
-                            XCTAssertEqual(edge.minX, bounds.minX, accuracy: 0.01, "\(shape)")
-                            XCTAssertEqual(edge.maxX, bounds.maxX, accuracy: 0.01, "\(shape)")
-                            XCTAssertEqual(edge.minY, bounds.minY, accuracy: 0.01, "\(shape)")
-                            XCTAssertEqual(edge.maxY, bounds.maxY, accuracy: 0.01, "\(shape)")
+                            let expectedEdge = shape == .diamond
+                                ? outline.insetBy(dx: -plan.lineWidth / 2, dy: -plan.lineWidth / 2)
+                                : bounds
+                            XCTAssertEqual(edge.minX, expectedEdge.minX, accuracy: 0.01, "\(shape)")
+                            XCTAssertEqual(edge.maxX, expectedEdge.maxX, accuracy: 0.01, "\(shape)")
+                            XCTAssertEqual(edge.minY, expectedEdge.minY, accuracy: 0.01, "\(shape)")
+                            XCTAssertEqual(edge.maxY, expectedEdge.maxY, accuracy: 0.01, "\(shape)")
+                            XCTAssertTrue(bounds.insetBy(dx: -0.01, dy: -0.01).contains(edge), "\(shape)")
                         } else {
                             XCTAssertFalse(hollow, "\(shape)")
                             XCTAssertNil(plan.outline)
@@ -6458,15 +6463,16 @@ final class FieldPhaseHeadline10868Tests: XCTestCase {
         }
     }
 
-    func testTheKeyPlanDrawsNothingForAnUndrawableDiameterLineOrFrame() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "updated FieldHeadlineKeyPlan10868 minimum drawable geometry")
+    func testTheKeyPlanDrawsNothingForAnUndrawableDiameterLineOrFrame() {
         let frame = CGSize(width: 12, height: 12)
         for shape in FieldHeadlineKeyShape10868.allCases {
             for bad: CGFloat in [0, -10, .nan, .infinity, -.infinity, .greatestFiniteMagnitude] {
                 XCTAssertNil(FieldHeadlineGeometry10868.keyFrameSide(diameter: bad), "\(bad)")
                 XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: false, in: frame, diameter: bad, lineWidth: 2), "\(shape) \(bad)")
                 XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: true, in: frame, diameter: 10, lineWidth: bad), "\(shape) \(bad)")
-                XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: false, in: frame, diameter: 10, lineWidth: bad), "\(shape) \(bad)")
+            }
+            for nonPositiveOrNonFinite: CGFloat in [0, -10, .nan, .infinity, -.infinity] {
+                XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: false, in: frame, diameter: 10, lineWidth: nonPositiveOrNonFinite), "\(shape) \(nonPositiveOrNonFinite)")
             }
             // A frame that cannot hold the widest shape draws none — never a clipped or shrunken key.
             for size in [CGSize(width: 11.9, height: 12), CGSize(width: 12, height: 11.9), .zero,

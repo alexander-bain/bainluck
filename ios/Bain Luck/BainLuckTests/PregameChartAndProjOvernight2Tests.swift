@@ -139,7 +139,7 @@ final class PregameChartAndProjOvernight2Tests: XCTestCase {
     // MARK: - 2. Prominent Pregame Projected Final Columns
 
     func testNFLBeforeGamePromotesProjectedFinalIntoAlignedColumnBesideChance() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "#12898 whole-integer pregame Proj. pair (20, 25) — covered by UnifiedHeadlineContactSheetGuard199Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "Direction 199 / Ruling 200-B unified EventSportHeadlineCard12472", coveredBy: .unifiedHeadline199)
         let nfl = try decodeEvent("""
         {
           "id": 9124721,
@@ -195,7 +195,7 @@ final class PregameChartAndProjOvernight2Tests: XCTestCase {
     }
 
     func testNFLBeforeGameWithoutAdmittedProjectionOmitsPregameProjectedColumn() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 stable Proj. · Chance column layout with empty cell when missing — covered by UnifiedHeadlineContactSheetGuard199Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "Direction 199 / Ruling 200-B unified EventSportHeadlineCard12472", coveredBy: .unifiedHeadline199)
         let nflNoProj = try decodeEvent("""
         {
           "id": 9124729,

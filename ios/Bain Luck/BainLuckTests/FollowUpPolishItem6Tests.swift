@@ -52,6 +52,11 @@ final class FollowUpPolishItem6Tests: XCTestCase {
                 "home_probability": 0.53,
                 "away_probability": 0.47,
             ],
+            "hero_probability": 0.584,
+            "hero_probability_source": "blend",
+            "win_probability_sources": [
+                "kalshi": ["value": 0.584, "updated_at": freshISO],
+            ],
             "projected_home_score": 115.0,
             "projected_away_score": 109.0,
             "home_team_data": [
@@ -266,7 +271,7 @@ final class FollowUpPolishItem6Tests: XCTestCase {
     }
 
     func testHeadlineDrawsNoFlatGreyPulseLineWhenNotStreamingAndDrawsPulseWhenStreaming() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 EkgHeartbeat.present beating gate on EventSportHeadlineCard12472")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "Direction 199 unified EKG visibility & hint", coveredBy: .ekgEvidence10090)
         let beforeEvent = try makeNBAEvent(
             id: 601,
             status: "scheduled",

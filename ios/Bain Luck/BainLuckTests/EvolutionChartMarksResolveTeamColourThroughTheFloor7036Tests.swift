@@ -223,7 +223,7 @@ final class EvolutionChartMarksResolveTeamColourThroughTheFloor7036Tests: XCTest
     /// compiles, renders, and leaves every helper assertion green.
     /// A count, not a `contains`, is the only thing that sees it.
     func testAllThreeMarkSitesGoThroughTheOneResolver() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Ruling 197 / #12940 chart mark colour resolution — covered by GroupingMachinery12288Tests & OneTypeTableEverywhere199Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "Direction 199 / Ruling 197 unified type & badge table", coveredBy: .oneTypeTable199)
         let body = try String(contentsOf: Self.chartURL, encoding: .utf8)
 
         // Four call sites plus the declaration.

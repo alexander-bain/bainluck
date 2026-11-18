@@ -214,7 +214,7 @@ final class RecognizableNFLPage9483Tests: XCTestCase {
     /// the whole 44pt target (the button's own frame, unchanged) but overhangs
     /// the card's top inset and the row gap, each of which holds it exactly.
     func testTheDisclosureKeepsItsTargetWithoutARowOfItsOwn() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 unified EventSportHeadlineCard12472 top bar — covered by UnifiedHeadlineContactSheetGuard199Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "Direction 199 / Ruling 200-B unified EventSportHeadlineCard12472", coveredBy: .unifiedHeadline199)
         let page = try pageCode()
         let button = try span(page, from: "private func probabilityDetails(confidenceTier: String?, statusInDetails: Bool = false, ekgDrawn: Bool = false) -> some View {",
                               to: "// MARK: - Chart Header Bar")
@@ -236,7 +236,7 @@ final class RecognizableNFLPage9483Tests: XCTestCase {
     /// text, stacking from xxLarge as the legacy meta row does; a priced pair
     /// (whose chip can be empty) keeps the stacked column it had.
     func testAFinalsChipAndDateShareARowAtDefaultText() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 unified EventSportHeadlineCard12472 — covered by UnifiedHeadlineContactSheetGuard199Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "Direction 199 / Ruling 200-B unified EventSportHeadlineCard12472", coveredBy: .unifiedHeadline199)
         let page = try pageCode()
         let hero = try span(page, from: "private func heroSection(", to: "static func heroBackdrop(")
         let adopted = try span(hero, from: "if approvedPair {", to: "} else {")

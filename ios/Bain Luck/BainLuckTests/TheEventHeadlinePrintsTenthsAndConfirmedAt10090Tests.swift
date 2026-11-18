@@ -116,7 +116,7 @@ final class TheEventHeadlinePrintsTenthsAndConfirmedAt10090Tests: XCTestCase {
     /// The hero view reads the tenths function on all three priced arms
     /// (pair, lone draw-priced side, NFL paired headline), not a whole rule.
     func testTheEventPageHeroCallsTheTenthsPairOnEveryPricedArm() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 EventSportHeadlines12472 tenths formatting — covered by UnifiedHeadlineContactSheetGuard199Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "Direction 199 / Ruling 200-B unified EventSportHeadlineCard12472", coveredBy: .unifiedHeadline199)
         let source = try String(contentsOf: Self.repoFile("ios/Bain Luck/Bain Luck/Views/EventDetailView.swift"), encoding: .utf8)
         XCTAssertTrue(source.contains("let printed = EventHeadlineTenths10090.pair(home: home, away: away)"))
         XCTAssertTrue(source.contains("Text(printed.away ?? \"\")"))

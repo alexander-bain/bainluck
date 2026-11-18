@@ -155,7 +155,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
     // MARK: - Sports card controls: the single rows stay where they were
 
     func testTheFinishedSportsCardAtLargeKeepsItsSingleRows() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Ruling 182-A / #12616 / #12878 finished game card drops bottom forecast line — covered by CompactGameCard12616Tests")
+        try TestSuiteDisposition12982.skipSuperseded(#function, ruling: "Ruling 182-A / #12616 / #12878 finished card layout", coveredBy: .compactGameCard12616)
         let name = "sports-nfl-393-large"
         let read = try sportsLines(try served(14780563), width: 393, size: .large, name: name)
         let all = describe(read)

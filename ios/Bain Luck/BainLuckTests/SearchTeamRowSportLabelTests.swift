@@ -250,7 +250,6 @@ final class SearchTeamRowSportLabelTests: XCTestCase {
     /// key-only one would be silent — correct-but-coarse everywhere, with the
     /// server's "ATP US Open" and "MiLB" thrown away again.
     func testBothOfSearchsRowsAskForTheServedName() throws {
-        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Ruling 183-A searchEventCard183A third sportKeyDisplayName call site in SearchView")
         let search = try appSources().first { $0.path == "Bain Luck/Views/SearchView.swift" }
         let text = try XCTUnwrap(search?.text, "the scan never reached SearchView")
         let asks = text.components(separatedBy: .newlines).filter {
