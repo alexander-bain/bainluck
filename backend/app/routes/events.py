@@ -35733,6 +35733,25 @@ async def get_event_odds_history(
     }
 
 
+_LINE_MOVEMENT_DISAGREEMENT_BASIS = "admitted-sportsbook-v1"
+
+
+def _line_movement_sportsbook_probability(event: Event) -> Optional[float]:
+    """Use the current sportsbook input admitted by the shared blend rules."""
+    from app.utils.aggregation import effective_source_weights_detailed
+
+    if not isinstance(event.win_probability_sources, dict):
+        return None
+    sources, probabilities, weights, floored = effective_source_weights_detailed(event)
+    if "betting" in floored:
+        return None
+    return next(
+        (probability for source, probability, weight in zip(sources, probabilities, weights)
+         if source == "betting" and weight > 0),
+        None,
+    )
+
+
 @router.get("/{event_id}/line-movement")
 async def get_line_movement_analysis(
     event_id: int,
@@ -35765,6 +35784,7 @@ async def get_line_movement_analysis(
         raise HTTPException(status_code=404, detail="Event not found")
 
     now = datetime.now(timezone.utc)
+    sportsbook_prob = _line_movement_sportsbook_probability(event)
 
     # Check for cached analysis
     cached = await db.execute(
@@ -35784,15 +35804,28 @@ async def get_line_movement_analysis(
             # Extract stored context metadata if available
             stored_movement_data = cached_analysis.movement_data or []
             stored_context = None
+            disagreement_basis = None
             if isinstance(stored_movement_data, dict):
                 stored_context = stored_movement_data.get("context")
+                disagreement_basis = stored_movement_data.get("disagreement_basis")
                 stored_movement_data = stored_movement_data.get("movements", [])
+            disagreement = cached_analysis.disagreement_data
+            # Older comparisons may have used the opening line or a raw book
+            # snapshot. Keep the movement history, but require a known basis
+            # and the same admitted sportsbook chance to reuse a comparison.
+            if (
+                disagreement_basis != _LINE_MOVEMENT_DISAGREEMENT_BASIS
+                or sportsbook_prob is None
+                or not isinstance(disagreement, dict)
+                or disagreement.get("sportsbook_home_prob") != round(sportsbook_prob, 4)
+            ):
+                disagreement = None
             return {
                 "event_id": event_id,
                 "movements": stored_movement_data,
                 "explanation": cached_analysis.explanation,
-                "disagreement_explanation": cached_analysis.disagreement_explanation,
-                "disagreement_data": cached_analysis.disagreement_data,
+                "disagreement_explanation": cached_analysis.disagreement_explanation if disagreement else None,
+                "disagreement_data": disagreement,
                 "context": stored_context,
                 "cached": True,
                 "created_at": cached_analysis.created_at.isoformat(),
@@ -36031,17 +36064,12 @@ async def get_line_movement_analysis(
         )
         pm_snapshots = pm_result.scalars().all()
 
-        if pm_snapshots and opening_home_prob is not None:
+        if pm_snapshots and sportsbook_prob is not None:
             # Compare latest prediction market price to sportsbook consensus
             pm_snap = pm_snapshots[0]
             pm_prob = float(pm_snap.home_probability) if pm_snap.home_probability is not None else None
-            sportsbook_prob = opening_home_prob
 
-            # Use latest aggregated odds if available
-            if aggregated_snapshots:
-                sportsbook_prob = aggregated_snapshots[-1]["home_probability"]
-
-            if pm_prob is not None and sportsbook_prob is not None:
+            if pm_prob is not None:
                 divergence = abs(pm_prob - sportsbook_prob)
                 if divergence >= 0.05:  # 5% disagreement threshold
                     disagreement_data = {
@@ -36089,6 +36117,7 @@ async def get_line_movement_analysis(
     cache_data = {
         "movements": movements_data,
         "context": context_meta,
+        "disagreement_basis": _LINE_MOVEMENT_DISAGREEMENT_BASIS,
     }
 
     # Upsert cached analysis
