@@ -401,7 +401,9 @@ export async function fetchCollection(slug: string, signal?: AbortSignal, page?:
   const query = params.toString();
   const path = `${API_URL}/api/containers/${slug}`;
   const url = query ? `${path}?${query}` : path;
-  const adminHeaders = await resolveMachineryAdminHeaders(slug);
+  const adminHeaders = slug.startsWith("machinery-")
+    ? await resolveMachineryAdminHeaders(slug)
+    : null;
   const init: RequestInit = adminHeaders
     ? { cache: "no-store", signal, headers: adminHeaders }
     : { cache: "no-store", signal };

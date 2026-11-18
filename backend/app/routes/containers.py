@@ -569,7 +569,6 @@ async def get_machinery_preview(
 
 @router.get("/{slug}")
 async def get_container(
-    request: Request = None,
     slug: str = Path(..., min_length=1, max_length=200),
     include_children: bool = Query(
         True, description="Include members of nested containers (draws)."
@@ -584,6 +583,7 @@ async def get_container(
     compact: bool = True,
     debug_timing: bool = False,
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ) -> dict:
     """One published collection: header, nested collections, and its members as
     familiar cards grouped by class.
@@ -604,10 +604,37 @@ async def get_container(
     token = _stage_timings.set(timings)
     try:
         with _time_stage("total"):
+            if (
+                request is not None
+                and isinstance(slug, str)
+                and containers_read_enabled()
+            ):
+                from app.utils.container_machinery import (
+                    container_machinery_enabled,
+                    is_machinery_candidate_slug,
+                    serve_machinery_candidate_preview,
+                )
+
+                if not container_machinery_enabled() and is_machinery_candidate_slug(slug):
+                    from app.routes.admin_utils import _check_admin_auth
+
+                    if await _check_admin_auth(None, request, db):
+                        preview = await serve_machinery_candidate_preview(
+                            slug, db, include_children=include_children
+                        )
+                        if preview is not None:
+                            result = preview["container"]
+                            if timings is not None and not isinstance(result, Response):
+                                result = Response(content=_render(result), media_type="application/json")
+                            if timings is not None:
+                                result.headers["X-Container-Timing"] = ";".join(
+                                    f"{name}={elapsed:.1f}" for name, elapsed in sorted(timings.items())
+                                ) + ";basis=overlapping_wall_ms"
+                            return result
+
             result = await _get_container(
                 slug, include_children, revision, cursor, limit,
                 market_revision, market_cursor, market_limit, compact, db,
-                request=request,
             )
             if timings is not None and not isinstance(result, Response):
                 result = Response(content=_render(result), media_type="application/json")
@@ -625,7 +652,7 @@ async def get_container(
 async def _get_container(
     slug: str, include_children: bool, revision: Optional[str], cursor: Optional[str], limit: Optional[str],
     market_revision: Optional[str], market_cursor: Optional[str], market_limit: Optional[str],
-    compact: bool, db: AsyncSession, *, request: Optional[Request] = None,
+    compact: bool, db: AsyncSession,
 ) -> dict | Response:
     if not containers_read_enabled() or (slug == MIDTERMS_SLUG and not midterms_enabled()):
         raise HTTPException(status_code=404, detail="Not found")
@@ -640,21 +667,6 @@ async def _get_container(
 
     if slug in ROUNDUP_PRODUCERS:
         return await serve_roundup(slug, db, include_children=include_children)
-
-    from app.utils.container_machinery import (
-        is_machinery_candidate_slug,
-        serve_machinery_candidate_preview,
-    )
-
-    if request is not None and is_machinery_candidate_slug(slug):
-        from app.routes.admin_utils import _check_admin_auth
-
-        if await _check_admin_auth(None, request, db):
-            preview = await serve_machinery_candidate_preview(
-                slug, db, include_children=include_children
-            )
-            if preview is not None:
-                return preview["container"]
 
     with _time_stage("published_read"):
         published = await read_published(db, slug)
