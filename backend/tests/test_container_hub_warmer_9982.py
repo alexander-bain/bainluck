@@ -147,7 +147,8 @@ def rig(monkeypatch):
         assert limit == warmer.MAX_HUBS
         return SimpleNamespace(collections=[{"slug": s} for s in state["slugs"]])
 
-    async def _read_published(session, slug):
+    async def _read_published(session, slug, *, include_headers):
+        assert include_headers
         st, rev = state["published"][slug]
         return SimpleNamespace(state=st, revision=rev, container_id=1, slug=slug)
 

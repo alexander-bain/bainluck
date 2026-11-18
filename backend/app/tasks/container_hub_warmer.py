@@ -142,7 +142,7 @@ async def _warm_container_hubs() -> dict:
             break
         try:
             async with async_session_maker() as session:
-                published = await read_published(session, slug)
+                published = await read_published(session, slug, include_headers=True)
                 if published.state not in (READ_PUBLISHED, READ_EMPTY):
                     summary["skipped"].append(slug)
                     continue

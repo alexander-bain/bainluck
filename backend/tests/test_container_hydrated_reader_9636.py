@@ -129,9 +129,13 @@ class _Session:
             exists = self.hub is not None and params["slug"] == self.hub.slug
             return _Result([(1,)] if exists else [])
         if text_.startswith("WITH hub AS"):
-            return _Result(self._published_rows(params["slug"]))
-        if "FROM containers" in text_ and "publication_state <> 'withdrawn'" in text_:
-            return _Result(self._header_rows(params["id"]))
+            rows = self._published_rows(params["slug"])
+            if "AS header_rows" in text_ and rows:
+                rows = [row + (None,) for row in rows]
+                if self.hub.publication == "published":
+                    headers = self._header_rows()
+                    rows.append(rows[0][:3] + (None,) * 6 + (headers,))
+            return _Result(rows)
         if text_.startswith("SELECT events.") and "WHERE events.id IN" in text_:
             return _Result(self.events)
         if text_.startswith("SELECT futures_markets.") and "WHERE futures_markets.id IN" in text_:
@@ -153,7 +157,7 @@ class _Session:
             return [(hub.id, hub.publication, hub.revision) + (None,) * 6]
         return [(hub.id, hub.publication, hub.revision) + tuple(e) for e in edges]
 
-    def _header_rows(self, container_id):
+    def _header_rows(self):
         hub = self.hub
         head = (
             hub.id, hub.kind, hub.name, hub.slug, "sports", "live",
@@ -606,9 +610,23 @@ async def test_statement_count_is_the_same_for_one_game_and_forty():
         payload = await _get(session, hub.slug)
         assert payload["member_count"] == 2 * games
         counts[games] = len(session.statements)
+        assert sum("FROM containers" in sql for sql in session.statements) == 1
     assert counts[1] == counts[40], counts
-    # probe + published read + header + event cards (5) + market cards (1..5)
-    assert counts[1] <= 13, counts
+    # probe + published read with headers + event cards (5) + market cards (1..5)
+    assert counts[1] <= 12, counts
+
+
+async def test_combined_publication_and_header_failure_is_not_an_empty_collection():
+    class BrokenPublication(_Session):
+        async def execute(self, sql, params=None):
+            if "AS header_rows" in str(sql):
+                raise RuntimeError("publication snapshot unavailable")
+            return await super().execute(sql, params)
+
+    hub, events, markets = _wide_week(1)
+    session = BrokenPublication(hub, events=events, markets=markets)
+    with pytest.raises(RuntimeError, match="publication snapshot unavailable"):
+        await _get(session, hub.slug)
 
 
 # ---------------------------------------------------------------------------

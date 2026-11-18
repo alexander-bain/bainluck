@@ -772,6 +772,7 @@ class PublishedRead:
     container_id: Optional[int] = None
     reason: Optional[str] = None
     members: list = field(default_factory=list)
+    header_rows: list[tuple] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -785,14 +786,14 @@ class PublishedRead:
         }
 
 
-async def read_published(session, slug: str) -> PublishedRead:
+async def read_published(session, slug: str, *, include_headers: bool = False) -> PublishedRead:
     """The hub's published membership, from ONE statement, so ONE snapshot.
 
     Under READ COMMITTED every statement gets its own snapshot; reading the
     revision and the members in two statements could straddle an assembly
     commit and hand a reader revision N's number with revision N+1's members.
-    One statement cannot. Draws are included one level down, as the existing
-    route does, except a draw that is itself ``withdrawn``.
+    One statement cannot. Draws are included one level down, except when
+    withdrawn. The generic route also takes headers from this snapshot.
     """
     schema = await correction_schema_present(session)
     if not schema.columns:
@@ -807,6 +808,22 @@ async def read_published(session, slug: str) -> PublishedRead:
             reason="publication_schema_absent" if exists else None,
         )
 
+    # Append one row with typed headers. Each membership row carries only a
+    # NULL in the extra column, even in collections with thousands of members.
+    headers_column = ", NULL::record[] AS header_rows" if include_headers else ""
+    headers_row = (
+        """
+        UNION ALL
+        SELECT hub.id, hub.pub, hub.rev, NULL, NULL, NULL, NULL, NULL, NULL,
+               (SELECT array_agg(ROW(c.id, c.kind, c.name, c.slug, c.category,
+                                     c.status, c.window_start, c.window_end,
+                                     c.parent_container_id, c.publication_state)
+                                 ORDER BY (c.id = hub.id) DESC, c.name, c.id)
+                  FROM parts JOIN containers c ON c.id = parts.id)
+        FROM hub WHERE hub.pub = 'published'
+        """
+        if include_headers else ""
+    )
     rows = (
         await session.execute(
             text(
@@ -820,12 +837,13 @@ async def read_published(session, slug: str) -> PublishedRead:
                 f"  WHERE c.{PUBLICATION_COLUMN} <> 'withdrawn'"
                 ") "
                 "SELECT hub.id, hub.pub, hub.rev, e.class, e.child_type, e.child_id, "
-                "       e.parent_id, e.source, e.confidence "
+                f"      e.parent_id, e.source, e.confidence{headers_column} "
                 "FROM hub LEFT JOIN event_edges e "
                 "  ON hub.pub = 'published' AND e.kind = 'contains' "
                 " AND e.parent_type = 'container' "
                 " AND e.parent_id IN (SELECT id FROM parts) "
-                "ORDER BY e.class, e.child_id"
+                f"{headers_row}"
+                "ORDER BY class, child_id"
             ),
             {"slug": slug},
         )
@@ -855,4 +873,5 @@ async def read_published(session, slug: str) -> PublishedRead:
         revision=int(head[2]),
         container_id=int(head[0]),
         members=members,
+        header_rows=next((r[9] for r in rows if r[9] is not None), []) if include_headers else [],
     )

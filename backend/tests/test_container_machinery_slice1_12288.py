@@ -693,7 +693,7 @@ async def test_admin_only_machinery_preview_blocks_public_and_serves_admin(
         auth = (getattr(request, "headers", None) or {}).get("Authorization", "")
         return auth == "Bearer admin-ok"
 
-    async def _fake_read_published(_db: Any, slug: str) -> Any:
+    async def _fake_read_published(_db: Any, slug: str, *, include_headers: bool) -> Any:
         return SimpleNamespace(
             state=container_corrections.READ_UNAVAILABLE,
             slug=slug,

@@ -245,7 +245,8 @@ async def test_background_rebuild_never_mutates_the_response_timings(monkeypatch
     entry = next(iter(route._local_entries.values()))
     contexts = []
 
-    async def published(*args):
+    async def published(*args, include_headers):
+        assert include_headers
         contexts.append(route._stage_timings.get())
         with route._time_stage("background_read"):
             return SimpleNamespace(state="published", slug="nfl-2026-week-5", revision=1)

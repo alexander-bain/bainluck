@@ -668,14 +668,17 @@ async def _get_container(
     if slug in ROUNDUP_PRODUCERS:
         return await serve_roundup(slug, db, include_children=include_children)
 
+    edition = edition_for_slug(slug)
     with _time_stage("published_read"):
-        published = await read_published(db, slug)
+        if slug == MIDTERMS_SLUG or _is_theme_edition(edition):
+            published = await read_published(db, slug)
+        else:
+            published = await read_published(db, slug, include_headers=True)
     if published.state == READ_UNAVAILABLE:
         raise HTTPException(
             status_code=404, detail={"state": READ_UNAVAILABLE, "slug": slug}
         )
 
-    edition = edition_for_slug(slug)
     payload = _state_payload(published, edition)
     base_empty = _base_empty(published.slug)
     if published.state not in (READ_PUBLISHED, READ_EMPTY):
@@ -736,42 +739,25 @@ async def _build_published_payload(
 ) -> dict:
     """The full 200 for a ``published`` / ``empty`` read — the uncached build."""
     payload = _state_payload(published, edition_for_slug(published.slug))
-    # Header and nested collections in ONE statement, keyed on the id the
-    # published read returned (not the slug again), so both halves describe the
-    # same row. A nested collection that is withdrawn is left out, matching the
-    # published read, which leaves its members out.
     with _time_stage("header"):
-        rows = (
-            await db.execute(
-                text(
-                    "SELECT id, kind, name, slug, category, status, "
-                    "       window_start, window_end, parent_container_id, "
-                    "       publication_state "
-                    "FROM containers "
-                    "WHERE id = :id "
-                    "   OR (parent_container_id = :id AND publication_state <> 'withdrawn') "
-                    "ORDER BY (id = :id) DESC, name, id"
-                ),
-                {"id": published.container_id},
-            )
-        ).fetchall()
-    head = next((r for r in rows if int(r[0]) == published.container_id), None)
-    child_rows = [r for r in rows if int(r[0]) != published.container_id]
-    children = [
-        {
-            "id": int(c[0]),
-            "kind": c[1],
-            "name": c[2],
-            "slug": c[3],
-            "status": c[5],
-            "publication_state": c[9],
-            "edition": edition_for_slug(c[3]),
-            # Only a published nested collection is a destination; any other
-            # would open onto a state with nothing in it.
-            "destination": container_destination(c[3]) if c[9] == READ_PUBLISHED else None,
-        }
-        for c in child_rows
-    ]
+        head = next(
+            (row for row in published.header_rows if row[0] == published.container_id), None
+        )
+        header = _container_header(head) if head is not None else None
+        children = [
+            {
+                "id": int(c[0]),
+                "kind": c[1],
+                "name": c[2],
+                "slug": c[3],
+                "status": c[5],
+                "publication_state": c[9],
+                "edition": edition_for_slug(c[3]),
+                "destination": container_destination(c[3]) if c[9] == READ_PUBLISHED else None,
+            }
+            for c in published.header_rows
+            if c[0] != published.container_id
+        ]
 
     members = list(published.members)
     if not include_children:
@@ -859,7 +845,6 @@ async def _build_published_payload(
             if member["type"] == MEMBER_EVENT and member["id"] in related_counts:
                 member["related_count"] = related_counts[member["id"]]
     member_count = sum(s["count"] for s in sections)
-    header = _container_header(head) if head is not None else None
     if header is not None and len(event_cards) == len(event_ids):
         from app.utils.container_presentation import nfl_week_title
 
@@ -1081,7 +1066,7 @@ async def _refresh_in_background(
     result = None
     try:
         async with async_session_maker() as session:
-            published = await read_published(session, slug)
+            published = await read_published(session, slug, include_headers=True)
             if published.state in (READ_PUBLISHED, READ_EMPTY):
                 entry = await _build_entry(session, published, include_children, compact=compact)
                 fresh_key = container_read_cache_key(slug, published.revision, include_children, compact)
