@@ -105,7 +105,7 @@ from app.utils.prematch_reading import (
     opening_consensus_has_frozen,
     prematch_prior_binds,
     prematch_row_to_reading,
-    resolve_prematch_reading,
+    serialize_prematch_odds,
 )
 from app.utils.closed_period_markets import closed_period_markets
 from app.utils.period_window_grade import grade_period_window, window_outcome_label
@@ -20301,7 +20301,7 @@ async def _settled_prematch_odds(
                 type(exc).__name__,
             )
 
-    reading = resolve_prematch_reading(
+    return serialize_prematch_odds(
         by_source=by_source,
         books_home=(
             float(event.opening_home_probability)
@@ -20315,18 +20315,6 @@ async def _settled_prematch_odds(
         ),
         sport=sport_key or "",
     )
-    if reading is None:
-        return None
-    away_pct, home_pct = rendered_duel_percents(
-        reading["away_probability"], reading["home_probability"]
-    )
-    return {
-        "home_probability": reading["home_probability"],
-        "away_probability": reading["away_probability"],
-        "home_rendered_percent": home_pct,
-        "away_rendered_percent": away_pct,
-        "source": reading["source"],
-    }
 
 
 @router.get("/{event_id}")

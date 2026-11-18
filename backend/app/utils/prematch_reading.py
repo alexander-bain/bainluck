@@ -76,6 +76,7 @@ from typing import Any, Iterable, Mapping, NamedTuple, Optional, Sequence
 # real price. `draw_priced_winner` imports only `graded_card`, which is stdlib
 # only, so this adds no cycle.
 from app.utils.draw_priced_winner import away_is_the_complement, sport_prices_a_draw
+from app.utils.graded_card import rendered_duel_percents
 
 logger = logging.getLogger(__name__)
 
@@ -386,10 +387,34 @@ def resolve_prematch_reading(
     when no rung has a reading. ``None`` means "we hold nothing", which is the
     only case where a settled card is allowed to print no pre-match number.
     """
+    reading = _select_prematch_reading(by_source, books_home, books_away, ladder, sport)
+    if reading is None:
+        return None
+    return {
+        "home_probability": reading.home,
+        "away_probability": reading.away,
+        "source": reading.source,
+    }
+
+
+class _SelectedPrematch(NamedTuple):
+    source: str
+    home: float
+    away: float
+    away_input: Any
+
+
+def _select_prematch_reading(
+    by_source: Optional[Mapping[str, Any]],
+    books_home: Any,
+    books_away: Any,
+    ladder: Iterable[str],
+    sport: Any,
+) -> Optional[_SelectedPrematch]:
     readings = dict(by_source or {})
     for source in ladder:
         if source == BOOKS_SOURCE:
-            pair = _pair(books_home, books_away, sport=sport)
+            home, away, draw = books_home, books_away, None
         else:
             served = readings.get(source)
             if served is None:
@@ -406,15 +431,47 @@ def resolve_prematch_reading(
                 home, away, draw = (list(served) + [None, None, None])[:3]
             if _is_a_two_way_reading_of_a_three_way_game(home, away, draw, sport):
                 continue
-            pair = _pair(home, away, draw, sport=sport)
-        if pair is None:
-            continue
-        return {
-            "home_probability": pair[0],
-            "away_probability": pair[1],
-            "source": source,
-        }
+        pair = _pair(home, away, draw, sport=sport)
+        if pair is not None:
+            return _SelectedPrematch(source, pair[0], pair[1], away)
     return None
+
+
+def serialize_prematch_odds(
+    *,
+    by_source: Optional[Mapping[str, Any]] = None,
+    books_home: Any = None,
+    books_away: Any = None,
+    sport: Any = None,
+) -> Optional[dict]:
+    """Serialize the selected pair and its own marks for detail and game cards."""
+    from app.utils.source_mark import no_source_mark, quote_source_mark
+
+    reading = _select_prematch_reading(
+        by_source, books_home, books_away, PREMATCH_LADDER, sport,
+    )
+    if reading is None:
+        return None
+
+    away_pct, home_pct = rendered_duel_percents(reading.away, reading.home)
+    source_key = "betting" if reading.source == BOOKS_SOURCE else reading.source
+    # The historical inputs establish prices. They carry no clock for the
+    # venue's observation of this exact quote. A repaired away value is also
+    # unbound to any quoted away price, even though the old pair is still served.
+    away_mark = (
+        quote_source_mark([{"key": source_key, "probability": reading.away}])
+        if _as_probability(reading.away_input) == reading.away
+        else no_source_mark("source_evidence_incomplete")
+    )
+    return {
+        "home_probability": reading.home,
+        "away_probability": reading.away,
+        "home_rendered_percent": home_pct,
+        "away_rendered_percent": away_pct,
+        "source": reading.source,
+        "source_mark": quote_source_mark([{"key": source_key, "probability": reading.home}]),
+        "away_source_mark": away_mark,
+    }
 
 
 # ── READING IT OUT OF THE SNAPSHOT TABLE (LAT-P222) ──────────────────────────

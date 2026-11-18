@@ -30,13 +30,12 @@ from typing import Any, Callable, Iterable, Mapping, Optional
 
 from sqlalchemy import text
 
-from app.utils.graded_card import rendered_duel_percents
 from app.utils.kalshi_occurrence_start import loaded_sport_key
 from app.utils.prematch_reading import (
     fetch_prematch_prior_rows,
     prematch_prior_binds,
     prematch_row_to_reading,
-    resolve_prematch_reading,
+    serialize_prematch_odds,
 )
 
 logger = logging.getLogger(__name__)
@@ -128,27 +127,17 @@ async def settled_prematch_odds_by_event(
             for source_id in source_ids[e.id]:
                 for source, row in by_event.get(source_id, {}).items():
                     by_source.setdefault(source, row)
-            reading = resolve_prematch_reading(
+            reading = serialize_prematch_odds(
                 by_source=by_source,
                 books_home=float(open_home) if open_home else None,
                 books_away=float(open_away) if open_away else None,
                 sport=loaded_sport_key(e) or "",
             )
-            if reading is None:
-                continue
-            away_pct, home_pct = rendered_duel_percents(
-                reading["away_probability"], reading["home_probability"]
-            )
         except Exception:  # noqa: BLE001 — gotcha #42: one row, never the page
             logger.exception("%s: event %s pre-match reading failed", surface, e.id)
             continue
-        served[int(e.id)] = {
-            "home_probability": reading["home_probability"],
-            "away_probability": reading["away_probability"],
-            "home_rendered_percent": home_pct,
-            "away_rendered_percent": away_pct,
-            "source": reading["source"],
-        }
+        if reading is not None:
+            served[int(e.id)] = reading
     return served
 
 

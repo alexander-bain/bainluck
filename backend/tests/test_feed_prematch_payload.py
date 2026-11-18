@@ -10,6 +10,8 @@ it), and that the pair is rounded ONCE — UX-P114's rule, on its third strip.
 
 from datetime import datetime, timezone
 
+import pytest
+
 from app.utils.feed_scoring import format_event_data
 
 
@@ -46,13 +48,22 @@ def _event(**overrides):
 
 def test_a_settled_card_gets_a_per_team_prior_from_the_prediction_market():
     data = _event(
-        prematch_by_source={"kalshi": (0.60, 0.40)},
+        prematch_by_source={"kalshi": (0.60, 0.40), "polymarket": (0.65, 0.35)},
         opening_home_prob=0.55,
         opening_away_prob=0.45,
+        win_probability_sources={"kalshi": {"value": 0.60, "updated_at": "2026-09-02T22:59:00Z"}},
     )
     assert data["prematch_odds"]["home_probability"] == 0.60
     assert data["prematch_odds"]["away_probability"] == 0.40
     assert data["prematch_odds"]["source"] == "kalshi"
+    for field, probability in (("source_mark", 0.60), ("away_source_mark", 0.40)):
+        assert data["prematch_odds"][field] == {
+            "state": "single",
+            "sources": [{
+                "key": "kalshi", "name": "Kalshi", "probability": probability,
+                "observed_at": None, "reason": "observation_unknown",
+            }],
+        }
 
 
 def test_the_books_opening_still_reaches_the_card_when_it_is_all_we_hold():
@@ -61,6 +72,26 @@ def test_the_books_opening_still_reaches_the_card_when_it_is_all_we_hold():
     data = _event(opening_home_prob=0.60, opening_away_prob=0.40)
     assert data["prematch_odds"]["source"] == "books"
     assert data["prematch_odds"]["home_probability"] == 0.60
+    for field, probability in (("source_mark", 0.60), ("away_source_mark", 0.40)):
+        assert data["prematch_odds"][field]["sources"] == [{
+            "key": "betting", "name": "Sportsbooks", "probability": probability,
+            "observed_at": None, "reason": "observation_unknown",
+        }]
+
+
+@pytest.mark.parametrize("away", [None, 0.20])
+def test_rebuilt_away_odds_do_not_credit_the_selected_rung_with_the_substitute(away):
+    data = _event(prematch_by_source={
+        "kalshi": (0.61, away),
+        "polymarket": (0.61, 0.39),
+    })
+    prior = data["prematch_odds"]
+    assert prior["home_probability"] == 0.61
+    assert prior["away_probability"] == 0.39
+    assert prior["source_mark"]["sources"][0]["key"] == "kalshi"
+    assert prior["away_source_mark"] == {
+        "state": "none", "sources": [], "reason": "source_evidence_incomplete",
+    }
 
 
 def test_opening_odds_is_untouched_by_any_of_this():
