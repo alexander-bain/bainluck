@@ -2165,7 +2165,8 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }
 
-  const currentWinOdds = isStoredOpeningChance(event) ? undefined : event.current_odds;
+  const isOpeningChance = isStoredOpeningChance(event);
+  const currentWinOdds = isOpeningChance ? undefined : event.current_odds;
   const currentHomeWinChance = currentWinOdds?.home_probability;
 
   // Resolve display probability based on game status (see eventKeyStats.ts)
@@ -2665,8 +2666,10 @@ export default function EventPage({ params }: EventPageProps) {
     acceptedPriceClock,
     confirmedAtShown,
     freshestSourceStamp,
-    currentOddsCapturedAt: event.current_odds?.captured_at,
+    currentOddsCapturedAt: currentWinOdds?.captured_at,
   });
+  const atlasHasLastReading =
+    !isFinished && (!isOpeningChance || resolvedProbability?.selectedProbabilitySource != null);
   const atlasPregameBaseline =
     atlasOptIn && !isFinished && (isLive || hasStarted || isSuspended)
       ? resolveEventHeadlineBaseline({
@@ -3134,9 +3137,9 @@ export default function EventPage({ params }: EventPageProps) {
               : atlasPregameBaseline?.homePercent ?? openingHomePct
           }
           openingObservedAt={null}
-          lastProbability={!isFinished ? homeProb : null}
-          renderedLast={!isFinished ? homePct : null}
-          lastObservedAt={!isFinished ? atlasObservedAt : null}
+          lastProbability={atlasHasLastReading ? homeProb : null}
+          renderedLast={atlasHasLastReading ? homePct : null}
+          lastObservedAt={atlasHasLastReading ? atlasObservedAt : null}
           resolutionDate={event.commence_time}
           source={
             isFinished
