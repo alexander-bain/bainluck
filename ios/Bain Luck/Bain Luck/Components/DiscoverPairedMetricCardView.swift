@@ -49,6 +49,9 @@ struct PairedArtThumbnailView: View {
     let entry: PairedSubjectEntry
     let size: PairedArtSlotSize
     var preloadedImages: [String: PairedPlatformImage] = [:]
+    var showsPlaceholderMonogram: Bool = true
+    var reservesSlotWidthWhenMissing: Bool = false
+    var fallbackArtKind: PairedArtKind = .tmdbPoster
     @Environment(\.colorScheme) private var colorScheme
 
     private var trackBgColor: Color {
@@ -64,33 +67,74 @@ struct PairedArtThumbnailView: View {
     }
 
     private var kind: PairedArtKind {
-        entry.art?.kind ?? .tmdbPoster
+        entry.art?.kind ?? fallbackArtKind
     }
 
     private var spec: (width: CGFloat, height: CGFloat, cornerRadius: CGFloat, isCircle: Bool, initialsSize: CGFloat) {
         size.dimensions(for: kind)
     }
 
+    @ViewBuilder
     var body: some View {
         let safeURL = PairedMetricPresentation.resolveKidSafeVisualArt(entry)
-        Group {
-            if let safeURL, let preloaded = preloadedImages[safeURL.absoluteString] {
-                renderedImage(platformImage(preloaded))
-            } else if let safeURL {
-                AsyncImage(url: safeURL) { phase in
-                    switch phase {
-                    case .success(let image):
-                        renderedImage(image)
-                    default:
-                        monogramTile
+        if safeURL == nil && !showsPlaceholderMonogram {
+            if reservesSlotWidthWhenMissing {
+                Color.clear
+                    .frame(width: spec.width, height: 1)
+                    .accessibilityHidden(true)
+            } else {
+                EmptyView()
+            }
+        } else {
+            Group {
+                if let safeURL, let preloaded = preloadedImages[safeURL.absoluteString] {
+                    renderedImage(platformImage(preloaded))
+                } else if let safeURL {
+                    AsyncImage(url: safeURL) { phase in
+                        switch phase {
+                        case .success(let image):
+                            renderedImage(image)
+                        default:
+                            if showsPlaceholderMonogram {
+                                monogramTile
+                            } else {
+                                emptyLoadingFrame
+                            }
+                        }
+                    }
+                } else {
+                    monogramTile
+                }
+            }
+            .frame(width: spec.width, height: spec.height)
+            .background {
+                if safeURL != nil {
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: MachineryRenderedPictureFramesKey12288.self,
+                            value: [geo.frame(in: .named("machineryPageRoot12288"))]
+                        )
                     }
                 }
+            }
+            .accessibilityHidden(true)
+        }
+    }
+
+    private var emptyLoadingFrame: some View {
+        Group {
+            if spec.isCircle {
+                Circle()
+                    .fill(trackBgColor)
+                    .frame(width: spec.width, height: spec.height)
+                    .overlay(Circle().stroke(borderColor, lineWidth: 1))
             } else {
-                monogramTile
+                RoundedRectangle(cornerRadius: spec.cornerRadius)
+                    .fill(trackBgColor)
+                    .frame(width: spec.width, height: spec.height)
+                    .overlay(RoundedRectangle(cornerRadius: spec.cornerRadius).stroke(borderColor, lineWidth: 1))
             }
         }
-        .frame(width: spec.width, height: spec.height)
-        .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -295,6 +339,9 @@ struct DiscoverPairedMetricCardView: View {
     let metricSet: PairedMetricSet
     let form: PairedVisualFormId
     var initialExpanded: Bool = false
+    var collapsedCount: Int = 5
+    var showsPlaceholderMonogram: Bool = true
+    var showsCardHeader: Bool = true
     var currentMarketId: Int? = nil
     var allowsRouteLinks: Bool = false
     var isOscarsCollectionSurface: Bool = false
@@ -349,6 +396,9 @@ struct DiscoverPairedMetricCardView: View {
         set: PairedMetricSet,
         form: PairedVisualFormId? = nil,
         initialExpanded: Bool = false,
+        collapsedCount: Int = 5,
+        showsPlaceholderMonogram: Bool = true,
+        showsCardHeader: Bool = true,
         currentMarketId: Int? = nil,
         allowsRouteLinks: Bool = false,
         isOscarsCollectionSurface: Bool = false,
@@ -359,6 +409,9 @@ struct DiscoverPairedMetricCardView: View {
         self.metricSet = set
         self.form = form ?? PairedMetricPresentation.resolvedForm(for: set)
         self.initialExpanded = initialExpanded
+        self.collapsedCount = max(1, collapsedCount)
+        self.showsPlaceholderMonogram = showsPlaceholderMonogram
+        self.showsCardHeader = showsCardHeader
         self.currentMarketId = currentMarketId
         self.allowsRouteLinks = allowsRouteLinks
         self.isOscarsCollectionSurface = isOscarsCollectionSurface
@@ -390,9 +443,15 @@ struct DiscoverPairedMetricCardView: View {
         PairedMetricPresentation.formatCardFaceSubtitle(metricSet.subtitle)
     }
 
+    private var listArtKind: PairedArtKind {
+        sortedEntries.first(where: { PairedMetricPresentation.resolveKidSafeVisualArt($0) != nil })?.art?.kind ?? .tmdbPoster
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            headerBlock
+            if showsCardHeader {
+                headerBlock
+            }
 
             switch effectiveForm {
             case .pairedBarsTop5Expandable:
@@ -651,7 +710,8 @@ struct DiscoverPairedMetricCardView: View {
     }
 
     private var pairedBarsBody: some View {
-        let visible = expanded ? sortedEntries : Array(sortedEntries.prefix(5))
+        let visible = expanded ? sortedEntries : Array(sortedEntries.prefix(collapsedCount))
+        let listHasAnyArt = visible.contains { PairedMetricPresentation.resolveKidSafeVisualArt($0) != nil }
         return VStack(alignment: .leading, spacing: 0) {
             // Legend strip
             ViewThatFits(in: .horizontal) {
@@ -667,7 +727,7 @@ struct DiscoverPairedMetricCardView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.top, 12)
+            .padding(.top, showsCardHeader ? 12 : 0)
             .padding(.bottom, 8)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(borderColor).frame(height: 1)
@@ -675,7 +735,7 @@ struct DiscoverPairedMetricCardView: View {
 
             // Contender rows
             ForEach(Array(visible.enumerated()), id: \.element.id) { idx, entry in
-                dualBarRow(entry: entry)
+                dualBarRow(entry: entry, reservesArtSlotWidth: listHasAnyArt)
                     .padding(.vertical, 10)
                 if idx < visible.count - 1 {
                     Rectangle().fill(borderColor).frame(height: 1)
@@ -686,7 +746,8 @@ struct DiscoverPairedMetricCardView: View {
             if let copy = PairedMetricPresentation.expanderCopy(
                 sortedEntries: sortedEntries,
                 set: metricSet,
-                expanded: expanded
+                expanded: expanded,
+                collapsedCount: collapsedCount
             ) {
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
@@ -722,14 +783,21 @@ struct DiscoverPairedMetricCardView: View {
     }
 
     @ViewBuilder
-    private func dualBarRow(entry: PairedSubjectEntry) -> some View {
+    private func dualBarRow(entry: PairedSubjectEntry, reservesArtSlotWidth: Bool) -> some View {
         let s1 = PairedMetricPresentation.formatStage1Display(entry: entry, set: metricSet)
         let s2 = PairedMetricPresentation.formatStage2Display(entry: entry, set: metricSet)
         let rowContent: some View = Group {
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .top, spacing: 10) {
-                        PairedArtThumbnailView(entry: entry, size: .md, preloadedImages: preloadedImages)
+                        PairedArtThumbnailView(
+                            entry: entry,
+                            size: .md,
+                            preloadedImages: preloadedImages,
+                            showsPlaceholderMonogram: showsPlaceholderMonogram,
+                            reservesSlotWidthWhenMissing: reservesArtSlotWidth,
+                            fallbackArtKind: listArtKind
+                        )
                         VStack(alignment: .leading, spacing: 2) {
                             Text(entry.subject)
                                 .font(.system(size: effectiveSubjectSize, weight: .semibold))
@@ -754,20 +822,27 @@ struct DiscoverPairedMetricCardView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 HStack(alignment: .center, spacing: 12) {
-                    PairedArtThumbnailView(entry: entry, size: .md, preloadedImages: preloadedImages)
+                    PairedArtThumbnailView(
+                        entry: entry,
+                        size: .md,
+                        preloadedImages: preloadedImages,
+                        showsPlaceholderMonogram: showsPlaceholderMonogram,
+                        reservesSlotWidthWhenMissing: reservesArtSlotWidth,
+                        fallbackArtKind: listArtKind
+                    )
 
                     VStack(alignment: .leading, spacing: 0) {
                         Text(entry.subject)
                             .font(.system(size: effectiveSubjectSize, weight: .semibold))
                             .foregroundStyle(primaryInk)
-                            .lineLimit(2)
+                            .lineLimit(showsPlaceholderMonogram ? 2 : nil)
                             .fixedSize(horizontal: false, vertical: true)
 
                         if !entry.detail.isEmpty {
                             Text(entry.detail)
                                 .font(.system(size: effectiveDetailSize, weight: .regular))
                                 .foregroundStyle(secondaryInk)
-                                .lineLimit(2)
+                                .lineLimit(showsPlaceholderMonogram ? 2 : nil)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
 
@@ -1085,14 +1160,14 @@ struct DiscoverPairedMetricCardView: View {
                             podiumCard(spot: spot)
                         }
                     }
-                    .padding(.top, 12)
+                    .padding(.top, showsCardHeader ? 12 : 0)
                 } else {
                     HStack(alignment: .bottom, spacing: 8) {
                         ForEach(partition.podiumSpots, id: \.entry.id) { spot in
                             podiumCard(spot: spot)
                         }
                     }
-                    .padding(.top, 12)
+                    .padding(.top, showsCardHeader ? 12 : 0)
                 }
 
                 if !partition.lockTier.isEmpty || !partition.bubbleTier.isEmpty {
@@ -1132,7 +1207,8 @@ struct DiscoverPairedMetricCardView: View {
             PairedArtThumbnailView(
                 entry: spot.entry,
                 size: spot.elevated ? .lg : .md,
-                preloadedImages: preloadedImages
+                preloadedImages: preloadedImages,
+                showsPlaceholderMonogram: showsPlaceholderMonogram
             )
             .padding(.top, 8)
 
@@ -1309,8 +1385,9 @@ struct DiscoverPairedMetricCardView: View {
             }
 
             VStack(spacing: 6) {
+                let tierHasAnyArt = entries.contains { PairedMetricPresentation.resolveKidSafeVisualArt($0) != nil }
                 ForEach(entries) { entry in
-                    tierRow(entry: entry)
+                    tierRow(entry: entry, reservesArtSlotWidth: tierHasAnyArt)
                 }
             }
         }
@@ -1394,14 +1471,21 @@ struct DiscoverPairedMetricCardView: View {
     }
 
     @ViewBuilder
-    private func tierRow(entry: PairedSubjectEntry) -> some View {
+    private func tierRow(entry: PairedSubjectEntry, reservesArtSlotWidth: Bool) -> some View {
         let s1 = PairedMetricPresentation.formatStage1Display(entry: entry, set: metricSet)
         let s2 = PairedMetricPresentation.formatStage2Display(entry: entry, set: metricSet)
         let rowBody: some View = Group {
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .center, spacing: 8) {
-                        PairedArtThumbnailView(entry: entry, size: .xs, preloadedImages: preloadedImages)
+                        PairedArtThumbnailView(
+                            entry: entry,
+                            size: .xs,
+                            preloadedImages: preloadedImages,
+                            showsPlaceholderMonogram: showsPlaceholderMonogram,
+                            reservesSlotWidthWhenMissing: reservesArtSlotWidth,
+                            fallbackArtKind: listArtKind
+                        )
                         Text(entry.subject)
                             .font(.system(size: effectiveDetailSize, weight: .semibold))
                             .foregroundStyle(DS.textPrimary)
@@ -1415,7 +1499,14 @@ struct DiscoverPairedMetricCardView: View {
                 }
             } else {
                 HStack(alignment: .center, spacing: 8) {
-                    PairedArtThumbnailView(entry: entry, size: .xs, preloadedImages: preloadedImages)
+                    PairedArtThumbnailView(
+                        entry: entry,
+                        size: .xs,
+                        preloadedImages: preloadedImages,
+                        showsPlaceholderMonogram: showsPlaceholderMonogram,
+                        reservesSlotWidthWhenMissing: reservesArtSlotWidth,
+                        fallbackArtKind: listArtKind
+                    )
 
                     Text(entry.subject)
                         .font(.system(size: effectiveDetailSize, weight: .semibold))

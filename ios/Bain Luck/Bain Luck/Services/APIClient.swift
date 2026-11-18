@@ -1379,7 +1379,25 @@ actor APIClient {
     /// #9652: publication state/revision and cards come from one fresh read.
     /// Never reuse a slug-only cached publication after a withdrawal.
     func fetchContainerHub(slug: String) async throws -> ContainerHubResponse {
-        try await fetch(ContainerHubService.path(for: slug), requiresNetwork: true)
+        if GroupingMachineryGate12288.isMachineryCandidateSlug(slug),
+           !GroupingMachineryGate12288.canAccessMachineryCurrentUser() {
+            throw APIError.httpError(statusCode: 404, body: nil)
+        }
+        return try await fetch(ContainerHubService.path(for: slug), requiresNetwork: true)
+    }
+
+    /// #12288: Fetches the four machinery-built groupings ONLY when `user` is Alex
+    /// AND the owner-only Preferences switch is turned `on`. Public, signed-out, and
+    /// switched-off callers return `[]` immediately with zero network requests.
+    func fetchMachineryPreview(user: AuthUser?) async throws -> [MachineryPreviewEntry] {
+        guard GroupingMachineryGate12288.canAccessMachinery(user: user) else {
+            return []
+        }
+        let response: MachineryPreviewResponse = try await fetch(
+            "/api/containers/preview/machinery",
+            requiresNetwork: true
+        )
+        return response.items
     }
 
     /// Theme cursors are positions within their exact published revision.

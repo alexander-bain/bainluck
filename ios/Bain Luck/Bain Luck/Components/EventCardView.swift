@@ -13,6 +13,24 @@ struct EventCardView: View {
     /// away probability via `_away_three_way_price` (#11541).
     var awayReadingIsServerVerified: Bool = false
 
+    init(
+        event: FeedEventData,
+        reason: String?,
+        personalizationReasons: [String]? = nil,
+        headline: String? = nil,
+        compactScheduleStyle: Bool = false,
+        awayReadingIsServerVerified: Bool = false
+    ) {
+        var cardEvent = event
+        cardEvent.currentOdds = CompactGameCard12616.currentOddsForCard(event)
+        self.event = cardEvent
+        self.reason = reason
+        self.personalizationReasons = personalizationReasons
+        self.headline = headline
+        self.compactScheduleStyle = compactScheduleStyle
+        self.awayReadingIsServerVerified = awayReadingIsServerVerified
+    }
+
     /// #11325 — selects the finished card's accessibility arm; see
     /// `FinishedCardAccessibility11325`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -330,6 +348,74 @@ struct EventCardView: View {
         }
     }
 
+    static func resolvedCardSourceMark(
+        event: FeedEventData,
+        canStillBeGraded: Bool,
+        currentAwayIsWithheld: Bool,
+        prematch: PrematchReading?,
+        prematchAwayIsWithheld: Bool
+    ) -> (mark: SourceMark, number: Double?)? {
+        if canStillBeGraded {
+            let homeCand: (SourceMark, Double)? = {
+                guard let m = event.sourceMark, m.draws,
+                      let p = event.currentOdds?.homeProbability else { return nil }
+                return (m, p)
+            }()
+            let awayCand: (SourceMark, Double)? = {
+                guard !currentAwayIsWithheld,
+                      let m = event.awaySourceMark, m.draws,
+                      let p = event.currentOdds?.awayProbability else { return nil }
+                return (m, p)
+            }()
+            if let h = homeCand, let a = awayCand {
+                return a.1 > h.1 ? (a.0, a.1) : (h.0, h.1)
+            }
+            if let chosen = homeCand ?? awayCand {
+                return (chosen.0, chosen.1)
+            }
+            return nil
+        }
+
+        let homePreCand: (SourceMark, Double)? = {
+            guard let m = event.pregameSourceMark, m.draws,
+                  let p = prematch?.homeProbability else { return nil }
+            return (m, p)
+        }()
+        let awayPreCand: (SourceMark, Double)? = {
+            guard !prematchAwayIsWithheld,
+                  let m = event.awayPregameSourceMark, m.draws,
+                  let p = prematch?.awayProbability else { return nil }
+            return (m, p)
+        }()
+        if let h = homePreCand, let a = awayPreCand {
+            return a.1 > h.1 ? (a.0, a.1) : (h.0, h.1)
+        }
+        if let chosen = homePreCand ?? awayPreCand {
+            return (chosen.0, chosen.1)
+        }
+        if let settled = [event.sourceMark, event.awaySourceMark]
+            .compactMap({ $0 })
+            .first(where: { $0.state == .settled && $0.draws }) {
+            return (settled, nil)
+        }
+        return nil
+    }
+
+    @ViewBuilder
+    private var cardSourceMarkButton: some View {
+        if let resolved = Self.resolvedCardSourceMark(
+            event: event,
+            canStillBeGraded: canStillBeGraded,
+            currentAwayIsWithheld: currentAwayIsWithheld,
+            prematch: prematch,
+            prematchAwayIsWithheld: prematchAwayIsWithheld
+        ),
+        let button = SourceMarkButton(resolved.mark, number: resolved.number, numberSize: 17) {
+            button
+                .padding(.vertical, -8)
+        }
+    }
+
     private var singleRowTopBar: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 6) {
@@ -342,6 +428,7 @@ struct EventCardView: View {
                     .fixedSize(horizontal: true, vertical: false)
                 Spacer(minLength: 4)
                 trailingTopBarMeta
+                cardSourceMarkButton
                 PinButton(type: "event", id: event.id, compact: true)
             }
 
@@ -352,6 +439,7 @@ struct EventCardView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 6)
+                    cardSourceMarkButton
                     PinButton(type: "event", id: event.id, compact: true)
                 }
                 ViewThatFits(in: .horizontal) {
@@ -383,12 +471,14 @@ struct EventCardView: View {
                     statusBadge.fixedSize()
                     Spacer(minLength: 6)
                     formattedDate
+                    cardSourceMarkButton
                     PinButton(type: "event", id: event.id, compact: true)
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         statusBadge.fixedSize()
                         Spacer(minLength: 6)
+                        cardSourceMarkButton
                         PinButton(type: "event", id: event.id, compact: true)
                     }
                     formattedDate
@@ -1393,15 +1483,13 @@ struct EventCardView: View {
                     .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
+                    .fixedSize(horizontal: true, vertical: false)
             } else {
                 Text(formatProbability(prob, renderedPercent: side == .home ? livePercents[1] : livePercents[0]))
                     .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         }
     }

@@ -47,6 +47,14 @@ final class ContainerHubViewModel: ObservableObject {
 
     @MainActor
     func load() async {
+        if GroupingMachineryGate12288.isMachineryCandidateSlug(slug),
+           !GroupingMachineryGate12288.canAccessMachineryCurrentUser() {
+            closeReads()
+            context = ContainerHubReadingContext()
+            heldPages = []
+            state = .unavailable
+            return
+        }
         issued += 1
         let ticket = issued
         refreshVersion += 1
@@ -62,7 +70,8 @@ final class ContainerHubViewModel: ObservableObject {
             guard version == refreshVersion, admitted(ticket), !Task.isCancelled else { return }
             try validate(response)
             guard revisionAdmitted(response) else { return }
-            if response.state == .published {
+            let hasMachineryBlocks = response.sections.contains { $0.visualBlock != nil }
+            if response.state == .published && !hasMachineryBlocks {
                 if !ceremonySets.isEmpty {
                     pairedMetricSets = ceremonySets
                 } else if let directSet = response.pairedMetricSet, !directSet.entries.isEmpty {
@@ -214,9 +223,27 @@ final class ContainerHubViewModel: ObservableObject {
                 guard !slots.isEmpty else { continue }
                 if let index = sections.firstIndex(where: { $0.sectionClass == section.sectionClass }) {
                     let joined = sections[index].slots + slots
-                    sections[index] = ContainerHubSection(sectionClass: section.sectionClass, count: joined.count, slots: joined)
+                    sections[index] = ContainerHubSection(
+                        sectionClass: section.sectionClass,
+                        title: sections[index].title ?? section.title,
+                        note: sections[index].note ?? section.note,
+                        layout: sections[index].layout ?? section.layout,
+                        count: joined.count,
+                        slots: joined,
+                        visualBlock: sections[index].visualBlock ?? section.visualBlock
+                    )
                 } else {
-                    sections.append(ContainerHubSection(sectionClass: section.sectionClass, count: slots.count, slots: slots))
+                    sections.append(
+                        ContainerHubSection(
+                            sectionClass: section.sectionClass,
+                            title: section.title,
+                            note: section.note,
+                            layout: section.layout,
+                            count: slots.count,
+                            slots: slots,
+                            visualBlock: section.visualBlock
+                        )
+                    )
                 }
             }
         }

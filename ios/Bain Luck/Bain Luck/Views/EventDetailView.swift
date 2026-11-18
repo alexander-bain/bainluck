@@ -575,8 +575,8 @@ struct EventDetailView: View {
                                       pairedAwayLabel9483: LivePriceActivity.displayedLabels(in: vm.headline(event)).away,
                                      // #10456 — the served winner pair, both
                                      // sides: admission for the balance ink.
-                                     servedHomeProbability: event.currentOdds?.homeProbability,
-                                     servedAwayProbability: event.currentOdds?.awayProbability,
+                                     servedHomeProbability: event.heroProbabilitySource == OpeningLineHero.openingSource ? nil : event.currentOdds?.homeProbability,
+                                     servedAwayProbability: event.heroProbabilitySource == OpeningLineHero.openingSource ? nil : event.currentOdds?.awayProbability,
                                      forcedDomain: sharedChartDomain,
                                      legacyDataDomain: legacyChartDataDomain,
                                      pageAxisPlotWidth: pageAxisPlotWidth,
@@ -965,6 +965,7 @@ struct EventDetailView: View {
                 // Series Probability (playoff series context)
                 if let tags = event.eventTags,
                    (tags.contains("competitive_structure:series") || tags.contains("competitive_structure:best_of_7")),
+                   event.heroProbabilitySource != OpeningLineHero.openingSource,
                    let homeProb = event.currentOdds?.homeProbability {
                     SeriesProbabilityView(
                         homeWinProb: homeProb,
@@ -1215,7 +1216,7 @@ struct EventDetailView: View {
                     showUpdateStream = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showProbabilityDetails = true }
                 })
-                    .frame(idealWidth: 280, maxWidth: 300)
+                    .frame(minWidth: 320, idealWidth: 340, maxWidth: 358)
                     #if os(iOS)
                     .presentationCompactAdaptation(.popover)
                     #endif
@@ -2189,6 +2190,7 @@ struct EventDetailView: View {
         guard !EventState.showsVenueSettledVerdict(
                 event.status, venueSettled: event.venueSettled,
                 commenceTime: event.commenceTime?.asDate),
+              event.heroProbabilitySource != OpeningLineHero.openingSource,
               let odds = event.currentOdds,
               case let shown = OpeningLineHero.resolve(odds, for: event),
               !shown.isOpeningLine,

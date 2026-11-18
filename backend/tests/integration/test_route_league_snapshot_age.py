@@ -34,8 +34,9 @@ dispatched — because that is where the defect lived. The payload contract is
 one input (ruling 021).
 """
 
+import json
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -45,13 +46,16 @@ from app.routes.league_futures import (
     LEAGUE_GAMES_MIRROR_MAX_AGE,
     LEAGUE_PRIMARY_TTL,
     LEAGUE_STALE_TTL,
+    _format_game_brief,
+    _write_league_payload,
     build_league,
     has_games,
+    league_cache_keys,
     mirror_is_too_old,
     payload_age_seconds,
-    league_cache_keys,
 )
 from tests.integration.test_route_league_revalidation import FakeRedis
+from tests.test_league_games_rail_probability import FakeEvent
 
 pytestmark = pytest.mark.asyncio
 
@@ -96,11 +100,16 @@ def _mirror(built_ago_seconds=None, games=(FROZEN_MATCH,), sections=None, stampe
     return payload
 
 
-def _seed(redis, slot, payload):
-    import json
-
+def _seed(redis, slot, payload, *, legacy=False):
     keys = league_cache_keys(SPORT)
-    redis.store[getattr(keys, slot)] = json.dumps(payload)
+    key = getattr(keys, slot)
+    if legacy:
+        redis.store[key] = json.dumps(payload)
+    else:
+        # Age fixtures use the current cache codec, including without a built_at.
+        writer = FakeRedis()
+        _write_league_payload(writer, keys, payload)
+        redis.store[key] = writer.store[key]
 
 
 async def _get(client, redis, sent=None):
@@ -175,8 +184,6 @@ class TestTheStampIsReal:
         """`_write_league_payload` encodes with `default=str`. A stamp that only
         parses in-process would read as None off the wire — fail-closed, so
         every read would rebuild and nothing would ever be served from cache."""
-        import json
-
         payload = await build_league(SPORT, mock_db)
         decoded = json.loads(json.dumps(payload, default=str))
         age = payload_age_seconds(decoded, datetime.now(timezone.utc))
@@ -346,6 +353,51 @@ class TestARefusedMirrorStillBeatsAnOutage:
         assert body["stale_age_seconds"] == pytest.approx(200, abs=5)
 
 
+class TestGamePricePolicy:
+    @pytest.mark.parametrize("rail", GAMES_RAIL_KEYS)
+    @pytest.mark.parametrize("slot", ["primary", "stale"])
+    async def test_legacy_game_prices_rebuild_with_current_policy(self, client, rail, slot):
+        opening_only = _format_game_brief(FakeEvent(opening=0.58, opening_away=0.42), SPORT)
+        same_current_event = FakeEvent(espn=0.58, opening=0.58, opening_away=0.42)
+        same_current_event.id += 1
+        same_current = _format_game_brief(same_current_event, SPORT)
+        legacy_game = {
+            **opening_only,
+            "home_win_probability": 0.58,
+            "current_odds": opening_only["opening_odds"],
+        }
+        old = dict(_mirror(games=()), **{rail: [legacy_game]})
+        rebuilt = dict(_mirror(games=()), **{rail: [opening_only, same_current]})
+        redis = FakeRedis()
+        _seed(redis, slot, old, legacy=True)
+        build = AsyncMock(return_value=rebuilt)
+
+        with patch("app.routes.league_futures.build_league", build):
+            response = await _get(client, redis)
+            cached_response = await _get(client, redis)
+
+        build.assert_awaited_once()
+        assert response == cached_response == rebuilt
+        assert "current_odds" not in response[rail][0]
+        assert response[rail][0]["opening_odds"] == {
+            "home_probability": 0.58, "away_probability": 0.42
+        }
+        assert response[rail][1]["current_odds"] == response[rail][1]["opening_odds"]
+
+    async def test_outage_does_not_resurrect_a_legacy_game_mirror(self, client):
+        legacy = _mirror(built_ago_seconds=6600)
+        redis = FakeRedis()
+        _seed(redis, "stale", legacy, legacy=True)
+        degraded = _mirror(games=())
+        degraded["availability"] = "degraded"
+
+        with patch("app.routes.league_futures.build_league", AsyncMock(return_value=degraded)):
+            body = await _get(client, redis)
+
+        assert body == degraded
+        assert redis.writes == []
+
+
 class TestRevalidationStartsBeforeTheSlotExpires:
     async def test_an_aged_primary_hit_dispatches_a_rebuild(self, client):
         redis = FakeRedis()
@@ -354,6 +406,7 @@ class TestRevalidationStartsBeforeTheSlotExpires:
 
         body = await _get(client, redis, sent)
 
+        assert _served_the_frozen_match(body)
         assert len(sent) == 1, (
             "the rebuild must be dispatched while the primary is still valid — "
             "starting it at expiry is what left a 167s stale window every cycle"

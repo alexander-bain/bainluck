@@ -235,6 +235,7 @@ import {
   computeLastChartPoint,
   defaultChartTimeRange,
 } from "@/lib/eventKeyStats";
+import { isStoredOpeningChance } from "@/lib/probabilityEvidence";
 import MatchupOutcomes from "@/components/event/MatchupOutcomes";
 import { settledPregameMark } from "@/lib/settledPregameMark";
 import { SPECIAL_MARKETS_MIN_WIRE_ROWS, specialMarketsDrawnIds } from "@/lib/gamePropsDrawnAbove";
@@ -2164,6 +2165,10 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }
 
+  const isOpeningChance = isStoredOpeningChance(event);
+  const currentWinOdds = isOpeningChance ? undefined : event.current_odds;
+  const currentHomeWinChance = currentWinOdds?.home_probability;
+
   // Resolve display probability based on game status (see eventKeyStats.ts)
   //
   // #4015 — `isSuspended` (the page's one `hasNoReportedResult` answer, computed
@@ -2661,8 +2666,10 @@ export default function EventPage({ params }: EventPageProps) {
     acceptedPriceClock,
     confirmedAtShown,
     freshestSourceStamp,
-    currentOddsCapturedAt: event.current_odds?.captured_at,
+    currentOddsCapturedAt: currentWinOdds?.captured_at,
   });
+  const atlasHasLastReading =
+    !isFinished && (!isOpeningChance || resolvedProbability?.selectedProbabilitySource != null);
   const atlasPregameBaseline =
     atlasOptIn && !isFinished && (isLive || hasStarted || isSuspended)
       ? resolveEventHeadlineBaseline({
@@ -2825,14 +2832,16 @@ export default function EventPage({ params }: EventPageProps) {
     homeColor: nflStrokes.home,
   };
   const nflScored = (isLive || isFinished) && !heroScoreIsStoppageFiller && bestHomeScore != null && bestAwayScore != null;
+  // #12824 — a legacy scheduled response can carry the first stored line in both chance fields.
+  const readerShowsChance = !(event.status === "scheduled" && isStoredOpeningChance(event));
   const nflReaderHeader = readerHeader({
     awayShort: heroShortNames.away,
     homeShort: heroShortNames.home,
     awayScore: nflScored ? bestAwayScore : null,
     homeScore: nflScored ? bestHomeScore : null,
     stateLabel: stoppageLabel ?? (isFinished ? "Final" : effectivelyLive ? liveClockLabel || "Live" : isLive ? "Live" : "Pregame"),
-    awayChance: awayProb != null ? formatProbability(awayProb, { rendered: awayPct }) : null,
-    homeChance: homeProb != null ? formatProbability(homeProb, { rendered: homePct }) : null,
+    awayChance: readerShowsChance && awayProb != null ? formatProbability(awayProb, { rendered: awayPct }) : null,
+    homeChance: readerShowsChance && homeProb != null ? formatProbability(homeProb, { rendered: homePct }) : null,
     finished: isFinished,
   });
   // Back returns focus to the card the reader was opened on, or the nearest
@@ -3130,9 +3139,9 @@ export default function EventPage({ params }: EventPageProps) {
               : atlasPregameBaseline?.homePercent ?? openingHomePct
           }
           openingObservedAt={null}
-          lastProbability={!isFinished ? homeProb : null}
-          renderedLast={!isFinished ? homePct : null}
-          lastObservedAt={!isFinished ? atlasObservedAt : null}
+          lastProbability={atlasHasLastReading ? homeProb : null}
+          renderedLast={atlasHasLastReading ? homePct : null}
+          lastObservedAt={atlasHasLastReading ? atlasObservedAt : null}
           resolutionDate={event.commence_time}
           source={
             isFinished
@@ -3482,8 +3491,8 @@ export default function EventPage({ params }: EventPageProps) {
           awayColor={effectiveAwayPrimary}
           homeLogo={event.home_team_data?.logo_small || undefined}
           awayLogo={event.away_team_data?.logo_small || undefined}
-          homeWinProb={event.current_odds?.home_probability ?? undefined}
-          awayWinProb={event.current_odds?.away_probability ?? undefined}
+          homeWinProb={currentHomeWinChance ?? undefined}
+          awayWinProb={currentWinOdds?.away_probability ?? undefined}
           /* #5414: `current_odds.home_spread` is a key the API has never
              emitted — it serialises the same column as `spread` — so this prop
              has been null on every render since it was added, and the card's
@@ -3745,7 +3754,7 @@ export default function EventPage({ params }: EventPageProps) {
       {event.event_tags && (
         event.event_tags.includes("competitive_structure:series") ||
         event.event_tags.includes("competitive_structure:best_of_7")
-      ) && event.current_odds?.home_probability != null && (() => {
+      ) && currentHomeWinChance != null && (() => {
         // Detect series wins from ESPN data or default to 0-0
         const homeSeriesWins = (event.espn as any)?.series_home_wins ?? 0;
         const awaySeriesWins = (event.espn as any)?.series_away_wins ?? 0;
@@ -3753,7 +3762,7 @@ export default function EventPage({ params }: EventPageProps) {
         return (
           <SectionErrorBoundary label="The series picture" resetKey={event}>
           <SeriesProbability
-            homeWinProb={event.current_odds!.home_probability!}
+            homeWinProb={currentHomeWinChance}
             homeSeriesWins={homeSeriesWins}
             awaySeriesWins={awaySeriesWins}
             gamesToWin={gamesToWin}

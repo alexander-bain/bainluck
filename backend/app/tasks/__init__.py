@@ -4234,6 +4234,14 @@ def update_max_movement(self, heavy: bool = True):
     would have left them ranked exactly as they are today.
     """
     async def _impl():
+        import time as _phase_time
+        _phase_t0 = _phase_time.monotonic()
+
+        def _mark(label):
+            # Where a run is when its 120 s soft limit hits: the traceback only
+            # shows the event loop waiting on the database (Nov 16, 6 of 6 runs).
+            logger.info("update_max_movement phase %s at %.1fs", label, _phase_time.monotonic() - _phase_t0)
+
         from decimal import Decimal
 
         from app.tasks.base import get_task_session
@@ -4319,6 +4327,7 @@ def update_max_movement(self, heavy: bool = True):
         # quote blocking. Release market locks here as well: carrying them
         # into the outcome sweeps would reverse the existing lock order.
         async with get_task_session() as session:
+            _mark("A10")
             # A10. LIST THE OPENINGS THAT WERE NEVER A PRICE (#8612).
             #
             #     A8's rule, applied to the lifetime baseline. A card says
@@ -4660,6 +4669,7 @@ def update_max_movement(self, heavy: bool = True):
                 "window_hours": MOVEMENT_WINDOW_HOURS,
                 "batch": STALE_DELTA_BATCH,
             }
+            _mark("A1")
             a_prepared_ids = await prepare("A", a_predicate, a_order, a_params)
             expired_rows = await retire_prepared(
                 """
@@ -4678,6 +4688,7 @@ def update_max_movement(self, heavy: bool = True):
                 "A",
             )
 
+            _mark("A2")
             # A2. Retire deltas on GRADED outcomes, whatever their stamp says.
             #
             #     A alone cannot reach these, and the reason is the whole defect
@@ -4746,6 +4757,7 @@ def update_max_movement(self, heavy: bool = True):
                 "A2",
             )
 
+            _mark("A3")
             # A3. Retire deltas that REFUTE THEMSELVES — the row's own two
             #     columns cannot both describe the same instant (#6536).
             #
@@ -4837,6 +4849,7 @@ def update_max_movement(self, heavy: bool = True):
                 {"batch": IMPOSSIBLE_PRIOR_BATCH},
             )
 
+            _mark("A4")
             # A4. Retire deltas claiming a move THE OUTCOME'S OWN SERIES CANNOT
             #     SUPPORT (#4079).
             #
@@ -4982,6 +4995,7 @@ def update_max_movement(self, heavy: bool = True):
                 "A4",
             )
 
+            _mark("A5")
             # A5. Retire the RANK claim on rows nothing has written inside the
             #     window — A's predicate, applied to A's forgotten twin.
             #
@@ -5033,6 +5047,7 @@ def update_max_movement(self, heavy: bool = True):
                 "A5",
             )
 
+            _mark("A6")
             # A6. Retire the RANK claim on GRADED outcomes — A2's predicate,
             #     applied to the same forgotten twin, and immune to A5 for
             #     precisely A2's reason: `backfill_winners` re-stamps
@@ -5078,6 +5093,7 @@ def update_max_movement(self, heavy: bool = True):
                 "A6",
             )
 
+            _mark("A7")
             # A7. Retire deltas whose DIRECTION a dated comparison contradicts
             #     (#4079). A4's sibling, lettered after A5/A6 to keep the list
             #     monotonic; it is a DELTA statement and runs before B like
@@ -5283,6 +5299,7 @@ def update_max_movement(self, heavy: bool = True):
                 # A8's carrier key, shared by A8-DG / A9-DG below.
                 bank_key = DATED_BASIS_METADATA_KEY
 
+                _mark("A8-DG")
                 # A8-DG. THE DATAGOLF BANK (#10248, D3).
                 #
                 #     DataGolf polls every 90 s in play and hourly before it, and
@@ -5410,6 +5427,7 @@ def update_max_movement(self, heavy: bool = True):
                     },
                 )
 
+                _mark("A9-DG")
                 # A9-DG. A DataGolf market that has left A8-DG's scope (closed, or
                 #     no priced leg with a previous price) loses its bank and mark.
                 #     A9's job for the arm A9 no longer covers.
@@ -5442,6 +5460,7 @@ def update_max_movement(self, heavy: bool = True):
                     """),
                 )
 
+                _mark("A8")
                 # A8. PUBLISH THE DATED EVIDENCE A "TODAY" CLAIM NEEDS.
                 #
                 #     Every statement above this one DELETES, except #10248's
@@ -5667,6 +5686,7 @@ def update_max_movement(self, heavy: bool = True):
                     },
                 )
 
+                _mark("A9")
                 # A9. A market that has left claim scope loses its bank.
                 #
                 #     The reader already fails closed on a bank nobody refreshes —
@@ -5730,6 +5750,7 @@ def update_max_movement(self, heavy: bool = True):
             # passes over locked eligible rows), so the flag reads `None`, not
             # `True`. Without them the only signal would be the strip quietly
             # getting better.
+            _mark("done")
             return {
                 "updated": updated,
                 "expired": expired_rows,

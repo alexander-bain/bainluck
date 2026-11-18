@@ -337,9 +337,30 @@ def _sample_snapshot() -> dict[str, Any]:
                 "status": "open",
                 "source": "kalshi",
                 "top_outcomes": [
-                    {"id": 201, "name": "James Talarico", "probability": 0.11, "opening_probability": 0.09},
+                    {"id": 201, "name": "James Talarico", "probability": 0.16, "opening_probability": 0.09},
                     {"id": 202, "name": "Alexandria Ocasio-Cortez", "probability": 0.09, "opening_probability": 0.11},
                     {"id": 203, "name": "Pete Buttigieg", "probability": 0.05, "opening_probability": 0.06},
+                ],
+            },
+            {
+                "id": 68980426,
+                "name": "Iowa Republican Presidential Caucus Winner 2028",
+                "status": "open",
+                "source": "polymarket",
+                "top_outcomes": [
+                    {"id": 231, "name": "J.D. Vance", "probability": 0.34},
+                    {"id": 232, "name": "Marco Rubio", "probability": 0.21},
+                    {"id": 233, "name": "Ron DeSantis", "probability": 0.12},
+                ],
+            },
+            {
+                "id": 67861937,
+                "name": "2028 Presidential Election: North Carolina Winner",
+                "status": "open",
+                "source": "polymarket",
+                "top_outcomes": [
+                    {"id": 241, "name": "Democratic Party", "probability": 0.692},
+                    {"id": 242, "name": "Republican Party", "probability": 0.308},
                 ],
             },
             {
@@ -363,6 +384,16 @@ def _sample_snapshot() -> dict[str, Any]:
                 ],
             },
             {
+                "id": 108399,
+                "name": "Hawaii Senate winner? (2028)",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 225, "name": "Democratic party", "probability": 0.95, "opening_probability": 0.91},
+                    {"id": 226, "name": "Republican party", "probability": 0.05, "opening_probability": 0.09},
+                ],
+            },
+            {
                 "id": 57574217,
                 "name": "Fed Decision in January?",
                 "status": "open",
@@ -372,6 +403,18 @@ def _sample_snapshot() -> dict[str, Any]:
                     {"id": 302, "name": "No change", "probability": 0.37, "opening_probability": 0.44},
                     {"id": 303, "name": "25 bps decrease", "probability": 0.01, "opening_probability": 0.02},
                     {"id": 304, "name": "50+ bps increase", "probability": 0.01, "opening_probability": 0.02},
+                ],
+            },
+            {
+                "id": 68032108,
+                "name": "Fed decision in Apr 2027?",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 305, "name": "Fed maintains rate", "probability": 0.60},
+                    {"id": 306, "name": "Hike 25bps", "probability": 0.24},
+                    {"id": 307, "name": "Cut 25bps", "probability": 0.10},
+                    {"id": 308, "name": "Cut >25bps", "probability": 0.06},
                 ],
             },
             {
@@ -421,13 +464,35 @@ def _sample_snapshot() -> dict[str, Any]:
                 ],
             },
             {
+                "id": 68169138,
+                "name": "US GDP growth in Q4 2026?",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 371, "name": "2.5% to 3.0%", "probability": 0.31},
+                    {"id": 372, "name": "2.0% to 2.5%", "probability": 0.28},
+                    {"id": 373, "name": "≥4.0%", "probability": 0.18},
+                ],
+            },
+            {
+                "id": 109668,
+                "name": "Unemployment rate in Nov 2026?",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 381, "name": "Exactly 4.1%", "probability": 0.34},
+                    {"id": 382, "name": "Exactly 4.2%", "probability": 0.30},
+                    {"id": 383, "name": "Exactly 4.0%", "probability": 0.19},
+                ],
+            },
+            {
                 "id": 114551,
                 "name": "Predicted Fed rate under each Fed Chair",
                 "status": "open",
                 "source": "kalshi",
                 "top_outcomes": [
-                    {"id": 351, "name": "Kevin Warsh & Rate > 2.5%", "probability": 0.97, "opening_probability": 0.93},
-                    {"id": 352, "name": "Rick Rieder & Rate ≤ 2.5%", "probability": 0.01, "opening_probability": 0.02},
+                    {"id": 351, "name": "Kevin Warsh & Rate > 2.5%", "probability": 0.99, "opening_probability": 0.93},
+                    {"id": 352, "name": "Rick Rieder & Rate ≤ 2.5%", "probability": 0.01, "opening_probability": 0.04},
                     {"id": 353, "name": "Kevin Warsh & Rate ≤ 2.5%", "probability": 0.01, "opening_probability": 0.02},
                 ],
             },
@@ -471,6 +536,27 @@ def _sample_snapshot() -> dict[str, Any]:
                 ],
             },
         ],
+        "market_histories": {
+            # Oscars companion awards (real 7d movement >= 3pp)
+            54: [{"t": "2026-09-28T00:00:00+00:00", "probability": 0.37}, {"t": "2026-10-04T12:00:00+00:00", "probability": 0.44}],
+            57: [{"t": "2026-09-28T00:00:00+00:00", "probability": 0.48}, {"t": "2026-10-04T12:00:00+00:00", "probability": 0.55}],
+            601: [{"t": "2026-09-28T00:00:00+00:00", "probability": 0.79}, {"t": "2026-10-04T12:00:00+00:00", "probability": 0.86}],
+            611: [{"t": "2026-09-28T00:00:00+00:00", "probability": 0.74}, {"t": "2026-10-04T12:00:00+00:00", "probability": 0.81}],
+            # 2028 Presidential primary, battleground, and VP movement
+            201: [{"t": "2026-09-28T00:00:00+00:00", "probability": 0.10}, {"t": "2026-10-04T12:00:00+00:00", "probability": 0.16}],
+            231: [{"t": "2026-09-28T00:00:00+00:00", "probability": 0.18}, {"t": "2026-10-04T12:00:00+00:00", "probability": 0.34}],
+            241: [{"t": "2026-09-28T00:00:00+00:00", "probability": 0.56}, {"t": "2026-10-04T12:00:00+00:00", "probability": 0.69}],
+            # Fed & Macro real 7d movement (January card + FOMC/cut + GDP/Unemployment)
+            301: [{"t": "2026-09-28T00:00:00+00:00", "probability": 0.48}, {"t": "2026-10-04T12:00:00+00:00", "probability": 0.61}],
+            305: [{"t": "2026-09-28T00:00:00+00:00", "probability": 0.46}, {"t": "2026-10-04T12:00:00+00:00", "probability": 0.60}],
+            331: [{"t": "2026-09-28T00:00:00+00:00", "probability": 0.84}, {"t": "2026-10-04T12:00:00+00:00", "probability": 0.92}],
+            341: [{"t": "2026-09-28T00:00:00+00:00", "probability": 0.19}, {"t": "2026-10-04T12:00:00+00:00", "probability": 0.30}],
+            371: [{"t": "2026-09-28T00:00:00+00:00", "probability": 0.15}, {"t": "2026-10-04T12:00:00+00:00", "probability": 0.31}],
+            381: [{"t": "2026-09-28T00:00:00+00:00", "probability": 0.24}, {"t": "2026-10-04T12:00:00+00:00", "probability": 0.34}],
+            # 99% pinned lock with tail wiggle (must NOT count as moving)
+            351: [{"t": "2026-09-28T00:00:00+00:00", "probability": 0.98}, {"t": "2026-10-04T12:00:00+00:00", "probability": 0.99}],
+            352: [{"t": "2026-09-28T00:00:00+00:00", "probability": 0.04}, {"t": "2026-10-04T12:00:00+00:00", "probability": 0.01}],
+        },
     }
 
 
@@ -603,15 +689,23 @@ def test_slice2_bar_no_question_word_proper_case_and_definition_only_fourth_grou
         discover_machinery_candidate_paths,
     )
 
-    # 1. All 4 unlike groupings discovered automatically (including machinery-fed-and-macro.json)
+    # 1. All 4 core unlike groupings discovered automatically (plus any definition-only candidates)
     paths = discover_machinery_candidate_paths()
     slugs = [load_machinery_definition(p)["slug"] for p in paths]
-    assert slugs == [
+    assert {
         "machinery-2028-presidential",
         "machinery-fed-and-macro",
         "machinery-nfl-week",
         "machinery-oscars-best-picture",
-    ]
+    }.issubset(set(slugs))
+    for p in paths:
+        assert not (CONTAINERS_DATA_DIR / p.name).exists()
+        raw_p = json.loads(p.read_text(encoding="utf-8"))
+        for bad_key in HAND_LIST_ID_RULE_KEYS:
+            assert bad_key not in raw_p.get("rule", {})
+        ser_p = json.dumps(raw_p)
+        assert "market_id" not in ser_p
+        assert "event_id" not in ser_p
 
     # 2. Proper-casing miscased names without mangling numeric/rate brackets
     assert _proper_case_outcome_label("Anne hathaway") == "Anne Hathaway"
@@ -693,7 +787,7 @@ async def test_admin_only_machinery_preview_blocks_public_and_serves_admin(
         auth = (getattr(request, "headers", None) or {}).get("Authorization", "")
         return auth == "Bearer admin-ok"
 
-    async def _fake_read_published(_db: Any, slug: str) -> Any:
+    async def _fake_read_published(_db: Any, slug: str, *, include_headers: bool) -> Any:
         return SimpleNamespace(
             state=container_corrections.READ_UNAVAILABLE,
             slug=slug,
@@ -792,13 +886,14 @@ async def test_slice3_all_four_groupings_pass_227a_and_direction_228() -> None:
     )
 
     snap = _sample_snapshot()
-    items = await evaluate_machinery_candidates_preview(snap, now=FIXED_NOW)
-    assert [it["slug"] for it in items] == [
+    core_slugs = [
         "machinery-nfl-week",
         "machinery-oscars-best-picture",
         "machinery-2028-presidential",
         "machinery-fed-and-macro",
     ]
+    items = await evaluate_machinery_candidates_preview(snap, slugs=core_slugs, now=FIXED_NOW)
+    assert [it["slug"] for it in items] == core_slugs
 
     for it in items:
         rep = it["diversity_report"]
@@ -870,7 +965,16 @@ async def test_slice4_card_charts_own_headline_flat_line_is_not_picture_and_natu
     )
 
     snap = _sample_snapshot()
-    items = await evaluate_machinery_candidates_preview(snap, now=FIXED_NOW)
+    items = await evaluate_machinery_candidates_preview(
+        snap,
+        slugs=[
+            "machinery-nfl-week",
+            "machinery-oscars-best-picture",
+            "machinery-2028-presidential",
+            "machinery-fed-and-macro",
+        ],
+        now=FIXED_NOW,
+    )
     by_slug = {it["slug"]: it for it in items}
 
     # 1. Card's mini_chart shows the card's OWN headline market (57574217 "Fed Decision in January"),
@@ -940,3 +1044,149 @@ async def test_slice4_card_charts_own_headline_flat_line_is_not_picture_and_natu
     )
     assert rep_flat["page"]["point_1_pictures_per_screen_390px"]["screens"] == [0]
     assert rep_flat["page"]["point_1_pictures_per_screen_390px"]["passes"] is False
+
+
+@pytest.mark.asyncio
+async def test_slice5_fable_six_notes_pairs_moving_charts_subject_headings_titles_and_fed_screen3() -> None:
+    import copy
+    from app.utils.container_machinery import (
+        SubjectArtResolver,
+        _clean_outcome_label,
+        _clean_section_market_label,
+        _history_chart_moved,
+        _hydrate_event_visual_item,
+        _hydrate_market_visual_item,
+        evaluate_machinery_candidates_preview,
+    )
+
+    resolver = SubjectArtResolver()
+
+    # 1. Two-way pairs MUST add to 100 (Ravens/Panthers, Jets/Chargers, Democratic/Republican).
+    ravens_panthers = _hydrate_event_visual_item(
+        {
+            "id": 50001,
+            "sport": "americanfootball_nfl",
+            "away_team": "Baltimore Ravens",
+            "home_team": "Carolina Panthers",
+            "commence_time": "2026-11-22T18:00:00+00:00",
+            "status": "scheduled",
+            "current_odds": {"away_probability": 0.435, "home_probability": 0.565},
+        },
+        resolver=resolver,
+    )
+    assert ravens_panthers is not None
+    assert (ravens_panthers["away_pct"], ravens_panthers["home_pct"]) == (43, 57)
+    assert ravens_panthers["away_pct"] + ravens_panthers["home_pct"] == 100
+    assert ravens_panthers["card"]["rendered_away_percent"] + ravens_panthers["card"]["rendered_home_percent"] == 100
+
+    jets_chargers = _hydrate_event_visual_item(
+        {
+            "id": 50002,
+            "sport": "americanfootball_nfl",
+            "away_team": "New York Jets",
+            "home_team": "Los Angeles Chargers",
+            "commence_time": "2026-11-22T21:25:00+00:00",
+            "status": "scheduled",
+            "current_odds": {"away_probability": 0.375, "home_probability": 0.625},
+        },
+        resolver=resolver,
+    )
+    assert jets_chargers is not None
+    assert (jets_chargers["away_pct"], jets_chargers["home_pct"]) == (37, 63)
+    assert jets_chargers["away_pct"] + jets_chargers["home_pct"] == 100
+
+    party_market = _hydrate_market_visual_item(
+        {
+            "id": 108327,
+            "name": "2028 Presidential Election winner? (Party)",
+            "status": "open",
+            "source": "kalshi",
+            "top_outcomes": [
+                {"id": 61, "name": "Democratic party", "probability": 0.675},
+                {"id": 62, "name": "Republican party", "probability": 0.325},
+            ],
+        },
+        max_outcomes=2,
+        resolver=resolver,
+    )
+    party_pcts = [o["rendered_percent"] for o in party_market["outcomes"]]
+    assert party_pcts == [68, 32]
+    assert sum(party_pcts) == 100
+    assert [o["name"] for o in party_market["outcomes"]] == ["Democratic Party", "Republican Party"]
+
+    # 2. No flat chart: 98-99% ceiling lock ("Kevin Warsh & Rate > 2.5%") fails moving-line test
+    #    and opening_probability alone (without observed snapshots) never fakes movement.
+    pinned_lock_chart = {
+        "series": [
+            {"outcome_id": 351, "current_pct": 99, "points": [{"t": "t0", "pct": 98}, {"t": "t1", "pct": 99}]},
+            {"outcome_id": 352, "current_pct": 1, "points": [{"t": "t0", "pct": 4}, {"t": "t1", "pct": 1}]},
+        ]
+    }
+    assert _history_chart_moved(pinned_lock_chart) is False
+
+    snap = _sample_snapshot()
+    items = await evaluate_machinery_candidates_preview(
+        snap,
+        slugs=[
+            "machinery-nfl-week",
+            "machinery-oscars-best-picture",
+            "machinery-2028-presidential",
+            "machinery-fed-and-macro",
+        ],
+        now=FIXED_NOW,
+    )
+    by_slug = {it["slug"]: it for it in items}
+
+    # 3. Charts on the grouping's subject: 2028 Presidential never seats Senate or House seats.
+    pol_sections = by_slug["machinery-2028-presidential"]["container"]["sections"]
+    pol_member_ids = {m["id"] for s in pol_sections for m in s["members"]}
+    assert 108398 not in pol_member_ids  # Ohio Senate
+    assert 108399 not in pol_member_ids  # Hawaii Senate
+    assert 25922306 not in pol_member_ids  # House
+    # And Fed never seats "Predicted Fed rate under each Fed Chair" (114551)
+    fed_sections = by_slug["machinery-fed-and-macro"]["container"]["sections"]
+    fed_member_ids = {m["id"] for s in fed_sections for m in s["members"]}
+    assert 114551 not in fed_member_ids
+
+    # 4. Section title and description match BOTH the rendered form AND the actual rendered items.
+    osc_hist_sec = next(
+        s for s in by_slug["machinery-oscars-best-picture"]["container"]["sections"] if s["class"] == "best_picture_history"
+    )
+    assert osc_hist_sec["layout"] == "probability_history_chart"
+    osc_shown_titles = [it["title"] for it in osc_hist_sec["visual_block"]["items"][:3]]
+    for shown_t in osc_shown_titles:
+        assert shown_t in osc_hist_sec["note"]
+    assert "Best Actress" not in osc_hist_sec["note"]  # Best Actress is in acting_categories, not best_picture_history
+
+    snap_no_hist = copy.deepcopy(snap)
+    snap_no_hist["market_histories"] = {}
+    osc_flat_res = await evaluate_machinery_candidates_preview(
+        snap_no_hist, slugs=["machinery-oscars-best-picture"], now=FIXED_NOW
+    )
+    osc_fb_sec = next(
+        s for s in osc_flat_res[0]["container"]["sections"] if s["class"] == "best_picture_history"
+    )
+    assert osc_fb_sec["layout"] == "sibling_fields_grid"
+    assert osc_fb_sec["title"] == "Companion Category Odds"
+    assert "Past Week" not in osc_fb_sec["title"]
+    assert osc_fb_sec["note"].startswith("Current leaders across ")
+    for shown_t in [it["title"] for it in osc_fb_sec["visual_block"]["items"][:3]]:
+        assert shown_t in osc_fb_sec["note"]
+
+    # 5. Our titles and outcome labels, never raw venue interrogatives or mixed bps phrasing.
+    assert _clean_section_market_label("Hawaii Senate winner? (2028)") == "Hawaii Senate Race"
+    assert _clean_section_market_label("What will Fed Rate hit before 2027?") == "Fed Rate Highs & Lows Before 2027"
+    assert _clean_section_market_label("Fed decision in Apr 2027?") == "April 2027 Fed Decision"
+    assert _clean_section_market_label("Oscar Winner: Best Music (Original Score)") == "Best Original Score"
+    assert _clean_outcome_label("Hike 25bps") == "25 bps increase"
+    assert _clean_outcome_label("Hike >25bps") == "50+ bps increase"
+    assert _clean_outcome_label("Cut 25bps") == "25 bps decrease"
+    assert _clean_outcome_label("Cut >25bps") == "50+ bps decrease"
+    assert _clean_outcome_label("Fed maintains rate") == "No change"
+    assert _clean_outcome_label("Exactly 4.1%") == "4.1%"
+
+    # 6. Fed's third screen has a real picture (moving chart) and passes 227: A across all screens.
+    fed_p1 = by_slug["machinery-fed-and-macro"]["diversity_report"]["page"]["point_1_pictures_per_screen_390px"]
+    assert len(fed_p1["screens"]) >= 3
+    assert fed_p1["min_pictures_per_screen"] >= 1
+    assert fed_p1["passes"] is True

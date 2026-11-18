@@ -23,13 +23,14 @@ def _outcome(prob, rank=1, change=None):
     )
 
 
-def _market(tier, name, key=None, mid=1, gid=None):
+def _market(tier, name, key=None, mid=1, gid=None, source=None):
     return SimpleNamespace(
         market_tier=tier,
         name=name,
         canonical_market_key=key,
         id=mid,
         group_id=gid,
+        source=source,
     )
 
 
@@ -44,8 +45,10 @@ class _Result:
 class _DB:
     def __init__(self, rows):
         self._rows = rows
+        self.reads = 0
 
     async def execute(self, _query):
+        self.reads += 1
         return _Result(self._rows)
 
 
@@ -108,3 +111,47 @@ async def test_no_league_slug_still_returns_path():
     ]
     path = await teams_mod._get_championship_path(1, _DB(rows), league_slug=None, now=_NOW)
     assert len(path) == 1
+
+
+@pytest.mark.asyncio
+async def test_source_mark_uses_only_quotes_in_the_pennant_average():
+    rows = [
+        (_outcome(0.0255), _market(2, "NL Pennant", mid=11, gid="venue-market", source="polymarket")),
+        (_outcome(0.04), _market(2, "NL Pennant", mid=12, gid="venue-market", source="odds_api")),
+        (_outcome(0.0225), _market(2, "NL Pennant", mid=13, source="polymarket")),
+        (_outcome(0.015), _market(2, "NL Pennant", mid=14, source="kalshi")),
+        (_outcome(0.99), _market(2, "MLB Playoff Qualifiers", mid=15, source="kalshi")),
+    ]
+    db = _DB(rows)
+
+    [step] = await teams_mod._get_championship_path(1, db, league_slug="mlb", now=_NOW)
+
+    assert db.reads == 1
+    assert step["market_id"] == 11
+    assert step["probability"] == 0.021
+    mark = step["source_mark"]
+    assert mark["state"] == "blend"
+    assert mark["method"] == "Bain Luck blend · average of 3 prices before rounding"
+    assert [(source["key"], source["probability"], source["observed_at"])
+            for source in mark["sources"]] == [
+        ("kalshi", 0.015, None), ("polymarket", 0.024, None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_single_sportsbook_championship_step_keeps_its_quote():
+    rows = [(_outcome(0.015), _market(1, "World Series Winner", source="odds_api"))]
+
+    [step] = await teams_mod._get_championship_path(1, _DB(rows), league_slug="mlb", now=_NOW)
+
+    assert step["probability"] == 0.015
+    assert step["source_mark"] == {
+        "state": "single",
+        "sources": [{
+            "key": "betting",
+            "name": "Sportsbooks",
+            "probability": 0.015,
+            "observed_at": None,
+            "reason": "observation_unknown",
+        }],
+    }
