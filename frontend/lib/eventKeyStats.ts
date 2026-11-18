@@ -23,6 +23,7 @@ import {
 } from "@/lib/chartTimeline";
 import {
   hasProbabilitySourceReading,
+  isStoredOpeningChance,
   readProbabilitySourceValues,
   shouldWithholdProbability,
 } from "@/lib/probabilityEvidence";
@@ -1036,7 +1037,11 @@ export function resolveProbability(
   /** Opt in to selection provenance without changing legacy result shapes. */
   includeSelection = false,
 ): ResolvedProbability {
-  const odds = event.current_odds;
+  const snapshot = event.current_odds;
+  // Older detail responses copied the opening into the aggregate fallback.
+  const repeatsOpening =
+    isLive && isStoredOpeningChance(event) && snapshot?.source === "aggregate";
+  const odds = repeatsOpening ? undefined : snapshot;
   const opening = event.opening_odds;
 
   let homeProb: number | null = null;

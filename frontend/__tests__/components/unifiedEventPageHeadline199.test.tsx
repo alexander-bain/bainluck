@@ -71,6 +71,45 @@ describe("a historical opening reading is kept off the live headline", () => {
     expect(model.rows.find(row => row.role === "away")?.cells.at(-1)).toBe(away);
     expect(model.rows.find(row => row.role === "home")?.cells.at(-1)).toBe(home);
   });
+
+  it.each([
+    ["an opening aggregate copied into current odds", "aggregate", 0, false, "", ""],
+    ["an independent in-play quote alongside the opening pair", "aggregate", 0, true, "38.0%", "62.0%"],
+    ["a separate sportsbook consensus at the same price as the opening", undefined, 9, false, "42.0%", "58.0%"],
+  ])("handles %s", (_case, source, count, hasInPlayQuote, away, home) => {
+    const cached: EventDetailResponse = {
+      ...live,
+      hero_probability_source: "opening",
+      hero_probability: 0.58,
+      hero_probability_away: 0.42,
+      current_odds: {
+        home_probability: 0.58,
+        away_probability: 0.42,
+        source,
+        bookmaker_count: count,
+      } as EventDetailResponse["current_odds"],
+    };
+    const history = hasInPlayQuote ? {
+      history: [{ timestamp: inPlay, home_probability: 0.62, away_probability: 0.38, bookmaker_count: 4 }],
+      bookmaker_history: {
+        book: [{ timestamp: inPlay, home_probability: 0.62, kind: "recorded", observed_at: inPlay }],
+      },
+    } as unknown as EventHistoryResponse : undefined;
+    const picked = resolveProbability(cached, history, computeLastChartPoint(history, null, null), true, false);
+    const { model, html } = resolveSpecimen(cached, {
+      homeProb: picked.homeProb,
+      servedAwayProb: picked.awayProb,
+      homePct: picked.homePct,
+      servedAwayPct: picked.awayPct,
+      probSourceLabel: picked.probSourceLabel,
+    });
+    expect(model.rows.find(row => row.role === "away")?.cells.at(-1)).toBe(away);
+    expect(model.rows.find(row => row.role === "home")?.cells.at(-1)).toBe(home);
+    expect(model.columns.find(column => column.role === "now")?.header).toBe(home ? "Now" : "");
+    expect(html).toContain(">68<");
+    expect(html).toContain(">72<");
+    expect(html).toContain("headline-12472-pregame-summary");
+  });
 });
 
 function baseEvent(overrides: Partial<EventDetailResponse> = {}): EventDetailResponse {
