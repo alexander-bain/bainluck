@@ -72,6 +72,7 @@ _MATCH_FLOOR = 40
 # Name-only venue identities have no provider team ID to corroborate a fuzzy
 # hit. The futures caller is another entrance for the same venue names.
 _VENUE_NAME_SOURCES = frozenset({"kalshi", "polymarket", "futures"})
+_ESPN_SCHOOL_LOCATION_LEAGUES = frozenset({"baseball_ncaa", "lacrosse_ncaa"})
 _NAME_WITNESS_LIMIT = 2048
 
 
@@ -365,7 +366,10 @@ class TeamIdentityService:
         the session). Only unexplained names read a bounded, narrow league pool;
         never scan the whole sport family for each registration. "Hawks" in the
         NFL must not be contradicted by Monmouth's college-football nickname.
-        Multiple witnesses refuse without choosing or reassigning a team.
+        Multiple exact name witnesses refuse without choosing a destination.
+        For NCAA baseball and lacrosse, one ESPN-identified school's exact
+        location can also corroborate a contradiction. This field names the
+        school in these leagues. It never elects a replacement team.
         """
         if source not in _VENUE_NAME_SOURCES or not source_name or not sport_key:
             return False
@@ -387,10 +391,20 @@ class TeamIdentityService:
         if not names_a_different_club(source_name, team.name):
             return False
 
+        # The general name normalizer strips parenthetical qualifiers, which
+        # can name different schools or squads. ESPN location evidence keeps
+        # the exact school spelling apart from case and surrounding whitespace.
+        school_name = (
+            source_name.strip().casefold()
+            if sport_key in _ESPN_SCHOOL_LOCATION_LEAGUES
+            else ""
+        )
+        witness_query = select(Team.id, Team.name, Team.alternate_names, Team.espn_id)
+        if school_name:
+            witness_query = witness_query.add_columns(Team.location)
         rows = (
             await session.execute(
-                select(Team.id, Team.name, Team.alternate_names, Team.espn_id)
-                .join(Sport, Sport.id == Team.sport_id)
+                witness_query.join(Sport, Sport.id == Team.sport_id)
                 .where(Sport.key == sport_key)
                 .order_by(Team.id)
                 .limit(_NAME_WITNESS_LIMIT + 1)
@@ -408,23 +422,51 @@ class TeamIdentityService:
             return True
 
         witnesses = []
+        target_in_league = False
+        location_matches = 0
+        location_witness = None
         own_strict = {_strict_name(name) for name in own_names}
-        for other_id, other_name, other_aliases, other_espn_id in rows:
+        for row in rows:
+            other_id, other_name, other_aliases, other_espn_id = row[:4]
+            exact_location = (
+                bool(school_name)
+                and bool((other_espn_id or "").strip())
+                and (row.location or "").strip().casefold() == school_name
+            )
+            # Count every claim, including this club's own or a duplicate's.
+            # Location alone must not decide a name that multiple rows claim.
+            if exact_location:
+                location_matches += 1
             if other_id == team_id:
+                target_in_league = True
                 continue
             other_names = [other_name, *(other_aliases or [])]
-            if wanted not in {_strict_name(name) for name in other_names}:
+            other_strict = {_strict_name(name) for name in other_names}
+            exact_name = wanted in other_strict
+            if not exact_name and not exact_location:
                 continue
             # A duplicate row for this club is not an independent contradiction.
             if team.espn_id and other_espn_id and team.espn_id == other_espn_id:
                 continue
-            if _strict_name(other_name) in own_strict or _strict_name(team.name) in {
-                _strict_name(name) for name in other_names
-            }:
+            if (
+                _strict_name(other_name) in own_strict
+                or _strict_name(team.name) in other_strict
+            ):
                 continue
-            if names_a_different_club(team.name, other_name):
+            if not names_a_different_club(team.name, other_name):
+                continue
+            if exact_name:
                 witnesses.append(other_id)
+            else:
+                location_witness = other_id
 
+        if (
+            not witnesses
+            and target_in_league
+            and location_matches == 1
+            and location_witness is not None
+        ):
+            witnesses.append(location_witness)
         if not witnesses:
             return False
         logger.warning(
