@@ -74,6 +74,101 @@ final class OneGameCardTeamAndSearch183ATests: XCTestCase {
         XCTAssertEqual(adaptedCanceled.espn?.period, "Canceled")
     }
 
+    func testSearchOpeningLineKeepsScoreAndPregameWithoutACurrentChance() async throws {
+        // Full /api/events/search shape, using the fields carried by the old serializer.
+        func card(source: String, currentOdds: String) throws -> FeedEventData {
+            let response = try decode(SearchResponse.self, """
+            {
+              "query": "Raptors",
+              "results": [{
+                "id": 9324,
+                "sport": "basketball_nba",
+                "home_team": "Boston Celtics",
+                "away_team": "Toronto Raptors",
+                "commence_time": "2026-11-17T01:00:00Z",
+                "status": "live",
+                "home_score": 68,
+                "away_score": 72,
+                "espn": {"period": "Q4", "game_clock": "4:12"},
+                "hero_probability_source": "\(source)",
+                "hero_probability": 0.64,
+                "hero_probability_away": 0.36,
+                "current_odds": \(currentOdds),
+                "opening_odds": {"home_probability": 0.64, "away_probability": 0.36}
+              }],
+              "futures": []
+            }
+            """)
+            return SearchEventCardAdapter183A.fromSearchResult(
+                try XCTUnwrap(response.results.first), sportDisplayName: "NBA")
+        }
+
+        let heroOnly = try card(source: "opening", currentOdds: "null")
+        XCTAssertNil(heroOnly.currentOdds, "Search must not make current odds from an opening hero")
+
+        let currentOdds = """
+        {"home_probability": 0.64, "away_probability": 0.36,
+         "home_rendered_percent": 64, "away_rendered_percent": 36,
+         "captured_at": "2026-11-17T01:23:00Z", "projected_home_score": 100}
+        """
+        let opening = try card(source: "opening", currentOdds: currentOdds)
+        let observed = try card(source: "blend", currentOdds: currentOdds)
+        XCTAssertEqual(opening.heroProbabilitySource, "opening")
+        XCTAssertNil(opening.currentOdds?.homeProbability)
+        XCTAssertNil(opening.currentOdds?.awayProbability)
+        XCTAssertNil(opening.currentOdds?.homeRenderedPercent)
+        XCTAssertNil(opening.currentOdds?.awayRenderedPercent)
+        XCTAssertEqual(opening.currentOdds?.projectedHomeScore, 100)
+        XCTAssertEqual(opening.homeScore, 68)
+        XCTAssertEqual(opening.awayScore, 72)
+        XCTAssertEqual(opening.openingOdds?.homeProbability, 0.64)
+        XCTAssertEqual(observed.heroProbabilitySource, "blend")
+        XCTAssertEqual(observed.currentOdds?.homeProbability, 0.64)
+        XCTAssertEqual(observed.currentOdds?.awayProbability, 0.36)
+        XCTAssertEqual(observed.currentOdds?.homeRenderedPercent, 64)
+
+        let suiteName = "SearchOpening12824.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let pins = PinManager(
+            defaults: defaults,
+            serverLoad: { PinsResponse(events: [], futures: []) },
+            serverSync: { _, _, _ in }
+        )
+        let view = VStack(alignment: .leading, spacing: 12) {
+            Text("Stored opening line").font(.caption)
+            EventCardView(event: opening, reason: nil)
+            Text("Observed blend").font(.caption)
+            EventCardView(event: observed, reason: nil)
+        }
+        .padding(16)
+        .frame(width: 390, alignment: .leading)
+        .background(.white)
+        .environmentObject(pins)
+        .environment(\.colorScheme, .light)
+
+        let hosted = hostForMeasurement(view, at: .large)
+        let fitting = hosted.sizeThatFits(in: CGSize(width: 390, height: 852))
+        let bounds = CGRect(x: 0, y: 0, width: 390, height: ceil(fitting.height) + 32)
+        let window = UIWindow(frame: bounds)
+        window.rootViewController = hosted
+        hosted.view.frame = bounds
+        window.isHidden = false
+        defer { window.isHidden = true }
+        hosted.view.layoutIfNeeded()
+        try await Task.sleep(nanoseconds: 80_000_000)
+        hosted.view.layoutIfNeeded()
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 3
+        let image = UIGraphicsImageRenderer(bounds: bounds, format: format).image { _ in
+            hosted.view.drawHierarchy(in: bounds, afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "12824-search-opening-and-observed-390pt"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     // MARK: - 2. SearchEventCardAdapter183A.fromTeamScheduleBrief (Size S)
 
     func testTeamScheduleBriefAdapterOrientsHomeAndAwayAndRespectsSettledAndSoccerRules() throws {

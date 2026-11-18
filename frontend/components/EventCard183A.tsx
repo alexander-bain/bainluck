@@ -6,13 +6,14 @@ import type { Event, EventHistoryResponse, FeedEventData, FeedItem } from "@/lib
 import type { TeamGameBrief } from "@/lib/api";
 import { getSportLabel } from "@/lib/sportCategories";
 import { espnTeamLogoByName } from "@/lib/images";
-import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
+import { isStoredOpeningChance, shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { awayIsTheComplement, sportPricesADraw } from "@/lib/drawPricedWinner";
 import { extractThreeWaySample, SOCCER_DRAW_LINE_HEX } from "@/lib/chartScaleRule201";
 import { ABOVE_NINETY_NINE_PERCENT, BELOW_ONE_PERCENT } from "@/lib/probabilityDisplay";
 import { probabilityBarPair } from "@/lib/probabilityBarPair";
 import { HEADLINE_STYLE_199, type HeadlineRowRole199 } from "@/lib/headlineModel199";
 import {
+  darkenTeamColorForCardText,
   lookupTeamColors,
   resolveMatchupTeamColors,
   SLATE_TEAM_FALLBACK,
@@ -502,7 +503,7 @@ export function resolveLiveSummarySideInk(hex: string | null | undefined): strin
   ) {
     return HEADLINE_STYLE_199.slateTeamTextInk;
   }
-  return teamTextColor(hex) ?? hex!;
+  return teamTextColor(hex) ?? darkenTeamColorForCardText(hex, 4.5);
 }
 
 /**
@@ -1147,7 +1148,7 @@ function extractTennisSets(espn: unknown): {
 export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
   const isLive = event.status === "live";
   const isDone = isFinishedStatus(event.status);
-  const probWithheld = shouldWithholdProbability(event);
+  const probWithheld = isStoredOpeningChance(event) || shouldWithholdProbability(event);
 
   const rawHome = probWithheld
     ? null
@@ -1297,7 +1298,7 @@ export function buildUnifiedCardFromFeed(
 ): UnifiedGameCardData {
   const isLive = data.status === "live";
   const isDone = isFinishedStatus(data.status);
-  const probWithheld = shouldWithholdProbability(data);
+  const probWithheld = isStoredOpeningChance(data) || shouldWithholdProbability(data);
 
   const rawHome = probWithheld ? null : (data.current_odds?.home_probability ?? null);
   const rawAway = probWithheld ? null : (data.current_odds?.away_probability ?? null);
@@ -1722,6 +1723,8 @@ export default function EventCard183A({
 
   const awaySummaryInk = resolveLiveSummarySideInk(awayInk);
   const homeSummaryInk = resolveLiveSummarySideInk(homeInk);
+  const awayChanceInk = darkenTeamColorForCardText(awaySummaryInk, 4.5);
+  const homeChanceInk = darkenTeamColorForCardText(homeSummaryInk, 4.5);
   const sideSummaryInk = (side: HeadlineRowRole199 | null | undefined): string =>
     side === "away"
       ? awaySummaryInk
@@ -1907,7 +1910,7 @@ export default function EventCard183A({
             <span className="font-medium text-text-muted">{SUSPENDED_LABEL}</span>
           ) : isDone ? (
             <span className="font-medium text-text-muted">
-              {formatFinishedGameLabel(card.completed_at ?? card.commence_time)}
+              {formatFinishedGameLabel(card.commence_time).replace(/^([A-Za-z]+),\s+/, "$1 ")}
             </span>
           ) : (
             <span className="text-text-muted">
@@ -2093,7 +2096,7 @@ export default function EventCard183A({
                   !isDone &&
                   !awayWithheld &&
                   (isLive ? liveTenths.away != null : awayWholePct != null)
-                    ? awaySummaryInk
+                    ? awayChanceInk
                     : undefined,
               }}
               data-testid="primary-chance-away"
@@ -2280,7 +2283,7 @@ export default function EventCard183A({
               style={{
                 color:
                   !isDone && (isLive ? liveTenths.home != null : homeWholePct != null)
-                    ? homeSummaryInk
+                    ? homeChanceInk
                     : undefined,
               }}
               data-testid="primary-chance-home"

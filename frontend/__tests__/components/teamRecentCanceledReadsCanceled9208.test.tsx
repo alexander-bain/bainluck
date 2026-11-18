@@ -40,6 +40,18 @@ function text(game: TeamGameBrief): string {
     .replace(/\s+/g, " ");
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#9208 — a called-off game on the team page says so", () => {
   it("the specimen brief is the served suspended row with no score", () => {
     expect(SPECIMEN.id).toBe(15319530);

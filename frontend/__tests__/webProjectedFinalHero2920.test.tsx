@@ -105,6 +105,18 @@ function heroStamp(html: string): string | null {
 
 const HERO = "event-hero-projected-final";
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the specimen headline, before play", () => {
   it("prints the Proj. column and names each number on its team row", () => {
     const html = page(specimen());

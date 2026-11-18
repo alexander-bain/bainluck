@@ -12,8 +12,8 @@ from app.utils.event_rails import (
     upcoming_rail_condition,
 )
 from app.utils.event_twin_fold import fold_twin_events, team_name_fold_key
-from app.utils.aggregation import compute_aggregate_probability
-from app.utils.draw_priced_winner import printable_away, sport_prices_a_draw
+from app.utils.aggregation import compute_aggregate_probability_tiered
+from app.utils.draw_priced_winner import sport_prices_a_draw
 from app.utils.game_state import authority_stoppage_label
 from app.utils.lifecycle import served_event_status
 from app.utils.market_team_sport import (
@@ -22,11 +22,17 @@ from app.utils.market_team_sport import (
     market_event_slug,
     sport_key_llm_category,
 )
+from app.utils.prematch_reading import BOOKS_SOURCE
 from app.utils.start_placeholder import start_is_tbd
 from app.utils.settled_prematch_batch import settled_prematch_odds_by_event
 from app.utils.season_variant_team import (
     choose_parent_league_row,
     wants_parent_league_row,
+)
+from app.utils.source_mark import (
+    blended_source_marks,
+    no_source_mark,
+    quote_source_mark,
 )
 from app.utils.sport_keys import (
     league_family_identity,
@@ -34,9 +40,10 @@ from app.utils.sport_keys import (
     sport_display_name,
 )
 from app.utils.standings_shape import public_standings
+from app.utils.source_mark import quote_source_mark, settled_source_mark
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, or_, and_, func
+from sqlalchemy import select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
@@ -868,27 +875,6 @@ async def _folded_briefs(
     ]
 
 
-def _away_three_way_price(event: Event, status: str | None, now: datetime) -> float | None:
-    """The away club's own win price on a sport that prices a draw (#11541).
-
-    The blend carries only the home side, so this reads the stored away leg,
-    which #1011 de-vigs over the whole board until kickoff: the club's three-way
-    price, with the draw left out. It is served only before kickoff, because
-    after it the leg is the last pre-match consensus and not a live chance; and
-    only while its pair still leaves a draw, because a pair summing to one is
-    `1 - home` again under another name (`printable_away`). Otherwise None: a
-    card with no number is honest, and one that counts the draw as a win is not.
-    """
-    commence = event.commence_time
-    if status != "scheduled" or commence is None or commence <= now:
-        return None
-    home, away = event.opening_home_probability, event.opening_away_probability
-    if home is None or away is None:
-        return None
-    sport = event.sport
-    return printable_away(float(away), float(home), sport.key if sport else None)
-
-
 def _format_event_brief(
     event: Event, team: Team, club_ids=None, club_names=None, prematch=None
 ) -> dict:
@@ -930,8 +916,16 @@ def _format_event_brief(
     now = datetime.now(timezone.utc)
     status = served_event_status(event.status, event.commence_time, now)
     wp = None
+    away_unavailable = not is_home and sport_prices_a_draw(sport.key if sport else None)
+    current_mark = no_source_mark(
+        "away_unavailable" if away_unavailable else "no_probability"
+    )
     if isinstance(event.win_probability_sources, (dict, type(None))):
-        wp = compute_aggregate_probability(event)
+        source_inputs = []
+        source_method = []
+        wp, _ = compute_aggregate_probability_tiered(
+            event, source_inputs=source_inputs, source_method=source_method
+        )
         # The blend states the HOME side's probability; this brief is
         # team-relative ("we had them at 72%"), so on a two-way sport an away
         # row is the complement.
@@ -942,10 +936,18 @@ def _format_event_brief(
         # Newcastle at 18% and Arsenal's own price was 59%. This comment used to
         # call every sport two-way normalised (measured 2026-09-11); #1011 made
         # soccer three-way five days later.
-        if not is_home:
-            if sport_prices_a_draw(sport.key if sport else None):
-                wp = _away_three_way_price(event, status, now)
-            elif wp is not None:
+        if away_unavailable:
+            # #12824: the shared blend has no admitted current away leg.
+            wp = None
+        elif wp is not None:
+            home_mark, away_mark = blended_source_marks(
+                event,
+                source_inputs,
+                method=source_method[0] if source_method else None,
+                away_available=not is_home,
+            )
+            current_mark = home_mark if is_home else away_mark
+            if not is_home:
                 wp = 1.0 - wp
 
     # L2-174 Item 3e — the recents expectation grammar ("we had them at 72%",
@@ -954,6 +956,8 @@ def _format_event_brief(
     # gates silently on the missing field. The team-relative OPENING probability is
     # exactly "what we had them at" before the game; completed_at dates the result.
     pre = event.opening_home_probability if is_home else event.opening_away_probability
+    pregame_input = pre
+    pregame_source = BOOKS_SOURCE
 
     # #10589 — but on a SETTLED row the page beside it prints a different
     # number. Since #8315 the game page's "Pre-match 44% – 56%" is the ladder
@@ -973,6 +977,24 @@ def _format_event_brief(
         pct = prematch["home_rendered_percent" if is_home else "away_rendered_percent"]
         if pct is not None:
             pre = pct / 100
+            pregame_source = prematch.get("source")
+            pregame_input = prematch.get(
+                "home_probability" if is_home else "away_probability"
+            )
+    pregame_mark = (
+        quote_source_mark(
+            [
+                {
+                    "key": (
+                        "betting" if pregame_source == BOOKS_SOURCE else pregame_source
+                    ),
+                    "probability": pregame_input,
+                }
+            ]
+        )
+        if pre is not None
+        else no_source_mark("no_probability")
+    )
 
     return {
         "id": event.id,
@@ -991,7 +1013,9 @@ def _format_event_brief(
         "is_home": is_home,
         "opponent": opponent,
         "win_probability": round(wp, 3) if wp is not None else None,
+        "source_mark": current_mark,
         "pregame_win_probability": round(float(pre), 3) if pre is not None else None,
+        "pregame_source_mark": pregame_mark,
         "completed_at": event.completed_at.isoformat() if event.completed_at else None,
         # #9208 — ESPN's word for a game called off ("Canceled", "Postponed"),
         # on a suspended row only. Orioles @ Yankees 15319530 read "Canceled"
@@ -1414,12 +1438,20 @@ async def _get_championship_path(
             )
             avg_prob = 1.0
 
+        source_mark = quote_source_mark(
+            (
+                {"key": getattr(market, "source", None), "probability": probability}
+                for probability, _, market in deduped
+            ),
+            method=f"Bain Luck blend · average of {len(deduped)} prices before rounding",
+        )
         path.append({
             "tier": tier,
             "label": _championship_tier_label(tier, team_sport_key, best_market.name),
             "market_name": best_market.name,
             "market_id": best_market.id,
             "probability": round(avg_prob, 4),
+            "source_mark": source_mark,
             "rank": best_outcome.rank,
             "movement": float(best_outcome.probability_change_24h) if best_outcome.probability_change_24h else None,
             # Season this number describes (Queue #242 Item 1). Every market that
@@ -1557,6 +1589,9 @@ def _stamp_grid_states(
                     break
         if state:
             step["state"] = state
+            step["source_mark"] = settled_source_mark(
+                None, "Won" if state == "won" else "Eliminated"
+            )
 
     for item in futures_items:
         state = _by_market(item.get("market_id"))

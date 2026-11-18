@@ -61,6 +61,7 @@ export interface Watcher {
 
 export interface WatcherList {
   reviewedAt: string;
+  sinceAt: string;
   scheduleSource: { label: string; href: string };
   alertsHref: string;
   watchers: Watcher[];
@@ -171,17 +172,21 @@ export function watcherProblem(raw: unknown): string | null {
 export function loadWatchers(raw: unknown = WATCHERS): WatcherList | null {
   const d = raw as {
     reviewed_at?: unknown;
+    since_at?: unknown;
     schedule_source?: { label?: unknown; href?: unknown };
     alerts_href?: unknown;
     watchers?: unknown[];
   } | null;
   if (!d || typeof d.reviewed_at !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(d.reviewed_at)) return null;
+  const sinceAt =
+    typeof d.since_at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.since_at) ? d.since_at : d.reviewed_at;
   if (typeof d.schedule_source?.label !== "string" || typeof d.schedule_source?.href !== "string") return null;
   if (typeof d.alerts_href !== "string" || !d.alerts_href.startsWith("https://")) return null;
   if (!Array.isArray(d.watchers) || d.watchers.length === 0) return null;
   if (d.watchers.some((w) => watcherProblem(w) !== null)) return null;
   return {
     reviewedAt: d.reviewed_at,
+    sinceAt,
     scheduleSource: { label: d.schedule_source.label, href: d.schedule_source.href },
     alertsHref: d.alerts_href,
     watchers: (d.watchers as Record<string, unknown>[]).map((w) => {

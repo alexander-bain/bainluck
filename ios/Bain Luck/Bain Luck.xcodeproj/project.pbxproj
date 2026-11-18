@@ -169,6 +169,7 @@
 				WatchDiscoveryAPIClient.swift,
 				WatchPinsModels12640.swift,
 				WatchSelectedGameModels.swift,
+				WatchMatchupReading217.swift,
 			);
 			target = A7C0000000000000000000E1 /* BainLuckTests */;
 		};
@@ -193,6 +194,8 @@
 				WatchSavedComplicationContent.swift,
 				WatchComplicationSnapshot.swift,
 				WatchLaunchRoute.swift,
+				WatchMatchupComplication217.swift,
+				WatchMatchupReading217.swift,
 			);
 			target = A7C0000000000000000000D1 /* BainLuckComplication */;
 		};
@@ -209,6 +212,7 @@
 				Utilities/DrawPricedWinner.swift,
 				Utilities/GameActivityAttributes.swift,
 				Utilities/GameActivitySnapshot.swift,
+				Utilities/GameActivityCrests.swift,
 				Utilities/EventHeadlineTenths10090.swift,
 				Utilities/GameContinuation.swift,
 				Utilities/HeadlineStyleTable199.swift,

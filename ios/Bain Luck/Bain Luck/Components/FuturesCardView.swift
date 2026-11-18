@@ -8,6 +8,33 @@ struct FuturesCardView: View {
     @State private var isHovered = false
     #endif
 
+    /// #11920 / Ruling 141: collection & list cards never print raw `"both"` or venue names
+    /// (`"Kalshi"` / `"Polymarket"`) on the card face.
+    /// - When the server sends `source_mark` (`#12581`), the `ⓘ` ring beside the probability
+    ///   replaces the header badge and opens `"Where this number comes from"` on tap.
+    /// - While `source_mark` is absent, multi-source markets (`sourceCount > 1` or `source == "both"`)
+    ///   say the source count in words (`"2 sources"`, matching web `FeedCard.tsx`), and non-venue
+    ///   model/sportsbook labels still resolve through `SourceLabels.label(for:)`.
+    static func cardFaceSourceBadge(for futures: FeedFuturesData) -> String? {
+        if futures.sourceMark?.draws == true {
+            return nil
+        }
+        if futures.topOutcomes?.contains(where: { $0.sourceMark?.draws == true }) == true {
+            return nil
+        }
+        if let count = futures.sourceCount, count > 1 {
+            return "\(count) sources"
+        }
+        let raw = futures.source?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if raw == "both" {
+            return "2 sources"
+        }
+        if raw == "kalshi" || raw == "polymarket" {
+            return nil
+        }
+        return SourceLabels.label(for: futures.source)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
@@ -24,12 +51,8 @@ struct FuturesCardView: View {
                 SignalBarsView(tier: futures.confidenceTier)
                 Spacer()
                 PinButton(type: "future", id: futures.id, compact: true)
-                if let count = futures.sourceCount, count > 1 {
-                    Text("\(count) sources")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                } else if let source = SourceLabels.label(for: futures.source) {
-                    Text(source)
+                if let badge = Self.cardFaceSourceBadge(for: futures) {
+                    Text(badge)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -39,13 +62,26 @@ struct FuturesCardView: View {
             Text(futures.name)
                 .font(.subheadline)
                 .fontWeight(.medium)
-                .lineLimit(2)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
 
-            // Top outcomes
-            if let outcomes = futures.topOutcomes?.prefix(3) {
+            // Top outcomes (Direction 228 #12885: numerical scales list ascending without #rank)
+            if let allOutcomes = futures.topOutcomes, !allOutcomes.isEmpty {
+                let numerical = NumericalMarketScaleOrder228.orderedSlice(
+                    allOutcomes,
+                    limit: 3,
+                    label: \.name,
+                    probability: \.probability,
+                    explicitSortKey: \.sortKey,
+                    marketType: futures.marketType,
+                    totalOutcomeCount: futures.outcomeCount ?? allOutcomes.count,
+                    isCumulative: futures.mutuallyExclusive == false
+                )
+                let shown = numerical?.map(\.element) ?? Array(allOutcomes.prefix(3))
+                let showsRank = numerical == nil
                 VStack(spacing: 4) {
-                    ForEach(Array(outcomes)) { outcome in
-                        outcomeRow(outcome)
+                    ForEach(shown) { outcome in
+                        outcomeRow(outcome, showsRank: showsRank)
                     }
                 }
             }
@@ -68,9 +104,9 @@ struct FuturesCardView: View {
         #endif
     }
 
-    private func outcomeRow(_ outcome: FeedFuturesOutcome) -> some View {
+    private func outcomeRow(_ outcome: FeedFuturesOutcome, showsRank: Bool = true) -> some View {
         HStack(spacing: 8) {
-            if let rank = outcome.rank {
+            if showsRank, let rank = outcome.rank {
                 Text("#\(rank)")
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.tertiary)
@@ -82,11 +118,16 @@ struct FuturesCardView: View {
             Spacer()
             movementIndicator(outcome.movement)
             if let prob = outcome.probability {
-                Text(formatProbability(prob, renderedPercent: outcome.renderedPercent))
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
-                    .foregroundStyle(.primary)
+                HStack(spacing: 2) {
+                    Text(formatProbability(prob, renderedPercent: outcome.renderedPercent))
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
+                        .foregroundStyle(.primary)
+                    if let mark = SourceMarkButton(outcome.sourceMark ?? futures.sourceMark, number: prob, numberSize: 12, compactRow: true) {
+                        mark
+                    }
+                }
             }
         }
         .padding(.vertical, 2)

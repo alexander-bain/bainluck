@@ -104,12 +104,14 @@ const HISTORY = {
   },
 };
 
+let mockEvent: typeof EVENT & { hero_probability_source?: string } = EVENT;
+
 jest.mock("swr", () => ({
   __esModule: true,
   default: (key: string | null) => {
     if (key === null) return { data: undefined, error: undefined };
     return {
-      data: String(key).endsWith("/history") ? HISTORY : EVENT,
+      data: String(key).endsWith("/history") ? HISTORY : mockEvent,
       error: undefined,
     };
   },
@@ -135,13 +137,15 @@ jest.mock("next/link", () => ({
 
 import ModelsPage from "@/app/events/[id]/models/page";
 
-function markup(): string {
+function markup(event: typeof mockEvent = EVENT): string {
+  mockEvent = event;
   jest.useFakeTimers().setSystemTime(NOW);
   try {
     return renderToStaticMarkup(
       React.createElement(ModelsPage, { params: { id: "15310077" } }),
     );
   } finally {
+    mockEvent = EVENT;
     jest.useRealTimers();
   }
 }
@@ -185,6 +189,15 @@ describe("#4970 — the census first, so no assertion below can pass vacuously",
     expect(html).toContain("99.0%"); // kalshi
     expect(html).toContain("59.9%"); // espn — the stale one
     expect(html).toContain("Chicago Cubs");
+  });
+
+  it("keeps independently observed sources when the sportsbook value is a stored opening", () => {
+    const html = markup({ ...EVENT, hero_probability_source: "opening" });
+    expect(cardSources(html)).toContain("betting");
+    expect(html).not.toContain("99.2%");
+    expect(html).toContain("99.0%");
+    expect(html).toContain("59.9%");
+    expect(agesBySource(html).betting).toBeUndefined();
   });
 });
 

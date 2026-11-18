@@ -50,7 +50,7 @@ export default function CompactMarketMap({
         </span>
       </div>
       <p className="text-xs text-text-secondary mt-1">{subtitle}</p>
-      <div className="grid sm:grid-cols-2 gap-4 sm:gap-8">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-1 gap-4 sm:gap-8 lg:gap-4">
         <div>
           {carriesRail && (
             <div className="mt-4">

@@ -375,7 +375,7 @@ struct EventSportHeadlineCard12472: View {
                     }
                 }
             )
-            .frame(idealWidth: 280, maxWidth: 300)
+            .frame(minWidth: 320, idealWidth: 340, maxWidth: 358)
             #if os(iOS)
             .presentationCompactAdaptation(.popover)
             #endif
@@ -478,6 +478,7 @@ struct EventSportHeadlineCard12472: View {
 
     private func competitorIdentityStack(_ row: EventSportHeadlines12472.CompetitorRow) -> some View {
         let isLoser = row.won == false
+        let reservesWinnerTick = model.rows.contains { $0.won == true }
         let nameInk: Color = {
             if row.role == .draw && row.won != true {
                 return HeadlineStyleTable199.drawInk
@@ -485,14 +486,25 @@ struct EventSportHeadlineCard12472: View {
             return isLoser ? HeadlineStyleTable199.loserInk : HeadlineStyleTable199.primaryNumberInk
         }()
         return VStack(alignment: .leading, spacing: stacksRowsVertically ? 2 : 1.5) {
-            Text(row.shortName)
-                .font(HeadlineStyleTable199.names(.page, isLoser: isLoser, scaledSize: sharedTeamNameFontSize))
-                .foregroundStyle(nameInk)
-                .lineLimit(1)
-                .minimumScaleFactor(stacksRowsVertically ? 0.72 : 0.80)
-                .truncationMode(.tail)
-                .allowsTightening(true)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(row.shortName)
+                    .font(HeadlineStyleTable199.names(.page, isLoser: isLoser, scaledSize: sharedTeamNameFontSize))
+                    .foregroundStyle(nameInk)
+                    .lineLimit(1)
+                    .minimumScaleFactor(stacksRowsVertically ? 0.72 : 0.80)
+                    .truncationMode(.tail)
+                    .allowsTightening(true)
+                    .fixedSize(horizontal: false, vertical: true)
+                if reservesWinnerTick {
+                    Text("\u{2713}")
+                        .font(HeadlineStyleTable199.secondNumbers(.page, prominent: true, scaledSize: min(sharedTeamNameFontSize, 20) * 0.85))
+                        .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .opacity(row.won == true ? 1 : 0)
+                        .accessibilityHidden(true)
+                }
+            }
             if let record = row.record, !record.isEmpty {
                 Text(record)
                     .font(HeadlineStyleTable199.quietText(.page, monospacedDigits: true, scaledSize: sharedRecordFontSize))
@@ -632,37 +644,27 @@ struct EventSportHeadlineCard12472: View {
             }
 
         case .finalResult:
-            if row.won == true {
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    if !text.isEmpty {
-                        Text(text)
-                            .font(HeadlineStyleTable199.secondNumbers(.page, prominent: true, scaledSize: effectiveSecondProminentSize))
-                            .foregroundStyle(HeadlineStyleTable199.primaryNumberInk)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.35)
-                            .allowsTightening(true)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Text("\u{2713}")
-                        .font(HeadlineStyleTable199.secondNumbers(.page, prominent: true, scaledSize: effectiveSecondProminentSize * 0.82))
-                        .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.35)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .accessibilityLabel(text.isEmpty ? "Won" : "Final \(text), won")
-            } else if text.isEmpty {
-                Color.clear.frame(height: 1)
+            if text.isEmpty {
+                Color.clear
+                    .frame(height: 1)
+                    .accessibilityLabel(row.won == true ? "Won" : "")
             } else {
-                let ink = row.role == .draw ? HeadlineStyleTable199.drawInk : (row.won == false ? HeadlineStyleTable199.loserInk : HeadlineStyleTable199.primaryNumberInk)
+                let prominent = row.won == true
+                let ink = row.role == .draw
+                    ? HeadlineStyleTable199.drawInk
+                    : (row.won == false ? HeadlineStyleTable199.loserInk : HeadlineStyleTable199.primaryNumberInk)
                 Text(text)
-                    .font(HeadlineStyleTable199.secondNumbers(.page, prominent: false, scaledSize: effectiveSecondRegularSize))
+                    .font(HeadlineStyleTable199.secondNumbers(
+                        .page,
+                        prominent: prominent,
+                        scaledSize: prominent ? effectiveSecondProminentSize : effectiveSecondRegularSize
+                    ))
                     .foregroundStyle(ink)
                     .lineLimit(1)
                     .minimumScaleFactor(0.35)
                     .allowsTightening(true)
                     .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityLabel("Final \(text)")
+                    .accessibilityLabel(prominent ? "Final \(text), won" : "Final \(text)")
             }
         }
     }

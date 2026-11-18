@@ -35,8 +35,10 @@ from app.utils.aggregation import (
     compute_aggregate_probability,
     stamp_source_reading,
 )
+from app.utils.hero_probability import resolve_hero
 from app.utils.probability_eligibility import ineligible_record, is_refused
 from app.utils.win_probability import (
+    compute_statistical_win_prob,
     priorless_model_defers_to_market,
     retire_priorless_model_reading,
 )
@@ -204,7 +206,12 @@ NHL = "icehockey_nhl"
 
 
 async def _run_poll(
-    *, sources, opening_home_probability=None, opening_home_spread=None
+    *,
+    sources,
+    opening_home_probability=None,
+    opening_home_spread=None,
+    game_clock: str | None = None,
+    period: str | None = None,
 ):
     """Seed one live, ESPN-less NHL row at 0–0; run the REAL ``_poll_all_odds``."""
     from app.models.models import (
@@ -245,6 +252,8 @@ async def _run_poll(
         status="live",
         home_score=0,
         away_score=0,
+        game_clock=game_clock,
+        period=period,
         opening_home_probability=opening_home_probability,
         opening_home_spread=opening_home_spread,
         win_probability_sources=sources,
@@ -363,6 +372,49 @@ async def test_poll_a_model_with_a_prior_still_votes_beside_kalshi_8522():
     assert result["stat_model_from_poll"] == 1
     assert sources["stat_model"]["value"] > 0.6
     assert snaps == 1
+
+
+@pytest.mark.asyncio
+async def test_scoreless_poll_serves_the_live_model_result_instead_of_the_opening_line():
+    from app.models.models import Event, WinProbSnapshot
+
+    opening = 0.74
+    clock = "10:00"
+    period = "3rd Period"
+    calculated = compute_statistical_win_prob(
+        home_score=0,
+        away_score=0,
+        clock=clock,
+        period=period,
+        sport_key=NHL,
+        opening_home_probability=opening,
+    )
+    assert calculated is not None
+    expected = round(calculated, 4)
+    assert 0.5 < expected < opening
+
+    result, engine, event_id, _ = await _run_poll(
+        sources={}, opening_home_probability=opening, game_clock=clock, period=period
+    )
+    assert result["stat_model_from_poll"] == 1
+    with Session(engine) as fresh:
+        event = fresh.get(Event, event_id)
+        assert event is not None
+        assert float(event.opening_home_probability) == opening
+        snapshot = fresh.execute(
+            select(WinProbSnapshot).where(
+                WinProbSnapshot.event_id == event_id,
+                WinProbSnapshot.source == "stat_model",
+            )
+        ).scalar_one()
+        reading = resolve_hero(event)
+        assert reading is not None
+        assert reading.source == "blend"
+        assert (
+            event.win_probability_sources["stat_model"]["value"],
+            float(snapshot.home_win_probability),
+            reading.home_probability,
+        ) == (expected, expected, expected)
 
 
 @pytest.mark.asyncio

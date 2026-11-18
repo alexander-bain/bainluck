@@ -123,6 +123,12 @@ private struct GameActivityReading {
         default: return nil
         }
     }
+    /// The team's crest, fetched by the app while the game page was open
+    /// (`GameActivityCrests`); nil draws today's short name or badge.
+    func crest(_ side: Side) -> UIImage? {
+        guard matches else { return nil }
+        return GameActivityCrests.image(eventID: eventID, home: side == .home)
+    }
     /// The served badge, else the app's own badge rule for the name.
     func badge(_ side: Side) -> String {
         (side == .home ? snapshot.homeAbbreviation : snapshot.awayAbbreviation)
@@ -404,6 +410,9 @@ private struct GameActivityTeamRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            if let crest = reading.crest(side) {
+                GameActivityCrest(image: crest, size: 26)
+            }
             // #199 — the page's short name, once ("Patriots"); the islands keep the badge.
             Text(reading.shortName(side))
                 .font(.headline.weight(.bold))
@@ -531,6 +540,38 @@ private struct GameActivitySplitBar: View {
     }
 }
 
+/// A team crest on a white disc so dark crests read on the Lock Screen's
+/// material and the island's black.
+private struct GameActivityCrest: View {
+    let image: UIImage
+    let size: CGFloat
+
+    var body: some View {
+        Image(uiImage: image)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .padding(size * 0.12)
+            .frame(width: size, height: size)
+            .background(Circle().fill(Color.white))
+            .accessibilityHidden(true)
+    }
+}
+
+/// The compact island's team mark: the crest when the app has it, else the badge.
+private struct GameActivityCrestOrBadge: View {
+    let reading: GameActivityReading
+    let side: GameActivityReading.Side
+
+    var body: some View {
+        if let crest = reading.crest(side) {
+            GameActivityCrest(image: crest, size: 18)
+        } else {
+            Text(reading.badge(side))
+        }
+    }
+}
+
 @available(iOS 17.0, *)
 private struct GameActivityFooter: View {
     let reading: GameActivityReading
@@ -557,9 +598,15 @@ private struct GameActivityExpandedSide: View {
     var body: some View {
         VStack(alignment: side == .away ? .leading : .trailing, spacing: 0) {
             HStack(spacing: 5) {
-                if side == .away { dot }
-                Text(reading.badge(side)).font(.subheadline.weight(.heavy))
-                if side == .home { dot }
+                if let crest = reading.crest(side) {
+                    if side == .home { Text(reading.badge(side)).font(.subheadline.weight(.heavy)) }
+                    GameActivityCrest(image: crest, size: 24)
+                    if side == .away { Text(reading.badge(side)).font(.subheadline.weight(.heavy)) }
+                } else {
+                    if side == .away { dot }
+                    Text(reading.badge(side)).font(.subheadline.weight(.heavy))
+                    if side == .home { dot }
+                }
             }
             // #199 — the score is a second number: smaller than Now below it.
             // Before the game there is no score to show.
@@ -646,7 +693,7 @@ private struct GameActivityCompactLeading: View {
             } else if let now = reading.nowText(reading.lead) {
                 // #199 — the leader and its chance now, in the headline's words.
                 HStack(spacing: 4) {
-                    Text(reading.badge(reading.lead))
+                    GameActivityCrestOrBadge(reading: reading, side: reading.lead)
                     Text(now)
                         .foregroundStyle(reading.isStale ? AnyShapeStyle(.secondary)
                                                          : AnyShapeStyle(reading.color(reading.lead, onDark: true)))
@@ -691,7 +738,7 @@ private struct GameActivityCompactTrailing: View {
                     Text(now)
                         .foregroundStyle(reading.isStale ? AnyShapeStyle(.secondary)
                                                          : AnyShapeStyle(reading.color(reading.trail, onDark: true)))
-                    Text(reading.badge(reading.trail))
+                    GameActivityCrestOrBadge(reading: reading, side: reading.trail)
                 }
             } else if reading.pair != nil, let lead = reading.score(reading.lead),
                       let trail = reading.score(reading.lead == .home ? .away : .home) {

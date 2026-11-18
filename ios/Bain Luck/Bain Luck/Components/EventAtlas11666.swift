@@ -275,7 +275,8 @@ nonisolated struct EventAtlasDetailsSheetModel11666: Identifiable, Equatable, Se
                 opening: event.openingOdds
             )
             primaryValue = badge.winnerLabel
-        } else if let odds = event.currentOdds,
+        } else if !(event.status == "live" && event.heroProbabilitySource == OpeningLineHero.openingSource),
+                  let odds = event.currentOdds,
                   case let shown = OpeningLineHero.resolve(odds, for: event),
                   let pair = DrawPricedWinner.printablePair(
                     away: shown.awayProbability,

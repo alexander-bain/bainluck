@@ -575,8 +575,8 @@ struct EventDetailView: View {
                                       pairedAwayLabel9483: LivePriceActivity.displayedLabels(in: vm.headline(event)).away,
                                      // #10456 — the served winner pair, both
                                      // sides: admission for the balance ink.
-                                     servedHomeProbability: event.currentOdds?.homeProbability,
-                                     servedAwayProbability: event.currentOdds?.awayProbability,
+                                     servedHomeProbability: event.heroProbabilitySource == OpeningLineHero.openingSource ? nil : event.currentOdds?.homeProbability,
+                                     servedAwayProbability: event.heroProbabilitySource == OpeningLineHero.openingSource ? nil : event.currentOdds?.awayProbability,
                                      forcedDomain: sharedChartDomain,
                                      legacyDataDomain: legacyChartDataDomain,
                                      pageAxisPlotWidth: pageAxisPlotWidth,
@@ -667,6 +667,8 @@ struct EventDetailView: View {
                     GameActivityControl(snapshot: reading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 4)
+                        // The Live Activity's crests, fetched while the page is open.
+                        .task(id: event.id) { await Self.prefetchActivityCrests(event) }
                 }
                 #endif
                 // #9483 — the NFL cards sit directly under the paired chart:
@@ -757,7 +759,8 @@ struct EventDetailView: View {
                         homeColor: teamColors(event).home,
                         awayColor: teamColors(event).away,
                         periodMarkers: vm.history?.periodMarkers,
-                        sportKey: event.sport
+                        sportKey: event.sport,
+                        pageProjectedPair: pageProjectedPointsPair(event)
                     )
                     .padding(16)
                     .background(Color.cardBackground)
@@ -962,6 +965,7 @@ struct EventDetailView: View {
                 // Series Probability (playoff series context)
                 if let tags = event.eventTags,
                    (tags.contains("competitive_structure:series") || tags.contains("competitive_structure:best_of_7")),
+                   event.heroProbabilitySource != OpeningLineHero.openingSource,
                    let homeProb = event.currentOdds?.homeProbability {
                     SeriesProbabilityView(
                         homeWinProb: homeProb,
@@ -1212,7 +1216,7 @@ struct EventDetailView: View {
                     showUpdateStream = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showProbabilityDetails = true }
                 })
-                    .frame(idealWidth: 280, maxWidth: 300)
+                    .frame(minWidth: 320, idealWidth: 340, maxWidth: 358)
                     #if os(iOS)
                     .presentationCompactAdaptation(.popover)
                     #endif
@@ -1794,6 +1798,24 @@ struct EventDetailView: View {
             asOf: vm.historyArrivedAt)
     }
 
+    /// #12889 / #10573 — the page's own whole-number projected pair (`111` and
+    /// `114`), read through `projectionText`'s single gate so the Projected Final
+    /// Points card never prints one sportsbook's half-point line when the page
+    /// headline prints the whole-number pair.
+    func pageProjectedPointsPair(_ event: EventDetail) -> (away: Int, home: Int)? {
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        return EventDetailView.projectionText(
+            event,
+            ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
+            ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
+            hasScore: hasScore,
+            now: displayNow()
+        )
+        .map(Self.projectionFigure9483)
+        .flatMap(Self.projectedPair11285)
+    }
+
     private func nflNames(_ event: EventDetail) -> (away: String, home: String) {
         TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
     }
@@ -2168,6 +2190,7 @@ struct EventDetailView: View {
         guard !EventState.showsVenueSettledVerdict(
                 event.status, venueSettled: event.venueSettled,
                 commenceTime: event.commenceTime?.asDate),
+              event.heroProbabilitySource != OpeningLineHero.openingSource,
               let odds = event.currentOdds,
               case let shown = OpeningLineHero.resolve(odds, for: event),
               !shown.isOpeningLine,

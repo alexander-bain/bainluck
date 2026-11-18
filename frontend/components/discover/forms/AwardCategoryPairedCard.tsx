@@ -45,69 +45,63 @@ export function cleanPairedCardSubtitle(subtitle: string | null | undefined): st
 function PairedArtThumb({
   entry,
   kidSurface = false,
+  reservesSlotWidthWhenMissing = false,
+  fallbackArtKind = "tmdb_poster",
 }: {
   entry: PairedSubjectEntry;
   kidSurface?: boolean;
+  reservesSlotWidthWhenMissing?: boolean;
+  fallbackArtKind?: string;
 }) {
   const safeUrl = resolveKidSafeVisualArt(entry, { kidSurface });
-  const kind = entry.art?.kind ?? "tmdb_poster";
-  const initials = entry.subject
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0] || "")
-    .join("")
-    .toUpperCase();
+  const kind = entry.art?.kind ?? fallbackArtKind;
+
+  if (!safeUrl) {
+    if (!reservesSlotWidthWhenMissing) return null;
+    const widthClass =
+      kind === "espn_team_logo"
+        ? "w-9"
+        : kind === "tmdb_headshot"
+          ? "w-11"
+          : "w-10";
+    return (
+      <span
+        aria-hidden="true"
+        data-testid="award-paired-art-spacer"
+        className={`inline-block h-1 ${widthClass} shrink-0`}
+      />
+    );
+  }
 
   if (kind === "espn_team_logo") {
-    return safeUrl ? (
+    return (
       <img
         src={safeUrl}
         alt={entry.subject}
         data-testid="award-paired-art-logo"
         className="h-9 w-9 shrink-0 rounded-full border border-surface-border bg-surface-elevated object-contain p-0.5"
       />
-    ) : (
-      <div
-        data-testid="award-paired-art-fallback"
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-xs font-bold text-text-secondary"
-      >
-        {initials}
-      </div>
     );
   }
 
   if (kind === "tmdb_headshot") {
-    return safeUrl ? (
+    return (
       <img
         src={safeUrl}
         alt={entry.subject}
         data-testid="award-paired-art-headshot"
         className="h-11 w-11 shrink-0 rounded-full border border-surface-border bg-surface-elevated object-cover"
       />
-    ) : (
-      <div
-        data-testid="award-paired-art-fallback"
-        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-xs font-bold text-text-secondary"
-      >
-        {initials}
-      </div>
     );
   }
 
-  return safeUrl ? (
+  return (
     <img
       src={safeUrl}
       alt={entry.subject}
       data-testid="award-paired-art-poster"
       className="h-14 w-10 shrink-0 rounded-md border border-surface-border bg-surface-elevated object-cover"
     />
-  ) : (
-    <div
-      data-testid="award-paired-art-fallback"
-      className="flex h-14 w-10 shrink-0 items-center justify-center rounded-md border border-surface-border bg-surface-elevated text-xs font-bold text-text-secondary"
-    >
-      {initials}
-    </div>
   );
 }
 
@@ -116,11 +110,15 @@ function PairedDualBarRow({
   set,
   idx,
   kidSurface,
+  reservesArtSlotWidth,
+  fallbackArtKind,
 }: {
   entry: PairedSubjectEntry;
   set: PairedMetricSet;
   idx: number;
   kidSurface: boolean;
+  reservesArtSlotWidth: boolean;
+  fallbackArtKind: string;
 }) {
   const s1 = formatStage1Display(entry, set);
   const s2 = formatStage2Display(entry, set);
@@ -130,7 +128,12 @@ function PairedDualBarRow({
       data-testid={`award-paired-row-${idx + 1}`}
       className="flex items-center gap-3 py-2.5"
     >
-      <PairedArtThumb entry={entry} kidSurface={kidSurface} />
+      <PairedArtThumb
+        entry={entry}
+        kidSurface={kidSurface}
+        reservesSlotWidthWhenMissing={reservesArtSlotWidth}
+        fallbackArtKind={fallbackArtKind}
+      />
       <div className="min-w-0 flex-1">
         <div className="min-w-0">
           <span className="block truncate text-sm font-semibold text-text-primary">
@@ -246,23 +249,37 @@ export interface AwardCategoryPairedCardProps {
   set: PairedMetricSet;
   surface?: "discover" | "collection" | "category";
   defaultExpanded?: boolean;
+  initialLimit?: number;
   kidSurface?: boolean;
   currentMarketId?: number | null;
+  showHeader?: boolean;
 }
 
 export function AwardCategoryPairedCard({
   set,
   surface = "discover",
   defaultExpanded = false,
+  initialLimit = 5,
   kidSurface = false,
   currentMarketId = null,
+  showHeader,
 }: AwardCategoryPairedCardProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const sorted = sortPairedEntries(set.entries);
-  const initialLimit = 5;
   const visibleRows = expanded ? sorted : sorted.slice(0, initialLimit);
   const hiddenCount = Math.max(0, sorted.length - initialLimit);
   const subtitle = cleanPairedCardSubtitle(set.subtitle);
+  const suppressedByPayload = Boolean(
+    (set as PairedMetricSet & { suppress_card_header_in_section?: boolean })
+      .suppress_card_header_in_section,
+  );
+  const effectiveShowHeader = showHeader ?? !suppressedByPayload;
+  const listHasAnyArt = visibleRows.some((e) =>
+    Boolean(resolveKidSafeVisualArt(e, { kidSurface })),
+  );
+  const listArtKind =
+    visibleRows.find((e) => Boolean(resolveKidSafeVisualArt(e, { kidSurface })))?.art
+      ?.kind ?? "tmdb_poster";
 
   const stage1Id = set.stage_1_market?.id ?? null;
   const stage2Id = set.stage_2_market?.id ?? null;
@@ -278,28 +295,36 @@ export function AwardCategoryPairedCard({
       data-paired-surface={surface}
       className="rounded-2xl border border-surface-border bg-surface-card p-4 shadow-sm"
     >
-      <div className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-        {set.kicker}
-      </div>
+      {effectiveShowHeader && (
+        <>
+          <div className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+            {set.kicker}
+          </div>
 
-      {surface === "category" ? (
-        <h2 className="mt-1 text-lg font-semibold leading-snug text-text-primary">
-          {set.title}
-        </h2>
-      ) : (
-        <h3 className="mt-1 text-lg font-semibold leading-snug text-text-primary">
-          <Link href={primaryHref} className="hover:underline">
-            {set.title}
-          </Link>
-        </h3>
-      )}
+          {surface === "category" ? (
+            <h2 className="mt-1 text-lg font-semibold leading-snug text-text-primary">
+              {set.title}
+            </h2>
+          ) : (
+            <h3 className="mt-1 text-lg font-semibold leading-snug text-text-primary">
+              <Link href={primaryHref} className="hover:underline">
+                {set.title}
+              </Link>
+            </h3>
+          )}
 
-      {subtitle && (
-        <p className="mt-0.5 text-xs text-text-secondary">{subtitle}</p>
+          {subtitle && (
+            <p className="mt-0.5 text-xs text-text-secondary">{subtitle}</p>
+          )}
+        </>
       )}
 
       {/* Legend */}
-      <div className="mt-2.5 flex flex-wrap items-center gap-4 border-b border-surface-border pb-2 text-xs text-text-secondary">
+      <div
+        className={`${
+          effectiveShowHeader ? "mt-2.5" : "mt-0"
+        } flex flex-wrap items-center gap-4 border-b border-surface-border pb-2 text-xs text-text-secondary`}
+      >
         <span className="inline-flex items-center gap-1.5">
           <span
             data-testid="legend-swatch-stage-1"
@@ -330,6 +355,8 @@ export function AwardCategoryPairedCard({
             set={set}
             idx={idx}
             kidSurface={kidSurface}
+            reservesArtSlotWidth={listHasAnyArt}
+            fallbackArtKind={listArtKind}
           />
         ))}
       </div>

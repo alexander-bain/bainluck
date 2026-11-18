@@ -326,6 +326,18 @@ function printedOpened(html: string): [number, number] {
   );
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("UX-P166 — the fixture reproduces what production served", () => {
   it("every specimen carries the payload the endpoint actually returned", () => {
     expect(BARCELONA.opening_odds).toEqual({

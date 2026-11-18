@@ -31,6 +31,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     @ScaledMetric(relativeTo: .body) private var scoreColWidth: CGFloat = 42
     @ScaledMetric(relativeTo: .subheadline) private var pregameColWidth: CGFloat = 48
     @ScaledMetric(relativeTo: .title3) private var primaryColWidth: CGFloat = 82
+    @State private var measuredContentWidth: CGFloat = 0
 
     private let scoreToPregameGutter: CGFloat = 12
     private let pregameToPrimaryGap: CGFloat = 14
@@ -69,7 +70,10 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     }
 
     private var effectivePrimaryWidth: CGFloat {
-        dynamicTypeSize.isAccessibilitySize ? min(primaryColWidth, 96) : min(primaryColWidth, 88)
+        if model.isFinished {
+            return dynamicTypeSize.isAccessibilitySize ? min(scoreColWidth + 10, 64) : min(scoreColWidth + 6, 52)
+        }
+        return dynamicTypeSize.isAccessibilitySize ? min(primaryColWidth, 96) : min(primaryColWidth, 88)
     }
 
     private var gapAfterScore: CGFloat {
@@ -89,17 +93,18 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         return scoreW + pregameW + primaryW
     }
 
-    private var sharedCompactTeamNameFontSize: CGFloat {
+    private func sharedCompactTeamNameFontSize(forRowWidth rowWidth: CGFloat) -> CGFloat {
         let competitorNames = model.rows
             .filter { $0.kind != .draw }
             .map(\.shortName)
-        let availableWidth = max(330 - 36 - 8 - trailingColumnsClusterWidth, 48)
+        let tickReserve: CGFloat = model.isFinished ? 16 : 0
+        let availableWidth = max(rowWidth - 36 - 8 - tickReserve - trailingColumnsClusterWidth, 48)
         return CardTeamNameSizing.sharedWordSafeFontSize(
             names: competitorNames,
             baseSize: min(compactNameSize, 20),
             weight: .bold,
             availableWidth: availableWidth,
-            minimumScale: 0.65
+            minimumScale: 0.48
         )
     }
 
@@ -107,13 +112,18 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         VStack(alignment: .leading, spacing: 10) {
             topHeaderSection
 
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(model.rows.enumerated()), id: \.offset) { _, row in
-                    if dynamicTypeSize.isAccessibilitySize {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(model.rows.enumerated()), id: \.offset) { _, row in
                         accessibilityRowView(row)
-                    } else {
-                        compactRowView(row)
                     }
+                }
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    compactCompetitorStack(rowWidth: 333, isFallback: false)
+                    compactCompetitorStack(rowWidth: 296, isFallback: false)
+                    compactCompetitorStack(rowWidth: 264, isFallback: false)
+                    compactCompetitorStack(rowWidth: 232, isFallback: true)
                 }
             }
 
@@ -153,6 +163,13 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 footerRow()
             }
         }
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { measuredContentWidth = geo.size.width }
+                    .onChange(of: geo.size.width) { _, w in measuredContentWidth = w }
+            }
+        )
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
     }
@@ -250,8 +267,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                     .font(headerFont)
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
+                    .fixedSize(horizontal: true, vertical: false)
                     .frame(width: effectiveScoreWidth, alignment: .trailing)
             }
             if let pregameHeader = model.headers.pregame {
@@ -259,8 +275,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                     .font(headerFont)
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
+                    .fixedSize(horizontal: true, vertical: false)
                     .frame(width: effectivePregameWidth, alignment: .trailing)
                     .padding(.leading, model.headers.score != nil ? scoreToPregameGutter : 0)
             }
@@ -269,8 +284,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                     .font(headerFont)
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
+                    .fixedSize(horizontal: true, vertical: false)
                     .frame(width: effectivePrimaryWidth, alignment: .trailing)
                     .padding(.leading, model.headers.pregame != nil
                         ? pregameToPrimaryGap
@@ -281,19 +295,46 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
 
     // MARK: - Competitor & 187-A Middle Draw Rows
 
-    private func compactRowView(_ row: DiscoverSingleGameCard190C.RowModel) -> some View {
+    private func compactCompetitorStack(rowWidth: CGFloat, isFallback: Bool) -> some View {
+        let fontSize = sharedCompactTeamNameFontSize(forRowWidth: rowWidth)
+        return VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(model.rows.enumerated()), id: \.offset) { _, row in
+                compactRowView(row, nameFontSize: fontSize, preventSingleWordTruncation: !isFallback)
+            }
+        }
+    }
+
+    private func compactRowView(
+        _ row: DiscoverSingleGameCard190C.RowModel,
+        nameFontSize: CGFloat,
+        preventSingleWordTruncation: Bool
+    ) -> some View {
         let singleWord = !row.shortName.contains(" ")
         let isLoser = model.isFinished && !row.isWinner && row.isDimmedAfter
         return HStack(alignment: .center, spacing: 8) {
             rowBadgeView(row)
 
-            Text(row.shortName)
-                .font(HeadlineStyleTable199.names(.card, isLoser: isLoser, scaledSize: sharedCompactTeamNameFontSize))
-                .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
-                .lineLimit(singleWord ? 1 : 2)
-                .minimumScaleFactor(0.65)
-                .allowsTightening(true)
-                .fixedSize(horizontal: false, vertical: !singleWord)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(row.shortName)
+                    .font(HeadlineStyleTable199.names(.card, isLoser: isLoser, scaledSize: nameFontSize))
+                    .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
+                    .lineLimit(singleWord ? 1 : 2)
+                    .allowsTightening(true)
+                    .fixedSize(horizontal: singleWord && preventSingleWordTruncation, vertical: true)
+                if model.isFinished {
+                    Text("\u{2713}")
+                        .font(HeadlineStyleTable199.secondNumbers(
+                            .card,
+                            prominent: true,
+                            scaledSize: min(nameFontSize, 18) * 0.85
+                        ))
+                        .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .opacity(row.isWinner ? 1 : 0)
+                        .accessibilityHidden(true)
+                }
+            }
 
             Spacer(minLength: 8)
 
@@ -307,8 +348,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                         ))
                         .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.45)
-                        .allowsTightening(true)
+                        .fixedSize(horizontal: true, vertical: false)
                         .frame(width: effectiveScoreWidth, alignment: .trailing)
                 }
 
@@ -322,8 +362,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                         ))
                         .foregroundStyle(model.isLive ? Color.primary : DS.textSecondaryReadable)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.45)
-                        .allowsTightening(true)
+                        .fixedSize(horizontal: true, vertical: false)
                         .frame(width: effectivePregameWidth, alignment: .trailing)
                         .padding(.leading, model.headers.score != nil ? scoreToPregameGutter : 0)
                 }
@@ -339,10 +378,31 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         }
     }
 
+    private func accessibilityDisplayLabel(for row: DiscoverSingleGameCard190C.RowModel) -> String {
+        if row.kind == .draw { return row.fullName }
+        return TeamShortName.isCollegeSport(sportKey: event.sport) ? row.shortName : row.fullName
+    }
+
+    private var sharedAccessibilityTeamNameFontSize: CGFloat {
+        let names = model.rows
+            .filter { $0.kind != .draw }
+            .map(accessibilityDisplayLabel(for:))
+        let contentW = measuredContentWidth > 0 ? measuredContentWidth : 333
+        return CardTeamNameSizing.sharedUnboundedWordSafeFontSize(
+            names: names,
+            baseSize: compactNameSize,
+            weight: .bold,
+            availableWidth: max(contentW, 120),
+            minimumScale: 0.55
+        )
+    }
+
     private func accessibilityRowView(_ row: DiscoverSingleGameCard190C.RowModel) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(row.fullName)
-                .font(.body.weight(model.isFinished ? (row.isWinner ? .bold : .medium) : .semibold))
+        let displayLabel = accessibilityDisplayLabel(for: row)
+        let weight: Font.Weight = model.isFinished ? (row.isWinner ? .bold : .medium) : .semibold
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(displayLabel)
+                .font(.system(size: sharedAccessibilityTeamNameFontSize, weight: weight))
                 .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -373,8 +433,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 ))
                 .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.45)
-                .allowsTightening(true)
+                .fixedSize(horizontal: true, vertical: false)
                 .frame(width: effectiveScoreWidth, alignment: .trailing)
                 .accessibilityLabel(row.scoreText.map { "Score \($0)" } ?? "")
         }
@@ -388,8 +447,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 ))
                 .foregroundStyle(model.isLive ? Color.primary : DS.textSecondaryReadable)
                 .lineLimit(1)
-                .minimumScaleFactor(0.45)
-                .allowsTightening(true)
+                .fixedSize(horizontal: true, vertical: false)
                 .frame(width: effectivePregameWidth, alignment: .trailing)
                 .padding(.leading, model.headers.score != nil ? scoreToPregameGutter : 0)
                 .accessibilityLabel(row.pregameText.map { isProjColumn ? "Projected \($0)" : "Pregame \($0)" } ?? "")
@@ -473,52 +531,37 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                 .foregroundStyle(sideAccentColor(for: row.kind))
                 .lineLimit(1)
-                .minimumScaleFactor(0.45)
-                .allowsTightening(true)
+                .fixedSize(horizontal: true, vertical: false)
         case .finalScore(let text, let won, let isDrawOutcome):
-            if won {
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    if let text, !text.isEmpty {
-                        Text(text)
-                            .font(HeadlineStyleTable199.secondNumbers(.card, prominent: true, scaledSize: min(compactLargeSize, 24)))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.45)
-                            .allowsTightening(true)
-                    }
-                    Text("\u{2713}")
-                        .font(HeadlineStyleTable199.secondNumbers(.card, prominent: true, scaledSize: min(compactLargeSize, 24) * 0.82))
-                        .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.45)
-                }
-            } else if let text, !text.isEmpty {
+            if let text, !text.isEmpty {
+                let prominent = won || isDrawOutcome
                 Text(text)
                     .font(HeadlineStyleTable199.secondNumbers(
                         .card,
-                        prominent: isDrawOutcome,
-                        scaledSize: isDrawOutcome ? min(compactLargeSize, 24) : min(compactScoreSize, 20)
+                        prominent: prominent,
+                        scaledSize: prominent ? min(compactLargeSize, 24) : min(compactScoreSize, 20)
                     ))
-                    .foregroundStyle(isDrawOutcome ? .primary : .secondary)
+                    .foregroundStyle(prominent ? .primary : .secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
+                    .fixedSize(horizontal: true, vertical: false)
             } else {
-                EmptyView()
+                Text("0")
+                    .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactScoreSize, 20)))
+                    .opacity(0)
+                    .accessibilityHidden(true)
             }
         case .won(let text):
             Text(text)
                 .font(HeadlineStyleTable199.secondNumbers(.card, prominent: true, scaledSize: min(compactPregameSize, 18)))
                 .foregroundStyle(DS.emerald)
                 .lineLimit(1)
-                .minimumScaleFactor(0.45)
-                .allowsTightening(true)
+                .fixedSize(horizontal: true, vertical: false)
         case .settledDash:
             Text(absentProbabilityMarker)
                 .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactPregameSize, 18)))
                 .foregroundStyle(DS.textSecondaryReadable)
                 .lineLimit(1)
-                .minimumScaleFactor(0.45)
+                .fixedSize(horizontal: true, vertical: false)
         case .none:
             EmptyView()
         }

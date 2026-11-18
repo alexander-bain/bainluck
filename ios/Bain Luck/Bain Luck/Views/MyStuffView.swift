@@ -795,6 +795,13 @@ struct MyStuffView: View {
 
     // MARK: - Context Menu Pin (iPad)
 
+    static func eventCopyProbabilityText(_ event: FeedEventData) -> String? {
+        guard let probability = CompactGameCard12616.currentOddsForCard(event)?.homeProbability else {
+            return nil
+        }
+        return "\(event.homeTeam): \(Int(probability * 100))%"
+    }
+
     @ViewBuilder
     private func pinContextMenu(_ item: FeedItem) -> some View {
         if let pinInfo = pinInfo(for: item) {
@@ -806,9 +813,8 @@ struct MyStuffView: View {
             }
         }
         if let event = item.event {
-            if let prob = event.currentOdds?.homeProbability {
+            if let text = Self.eventCopyProbabilityText(event) {
                 Button {
-                    let text = "\(event.homeTeam): \(Int(prob * 100))%"
                     copyToClipboard(text)
                 } label: {
                     Label("Copy Probability", systemImage: "doc.on.doc")
@@ -1523,7 +1529,7 @@ private struct TeamFuturesSection: View {
 /// Futures card for My Stuff that highlights the user's team outcomes instead
 /// of showing the global top 3 leaders. Shows the user's team probability,
 /// rank, and movement in the context of the broader market.
-private struct MyTeamFuturesCard: View {
+struct MyTeamFuturesCard: View {
     private let futures: FeedFuturesData
     private let matchedOutcomes: [MatchedOutcome]
 
@@ -1544,11 +1550,11 @@ private struct MyTeamFuturesCard: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 PinButton(type: "future", id: futures.id, compact: true)
-                if let count = futures.sourceCount, count > 1 {
-                    Text("\(count) sources")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                } else if let source = SourceLabels.label(for: futures.source) {
+                if let source = SourceLabels.cardFaceLabel(
+                    for: futures.source,
+                    sources: futures.sources,
+                    sourceCount: futures.sourceCount
+                ) {
                     Text(source)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
@@ -1559,7 +1565,8 @@ private struct MyTeamFuturesCard: View {
             Text(futures.name)
                 .font(.subheadline)
                 .fontWeight(.medium)
-                .lineLimit(2)
+                .lineLimit(4)
+                .fixedSize(horizontal: false, vertical: true)
 
             // User's matched team outcomes — shown prominently
             ForEach(matchedOutcomes) { outcome in

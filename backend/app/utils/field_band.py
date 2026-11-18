@@ -24,6 +24,7 @@ from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
 
 from app.utils.container_presentation import MEMBER_MARKET, market_destination
 from app.utils.futures_liveness import leg_is_graded
+from app.utils.source_mark import quote_source_mark
 from app.utils.tonights_games import _parse_dt
 
 
@@ -119,6 +120,7 @@ class _PricedOutcome:
     probability: float
     movement: Optional[float]
     observed_at: Optional[str]
+    source_mark: dict[str, Any]
 
 
 def _iso_utc(value: Any) -> Optional[str]:
@@ -229,6 +231,9 @@ def _extract_market_outcomes(
                 probability=prob,
                 movement=movement,
                 observed_at=obs,
+                # The legacy display clock can come from a row or market update.
+                # Only the venue and its price are bound to this input.
+                source_mark=quote_source_mark([{"key": source, "probability": prob}]),
             )
         )
 
@@ -278,6 +283,7 @@ def _build_section_market_card(
             "id": o.outcome_id,
             "name": o.name,
             "probability": o.probability,
+            "source_mark": o.source_mark,
             "american_odds": None,
             "rank": idx + 1,
             "movement": o.movement,
@@ -290,6 +296,7 @@ def _build_section_market_card(
         {
             "label": o.name,
             "probability": o.probability,
+            "source_mark": o.source_mark,
             "movement": o.movement,
         }
         for o in board_outcomes
@@ -444,6 +451,7 @@ def select_field_band(
             "outcome_id": o.outcome_id,
             "label": o.name,
             "probability": o.probability,
+            "source_mark": o.source_mark,
             "observed_at": o.observed_at,
         }
         for o in top_band_rows

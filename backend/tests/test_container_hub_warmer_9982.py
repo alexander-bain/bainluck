@@ -137,6 +137,7 @@ def rig(monkeypatch):
         },
         "fail": set(),
         "built": [],
+        "compact": {},
     }
 
     @asynccontextmanager
@@ -144,18 +145,20 @@ def rig(monkeypatch):
         yield SimpleNamespace()
 
     async def _discover(session, *, limit):
-        assert limit == warmer.MAX_HUBS
+        assert limit == discovery.MAX_COLLECTIONS
         return SimpleNamespace(collections=[{"slug": s} for s in state["slugs"]])
 
-    async def _read_published(session, slug):
+    async def _read_published(session, slug, *, include_headers):
+        assert include_headers
         st, rev = state["published"][slug]
-        return SimpleNamespace(state=st, revision=rev, container_id=1, slug=slug)
+        return corrections.PublishedRead(state=st, revision=rev, container_id=1, slug=slug)
 
-    async def _build_entry(session, published, include_children):
+    async def _build_entry(session, published, include_children, *, compact=False):
         assert include_children is True
         if published.slug in state["fail"]:
             raise RuntimeError("boom")
         state["built"].append(published.slug)
+        state["compact"][published.slug] = compact
         now = time.time()
         return CachedRead(
             body=f'{{"slug":"{published.slug}"}}'.encode(),
@@ -169,6 +172,7 @@ def rig(monkeypatch):
     monkeypatch.setattr(database, "async_session_maker", _session_maker)
     monkeypatch.setattr(discovery, "discover_collections", _discover)
     monkeypatch.setattr(corrections, "read_published", _read_published)
+    monkeypatch.setattr(route, "read_published", _read_published)
     monkeypatch.setattr(route, "_build_entry", _build_entry)
     monkeypatch.setattr(redis_state, "get_redis_client", lambda *a, **k: redis)
     monkeypatch.delenv("CONTAINER_HUB_WARMER_ENABLED", raising=False)
@@ -181,15 +185,66 @@ async def test_a_cold_hub_is_built_under_the_routes_own_key(rig):
     summary = await warmer._warm_container_hubs()
     assert summary["status"] == "ok"
     assert summary["built"] == ["nfl-2026-week-4", "nfl-2026-week-5"]
-    key = container_read_cache_key("nfl-2026-week-4", 34, True)
+    key = container_read_cache_key("nfl-2026-week-4", 34, True, compact=True)
     stored = decode_entry(rig["redis"].store[key])
     assert stored is not None and stored.body == b'{"slug":"nfl-2026-week-4"}'
     assert 0 < rig["redis"].ttls[key] <= 300
+    assert rig["compact"]["nfl-2026-week-4"] is True
+    assert container_read_cache_key("nfl-2026-week-4", 34, True) not in rig["redis"].store
+
+
+async def test_a_non_nfl_hub_keeps_its_public_default_key(rig):
+    slug = "mlb-2026-postseason"
+    rig["slugs"] = [slug]
+    rig["published"][slug] = (corrections.READ_PUBLISHED, 11)
+
+    await warmer._warm_container_hubs()
+
+    assert rig["compact"] == {slug: False}
+    assert container_read_cache_key(slug, 11, True) in rig["redis"].store
+
+
+async def test_a_bounded_pass_prefers_recent_nfl_weeks_and_keeps_other_hub_seats(rig):
+    baseball = "mlb-2026-postseason"
+    weeks = [f"nfl-2026-week-{week}" for week in (4, 5, 7, 8, 9, 10, 11, 12)]
+    rig["slugs"] = [baseball, *weeks]
+    rig["published"] = {slug: (corrections.READ_PUBLISHED, 1) for slug in rig["slugs"]}
+
+    summary = await warmer._warm_container_hubs()
+
+    assert summary["hubs"] == warmer.MAX_HUBS
+    assert summary["built"] == [baseball, *reversed(weeks[-3:])]
+    assert container_read_cache_key("nfl-2026-week-10", 1, True, compact=True) in rig["redis"].store
+
+
+async def test_default_week_read_reuses_the_warmed_body(rig, monkeypatch):
+    from app.utils import request_cache
+
+    async def get_redis():
+        return rig["redis"]
+
+    async def bounded_read(read):
+        return SimpleNamespace(is_ok=True, value=read())
+
+    monkeypatch.setattr(request_cache, "get_shared_async_redis", get_redis)
+    monkeypatch.setattr(request_cache, "bounded_redis_call", bounded_read)
+    monkeypatch.setattr(route, "_local_entries", {})
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    await warmer._warm_container_hubs()
+    rig["built"].clear()
+
+    response = await route.get_container(
+        slug="nfl-2026-week-4", include_children=True, db=SimpleNamespace()
+    )
+
+    assert response.headers["X-Feed-Cache"] == "shared_hit"
+    assert response.body == b'{"slug":"nfl-2026-week-4"}'
+    assert not rig["built"]
 
 
 async def test_a_hub_a_reader_just_built_is_skipped(rig):
     now = time.time()
-    key = container_read_cache_key("nfl-2026-week-4", 34, True)
+    key = container_read_cache_key("nfl-2026-week-4", 34, True, compact=True)
     rig["redis"].store[key] = encode_entry(_entry(now, fresh_in=30, stale_in=270))
     summary = await warmer._warm_container_hubs()
     assert summary["skipped"] == ["nfl-2026-week-4"]
@@ -198,7 +253,7 @@ async def test_a_hub_a_reader_just_built_is_skipped(rig):
 
 async def test_a_republish_is_a_cold_key_even_with_the_old_revision_warm(rig):
     now = time.time()
-    old = container_read_cache_key("nfl-2026-week-4", 33, True)
+    old = container_read_cache_key("nfl-2026-week-4", 33, True, compact=True)
     rig["redis"].store[old] = encode_entry(_entry(now, fresh_in=30, stale_in=270))
     await warmer._warm_container_hubs()
     assert "nfl-2026-week-4" in rig["built"]
@@ -228,8 +283,8 @@ async def test_a_pass_starts_no_build_after_its_budget(rig, monkeypatch):
 
     real_build = route._build_entry
 
-    async def _slow_build(session, published, include_children):
-        entry = await real_build(session, published, include_children)
+    async def _slow_build(session, published, include_children, *, compact=False):
+        entry = await real_build(session, published, include_children, compact=compact)
         clock["t"] += warmer.PASS_BUDGET_S + 1
         return entry
 
@@ -257,3 +312,4 @@ def test_the_route_default_is_the_variant_the_warmer_builds():
     query, so `include_children` takes the route's default."""
     default = inspect.signature(route.get_container).parameters["include_children"].default
     assert getattr(default, "default", default) is True
+    assert inspect.signature(route.get_container).parameters["compact"].default is True

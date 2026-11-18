@@ -35,6 +35,18 @@ function brief(overrides: Partial<TeamGameBrief>): TeamGameBrief {
 const future = () => new Date(Date.now() + 4 * 3600_000).toISOString();
 const past = () => new Date(Date.now() - 1 * 3600_000).toISOString();
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("UpcomingGameCard — probability-first + chip honesty", () => {
   test("scheduled game leads with the win-prob split", () => {
     const html = renderToStaticMarkup(

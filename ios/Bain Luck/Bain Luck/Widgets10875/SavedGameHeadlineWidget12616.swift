@@ -665,47 +665,42 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                     .foregroundStyle(inkPrimary)
                     .lineLimit(1)
             } else {
-                Text(row.abbreviation)
-                    .font(HeadlineStyleTable199.names(.widget, isLoser: model.stage == .after && row.isLoser, scaledSize: 13))
-                    .foregroundStyle(model.stage == .after && row.isLoser ? inkSecondary : inkPrimary)
-                    .lineLimit(1)
+                HStack(alignment: .firstTextBaseline, spacing: 2.5) {
+                    Text(row.abbreviation)
+                        .font(HeadlineStyleTable199.names(.widget, isLoser: model.stage == .after && row.isLoser, scaledSize: 13))
+                        .foregroundStyle(model.stage == .after && row.isLoser ? inkSecondary : inkPrimary)
+                        .lineLimit(1)
+                    if model.stage == .after {
+                        Text("\u{2713}")
+                            .font(HeadlineStyleTable199.secondNumbers(
+                                .widget,
+                                prominent: true,
+                                scaledSize: 11.5
+                            ))
+                            .foregroundStyle(fullColor ? wonEmerald : Color.primary)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .opacity(row.isWinner ? 1 : 0)
+                            .accessibilityHidden(true)
+                    }
+                }
             }
 
             Spacer(minLength: 4)
 
-            if model.stage == .after && row.isWinner {
-                HStack(alignment: .firstTextBaseline, spacing: 2.5) {
-                    Text(row.figure)
-                        .font(HeadlineStyleTable199.secondNumbers(
-                            .widget,
-                            prominent: true,
-                            scaledSize: HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true)
-                        ))
-                        .foregroundStyle(primaryFigureColor(row))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                    Text("\u{2713}")
-                        .font(HeadlineStyleTable199.secondNumbers(
-                            .widget,
-                            prominent: true,
-                            scaledSize: HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true) * 0.82
-                        ))
-                        .foregroundStyle(fullColor ? wonEmerald : Color.primary)
-                        .lineLimit(1)
-                }
-            } else {
-                Text(row.figure)
-                    .font(model.stage == .after
-                        ? HeadlineStyleTable199.secondNumbers(
-                            .widget,
-                            prominent: !row.isLoser,
-                            scaledSize: row.isLoser ? HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: false) : HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true)
-                        )
-                        : HeadlineStyleTable199.now(.widget, scaledSize: HeadlineStyleTable199.nowBaseSize(.widget)))
-                    .foregroundStyle(primaryFigureColor(row))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-            }
+            Text(row.figure)
+                .font(model.stage == .after
+                    ? HeadlineStyleTable199.secondNumbers(
+                        .widget,
+                        prominent: !row.isLoser,
+                        scaledSize: row.isLoser
+                            ? HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: false)
+                            : HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true)
+                    )
+                    : HeadlineStyleTable199.now(.widget, scaledSize: HeadlineStyleTable199.nowBaseSize(.widget)))
+                .foregroundStyle(primaryFigureColor(row))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
     }
 
@@ -792,7 +787,7 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                 fullColor: fullColor
             )
 
-            HStack(spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(useAbbreviation ? row.abbreviation : row.shortName)
                     .font(HeadlineStyleTable199.names(
                         .widget,
@@ -806,6 +801,19 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                     Text("Draw")
                         .font(HeadlineStyleTable199.headers(.widget, scaledSize: 10))
                         .foregroundStyle(inkSecondary)
+                }
+                if model.stage == .after {
+                    Text("\u{2713}")
+                        .font(HeadlineStyleTable199.secondNumbers(
+                            .widget,
+                            prominent: true,
+                            scaledSize: HeadlineStyleTable199.nameBaseSize(.widget) * 0.85
+                        ))
+                        .foregroundStyle(fullColor ? wonEmerald : Color.primary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .opacity(row.isWinner ? 1 : 0)
+                        .accessibilityHidden(true)
                 }
             }
 
@@ -840,41 +848,20 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                         .lineLimit(1)
                 }
 
-                if model.stage == .after && row.isWinner {
-                    HStack(alignment: .firstTextBaseline, spacing: 2.5) {
-                        Text(row.figure)
-                            .font(HeadlineStyleTable199.secondNumbers(
-                                .widget,
-                                prominent: true,
-                                scaledSize: HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true)
-                            ))
-                            .foregroundStyle(primaryFigureColor(row))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                        Text("\u{2713}")
-                            .font(HeadlineStyleTable199.secondNumbers(
-                                .widget,
-                                prominent: true,
-                                scaledSize: HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true) * 0.82
-                            ))
-                            .foregroundStyle(fullColor ? wonEmerald : Color.primary)
-                            .lineLimit(1)
-                    }
+                Text(row.figure)
+                    .font(model.stage == .after
+                        ? HeadlineStyleTable199.secondNumbers(
+                            .widget,
+                            prominent: !row.isLoser,
+                            scaledSize: row.isLoser
+                                ? HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: false)
+                                : HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true)
+                        )
+                        : HeadlineStyleTable199.now(.widget, scaledSize: HeadlineStyleTable199.nowBaseSize(.widget)))
+                    .foregroundStyle(primaryFigureColor(row))
                     .frame(width: mediumPrimaryColWidth, alignment: .trailing)
-                } else {
-                    Text(row.figure)
-                        .font(model.stage == .after
-                            ? HeadlineStyleTable199.secondNumbers(
-                                .widget,
-                                prominent: !row.isLoser,
-                                scaledSize: row.isLoser ? HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: false) : HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true)
-                            )
-                            : HeadlineStyleTable199.now(.widget, scaledSize: HeadlineStyleTable199.nowBaseSize(.widget)))
-                        .foregroundStyle(primaryFigureColor(row))
-                        .frame(width: mediumPrimaryColWidth, alignment: .trailing)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                }
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
         }
     }

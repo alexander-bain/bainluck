@@ -272,19 +272,24 @@ struct GameActivityRecord {
         observationFences[id] = fence
     }
 
+    /// #10542 step 4, the server's rule (`activitykit_payload.OBSERVATION_MAX_AGE`, #12860):
+    /// the activity turns stale when the score has gone unconfirmed this long.
+    static let observationMaxAge: TimeInterval = 360
+
+    /// The score's clock decides; the chance's clock decides only when there is no
+    /// score (pregame), because the chance prints its own age. A shown number with no
+    /// clock, or a clock from the future, is stale now. It was the older of both clocks
+    /// + 120 s, which turned a 20-second-old score orange behind an older chance.
     private func staleDate(for snapshot: GameActivitySnapshot) -> Date {
         let current = now()
-        var clocks: [Date] = []
-        if snapshot.homeScore != nil || snapshot.awayScore != nil {
-            guard let clock = snapshot.scoreObservedAt else { return current }
-            clocks.append(clock)
+        let hasScore = snapshot.homeScore != nil || snapshot.awayScore != nil
+        let hasChance = snapshot.homeRenderedPercent != nil
+        if (hasScore && snapshot.scoreObservedAt == nil) || (hasChance && snapshot.probabilityObservedAt == nil) {
+            return current
         }
-        if snapshot.homeRenderedPercent != nil {
-            guard let clock = snapshot.probabilityObservedAt else { return current }
-            clocks.append(clock)
-        }
-        guard let oldest = clocks.min(), oldest <= current else { return current }
-        return oldest.addingTimeInterval(120)
+        guard let clock = hasScore ? snapshot.scoreObservedAt : hasChance ? snapshot.probabilityObservedAt : nil,
+              clock <= current else { return current }
+        return clock.addingTimeInterval(Self.observationMaxAge)
     }
 
     private func canAdopt(_ candidate: GameActivitySnapshot, after previous: GameActivitySnapshot,

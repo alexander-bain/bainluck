@@ -235,6 +235,7 @@ import {
   computeLastChartPoint,
   defaultChartTimeRange,
 } from "@/lib/eventKeyStats";
+import { isStoredOpeningChance } from "@/lib/probabilityEvidence";
 import MatchupOutcomes from "@/components/event/MatchupOutcomes";
 import { settledPregameMark } from "@/lib/settledPregameMark";
 import { SPECIAL_MARKETS_MIN_WIRE_ROWS, specialMarketsDrawnIds } from "@/lib/gamePropsDrawnAbove";
@@ -272,6 +273,9 @@ export default function EventPage({ params }: EventPageProps) {
   const ekgOptIn = useEkgOptIn();
   // #11974 — the event-page atlas adoption, behind `?atlas=1` while Alex reviews it.
   const atlasOptIn = resolveAtlasOptIn(searchParams);
+  // #12615 — the win probability chart shows reading marks by default (unless `?atlas=0` / `?atlas=false`).
+  const atlasChartOptIn =
+    searchParams?.get("atlas") !== "0" && searchParams?.get("atlas") !== "false";
   const [atlasHeadlineSheetOpen, setAtlasHeadlineSheetOpen] = useState(false);
   useEffect(() => {
     setAtlasHeadlineSheetOpen(false);
@@ -2161,6 +2165,10 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }
 
+  const isOpeningChance = isStoredOpeningChance(event);
+  const currentWinOdds = isOpeningChance ? undefined : event.current_odds;
+  const currentHomeWinChance = currentWinOdds?.home_probability;
+
   // Resolve display probability based on game status (see eventKeyStats.ts)
   //
   // #4015 — `isSuspended` (the page's one `hasNoReportedResult` answer, computed
@@ -2252,6 +2260,16 @@ export default function EventPage({ params }: EventPageProps) {
   // where the number still IS the complement.
   const awaySlotWithheld = sportPricesADraw(event.sport);
   const awayProb = printableAway(servedAwayProb, event.sport);
+  // At rest this card shows the same in-play chance as the headline.
+  // Explicit chart scrubs still show the reading from that point in time.
+  const restingChartPoint = isLive && lastChartPoint
+    ? {
+        ...lastChartPoint,
+        homeProb: homeProb ?? lastChartPoint.homeProb,
+        awayProb: servedAwayProb ?? lastChartPoint.awayProb,
+        probKnown: homeProb !== null && (awaySlotWithheld || servedAwayProb !== null),
+      }
+    : lastChartPoint;
   const awayPct = printableAway(servedAwayPct, event.sport);
 
   // #10090 decision J under a preview (native #11816's rule, web half).
@@ -2648,8 +2666,10 @@ export default function EventPage({ params }: EventPageProps) {
     acceptedPriceClock,
     confirmedAtShown,
     freshestSourceStamp,
-    currentOddsCapturedAt: event.current_odds?.captured_at,
+    currentOddsCapturedAt: currentWinOdds?.captured_at,
   });
+  const atlasHasLastReading =
+    !isFinished && (!isOpeningChance || resolvedProbability?.selectedProbabilitySource != null);
   const atlasPregameBaseline =
     atlasOptIn && !isFinished && (isLive || hasStarted || isSuspended)
       ? resolveEventHeadlineBaseline({
@@ -2812,14 +2832,16 @@ export default function EventPage({ params }: EventPageProps) {
     homeColor: nflStrokes.home,
   };
   const nflScored = (isLive || isFinished) && !heroScoreIsStoppageFiller && bestHomeScore != null && bestAwayScore != null;
+  // #12824 — a legacy scheduled response can carry the first stored line in both chance fields.
+  const readerShowsChance = !(event.status === "scheduled" && isStoredOpeningChance(event));
   const nflReaderHeader = readerHeader({
     awayShort: heroShortNames.away,
     homeShort: heroShortNames.home,
     awayScore: nflScored ? bestAwayScore : null,
     homeScore: nflScored ? bestHomeScore : null,
     stateLabel: stoppageLabel ?? (isFinished ? "Final" : effectivelyLive ? liveClockLabel || "Live" : isLive ? "Live" : "Pregame"),
-    awayChance: awayProb != null ? formatProbability(awayProb, { rendered: awayPct }) : null,
-    homeChance: homeProb != null ? formatProbability(homeProb, { rendered: homePct }) : null,
+    awayChance: readerShowsChance && awayProb != null ? formatProbability(awayProb, { rendered: awayPct }) : null,
+    homeChance: readerShowsChance && homeProb != null ? formatProbability(homeProb, { rendered: homePct }) : null,
     finished: isFinished,
   });
   // Back returns focus to the card the reader was opened on, or the nearest
@@ -3012,6 +3034,12 @@ export default function EventPage({ params }: EventPageProps) {
         )}
       </div>
 
+      <div
+        data-testid="event-desktop-two-col-shell"
+        className="flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1.36fr)_minmax(404px,1fr)] xl:grid-cols-[minmax(0,1.52fr)_minmax(448px,1fr)] lg:gap-6 lg:items-start"
+      >
+      <div className="max-lg:contents lg:flex lg:flex-col lg:gap-3 lg:min-w-0" data-testid="event-featured-column">
+      <div className="empty:hidden max-lg:order-1 space-y-3 min-w-0" data-testid="event-featured-lead">
       {/* Unified Direction 199 Game Page Headline (every sport & state) */}
       <SectionErrorBoundary label="The score and probability" resetKey={event}>
       <EventPageHeadline199
@@ -3111,9 +3139,9 @@ export default function EventPage({ params }: EventPageProps) {
               : atlasPregameBaseline?.homePercent ?? openingHomePct
           }
           openingObservedAt={null}
-          lastProbability={!isFinished ? homeProb : null}
-          renderedLast={!isFinished ? homePct : null}
-          lastObservedAt={!isFinished ? atlasObservedAt : null}
+          lastProbability={atlasHasLastReading ? homeProb : null}
+          renderedLast={atlasHasLastReading ? homePct : null}
+          lastObservedAt={atlasHasLastReading ? atlasObservedAt : null}
           resolutionDate={event.commence_time}
           source={
             isFinished
@@ -3237,7 +3265,7 @@ export default function EventPage({ params }: EventPageProps) {
               awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
               awayWithheld={awaySlotWithheld}
               tenths={liveTenthsActive}
-              atlasMode={atlasOptIn}
+              atlasMode={atlasChartOptIn}
               settledWinnerSide={atlasSettledWinnerSide}
               /* #9483 — NFL and NBA: both teams' lines (design freeze v328). */
               pairedAwayLine={storyCardsOn}
@@ -3263,7 +3291,7 @@ export default function EventPage({ params }: EventPageProps) {
               awayTeamSecondaryColor={resolvedAwaySecondary || event.away_team_data?.secondary_color || undefined}
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
-              lastPoint={lastChartPoint}
+              lastPoint={restingChartPoint}
               /* #6238 — the same single derivation the hero reads, handed to
                  the readout below the chart. On `/events/15305024` (2–2 final)
                  this card printed `Citizen 1% — Steelers 99%` two cards above
@@ -3357,7 +3385,34 @@ export default function EventPage({ params }: EventPageProps) {
 
       </SectionErrorBoundary>
       )}
+      </div>
 
+      <div className="empty:hidden max-lg:order-3 space-y-3 min-w-0" data-testid="event-featured-projection">
+      {/* #10539: projected final points replaces the Score Differential card when — and only when —
+          the page's one decision admits it. Every refusal keeps the differential, and a projection
+          that fails to load or draw hands its place back to the differential rather than leaving
+          the game's score story empty. */}
+      {projectedFinalPoints.mount ? (
+        scoreDiffCard ? (
+          <ErrorBoundary resetKey={projectedFinalPoints} fallback={scoreDiffCard}>
+            {projectedFinalPointsModule}
+          </ErrorBoundary>
+        ) : (
+          <SectionErrorBoundary label="The projected final points" resetKey={projectedFinalPoints}>
+            {projectedFinalPointsModule}
+          </SectionErrorBoundary>
+        )
+      ) : (
+        scoreDiffCard
+      )}
+
+      <FinalGameWinnerQuote quote={servedGameMarkets?.open_winner_quote}
+        eventId={event.id} finished={isFinished} closedIds={servedGameMarkets?.closed_winner_market_ids} />
+      </div>
+      </div>
+
+      <div className="max-lg:contents lg:flex lg:flex-col lg:gap-3 lg:min-w-0" data-testid="event-side-column">
+      <div className="empty:hidden max-lg:order-2 space-y-3 min-w-0" data-testid="event-side-lead">
       {showSharedPinBanner && showConsentBanner && (
         <SharedLinkPinBanner
           inline
@@ -3413,28 +3468,9 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {/* Source Comparison removed — not useful, sources already visible in OddsChart */}
+      </div>
 
-      {/* #10539: projected final points replaces the Score Differential card when — and only when —
-          the page's one decision admits it. Every refusal keeps the differential, and a projection
-          that fails to load or draw hands its place back to the differential rather than leaving
-          the game's score story empty. */}
-      {projectedFinalPoints.mount ? (
-        scoreDiffCard ? (
-          <ErrorBoundary resetKey={projectedFinalPoints} fallback={scoreDiffCard}>
-            {projectedFinalPointsModule}
-          </ErrorBoundary>
-        ) : (
-          <SectionErrorBoundary label="The projected final points" resetKey={projectedFinalPoints}>
-            {projectedFinalPointsModule}
-          </SectionErrorBoundary>
-        )
-      ) : (
-        scoreDiffCard
-      )}
-
-      <FinalGameWinnerQuote quote={servedGameMarkets?.open_winner_quote}
-        eventId={event.id} finished={isFinished} closedIds={servedGameMarkets?.closed_winner_market_ids} />
-
+      <div className="empty:hidden max-lg:order-4 space-y-3 min-w-0" data-testid="event-side-markets">
       {/* Market Map cards — Margin Map + Total Map */}
       {/* #3240: the mount condition is shared with `totalsMapRenders` above, so
           the note's idea of what is on the page and the page cannot diverge. */}
@@ -3455,8 +3491,8 @@ export default function EventPage({ params }: EventPageProps) {
           awayColor={effectiveAwayPrimary}
           homeLogo={event.home_team_data?.logo_small || undefined}
           awayLogo={event.away_team_data?.logo_small || undefined}
-          homeWinProb={event.current_odds?.home_probability ?? undefined}
-          awayWinProb={event.current_odds?.away_probability ?? undefined}
+          homeWinProb={currentHomeWinChance ?? undefined}
+          awayWinProb={currentWinOdds?.away_probability ?? undefined}
           /* #5414: `current_odds.home_spread` is a key the API has never
              emitted — it serialises the same column as `spread` — so this prop
              has been null on every render since it was added, and the card's
@@ -3718,7 +3754,7 @@ export default function EventPage({ params }: EventPageProps) {
       {event.event_tags && (
         event.event_tags.includes("competitive_structure:series") ||
         event.event_tags.includes("competitive_structure:best_of_7")
-      ) && event.current_odds?.home_probability != null && (() => {
+      ) && currentHomeWinChance != null && (() => {
         // Detect series wins from ESPN data or default to 0-0
         const homeSeriesWins = (event.espn as any)?.series_home_wins ?? 0;
         const awaySeriesWins = (event.espn as any)?.series_away_wins ?? 0;
@@ -3726,7 +3762,7 @@ export default function EventPage({ params }: EventPageProps) {
         return (
           <SectionErrorBoundary label="The series picture" resetKey={event}>
           <SeriesProbability
-            homeWinProb={event.current_odds!.home_probability!}
+            homeWinProb={currentHomeWinChance}
             homeSeriesWins={homeSeriesWins}
             awaySeriesWins={awaySeriesWins}
             gamesToWin={gamesToWin}
@@ -3848,6 +3884,9 @@ export default function EventPage({ params }: EventPageProps) {
           </SectionErrorBoundary>
         ) : null;
       })()}
+      </div>
+      </div>
+      </div>
 
       {/* Fullscreen Chart Modal — #10250: a dialog above the phone bottom nav. */}
       {chartFullscreen && (
@@ -3910,7 +3949,7 @@ export default function EventPage({ params }: EventPageProps) {
                  taps expand must not get the withheld number back. */
               awayWithheld={awaySlotWithheld}
               tenths={liveTenthsActive}
-              atlasMode={atlasOptIn}
+              atlasMode={atlasChartOptIn}
               settledWinnerSide={atlasSettledWinnerSide}
               pairedAwayLine={storyCardsOn}
               /* #10362 — and it opens on the range the card shows. Without these the

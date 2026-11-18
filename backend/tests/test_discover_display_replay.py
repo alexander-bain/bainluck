@@ -37,6 +37,15 @@ from app.services.database import get_db, get_db_rw
 from app.utils import discover_display_replay as ddr
 from app.utils import request_cache as _rc
 
+
+@pytest.fixture(autouse=True)
+def _pre_190_game_admission(monkeypatch):
+    """These cases are about caching and page assembly, not about which games
+    earn a seat; their fixtures seat ordinary games as furniture. Ruling 190
+    (#11937) would remove those games, so the pre-190 admission is pinned here.
+    The 190 rule is guarded in `test_discover_game_reason_190.py`."""
+    monkeypatch.setenv("DISCOVER_GAME_NEEDS_REASON", "false")
+
 BACKEND = Path(__file__).resolve().parents[1]
 _POOL_FUTURES = 320
 _AWARD_ID = 99001

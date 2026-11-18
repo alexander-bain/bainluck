@@ -69,13 +69,18 @@ import math
 import os
 import time
 from collections import Counter
-from typing import Annotated, Literal, Optional
+from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import wraps
+from time import perf_counter
+from typing import Annotated, Awaitable, Callable, Iterator, Literal, Optional, ParamSpec, TypeVar
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import DBAPIError, TimeoutError as PoolTimeoutError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.services import get_db
 from app.services.midterms_collection import load_midterms_cards
@@ -112,6 +117,39 @@ from app.utils.container_week_preview import (
 )
 
 logger = logging.getLogger(__name__)
+
+# #12337: public timings identify the remaining cold-read delay without SQL,
+# parameters or an admin/database request. Nested/concurrent stages overlap;
+# their durations must not be added together.
+_stage_timings: ContextVar[Optional[dict[str, float]]] = ContextVar(
+    "container_stage_timings", default=None
+)
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+
+
+@contextmanager
+def _time_stage(name: str) -> Iterator[None]:
+    timings = _stage_timings.get()
+    if timings is None:
+        yield
+        return
+    started = perf_counter()
+    try:
+        yield
+    finally:
+        timings[name] = timings.get(name, 0.0) + (perf_counter() - started) * 1000
+
+
+def _timed_read(name: str) -> Callable[[Callable[_P, Awaitable[_T]]], Callable[_P, Awaitable[_T]]]:
+    def decorate(function: Callable[_P, Awaitable[_T]]) -> Callable[_P, Awaitable[_T]]:
+        @wraps(function)
+        async def measured(*args: _P.args, **kwargs: _P.kwargs) -> _T:
+            with _time_stage(name):
+                return await function(*args, **kwargs)
+        return measured
+    return decorate
+
 
 router = APIRouter(tags=["Containers"])
 
@@ -166,19 +204,29 @@ def order_classes(present: set) -> list:
     return ordered + extras + tail
 
 
-async def _read_event_card_references(names: list[str]) -> tuple[dict, dict]:
-    """Read the canonical EI/team references on one separate session."""
+@_timed_read("references")
+async def _load_event_card_references(db: AsyncSession, names: list[str]) -> tuple[dict, dict]:
     from app.routes.events import _build_team_lookup, _load_gei_percentiles
-    from app.services.database import async_session_maker
 
-    async with async_session_maker() as reference_db:
-        percentiles = await _load_gei_percentiles(reference_db)
-        teams = await _build_team_lookup(reference_db, names)
+    with _time_stage("percentiles"):
+        percentiles = await _load_gei_percentiles(db)
+    with _time_stage("teams"):
+        teams = await _build_team_lookup(db, names)
     return percentiles, teams
 
 
+async def _read_event_card_references(names: list[str]) -> tuple[dict, dict]:
+    """Read the canonical EI/team references on one separate session."""
+    from app.services.database import async_session_maker
+
+    async with async_session_maker() as reference_db:
+        return await _load_event_card_references(reference_db, names)
+
+
+@_timed_read("event_cards")
 async def _hydrate_event_cards(
-    db: AsyncSession, event_ids: list, *, concurrent_references: bool = False
+    db: AsyncSession, event_ids: list, *, compact: bool = False,
+    concurrent_references: bool = True,
 ) -> tuple[dict, dict]:
     """``({event_id: card}, {("event", id): reason})`` in a constant query count.
 
@@ -192,21 +240,22 @@ async def _hydrate_event_cards(
     if not event_ids:
         return {}, {}
     from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
+    from sqlalchemy.orm import joinedload
 
     from app.models import Event
 
-    events = (
-        await db.execute(
-            select(Event)
-            .options(selectinload(Event.sport))
-            .where(Event.id.in_(event_ids))
-            .order_by(Event.id)
-        )
-    ).scalars().all()
+    with _time_stage("event_rows"):
+        events = (
+            await db.execute(
+                select(Event)
+                .options(joinedload(Event.sport))
+                .where(Event.id.in_(event_ids))
+                .order_by(Event.id)
+            )
+        ).scalars().all()
     if not events:
         return {}, {}
-    if concurrent_references:
+    if compact and concurrent_references:
         names = sorted(
             {
                 name
@@ -219,35 +268,65 @@ async def _hydrate_event_cards(
             references = reads.create_task(
                 _read_event_card_references(names), name="container-card-references"
             )
-            return await _assemble_event_cards(db, events, references=references)
-    return await _assemble_event_cards(db, events)
+            return await _assemble_event_cards(db, events, references=references, compact=True)
+    return await _assemble_event_cards(db, events, compact=compact)
 
 
 async def _assemble_event_cards(
-    db: AsyncSession, events: list, *, references: Optional[asyncio.Task] = None
+    db: AsyncSession, events: list, *, references: Optional[asyncio.Task] = None,
+    compact: bool = False,
 ) -> tuple[dict, dict]:
     from collections import defaultdict
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     from app.routes.events import (
-        _build_team_lookup,
         _filter_stale_bookmaker_snapshots,
         _format_event_with_aggregated_odds,
-        _load_gei_percentiles,
         aggregate_bookmaker_odds,
         detect_reversed_bookmakers,
         latest_odds_per_bookmaker_query,
     )
     from app.utils.proven_duplicates import folded_card_numbers_batch
+    from app.utils.settled_hero import resolve_settled_hero
     from app.utils.venue_settlement_reader import attach_venue_settlement
 
+    # The compact finished card draws the verified score and the dedicated
+    # pre-match reading, with the recorded opening as its historical fallback.
+    # Once the recent-finish highlight window has passed, there is no reason to
+    # load a finished game's latest sportsbook table just to draw that card.
+    # Unresolved, recent and still-playing games keep the ordinary enrichment.
+    finish_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    bookmaker_event_ids = [
+        event.id for event in events
+        if not (
+            compact
+            and event.completed_at is not None
+            and event.completed_at.tzinfo is not None
+            and event.completed_at <= finish_cutoff
+            and event.opening_home_probability
+            and event.opening_away_probability
+            and resolve_settled_hero(
+                status=event.status, home_score=event.home_score,
+                away_score=event.away_score, completed_at=event.completed_at,
+            ) is not None
+        )
+    ]
     snapshots_by_event: dict = defaultdict(list)
-    for snap in (
-        await db.execute(latest_odds_per_bookmaker_query([e.id for e in events]))
-    ).scalars().all():
+    with _time_stage("bookmaker_odds"):
+        snapshots = []
+        if bookmaker_event_ids:
+            snapshots = (
+                await db.execute(latest_odds_per_bookmaker_query(bookmaker_event_ids))
+            ).scalars().all()
+    for snap in snapshots:
         snapshots_by_event[snap.event_id].append(snap)
 
     by_id = {e.id: e for e in events}
+    # #12938 / ruling 233: A: live games project from current lines only.
+    from app.utils.live_line_clock import apply_live_line_projection, event_state_clock
+
+    live_clocks = {e.id: event_state_clock(e) for e in events}
+    clock_now = datetime.now(timezone.utc)
     odds_map: dict = {}
     for event_id, snaps in snapshots_by_event.items():
         ev = by_id.get(event_id)
@@ -261,22 +340,29 @@ async def _assemble_event_cards(
         odds_map[event_id] = {
             "snapshots": filtered,
             "all_snapshots": snaps,
-            "aggregated": aggregate_bookmaker_odds(agg if agg else filtered),
+            "aggregated": apply_live_line_projection(
+                aggregate_bookmaker_odds(agg if agg else filtered),
+                agg if agg else filtered,
+                now=clock_now, state_changed_at=live_clocks.get(event_id),
+            ),
             "captured_at": max(s.captured_at for s in filtered) if filtered else None,
         }
     # #12595: a scheduled game's pair comes from recent line readings.
     from app.utils.recent_line_readings import apply_recent_line_projections
 
-    await apply_recent_line_projections(db, events, odds_map)
+    with _time_stage("recent_lines"):
+        await apply_recent_line_projections(db, events, odds_map)
 
     if references is None:
-        gei_percentiles = await _load_gei_percentiles(db)
         names = {n for e in events for n in (e.home_team_name, e.away_team_name) if n}
-        team_lookup = await _build_team_lookup(db, sorted(names))
-        folded_map = await folded_card_numbers_batch(db, events)
+        gei_percentiles, team_lookup = await _load_event_card_references(db, sorted(names))
+        with _time_stage("folded_numbers"):
+            folded_map = await folded_card_numbers_batch(db, events)
     else:
-        folded_map = await folded_card_numbers_batch(db, events)
-        gei_percentiles, team_lookup = await references
+        with _time_stage("folded_numbers"):
+            folded_map = await folded_card_numbers_batch(db, events)
+        with _time_stage("reference_wait"):
+            gei_percentiles, team_lookup = await references
 
     cards: dict = {}
     failed: dict = {}
@@ -303,8 +389,10 @@ async def _assemble_event_cards(
         formatted.append(card)
         cards[int(e.id)] = card
 
-    await attach_venue_settlement(db, formatted_events, formatted, datetime.now(timezone.utc))
-    await _attach_settled_prematch(db, formatted_events, cards, folded_map)
+    with _time_stage("venue_settlement"):
+        await attach_venue_settlement(db, formatted_events, formatted, datetime.now(timezone.utc))
+    with _time_stage("pregame"):
+        await _attach_settled_prematch(db, formatted_events, cards, folded_map)
     return cards, failed
 
 
@@ -347,6 +435,7 @@ async def _attach_settled_prematch(db: AsyncSession, events: list, cards: dict, 
             card["prematch_odds"] = prematch_odds
 
 
+@_timed_read("market_cards")
 async def _hydrate_market_cards(
     db: AsyncSession, market_ids: list, *, nfl_week: bool = False
 ) -> tuple[dict, dict, dict]:
@@ -361,25 +450,29 @@ async def _hydrate_market_cards(
     if not market_ids:
         return {}, {}, {}
     from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
+    from sqlalchemy.orm import joinedload, selectinload
 
     from app.models import FuturesMarket
     from app.routes.events import _format_futures_for_search
     from app.routes.futures import withheld_price_outcome_ids_for_markets
     from app.utils.container_game_winner import RELATED_LINK_LIMIT, related_link_presentation
 
-    markets = (
-        await db.execute(
-            select(FuturesMarket)
-            .options(selectinload(FuturesMarket.sport), selectinload(FuturesMarket.outcomes))
-            .where(FuturesMarket.id.in_(market_ids))
-            .order_by(FuturesMarket.id)
-        )
-    ).scalars().all()
+    with _time_stage("market_rows"):
+        markets = (
+            await db.execute(
+                select(FuturesMarket)
+                # The scalar sport can join the market row. Keep outcomes in
+                # one separate batch so a long ladder does not repeat that row.
+                .options(joinedload(FuturesMarket.sport), selectinload(FuturesMarket.outcomes))
+                .where(FuturesMarket.id.in_(market_ids))
+                .order_by(FuturesMarket.id)
+            )
+        ).scalars().all()
     if not markets:
         return {}, {}, {}
 
-    withheld = await withheld_price_outcome_ids_for_markets(db, markets)
+    with _time_stage("withheld_prices"):
+        withheld = await withheld_price_outcome_ids_for_markets(db, markets)
     cards: dict = {}
     event_ids: dict = {}
     failed: dict = {}
@@ -475,6 +568,43 @@ async def get_week_navigation(
         return {"slug": slug, "state": "unavailable", "previous": None, "next": None}
 
 
+@router.get("/preview/machinery")
+async def get_machinery_preview(
+    request: Request,
+    slugs: Annotated[
+        Optional[str],
+        Query(description="Optional comma-separated candidate slugs to preview."),
+    ] = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Admin-only preview of switched-off #12288 grouping & container machinery
+    candidates (NFL Week, Oscars Best Picture, 2028 Presidential Race, Fed & Economy),
+    with Ruling 227-A report-only diversity counts.
+
+    Public readers and non-admin sessions receive 403 while
+    CONTAINER_MACHINERY_SLICE1_ENABLED remains false.
+    """
+    from app.routes.admin_utils import _check_admin_auth
+    from app.utils.container_machinery import (
+        container_machinery_enabled,
+        evaluate_machinery_candidates_preview,
+    )
+
+    if not await _check_admin_auth(None, request, db):
+        raise HTTPException(status_code=403, detail="Admin authentication required")
+    wanted = (
+        [s.strip() for s in slugs.split(",") if s.strip()]
+        if slugs is not None
+        else None
+    )
+    items = await evaluate_machinery_candidates_preview(db, slugs=wanted)
+    return {
+        "public_switch_enabled": container_machinery_enabled(),
+        "count": len(items),
+        "items": items,
+    }
+
+
 @router.get("/{slug}")
 async def get_container(
     slug: str = Path(..., min_length=1, max_length=200),
@@ -489,7 +619,9 @@ async def get_container(
     market_cursor: Annotated[Optional[str], Query(description="The NFL market page's next_cursor.")] = None,
     market_limit: Annotated[Optional[str], Query(description="NFL markets per continuation page.")] = None,
     compact: bool = True,
+    debug_timing: bool = False,
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ) -> dict:
     """One published collection: header, nested collections, and its members as
     familiar cards grouped by class.
@@ -502,22 +634,147 @@ async def get_container(
     NFL weeks default to all games plus twelve ranked market cards. Remaining
     markets are requested through ``page.next_url``. ``compact=false`` retains
     the explicit full-inventory read. All forms honor published membership.
+
+    ``debug_timing=true`` adds request-local overlapping wall times to a
+    header. It uses the ordinary cache key, statements and response bytes.
     """
+    timings = {} if debug_timing else None
+    token = _stage_timings.set(timings)
+    try:
+        with _time_stage("total"):
+            if (
+                request is not None
+                and isinstance(slug, str)
+                and containers_read_enabled()
+            ):
+                from app.utils.container_machinery import (
+                    container_machinery_enabled,
+                    is_machinery_candidate_slug,
+                    serve_machinery_candidate_preview,
+                )
+
+                if not container_machinery_enabled() and is_machinery_candidate_slug(slug):
+                    from app.routes.admin_utils import _check_admin_auth
+
+                    if await _check_admin_auth(None, request, db):
+                        preview = await serve_machinery_candidate_preview(
+                            slug, db, include_children=include_children
+                        )
+                        if preview is not None:
+                            result = preview["container"]
+                            if timings is not None and not isinstance(result, Response):
+                                result = Response(content=_render(result), media_type="application/json")
+                            if timings is not None:
+                                result.headers["X-Container-Timing"] = ";".join(
+                                    f"{name}={elapsed:.1f}" for name, elapsed in sorted(timings.items())
+                                ) + ";basis=overlapping_wall_ms"
+                            return result
+
+            if isinstance(slug, str) and containers_read_enabled():
+                from app.utils.discovered_child_collections import (
+                    attach_discovered_theme_children,
+                    event_hub_child_discovery_enabled,
+                    is_discovered_child_collection_slug,
+                    serve_discovered_child_collection,
+                )
+
+                def _has_admin_header(req: Optional[Request]) -> bool:
+                    if req is None:
+                        return False
+                    hdrs = getattr(req, "headers", None) or {}
+                    return bool(hdrs.get("Authorization") or hdrs.get("X-Admin-Secret"))
+
+                if is_discovered_child_collection_slug(slug):
+                    allow_child = event_hub_child_discovery_enabled()
+                    if not allow_child and _has_admin_header(request):
+                        from app.routes.admin_utils import _check_admin_auth
+
+                        allow_child = await _check_admin_auth(None, request, db)
+                    if allow_child:
+                        result = await serve_discovered_child_collection(
+                            slug, db, include_children=include_children
+                        )
+                        if timings is not None and not isinstance(result, Response):
+                            result = Response(content=_render(result), media_type="application/json")
+                        if timings is not None:
+                            result.headers["X-Container-Timing"] = ";".join(
+                                f"{name}={elapsed:.1f}" for name, elapsed in sorted(timings.items())
+                            ) + ";basis=overlapping_wall_ms"
+                        return result
+
+            result = await _get_container(
+                slug, include_children, revision, cursor, limit,
+                market_revision, market_cursor, market_limit, compact, db,
+            )
+            if (
+                isinstance(result, dict)
+                and result.get("state") == READ_PUBLISHED
+                and _is_theme_edition(result.get("edition"))
+                and include_children
+                and cursor is None
+            ):
+                from app.utils.discovered_child_collections import (
+                    attach_discovered_theme_children,
+                    event_hub_child_discovery_enabled,
+                )
+
+                allow_theme_children = event_hub_child_discovery_enabled()
+                if (
+                    not allow_theme_children
+                    and request is not None
+                    and ((getattr(request, "headers", None) or {}).get("Authorization")
+                         or (getattr(request, "headers", None) or {}).get("X-Admin-Secret"))
+                ):
+                    from app.routes.admin_utils import _check_admin_auth
+
+                    allow_theme_children = await _check_admin_auth(None, request, db)
+                if allow_theme_children:
+                    await attach_discovered_theme_children(
+                        result, db, include_children=include_children
+                    )
+            if timings is not None and not isinstance(result, Response):
+                result = Response(content=_render(result), media_type="application/json")
+        if timings is not None:
+            # A fresh Response is built even for hits; request timings are
+            # never stored in the shared body or another caller's headers.
+            result.headers["X-Container-Timing"] = ";".join(
+                f"{name}={elapsed:.1f}" for name, elapsed in sorted(timings.items())
+            ) + ";basis=overlapping_wall_ms"
+        return result
+    finally:
+        _stage_timings.reset(token)
+
+
+async def _get_container(
+    slug: str, include_children: bool, revision: Optional[str], cursor: Optional[str], limit: Optional[str],
+    market_revision: Optional[str], market_cursor: Optional[str], market_limit: Optional[str],
+    compact: bool, db: AsyncSession,
+) -> dict | Response:
     if not containers_read_enabled() or (slug == MIDTERMS_SLUG and not midterms_enabled()):
         raise HTTPException(status_code=404, detail="Not found")
 
-    from app.utils.roundup_containers import ROUNDUP_PRODUCERS, serve_roundup
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        ensure_optional_roundup_candidates,
+        serve_roundup,
+    )
+
+    ensure_optional_roundup_candidates()
 
     if slug in ROUNDUP_PRODUCERS:
         return await serve_roundup(slug, db, include_children=include_children)
 
-    published = await read_published(db, slug)
+    edition = edition_for_slug(slug)
+    with _time_stage("published_read"):
+        if slug == MIDTERMS_SLUG or _is_theme_edition(edition):
+            published = await read_published(db, slug)
+        else:
+            published = await read_published(db, slug, include_headers=True)
     if published.state == READ_UNAVAILABLE:
         raise HTTPException(
             status_code=404, detail={"state": READ_UNAVAILABLE, "slug": slug}
         )
 
-    edition = edition_for_slug(slug)
     payload = _state_payload(published, edition)
     base_empty = _base_empty(published.slug)
     if published.state not in (READ_PUBLISHED, READ_EMPTY):
@@ -572,47 +829,116 @@ async def get_container(
     return await _serve_cached(db, slug, published, include_children, compact=compact)
 
 
+# Keep at most one first-page market read per worker on a second connection.
+_week_market_read_slot = asyncio.Semaphore(1)
+_WEEK_MARKET_CHECKOUT_SECONDS = 0.15
+_WeekMarketRead = tuple[dict[int, MarketSummary], list[int], tuple[dict, dict, dict]]
+
+
+def _week_market_read_engine(db: AsyncSession) -> AsyncEngine | None:
+    engine = getattr(db, "bind", None)
+    if _week_market_read_slot.locked() or not isinstance(engine, AsyncEngine):
+        return None
+    try:
+        has_capacity = engine.pool.checkedout() < engine.pool.size()
+    except (AttributeError, NotImplementedError):
+        # Some pool implementations do not report available capacity.
+        return None
+    return engine if has_capacity else None
+
+
+@_timed_read("market_descriptors")
+async def _read_week_market_summaries(
+    db: AsyncSession, market_ids: list[int]
+) -> dict[int, MarketSummary]:
+    rows = (
+        await db.execute(
+            text(
+                "SELECT id, event_id, name, external_id, volume_24h, volume "
+                "FROM futures_markets WHERE id = ANY(:market_ids)"
+            ),
+            {"market_ids": market_ids},
+        )
+    ).fetchall()
+    return {int(row[0]): MarketSummary(*row) for row in rows}
+
+
+async def _read_week_market_cards(
+    db: AsyncSession, market_ids: list[int], event_ids: set[int]
+) -> _WeekMarketRead:
+    summaries = await _read_week_market_summaries(db, market_ids)
+    selected = ranked_preview(list(summaries.values()), event_ids)
+    return summaries, selected, await _hydrate_market_cards(db, selected, nfl_week=True)
+
+
+async def _close_week_market_session(db: AsyncSession) -> None:
+    close = asyncio.create_task(db.close())
+    cancelled = None
+    while not close.done():
+        try:
+            await asyncio.shield(close)
+        except asyncio.CancelledError as exc:
+            # Keep returning the connection even during repeated cancellations.
+            cancelled = exc
+    close.result()
+    if cancelled is not None:
+        raise cancelled
+
+
+async def _read_week_cards_in_parallel(
+    engine: AsyncEngine, db: AsyncSession, event_ids: list[int], market_ids: list[int]
+) -> tuple[tuple[dict, dict], _WeekMarketRead] | None:
+    # Both read chains use only published IDs. Canonical event references stay
+    # on the request session so the build uses at most two connections.
+    async with _week_market_read_slot:
+        side = async_sessionmaker(engine, expire_on_commit=False)()
+        try:
+            try:
+                with _time_stage("market_pool_wait"):
+                    async with asyncio.timeout(_WEEK_MARKET_CHECKOUT_SECONDS):
+                        await side.connection()
+            except (OSError, PoolTimeoutError, DBAPIError):
+                # An unavailable side connection does not prevent the primary
+                # connection from serving the page.
+                return None
+            async with asyncio.TaskGroup() as reads:
+                markets = reads.create_task(
+                    _read_week_market_cards(side, market_ids, set(event_ids)),
+                    name="container-week-market-cards",
+                )
+                games = await _hydrate_event_cards(
+                    db, event_ids, compact=True, concurrent_references=False,
+                )
+            return games, markets.result()
+        finally:
+            await _close_week_market_session(side)
+
+
 async def _build_published_payload(
     db: AsyncSession, published, include_children: bool, compact: bool = False,
     week_page: Optional[tuple] = None,
 ) -> dict:
     """The full 200 for a ``published`` / ``empty`` read — the uncached build."""
     payload = _state_payload(published, edition_for_slug(published.slug))
-    # Header and nested collections in ONE statement, keyed on the id the
-    # published read returned (not the slug again), so both halves describe the
-    # same row. A nested collection that is withdrawn is left out, matching the
-    # published read, which leaves its members out.
-    rows = (
-        await db.execute(
-            text(
-                "SELECT id, kind, name, slug, category, status, "
-                "       window_start, window_end, parent_container_id, "
-                "       publication_state "
-                "FROM containers "
-                "WHERE id = :id "
-                "   OR (parent_container_id = :id AND publication_state <> 'withdrawn') "
-                "ORDER BY (id = :id) DESC, name, id"
-            ),
-            {"id": published.container_id},
+    with _time_stage("header"):
+        head = next(
+            (row for row in published.header_rows if row[0] == published.container_id), None
         )
-    ).fetchall()
-    head = next((r for r in rows if int(r[0]) == published.container_id), None)
-    child_rows = [r for r in rows if int(r[0]) != published.container_id]
-    children = [
-        {
-            "id": int(c[0]),
-            "kind": c[1],
-            "name": c[2],
-            "slug": c[3],
-            "status": c[5],
-            "publication_state": c[9],
-            "edition": edition_for_slug(c[3]),
-            # Only a published nested collection is a destination; any other
-            # would open onto a state with nothing in it.
-            "destination": container_destination(c[3]) if c[9] == READ_PUBLISHED else None,
-        }
-        for c in child_rows
-    ]
+        header = _container_header(head) if head is not None else None
+        children = [
+            {
+                "id": int(c[0]),
+                "kind": c[1],
+                "name": c[2],
+                "slug": c[3],
+                "status": c[5],
+                "publication_state": c[9],
+                "edition": edition_for_slug(c[3]),
+                "destination": container_destination(c[3]) if c[9] == READ_PUBLISHED else None,
+            }
+            for c in published.header_rows
+            if c[0] != published.container_id
+        ]
 
     members = list(published.members)
     if not include_children:
@@ -621,9 +947,20 @@ async def _build_published_payload(
     event_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_EVENT})
     market_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_MARKET})
     all_market_ids = list(market_ids)
-    event_cards, event_failed = await _hydrate_event_cards(
-        db, [] if week_page is not None else event_ids, concurrent_references=compact
-    )
+    first_week_page = compact and week_page is None and bool(market_ids)
+    market_engine = _week_market_read_engine(db) if first_week_page and event_ids else None
+    parallel = await _read_week_cards_in_parallel(
+        market_engine, db, event_ids, market_ids
+    ) if market_engine is not None else None
+    if parallel is None:
+        event_cards, event_failed = await _hydrate_event_cards(
+            db, [] if week_page is not None else event_ids,
+            compact=compact,
+            concurrent_references=compact and not first_week_page,
+        )
+        market_rows = None
+    else:
+        (event_cards, event_failed), (summaries, selected, market_rows) = parallel
     related_counts = {}
     unclassified_count = 0
     week_metadata = ({
@@ -636,18 +973,12 @@ async def _build_published_payload(
         candidates = [mid for mid in market_ids if mid > after and mid not in excluded]
         # Continuations need only their bounded slice's descriptors. Entry
         # ranks narrow metadata for all members, never all outcome rows.
-        asked = candidates[:page_limit] if week_page is not None else market_ids
-        rows = (
-            await db.execute(
-                text(
-                    "SELECT id, event_id, name, external_id, volume_24h, volume "
-                    "FROM futures_markets WHERE id = ANY(:market_ids)"
-                ),
-                {"market_ids": asked},
+        if parallel is None:
+            asked = candidates[:page_limit] if week_page is not None else market_ids
+            summaries = await _read_week_market_summaries(db, asked)
+            selected = asked if week_page is not None else ranked_preview(
+                list(summaries.values()), set(event_ids)
             )
-        ).fetchall()
-        summaries = {int(row[0]): MarketSummary(*row) for row in rows}
-        selected = (asked if week_page is not None else ranked_preview(list(summaries.values()), set(event_ids)))
         if week_page is None:
             excluded = selected
             deferred = set(all_market_ids) - set(selected)
@@ -682,9 +1013,11 @@ async def _build_published_payload(
             members, summaries, selected, set(event_ids)
         )
         market_ids = selected
-    market_cards, market_event_ids, market_failed = await _hydrate_market_cards(
-        db, market_ids, nfl_week=(payload["edition"] or {}).get("kind") == EDITION_NFL_WEEK
-    )
+    if market_rows is None:
+        market_rows = await _hydrate_market_cards(
+            db, market_ids, nfl_week=(payload["edition"] or {}).get("kind") == EDITION_NFL_WEEK
+        )
+    market_cards, market_event_ids, market_failed = market_rows
     sections, withheld = present_sections(
         members,
         event_cards=event_cards,
@@ -699,7 +1032,6 @@ async def _build_published_payload(
             if member["type"] == MEMBER_EVENT and member["id"] in related_counts:
                 member["related_count"] = related_counts[member["id"]]
     member_count = sum(s["count"] for s in sections)
-    header = _container_header(head) if head is not None else None
     if header is not None and len(event_cards) == len(event_ids):
         from app.utils.container_presentation import nfl_week_title
 
@@ -783,13 +1115,14 @@ def _render(payload: dict) -> bytes:
     Rendered once per build instead of once per request; byte-identical to the
     uncached path (the same encoder, the same ``json.dumps`` arguments).
     """
-    return json.dumps(
-        jsonable_encoder(payload),
-        ensure_ascii=False,
-        allow_nan=False,
-        indent=None,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    with _time_stage("render"):
+        return json.dumps(
+            jsonable_encoder(payload),
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(",", ":"),
+        ).encode("utf-8")
 
 
 def _remember_local(key: str, entry: CachedRead) -> None:
@@ -806,6 +1139,7 @@ def _reset_read_cache_for_tests() -> None:
     reset_nfl_division_roundup_cache_for_tests()
 
 
+@_timed_read("cache_lookup")
 async def _load_entry(key: str, now: float) -> tuple[Optional[CachedRead], bool]:
     """``(entry, from_shared)`` — the freshest servable copy of ``key``, or None."""
     local = _local_entries.get(key)
@@ -915,10 +1249,11 @@ async def _refresh_in_background(
     from app.services.database import async_session_maker
     from app.utils.request_cache import finish_build
 
+    timing_token = _stage_timings.set(None)
     result = None
     try:
         async with async_session_maker() as session:
-            published = await read_published(session, slug)
+            published = await read_published(session, slug, include_headers=True)
             if published.state in (READ_PUBLISHED, READ_EMPTY):
                 entry = await _build_entry(session, published, include_children, compact=compact)
                 fresh_key = container_read_cache_key(slug, published.revision, include_children, compact)
@@ -935,6 +1270,7 @@ async def _refresh_in_background(
             exc_info=True,
         )
     finally:
+        _stage_timings.reset(timing_token)
         finish_build(key, future, result=result)
 
 

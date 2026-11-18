@@ -105,6 +105,18 @@ function card(sportKey: string, sportName: string): string {
   );
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the sports whose key segment is not a shelf name", () => {
   it("an NFL card draws the football, not the fallback", () => {
     const html = card("americanfootball_nfl", "NFL");
