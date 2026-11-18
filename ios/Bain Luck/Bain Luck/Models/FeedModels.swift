@@ -953,6 +953,13 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     /// PRESENT ONLY WHEN TRUE: absent means "not established", never "still
     /// going". Read it through ``EventState/showsVenueClosedNoWinner(_:venueSettled:venueClosedNoWinner:commenceTime:now:)``.
     let venueClosedNoWinner: Bool?
+    /// #12581 / #12926 / #12864 / #12865 / #12961 — server-owned source attribution
+    /// marks for home (`sourceMark` / `pregameSourceMark`) and away (`awaySourceMark` /
+    /// `awayPregameSourceMark`) probabilities.
+    var sourceMark: SourceMark? = nil
+    var awaySourceMark: SourceMark? = nil
+    var pregameSourceMark: SourceMark? = nil
+    var awayPregameSourceMark: SourceMark? = nil
 }
 
 /// What a card should draw in one participant's avatar slot, and how.

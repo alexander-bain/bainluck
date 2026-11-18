@@ -60,9 +60,13 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from time import monotonic
 from typing import Any, Optional
+from weakref import WeakKeyDictionary
 
 from sqlalchemy import text
+from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.utils.container_graph import (
     validate_correction,
@@ -228,6 +232,29 @@ async def correction_schema_present(session) -> CorrectionSchema:
     if not row:
         return CorrectionSchema(ledger=False, columns=False)
     return CorrectionSchema(ledger=bool(row[0]), columns=bool(row[1]))
+
+
+_READ_SCHEMA_TTL_SECONDS = 60.0
+_read_schema_cache: WeakKeyDictionary[
+    Engine | Connection, tuple[float, CorrectionSchema]
+] = WeakKeyDictionary()
+
+
+async def _schema_for_published_read(session) -> CorrectionSchema:
+    """Reuse a recently verified schema for this database bind."""
+    if not isinstance(session, AsyncSession):
+        return await correction_schema_present(session)
+
+    bind = session.get_bind()
+    now = monotonic()
+    cached = _read_schema_cache.get(bind)
+    if cached is not None and now < cached[0]:
+        return cached[1]
+
+    schema = await correction_schema_present(session)
+    if schema.complete:
+        _read_schema_cache[bind] = (now + _READ_SCHEMA_TTL_SECONDS, schema)
+    return schema
 
 
 # ---------------------------------------------------------------------------
@@ -794,7 +821,7 @@ async def read_published(session, slug: str) -> PublishedRead:
     One statement cannot. Draws are included one level down, as the existing
     route does, except a draw that is itself ``withdrawn``.
     """
-    schema = await correction_schema_present(session)
+    schema = await _schema_for_published_read(session)
     if not schema.columns:
         exists = (
             await session.execute(

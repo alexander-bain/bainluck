@@ -188,6 +188,14 @@ nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
     /// owns that rule so no second surface has to rediscover it.
     let winProbability: Double?
     let pregameWinProbability: Double?
+    /// #12581 / #12926 / #12865 — server-owned source attribution marks.
+    /// On `/api/teams/{slug}`, `sourceMark` and `pregameSourceMark` describe this
+    /// page's team (`isHome`); on `/api/events/search`, `sourceMark` and
+    /// `awaySourceMark` describe the home and away sides.
+    var sourceMark: SourceMark? = nil
+    var awaySourceMark: SourceMark? = nil
+    var pregameSourceMark: SourceMark? = nil
+    var awayPregameSourceMark: SourceMark? = nil
     /// Served orientation. Preferred over comparing `homeTeam` to the page's team
     /// name: one name variant flips the row to the wrong side silently, and the
     /// payload states the answer outright.

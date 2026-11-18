@@ -172,12 +172,12 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
         XCTAssertEqual(list.updates.count, 1, "a cleared list takes the venue's rows again")
     }
 
-    func testEachRowNamesItsVenueAndItsTimeToTheHundredth() {
+    func testEachRowNamesItsVenueAndItsTimeToTheSecond() {
         let utc = TimeZone(identifier: "UTC")!
         let time = Date(timeIntervalSince1970: 1_793_573_823.427)   // 2026-11-01 22:57:03.427Z
-        XCTAssertEqual(LiveUpdateStream.timeText(time, timeZone: utc), "10:57:03.42 PM")
+        XCTAssertEqual(LiveUpdateStream.timeText(time, timeZone: utc), "10:57:03 PM")
         XCTAssertEqual(LiveUpdateStream.timeText(Date(timeIntervalSince1970: 1_793_491_200.055), timeZone: utc),
-                       "12:00:00.05 AM")
+                       "12:00:00 AM")
         XCTAssertEqual(LiveUpdateStream.venueName("kalshi"), "Kalshi")
         XCTAssertEqual(LiveUpdateStream.venueName("polymarket"), "Polymarket")
         XCTAssertEqual(LiveUpdateStream.venueName("new_venue"), "Another venue", "#4135: never a title-cased key")

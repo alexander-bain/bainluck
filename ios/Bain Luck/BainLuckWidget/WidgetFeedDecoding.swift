@@ -77,6 +77,7 @@ nonisolated struct WidgetEventData: Decodable {
     let status: String?
     let homeScore: Int?
     let awayScore: Int?
+    let heroProbabilitySource: String?
     let currentOdds: WidgetCurrentOdds?
     let homeTeamData: WidgetTeamData?
     let awayTeamData: WidgetTeamData?
@@ -132,6 +133,13 @@ enum WidgetLifecycle {
             return true
         }
         return false
+    }
+
+    /// #12824 — rejects an older/cached feed event whose `hero_probability_source`
+    /// is `"opening"` so `LiveGamesWidget` never draws a stored opening line as a
+    /// live win probability on the Home Screen.
+    static func admitsLiveProbability(_ e: WidgetEventData) -> Bool {
+        e.status == "live" && e.heroProbabilitySource != "opening"
     }
 
     /// ISO8601 with or without fractional seconds — the widget has no access to the

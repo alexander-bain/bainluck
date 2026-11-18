@@ -245,6 +245,58 @@ class TestFieldBandDefinitionAndRegistry:
 class TestSelectFieldBand:
     """Pure selection and compositional rules for ``field_band``."""
 
+    def test_feed_and_section_rows_carry_the_price_from_their_own_field(self) -> None:
+        qualifiers = _make_cfp_qualifiers_market()
+        title = _make_cfp_title_market(source="polymarket")
+        # An earlier false grade was retracted. The open field still uses its
+        # price. A row revision dates neither a venue read nor a result.
+        for row in qualifiers["outcomes"]:
+            row.update(is_winner=False, resolution_source="ungradeable_result")
+        result = select_field_band(
+            [qualifiers, title],
+            field_spec="kalshi:227",
+            second_section_spec="polymarket:181",
+            band=(0.2, 0.8),
+            section_titles=("On the bubble", "Title contenders"),
+        )
+        feed = compose_roundup_feed_item(CFP_PICTURE_PRODUCER, result)["data"]
+        page = compose_roundup_container(CFP_PICTURE_PRODUCER, result)
+        for (market, source_name), section, item in zip(
+            ((qualifiers, "Kalshi"), (title, "Polymarket")),
+            page["sections"],
+            feed["items"],
+            strict=True,
+        ):
+            source = market["source"]
+            by_id = {r["id"]: r for r in market["outcomes"]}
+            card = section["members"][0]["card"]
+            assert item["data"] == card
+            marks = {}
+            for row in card["top_outcomes"]:
+                original = by_id[row["id"]]
+                assert original["name"] == row["name"]
+                assert original["probability"] == row["probability"]
+                marks[row["name"]] = row["source_mark"]
+                assert row["source_mark"] == {
+                    "state": "single",
+                    "sources": [
+                        {
+                            "key": source,
+                            "name": source_name,
+                            "probability": original["probability"],
+                            "observed_at": None,
+                            "reason": "observation_unknown",
+                        }
+                    ],
+                }
+            for row in card["discover_card"]["distribution_outcomes"]:
+                assert row["source_mark"] == marks[row["label"]]
+        bubble = page["sections"][0]["members"][0]["card"]
+        by_id = {row["id"]: row for row in bubble["top_outcomes"]}
+        for row in feed["roundup"]["rows"]:
+            assert row["source_mark"] == by_id[row["outcome_id"]]["source_mark"]
+            assert row["observed_at"] == FIXED_UPDATED
+
     @pytest.mark.asyncio
     async def test_produces_bubble_and_title_sections_without_normalizing_to_100(
         self,
