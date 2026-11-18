@@ -131,8 +131,7 @@ class TestActualHeadlineInputs:
     def test_opening_fallback_does_not_invent_a_current_contributor(self):
         sources = []
         hero = resolve_hero(event(opening_home_probability=0.63), source_inputs=sources)
-        assert hero.source == "opening"
-        assert hero.home_probability == 0.63
+        assert hero is None
         assert sources == []
 
     def test_espn_fallback_names_espn_without_inventing_a_clock(self):

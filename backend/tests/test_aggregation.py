@@ -332,7 +332,7 @@ class TestComputeAggregateProbability:
 
         assert compute_aggregate_probability(event, event_status="closed") == 1.0
 
-    def test_falls_back_to_espn_then_opening_probability(self):
+    def test_falls_back_to_espn_but_never_to_opening_probability(self):
         event = type("Event", (), {
             "status": "live",
             "win_probability_sources": {},
@@ -342,7 +342,7 @@ class TestComputeAggregateProbability:
         assert compute_aggregate_probability(event) == 0.42
 
         event.espn_win_prob_home = None
-        assert compute_aggregate_probability(event) == 0.38
+        assert compute_aggregate_probability(event) is None
 
     def test_returns_none_without_any_probability(self):
         event = type("Event", (), {

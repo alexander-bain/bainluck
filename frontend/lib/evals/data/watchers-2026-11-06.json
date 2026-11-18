@@ -1,6 +1,7 @@
 {
   "schema": "evals-watchers/1",
-  "reviewed_at": "2026-11-06",
+  "reviewed_at": "2026-11-17",
+  "since_at": "2026-11-06",
   "schedule_source": {
     "label": "The production schedule",
     "href": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py"
@@ -19,13 +20,13 @@
       "source": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/data_quality_watchdog.py",
       "verdict": {
         "state": "red_reporting",
-        "run_at": "2026-11-06T12:47:48Z",
+        "run_at": "2026-11-17T01:10:36Z",
         "receipt": {
           "label": "The run's first post on GitHub",
-          "href": "https://github.com/alexander-bain/bainluck/issues/4057#issuecomment-6685169500"
+          "href": "https://github.com/alexander-bain/bainluck/issues/12833"
         },
         "issues": [
-          4057
+          12833
         ],
         "closed": [],
         "fix": null,
@@ -44,15 +45,13 @@
       "source": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/matching_reconciliation.py",
       "verdict": {
         "state": "red_reporting",
-        "run_at": "2026-11-06T14:03:23Z",
+        "run_at": "2026-11-17T13:28:08Z",
         "receipt": {
           "label": "The run's first post on GitHub",
-          "href": "https://github.com/alexander-bain/bainluck/issues/12144#issuecomment-6686664159"
+          "href": "https://github.com/alexander-bain/bainluck/issues/10523#issuecomment-6949418976"
         },
         "issues": [
-          12144,
-          10523,
-          12145
+          10523
         ],
         "closed": [],
         "fix": null,
@@ -71,10 +70,10 @@
       "source": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py",
       "verdict": {
         "state": "red_reporting",
-        "run_at": "2026-11-06T06:44:52Z",
+        "run_at": "2026-11-17T06:44:35Z",
         "receipt": {
           "label": "The run's first post on GitHub",
-          "href": "https://github.com/alexander-bain/bainluck/issues/2978#issuecomment-6678966061"
+          "href": "https://github.com/alexander-bain/bainluck/issues/2978#issuecomment-6940896254"
         },
         "issues": [
           2978
@@ -96,19 +95,17 @@
       "source": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py",
       "verdict": {
         "state": "red_reporting",
-        "run_at": "2026-11-06T07:19:52Z",
+        "run_at": "2026-11-17T07:22:17Z",
         "receipt": {
           "label": "The run's first post on GitHub",
-          "href": "https://github.com/alexander-bain/bainluck/issues/12071#issuecomment-6679506737"
+          "href": "https://github.com/alexander-bain/bainluck/issues/12635#issuecomment-6941564131"
         },
         "issues": [
-          12071,
-          12072,
-          1511
+          12635,
+          12853,
+          12749
         ],
-        "closed": [
-          12073
-        ],
+        "closed": [],
         "fix": null,
         "earlier": 11960
       }
@@ -162,13 +159,13 @@
       "source": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py",
       "verdict": {
         "state": "red_reporting",
-        "run_at": "2026-11-06T07:53:52Z",
+        "run_at": "2026-11-17T07:46:59Z",
         "receipt": {
           "label": "The run's first post on GitHub",
-          "href": "https://github.com/alexander-bain/bainluck/issues/4231#issuecomment-6680051792"
+          "href": "https://github.com/alexander-bain/bainluck/issues/12429#issuecomment-6942013906"
         },
         "issues": [
-          4231
+          12429
         ],
         "closed": [],
         "fix": null,
@@ -187,20 +184,14 @@
       "source": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py",
       "verdict": {
         "state": "red_reporting",
-        "run_at": "2026-11-06T07:54:07Z",
+        "run_at": "2026-11-17T07:47:08Z",
         "receipt": {
           "label": "The run's first post on GitHub",
-          "href": "https://github.com/alexander-bain/bainluck/issues/12135"
+          "href": "https://github.com/alexander-bain/bainluck/issues/12430#issuecomment-6942016608"
         },
         "issues": [
-          12135,
-          12136,
-          12137,
-          12138,
-          12139,
-          12140,
-          12141,
-          12142
+          12430,
+          12431
         ],
         "closed": [],
         "fix": null,
@@ -243,10 +234,10 @@
       "source": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py",
       "verdict": {
         "state": "red_reporting",
-        "run_at": "2026-11-06T08:05:09Z",
+        "run_at": "2026-11-17T07:59:39Z",
         "receipt": {
           "label": "The run's first post on GitHub",
-          "href": "https://github.com/alexander-bain/bainluck/issues/1449#issuecomment-6680233836"
+          "href": "https://github.com/alexander-bain/bainluck/issues/1449#issuecomment-6942244191"
         },
         "issues": [
           1449
@@ -268,19 +259,15 @@
       "source": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py",
       "verdict": {
         "state": "red_reporting",
-        "run_at": "2026-11-06T08:06:35Z",
+        "run_at": "2026-11-17T08:00:40Z",
         "receipt": {
           "label": "The run's first post on GitHub",
-          "href": "https://github.com/alexander-bain/bainluck/issues/10783#issuecomment-6680257276"
+          "href": "https://github.com/alexander-bain/bainluck/issues/12083#issuecomment-6942263296"
         },
         "issues": [
-          10783,
-          10782,
           12083
         ],
-        "closed": [
-          12082
-        ],
+        "closed": [],
         "fix": null,
         "earlier": null
       }

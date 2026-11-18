@@ -170,6 +170,18 @@ const DARK_HERO_SPORTS: [string, string][] = [
   ["soccer_epl", "soccer"],
 ];
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#8436 · EventCard — the hero chip wears the on-dark skin on every dark hero", () => {
   it.each(DARK_HERO_SPORTS)("%s: chip drawn, labelled, readable at every stop", (sport, shelf) => {
     const html = renderEvent(sport);

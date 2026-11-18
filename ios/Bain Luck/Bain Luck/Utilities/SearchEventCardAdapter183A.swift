@@ -10,15 +10,24 @@ enum SearchEventCardAdapter183A {
         _ event: SearchEvent,
         sportDisplayName: String?
     ) -> FeedEventData {
+        let isOpeningLine = event.heroProbabilitySource == OpeningLineHero.openingSource
         let resolvedCurrentOdds: CurrentOdds? = {
-            if let current = event.currentOdds {
+            if var current = event.currentOdds {
+                if isOpeningLine {
+                    // The old serializer's snapshot stamp dates the book rows, not the win chance.
+                    current.homeProbability = nil
+                    current.awayProbability = nil
+                    current.drawProbability = nil
+                    current.homeRenderedPercent = nil
+                    current.awayRenderedPercent = nil
+                }
                 return current
             }
             // #4967 — search rows without `current_odds` still serve `hero_probability` /
             // `hero_probability_away`. Populate `CurrentOdds` when gradable so the card
             // renders the server's blended probability (`EventCardView.currentAwayIsWithheld`
             // enforces #5363 on draw-priced sports).
-            guard EventState.canStillBeGraded(
+            guard !isOpeningLine, EventState.canStillBeGraded(
                 event.status,
                 commenceTime: event.commenceTime?.asDate
             ), event.heroProbability != nil || event.heroProbabilityAway != nil else {
@@ -54,7 +63,7 @@ enum SearchEventCardAdapter183A {
             homeScore: event.homeScore,
             awayScore: event.awayScore,
             blendFoldRevision: nil,
-            heroProbabilitySource: nil,
+            heroProbabilitySource: event.heroProbabilitySource,
             heroProbabilityObservedAt: nil,
             currentOdds: resolvedCurrentOdds,
             openingOdds: event.openingOdds,
@@ -77,7 +86,11 @@ enum SearchEventCardAdapter183A {
             awayFlagUrl: event.awayFlagUrl,
             endedAt: nil,
             discoverMarqueeFinal: nil,
-            venueClosedNoWinner: event.venueClosedNoWinner
+            venueClosedNoWinner: event.venueClosedNoWinner,
+            sourceMark: isOpeningLine ? nil : event.sourceMark,
+            awaySourceMark: isOpeningLine ? nil : event.awaySourceMark,
+            pregameSourceMark: event.pregameSourceMark,
+            awayPregameSourceMark: event.awayPregameSourceMark
         )
     }
 
@@ -171,6 +184,14 @@ enum SearchEventCardAdapter183A {
         let awayVerified = !isHome && pricesADraw
             && (livePrice != nil || event.pregameWinProbability != nil)
 
+        // `/api/teams/{slug}` (#12926) orients `source_mark` and `pregame_source_mark`
+        // to this page's team (`isHome`). Map them onto the matching side without ever
+        // synthesizing or complementing an opponent mark (137-A).
+        let homeCurrentMark: SourceMark? = isHome ? event.sourceMark : event.awaySourceMark
+        let awayCurrentMark: SourceMark? = isHome ? event.awaySourceMark : event.sourceMark
+        let homePregameMark: SourceMark? = isHome ? event.pregameSourceMark : event.awayPregameSourceMark
+        let awayPregameMark: SourceMark? = isHome ? event.awayPregameSourceMark : event.pregameSourceMark
+
         let feedEvent = FeedEventData(
             id: event.id,
             externalId: event.externalId,
@@ -207,7 +228,11 @@ enum SearchEventCardAdapter183A {
             awayFlagUrl: event.awayFlagUrl,
             endedAt: nil,
             discoverMarqueeFinal: nil,
-            venueClosedNoWinner: event.venueClosedNoWinner
+            venueClosedNoWinner: event.venueClosedNoWinner,
+            sourceMark: homeCurrentMark,
+            awaySourceMark: awayCurrentMark,
+            pregameSourceMark: homePregameMark,
+            awayPregameSourceMark: awayPregameMark
         )
         return (feedEvent: feedEvent, awayReadingIsServerVerified: awayVerified)
     }

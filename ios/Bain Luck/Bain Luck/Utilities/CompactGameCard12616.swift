@@ -302,8 +302,8 @@ enum CompactGameCard12616 {
     /// or `"Projected (90 min) 1–2"` on regulation soccer), in away–home card order.
     nonisolated static func finalContextText(_ comparison: FinalForecastComparison11296.Comparison) -> String {
         let prefix = comparison.label == FinalForecastComparison11296.label90Min
-            ? "Projected (90 min)"
-            : "Projected"
+            ? "Pregame projection (90 min)"
+            : "Pregame projection"
         return "\(prefix) \(comparison.away)\u{2013}\(comparison.home)"
     }
 

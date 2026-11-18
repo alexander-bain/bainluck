@@ -18,7 +18,9 @@ import { calibrationFixture, calibrationFixtureBuckets } from "@/lib/evals/fixtu
 import {
   CHART_THIN_FLOOR,
   DEFAULT_CURVE_COLOR,
+  UNGRADED_OUTCOMES_ISSUE,
   barPointsText,
+  categorySliceLabel,
   forwardRecordView,
 } from "@/lib/evals/forwardRecord";
 
@@ -91,6 +93,27 @@ describe("the categories meter reads the scorecard, all three numbers", () => {
     ]) {
       expect(forwardRecordView(calibrationFixture({ scorecard })).categories).toBeNull();
     }
+  });
+
+  it("marks partly_ungraded only from explicit server flags, marks uncertain only when n < min_category_outcomes or within 2-sigma, and keeps clear misses over_bar", () => {
+    const view = forwardRecordView(calibrationFixture());
+    const slices = view.categorySlices;
+    expect(slices.length).toBeGreaterThan(0);
+    const mlbPre = slices.find((s) => s.key === "baseball_mlb_preseason");
+    expect(mlbPre?.status).toBe("partly_ungraded");
+    expect(mlbPre?.ungradedIssue).toBe(UNGRADED_OUTCOMES_ISSUE);
+    const nfl = slices.find((s) => s.key === "americanfootball_nfl");
+    expect(nfl?.status).toBe("over_bar");
+    expect(nfl?.ungradedIssue).toBeNull();
+    const wtaCan = slices.find((s) => s.key === "tennis_wta_canadian_open");
+    expect(wtaCan?.status).toBe("over_bar");
+    const chess = slices.find((s) => s.key === "chess");
+    expect(chess?.status).toBe("uncertain");
+    expect(view.minCategoryOutcomes).toBe(1000);
+    expect(view.smallSampleSlices.map((s) => s.key)).toEqual(["tennis_atp_canadian_open", "lacrosse_ncaa"]);
+    expect(view.smallSampleSlices.every((s) => s.status === "uncertain")).toBe(true);
+    expect(categorySliceLabel("soccer_france_ligue_one")).toBe("France Ligue One");
+    expect(categorySliceLabel("soccer_france_ligue_one")).not.toMatch(/\d/);
   });
 });
 

@@ -54,7 +54,8 @@ nonisolated enum PairedMetricPresentation {
     static let allowedVisualArtHosts: Set<String> = [
         "image.tmdb.org",
         "a.espncdn.com",
-        "images.pexels.com"
+        "images.pexels.com",
+        "upload.wikimedia.org"
     ]
 
     // Mirrors `frontend/lib/play/kidSafe.ts` (#7461).
@@ -163,6 +164,7 @@ nonisolated enum PairedMetricPresentation {
         let patterns = [
             "\\s*·\\s*Nominee\\s*%.*$",
             "\\s*·\\s*Paired by club.*$",
+            "\\s*·\\s*Verified [A-Za-z0-9\\s]+$",
             "\\s*\\([^)]*#\\d+[^)]*\\)"
         ]
         for pattern in patterns {
@@ -246,10 +248,11 @@ nonisolated enum PairedMetricPresentation {
             || lower.contains("ties broken by")
     }
 
-    /// Short Stage-1 qualifier tag (`"nom"`, `"playoff"`, or lowercased `stage1Label`).
+    /// Stage-1 qualifier tag (`"nominated"`, `"playoff"`, or lowercased `stage1Label`).
+    /// Never abbreviates `"nominated"` to `"nom"` (Fable look on `#12863`).
     static func shortStage1Tag(for set: PairedMetricSet) -> String {
         let lower = set.stage1Label.lowercased()
-        if lower.contains("nominat") { return "nom" }
+        if lower.contains("nominat") { return "nominated" }
         if lower.contains("playoff") { return "playoff" }
         return lower
     }
@@ -265,12 +268,14 @@ nonisolated enum PairedMetricPresentation {
     static func expanderCopy(
         sortedEntries: [PairedSubjectEntry],
         set: PairedMetricSet,
-        expanded: Bool
+        expanded: Bool,
+        collapsedCount: Int = 5
     ) -> (primary: String, unpricedNotice: String?)? {
-        let hiddenCount = sortedEntries.count - 5
+        let safeLimit = max(1, collapsedCount)
+        let hiddenCount = sortedEntries.count - safeLimit
         guard hiddenCount > 0 else { return nil }
         if expanded {
-            return (primary: "Show top 5 by \(set.stage2Label) % only", unpricedNotice: nil)
+            return (primary: "Show top \(safeLimit) by \(set.stage2Label) % only", unpricedNotice: nil)
         }
         let primary: String
         if set.stage1Label.lowercased().contains("nominat") {
@@ -278,7 +283,7 @@ nonisolated enum PairedMetricPresentation {
         } else {
             primary = "Show all \(sortedEntries.count) contenders (+\(hiddenCount) more)"
         }
-        let hiddenSlice = sortedEntries.dropFirst(5)
+        let hiddenSlice = sortedEntries.dropFirst(safeLimit)
         guard let unpriced = hiddenSlice.first(where: { $0.stage2Probability == nil }) else {
             return (primary: primary, unpricedNotice: nil)
         }
@@ -311,7 +316,7 @@ nonisolated enum PairedMetricPresentation {
             let left = isLockTier
                 ? "LIKELY NOMINEES (70%+ TO BE NOMINATED · LONGSHOT TO WIN)"
                 : "ON THE NOMINATION BUBBLE (<70% TO BE NOMINATED)"
-            return (left, "NOM · WIN")
+            return (left, "NOMINATED · WIN")
         }
         if lowerS1.contains("playoff") {
             let left = isLockTier
@@ -328,8 +333,10 @@ nonisolated enum PairedMetricPresentation {
     }
 
     /// Resolves which of the two winning grouped looks to draw, honoring explicit server preference
-    /// when valid, falling back to `.pairedBarsTop5Expandable` if `< 3` entries, and alternating
-    /// deterministically across cards when unspecified so adjacent grouped cards differ (`168-A`).
+    /// when valid, defaulting award-category (`Nominated %` + `Wins %`, #12577 / #12849) cards to
+    /// `.pairedBarsTop5Expandable` so every contender's nomination chance draws beside its win chance,
+    /// falling back to `.pairedBarsTop5Expandable` if `< 3` entries, and alternating deterministically
+    /// across other grouped cards when unspecified (`168-A`).
     static func resolvedForm(
         for set: PairedMetricSet,
         preferred: String? = nil,
@@ -341,6 +348,9 @@ nonisolated enum PairedMetricPresentation {
                 return .pairedBarsTop5Expandable
             }
             return explicit
+        }
+        if set.setId.hasPrefix("oscars-") || set.stage1Label.lowercased().contains("nominat") {
+            return .pairedBarsTop5Expandable
         }
         guard set.entries.count >= 3 else {
             return .pairedBarsTop5Expandable

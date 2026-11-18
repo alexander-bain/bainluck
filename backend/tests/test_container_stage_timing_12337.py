@@ -75,10 +75,11 @@ async def test_opt_in_cold_and_hit_headers_keep_the_normal_bytes():
 
     assert cold.headers["X-Feed-Cache"] == "miss"
     assert {
-        "published_read", "header", "event_cards", "event_rows", "references", "percentiles", "teams", "reference_wait",
+        "published_read", "header", "event_cards", "event_rows", "references", "percentiles", "teams",
         "bookmaker_odds", "recent_lines", "folded_numbers", "venue_settlement", "pregame",
         "market_descriptors", "market_cards", "market_rows", "withheld_prices", "render", "cache_lookup", "total",
     } <= cold_fields.keys()
+    assert "reference_wait" not in cold_fields
     assert cold_fields["basis"] == "overlapping_wall_ms"
     assert len(cold.headers["X-Container-Timing"]) < 1024
     assert all(float(value) >= 0 for name, value in cold_fields.items() if name not in {"basis"})

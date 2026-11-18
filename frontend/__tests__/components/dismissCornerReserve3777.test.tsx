@@ -271,6 +271,18 @@ function eventItem(data: FeedEventData): FeedItem {
 
 // ── 1. the invariant ─────────────────────────────────────────────────────────
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#3777 the reserved corner is at least the button that occupies it", () => {
   // Read the button's real geometry off its own markup, so this fails if
   // someone widens the button without widening what the rows reserve.

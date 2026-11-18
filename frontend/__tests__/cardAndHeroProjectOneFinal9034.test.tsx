@@ -113,6 +113,18 @@ function cardPair(html: string): string | null {
   return m ? `${m[1]}-${m[2]}` : null;
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#9034 — card and hero print one projected final", () => {
   it("the specimen: the card and the page print the same pair, the card's", () => {
     const ev = event();
