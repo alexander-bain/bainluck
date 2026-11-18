@@ -1393,15 +1393,13 @@ struct EventCardView: View {
                     .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
+                    .fixedSize(horizontal: true, vertical: false)
             } else {
                 Text(formatProbability(prob, renderedPercent: side == .home ? livePercents[1] : livePercents[0]))
                     .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         }
     }
