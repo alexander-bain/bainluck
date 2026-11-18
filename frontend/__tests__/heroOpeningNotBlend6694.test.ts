@@ -35,6 +35,7 @@ const SINGLE_BOOK = 0.7534;
 
 function specimen(source: "blend" | "opening") {
   return {
+    commence_time: "2026-09-19T11:00:00Z",
     hero_probability: OPENING,
     hero_probability_away: 1 - OPENING,
     hero_probability_source: source,
@@ -56,9 +57,14 @@ function specimen(source: "blend" | "opening") {
 /** The chart's own series: one sportsbook, currently 0.7534. */
 const HISTORY = {
   history: [
-    { timestamp: "2026-09-19T11:40:00", home_probability: 0.71, bookmaker_count: 1 },
-    { timestamp: "2026-09-19T12:06:44", home_probability: SINGLE_BOOK, bookmaker_count: 1 },
+    { timestamp: "2026-09-19T11:40:00Z", home_probability: 0.71, bookmaker_count: 1 },
+    { timestamp: "2026-09-19T12:06:00Z", home_probability: SINGLE_BOOK, bookmaker_count: 1 },
   ],
+  bookmaker_history: {
+    book: [
+      { timestamp: "2026-09-19T12:06:00Z", kind: "recorded", observed_at: "2026-09-19T12:06:44Z" },
+    ],
+  },
   // No blend line exists — a single source produces no aggregate.
   aggregate_line: null,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -5,20 +5,21 @@
   "relations": [
     "same_event",
     "same_measure",
-    "sibling"
+    "sibling",
+    "movement"
   ],
   "level": "member",
   "kicker": "POLITICS · 2028 RACE",
-  "name": "2028 Presidential Race: party control, field & nominations",
+  "name": "2028 Presidential Race",
   "category": "politics",
   "tag": "POLITICS",
   "section_title": "Presidential Contenders",
-  "footer": "One party and one candidate win the general election.",
+  "footer": "",
   "rule": {
     "producer": "container_machinery",
     "refusal": "all-or-nothing",
     "materialize": "read-time",
-    "card_rows": 5,
+    "card_rows": 3,
     "card_section_key": "presidential_field",
     "sections": [
       {
@@ -51,6 +52,29 @@
         }
       },
       {
+        "key": "race_history",
+        "title": "2028 Ticket & Battleground Trends",
+        "note": "Recent probability paths across vice-presidential, Senate, and battleground races.",
+        "atom_query": {
+          "kind": "market_history",
+          "title_all_tokens": ["2028"],
+          "any_tokens": [
+            "vice-presidential",
+            "house winner",
+            "senate winner",
+            "north carolina winner",
+            "primary winner"
+          ],
+          "exclude_tokens": ["uefa", "euro", "olympic"],
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 3,
+          "max_outcomes": 3,
+          "hours": 168
+        }
+      },
+      {
         "key": "party_nominations",
         "title": "Party Nominations & Running Mates",
         "note": "Primary fields and ticket races feeding the general election.",
@@ -62,23 +86,8 @@
           "shape": "field",
           "order_by": "closeness_to_50",
           "min_items": 2,
-          "max_items": 3,
-          "max_outcomes": 4
-        }
-      },
-      {
-        "key": "ticket_benchmarks",
-        "title": "Ticket Benchmarks",
-        "note": "Yes-or-no questions on the composition of the major-party tickets.",
-        "atom_query": {
-          "kind": "markets",
-          "title_all_tokens": ["2028", "presidential", "nominee"],
-          "any_tokens": ["woman", "trump family"],
-          "shape": "binary",
-          "order_by": "lead_prob_desc",
-          "min_items": 2,
-          "max_items": 3,
-          "max_outcomes": 1
+          "max_items": 2,
+          "max_outcomes": 3
         }
       }
     ]

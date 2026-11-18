@@ -1,6 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import AwardCategoryPairedCard from "@/components/discover/forms/AwardCategoryPairedCard";
 import EventCard183A, { buildUnifiedCardFromEvent } from "@/components/EventCard183A";
@@ -16,6 +17,32 @@ export function isMachinerySlice1Enabled(): boolean {
   return process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 === "true";
 }
 
+export interface MachineryHistorySeriesPoint {
+  t: string;
+  pct: number;
+}
+
+export interface MachineryHistorySeries {
+  outcome_id: number;
+  name: string;
+  current_pct: number;
+  color: string;
+  art?: MachinerySubjectArt;
+  points: MachineryHistorySeriesPoint[];
+}
+
+export interface MachineryHistoryChartItem {
+  market_id: number;
+  title: string;
+  href: string;
+  scale_ordered?: boolean;
+  start_iso: string;
+  end_iso: string;
+  y_min: number;
+  y_max: number;
+  series: MachineryHistorySeries[];
+}
+
 export interface MachineryCardContract {
   slug: string;
   form_id: string;
@@ -23,9 +50,11 @@ export interface MachineryCardContract {
   title: string;
   subtitle: string;
   footer: string;
+  scale_ordered?: boolean;
   section_count: number;
   destination_href: string;
   rows: Record<string, unknown>[];
+  mini_chart?: MachineryHistoryChartItem | null;
 }
 
 function SubjectAvatar({
@@ -40,28 +69,48 @@ function SubjectAvatar({
   poster?: boolean;
 }) {
   const url = art?.url;
-  const kind = art?.kind ?? "monogram";
+  if (!url) return null;
+  const kind = art?.kind ?? "person";
   const isLogo = kind === "team_logo";
   const shapeClass = poster ? "rounded-md" : "rounded-full";
-  if (url) {
-    return (
-      <span
-        className={`inline-flex shrink-0 items-center justify-center overflow-hidden border border-surface-border bg-surface-elevated ${shapeClass} ${sizeClass}`}
-      >
-        <img
-          src={url}
-          alt={label}
-          className={isLogo ? "h-4/5 w-4/5 object-contain" : "h-full w-full object-cover object-top"}
-        />
-      </span>
-    );
-  }
   return (
     <span
-      className={`inline-flex shrink-0 items-center justify-center border border-surface-border bg-surface-elevated font-semibold text-xs text-text-primary ${shapeClass} ${sizeClass}`}
+      className={`inline-flex shrink-0 items-center justify-center overflow-hidden border border-surface-border bg-surface-elevated ${shapeClass} ${sizeClass}`}
     >
-      {art?.initials || label.slice(0, 2).toUpperCase()}
+      <img
+        src={url}
+        alt={label}
+        className={isLogo ? "h-4/5 w-4/5 object-contain" : "h-full w-full object-cover object-top"}
+      />
     </span>
+  );
+}
+
+function ShowAllButton({
+  expanded,
+  totalCount,
+  visibleLimit,
+  noun,
+  onToggle,
+}: {
+  expanded: boolean;
+  totalCount: number;
+  visibleLimit: number;
+  noun: string;
+  onToggle: () => void;
+}) {
+  if (totalCount <= visibleLimit) return null;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      data-testid="machinery-show-all-toggle"
+      className="w-full rounded-lg border border-surface-border bg-surface-elevated/70 px-3 py-2 text-xs font-semibold text-accent-brand transition-colors hover:bg-surface-elevated"
+    >
+      {expanded
+        ? `Show top ${visibleLimit}`
+        : `Show all ${totalCount} ${noun} (+${totalCount - visibleLimit} more)`}
+    </button>
   );
 }
 
@@ -76,77 +125,117 @@ function formatShortKickoff(iso: string): string {
   });
 }
 
-function CoinFlipMatchupsBlock({ items }: { items: Record<string, unknown>[] }) {
+function formatShortSpanDate(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function CoinFlipMatchupsBlock({
+  items,
+  limit = 3,
+}: {
+  items: Record<string, unknown>[];
+  limit?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? items : items.slice(0, limit);
   return (
-    <div className="grid grid-cols-1 gap-2.5" data-machinery-form="coin_flip_matchups">
-      {items.map((raw) => {
-        const eid = Number(raw.event_id ?? 0);
-        const awayShort = String(raw.away_short ?? raw.away_team ?? "");
-        const homeShort = String(raw.home_short ?? raw.home_team ?? "");
-        const awayPct = Number(raw.away_pct ?? 50);
-        const homePct = Number(raw.home_pct ?? 50);
-        const awayArt = raw.away_art as MachinerySubjectArt | undefined;
-        const homeArt = raw.home_art as MachinerySubjectArt | undefined;
-        const when = formatShortKickoff(String(raw.commence_time ?? ""));
-        return (
-          <Link
-            key={eid}
-            href={`/events/${eid}`}
-            className="block rounded-card border border-surface-border bg-surface-card p-3 transition-colors hover:bg-surface-elevated"
-          >
-            <div className="mb-2 flex items-center justify-between text-xs text-text-muted">
-              <span className="font-semibold uppercase tracking-wide text-accent-brand">Toss-up</span>
-              <span>{when}</span>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-2">
-                <SubjectAvatar art={awayArt} label={awayShort} sizeClass="h-8 w-8" />
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold text-text-primary">{awayShort}</div>
-                  <div className="text-xs font-bold tabular-nums text-text-secondary">{awayPct}%</div>
+    <div className="space-y-2.5" data-machinery-form="coin_flip_matchups">
+      <div className="grid grid-cols-1 gap-2.5">
+        {shown.map((raw) => {
+          const eid = Number(raw.event_id ?? 0);
+          const awayShort = String(raw.away_short ?? raw.away_team ?? "");
+          const homeShort = String(raw.home_short ?? raw.home_team ?? "");
+          const awayPct = Number(raw.away_pct ?? 50);
+          const homePct = Number(raw.home_pct ?? 50);
+          const awayArt = raw.away_art as MachinerySubjectArt | undefined;
+          const homeArt = raw.home_art as MachinerySubjectArt | undefined;
+          const when = formatShortKickoff(String(raw.commence_time ?? ""));
+          return (
+            <Link
+              key={eid}
+              href={`/events/${eid}`}
+              className="block rounded-card border border-surface-border bg-surface-card p-3 transition-colors hover:bg-surface-elevated"
+            >
+              <div className="mb-2 flex items-center justify-between text-xs text-text-muted">
+                <span className="font-semibold uppercase tracking-wide text-accent-brand">Toss-up</span>
+                <span>{when}</span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <SubjectAvatar art={awayArt} label={awayShort} sizeClass="h-8 w-8" />
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-text-primary">{awayShort}</div>
+                    <div className="text-xs font-bold tabular-nums text-text-secondary">{awayPct}%</div>
+                  </div>
+                </div>
+                <span className="text-xs font-medium text-text-muted">at</span>
+                <div className="flex min-w-0 items-center gap-2 text-right">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-text-primary">{homeShort}</div>
+                    <div className="text-xs font-bold tabular-nums text-text-secondary">{homePct}%</div>
+                  </div>
+                  <SubjectAvatar art={homeArt} label={homeShort} sizeClass="h-8 w-8" />
                 </div>
               </div>
-              <span className="text-xs font-medium text-text-muted">at</span>
-              <div className="flex min-w-0 items-center gap-2 text-right">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold text-text-primary">{homeShort}</div>
-                  <div className="text-xs font-bold tabular-nums text-text-secondary">{homePct}%</div>
-                </div>
-                <SubjectAvatar art={homeArt} label={homeShort} sizeClass="h-8 w-8" />
+              <div className="mt-2.5 flex h-2 w-full overflow-hidden rounded-full bg-surface-elevated">
+                <div
+                  className="h-full bg-accent-brand transition-all"
+                  style={{
+                    width: `${Math.max(8, Math.min(92, awayPct))}%`,
+                    backgroundColor: awayArt?.accent_color || undefined,
+                  }}
+                />
+                <div
+                  className="h-full flex-1 bg-slate-400 transition-all"
+                  style={{ backgroundColor: homeArt?.accent_color || undefined }}
+                />
               </div>
-            </div>
-            <div className="mt-2.5 flex h-2 w-full overflow-hidden rounded-full bg-surface-elevated">
-              <div
-                className="h-full bg-accent-brand transition-all"
-                style={{
-                  width: `${Math.max(8, Math.min(92, awayPct))}%`,
-                  backgroundColor: awayArt?.accent_color || undefined,
-                }}
-              />
-              <div
-                className="h-full flex-1 bg-slate-400 transition-all"
-                style={{ backgroundColor: homeArt?.accent_color || undefined }}
-              />
-            </div>
-          </Link>
-        );
-      })}
+            </Link>
+          );
+        })}
+      </div>
+      <ShowAllButton
+        expanded={expanded}
+        totalCount={items.length}
+        visibleLimit={limit}
+        noun="games"
+        onToggle={() => setExpanded((v) => !v)}
+      />
     </div>
   );
 }
 
-function MatchupSlateBlock({ members }: { members: CollectionMember[] }) {
+function MatchupSlateBlock({
+  members,
+  limit = 3,
+}: {
+  members: CollectionMember[];
+  limit?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const eventMembers = members.filter((m) => m.type === "event");
+  const shown = expanded ? eventMembers : eventMembers.slice(0, limit);
   return (
-    <div className="grid grid-cols-1 gap-3" data-machinery-form="matchup_slate">
-      {members
-        .filter((m) => m.type === "event")
-        .map((m) => (
+    <div className="space-y-2.5" data-machinery-form="matchup_slate">
+      <div className="grid grid-cols-1 gap-3">
+        {shown.map((m) => (
           <EventCard183A
             key={m.key}
             card={buildUnifiedCardFromEvent(m.item.data as unknown as Event)}
             surface="standard"
           />
         ))}
+      </div>
+      <ShowAllButton
+        expanded={expanded}
+        totalCount={eventMembers.length}
+        visibleLimit={limit}
+        noun="games"
+        onToggle={() => setExpanded((v) => !v)}
+      />
     </div>
   );
 }
@@ -222,11 +311,78 @@ function DuelBarBlock({ items }: { items: Record<string, unknown>[] }) {
   );
 }
 
-function ContenderSpotlightBlock({ items }: { items: Record<string, unknown>[] }) {
+function ContenderSpotlightBlock({
+  items,
+  limit = 3,
+}: {
+  items: Record<string, unknown>[];
+  limit?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
   const lead = items[0];
   if (!lead) return null;
   const outcomes = (lead.outcomes as MachineryOutcomeVisual[] | undefined) ?? [];
   const href = String(lead.href ?? "/discover");
+  const scaleOrdered = Boolean(lead.scale_ordered);
+  const leaderOutcomeId = Number(lead.leader_outcome_id ?? 0);
+
+  // Direction 228 (#12885): numerical-scale markets run ascending by value with NO #1/#2/#3 podium badges.
+  if (scaleOrdered) {
+    const shownScale = expanded ? outcomes : outcomes.slice(0, limit);
+    return (
+      <div
+        className="space-y-2.5"
+        data-machinery-form="contender_spotlight"
+        data-scale-ordered="true"
+      >
+        <div className="divide-y divide-surface-border rounded-card border border-surface-border bg-surface-card">
+          {shownScale.map((o) => {
+            const isFav = leaderOutcomeId > 0 && o.outcome_id === leaderOutcomeId;
+            return (
+              <Link
+                key={o.outcome_id}
+                href={href}
+                className="flex items-center gap-3 px-3.5 py-2.5 transition-colors hover:bg-surface-elevated"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span
+                      className={`truncate text-sm ${
+                        isFav ? "font-bold text-text-primary" : "font-medium text-text-secondary"
+                      }`}
+                    >
+                      {o.name}
+                    </span>
+                    <span
+                      className={`tabular-nums text-sm ${
+                        isFav ? "font-extrabold text-text-primary" : "font-semibold text-text-secondary"
+                      }`}
+                    >
+                      {o.rendered_percent}%
+                    </span>
+                  </div>
+                  <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-surface-elevated">
+                    <div
+                      className={`h-full rounded-full ${isFav ? "bg-accent-brand" : "bg-slate-400"}`}
+                      style={{ width: `${Math.max(3, Math.min(100, o.rendered_percent))}%` }}
+                    />
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+        <ShowAllButton
+          expanded={expanded}
+          totalCount={outcomes.length}
+          visibleLimit={limit}
+          noun="outcomes"
+          onToggle={() => setExpanded((v) => !v)}
+        />
+      </div>
+    );
+  }
+
   const topThree = outcomes.slice(0, 3);
   const chasers = outcomes.slice(3);
 
@@ -273,7 +429,7 @@ function ContenderSpotlightBlock({ items }: { items: Record<string, unknown>[] }
         })}
       </div>
 
-      {chasers.length > 0 && (
+      {chasers.length > 0 && expanded && (
         <div className="divide-y divide-surface-border rounded-card border border-surface-border bg-surface-card">
           {chasers.map((o) => (
             <Link
@@ -301,100 +457,299 @@ function ContenderSpotlightBlock({ items }: { items: Record<string, unknown>[] }
           ))}
         </div>
       )}
+
+      <ShowAllButton
+        expanded={expanded}
+        totalCount={outcomes.length}
+        visibleLimit={3}
+        noun="contenders"
+        onToggle={() => setExpanded((v) => !v)}
+      />
     </div>
   );
 }
 
-function SiblingFieldsGridBlock({ items }: { items: Record<string, unknown>[] }) {
+function SiblingFieldsGridBlock({
+  items,
+  limit = 3,
+}: {
+  items: Record<string, unknown>[];
+  limit?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? items : items.slice(0, limit);
   return (
-    <div className="grid grid-cols-1 gap-3" data-machinery-form="sibling_fields_grid">
-      {items.map((m) => {
-        const mid = Number(m.market_id ?? 0);
-        const title = String(m.title ?? "");
-        const href = String(m.href ?? `/futures/${mid}`);
-        const outcomes = ((m.outcomes as MachineryOutcomeVisual[] | undefined) ?? []).slice(0, 4);
-        return (
-          <Link
-            key={mid}
-            href={href}
-            className="block rounded-card border border-surface-border bg-surface-card p-3.5 transition-colors hover:bg-surface-elevated"
-          >
-            <div className="mb-2.5 flex items-center justify-between gap-2">
-              <h3 className="text-sm font-bold text-text-primary">{title}</h3>
-              <span className="text-xs text-text-muted" aria-hidden="true">
-                ›
-              </span>
-            </div>
-            <div className="space-y-2">
-              {outcomes.map((o) => {
-                const isPoster = o.art?.kind === "tmdb_poster";
-                return (
-                  <div key={o.outcome_id} className="flex items-center gap-2.5">
-                    <SubjectAvatar
-                      art={o.art}
-                      label={o.name}
-                      sizeClass={isPoster ? "h-9 w-7" : "h-7 w-7"}
-                      poster={isPoster}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="truncate text-xs font-medium text-text-primary">
-                          {o.name}
-                        </span>
-                        <span className="text-xs font-bold tabular-nums text-text-primary">
-                          {o.rendered_percent}%
-                        </span>
-                      </div>
-                      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">
-                        <div
-                          className="h-full rounded-full bg-accent-brand"
-                          style={{
-                            width: `${Math.max(4, Math.min(100, o.rendered_percent))}%`,
-                            backgroundColor: o.art?.accent_color || undefined,
-                          }}
+    <div className="space-y-2.5" data-machinery-form="sibling_fields_grid">
+      <div className="grid grid-cols-1 gap-3">
+        {shown.map((m) => {
+          const mid = Number(m.market_id ?? 0);
+          const title = String(m.title ?? "");
+          const href = String(m.href ?? `/futures/${mid}`);
+          const scaleOrdered = Boolean(m.scale_ordered);
+          const leaderOid = Number(m.leader_outcome_id ?? 0);
+          const outcomes = ((m.outcomes as MachineryOutcomeVisual[] | undefined) ?? []).slice(0, 4);
+          return (
+            <Link
+              key={mid}
+              href={href}
+              data-scale-ordered={scaleOrdered ? "true" : undefined}
+              className="block rounded-card border border-surface-border bg-surface-card p-3.5 transition-colors hover:bg-surface-elevated"
+            >
+              <div className="mb-2.5 flex items-center justify-between gap-2">
+                <h3 className="text-sm font-bold text-text-primary">{title}</h3>
+                <span className="text-xs text-text-muted" aria-hidden="true">
+                  ›
+                </span>
+              </div>
+              <div className="space-y-2">
+                {outcomes.map((o) => {
+                  const isPoster = o.art?.kind === "tmdb_poster";
+                  const isFav = !scaleOrdered || (leaderOid > 0 && o.outcome_id === leaderOid);
+                  return (
+                    <div key={o.outcome_id} className="flex items-center gap-2.5">
+                      {!scaleOrdered && (
+                        <SubjectAvatar
+                          art={o.art}
+                          label={o.name}
+                          sizeClass={isPoster ? "h-9 w-7" : "h-7 w-7"}
+                          poster={isPoster}
                         />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span
+                            className={`truncate text-xs ${
+                              isFav ? "font-semibold text-text-primary" : "font-medium text-text-secondary"
+                            }`}
+                          >
+                            {o.name}
+                          </span>
+                          <span
+                            className={`text-xs tabular-nums ${
+                              isFav ? "font-bold text-text-primary" : "font-semibold text-text-secondary"
+                            }`}
+                          >
+                            {o.rendered_percent}%
+                          </span>
+                        </div>
+                        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">
+                          <div
+                            className={`h-full rounded-full ${isFav ? "bg-accent-brand" : "bg-slate-400"}`}
+                            style={{
+                              width: `${Math.max(4, Math.min(100, o.rendered_percent))}%`,
+                              backgroundColor: !scaleOrdered ? o.art?.accent_color || undefined : undefined,
+                            }}
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          </Link>
-        );
-      })}
+                  );
+                })}
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+      <ShowAllButton
+        expanded={expanded}
+        totalCount={items.length}
+        visibleLimit={limit}
+        noun="markets"
+        onToggle={() => setExpanded((v) => !v)}
+      />
     </div>
   );
 }
 
-function BenchmarkStripBlock({ items }: { items: Record<string, unknown>[] }) {
+function BenchmarkStripBlock({
+  items,
+  limit = 3,
+}: {
+  items: Record<string, unknown>[];
+  limit?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? items : items.slice(0, limit);
   return (
-    <div
-      className="divide-y divide-surface-border rounded-card border border-surface-border bg-surface-card"
-      data-machinery-form="benchmark_strip"
+    <div className="space-y-2" data-machinery-form="benchmark_strip">
+      <div className="divide-y divide-surface-border rounded-card border border-surface-border bg-surface-card">
+        {shown.map((m) => {
+          const mid = Number(m.market_id ?? 0);
+          const title = String(m.title ?? "");
+          const href = String(m.href ?? `/futures/${mid}`);
+          const outcomes = (m.outcomes as MachineryOutcomeVisual[] | undefined) ?? [];
+          const yes = outcomes[0];
+          if (!yes) return null;
+          return (
+            <Link
+              key={mid}
+              href={href}
+              className="flex items-center justify-between gap-3 px-3.5 py-2.5 transition-colors hover:bg-surface-elevated"
+            >
+              <div className="flex min-w-0 items-center gap-2.5">
+                {yes.art?.url ? (
+                  <SubjectAvatar art={yes.art} label={title} sizeClass="h-7 w-7" />
+                ) : null}
+                <span className="line-clamp-2 text-xs font-medium text-text-primary">{title}</span>
+              </div>
+              <span className="shrink-0 rounded-md bg-surface-elevated px-2 py-1 text-xs font-bold tabular-nums text-text-primary">
+                {yes.rendered_percent}%
+              </span>
+            </Link>
+          );
+        })}
+      </div>
+      <ShowAllButton
+        expanded={expanded}
+        totalCount={items.length}
+        visibleLimit={limit}
+        noun="benchmarks"
+        onToggle={() => setExpanded((v) => !v)}
+      />
+    </div>
+  );
+}
+
+function SingleHistoryChartCard({
+  chart,
+  compact = false,
+}: {
+  chart: MachineryHistoryChartItem;
+  compact?: boolean;
+}) {
+  const W = 520;
+  const H = compact ? 88 : 124;
+  const L = 34;
+  const R = W - 10;
+  const T = 10;
+  const B = H - 14;
+  const yMin = Number.isFinite(chart.y_min) ? chart.y_min : 0;
+  const yMax = Number.isFinite(chart.y_max) && chart.y_max > yMin ? chart.y_max : 100;
+  const ySpan = Math.max(1, yMax - yMin);
+  const yMid = Math.round((yMin + yMax) / 2);
+  const yOf = (pct: number) => B - ((Math.max(yMin, Math.min(yMax, pct)) - yMin) / ySpan) * (B - T);
+
+  const series = chart.series ?? [];
+  const inner = (
+    <>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="truncate text-xs font-bold text-text-primary">{chart.title}</span>
+        <span className="shrink-0 text-[11px] text-text-muted">
+          {formatShortSpanDate(chart.start_iso)}–{formatShortSpanDate(chart.end_iso)}
+        </span>
+      </div>
+      <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1">
+        {series.slice(0, 3).map((s) => (
+          <span key={s.outcome_id} className="inline-flex items-center gap-1.5 text-[11px]">
+            <span
+              className="inline-block h-2 w-2 shrink-0 rounded-full"
+              style={{ backgroundColor: s.color }}
+            />
+            <span className="truncate font-medium text-text-secondary">{s.name}</span>
+            <span className="font-bold tabular-nums text-text-primary">{s.current_pct}%</span>
+          </span>
+        ))}
+      </div>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className={compact ? "h-20 w-full" : "h-28 w-full"}
+        role="img"
+        aria-label={`Probability trend chart for ${chart.title}`}
+      >
+        {[yMin, yMid, yMax].map((tick) => (
+          <g key={tick}>
+            <line
+              x1={L}
+              x2={R}
+              y1={yOf(tick)}
+              y2={yOf(tick)}
+              stroke="var(--surface-border)"
+              strokeWidth={1}
+            />
+            <text
+              x={0}
+              y={yOf(tick) + 3}
+              fontSize={10}
+              fill="var(--text-muted)"
+            >
+              {tick}%
+            </text>
+          </g>
+        ))}
+        {series.slice(0, 3).map((s) => {
+          const pts = s.points ?? [];
+          if (!pts.length) return null;
+          const d = pts
+            .map((pt, idx) => {
+              const x = L + (pts.length === 1 ? 0.5 : idx / (pts.length - 1)) * (R - L);
+              const y = yOf(pt.pct);
+              return `${idx === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+            })
+            .join(" ");
+          const lastY = yOf(pts[pts.length - 1].pct);
+          return (
+            <g key={s.outcome_id}>
+              <path
+                d={d}
+                fill="none"
+                stroke={s.color}
+                strokeWidth={2.25}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <circle cx={R} cy={lastY} r={3} fill={s.color} />
+            </g>
+          );
+        })}
+      </svg>
+    </>
+  );
+
+  if (compact) {
+    return (
+      <div
+        data-testid="machinery-card-mini-chart"
+        className="mt-3 rounded-lg border border-surface-border bg-surface-elevated/40 p-2.5"
+      >
+        {inner}
+      </div>
+    );
+  }
+
+  return (
+    <Link
+      href={chart.href || `/futures/${chart.market_id}`}
+      className="block rounded-card border border-surface-border bg-surface-card p-3.5 transition-colors hover:bg-surface-elevated"
     >
-      {items.map((m) => {
-        const mid = Number(m.market_id ?? 0);
-        const title = String(m.title ?? "");
-        const href = String(m.href ?? `/futures/${mid}`);
-        const outcomes = (m.outcomes as MachineryOutcomeVisual[] | undefined) ?? [];
-        const yes = outcomes[0];
-        if (!yes) return null;
-        return (
-          <Link
-            key={mid}
-            href={href}
-            className="flex items-center justify-between gap-3 px-3.5 py-2.5 transition-colors hover:bg-surface-elevated"
-          >
-            <div className="flex min-w-0 items-center gap-2.5">
-              <SubjectAvatar art={yes.art} label={title} sizeClass="h-7 w-7" />
-              <span className="line-clamp-2 text-xs font-medium text-text-primary">{title}</span>
-            </div>
-            <span className="shrink-0 rounded-md bg-surface-elevated px-2 py-1 text-xs font-bold tabular-nums text-text-primary">
-              {yes.rendered_percent}%
-            </span>
-          </Link>
-        );
-      })}
+      {inner}
+    </Link>
+  );
+}
+
+function ProbabilityHistoryChartBlock({
+  items,
+  limit = 3,
+}: {
+  items: Record<string, unknown>[];
+  limit?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const charts = items as unknown as MachineryHistoryChartItem[];
+  const shown = expanded ? charts : charts.slice(0, limit);
+  return (
+    <div className="space-y-2.5" data-machinery-form="probability_history_chart">
+      <div className="grid grid-cols-1 gap-3">
+        {shown.map((chart) => (
+          <SingleHistoryChartCard key={chart.market_id} chart={chart} />
+        ))}
+      </div>
+      <ShowAllButton
+        expanded={expanded}
+        totalCount={charts.length}
+        visibleLimit={limit}
+        noun="charts"
+        onToggle={() => setExpanded((v) => !v)}
+      />
     </div>
   );
 }
@@ -406,40 +761,49 @@ export default function MachinerySectionRenderer({
   visualBlock: MachineryVisualBlock;
   members: CollectionMember[];
 }) {
-  const { form_id, paired_metric_set, items = [] } = visualBlock;
+  const { form_id, initial_visible_limit, paired_metric_set, items = [] } = visualBlock;
+  const limit = Math.min(3, Math.max(1, Number(initial_visible_limit ?? 3)));
   if (form_id === "paired_stage_bars" && paired_metric_set) {
     return (
       <div data-machinery-form="paired_stage_bars">
-        <AwardCategoryPairedCard set={paired_metric_set} surface="collection" defaultExpanded />
+        <AwardCategoryPairedCard set={paired_metric_set} surface="collection" initialLimit={limit} />
       </div>
     );
   }
+  if (form_id === "probability_history_chart") {
+    return <ProbabilityHistoryChartBlock items={items} limit={limit} />;
+  }
   if (form_id === "coin_flip_matchups") {
-    return <CoinFlipMatchupsBlock items={items} />;
+    return <CoinFlipMatchupsBlock items={items} limit={limit} />;
   }
   if (form_id === "matchup_slate") {
-    return <MatchupSlateBlock members={members} />;
+    return <MatchupSlateBlock members={members} limit={limit} />;
   }
   if (form_id === "duel_bar") {
     return <DuelBarBlock items={items} />;
   }
   if (form_id === "contender_spotlight") {
-    return <ContenderSpotlightBlock items={items} />;
+    return <ContenderSpotlightBlock items={items} limit={limit} />;
   }
   if (form_id === "benchmark_strip") {
-    return <BenchmarkStripBlock items={items} />;
+    return <BenchmarkStripBlock items={items} limit={limit} />;
   }
-  return <SiblingFieldsGridBlock items={items} />;
+  return <SiblingFieldsGridBlock items={items} limit={limit} />;
 }
 
 export function MachineryDiscoverCard({ card }: { card: MachineryCardContract }) {
   const isEventCard =
     card.form_id === "coin_flip_matchups" || card.form_id === "matchup_slate";
+  const maxPct = card.rows.reduce(
+    (acc, r) => Math.max(acc, Number(r.rendered_percent ?? 0)),
+    0,
+  );
   return (
     <Link
       href={card.destination_href}
       data-testid="machinery-discover-card"
       data-machinery-card-form={card.form_id}
+      data-scale-ordered={card.scale_ordered ? "true" : undefined}
       className="block rounded-card border border-surface-border bg-surface-card p-4 transition-colors hover:bg-surface-elevated"
     >
       <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-accent-brand">
@@ -449,6 +813,8 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
       {card.subtitle && (
         <p className="mt-0.5 text-xs text-text-secondary">{card.subtitle}</p>
       )}
+
+      {card.mini_chart && <SingleHistoryChartCard chart={card.mini_chart} compact />}
 
       <div className="mt-3 divide-y divide-surface-border">
         {isEventCard
@@ -480,22 +846,35 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
               const name = String(r.name ?? "");
               const pct = Number(r.rendered_percent ?? 0);
               const art = r.art as MachinerySubjectArt | undefined;
+              const isFav = !card.scale_ordered || pct === maxPct;
               return (
                 <div key={oid} className="flex items-center gap-2.5 py-2">
-                  <SubjectAvatar art={art} label={name} sizeClass="h-8 w-8" />
+                  {(!card.scale_ordered && (art?.url || !card.mini_chart)) && (
+                    <SubjectAvatar art={art} label={name} sizeClass="h-8 w-8" />
+                  )}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="truncate text-sm font-medium text-text-primary">{name}</span>
-                      <span className="text-sm font-bold tabular-nums text-text-primary">
+                      <span
+                        className={`truncate text-sm ${
+                          isFav ? "font-semibold text-text-primary" : "font-medium text-text-secondary"
+                        }`}
+                      >
+                        {name}
+                      </span>
+                      <span
+                        className={`text-sm tabular-nums ${
+                          isFav ? "font-bold text-text-primary" : "font-semibold text-text-secondary"
+                        }`}
+                      >
                         {pct}%
                       </span>
                     </div>
                     <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">
                       <div
-                        className="h-full rounded-full bg-accent-brand"
+                        className={`h-full rounded-full ${isFav ? "bg-accent-brand" : "bg-slate-400"}`}
                         style={{
                           width: `${Math.max(4, Math.min(100, pct))}%`,
-                          backgroundColor: art?.accent_color || undefined,
+                          backgroundColor: !card.scale_ordered ? art?.accent_color || undefined : undefined,
                         }}
                       />
                     </div>
@@ -506,7 +885,7 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
       </div>
 
       <div className="mt-3 flex flex-col gap-1 border-t border-surface-border pt-2.5 text-xs text-text-secondary">
-        <span>{card.footer}</span>
+        {card.footer ? <span>{card.footer}</span> : null}
         <span className="font-semibold text-accent-brand">
           Open all {card.section_count} sections ›
         </span>

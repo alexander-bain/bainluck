@@ -770,10 +770,7 @@ final class HeadlineNeverTruncates12822Tests: XCTestCase {
             )
         }
 
-        let outDir = URL(fileURLWithPath: "/Users/bain/.gemini/antigravity/brain/4c590449-f20c-4ff4-921d-f7e1343a4327/renders-12822")
-        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
-        let outFile = outDir.appendingPathComponent("12837-magic-celtics-q4-106-99-390.png")
-        try XCTUnwrap(q4Image.pngData()).write(to: outFile)
+        try attachPNG(q4Image, named: "12837-magic-celtics-q4-106-99-390")
     }
 
     // MARK: - 3. Export 390 px Render Sheet for Fable
@@ -925,10 +922,15 @@ final class HeadlineNeverTruncates12822Tests: XCTestCase {
             )
         }
 
-        let outDir = URL(fileURLWithPath: "/Users/bain/.gemini/antigravity/brain/4c590449-f20c-4ff4-921d-f7e1343a4327/renders-12822")
-        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
-        let outFile = outDir.appendingPathComponent("12822-headline-no-truncation-390.png")
-        try XCTUnwrap(image.pngData()).write(to: outFile)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: outFile.path))
+        try attachPNG(image, named: "12822-headline-no-truncation-390")
+    }
+
+    private func attachPNG(_ image: UIImage, named name: String) throws {
+        let png = try XCTUnwrap(image.pngData())
+        XCTAssertFalse(png.isEmpty)
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 }

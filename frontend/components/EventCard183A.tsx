@@ -6,7 +6,7 @@ import type { Event, EventHistoryResponse, FeedEventData, FeedItem } from "@/lib
 import type { TeamGameBrief } from "@/lib/api";
 import { getSportLabel } from "@/lib/sportCategories";
 import { espnTeamLogoByName } from "@/lib/images";
-import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
+import { isStoredOpeningChance, shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { awayIsTheComplement, sportPricesADraw } from "@/lib/drawPricedWinner";
 import { extractThreeWaySample, SOCCER_DRAW_LINE_HEX } from "@/lib/chartScaleRule201";
 import { ABOVE_NINETY_NINE_PERCENT, BELOW_ONE_PERCENT } from "@/lib/probabilityDisplay";
@@ -1148,7 +1148,7 @@ function extractTennisSets(espn: unknown): {
 export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
   const isLive = event.status === "live";
   const isDone = isFinishedStatus(event.status);
-  const probWithheld = shouldWithholdProbability(event);
+  const probWithheld = isStoredOpeningChance(event) || shouldWithholdProbability(event);
 
   const rawHome = probWithheld
     ? null
@@ -1298,7 +1298,7 @@ export function buildUnifiedCardFromFeed(
 ): UnifiedGameCardData {
   const isLive = data.status === "live";
   const isDone = isFinishedStatus(data.status);
-  const probWithheld = shouldWithholdProbability(data);
+  const probWithheld = isStoredOpeningChance(data) || shouldWithholdProbability(data);
 
   const rawHome = probWithheld ? null : (data.current_odds?.home_probability ?? null);
   const rawAway = probWithheld ? null : (data.current_odds?.away_probability ?? null);

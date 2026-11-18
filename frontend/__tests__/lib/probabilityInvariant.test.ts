@@ -152,6 +152,7 @@ describe("cross-surface invariant: hero == readout == chart == tooltip == scrub"
         current_odds: { home_probability: 0.57, away_probability: 0.43, bookmaker_count: 9 } as never,
       }),
       hist({
+        blend_edge_pinned: true,
         aggregate_line: [
           { timestamp: "2026-07-23T00:10:00Z", home_probability: 0.24 },
           { timestamp: "2026-07-23T00:17:00Z", home_probability: 0.2 },
@@ -176,6 +177,7 @@ describe("cross-surface invariant: hero == readout == chart == tooltip == scrub"
     const s = surfaces(
       evt({ status: "live" }),
       hist({
+        blend_edge_pinned: true,
         aggregate_line: [
           { timestamp: "2026-09-08T09:00:00Z", home_probability: 0.575 },
         ],
@@ -209,13 +211,16 @@ describe("cross-surface invariant: hero == readout == chart == tooltip == scrub"
     // headline fallback used to divide the 0–1 history by 100 (→ ~1%) while the
     // chart multiplied it by 100 (→ 81%). Now every surface agrees on 81.
     const s = surfaces(
-      evt({ status: "live", current_odds: undefined as never }),
+      evt({ status: "live", commence_time: "2026-07-09T14:00:00Z", current_odds: undefined as never }),
       hist({
         win_prob_history: {},
         history: [
           { timestamp: "2026-07-09T10:00:00Z", home_probability: 0.54 },
           { timestamp: "2026-07-09T16:00:00Z", home_probability: 0.81 },
         ] as never,
+        bookmaker_history: { book: [
+          { timestamp: "2026-07-09T16:00:00Z", kind: "recorded", observed_at: "2026-07-09T16:00:12Z" },
+        ] } as never,
       }),
       true,
       false,
@@ -231,6 +236,7 @@ describe("cross-surface invariant: hero == readout == chart == tooltip == scrub"
     const s = surfaces(
       evt({ status: "live" }),
       hist({
+        blend_edge_pinned: true,
         aggregate_line: [{ timestamp: "2026-07-23T02:00:00Z", home_probability: 0.01 }],
         // An oppositely-oriented single source must NOT override the blend.
         win_prob_history: {
@@ -405,12 +411,13 @@ describe("UX-P003: card == hero == chart on a live game", () => {
     expect(r.probSourceLabel).not.toBe("Live · Bain Luck blend");
   });
 
-  test("payloads predating hero_probability still fall back to the blend line", () => {
-    // Backward compatibility: a cached detail response with no hero_probability
-    // must keep working off aggregate_line rather than dropping to null.
+  test("a detail response without a hero can use the pinned blend edge", () => {
     const s = surfaces(
       evt({ status: "live" }),
-      hist({ aggregate_line: [{ timestamp: "t", home_probability: 0.2 }] }),
+      hist({
+        blend_edge_pinned: true,
+        aggregate_line: [{ timestamp: "2026-07-23T00:17:00Z", home_probability: 0.2 }],
+      }),
       true,
       false,
     );
