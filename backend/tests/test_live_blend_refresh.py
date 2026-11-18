@@ -15,9 +15,11 @@ that would silently un-ship it, each with a test below:
 """
 
 import os
+from dataclasses import replace
 
 import pytest
 
+from app.tasks.prediction_market_matching import _InversionDecision
 from app.tasks.live_blend_refresh import (
     LiveBlendRefresher,
     event_ids_for_outcomes,
@@ -145,10 +147,10 @@ class TestInversionVerdictCache:
 
         async def _fake_check(session, event_id, home_prob, source):
             calls.append((event_id, home_prob))
-            return home_prob  # not inverted
+            return _InversionDecision(home_prob)  # not inverted
 
         monkeypatch.setattr(
-            "app.tasks.prediction_market_matching._check_and_fix_inversion",
+            "app.tasks.prediction_market_matching._inversion_decision",
             _fake_check,
         )
         r = LiveBlendRefresher("kalshi", inversion_ttl_s=150.0)
@@ -165,10 +167,10 @@ class TestInversionVerdictCache:
         pin a price, which is the opposite of a fast lane."""
 
         async def _fake_check(session, event_id, home_prob, source):
-            return 1.0 - home_prob  # inverted linkage
+            return _InversionDecision(1.0 - home_prob)  # inverted linkage
 
         monkeypatch.setattr(
-            "app.tasks.prediction_market_matching._check_and_fix_inversion",
+            "app.tasks.prediction_market_matching._inversion_decision",
             _fake_check,
         )
         r = LiveBlendRefresher("kalshi")
@@ -184,10 +186,10 @@ class TestInversionVerdictCache:
 
         async def _fake_check(session, event_id, home_prob, source):
             calls.append(event_id)
-            return home_prob
+            return _InversionDecision(home_prob)
 
         monkeypatch.setattr(
-            "app.tasks.prediction_market_matching._check_and_fix_inversion",
+            "app.tasks.prediction_market_matching._inversion_decision",
             _fake_check,
         )
         r = LiveBlendRefresher("kalshi", inversion_ttl_s=150.0)
@@ -195,18 +197,18 @@ class TestInversionVerdictCache:
 
         await r._oriented(s, 7, 0.61)
         # Force the cached entry to have expired.
-        expires_at, flipped = r._inversion[7]
-        r._inversion[7] = (expires_at - 1000.0, flipped)
+        verdict = r._inversion[7]
+        r._inversion[7] = replace(verdict, expires_at=verdict.expires_at - 1000.0)
         await r._oriented(s, 7, 0.61)
         assert len(calls) == 2
 
     @pytest.mark.asyncio
     async def test_two_events_get_independent_verdicts(self, monkeypatch):
         async def _fake_check(session, event_id, home_prob, source):
-            return (1.0 - home_prob) if event_id == 2 else home_prob
+            return _InversionDecision((1.0 - home_prob) if event_id == 2 else home_prob)
 
         monkeypatch.setattr(
-            "app.tasks.prediction_market_matching._check_and_fix_inversion",
+            "app.tasks.prediction_market_matching._inversion_decision",
             _fake_check,
         )
         r = LiveBlendRefresher("kalshi")
@@ -762,10 +764,10 @@ class TestTheFrameCarriesTheStoredBlend:
         )
 
         async def _no_inversion(session, event_id, home_prob, source):
-            return home_prob
+            return _InversionDecision(home_prob)
 
         monkeypatch.setattr(
-            "app.tasks.prediction_market_matching._check_and_fix_inversion",
+            "app.tasks.prediction_market_matching._inversion_decision",
             _no_inversion,
         )
 
@@ -861,10 +863,10 @@ class TestTheFrameCarriesTheStoredBlend:
         )
 
         async def _no_inversion(session, event_id, home_prob, source):
-            return home_prob
+            return _InversionDecision(home_prob)
 
         monkeypatch.setattr(
-            "app.tasks.prediction_market_matching._check_and_fix_inversion",
+            "app.tasks.prediction_market_matching._inversion_decision",
             _no_inversion,
         )
 
@@ -1438,10 +1440,10 @@ def _one_event_refresher(monkeypatch, session, **kwargs):
     )
 
     async def _no_inversion(session, event_id, home_prob, source):
-        return home_prob
+        return _InversionDecision(home_prob)
 
     monkeypatch.setattr(
-        "app.tasks.prediction_market_matching._check_and_fix_inversion",
+        "app.tasks.prediction_market_matching._inversion_decision",
         _no_inversion,
     )
 

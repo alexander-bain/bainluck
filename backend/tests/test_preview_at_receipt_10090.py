@@ -23,13 +23,14 @@ import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace as Row
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from app.tasks import live_blend_refresh as module
-from app.tasks.live_blend_refresh import HeldRowQuotes, LiveBlendRefresher
+from app.tasks.live_blend_refresh import HeldRowQuotes, LiveBlendRefresher, _CachedInversion
 from app.utils import blend_preview
-from app.utils.aggregation import observation_basis
+from app.utils.aggregation import MAX_STALENESS, observation_basis, stamp_source_reading
 from app.utils.live_blend import MarketOutcomes
 from app.utils.preview_receipt import PreviewReceipt
 
@@ -685,7 +686,9 @@ def duel_event():
 async def test_an_unproven_reading_shows_what_the_stamps_live_verdict_will_write(
         r, flipped, value):
     read(r, duel_event(), duel_pair())
-    r._inversion[EV] = (time.monotonic() + 60.0, flipped)
+    r._inversion[EV] = _CachedInversion(
+        time.monotonic() + 60.0, flipped, (True, duel_event().commence_time),
+    )
 
     receive(r, 0.20)  # the men's market: Villanova 0.24 -> 0.20, beside the women's 0.235
     await drained(r)
@@ -700,7 +703,9 @@ async def test_a_verdict_just_past_its_ttl_still_orients_the_preview(r, flipped,
     """11/01 17:49-17:57Z: a quiet game's first input after the 150 s TTL waited
     4.5-24 s for the stamp to re-derive the same verdict (event 15339038)."""
     read(r, duel_event(), duel_pair())
-    r._inversion[EV] = (time.monotonic() - 300.0, flipped)
+    r._inversion[EV] = _CachedInversion(
+        time.monotonic() - 300.0, flipped, (True, duel_event().commence_time),
+    )
 
     receive(r, 0.20)
     await drained(r)
@@ -714,7 +719,10 @@ async def test_without_a_live_verdict_the_unproven_reading_still_waits_for_the_s
         r, verdict):
     read(r, duel_event(), duel_pair())
     if verdict == "expired":
-        r._inversion[EV] = (time.monotonic() - 0.01 - module.ORIENTATION_PREVIEW_GRACE_S, False)
+        r._inversion[EV] = _CachedInversion(
+            time.monotonic() - 0.01 - module.ORIENTATION_PREVIEW_GRACE_S,
+            False, (True, duel_event().commence_time),
+        )
 
     receive(r, 0.20)
     await drained(r)
@@ -723,6 +731,110 @@ async def test_without_a_live_verdict_the_unproven_reading_still_waits_for_the_s
     assert r.receipt_preview_stats["verdict_oriented"] == 0
     assert r._hl_fallback.get("na_orientation", 0) >= 1
     assert EV in r._urgent_stamp, "the stamp that computes the verdict is made urgent"
+
+
+def _orientation_clock(monkeypatch):
+    from app.tasks import prediction_market_matching as matcher
+
+    class Clock(datetime):
+        current = NOW
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current.astimezone(tz)
+
+    monkeypatch.setattr(module, "datetime", Clock)
+    monkeypatch.setattr(matcher, "datetime", Clock)
+    return Clock
+
+
+async def test_pregame_flip_cannot_orient_stamp_or_receipt_at_kickoff(r, monkeypatch):
+    Clock = _orientation_clock(monkeypatch)
+    ev = duel_event()
+    ev.status = "scheduled"
+    ev.commence_time = Clock.fromtimestamp(NOW.timestamp() + 1.0, timezone.utc)
+    ev.opening_home_probability = 0.88
+    session = AsyncMock()
+    session.get.return_value = ev
+    session.execute.return_value = Mock(scalar_one_or_none=Mock(return_value=None))
+    assert await r._oriented(session, EV, 0.08, event=ev) == pytest.approx(0.92)
+
+    Clock.current = ev.commence_time
+    ev.status = "live"
+    read(r, ev, duel_pair())
+    receive(r, 0.20)
+    await drained(r)
+
+    assert not ops(r.sent, "propose")
+    assert r._hl_fallback.get("na_orientation", 0) >= 1
+    assert EV in r._urgent_stamp
+    assert session.get.await_count == 1, "receipt must not touch the database"
+
+    assert await r._oriented(session, EV, 0.08, event=ev) == pytest.approx(0.08)
+    assert session.get.await_count == 2
+    assert session.execute.await_count == 1, "only pregame inspects raw odds"
+
+
+async def test_rescheduled_kickoff_binds_the_cached_flip_to_the_cold_event_phase(r):
+    live = duel_event()
+    rescheduled = Row(**{
+        **vars(live),
+        "status": "scheduled",
+        "commence_time": NOW + timedelta(hours=1),
+        "opening_home_probability": 0.88,
+    })
+    session = AsyncMock()
+    session.get.side_effect = [rescheduled, live]
+    session.execute.return_value = Mock(scalar_one_or_none=Mock(return_value=None))
+
+    assert await r._oriented(session, EV, 0.08, event=live) == pytest.approx(0.92)
+    read(r, live, duel_pair())
+    receive(r, 0.20)
+    await drained(r)
+
+    assert not ops(r.sent, "propose")
+    assert EV in r._urgent_stamp
+    assert session.get.await_count == 1
+    assert await r._oriented(session, EV, 0.08, event=live) == pytest.approx(0.08)
+    assert session.get.await_count == 2
+    assert session.execute.await_count == 1
+
+
+@pytest.mark.parametrize("evidence", ["betting", "two-peers"])
+async def test_expired_live_evidence_cannot_orient_the_stamp_or_receipt(r, monkeypatch, evidence):
+    Clock = _orientation_clock(monkeypatch)
+    ev = duel_event()
+    ev.commence_time = Clock.fromtimestamp(ev.commence_time.timestamp(), timezone.utc)
+    expires_at = Clock.current + timedelta(seconds=1)
+    oldest = expires_at - timedelta(seconds=MAX_STALENESS)
+    if evidence == "betting":
+        ev.win_probability_sources = stamp_source_reading(
+            {"betting_book_count": 3}, "betting", 0.88, price_read_at=oldest,
+        )
+    else:
+        peers = stamp_source_reading({}, "espn", 0.88, price_read_at=oldest)
+        ev.win_probability_sources = stamp_source_reading(
+            peers, "mlb", 0.89, price_read_at=Clock.current,
+        )
+    session = AsyncMock()
+    session.get.return_value = ev
+
+    assert await r._oriented(session, EV, 0.08, event=ev) == pytest.approx(0.92)
+    assert await r._oriented(session, EV, 0.10, event=ev) == pytest.approx(0.90)
+    assert r._inversion[EV].evidence_expires_at == expires_at
+    assert session.get.await_count == 1, "a fresh cached verdict requires no read"
+
+    read(r, ev, duel_pair())
+    Clock.current = expires_at
+    receive(r, 0.20)
+    await drained(r)
+
+    assert not ops(r.sent, "propose")
+    assert EV in r._urgent_stamp
+    assert session.get.await_count == 1, "receipt must not touch the database"
+    assert await r._oriented(session, EV, 0.08, event=ev) == pytest.approx(0.08)
+    assert session.get.await_count == 2
+    session.execute.assert_not_awaited()
 
 
 async def test_a_receipt_with_no_valid_reading_leaves_the_clock_as_no_price(r):
