@@ -108,6 +108,9 @@ LEAGUE_PRIMARY_TTL = 300
 #: the missing revalidation — the actual defect — in place.
 LEAGUE_STALE_TTL = 86400
 
+# Cache-only stamp for game rails built after #12824 removed the opening fallback.
+_GAME_PRICE_POLICY = "no_opening_as_current"
+
 #: How old a mirror carrying GAME ROWS may be and still be served (#3389).
 #:
 #: #1767 restored revalidation but left it entirely reader-driven, and the 24h
@@ -1931,11 +1934,9 @@ def _redis_or_none():
 def _read_league_slot(rc, key: str) -> dict | None:
     """Read one league cache slot, or None.
 
-    Deliberately NOT `event_concept_cache.read_slot`: that helper validates the
-    stamped `cache` envelope and reads an unstamped payload as a MISS, so adopting
-    it here would silently invalidate every live league entry and, worse, couple a
-    revalidation fix to a payload-shape migration. The keys are shared; the codec
-    is this tier's own until it adopts the envelope deliberately.
+    Pre-#12824 game rails could store the opening as current odds without a
+    source tag. Require a pricing policy stamp before serving any cached games,
+    including the outage fallback. Futures-only mirrors need no game price stamp.
     """
     if rc is None:
         return None
@@ -1951,7 +1952,12 @@ def _read_league_slot(rc, key: str) -> dict | None:
     except Exception:
         logger.warning("league cache: refusing undecodable payload for %s", key)
         return None
-    return payload if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    game_price_policy = payload.pop("_game_price_policy", None)
+    if has_games(payload) and game_price_policy != _GAME_PRICE_POLICY:
+        return None
+    return payload
 
 
 def _write_league_payload(rc, keys: ConceptCacheKeys, payload: dict) -> None:
@@ -1959,6 +1965,8 @@ def _write_league_payload(rc, keys: ConceptCacheKeys, payload: dict) -> None:
     if rc is None:
         return
     try:
+        if has_games(payload):
+            payload = {**payload, "_game_price_policy": _GAME_PRICE_POLICY}
         encoded = json.dumps(payload, default=str)
         rc.setex(keys.primary, LEAGUE_PRIMARY_TTL, encoded)
         rc.setex(keys.stale, LEAGUE_STALE_TTL, encoded)

@@ -10,8 +10,10 @@ a pass on a database where the correction migration has not run.
 
 import re
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.utils import container_corrections as cc
 from app.utils.container_graph import (
@@ -287,6 +289,68 @@ async def test_a_probe_with_no_answer_reads_as_absent():
 
     schema = await cc.correction_schema_present(Silent())
     assert not schema.ledger and not schema.columns
+
+
+@pytest.mark.asyncio
+async def test_published_reads_reuse_only_the_schema_probe(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(cc, "monotonic", lambda: clock[0])
+    engine = create_async_engine("postgresql+asyncpg://localhost/container_reader")
+    other_engine = create_async_engine("postgresql+asyncpg://localhost/other_reader")
+    try:
+        async with AsyncSession(engine) as first, AsyncSession(engine) as next_read:
+            first.execute = AsyncMock(side_effect=[
+                _Result([(True, True)]),
+                _Result([(7, "published", 3, "member", "event", 50, 7, "test", None)]),
+            ])
+            next_read.execute = AsyncMock(side_effect=[
+                _Result([(7, "withdrawn", 4, None, None, None, None, None, None)]),
+                _Result([(True, True)]),
+                _Result([(7, "published", 5, "member", "event", 51, 7, "test", None)]),
+            ])
+            initial = await cc.read_published(first, "week")
+            assert initial.revision == 3 and initial.members[0]["id"] == 50
+            withdrawn = await cc.read_published(next_read, "week")
+            assert withdrawn.state == cc.READ_WITHDRAWN and withdrawn.revision == 4
+            assert withdrawn.members == []
+            next_read.execute.assert_awaited_once()
+            assert str(next_read.execute.await_args.args[0]).startswith("WITH hub AS")
+
+            clock[0] += cc._READ_SCHEMA_TTL_SECONDS
+            republished = await cc.read_published(next_read, "week")
+            assert republished.revision == 5 and republished.members[0]["id"] == 51
+            assert next_read.execute.await_count == 3
+            assert "to_regclass" in str(next_read.execute.await_args_list[1].args[0])
+
+        async with AsyncSession(other_engine) as other:
+            other.execute = AsyncMock(side_effect=[_Result([(False, False)]), _Result([(1,)])])
+            unpublished = await cc.read_published(other, "week")
+            assert unpublished.reason == "publication_schema_absent"
+            assert other.execute.await_count == 2
+    finally:
+        await engine.dispose()
+        await other_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_missing_schema_is_rechecked_and_writer_probes_remain_live():
+    engine = create_async_engine("postgresql+asyncpg://localhost/container_reader")
+    try:
+        async with AsyncSession(engine) as session:
+            session.execute = AsyncMock(side_effect=[
+                _Result([(False, False)]),
+                _Result([(1,)]),
+                _Result([(True, True)]),
+                _Result([]),
+                _Result([(False, False)]),
+            ])
+            unavailable_schema = await cc.read_published(session, "week")
+            assert unavailable_schema.reason == "publication_schema_absent"
+            assert (await cc.read_published(session, "week")).state == cc.READ_UNAVAILABLE
+            assert not (await cc.correction_schema_present(session)).complete
+            assert session.execute.await_count == 5
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

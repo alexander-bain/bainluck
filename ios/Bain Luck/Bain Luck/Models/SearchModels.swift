@@ -130,17 +130,11 @@ nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
     let bookmakerOdds: [BookmakerOdds]?
     let highlight: Highlight?
     let openingOdds: OpeningOdds?
-    /// The server's blended price for the HOME side, and its complement for the
-    /// away side (`routes/events.py` serves `hero_probability` from
-    /// `home_probability` and `hero_probability_away` from `away_probability`).
-    ///
-    /// #4967 — search serves these on rows that carry no `current_odds` at all,
-    /// and the model did not name them, so `Decodable` dropped them in silence
-    /// and the row drew no percentage. Named here as two plain optionals: the
-    /// struct has no `CodingKeys` and the client decodes with
-    /// `.convertFromSnakeCase`, so naming them IS the decode.
+    /// #4967 — search can serve a hero chance without a `current_odds` object.
     let heroProbability: Double?
     let heroProbabilityAway: Double?
+    /// #12824 — older search results can identify the hero pair as an opening line.
+    var heroProbabilitySource: String? = nil
     /// #5811 — `venue_closed_no_winner`, served by `/api/events/search`;
     /// present only when true. See `EventDetail.venueClosedNoWinner`.
     let venueClosedNoWinner: Bool?
@@ -194,6 +188,14 @@ nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
     /// owns that rule so no second surface has to rediscover it.
     let winProbability: Double?
     let pregameWinProbability: Double?
+    /// #12581 / #12926 / #12865 — server-owned source attribution marks.
+    /// On `/api/teams/{slug}`, `sourceMark` and `pregameSourceMark` describe this
+    /// page's team (`isHome`); on `/api/events/search`, `sourceMark` and
+    /// `awaySourceMark` describe the home and away sides.
+    var sourceMark: SourceMark? = nil
+    var awaySourceMark: SourceMark? = nil
+    var pregameSourceMark: SourceMark? = nil
+    var awayPregameSourceMark: SourceMark? = nil
     /// Served orientation. Preferred over comparing `homeTeam` to the page's team
     /// name: one name variant flips the row to the wrong side silently, and the
     /// payload states the answer outright.

@@ -35,6 +35,7 @@ from tests.test_team_link_drain_advances_7307 import (
     _FakeCursorStore,
     _make_engine,
 )
+from tests.test_team_link_own_name_9802 import BLUES_NODOT, ST_LOUIS
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "team_link_given_name_city_9726.json"
@@ -267,7 +268,7 @@ def test_a_closed_markets_stored_link_is_left_alone():
 
 
 def test_strawman_without_the_guard_the_surname_binds_to_the_huskies(monkeypatch):
-    monkeypatch.setattr(linking, "given_name_before_city", lambda *a: False)
+    monkeypatch.setattr(linking, "given_name_before_city", lambda *a, **kw: False)
     assert match_outcome_to_team("Parker Washington", _dicts()) == HUSKIES[0]
     assert match_outcome_to_team("Matt Campbell", _dicts()) == CAMELS[0]
 
@@ -280,6 +281,61 @@ def test_phase_3c_never_clears_a_link_step_1_would_make_again():
     assert not rests(
         "Parker Washington", "Washington Huskies", ["Washington", "Parker Washington"]
     )
+
+
+def test_jack_adams_coach_does_not_write_a_new_blues_link():
+    # #12534: the award's team-name fallback found "St. Louis" in the coach's
+    # name. The period made that alias look unlike the city in "St Louis Blues".
+    blues_id = BLUES_NODOT["id"]
+    with Session(_make_engine()) as session:
+        session.add(Sport(id=1, key="icehockey_nhl", name="NHL", active=True))
+        session.add(
+            Team(
+                id=blues_id,
+                sport_id=1,
+                name=BLUES_NODOT["name"],
+                alternate_names=BLUES_NODOT["alternate_names"],
+            )
+        )
+        session.add(
+            FuturesMarket(
+                id=63115864,
+                source="kalshi",
+                external_id="KXNHLADAMS-27",
+                name="NHL Jack Adams Award",
+                category="award",
+                llm_sport_category="hockey",
+                status="open",
+                market_tier=3,
+            )
+        )
+        session.flush()
+        for outcome_id, team_id in ((237995079, None), (1, blues_id)):
+            session.add(
+                FuturesOutcome(
+                    id=outcome_id,
+                    market_id=63115864,
+                    external_id=f"o{outcome_id}",
+                    name="Martin St. Louis",
+                    team_id=team_id,
+                )
+            )
+        session.commit()
+        stats = _drain(session)
+        links = _links(session)
+
+    assert stats["errors"] == []
+    assert stats["outcomes_processed"] == 1
+    assert links == {237995079: None, 1: blues_id}
+
+
+@pytest.mark.parametrize("name", ["St. Louis", "St. Louis Blues", "St Louis Blues", "Blues"])
+def test_the_blues_keep_their_exact_name_and_aliases(name):
+    assert match_outcome_to_team(name, [BLUES_NODOT]) == BLUES_NODOT["id"]
+
+
+def test_a_dotted_surname_stays_ambiguous_with_a_city_only_row():
+    assert match_outcome_to_team("Martin St. Louis", [BLUES_NODOT, ST_LOUIS]) is None
 
 
 # --- a fantasy defense named by its city (#9726, after-check 2026-09-30) -------

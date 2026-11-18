@@ -71,6 +71,14 @@ const EXEMPTIONS: Record<string, Exemption> = {
       return fileHasAllHooks(fs.readFileSync(sibling, "utf8"));
     },
   },
+  "factory/page.tsx": {
+    reason: "Server component; delegates all three hooks to FactoryFloor.tsx.",
+    validate: (src, absPath) => {
+      if (!/FactoryFloor/.test(src)) return false;
+      const sibling = path.join(path.dirname(absPath), "FactoryFloor.tsx");
+      return fs.existsSync(sibling) && fileHasAllHooks(fs.readFileSync(sibling, "utf8"));
+    },
+  },
 };
 
 function findPageFiles(dir: string): string[] {

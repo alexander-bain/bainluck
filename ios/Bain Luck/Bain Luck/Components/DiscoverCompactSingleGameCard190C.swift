@@ -267,8 +267,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                     .font(headerFont)
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
+                    .fixedSize(horizontal: true, vertical: false)
                     .frame(width: effectiveScoreWidth, alignment: .trailing)
             }
             if let pregameHeader = model.headers.pregame {
@@ -276,8 +275,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                     .font(headerFont)
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
+                    .fixedSize(horizontal: true, vertical: false)
                     .frame(width: effectivePregameWidth, alignment: .trailing)
                     .padding(.leading, model.headers.score != nil ? scoreToPregameGutter : 0)
             }
@@ -286,8 +284,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                     .font(headerFont)
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
+                    .fixedSize(horizontal: true, vertical: false)
                     .frame(width: effectivePrimaryWidth, alignment: .trailing)
                     .padding(.leading, model.headers.pregame != nil
                         ? pregameToPrimaryGap
@@ -351,8 +348,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                         ))
                         .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.45)
-                        .allowsTightening(true)
+                        .fixedSize(horizontal: true, vertical: false)
                         .frame(width: effectiveScoreWidth, alignment: .trailing)
                 }
 
@@ -366,8 +362,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                         ))
                         .foregroundStyle(model.isLive ? Color.primary : DS.textSecondaryReadable)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.45)
-                        .allowsTightening(true)
+                        .fixedSize(horizontal: true, vertical: false)
                         .frame(width: effectivePregameWidth, alignment: .trailing)
                         .padding(.leading, model.headers.score != nil ? scoreToPregameGutter : 0)
                 }
@@ -438,8 +433,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 ))
                 .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.45)
-                .allowsTightening(true)
+                .fixedSize(horizontal: true, vertical: false)
                 .frame(width: effectiveScoreWidth, alignment: .trailing)
                 .accessibilityLabel(row.scoreText.map { "Score \($0)" } ?? "")
         }
@@ -453,8 +447,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 ))
                 .foregroundStyle(model.isLive ? Color.primary : DS.textSecondaryReadable)
                 .lineLimit(1)
-                .minimumScaleFactor(0.45)
-                .allowsTightening(true)
+                .fixedSize(horizontal: true, vertical: false)
                 .frame(width: effectivePregameWidth, alignment: .trailing)
                 .padding(.leading, model.headers.score != nil ? scoreToPregameGutter : 0)
                 .accessibilityLabel(row.pregameText.map { isProjColumn ? "Projected \($0)" : "Pregame \($0)" } ?? "")
@@ -538,8 +531,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                 .foregroundStyle(sideAccentColor(for: row.kind))
                 .lineLimit(1)
-                .minimumScaleFactor(0.45)
-                .allowsTightening(true)
+                .fixedSize(horizontal: true, vertical: false)
         case .finalScore(let text, let won, let isDrawOutcome):
             if let text, !text.isEmpty {
                 let prominent = won || isDrawOutcome
@@ -551,8 +543,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                     ))
                     .foregroundStyle(prominent ? .primary : .secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
+                    .fixedSize(horizontal: true, vertical: false)
             } else {
                 Text("0")
                     .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactScoreSize, 20)))
@@ -564,14 +555,13 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 .font(HeadlineStyleTable199.secondNumbers(.card, prominent: true, scaledSize: min(compactPregameSize, 18)))
                 .foregroundStyle(DS.emerald)
                 .lineLimit(1)
-                .minimumScaleFactor(0.45)
-                .allowsTightening(true)
+                .fixedSize(horizontal: true, vertical: false)
         case .settledDash:
             Text(absentProbabilityMarker)
                 .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactPregameSize, 18)))
                 .foregroundStyle(DS.textSecondaryReadable)
                 .lineLimit(1)
-                .minimumScaleFactor(0.45)
+                .fixedSize(horizontal: true, vertical: false)
         case .none:
             EmptyView()
         }

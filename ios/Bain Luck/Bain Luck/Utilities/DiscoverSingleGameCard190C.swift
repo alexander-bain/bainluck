@@ -16,13 +16,31 @@ enum DiscoverSingleGameCard190C {
 
     // MARK: - 190-C / 191-A Eligibility
 
+    /// #12824 — strips win-chance fields from `currentOdds` when the feed item's
+    /// hero source is `"opening"` while retaining score projections.
+    nonisolated private static func sanitizedEventForCurrentChance(_ event: FeedEventData) -> FeedEventData {
+        guard event.heroProbabilitySource == OpeningLineHero.openingSource,
+              var odds = event.currentOdds else {
+            return event
+        }
+        var copy = event
+        odds.homeProbability = nil
+        odds.awayProbability = nil
+        odds.drawProbability = nil
+        odds.homeRenderedPercent = nil
+        odds.awayRenderedPercent = nil
+        copy.currentOdds = odds
+        return copy
+    }
+
     /// Maximum percentage-point move (`0...100`) between pregame/opening and current
     /// win probability while the game can still be graded (`nil` once finished/suspended
     /// or when either reading is absent).
     nonisolated static func swingPoints(
-        event: FeedEventData,
+        event rawEvent: FeedEventData,
         prematch: PrematchReading?
     ) -> Double? {
+        let event = sanitizedEventForCurrentChance(rawEvent)
         guard EventState.canStillBeGraded(
             event.status, commenceTime: event.commenceTime?.asDate),
               let reading = prematch,
@@ -72,9 +90,10 @@ enum DiscoverSingleGameCard190C {
     /// - Games in progress (`live`) and finished games (`isFinished`) that hold
     ///   win-probability data: carries the `191-A` chart panel under the rows (`true`).
     nonisolated static func qualifiesForPicture191A(
-        event: FeedEventData,
+        event rawEvent: FeedEventData,
         prematch: PrematchReading? = nil
     ) -> Bool {
+        let event = sanitizedEventForCurrentChance(rawEvent)
         let commence = event.commenceTime?.asDate
         let isSuspended = EventState.isSuspendedAndStarted(event.status, commenceTime: commence)
         let closedNoWinner = EventState.showsVenueClosedNoWinner(
@@ -161,11 +180,12 @@ enum DiscoverSingleGameCard190C {
     }
 
     nonisolated static func build(
-        event: FeedEventData,
+        event rawEvent: FeedEventData,
         prematch: PrematchReading?,
         showsInlinePregame: Bool = true,
         usesPictureLayout: Bool = false
     ) -> Model {
+        let event = sanitizedEventForCurrentChance(rawEvent)
         let isLive = event.status == "live"
         let isFinished = EventState.isFinished(event.status)
         let isSuspended = EventState.isSuspendedAndStarted(

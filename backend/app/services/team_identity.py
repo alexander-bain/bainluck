@@ -38,6 +38,7 @@ from app.utils.name_normalization import (
     normalize_name,
     normalize_team_name,
 )
+from app.utils.sport_keys import SPORT_LEAGUE_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,29 @@ _MATCH_FLOOR = 40
 # hit. The futures caller is another entrance for the same venue names.
 _VENUE_NAME_SOURCES = frozenset({"kalshi", "polymarket", "futures"})
 _NAME_WITNESS_LIMIT = 2048
+_WOMENS_TEAM_SUFFIX = re.compile(r"\(\s*(?:w|women(?:['’]s)?)\s*\)\s*$", re.IGNORECASE)
+
+
+def _venue_name_conflicts_with_league(
+    source: str, sport_key: str, source_name: Optional[str]
+) -> bool:
+    if source not in _VENUE_NAME_SOURCES or not source_name:
+        return False
+    _, league = SPORT_LEAGUE_MAP.get(sport_key, ("", ""))
+    if not league.startswith("mens-"):
+        return False
+    # The name normalizer drops parenthetical suffixes. Check the raw name
+    # before a cache hit or an alias can erase this contradiction.
+    if not _WOMENS_TEAM_SUFFIX.search(source_name):
+        return False
+    logger.warning(
+        "Team identity refused (#12534): source=%r name=%r sport=%r: "
+        "women's team name in a men's league",
+        source,
+        source_name,
+        sport_key,
+    )
+    return True
 
 
 def _fuzzy_score(candidate: str, target: str) -> int:
@@ -242,6 +266,9 @@ class TeamIdentityService:
             if team:
                 return team
 
+        if _venue_name_conflicts_with_league(source, sport_key, source_name):
+            return None
+
         # Step 2: Exact source_name match
         if source_name:
             team = await self._lookup_by_source_name(session, source, source_name, sport_key)
@@ -293,6 +320,9 @@ class TeamIdentityService:
         """
         if not source_id and not source_name:
             return True  # Nothing to register, and no identity was refused.
+
+        if _venue_name_conflicts_with_league(source, sport_key, source_name):
+            return False
 
         if await self._espn_mapping_names_another_club(
             session, team_id, source, source_id, source_name
