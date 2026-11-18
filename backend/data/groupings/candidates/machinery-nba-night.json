@@ -1,0 +1,138 @@
+{
+  "slug": "machinery-nba-night",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "same_window",
+    "same_subject"
+  ],
+  "level": "member",
+  "kicker": "NBA · THIS SLATE",
+  "name": "NBA Slate",
+  "category": "basketball",
+  "tag": "NBA",
+  "section_title": "Closest Toss-Ups",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "sections": [
+      {
+        "key": "closest_games",
+        "title": "Coin-Flip Matchups",
+        "note": "Games on this slate priced closest to a 50–50 toss-up.",
+        "atom_query": {
+          "kind": "events",
+          "sport_key": "basketball_nba",
+          "window_days_ahead": 4,
+          "probability_band": [0.34, 0.66],
+          "order_by": "closeness_to_50",
+          "min_items": 2,
+          "max_items": 3
+        }
+      },
+      {
+        "key": "prop_leaders",
+        "title": "Season Stat Leaders",
+        "note": "Players priced highest across open NBA per-game leader markets.",
+        "dynamic_item_note": true,
+        "atom_query": {
+          "kind": "markets",
+          "content_kind": "props",
+          "title_all_tokens": ["per", "game", "leader"],
+          "any_tokens": [
+            "nba points per game",
+            "nba rebounds per game",
+            "nba assists per game",
+            "pro basketball points per game",
+            "pro basketball rebounds per game",
+            "pro basketball assists per game"
+          ],
+          "exclude_tokens": ["wnba", "ncaa", "college", "averages", ":"],
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 2,
+          "max_items": 3,
+          "max_outcomes": 3
+        }
+      },
+      {
+        "key": "night_slate",
+        "title": "Upcoming Matchups",
+        "note": "Projected scores and win chances in tipoff order.",
+        "atom_query": {
+          "kind": "events",
+          "sport_key": "basketball_nba",
+          "window_days_ahead": 4,
+          "order_by": "kickoff_asc",
+          "min_items": 2,
+          "max_items": 4
+        }
+      },
+      {
+        "key": "mvp_race",
+        "title": "MVP Contenders",
+        "note": "Leading players priced highest in the regular-season MVP race.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["mvp", "winner"],
+          "any_tokens": [
+            "nba mvp winner",
+            "pro basketball mvp winner"
+          ],
+          "exclude_tokens": [
+            "wnba",
+            "nfl",
+            "finals",
+            "cup",
+            "conference",
+            "division",
+            "finalists",
+            "age",
+            ":"
+          ],
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 6
+        }
+      },
+      {
+        "key": "award_races",
+        "title": "Season Award Races",
+        "note": "Open NBA individual award fields priced closest at the top.",
+        "dynamic_item_note": true,
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["winner"],
+          "any_tokens": [
+            "nba sixth man of the year winner",
+            "nba most improved player winner",
+            "nba defensive player of the year winner",
+            "pro basketball sixth man of the year winner",
+            "pro basketball most improved player winner",
+            "pro basketball defensive player of the year winner"
+          ],
+          "exclude_tokens": [
+            "wnba",
+            "nfl",
+            "ncaa",
+            "college",
+            "finalists",
+            "conference",
+            ":"
+          ],
+          "shape": "field",
+          "order_by": "closeness_to_50",
+          "min_items": 2,
+          "max_items": 2,
+          "max_outcomes": 3
+        }
+      }
+    ]
+  }
+}
