@@ -3668,12 +3668,12 @@ def _log_stats_line(
         "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
         "%d msgs | coverage shards=%d/%d served=%d/%d wire=%d by_shard=%s "
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
-        "unobserved=%d stale=%d | trades refused below_min=%d outside_wide_book=%d "
+        "unobserved=%d stale=%d | older_than_tight_book=%d "
+        "| trades refused below_min=%d outside_wide_book=%d "
         "| %s | %s | held withdrawn=%d lock_probes_refused=%d fenced=%d stamp_wait_s=%.1f "
         "lock_timeouts=%d history_points=%d history_keepalive=%d "
         "history_keepalive_errors=%d history_capped=%d history_skipped=%d "
-        "history_refused=%d history_errors=%d older_than_tight_book=%d "
-        "skipped_locked=%d repeats_skipped=%d",
+        "history_refused=%d history_errors=%d skipped_locked=%d repeats_skipped=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
         ws_stats.get("messages", 0),
@@ -3690,6 +3690,8 @@ def _log_stats_line(
         blend.get("unobserved_skipped", 0),
         # #8910: readings refused as older than the stored observation.
         blend.get("stale_readings_refused", 0),
+        # #12658: delayed executions with a demonstrably newer tight book.
+        stats.get("trades_older_than_tight_book", 0),
         # #9733 / #9913: trades that were not a price. Counted in the consumer
         # and, until this line, never emitted.
         stats.get("trades_below_min_order", 0),
@@ -3722,7 +3724,6 @@ def _log_stats_line(
         stats.get("history_skipped", 0),
         stats.get("history_refused", 0),
         stats.get("history_errors", 0),
-        stats.get("trades_older_than_tight_book", 0),
         # #10090: price rows a row lock elsewhere held back (with their unit)
         # while the rest of their chunk committed. Counted, never logged per
         # flush; each stays buffered and is retried by the next flush.

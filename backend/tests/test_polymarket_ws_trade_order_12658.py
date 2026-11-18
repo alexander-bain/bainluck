@@ -1,10 +1,12 @@
 """A delayed Polymarket trade cannot replace its token's newer tight book."""
 
 import json
+import logging
 from types import SimpleNamespace
 
 import pytest
 
+from app.tasks import polymarket_ws
 from tests.test_pm_idle_wake_10090 import callbacks
 from tests.test_pm_repeat_skip_10090 import callbacks as repeat_callbacks
 from tests.test_poly_ws_min_order_trade_9733 import YES_LEG, YES_TOKEN, _run
@@ -34,7 +36,7 @@ def _trade(asset, time=TRADE_TIME, price="0.71"):
     }
 
 
-async def test_a_delayed_fill_cannot_replace_the_midpoint_at_flush(monkeypatch):
+async def test_a_delayed_fill_cannot_replace_the_midpoint_at_flush(monkeypatch, caplog):
     monkeypatch.setenv("POLYMARKET_WS_OPEN_CONTRACT_PRICES", "0")
     writes, stats = await _run(
         monkeypatch,
@@ -43,6 +45,10 @@ async def test_a_delayed_fill_cannot_replace_the_midpoint_at_flush(monkeypatch):
     assert writes == [(YES_LEG, pytest.approx(0.15))]
     assert stats["trade_updates"] == 0
     assert stats["trades_older_than_tight_book"] == 1
+    blend = {"stamped": 0, "no_reading": 0, "throttled": 0, "errors": 0}
+    with caplog.at_level(logging.INFO, logger=polymarket_ws.logger.name):
+        polymarket_ws._log_stats_line(stats, {}, blend)
+    assert "older_than_tight_book=1 | trades refused" in caplog.text
 
 
 @pytest.mark.parametrize(
