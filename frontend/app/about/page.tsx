@@ -94,12 +94,14 @@ export default function AboutPage() {
     }
   }, []);
 
-  useEffect(() => {
-    if (process.env.NEXT_PUBLIC_ABOUT_189 === "true") return;
-    loadProof();
-  }, [loadProof]);
+  const about189Enabled = process.env.NEXT_PUBLIC_ABOUT_189 !== "false";
 
-  if (process.env.NEXT_PUBLIC_ABOUT_189 === "true") {
+  useEffect(() => {
+    if (about189Enabled) return;
+    loadProof();
+  }, [about189Enabled, loadProof]);
+
+  if (about189Enabled) {
     return <AboutPage189 />;
   }
 

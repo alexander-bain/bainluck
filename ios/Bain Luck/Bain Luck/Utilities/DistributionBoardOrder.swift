@@ -36,6 +36,23 @@ nonisolated enum DistributionBoardOrder {
         order == "chronological"
     }
 
+    static func isNumerical(
+        _ outcomes: [FeedDiscoverDistributionOutcome],
+        order: String?
+    ) -> Bool {
+        guard !isChronological(order) else { return false }
+        if order?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "numerical" {
+            return true
+        }
+        let drawn = Array(outcomes.prefix(drawnRowLimit))
+        return NumericalMarketScaleOrder228.isNumericalScale(
+            labels: drawn.map(\.label),
+            explicitSortKeys: drawn.map(\.sortKey),
+            orderHint: order,
+            totalOutcomeCount: outcomes.count
+        )
+    }
+
     /// The rows to draw, in drawing order. `outcomes` is the served list (already
     /// filtered to priced rows); `order` is `discover_card.distribution_order`.
     static func listedRows(
@@ -64,6 +81,18 @@ nonisolated enum DistributionBoardOrder {
                 case (.none, .some): return false
                 case (.none, .none): return lhs.offset < rhs.offset
                 }
+            }
+        } else if let keys = NumericalMarketScaleOrder228.scaleKeys(
+            for: drawn.map(\.label),
+            explicitSortKeys: drawn.map(\.sortKey),
+            orderHint: order,
+            totalOutcomeCount: outcomes.count
+        ) {
+            indexed.sort { lhs, rhs in
+                if keys[lhs.offset] != keys[rhs.offset] {
+                    return keys[lhs.offset] < keys[rhs.offset]
+                }
+                return lhs.offset < rhs.offset
             }
         }
         return indexed.map { ListedRow(outcome: $0.element, isLeader: $0.offset == leaderIndex) }

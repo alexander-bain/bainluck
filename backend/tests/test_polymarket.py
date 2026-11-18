@@ -973,7 +973,10 @@ class TestPolymarketVolumeBackfill:
         from app.tasks.polymarket import _poll_polymarket_markets
         src = inspect.getsource(_poll_polymarket_markets)
         # budget comfortably under the 540s soft limit
-        assert "_MAX_SECONDS = 420" in src
+        # (Nov 16 2026: named, as the soft limit minus the closing steps' reserve)
+        assert "_MAX_SECONDS = POLYMARKET_POLL_PAGE_BUDGET_S" in src
+        from app.tasks.polymarket import POLYMARKET_POLL_PAGE_BUDGET_S
+        assert POLYMARKET_POLL_PAGE_BUDGET_S == 330  # 540 - 210 closing reserve (Nov 16 4 PM)
         # per-page guard using monotonic elapsed
         assert "_time.monotonic() - _start > _MAX_SECONDS" in src
         # rotating page cursor persisted for resume

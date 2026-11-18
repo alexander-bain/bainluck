@@ -370,16 +370,10 @@ def test_a_blend_a_prediction_market_fed_wears_no_books_marker():
     assert "price_source" not in row
 
 
-def test_the_hero_may_fall_back_to_the_opening_and_this_row_may_not():
-    """The one place the two surfaces are allowed to differ, and why.
-
-    `compute_aggregate_probability`'s tier 3 IS `opening_home_probability`, so
-    the hero still renders a number for an event with no live reading. A slate
-    row printing it would be publishing an opening inside freshness fields that
-    say how recent it is — the frozen number in a new place (ruling 051).
-    """
+def test_neither_the_hero_nor_the_slate_uses_a_historical_opening():
+    """#12824: both surfaces refuse a first stored line as a current chance."""
     event = _Event(win_probability_sources={})
-    assert compute_aggregate_probability(event, event.status) is not None
+    assert compute_aggregate_probability(event, event.status) is None
 
     filled, row = _apply(_slate(), rows_by_event={15306160: event_blend_view(event)})
 

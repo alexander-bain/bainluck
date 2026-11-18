@@ -9,8 +9,8 @@ describe('#10796 larger text keeps the numbers and the plot readable', () => {
   it('the unified headline card and details control budget widths cleanly at large text', () => {
     const page = read('Views/EventDetailView.swift');
     const card = read('Components/EventSportHeadlineCard12472.swift');
-    expect(card).toMatch(/private var stacksRowsVertically: Bool \{\s*dynamicTypeSize\.isAccessibilitySize\s*\}/);
-    expect(card).toMatch(/private func columnWidth\(for role: EventSportHeadlines12472\.ColumnRole\) -> CGFloat/);
+    expect(card).toContain('HeadlineCellFit12822.resolve(');
+    expect(card).toMatch(/private var stacksRowsVertically: Bool \{\s*cellLayout\.stacksRowsVertically\s*\}/);
     expect(page).toMatch(/size >= \.xxLarge \? nil : verdictSlotWidth/);
     expect(page.match(/\.frame\(maxWidth: Self\.probabilityDetailsMaxWidth\(at: dynamicTypeSize,/g)).toHaveLength(1);
     expect(page).toMatch(/statusInDetails \? nil : heroVerdictWidth\(at: size\)/);

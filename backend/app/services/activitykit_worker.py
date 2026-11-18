@@ -17,6 +17,7 @@ from typing import Callable
 from app.models.activitykit import ActivityKitRegistration
 from app.models.activitykit_delivery import ActivityKitDelivery
 from app.services.activitykit_apns import APNsResult
+from app.utils.activitykit_push_record import log_push
 from app.services.activitykit_state_codec import encode_state, decode_state
 from app.services.activitykit_registration_lifecycle import (
     horizon_open,
@@ -66,6 +67,9 @@ def rebind_token(state: DeliveryState, *, token_changed: bool) -> DeliveryState:
         attempt=None,
         halted=None,
         pending="terminal" if state.terminal_latched else "update",
+        # A new token has shown nothing yet: its first update goes now, at 10,
+        # never held for the quiet refresh (#10542 step 3).
+        sent_view=None,
     )
 
 
@@ -296,6 +300,15 @@ class DurableActivityKitWorker:
             if not isinstance(result, APNsResult):
                 result = APNsResult("rejected", "invalid_transport_result")
             completed_at = max(now, _clock(self.clock()))
+            # #10542: one line per push with its numbers' ages and Apple's answer.
+            log_push(
+                state.attempt,
+                activity_id=reservation.activity_id,
+                sent_at=dispatch_at,
+                answered_at=completed_at,
+                outcome=result.outcome,
+                reason=result.reason,
+            )
             failure = {
                 "accepted": None,
                 "retry": "transient",

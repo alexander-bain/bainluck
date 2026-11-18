@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSwipe } from "@/components/discover/shared";
 import { getCat, CATEGORY_GRADIENTS } from "@/components/discover/constants";
 import { getDiscoverItemAnalytics } from "@/lib/discoverInteractions";
+import { isStoredOpeningChance } from "@/lib/probabilityEvidence";
 import type {
   FeedItem,
   FeedFuturesData,
@@ -54,7 +55,8 @@ function cardProbability(item: FeedItem): number | null {
     return (item.data as FeedFuturesData).top_outcomes?.[0]?.probability ?? null;
   }
   if (item.type === "event") {
-    return (item.data as FeedEventData).current_odds?.home_probability ?? null;
+    const event = item.data as FeedEventData;
+    return isStoredOpeningChance(event) ? null : event.current_odds?.home_probability ?? null;
   }
   return null;
 }

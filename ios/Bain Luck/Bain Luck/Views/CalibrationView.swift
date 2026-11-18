@@ -285,7 +285,9 @@ struct CalibrationSurfaceView: View {
             // clause is web's `heroClause`, so the qualifier is the predicate.
             Text("We compare \(viewModel.heroPopulationText) with what actually happened. A well-calibrated market saying 30% should happen about 30% of the time.")
                 .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            Text("\(viewModel.dateRangeLabel.map { "Data \($0)" } ?? "\(viewModel.formattedTotalOutcomes) resolved outcomes") \u{00B7} Updated \(viewModel.updatedLabel)")
+            let rangeOrOutcomes = viewModel.dateRangeLabel.map { "Data \($0)" } ?? "\(viewModel.formattedTotalOutcomes) resolved outcomes"
+            let updatedSuffix = viewModel.updatedLabel.map { " \u{00B7} Updated \($0)" } ?? ""
+            Text(rangeOrOutcomes + updatedSuffix)
                 .font(.caption2).foregroundStyle(.tertiary)
                 // Mirrors web's `data-testid="calibration-generated-at"` /
                 // `data-generated-at`: the RAW ISO timestamp, not the "Aug 2" a
@@ -656,7 +658,11 @@ struct CalibrationSurfaceView: View {
                 }
                 if let sentence = activity.sentence {
                     Text(sentence)
-                        .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: .infinity)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity)
                 }
                 // L2-231 Item 2: `price_moved` is a tri-state. The two cards above
                 // cover `true` and `false`; the `null` rows (sportsbook lines,
@@ -664,8 +670,11 @@ struct CalibrationSurfaceView: View {
                 // counts silently fell short of the population the page claims.
                 if let partition = viewModel.activityPartitionNote {
                     Text(partition)
-                        .font(.caption2).foregroundStyle(.tertiary)
-                        .multilineTextAlignment(.center).frame(maxWidth: .infinity)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity)
                 }
             }
         }

@@ -70,9 +70,9 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
     return host.querySelector(`[data-testid="${id}"]`);
   }
 
-  it("stays strictly switched off by default unless NEXT_PUBLIC_GAME_CARD_183A === 'true'", () => {
+  it("is enabled by default under Ruling 207-A and disabled only when NEXT_PUBLIC_GAME_CARD_183A === 'false'", () => {
     delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
-    expect(isWebGameCard183AEnabled()).toBe(false);
+    expect(isWebGameCard183AEnabled()).toBe(true);
     process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
     expect(isWebGameCard183AEnabled()).toBe(false);
     process.env.NEXT_PUBLIC_GAME_CARD_183A = "true";
@@ -113,6 +113,12 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
     ).toEqual({
       body: "Lions 58% · projected 27–24",
       fullText: "Pregame  Lions 58% · projected 27–24",
+      namedText: "Lions 58%",
+      namedSide: "home",
+      firstProjText: "27",
+      firstProjSide: "home",
+      secondProjText: "24",
+      secondProjSide: "away",
     });
 
     // Away favourite: Chiefs 63% · projected 28–21
@@ -131,6 +137,12 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
     ).toEqual({
       body: "Chiefs 63% · projected 28–21",
       fullText: "Pregame  Chiefs 63% · projected 28–21",
+      namedText: "Chiefs 63%",
+      namedSide: "away",
+      firstProjText: "28",
+      firstProjSide: "away",
+      secondProjText: "21",
+      secondProjSide: "home",
     });
 
     // Missing pregame projected score: leaves out that half
@@ -149,6 +161,12 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
     ).toEqual({
       body: "Lions 58%",
       fullText: "Pregame  Lions 58%",
+      namedText: "Lions 58%",
+      namedSide: "home",
+      firstProjText: null,
+      firstProjSide: null,
+      secondProjText: null,
+      secondProjSide: null,
     });
 
     // Missing pregame win chance: leaves out that half
@@ -167,6 +185,12 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
     ).toEqual({
       body: "projected 27–24",
       fullText: "Pregame  projected 27–24",
+      namedText: null,
+      namedSide: null,
+      firstProjText: "27",
+      firstProjSide: "home",
+      secondProjText: "24",
+      secondProjSide: "away",
     });
 
     // Both missing: returns null so line is omitted completely
@@ -221,6 +245,22 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
     expect(unified.pregame_away_pct).toBeNull();
     expect(unified.pregame_projected_home).toBe("27");
     expect(unified.pregame_projected_away).toBe("24");
+
+    // Finished search/list cards with opening_odds but no prematch_odds must also leave
+    // pregame_* null and print Final alone (never passing opening_odds off as Pregame).
+    const finishedNoPrematch = buildUnifiedCardFromEvent({
+      ...fakeEvent,
+      status: "completed",
+      home_score: 28,
+      away_score: 20,
+    } as unknown as Event);
+    expect(finishedNoPrematch.pregame_home_pct).toBeNull();
+    expect(finishedNoPrematch.pregame_away_pct).toBeNull();
+    render(<EventCard183A card={finishedNoPrematch} surface="standard" />);
+    expect(byTestId("col-header-pregame")).toBeNull();
+    expect(byTestId("col-header-now")?.textContent).toBe("Final");
+    expect(host.textContent).not.toContain("42%");
+    expect(host.textContent).not.toContain("58%");
 
     expect(
       extractPregameProjectedPair(
@@ -317,10 +357,19 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
     expect(awayNow?.style.color).not.toBe("");
     expect(homeNow?.style.color).not.toBe("");
 
-    const preLine = byTestId("live-pregame-summary-line") as HTMLElement | null;
-    expect(preLine).not.toBeNull();
-    expect(preLine?.textContent).toBe("Pregame  Lions 58% · projected 27–24");
-    expect(preLine?.className).toContain("whitespace-nowrap");
+    // Rulings 213-A & 214-A1: live cards carry the single grey pregame line with each team's numbers in its team colour
+    const summaryLine = byTestId("live-pregame-summary-line");
+    expect(summaryLine).not.toBeNull();
+    expect(summaryLine?.textContent).toBe("Pregame  Lions 58% · projected 27–24");
+    const namedEl = byTestId("live-pregame-named") as HTMLElement | null;
+    const projFirst = byTestId("live-pregame-proj-first") as HTMLElement | null;
+    const projSecond = byTestId("live-pregame-proj-second") as HTMLElement | null;
+    expect(namedEl?.textContent).toBe("Lions 58%");
+    expect(projFirst?.textContent).toBe("27");
+    expect(projSecond?.textContent).toBe("24");
+    expect(namedEl?.style.color).toBe(homeNow?.style.color);
+    expect(projFirst?.style.color).toBe(homeNow?.style.color);
+    expect(projSecond?.style.color).toBe(awayNow?.style.color);
 
     const chartPanel = byTestId("discover-191a-chart-panel");
     expect(chartPanel).not.toBeNull();
@@ -362,11 +411,51 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
     expect(host.textContent).toContain("20");
     expect(host.textContent).toContain("28");
     expect(host.textContent).not.toContain("Won ✓");
-    expect(byTestId("discover-191a-chart-panel")).not.toBeNull();
+    // Decision 207 Fix 5: settled card without >= 3 chart_points draws NO chart (never a 2-point straight line)
+    expect(byTestId("discover-191a-chart-panel")).toBeNull();
     // Direction 199: after a game, print no sentence repeating the card
     expect(byTestId("discover-game-reason-line")).toBeNull();
     expect(host.textContent).not.toContain("65%");
     expect(host.textContent).not.toMatch(/Settled/i);
+
+    // With 2 readings, still draws NO chart
+    render(
+      <EventCard183A
+        card={{
+          ...BASE_CARD,
+          status: "completed",
+          completed_at: "2026-11-15T18:05:00Z",
+          away_score: 20,
+          home_score: 28,
+          chart_points: [
+            { t: 0, p: 0.58 },
+            { t: 1, p: 1.0 },
+          ],
+        }}
+        surface="discover"
+      />,
+    );
+    expect(byTestId("discover-191a-chart-panel")).toBeNull();
+
+    // With >= 3 real readings, draws the 191-A chart panel
+    render(
+      <EventCard183A
+        card={{
+          ...BASE_CARD,
+          status: "completed",
+          completed_at: "2026-11-15T18:05:00Z",
+          away_score: 20,
+          home_score: 28,
+          chart_points: [
+            { t: 0, p: 0.58 },
+            { t: 0.5, p: 0.44 },
+            { t: 1, p: 1.0 },
+          ],
+        }}
+        surface="discover"
+      />,
+    );
+    expect(byTestId("discover-191a-chart-panel")).not.toBeNull();
   });
 
   it("formats football/basketball projections as whole numbers and soccer/baseball/hockey to one decimal, omits live bar tick when unheld, and aligns pregame team names", () => {
@@ -510,6 +599,7 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
           projected_home: 1.9,
           chart_points: [
             { t: 0, p: 0.49 },
+            { t: 0.5, p: 0.57 },
             { t: 1, p: 0.64 },
           ],
         }}
@@ -587,7 +677,9 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
     expect(byTestId("tennis-score-strip")?.textContent).toContain("Pts");
     expect(byTestId("tennis-serving-home")).not.toBeNull();
     expect(byTestId("col-header-proj")).toBeNull();
+    // Rulings 213-A & 214-A1: live tennis card prints "Pregame  Sinner 78%" with no projected score
     expect(byTestId("live-pregame-summary-line")?.textContent).toBe("Pregame  Sinner 78%");
+    expect(byTestId("live-pregame-proj-first")).toBeNull();
     expect(host.textContent).toContain("28.4%");
     expect(host.textContent).toContain("71.6%");
   });

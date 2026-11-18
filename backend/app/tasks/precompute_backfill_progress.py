@@ -34,7 +34,7 @@ from sqlalchemy import text
 logger = logging.getLogger(__name__)
 
 CACHE_KEY = "bainluck:backfill_progress"
-CACHE_TTL = 1800  # 30 min — task runs every 15 min so always fresh
+CACHE_TTL = 50 * 3600  # 215-B: the task is daily; one missed night still serves
 
 # Item 1 (Queue #220/221): DEGRADED failure mode. The four census tiles each
 # arm a 150s statement_timeout, but the task's soft_time_limit is 280s — so two

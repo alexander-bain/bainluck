@@ -1273,7 +1273,7 @@ export function rangeMovementCaption(
   const delta = (last.probability - first.probability) * 100;
   const whole = Math.round(Math.abs(delta));
   if (whole < 1) return `${label} roughly flat since ${since}.`;
-  return `${label} ${delta > 0 ? "up" : "down"} ${whole} ${whole === 1 ? "pt" : "pts"} since ${since}.`;
+  return `${label} ${delta > 0 ? "up" : "down"} ${whole} ${whole === 1 ? "point" : "points"} since ${since}.`;
 }
 
 /* ───────────────────────────────────────────────────────────────────────────

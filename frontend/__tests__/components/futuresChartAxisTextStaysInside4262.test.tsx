@@ -171,9 +171,7 @@ describe("#4262 — the futures chart's axis text stays inside the plot", () => 
     expect(first.left).toBeGreaterThanOrEqual(PLOT_LEFT);
   });
 
-  it("lifts the `0%` chip's ink off the plot floor, and leaves the others centred", () => {
-    // The left-hand defect was a paint, not a clip: the opaque chip covered the
-    // tick's head. Anchoring it by its bottom is the #3520 rule.
+  it("centres every y-axis label — including `0%` — on the gridline it names (#12750)", () => {
     const html = render();
     const spans = [...html.matchAll(/<span([^>]*?data-testid="chart-y-label"[^>]*?)>([^<]*)</g)].map(
       (m) => ({
@@ -184,17 +182,10 @@ describe("#4262 — the futures chart's axis text stays inside the plot", () => 
     );
     expect(spans.length).toBe(5);
 
-    const floor = spans.find((s) => s.text === "0%");
-    expect(floor?.anchor).toBe("bottom");
-    expect(floor?.classes).toContain("-translate-y-full");
-    expect(floor?.classes).not.toContain("-translate-y-1/2");
-
-    // Two-directional (#2961's lesson): a chart where EVERY label moved has
-    // swapped one defect for another, not fixed this one.
-    for (const other of spans.filter((s) => s.text !== "0%")) {
-      expect(`${other.text} anchor: ${other.anchor}`).toBe(`${other.text} anchor: centre`);
-      expect(other.classes).toContain("-translate-y-1/2");
-      expect(other.classes).not.toContain("-translate-y-full");
+    for (const s of spans) {
+      expect(`${s.text} anchor: ${s.anchor}`).toBe(`${s.text} anchor: centre`);
+      expect(s.classes).toContain("-translate-y-1/2");
+      expect(s.classes).not.toContain("-translate-y-full");
     }
   });
 });

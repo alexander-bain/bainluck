@@ -136,6 +136,41 @@ final class SourceMark12581Tests: XCTestCase {
         XCTAssertNil(SourceMarkButton(SourceMark(state: .single, sources: []), numberSize: 20))
     }
 
+    func testSingleSourceServedMethodAndPluralPossessiveFallback12873() throws {
+        // 1. Single-source mark with served scaling explanation prints it verbatim (#12873).
+        let scaledJSON = """
+        {"market_name": "Super Bowl Winner", "outcome_name": "Chiefs",
+         "threshold": null, "over_probability": 0.14, "source": "betting", "movement": null,
+         "player_headshot": null, "player_team": null, "actual": null, "hit": null, "pregame_mark": null,
+         "source_mark": {"state": "single",
+           "sources": [{"key": "betting", "name": "Sportsbooks", "probability": 0.16, "observed_at": "\(stamp(90))", "count": 6}],
+           "settled": null,
+           "method": "Scaled across 32 outcomes so the field totals 100%"}}
+        """.data(using: .utf8)!
+        let scaled = try XCTUnwrap(try decode(scaledJSON).sourceMark)
+        XCTAssertEqual(
+            SourceMarkSheet.method(scaled),
+            "Scaled across 32 outcomes so the field totals 100%",
+            "single-source mark with served scaling sentence prints the served method"
+        )
+
+        // 2. Unscaled Sportsbooks fallback spells plural possessive "Sportsbooks' price" (never "Sportsbooks's price").
+        let unscaledSportsbooks = SourceMark(
+            state: .single,
+            sources: [.init(key: "betting", name: "Sportsbooks", probability: 0.195, observedAt: nil, count: 5)],
+            method: nil
+        )
+        XCTAssertEqual(SourceMarkSheet.method(unscaledSportsbooks), "Sportsbooks' price")
+
+        // 3. Blank served method on Sportsbooks also falls back to "Sportsbooks' price".
+        let blankSportsbooks = SourceMark(
+            state: .single,
+            sources: [.init(key: "betting", name: "Sportsbooks", probability: 0.195, observedAt: nil, count: 5)],
+            method: "   "
+        )
+        XCTAssertEqual(SourceMarkSheet.method(blankSportsbooks), "Sportsbooks' price")
+    }
+
     func testTheMarkIsTheInfoRing() throws {
         let source = try Self.source("Bain Luck/Components/SourceMarkView12581.swift")
         XCTAssertTrue(source.contains("Image(systemName: \"info.circle\")"), "139-A: the ⓘ ring")

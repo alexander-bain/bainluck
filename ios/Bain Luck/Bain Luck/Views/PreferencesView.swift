@@ -91,8 +91,19 @@ private let relationLabel: [String: String] = [
 
 struct PreferencesView: View {
     @EnvironmentObject private var authManager: AuthManager
-    @StateObject private var viewModel = PreferencesViewModel()
+    @StateObject private var viewModel: PreferencesViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    init() {
+        _viewModel = StateObject(wrappedValue: PreferencesViewModel())
+    }
+
+    #if DEBUG
+    init(loadedPrefsForTest: PreferencesResponse) {
+        _viewModel = StateObject(wrappedValue: PreferencesViewModel(loadedPrefs: loadedPrefsForTest))
+    }
+    #endif
     @State private var showOnboarding = false
     @State private var showDeleteConfirmation = false
     @State private var isDeletingAccount = false
@@ -110,6 +121,7 @@ struct PreferencesView: View {
     /// `onAppear`, never the thing that decides.
     @State private var analyticsConsentGranted = TelemetryConsent.shared.isGranted
     @State private var telemetryPersistence = TelemetryConsent.shared.persistence
+    @State private var groupingMachineryEnabled = false
 
     var body: some View {
         Group {
@@ -127,7 +139,7 @@ struct PreferencesView: View {
         }
         .navigationTitle("Preferences")
         #if os(iOS)
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(preferencesTitleDisplayMode)
         #endif
         .task {
             await viewModel.load()
@@ -174,10 +186,20 @@ struct PreferencesView: View {
 
     // MARK: - Main Content
 
+    static let readableDetailMaxWidth: CGFloat = 720
+
+    #if os(iOS)
+    private var preferencesTitleDisplayMode: NavigationBarItem.TitleDisplayMode {
+        if sizeClass == .regular { return .inline }
+        return .large
+    }
+    #endif
+
     private var preferencesContent: some View {
         ScrollView {
             VStack(spacing: 24) {
                 accountHero
+                ownerGroupingMachinerySection
                 teamsSection
                 interestsSection
                 notificationsSection
@@ -185,6 +207,8 @@ struct PreferencesView: View {
                 actionsSection
             }
             .padding(.vertical)
+            .frame(maxWidth: Self.readableDetailMaxWidth)
+            .frame(maxWidth: .infinity)
         }
         .background(Color.groupedBackground)
         .onAppear {
@@ -192,6 +216,10 @@ struct PreferencesView: View {
             // constructed (the first-run prompt, or a previous visit).
             analyticsConsentGranted = TelemetryConsent.shared.isGranted
             telemetryPersistence = TelemetryConsent.shared.persistence
+            groupingMachineryEnabled = GroupingMachineryGate12288.isSwitchEnabled(for: authManager.user)
+        }
+        .onChange(of: authManager.user?.id) { _, _ in
+            groupingMachineryEnabled = GroupingMachineryGate12288.isSwitchEnabled(for: authManager.user)
         }
     }
 
@@ -902,6 +930,53 @@ struct PreferencesView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.4), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
+    }
+
+    // MARK: - Owner-Only Grouping Machinery Preview (#12288)
+
+    /// Shown ONLY to the owner account (`id == 364`), default `off`.
+    /// Non-owner and signed-out accounts never see this section or toggle.
+    @ViewBuilder
+    private var ownerGroupingMachinerySection: some View {
+        if GroupingMachineryGate12288.isOwnerUser(authManager.user) {
+            VStack(spacing: 10) {
+                sectionHeader(emoji: "\u{1F9EA}", title: "Owner Preview", count: nil)
+                Toggle(isOn: Binding(
+                    get: { groupingMachineryEnabled },
+                    set: { enabled in
+                        groupingMachineryEnabled = enabled
+                        GroupingMachineryGate12288.setSwitchEnabled(enabled, for: authManager.user)
+                    }
+                )) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "rectangle.grid.2x2.fill")
+                            .font(.system(size: 20))
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Grouping machinery preview")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Show the 4 machinery-built groupings on Discover (private owner switch, default off)")
+                                .font(.caption2)
+                                .foregroundStyle(Color.secondary.opacity(0.75))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .toggleStyle(.switch)
+                .tint(Color.accentColor)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .background(Color.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.4), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
+                .padding(.horizontal)
+                .accessibilityIdentifier("preferences.ownerGroupingMachineryToggle")
+            }
+        }
     }
 
     // MARK: - Privacy

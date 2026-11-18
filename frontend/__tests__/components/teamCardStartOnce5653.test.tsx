@@ -59,6 +59,18 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#5653 — the nearest fixture says which day it is", () => {
   it("a start tomorrow, under 24 hours out, reads 'Tomorrow', not a bare clock", () => {
     const html = render(brief());
