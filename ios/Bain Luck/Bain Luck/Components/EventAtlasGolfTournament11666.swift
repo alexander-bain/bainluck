@@ -2487,24 +2487,39 @@ struct EventAtlasGolfContenderChooserView11666: View {
             }
             if phase == .final {
                 if row.isWinner == true {
-                    Text("✓ Won")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(DS.emeraldDark)
+                    HStack(spacing: 4) {
+                        Text("✓ Won")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(DS.emeraldDark)
+                        if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.name, numberSize: 15, compactRow: true) {
+                            mark.buttonStyle(.borderless)
+                        }
+                    }
                 } else if showsPregameBaseline, let open = row.openingProbability, open > 0, open < 1 {
-                    Text("○ Pregame \(formatProbability(open))")
-                        .font(.caption)
-                        .foregroundStyle(DS.textSecondaryReadable)
-                        .monospacedDigit()
+                    HStack(spacing: 4) {
+                        Text("○ Pregame \(formatProbability(open))")
+                            .font(.caption)
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .monospacedDigit()
+                        if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.name, numberSize: 13, compactRow: true) {
+                            mark.buttonStyle(.borderless)
+                        }
+                    }
                 } else {
                     Text("—")
                         .font(.caption)
                         .foregroundStyle(DS.textSecondaryReadable)
                 }
             } else {
-                Text(row.probabilityLabel)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(row.position == 1 ? .blue : .primary)
-                    .monospacedDigit()
+                HStack(spacing: 4) {
+                    Text(row.probabilityLabel)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(row.position == 1 ? .blue : .primary)
+                        .monospacedDigit()
+                    if let mark = SourceMarkButton(row.sourceMark, number: row.probability, subject: row.name, numberSize: 15, compactRow: true) {
+                        mark.buttonStyle(.borderless)
+                    }
+                }
             }
         }
     }

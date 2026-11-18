@@ -1077,6 +1077,52 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let cardSumReason: String?
     /// #11920 / #12581 (137-A): server-owned source attribution mark for collection and feed cards.
     var sourceMark: SourceMark? = nil
+    /// #12884: cumulative deadline member contract carrying independent `Yes` (`sourceMark`) and `No` (`noSourceMark`) attribution.
+    var deadlineMember: FeedDeadlineMemberContract? = nil
+
+    /// Resolves the served `SourceMark` for a specific outcome (or the card's primary outcome when `outcome` is nil),
+    /// checking outcome-level `sourceMark`, cumulative deadline `Yes`/`No` marks (`#12884`), and market-level `sourceMark`.
+    func resolvedSourceMark(for outcome: FeedFuturesOutcome?) -> SourceMark? {
+        if let mark = outcome?.sourceMark, mark.draws {
+            return mark
+        }
+        if let dm = deadlineMember {
+            if let outcome {
+                let normalized = outcome.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if normalized == "yes" {
+                    return dm.sourceMark
+                }
+                if normalized == "no" || normalized.hasPrefix("not ") {
+                    return dm.noSourceMark
+                }
+                if let p = outcome.probability,
+                   let yesP = dm.yesProbability,
+                   let noP = dm.noProbability,
+                   abs(yesP - noP) > 1e-6 {
+                    let dYes = abs(p - yesP)
+                    let dNo = abs(p - noP)
+                    if min(dYes, dNo) <= 0.025 {
+                        return dYes <= dNo ? dm.sourceMark : dm.noSourceMark
+                    }
+                }
+            } else {
+                return dm.sourceMark
+            }
+        }
+        if outcome == nil || (topOutcomes?.count ?? 0) <= 1 {
+            return sourceMark
+        }
+        return nil
+    }
+}
+
+/// #12884: cumulative deadline member attribution carried on `FeedFuturesData.deadline_member`.
+nonisolated struct FeedDeadlineMemberContract: Decodable, Equatable, Sendable {
+    let yesProbability: Double?
+    let yesRenderedPercent: Int?
+    let noProbability: Double?
+    let sourceMark: SourceMark?
+    let noSourceMark: SourceMark?
 }
 
 // MARK: - Discover Card Archetype
@@ -1125,6 +1171,7 @@ nonisolated struct FeedDiscoverDistributionOutcome: Decodable, Sendable {
     /// is the server's (venue labels read `October 27`), never guessed here.
     var date: String? = nil
     var sortKey: Double? = nil
+    var sourceMark: SourceMark? = nil
 }
 
 // MARK: - Feed Tournament Data
@@ -1165,6 +1212,7 @@ nonisolated struct FeedTournamentGolfer: Decodable, Identifiable, Sendable {
     var renderedPercent: Int? = nil
     let rank: Int
     let movement24h: Double?
+    var sourceMark: SourceMark? = nil
 
     var id: String { name }
 
@@ -1189,6 +1237,7 @@ nonisolated struct FeedTournamentGolfer: Decodable, Identifiable, Sendable {
     enum CodingKeys: String, CodingKey {
         case name, probability, renderedPercent, rank
         case movement24h = "movement24H"
+        case sourceMark
     }
 }
 

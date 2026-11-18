@@ -44,6 +44,7 @@ struct NativeTournamentDiscoverCard: View {
     let feedContext: String?
     @Binding var navigationPath: NavigationPath
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
 
     private var gradient: (Color, Color) {
         sportCategoryGradients["golf"] ?? sportDefaultGradient
@@ -128,12 +129,21 @@ struct NativeTournamentDiscoverCard: View {
                             // comes from `marquee_whathit` + the leader row, never
                             // from the probability being high.
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(leader.name)
-                                    .font(.title3.bold())
-                                    .foregroundStyle(.white)
-                                    .lineLimit(2)
-                                    .minimumScaleFactor(0.85)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Text(leader.name)
+                                        .font(.title3.bold())
+                                        .foregroundStyle(.white)
+                                        .lineLimit(2)
+                                        .minimumScaleFactor(0.85)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    if let mark = SourceMarkButton(leader.sourceMark, number: nil, subject: leader.name, numberSize: 17, compactRow: true) {
+                                        if colorScheme == .light {
+                                            mark.colorInvert()
+                                        } else {
+                                            mark
+                                        }
+                                    }
+                                }
                                 Text("CHAMPION · WON")
                                     .font(.caption2.bold())
                                     .foregroundStyle(.white)
@@ -144,9 +154,18 @@ struct NativeTournamentDiscoverCard: View {
                             }
                         } else {
                             HStack(spacing: 8) {
-                                Text(leader.renderedPercent.map { formatProbability(leader.probability, renderedPercent: $0) } ?? FeedProbabilityScale.percentLabel(fromFraction: leader.probability))
-                                    .font(.title.bold())
-                                    .foregroundStyle(.white)
+                                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                    Text(leader.renderedPercent.map { formatProbability(leader.probability, renderedPercent: $0) } ?? FeedProbabilityScale.percentLabel(fromFraction: leader.probability))
+                                        .font(.title.bold())
+                                        .foregroundStyle(.white)
+                                    if let mark = SourceMarkButton(leader.sourceMark, number: leader.probability, subject: leader.name, numberSize: 22, compactRow: true) {
+                                        if colorScheme == .light {
+                                            mark.colorInvert()
+                                        } else {
+                                            mark
+                                        }
+                                    }
+                                }
 
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(leader.name)

@@ -3628,6 +3628,7 @@ struct NativeGroupCard: View {
 
     private func compactRow(_ data: FeedFuturesData) -> some View {
         let summary = DiscoverGroupRows.compactSummary(for: data)
+        let hasMark = summary.sourceMark?.draws == true
         return HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(data.name)
@@ -3646,9 +3647,20 @@ struct NativeGroupCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             if let probability = summary.probability {
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text(formatProbability(probability))
-                        .font(.title2.weight(.bold).monospacedDigit())
-                        .foregroundStyle(primaryInk)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(formatProbability(probability))
+                            .font(.title2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(primaryInk)
+                        if let mark = SourceMarkButton(
+                            summary.sourceMark,
+                            number: summary.sourceMark?.state == .settled ? nil : probability,
+                            subject: summary.label,
+                            numberSize: 18,
+                            compactRow: true
+                        ) {
+                            mark.buttonStyle(.borderless)
+                        }
+                    }
                     MovementBadge(movement: summary.movement)
                 }
                 .frame(minWidth: 58, alignment: .trailing)
@@ -3659,7 +3671,7 @@ struct NativeGroupCard: View {
         // Keep the existing tap gesture: a NavigationLink here turns a swipe
         // into navigation on touch-up (#7074).
         .onTapGesture { navigationPath.append(Route.futuresDetail(id: data.id)) }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: hasMark ? .contain : .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier(NativeCompactFuturesRow.rowIdentifier)
     }

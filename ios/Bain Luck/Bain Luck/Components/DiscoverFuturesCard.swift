@@ -122,6 +122,7 @@ struct NativeFuturesDiscoverCard: View {
     /// setting instead, and measuring one while drawing the other is how a
     /// column ends up narrower than the string inside it.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
 
     private var categoryLabel: String {
         sportCategoryDisplayName(data.sportName ?? data.llmSportCategory).uppercased()
@@ -294,6 +295,25 @@ struct NativeFuturesDiscoverCard: View {
 
                         MovementBadge(movement: leader.movement)
                             .padding(.bottom, 8)
+
+                        let leaderMark = data.resolvedSourceMark(for: leader)
+                        if let mark = SourceMarkButton(
+                            leaderMark,
+                            number: leaderMark?.state == .settled ? nil : leader.probability,
+                            subject: leader.name,
+                            numberSize: 20,
+                            compactRow: true
+                        ) {
+                            Group {
+                                if colorScheme == .light {
+                                    mark.colorInvert()
+                                } else {
+                                    mark
+                                }
+                            }
+                            .buttonStyle(.borderless)
+                            .padding(.bottom, 8)
+                        }
                     }
 
                     Text(leader.name)
@@ -346,6 +366,7 @@ struct NativeFuturesDiscoverCard: View {
                         }
                         return Array(outcomes.prefix(3).enumerated()).map { ($0.offset, $0.element, $0.offset == 0) }
                     }()
+                    let hasAnyRowMark = orderedRows.contains { data.resolvedSourceMark(for: $0.outcome)?.draws == true }
                     // #8213 — the column widths are measured from the strings
                     // these rows will actually print, at this view's text size,
                     // in the width this card was actually given. The percent
@@ -359,7 +380,8 @@ struct NativeFuturesDiscoverCard: View {
                                 percents.indices.contains(idx) ? percents[idx] : nil)
                         },
                         availableWidth: outcomeRowWidth,
-                        typeSize: dynamicTypeSize
+                        typeSize: dynamicTypeSize,
+                        hasSourceMark: hasAnyRowMark
                     )
                     VStack(spacing: 7) {
                         ForEach(orderedRows, id: \.outcome.id) { row in
@@ -368,7 +390,8 @@ struct NativeFuturesDiscoverCard: View {
                                 row.outcome,
                                 isLeader: row.isLeader,
                                 percent: percents.indices.contains(idx) ? percents[idx] : nil,
-                                columns: columns
+                                columns: columns,
+                                hasAnyRowMark: hasAnyRowMark
                             )
                         }
                     }
@@ -502,11 +525,13 @@ struct NativeFuturesDiscoverCard: View {
         _ outcome: FeedFuturesOutcome,
         isLeader: Bool,
         percent: Int?,
-        columns: FuturesOutcomeRowColumns.Layout
+        columns: FuturesOutcomeRowColumns.Layout,
+        hasAnyRowMark: Bool = false
     ) -> some View {
+        let outcomeMark = data.resolvedSourceMark(for: outcome)
         // #8213 — the spacing the model subtracts is the spacing the row is
         // built with. Two literals that must agree are two numbers that drift.
-        HStack(spacing: FuturesOutcomeRowColumns.interColumnSpacing) {
+        return HStack(spacing: FuturesOutcomeRowColumns.interColumnSpacing) {
             Text(outcome.name)
                 .font(.caption.weight(isLeader ? .semibold : .regular))
                 .lineLimit(2)
@@ -531,6 +556,20 @@ struct NativeFuturesDiscoverCard: View {
                 .font(.caption.weight(.bold).monospacedDigit())
                 .lineLimit(1)
                 .frame(width: columns.percentWidth, alignment: .trailing)
+
+            if hasAnyRowMark {
+                if let mark = SourceMarkButton(
+                    outcomeMark,
+                    number: outcomeMark?.state == .settled ? nil : outcome.probability,
+                    subject: outcome.name,
+                    numberSize: 12,
+                    compactRow: true
+                ) {
+                    mark.buttonStyle(.borderless)
+                } else {
+                    Color.clear.frame(width: 22, height: 1)
+                }
+            }
         }
     }
 

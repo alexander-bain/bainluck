@@ -29,6 +29,7 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
     let primaryBarLabel: String?
     let secondaryBarLabel: String?
     let observedAt: String?
+    let sourceMark: SourceMark?
 
     private enum CodingKeys: String, CodingKey {
         case marketId
@@ -66,6 +67,8 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
         case secondaryBarLabelSnake = "secondary_bar_label"
         case observedAt
         case observedAtSnake = "observed_at"
+        case sourceMark
+        case sourceMarkSnake = "source_mark"
     }
 
     init(
@@ -87,7 +90,8 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
         secondaryRenderedPercent: Int? = nil,
         primaryBarLabel: String? = nil,
         secondaryBarLabel: String? = nil,
-        observedAt: String? = nil
+        observedAt: String? = nil,
+        sourceMark: SourceMark? = nil
     ) {
         self.marketId = marketId
         self.eventId = eventId
@@ -108,6 +112,7 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
         self.primaryBarLabel = primaryBarLabel
         self.secondaryBarLabel = secondaryBarLabel
         self.observedAt = observedAt
+        self.sourceMark = sourceMark
     }
 
     init(from decoder: Decoder) throws {
@@ -147,6 +152,8 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
             ?? (try? c.decodeIfPresent(String.self, forKey: .secondaryBarLabelSnake))
         observedAt = (try? c.decodeIfPresent(String.self, forKey: .observedAt))
             ?? (try? c.decodeIfPresent(String.self, forKey: .observedAtSnake))
+        sourceMark = (try? c.decodeIfPresent(SourceMark.self, forKey: .sourceMark))
+            ?? (try? c.decodeIfPresent(SourceMark.self, forKey: .sourceMarkSnake))
     }
 }
 
@@ -264,12 +271,14 @@ nonisolated struct DiscoverRoundupRowModel: Equatable, Identifiable, Sendable {
     let opponentLabel: String?
     let dateLabel: String?
     let detailCallout: String?
+    let rawProbability: Double
     let marker: String?
     let digits: String
     let fill: Double
     let secondary: DiscoverRoundupSecondaryBarModel?
     let observedAt: String?
     let showsRowAgeMark: Bool
+    let sourceMark: SourceMark?
 
     var formattedPercentText: String {
         "\(marker ?? "")\(digits)%"
@@ -298,6 +307,10 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
     let rows: [DiscoverRoundupRowModel]
     let cadence: SourceAge.Cadence
     let cardMarkObservedAt: String?
+
+    var hasAnySourceMark: Bool {
+        rows.contains { $0.sourceMark?.draws == true }
+    }
 
     var accessibilitySummary: String {
         let rowSpeech = rows
@@ -468,12 +481,14 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
                 opponentLabel: nonEmpty(item.row.opponentLabel) ?? splitPair?.0,
                 dateLabel: nonEmpty(item.row.dateLabel) ?? splitPair?.1,
                 detailCallout: buildDetailCallout(for: item.row),
+                rawProbability: item.row.probability,
                 marker: parts.marker,
                 digits: parts.digits,
                 fill: min(1.0, max(0.0, item.row.probability)),
                 secondary: secondary,
                 observedAt: stamps[idx],
-                showsRowAgeMark: !allOld && staleFlags[idx]
+                showsRowAgeMark: !allOld && staleFlags[idx],
+                sourceMark: item.row.sourceMark
             )
         }
 
