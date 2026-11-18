@@ -1156,7 +1156,10 @@ async def _load_snapshot_from_db(
                         FuturesOddsSnapshot.outcome_id.in_(sorted(wanted_oids)),
                         FuturesOddsSnapshot.captured_at >= cutoff,
                     )
-                    .order_by(FuturesOddsSnapshot.captured_at.asc())
+                    .order_by(
+                        FuturesOddsSnapshot.outcome_id,
+                        FuturesOddsSnapshot.captured_at,
+                    )
                     .limit(4000)
                 )
                 h_rows = (await db.execute(h_stmt)).scalars().all()
