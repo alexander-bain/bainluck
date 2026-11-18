@@ -194,6 +194,7 @@ def decide(repo: str, run_id: str, token: str, out: Path, *, opener: Opener = _d
     # A hard deadline for the whole fetch: change-scope is a 2-minute job and its steps
     # may not be waived, so a stalled GitHub must end here as "use the committed file".
     alarm = getattr(signal, "SIGALRM", None) if deadline else None
+    previous = None
     if alarm is not None:
         def _expired(signum, frame):  # noqa: ARG001
             raise TimeoutError(f"the {deadline} s deadline passed")
@@ -218,7 +219,8 @@ def decide(repo: str, run_id: str, token: str, out: Path, *, opener: Opener = _d
     finally:
         if alarm is not None:
             signal.alarm(0)
-            signal.signal(alarm, previous)
+            if previous is not None:
+                signal.signal(alarm, previous)
     if payload is None:
         print(f"::notice::shard timings for this run: the committed file ({why})")
     else:
