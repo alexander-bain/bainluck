@@ -243,6 +243,17 @@
       "source_page": "https://commons.wikimedia.org/wiki/File:Mark_Kelly_Official_Portrait_119th.jpg"
     },
     {
+      "key": "andy-beshear",
+      "aliases": ["Andy Beshear"],
+      "kind": "person",
+      "detail": "Governor · Kentucky",
+      "accent_color": "#2563EB",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d9/Andy_Beshear_in_April_2026_%28cropped_3%29.jpg/500px-Andy_Beshear_in_April_2026_%28cropped_3%29.jpg",
+      "author": "Governor Andy Beshear",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Andy_Beshear_in_April_2026_(cropped_3).jpg"
+    },
+    {
       "key": "democratic-party",
       "aliases": ["Democratic party", "Democratic Party", "Democrats"],
       "kind": "monogram",

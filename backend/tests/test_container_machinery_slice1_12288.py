@@ -399,3 +399,189 @@ def test_subject_art_resolver_excludes_horror_and_falls_back_to_monogram() -> No
     unknown = resolver.resolve("Unlisted Challenger")
     assert unknown["url"] is None
     assert unknown["initials"] == "UC"
+
+
+def test_slice2_bar_no_question_word_proper_case_and_definition_only_fourth_grouping(
+    tmp_path: Any,
+) -> None:
+    from app.utils.container_machinery import (
+        _proper_case_outcome_label,
+        discover_machinery_candidate_paths,
+    )
+
+    # 1. All 4 unlike groupings discovered automatically (including machinery-fed-and-macro.json)
+    paths = discover_machinery_candidate_paths()
+    slugs = [load_machinery_definition(p)["slug"] for p in paths]
+    assert slugs == [
+        "machinery-2028-presidential",
+        "machinery-fed-and-macro",
+        "machinery-nfl-week",
+        "machinery-oscars-best-picture",
+    ]
+
+    # 2. Proper-casing miscased names without mangling numeric/rate brackets
+    assert _proper_case_outcome_label("Anne hathaway") == "Anne Hathaway"
+    assert _proper_case_outcome_label("Hike 25bps") == "Hike 25bps"
+    assert _proper_case_outcome_label("Fed maintains rate") == "Fed maintains rate"
+    assert _proper_case_outcome_label("Democratic party") == "Democratic party"
+
+    # 3. Calling a market a 'question' in definition copy is rejected
+    bad = json.loads(CANDIDATE_2028_PRESIDENTIAL_PATH.read_text(encoding="utf-8"))
+    bad["rule"]["sections"][-1]["note"] = "Yes-or-no questions on the ticket."
+    bad_path = tmp_path / "machinery-bad.json"
+    bad_path.write_text(json.dumps(bad), encoding="utf-8")
+    with pytest.raises(ValueError, match="question"):
+        load_machinery_definition(bad_path)
+
+
+@pytest.mark.asyncio
+async def test_ruling_227a_visual_diversity_report_and_primitives_doc() -> None:
+    from pathlib import Path
+    from app.utils.container_machinery import (
+        CANDIDATE_FED_AND_MACRO_PATH,
+        compute_visual_diversity_report,
+    )
+
+    # 1. docs/design/grouping-primitives.md records 227: A under Sets and Presentations
+    doc_path = Path(__file__).resolve().parents[2] / "docs" / "design" / "grouping-primitives.md"
+    doc_text = doc_path.read_text(encoding="utf-8")
+    sets_part = doc_text.split("### 3. Sets", 1)[1].split("### 4. Presentations", 1)[0]
+    pres_part = doc_text.split("### 4. Presentations", 1)[1].split("### 5. Triggers", 1)[0]
+    assert "227: A" in sets_part and "60%" in sets_part
+    assert "227: A" in pres_part and "A picture on every screen" in pres_part
+
+    # 2. Report-only diversity report computes points 1–4 without blocking serving
+    snap = _sample_snapshot()
+    nfl_def = load_machinery_definition(CANDIDATE_NFL_WEEK_PATH)
+    nfl_prod = build_container_machinery_producer(nfl_def, enabled=lambda: True)
+    nfl_card, nfl_page = await evaluate_roundup_producer(nfl_prod, snap, now=FIXED_NOW)
+    rep = compute_visual_diversity_report(nfl_def, nfl_card, nfl_page)
+    assert rep["standard"] == "227-A"
+    assert rep["report_only"] is True
+    assert rep["card"]["point_1_pictures_per_screen_390px"]["passes"] is True
+    assert rep["page"]["point_1_pictures_per_screen_390px"]["passes"] is True
+    assert rep["page"]["point_3_forms"]["form_count"] == 4
+    assert rep["page"]["point_4_content_mix"]["content_kinds"]["games"] >= 1
+    assert rep["page"]["point_4_content_mix"]["content_kinds"]["futures"] >= 1
+
+    # Fed & Macro definition loads cleanly as 4th topic with zero topic code
+    fed_def = load_machinery_definition(CANDIDATE_FED_AND_MACRO_PATH)
+    assert fed_def["slug"] == "machinery-fed-and-macro"
+
+
+@pytest.mark.asyncio
+async def test_admin_only_machinery_preview_blocks_public_and_serves_admin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app.routes import admin_utils
+    from app.routes.containers import get_container, get_machinery_preview
+    from app.utils import container_corrections
+
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "false")
+
+    snap = _sample_snapshot()
+    req_signed_out = SimpleNamespace(
+        headers={}, url=SimpleNamespace(path="/api/containers/preview/machinery")
+    )
+    req_signed_in_non_admin = SimpleNamespace(
+        headers={"Authorization": "Bearer user-not-admin-token"},
+        url=SimpleNamespace(path="/api/containers/preview/machinery"),
+    )
+    req_admin = SimpleNamespace(
+        headers={"Authorization": "Bearer admin-ok"},
+        url=SimpleNamespace(path="/api/containers/preview/machinery"),
+    )
+
+    async def _fake_admin_auth(secret: Any, request: Any, db: Any = None) -> bool:
+        auth = (getattr(request, "headers", None) or {}).get("Authorization", "")
+        return auth == "Bearer admin-ok"
+
+    async def _fake_read_published(_db: Any, slug: str) -> Any:
+        return SimpleNamespace(
+            state=container_corrections.READ_UNAVAILABLE,
+            slug=slug,
+            revision=None,
+            members=[],
+        )
+
+    monkeypatch.setattr(admin_utils, "_check_admin_auth", _fake_admin_auth)
+    monkeypatch.setattr("app.routes.containers.read_published", _fake_read_published)
+
+    # 1. Signed-out reader AND signed-in non-admin are both refused (403) on preview read
+    for caller in (req_signed_out, req_signed_in_non_admin):
+        with pytest.raises(HTTPException) as exc_preview:
+            await get_machinery_preview(request=caller, slugs="machinery-nfl-week", db=snap)
+        assert exc_preview.value.status_code == 403
+
+        # 2. Both signed-out and signed-in non-admin are refused (404) on direct machinery-* page
+        with pytest.raises(HTTPException) as exc_direct:
+            await get_container(
+                request=caller,
+                slug="machinery-nfl-week",
+                include_children=True,
+                revision=None,
+                cursor=None,
+                limit=None,
+                market_revision=None,
+                market_cursor=None,
+                market_limit=None,
+                compact=True,
+                debug_timing=False,
+                db=snap,
+            )
+        assert exc_direct.value.status_code == 404
+
+    # 3. Admin caller receives preview items + 227-A diversity_report while switch stays OFF
+    preview_res = await get_machinery_preview(
+        request=req_admin, slugs="machinery-nfl-week,machinery-2028-presidential", db=snap
+    )
+    assert preview_res["public_switch_enabled"] is False
+    assert preview_res["count"] == 2
+    assert [it["slug"] for it in preview_res["items"]] == [
+        "machinery-nfl-week",
+        "machinery-2028-presidential",
+    ]
+    assert preview_res["items"][0]["diversity_report"]["standard"] == "227-A"
+
+    # 4. Direct /api/containers/machinery-nfl-week returns 200 for admin while global switch is OFF
+    hub_res = await get_container(
+        request=req_admin,
+        slug="machinery-nfl-week",
+        include_children=True,
+        revision=None,
+        cursor=None,
+        limit=None,
+        market_revision=None,
+        market_cursor=None,
+        market_limit=None,
+        compact=True,
+        debug_timing=False,
+        db=snap,
+    )
+    assert hub_res["slug"] == "machinery-nfl-week"
+    assert hub_res["state"] == "published"
+
+    # 5. Even AFTER an admin previews, ROUNDUP_PRODUCERS holds zero machinery-* slugs
+    #    so neither a signed-out reader nor a signed-in non-admin sees any machinery card
+    #    on Discover, and both remain refused on subsequent direct reads.
+    assert [s for s in ROUNDUP_PRODUCERS if s.startswith("machinery-")] == []
+    for caller in (req_signed_out, req_signed_in_non_admin):
+        with pytest.raises(HTTPException) as exc_after:
+            await get_container(
+                request=caller,
+                slug="machinery-nfl-week",
+                include_children=True,
+                revision=None,
+                cursor=None,
+                limit=None,
+                market_revision=None,
+                market_cursor=None,
+                market_limit=None,
+                compact=True,
+                debug_timing=False,
+                db=snap,
+            )
+        assert exc_after.value.status_code == 404

@@ -69,7 +69,7 @@
       {
         "key": "ticket_benchmarks",
         "title": "Ticket Benchmarks",
-        "note": "Yes-or-no questions on the composition of the major-party tickets.",
+        "note": "Yes-or-no markets on the composition of the major-party tickets.",
         "atom_query": {
           "kind": "markets",
           "title_all_tokens": ["2028", "presidential", "nominee"],

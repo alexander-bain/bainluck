@@ -33,6 +33,7 @@ from app.utils.container_presentation import (
 
 __all__ = [
     "CANDIDATE_2028_PRESIDENTIAL_PATH",
+    "CANDIDATE_FED_AND_MACRO_PATH",
     "CANDIDATE_NFL_WEEK_PATH",
     "CANDIDATE_OSCARS_BEST_PICTURE_PATH",
     "MACHINERY_CANDIDATE_PATHS",
@@ -41,10 +42,15 @@ __all__ = [
     "SubjectArtResolver",
     "build_container_machinery_producer",
     "choose_section_form",
+    "compute_visual_diversity_report",
     "container_machinery_enabled",
+    "discover_machinery_candidate_paths",
+    "evaluate_machinery_candidates_preview",
+    "is_machinery_candidate_slug",
     "load_machinery_definition",
     "produce_container_machinery",
     "register_machinery_slice1_candidates",
+    "serve_machinery_candidate_preview",
 ]
 
 PRODUCER_KIND_CONTAINER_MACHINERY = "container_machinery"
@@ -70,6 +76,7 @@ _SUBJECT_ART_PATH = _DATA_DIR / "groupings" / "machinery_subject_art.json"
 CANDIDATE_NFL_WEEK_PATH = _CANDIDATES_DIR / "machinery-nfl-week.json"
 CANDIDATE_OSCARS_BEST_PICTURE_PATH = _CANDIDATES_DIR / "machinery-oscars-best-picture.json"
 CANDIDATE_2028_PRESIDENTIAL_PATH = _CANDIDATES_DIR / "machinery-2028-presidential.json"
+CANDIDATE_FED_AND_MACRO_PATH = _CANDIDATES_DIR / "machinery-fed-and-macro.json"
 
 MACHINERY_CANDIDATE_PATHS: tuple[Path, ...] = (
     CANDIDATE_NFL_WEEK_PATH,
@@ -82,6 +89,51 @@ _PLACEHOLDER_OUTCOME_RE = re.compile(
     r"^(?:other|any\s+other|field|none(?:\s+of\s+the\s+above)?|someone\s+else|tbd)$",
     re.IGNORECASE,
 )
+_LOWER_PROPER_NAME_RE = re.compile(r"^[A-Z][a-z'’-]+(?:\s+[A-Za-z'’-]+)+$")
+_NON_NAME_TAIL_WORDS: frozenset[str] = frozenset(
+    {
+        "party",
+        "maintains",
+        "rate",
+        "rates",
+        "cuts",
+        "cut",
+        "hikes",
+        "hike",
+        "holds",
+        "hold",
+        "wins",
+        "win",
+        "of",
+        "the",
+        "in",
+        "and",
+        "to",
+        "for",
+        "at",
+        "by",
+        "or",
+    }
+)
+_FORBIDDEN_COPY_QUESTION_RE = re.compile(r"\bquestions?\b", re.IGNORECASE)
+
+
+def _proper_case_outcome_label(label: str) -> str:
+    """Capitalize miscased proper names (e.g. ``'Anne hathaway'`` -> ``'Anne Hathaway'``)
+    without altering numeric brackets, units, or plain sentence outcomes."""
+    trimmed = label.strip()
+    if not _LOWER_PROPER_NAME_RE.match(trimmed):
+        return trimmed
+    parts = trimmed.split(" ")
+    if any(p.lower() in _NON_NAME_TAIL_WORDS for p in parts[1:]):
+        return trimmed
+    fixed: list[str] = [parts[0]]
+    for tok in parts[1:]:
+        if len(tok) >= 2 and tok.islower():
+            fixed.append(tok[0].upper() + tok[1:])
+        else:
+            fixed.append(tok)
+    return " ".join(fixed)
 
 _PALETTE_FALLBACK: tuple[str, ...] = (
     "#059669",
@@ -315,6 +367,12 @@ def _clean_section_market_label(name: str) -> str:
     return cleaned.strip() or name.strip()
 
 
+_CUMULATIVE_OUTCOME_RE = re.compile(
+    r"^(?:above|below|over|under|at\s+least|more\s+than|fewer\s+than)\b",
+    re.IGNORECASE,
+)
+
+
 def _market_matches_query(market: Mapping[str, Any], query: Mapping[str, Any]) -> bool:
     status = str(market.get("status") or "open").lower()
     if status not in {"open", "active"}:
@@ -352,6 +410,14 @@ def _market_matches_query(market: Mapping[str, Any], query: Mapping[str, Any]) -
         return False
     if shape == "field" and len(priced) < 3:
         return False
+    if shape == "field" and not query.get("allow_cumulative"):
+        cum_hits = sum(
+            1
+            for o in priced
+            if _CUMULATIVE_OUTCOME_RE.match(str(o.get("name") or "").strip())
+        )
+        if cum_hits >= 2:
+            return False
     if shape == "binary" and len(priced) > 2:
         # Binary yes/no markets carry 1 ("Yes") or 2 ("Yes"/"No") outcomes
         names = {str(o.get("name") or "").strip().lower() for o in priced}
@@ -393,21 +459,25 @@ def _hydrate_market_visual_item(
             valid[0],
         )
         p = float(yes_row["probability"])
-        m_name = str(market.get("name") or "")
-        art = resolver.resolve(m_name, explicit_url=market.get("image_url"))
         outcomes_out = [
             {
                 "outcome_id": int(yes_row.get("id") or (mid * 10 + 1)),
                 "name": "Yes",
                 "probability": p,
                 "rendered_percent": _half_up_pct(p),
-                "art": art,
+                "art": {
+                    "url": None,
+                    "kind": "none",
+                    "detail": "",
+                    "accent_color": "",
+                    "initials": "",
+                },
             }
         ]
     else:
         outcomes_out = []
         for idx, o in enumerate(valid[:max_outcomes]):
-            o_name = str(o.get("name") or "").strip()
+            o_name = _proper_case_outcome_label(str(o.get("name") or "").strip())
             p = float(o["probability"])
             art = resolver.resolve(
                 o_name,
@@ -971,6 +1041,11 @@ async def produce_container_machinery(
     )
 
 
+def discover_machinery_candidate_paths() -> tuple[Path, ...]:
+    """Discover all ``machinery-*.json`` definitions in ``data/groupings/candidates/``."""
+    return tuple(sorted(_CANDIDATES_DIR.glob("machinery-*.json")))
+
+
 def load_machinery_definition(path: Path | str) -> dict[str, Any]:
     from app.utils.roundup_containers import validate_roundup_definition
 
@@ -978,6 +1053,21 @@ def load_machinery_definition(path: Path | str) -> dict[str, Any]:
     validated = validate_roundup_definition(raw, path=path)
     if validated["rule"].get("producer") != PRODUCER_KIND_CONTAINER_MACHINERY:
         raise ValueError(f"Expected producer='container_machinery' at {path}")
+    copy_fields: list[str] = [
+        str(validated.get("name") or ""),
+        str(validated.get("kicker") or ""),
+        str(validated.get("section_title") or ""),
+        str(validated.get("footer") or ""),
+    ]
+    for sec in validated["rule"].get("sections") or ():
+        if isinstance(sec, Mapping):
+            copy_fields.append(str(sec.get("title") or ""))
+            copy_fields.append(str(sec.get("note") or ""))
+    for text_val in copy_fields:
+        if _FORBIDDEN_COPY_QUESTION_RE.search(text_val):
+            raise ValueError(
+                f"Definition {path} calls a market a 'question' ({text_val!r}); say 'market(s)'."
+            )
     return validated
 
 
@@ -1014,13 +1104,418 @@ def build_container_machinery_producer(
 
 
 def register_machinery_slice1_candidates(*, enabled: Optional[Any] = None) -> list[str]:
-    """Register the three Slice-1 candidate definitions into ``ROUNDUP_PRODUCERS``."""
+    """Register all ``machinery-*.json`` candidate definitions into ``ROUNDUP_PRODUCERS``."""
     from app.utils.roundup_containers import register_roundup_producer
 
     slugs: list[str] = []
-    for path in MACHINERY_CANDIDATE_PATHS:
+    for path in discover_machinery_candidate_paths():
         defn = load_machinery_definition(path)
         prod = build_container_machinery_producer(defn, enabled=enabled)
         register_roundup_producer(prod)
         slugs.append(prod.slug)
     return slugs
+
+
+_SLICE1_ORDER: tuple[str, ...] = (
+    "machinery-nfl-week",
+    "machinery-oscars-best-picture",
+    "machinery-2028-presidential",
+    "machinery-fed-and-macro",
+)
+
+
+def _ordered_machinery_candidate_paths() -> tuple[Path, ...]:
+    by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
+    ordered: list[Path] = []
+    for s in _SLICE1_ORDER:
+        if s in by_slug:
+            ordered.append(by_slug.pop(s))
+    for s in sorted(by_slug):
+        ordered.append(by_slug[s])
+    return tuple(ordered)
+
+
+def is_machinery_candidate_slug(slug: str) -> bool:
+    """True when ``slug`` corresponds to a ``machinery-*.json`` candidate definition."""
+    if not slug or "/" in slug or "\\" in slug or ".." in slug:
+        return False
+    return any(p.stem == slug for p in discover_machinery_candidate_paths())
+
+
+def _has_verified_art(obj: Mapping[str, Any]) -> bool:
+    art = obj.get("art")
+    if isinstance(art, Mapping) and str(art.get("url") or "").strip():
+        return True
+    if str(obj.get("poster_url") or "").strip():
+        return True
+    away_art = obj.get("away_art")
+    home_art = obj.get("home_art")
+    if isinstance(away_art, Mapping) and str(away_art.get("url") or "").strip():
+        return True
+    if isinstance(home_art, Mapping) and str(home_art.get("url") or "").strip():
+        return True
+    return False
+
+
+def _visual_block_units(vb: Mapping[str, Any]) -> tuple[str, list[tuple[float, int]]]:
+    """Return ``(form_id, [(unit_height_px_at_390, verified_picture_count), ...])``
+    for each consecutive row/card unit rendered inside ``vb`` at 390 px width."""
+    form = str(vb.get("form_id") or vb.get("form") or "")
+    units: list[tuple[float, int]] = []
+    if form == "paired_stage_bars":
+        pms = vb.get("paired_metric_set") or {}
+        for row in pms.get("entries") or pms.get("rows") or ():
+            if isinstance(row, Mapping):
+                pics = 1 if _has_verified_art(row) else 0
+                units.append((76.0, pics))
+    elif form in {"coin_flip_matchups", "matchup_slate"}:
+        for it in vb.get("items") or ():
+            if isinstance(it, Mapping):
+                pics = 0
+                if isinstance(it.get("away_art"), Mapping) and str(it["away_art"].get("url") or "").strip():
+                    pics += 1
+                if isinstance(it.get("home_art"), Mapping) and str(it["home_art"].get("url") or "").strip():
+                    pics += 1
+                units.append((114.0, pics))
+    elif form == "duel_bar":
+        for it in vb.get("items") or ():
+            if isinstance(it, Mapping):
+                pics = sum(
+                    1
+                    for s in (it.get("sides") or ())
+                    if isinstance(s, Mapping) and _has_verified_art(s)
+                )
+                units.append((108.0, pics))
+    elif form == "contender_spotlight":
+        for it in vb.get("items") or ():
+            if isinstance(it, Mapping):
+                for o in it.get("outcomes") or ():
+                    if isinstance(o, Mapping):
+                        units.append((70.0, 1 if _has_verified_art(o) else 0))
+    elif form == "sibling_fields_grid":
+        for it in vb.get("items") or ():
+            if isinstance(it, Mapping):
+                pics = sum(
+                    1
+                    for o in (it.get("outcomes") or ())
+                    if isinstance(o, Mapping) and _has_verified_art(o)
+                )
+                units.append((148.0, pics))
+    elif form == "benchmark_strip":
+        for it in vb.get("items") or ():
+            if isinstance(it, Mapping):
+                units.append((64.0, 1 if _has_verified_art(it) else 0))
+    return form, units
+
+
+def _estimate_screen_picture_counts_390px(sections: Sequence[Mapping[str, Any]]) -> list[int]:
+    """Estimate verified picture counts per 390x844 phone screen from rendered unit heights."""
+    screen_h = 844.0
+    y = 148.0  # container title + subtitle + count header at 390 px
+    unit_boxes: list[tuple[float, float, int]] = []
+    for sec in sections:
+        vb = sec.get("visual_block")
+        if not isinstance(vb, Mapping):
+            continue
+        y += 64.0  # section title + subtitle + vertical gap
+        _form, units = _visual_block_units(vb)
+        for h, pics in units:
+            unit_boxes.append((y, y + h, pics))
+            y += h + 8.0
+        y += 16.0
+    total_h = max(y, screen_h)
+    num_screens = max(1, int(math.ceil(total_h / screen_h)))
+    counts: list[int] = []
+    for idx in range(num_screens):
+        top = idx * screen_h
+        bot = (idx + 1) * screen_h
+        pics_on_screen = sum(
+            pics for (u0, u1, pics) in unit_boxes if pics > 0 and u1 > top + 12.0 and u0 < bot - 12.0
+        )
+        counts.append(pics_on_screen)
+    return counts
+
+
+def _classify_member_content_kind(member: Mapping[str, Any]) -> str:
+    mtype = str(member.get("type") or "")
+    if mtype == "event":
+        return "games"
+    if mtype == "history":
+        return "history"
+    item = member.get("item") if isinstance(member.get("item"), Mapping) else {}
+    futures_obj = item.get("futures") if isinstance(item.get("futures"), Mapping) else item
+    m_kind = str(futures_obj.get("market_type") or "").lower()
+    if "prop" in m_kind or (futures_obj.get("event_id") is not None and "player" in m_kind):
+        return "props"
+    return "futures"
+
+
+def compute_visual_diversity_report(
+    definition: Mapping[str, Any],
+    feed_item: Optional[Mapping[str, Any]],
+    container_payload: Mapping[str, Any],
+    *,
+    screen_picture_counts_390px: Optional[Sequence[int]] = None,
+) -> dict[str, Any]:
+    """Compute Ruling 227-A report-only visual diversity metrics (points 1–4)
+    for both the Discover card and the multi-section container page."""
+    fi_data = (feed_item or {}).get("data") if isinstance((feed_item or {}).get("data"), Mapping) else {}
+    rc = (
+        fi_data.get("roundup")
+        or (feed_item or {}).get("roundup_contract")
+        or {}
+    )
+    if not isinstance(rc, Mapping):
+        rc = {}
+    mc = rc.get("machinery_card") if isinstance(rc.get("machinery_card"), Mapping) else {}
+    card_form = str(mc.get("form_id") or "roundup")
+    card_rows = list(mc.get("rows") or ())
+    pms = rc.get("paired_metric_set") if isinstance(rc.get("paired_metric_set"), Mapping) else None
+    if card_form == "paired_stage_bars" and pms:
+        all_pms_entries = list(pms.get("entries") or pms.get("rows") or ())
+        # AwardCategoryPairedCard on Discover collapses to top 5 rows by default.
+        pms_rows = all_pms_entries[:5]
+        card_row_count = len(pms_rows)
+        card_pics = sum(
+            1 for r in pms_rows if isinstance(r, Mapping) and _has_verified_art(r)
+        )
+    else:
+        card_row_count = len(card_rows)
+        card_pics = 0
+        for r in card_rows:
+            if not isinstance(r, Mapping):
+                continue
+            if card_form in {"coin_flip_matchups", "matchup_slate"}:
+                if isinstance(r.get("away_art"), Mapping) and str(r["away_art"].get("url") or "").strip():
+                    card_pics += 1
+                if isinstance(r.get("home_art"), Mapping) and str(r["home_art"].get("url") or "").strip():
+                    card_pics += 1
+            elif _has_verified_art(r):
+                card_pics += 1
+
+    card_kind = "games" if card_form in {"coin_flip_matchups", "matchup_slate"} else "futures"
+    card_failing: list[str] = []
+    if card_pics < 1:
+        card_failing.append("point_1_picture_on_screen")
+    if card_row_count > 3:
+        card_failing.append("point_2_no_long_runs")
+
+    card_report = {
+        "surface": "discover_card",
+        "form_id": card_form,
+        "point_1_pictures_per_screen_390px": {
+            "screens": [card_pics],
+            "min_pictures_per_screen": card_pics,
+            "passes": card_pics >= 1,
+        },
+        "point_2_longest_form_run": {
+            "longest_row_run": card_row_count,
+            "max_allowed": 3,
+            "passes": card_row_count <= 3,
+        },
+        "point_3_forms": {
+            "distinct_forms": [card_form],
+            "form_count": 1,
+            "note": "Single Discover card contributes 1 form toward Discover's first-10 >=4 requirement.",
+            "passes": True,
+        },
+        "point_4_content_mix": {
+            "content_kinds": {card_kind: card_row_count},
+            "kind_count": 1 if card_row_count else 0,
+            "largest_kind": card_kind if card_row_count else None,
+            "largest_kind_share": 1.0 if card_row_count else 0.0,
+            "note": "Card summarizes lead section; content-mix threshold applies at page/feed level.",
+            "passes": True,
+        },
+        "overall_passes": len(card_failing) == 0,
+        "failing_points": card_failing,
+    }
+
+    sections = [
+        s for s in (container_payload.get("sections") or ()) if isinstance(s, Mapping)
+    ]
+    screens = (
+        [int(x) for x in screen_picture_counts_390px]
+        if screen_picture_counts_390px is not None
+        else _estimate_screen_picture_counts_390px(sections)
+    )
+    if not screens:
+        screens = [0]
+    min_pics = min(screens)
+    p1_pass = min_pics >= 1
+
+    longest_row_run = 0
+    current_row_run = 0
+    longest_sec_run = 0
+    current_sec_run = 0
+    prev_form: Optional[str] = None
+    distinct_forms: list[str] = []
+    for sec in sections:
+        vb = sec.get("visual_block")
+        if not isinstance(vb, Mapping):
+            continue
+        form, units = _visual_block_units(vb)
+        unit_count = len(units)
+        if form and form not in distinct_forms:
+            distinct_forms.append(form)
+        if form == prev_form:
+            current_row_run += unit_count
+            current_sec_run += 1
+        else:
+            current_row_run = unit_count
+            current_sec_run = 1
+            prev_form = form
+        longest_row_run = max(longest_row_run, current_row_run)
+        longest_sec_run = max(longest_sec_run, current_sec_run)
+
+    p2_pass = longest_row_run <= 3
+    member_count = int(container_payload.get("member_count") or 0)
+    form_count = len(distinct_forms)
+    p3_pass = True if member_count < 6 else form_count >= 3
+
+    kind_counts: dict[str, int] = {}
+    for sec in sections:
+        for m in sec.get("members") or ():
+            if isinstance(m, Mapping):
+                k = _classify_member_content_kind(m)
+                kind_counts[k] = kind_counts.get(k, 0) + 1
+    total_members_typed = sum(kind_counts.values())
+    if total_members_typed > 0:
+        largest_kind = max(sorted(kind_counts), key=lambda k: kind_counts[k])
+        largest_share = round(kind_counts[largest_kind] / total_members_typed, 4)
+    else:
+        largest_kind = None
+        largest_share = 0.0
+
+    category = str(definition.get("category") or "").lower()
+    is_sports_topic = (
+        "games" in kind_counts
+        or category in {"sports", "football", "basketball", "baseball", "hockey", "soccer", "tennis", "golf", "mma"}
+    )
+    available_topic_kinds = (
+        ["games", "futures", "props", "history"]
+        if is_sports_topic
+        else ["futures", "history"]
+    )
+    multi_kind_topic = len(available_topic_kinds) > 1
+    p4_pass = (
+        (len(kind_counts) >= 2 and largest_share <= 0.60)
+        if multi_kind_topic
+        else True
+    )
+
+    page_failing: list[str] = []
+    if not p1_pass:
+        page_failing.append("point_1_picture_on_every_screen")
+    if not p2_pass:
+        page_failing.append("point_2_no_long_runs")
+    if not p3_pass:
+        page_failing.append("point_3_several_forms")
+    if not p4_pass:
+        page_failing.append("point_4_content_mix")
+
+    page_report = {
+        "surface": "container_page",
+        "member_count": member_count,
+        "section_count": len(sections),
+        "point_1_pictures_per_screen_390px": {
+            "screens": screens,
+            "screen_count": len(screens),
+            "min_pictures_per_screen": min_pics,
+            "passes": p1_pass,
+        },
+        "point_2_longest_form_run": {
+            "longest_row_run": longest_row_run,
+            "longest_section_form_run": longest_sec_run,
+            "max_allowed": 3,
+            "passes": p2_pass,
+        },
+        "point_3_forms": {
+            "member_count": member_count,
+            "distinct_forms": distinct_forms,
+            "form_count": form_count,
+            "min_required": 3 if member_count >= 6 else 1,
+            "passes": p3_pass,
+        },
+        "point_4_content_mix": {
+            "content_kinds": kind_counts,
+            "available_topic_kinds": available_topic_kinds,
+            "kind_count": len(kind_counts),
+            "largest_kind": largest_kind,
+            "largest_kind_share": largest_share,
+            "max_allowed_share": 0.60,
+            "passes": p4_pass,
+        },
+        "overall_passes": len(page_failing) == 0,
+        "failing_points": page_failing,
+    }
+
+    return {
+        "standard": "227-A",
+        "report_only": True,
+        "slug": str(definition.get("slug") or ""),
+        "name": str(definition.get("name") or ""),
+        "category": str(definition.get("category") or ""),
+        "card": card_report,
+        "page": page_report,
+        "overall_passes": bool(card_report["overall_passes"] and page_report["overall_passes"]),
+    }
+
+
+async def serve_machinery_candidate_preview(
+    slug: str,
+    db: Any,
+    *,
+    include_children: bool = True,
+    now: Optional[datetime] = None,
+) -> Optional[dict[str, Any]]:
+    """Evaluate a single ``machinery-*.json`` candidate definition for an authenticated
+    admin preview without enabling the global ``CONTAINER_MACHINERY_SLICE1_ENABLED`` flag."""
+    from app.utils.roundup_containers import evaluate_roundup_producer
+
+    target_path = next(
+        (p for p in _ordered_machinery_candidate_paths() if p.stem == slug),
+        None,
+    )
+    if target_path is None:
+        return None
+    defn = load_machinery_definition(target_path)
+    producer = build_container_machinery_producer(defn, enabled=lambda: True)
+    feed_item, payload = await evaluate_roundup_producer(producer, db, now=now)
+    if payload is None:
+        return None
+    out = copy.deepcopy(payload)
+    if not include_children:
+        out["children"] = []
+    report = compute_visual_diversity_report(defn, feed_item, out)
+    return {
+        "slug": slug,
+        "definition": {
+            "slug": defn["slug"],
+            "name": defn.get("name"),
+            "category": defn.get("category"),
+            "kicker": defn.get("kicker"),
+            "footer": defn.get("footer"),
+        },
+        "feed_item": feed_item,
+        "container": out,
+        "diversity_report": report,
+    }
+
+
+async def evaluate_machinery_candidates_preview(
+    db: Any,
+    *,
+    slugs: Optional[Sequence[str]] = None,
+    now: Optional[datetime] = None,
+) -> list[dict[str, Any]]:
+    """Evaluate all (or selected) ``machinery-*.json`` candidates for Alex's private preview."""
+    wanted = set(slugs) if slugs is not None else None
+    items: list[dict[str, Any]] = []
+    for path in _ordered_machinery_candidate_paths():
+        if wanted is not None and path.stem not in wanted:
+            continue
+        res = await serve_machinery_candidate_preview(path.stem, db, now=now)
+        if res is not None:
+            items.append(res)
+    return items

@@ -76,7 +76,7 @@ from time import perf_counter
 from typing import Annotated, Awaitable, Callable, Iterator, Literal, Optional, ParamSpec, TypeVar
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -530,6 +530,43 @@ async def get_week_navigation(
         return {"slug": slug, "state": "unavailable", "previous": None, "next": None}
 
 
+@router.get("/preview/machinery")
+async def get_machinery_preview(
+    request: Request,
+    slugs: Annotated[
+        Optional[str],
+        Query(description="Optional comma-separated candidate slugs to preview."),
+    ] = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Admin-only preview of switched-off #12288 grouping & container machinery
+    candidates (NFL Week, Oscars Best Picture, 2028 Presidential Race, Fed & Economy),
+    with Ruling 227-A report-only diversity counts.
+
+    Public readers and non-admin sessions receive 403 while
+    CONTAINER_MACHINERY_SLICE1_ENABLED remains false.
+    """
+    from app.routes.admin_utils import _check_admin_auth
+    from app.utils.container_machinery import (
+        container_machinery_enabled,
+        evaluate_machinery_candidates_preview,
+    )
+
+    if not await _check_admin_auth(None, request, db):
+        raise HTTPException(status_code=403, detail="Admin authentication required")
+    wanted = (
+        [s.strip() for s in slugs.split(",") if s.strip()]
+        if slugs is not None
+        else None
+    )
+    items = await evaluate_machinery_candidates_preview(db, slugs=wanted)
+    return {
+        "public_switch_enabled": container_machinery_enabled(),
+        "count": len(items),
+        "items": items,
+    }
+
+
 @router.get("/{slug}")
 async def get_container(
     slug: str = Path(..., min_length=1, max_length=200),
@@ -546,6 +583,7 @@ async def get_container(
     compact: bool = True,
     debug_timing: bool = False,
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ) -> dict:
     """One published collection: header, nested collections, and its members as
     familiar cards grouped by class.
@@ -566,6 +604,34 @@ async def get_container(
     token = _stage_timings.set(timings)
     try:
         with _time_stage("total"):
+            if (
+                request is not None
+                and isinstance(slug, str)
+                and containers_read_enabled()
+            ):
+                from app.utils.container_machinery import (
+                    container_machinery_enabled,
+                    is_machinery_candidate_slug,
+                    serve_machinery_candidate_preview,
+                )
+
+                if not container_machinery_enabled() and is_machinery_candidate_slug(slug):
+                    from app.routes.admin_utils import _check_admin_auth
+
+                    if await _check_admin_auth(None, request, db):
+                        preview = await serve_machinery_candidate_preview(
+                            slug, db, include_children=include_children
+                        )
+                        if preview is not None:
+                            result = preview["container"]
+                            if timings is not None and not isinstance(result, Response):
+                                result = Response(content=_render(result), media_type="application/json")
+                            if timings is not None:
+                                result.headers["X-Container-Timing"] = ";".join(
+                                    f"{name}={elapsed:.1f}" for name, elapsed in sorted(timings.items())
+                                ) + ";basis=overlapping_wall_ms"
+                            return result
+
             result = await _get_container(
                 slug, include_children, revision, cursor, limit,
                 market_revision, market_cursor, market_limit, compact, db,

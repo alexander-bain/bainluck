@@ -376,6 +376,19 @@ export function relatedMarketLinks(
 }
 
 export interface CollectionPageRequest { revision: number; cursor: string }
+async function resolveMachineryAdminHeaders(slug: string): Promise<Record<string, string> | undefined> {
+  if (!slug.startsWith("machinery-") || typeof window === "undefined") return undefined;
+  try {
+    const { hasStoredAccountSession } = await import("@/lib/adminAccountSession");
+    const { BACKEND_AUTH_KEY, getIdTokenAfterAuthReady } = await import("@/lib/firebase");
+    const { SIGNED_IN_MARKER } = await import("@/hooks/useAuth");
+    if (!hasStoredAccountSession(SIGNED_IN_MARKER, BACKEND_AUTH_KEY)) return undefined;
+    const token = await getIdTokenAfterAuthReady();
+    return token ? { Authorization: `Bearer ${token}` } : undefined;
+  } catch {
+    return undefined;
+  }
+}
 export async function fetchCollection(slug: string, signal?: AbortSignal, page?: CollectionPageRequest): Promise<CollectionHub> {
   if (!safeCollectionSlug(slug)) throw new Error("This collection isn't available right now.");
   // The cursor is opaque and belongs to its revision; both travel together.
@@ -388,7 +401,13 @@ export async function fetchCollection(slug: string, signal?: AbortSignal, page?:
   const query = params.toString();
   const path = `${API_URL}/api/containers/${slug}`;
   const url = query ? `${path}?${query}` : path;
-  const response = await fetch(url, { cache: "no-store", signal });
+  const adminHeaders = slug.startsWith("machinery-")
+    ? await resolveMachineryAdminHeaders(slug)
+    : null;
+  const init: RequestInit = adminHeaders
+    ? { cache: "no-store", signal, headers: adminHeaders }
+    : { cache: "no-store", signal };
+  const response = await fetch(url, init);
   if (response.status === 404) return parseCollection({ slug, state: "unavailable" }, slug);
   if (!response.ok) throw new Error("Couldn't load this collection. Please try again.");
   return parseCollection(await response.json(), slug);
