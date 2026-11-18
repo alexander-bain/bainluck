@@ -42,6 +42,25 @@ jobs:
     steps:
     - id: scope
       run: echo "scope=full" >> "$GITHUB_OUTPUT"
+    # #12797 (Fable, 9:35 PM Nov 17): decide the shard timings once per run and hand them
+    # to every shard as a run artifact; any failure falls back to the committed file.
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.workflow_run.head_sha }}
+    - name: Decide this run's shard timings (once)
+      working-directory: backend
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 scripts/ci_shard_hints_fetch.py decide "$RUNNER_TEMP/shard-timings/ci_shard_durations.json"
+    - name: Hand the run's shard timings to every shard
+      if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ci-shard-timings-run
+        path: ${{ runner.temp }}/shard-timings/ci_shard_durations.json
+        if-no-files-found: error
+        overwrite: true
+        retention-days: 1
   backend-tests:
     needs:
     - change-scope
@@ -127,6 +146,15 @@ jobs:
         echo "EVENT_FRAME_REDIS_REQUIRED=1" >> "$GITHUB_ENV"
 
         '
+    - name: This run's shard timings (decided once in change-scope)
+      if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
+      uses: actions/download-artifact@v4
+      with:
+        name: ci-shard-timings-run
+        path: ${{ runner.temp }}/shard-timings
+    - name: Apply this run's shard timings
+      if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
+      run: python scripts/ci_shard_hints_fetch.py adopt "$RUNNER_TEMP/shard-timings/ci_shard_durations.json"
     - name: Run tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
       if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
       run: "set -o pipefail\nFILES=\"$(python scripts/ci_shard.py --shard ${{ matrix.shard }} --of ${{ strategy.job-total }})\"\nif [ -z \"$FILES\"\
@@ -164,6 +192,15 @@ jobs:
     - name: Install dependencies
       if: needs.change-scope.outputs.reuse != 'true'
       run: pip install -r requirements.txt
+    - name: This run's shard timings (decided once in change-scope)
+      if: needs.change-scope.outputs.reuse != 'true'
+      uses: actions/download-artifact@v4
+      with:
+        name: ci-shard-timings-run
+        path: ${{ runner.temp }}/shard-timings
+    - name: Apply this run's shard timings
+      if: needs.change-scope.outputs.reuse != 'true'
+      run: python scripts/ci_shard_hints_fetch.py adopt "$RUNNER_TEMP/shard-timings/ci_shard_durations.json"
     - name: The shards must cover the whole suite, exactly once each
       if: needs.change-scope.outputs.reuse != 'true'
       run: python scripts/ci_shard.py --verify --of 8
