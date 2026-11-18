@@ -15,7 +15,9 @@ and ``container_machinery_enabled()`` defaults to ``False`` until turned on by F
 from __future__ import annotations
 
 import copy
+import inspect
 import json
+import logging
 import math
 import os
 import re
@@ -58,6 +60,8 @@ __all__ = [
 ]
 
 PRODUCER_KIND_CONTAINER_MACHINERY = "container_machinery"
+
+logger = logging.getLogger(__name__)
 
 MACHINERY_FORM_IDS: frozenset[str] = frozenset(
     {
@@ -1399,9 +1403,9 @@ async def _load_snapshot_from_db(
         }
 
     from sqlalchemy import and_, func, or_, select
-    from sqlalchemy.orm import selectinload
+    from sqlalchemy.orm import joinedload, selectinload
 
-    from app.models.models import Event, FuturesMarket, FuturesOddsSnapshot
+    from app.models.models import Event, FuturesMarket, FuturesOddsSnapshot, Sport
     from app.routes.futures import (
         _apply_verified_title_to_detail,
         _fleet_newest_observation,
@@ -1435,8 +1439,14 @@ async def _load_snapshot_from_db(
         recent_floor = now_dt - timedelta(hours=6)
         stmt = (
             select(Event)
+            .join(Sport, Event.sport_id == Sport.id)
+            .options(
+                joinedload(Event.sport),
+                joinedload(Event.home_team),
+                joinedload(Event.away_team),
+            )
             .where(
-                Event.sport.in_(sorted(sport_keys)),
+                Sport.key.in_(sorted(sport_keys)),
                 Event.commence_time >= recent_floor,
                 Event.commence_time <= horizon,
             )
@@ -1454,30 +1464,72 @@ async def _load_snapshot_from_db(
             away_pct_raw, home_pct_raw = rendered_duel_percents(ap, hp)
             away_pct = int(away_pct_raw) if away_pct_raw is not None else _half_up_pct(ap)
             home_pct = int(home_pct_raw) if home_pct_raw is not None else _half_up_pct(hp)
-            events_out.append(
-                {
-                    "id": ev.id,
-                    "sport": ev.sport,
-                    "sport_name": ev.sport.upper(),
-                    "home_team": ev.home_team,
-                    "away_team": ev.away_team,
-                    "commence_time": ev.commence_time.isoformat() if ev.commence_time else "",
-                    "status": ev.status or "scheduled",
-                    "home_score": ev.home_score,
-                    "away_score": ev.away_score,
-                    "hero_probability": hp,
-                    "hero_probability_away": ap,
-                    "hero_source": hero.source,
-                    "current_odds": {
-                        "home_probability": hp,
-                        "away_probability": ap,
-                    },
-                    "member_page_numbers": {
-                        "away_pct": away_pct,
-                        "home_pct": home_pct,
-                    },
-                }
+            sport_obj = getattr(ev, "sport", None)
+            if isinstance(sport_obj, str):
+                sport_key_val = sport_obj
+                sport_name_val = sport_obj.upper()
+            elif sport_obj is not None:
+                sport_key_val = str(getattr(sport_obj, "key", "") or "")
+                sport_name_val = str(getattr(sport_obj, "name", "") or sport_key_val.upper())
+            else:
+                sport_key_val = ""
+                sport_name_val = ""
+            home_team_obj = getattr(ev, "home_team", None)
+            away_team_obj = getattr(ev, "away_team", None)
+            home_team_str = str(
+                getattr(ev, "home_team_name", None)
+                or (
+                    home_team_obj
+                    if isinstance(home_team_obj, str)
+                    else getattr(home_team_obj, "name", "")
+                )
+                or ""
             )
+            away_team_str = str(
+                getattr(ev, "away_team_name", None)
+                or (
+                    away_team_obj
+                    if isinstance(away_team_obj, str)
+                    else getattr(away_team_obj, "name", "")
+                )
+                or ""
+            )
+            ev_dict: dict[str, Any] = {
+                "id": ev.id,
+                "sport": sport_key_val,
+                "sport_name": sport_name_val,
+                "home_team": home_team_str,
+                "away_team": away_team_str,
+                "commence_time": ev.commence_time.isoformat() if ev.commence_time else "",
+                "status": ev.status or "scheduled",
+                "home_score": ev.home_score,
+                "away_score": ev.away_score,
+                "hero_probability": hp,
+                "hero_probability_away": ap,
+                "hero_source": hero.source,
+                "current_odds": {
+                    "home_probability": hp,
+                    "away_probability": ap,
+                },
+                "member_page_numbers": {
+                    "away_pct": away_pct,
+                    "home_pct": home_pct,
+                },
+            }
+            for td_key, team_obj in (("home_team_data", home_team_obj), ("away_team_data", away_team_obj)):
+                if team_obj is not None and not isinstance(team_obj, str):
+                    logo_sm = getattr(team_obj, "logo_url_small", None) or getattr(team_obj, "logo_url", None)
+                    logo_lg = getattr(team_obj, "logo_url_large", None) or getattr(team_obj, "logo_url", None)
+                    p_col = getattr(team_obj, "primary_color", None)
+                    s_col = getattr(team_obj, "secondary_color", None)
+                    if any((logo_sm, logo_lg, p_col, s_col)):
+                        ev_dict[td_key] = {
+                            "logo_small": logo_sm,
+                            "logo_large": logo_lg,
+                            "primary_color": p_col,
+                            "secondary_color": s_col,
+                        }
+            events_out.append(ev_dict)
 
     ceremonies = {
         str(sec["atom_query"].get("ceremony") or "").lower()
@@ -3548,11 +3600,20 @@ def _machinery_preview_error_response(
     defn: Mapping[str, Any],
     *,
     error_code: str,
+    exc_class: str,
     allow_error_envelope: bool,
 ) -> dict[str, Any]:
-    """Slice 6 Item 2c: a failed read surfaces an explicit error state, never an empty or shorter grouping."""
+    """Slice 6 Item 2c + #12288 Ask 3: a failed read surfaces an explicit error state
+    (never an empty or shorter grouping) and logs one line naming the slug and exception class.
+    """
     from fastapi import HTTPException
 
+    logger.warning(
+        "machinery_preview_error slug=%s exception_class=%s error_code=%s",
+        slug,
+        exc_class,
+        error_code,
+    )
     msg = "Couldn't load this grouping right now. Please try again."
     if not allow_error_envelope:
         raise HTTPException(
@@ -3630,15 +3691,32 @@ async def serve_machinery_candidate_preview(
                     else "read_refused"
                 )
                 return _machinery_preview_error_response(
-                    slug, defn, error_code=str(code), allow_error_envelope=allow_error_envelope
+                    slug,
+                    defn,
+                    error_code=str(code),
+                    exc_class=type(outcome).__name__ if outcome is not None else "RoundupRefusal",
+                    allow_error_envelope=allow_error_envelope,
                 )
             payload = compose_roundup_container(producer, outcome)
             feed_item = compose_roundup_feed_item(producer, outcome)
         else:
             feed_item, payload = await evaluate_roundup_producer(producer, db, now=now)
-    except Exception:
+    except Exception as exc:
+        exc_name = type(exc).__name__
+        rollback_fn = getattr(db, "rollback", None)
+        if callable(rollback_fn):
+            try:
+                rb = rollback_fn()
+                if inspect.isawaitable(rb):
+                    await rb
+            except Exception:
+                pass
         return _machinery_preview_error_response(
-            slug, defn, error_code="read_failed", allow_error_envelope=allow_error_envelope
+            slug,
+            defn,
+            error_code="read_failed",
+            exc_class=exc_name,
+            allow_error_envelope=allow_error_envelope,
         )
 
     if (
@@ -3648,7 +3726,11 @@ async def serve_machinery_candidate_preview(
         or int(payload.get("member_count") or 0) <= 0
     ):
         return _machinery_preview_error_response(
-            slug, defn, error_code="incomplete_read", allow_error_envelope=allow_error_envelope
+            slug,
+            defn,
+            error_code="incomplete_read",
+            exc_class="RoundupRefusal",
+            allow_error_envelope=allow_error_envelope,
         )
 
     out = copy.deepcopy(payload)
