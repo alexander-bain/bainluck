@@ -275,6 +275,177 @@ final class TeamScheduleSourceMarks12926Tests: XCTestCase {
         XCTAssertNil(resolved)
     }
 
+    func testFinishedCardFallsBackToSettledSourceMarkWhenPregameMarksAbsent() throws {
+        let now = Date(timeIntervalSince1970: 1_795_000_000)
+        let settledAt = now.addingTimeInterval(-7200).ISO8601Format()
+        let pastCommence = now.addingTimeInterval(-14400).ISO8601Format()
+        let json = """
+        {
+          "id": 9920,
+          "sport": "basketball_nba",
+          "home_team": "Boston Celtics",
+          "away_team": "New York Knicks",
+          "commence_time": "\(pastCommence)",
+          "status": "completed",
+          "home_score": 114,
+          "away_score": 102,
+          "source_mark": {
+            "state": "settled",
+            "sources": [{"key": "espn", "name": "ESPN", "probability": null, "observed_at": "\(settledAt)"}],
+            "settled": {"source": "espn", "result": "Won", "at": "\(settledAt)"}
+          }
+        }
+        """
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        let event = try d.decode(FeedEventData.self, from: Data(json.utf8))
+        let resolved = try XCTUnwrap(
+            EventCardView.resolvedCardSourceMark(
+                event: event,
+                canStillBeGraded: false,
+                currentAwayIsWithheld: false,
+                prematch: nil,
+                prematchAwayIsWithheld: false
+            ),
+            "Finished card without pregame marks must retain its settled Official result provenance tap"
+        )
+        XCTAssertEqual(resolved.mark.state, SourceMark.State.settled)
+        XCTAssertNil(resolved.number)
+        XCTAssertEqual(resolved.subject, "Celtics")
+        XCTAssertFalse(resolved.isPregame)
+        XCTAssertEqual(SourceMarkSheet.contextLine(subject: resolved.subject, isPregame: resolved.isPregame), "Celtics")
+        XCTAssertEqual(
+            SourceMarkSheet.settledLine(resolved.mark, now: now),
+            .init(name: "Official result", price: "Won", age: "2h ago")
+        )
+        XCTAssertNotNil(
+            SourceMarkButton(
+                resolved.mark,
+                number: resolved.number,
+                subject: resolved.subject,
+                isPregame: resolved.isPregame,
+                numberSize: 17
+            )
+        )
+    }
+
+    func testHeadlineFinishedModelResolvesSettledAndPregameMarksTruthfully() throws {
+        let now = Date(timeIntervalSince1970: 1_795_000_000)
+        let settledAt = now.addingTimeInterval(-3600).ISO8601Format()
+        let pastCommence = now.addingTimeInterval(-10800).ISO8601Format()
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        // 1. Settled mark on finished headline -> Official result provenance, no percentage, not labelled Pregame.
+        let settledEvent = try decoder.decode(EventDetail.self, from: Data("""
+        {
+          "id": 9921,
+          "sport": "basketball_nba",
+          "sport_name": "NBA",
+          "home_team": "Boston Celtics",
+          "away_team": "New York Knicks",
+          "commence_time": "\(pastCommence)",
+          "status": "completed",
+          "home_score": 114,
+          "away_score": 102,
+          "current_odds": {"home_probability": 0.99, "away_probability": 0.01},
+          "prematch_odds": {"home_probability": 0.77, "away_probability": 0.23},
+          "source_mark": {
+            "state": "settled",
+            "sources": [{"key": "espn", "name": "ESPN", "probability": null, "observed_at": "\(settledAt)"}],
+            "settled": {"source": "espn", "result": "Won", "at": "\(settledAt)"}
+          }
+        }
+        """.utf8))
+        let settledModel = EventSportHeadlines12472.resolve(
+            event: settledEvent,
+            awayFullName: "New York Knicks",
+            homeFullName: "Boston Celtics",
+            liveStatusText: nil,
+            hasScore: true,
+            numberStreams: false,
+            now: now
+        )
+        let settledResolved = try XCTUnwrap(EventSportHeadlineCard12472.resolvedHeadlineSourceMark(model: settledModel))
+        XCTAssertEqual(settledResolved.mark.state, SourceMark.State.settled)
+        XCTAssertNil(settledResolved.number)
+        XCTAssertEqual(settledResolved.subject, "Celtics")
+        XCTAssertFalse(settledResolved.isPregame)
+
+        // 2. Blend mark on finished headline -> strictly prematch_odds (77%, never 99% current_odds), labelled "Celtics · Pregame".
+        let pregameBlendEvent = try decoder.decode(EventDetail.self, from: Data("""
+        {
+          "id": 9922,
+          "sport": "basketball_nba",
+          "sport_name": "NBA",
+          "home_team": "Boston Celtics",
+          "away_team": "New York Knicks",
+          "commence_time": "\(pastCommence)",
+          "status": "completed",
+          "home_score": 114,
+          "away_score": 102,
+          "current_odds": {"home_probability": 0.99, "away_probability": 0.01},
+          "prematch_odds": {"home_probability": 0.77, "away_probability": 0.23},
+          "source_mark": {
+            "state": "blend",
+            "sources": [
+              {"key": "betting", "name": "Sportsbooks (10)", "probability": 0.77, "observed_at": "\(pastCommence)"},
+              {"key": "kalshi", "name": "Kalshi", "probability": 0.76, "observed_at": "\(pastCommence)"}
+            ]
+          }
+        }
+        """.utf8))
+        let pregameModel = EventSportHeadlines12472.resolve(
+            event: pregameBlendEvent,
+            awayFullName: "New York Knicks",
+            homeFullName: "Boston Celtics",
+            liveStatusText: nil,
+            hasScore: true,
+            numberStreams: false,
+            now: now
+        )
+        let pregameResolved = try XCTUnwrap(EventSportHeadlineCard12472.resolvedHeadlineSourceMark(model: pregameModel))
+        XCTAssertEqual(try XCTUnwrap(pregameResolved.number), 0.77, accuracy: 0.0001)
+        XCTAssertEqual(SourceMarkSheet.headline(pregameResolved.number), "77%")
+        XCTAssertEqual(
+            SourceMarkSheet.contextLine(subject: pregameResolved.subject, isPregame: pregameResolved.isPregame),
+            "Celtics · Pregame"
+        )
+
+        // 3. Finished headline with no prematch_odds never falls back to 0% or current_odds.
+        let missingPregameEvent = try decoder.decode(EventDetail.self, from: Data("""
+        {
+          "id": 9923,
+          "sport": "basketball_nba",
+          "sport_name": "NBA",
+          "home_team": "Boston Celtics",
+          "away_team": "New York Knicks",
+          "commence_time": "\(pastCommence)",
+          "status": "completed",
+          "home_score": 114,
+          "away_score": 102,
+          "current_odds": {"home_probability": 0.99, "away_probability": 0.01},
+          "source_mark": {
+            "state": "blend",
+            "sources": [{"key": "kalshi", "name": "Kalshi", "probability": 0.76, "observed_at": "\(pastCommence)"}]
+          }
+        }
+        """.utf8))
+        let missingPregameModel = EventSportHeadlines12472.resolve(
+            event: missingPregameEvent,
+            awayFullName: "New York Knicks",
+            homeFullName: "Boston Celtics",
+            liveStatusText: nil,
+            hasScore: true,
+            numberStreams: false,
+            now: now
+        )
+        XCTAssertNil(
+            EventSportHeadlineCard12472.resolvedHeadlineSourceMark(model: missingPregameModel),
+            "Finished headline with no pregame reading must not print 'Celtics · Pregame' next to 0% or 99%"
+        )
+    }
+
     private func captureWindowSnapshot<V: View>(
         _ content: V,
         scheme: ColorScheme,

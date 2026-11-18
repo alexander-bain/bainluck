@@ -119,6 +119,8 @@ struct EventCardView: View {
     /// unit test of the helper can see: a revert to
     /// `ProbabilityBarPalette.colors(awayHex:homeHex:)` compiles, renders and
     /// leaves every contrast test green. A test drives this on a real payload.
+    /// Light-mode test seam preserved for existing contrast wiring assertions;
+    /// rendered card colours resolve through `barColorHexes(for: colorScheme)`.
     var barColorHexes: (away: String, home: String) {
         barColorHexes(for: .light)
     }
@@ -397,6 +399,12 @@ struct EventCardView: View {
         }
         if let chosen = homePreCand ?? awayPreCand {
             return (chosen.0, chosen.1, chosen.2, true)
+        }
+        if let homeSettled = event.sourceMark, homeSettled.state == .settled, homeSettled.draws {
+            return (homeSettled, nil, names.home, false)
+        }
+        if let awaySettled = event.awaySourceMark, awaySettled.state == .settled, awaySettled.draws {
+            return (awaySettled, nil, names.away, false)
         }
         return nil
     }
