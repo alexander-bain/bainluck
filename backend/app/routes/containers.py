@@ -71,9 +71,11 @@ import time
 from collections import Counter
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import date, datetime
+from decimal import Decimal
 from functools import wraps
 from time import perf_counter
-from typing import Annotated, Awaitable, Callable, Iterator, Literal, Optional, ParamSpec, TypeVar
+from typing import Annotated, Any, Awaitable, Callable, Iterator, Literal, Optional, ParamSpec, TypeVar
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
@@ -939,15 +941,46 @@ _local_entries: dict = {}
 _COALESCE_WAIT_S = 8.0
 
 
-def _render(payload: dict) -> bytes:
+_COMPACT_JSON_LEAF_TYPES = frozenset((str, int, float, bool, type(None), date, datetime, Decimal))
+
+
+def _can_encode_compact_week_directly(value: Any) -> bool:
+    """Check when encoding the leaves gives the same bytes as walking the tree."""
+    kind = type(value)
+    if kind in _COMPACT_JSON_LEAF_TYPES:
+        return True
+    if kind is dict:
+        for key, item in value.items():
+            # FastAPI filters SQLAlchemy keys and normalizes non-string keys.
+            if (
+                type(key) is not str
+                or key.startswith("_sa")
+                or not _can_encode_compact_week_directly(item)
+            ):
+                return False
+        return True
+    if kind is list or kind is tuple:
+        return all(map(_can_encode_compact_week_directly, value))
+    # Subclasses (including enums) and other objects go through FastAPI.
+    return False
+
+
+def _render(payload: dict, *, compact_week: bool = False) -> bytes:
     """The bytes FastAPI's default ``JSONResponse`` renders for ``payload``.
 
-    Rendered once per build instead of once per request; byte-identical to the
-    uncached path (the same encoder, the same ``json.dumps`` arguments).
+    On compact NFL week cache builds, let JSON encode the native tree and hand
+    date, datetime and Decimal leaves to FastAPI. The uncached response and
+    both branches below use the same JSON format and strict number handling.
     """
     with _time_stage("render"):
+        default = None
+        if compact_week and _can_encode_compact_week_directly(payload):
+            default = jsonable_encoder
+        else:
+            payload = jsonable_encoder(payload)
         return json.dumps(
-            jsonable_encoder(payload),
+            payload,
+            default=default,
             ensure_ascii=False,
             allow_nan=False,
             indent=None,
@@ -1028,7 +1061,10 @@ async def _build_entry(
     payload = await _build_published_payload(db, published, include_children, compact=compact)
     fresh_until, stale_until = payload_deadlines(payload, built_at)
     return CachedRead(
-        body=_render(payload), built_at=built_at, fresh_until=fresh_until, stale_until=stale_until
+        body=_render(payload, compact_week=compact),
+        built_at=built_at,
+        fresh_until=fresh_until,
+        stale_until=stale_until,
     )
 
 

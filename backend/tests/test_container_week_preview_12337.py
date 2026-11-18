@@ -1,7 +1,13 @@
 """The default NFL week never hydrates thousands of boards to show its games."""
 
+import json
 from collections import Counter
 from contextlib import asynccontextmanager
+from datetime import date, datetime, timezone
+from decimal import Decimal
+from enum import Enum
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -142,6 +148,89 @@ async def test_real_default_http_keeps_all_14_games_but_hydrates_only_12_boards(
         for member in section["members"]:
             if member["card"].get("name") == "1st Quarter Winner":
                 assert section["class"] == "side_question"
+
+
+async def test_default_compact_cache_build_keeps_the_uncached_http_bytes(monkeypatch):
+    session = WeekSession()
+    app = FastAPI()
+    app.include_router(route.router, prefix="/api/containers")
+
+    async def database():
+        yield session
+
+    app.dependency_overrides[route.get_db] = database
+    monkeypatch.setattr(route, "_local_entries", {})
+    monkeypatch.setattr(route, "_store_entry", route._remember_local)
+    shared = SimpleNamespace(get=AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "app.utils.request_cache.get_shared_async_redis",
+        AsyncMock(return_value=shared),
+    )
+    encode = route.jsonable_encoder
+    encoded_types = []
+
+    def encode_leaf(value):
+        encoded_types.append(type(value))
+        return encode(value)
+
+    monkeypatch.setattr(route, "jsonable_encoder", encode_leaf)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://fixture.invalid"
+    ) as client:
+        path = f"/api/containers/{session.hub.slug}"
+        uncached = await client.get(path)
+        monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+        cold = await client.get(path)
+        warm = await client.get(path)
+
+    assert uncached.status_code == cold.status_code == warm.status_code == 200
+    assert cold.headers["X-Feed-Cache"] == "miss"
+    assert warm.headers["X-Feed-Cache"] == "hit"
+    assert uncached.content == cold.content == warm.content
+    assert dict not in encoded_types
+    assert len(session.hydrated) == 2
+
+
+def test_compact_render_matches_native_and_fastapi_leaf_values():
+    day = date(2000, 2, 29)
+    timestamp = datetime(2000, 2, 29, 10, 30, tzinfo=timezone.utc)
+    payload = {
+        "fixture": "Kansas City – New York",
+        "values": (day, timestamp, Decimal("0.062500"), Decimal("10"), 0.0, None),
+    }
+    rendered = route._render(payload, compact_week=True)
+    assert rendered == route._render(payload)
+    assert json.loads(rendered)["values"] == [
+        "2000-02-29",
+        "2000-02-29T10:30:00+00:00",
+        0.0625,
+        10,
+        0.0,
+        None,
+    ]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"metadata": {"_sa_instance_state": object(), "kept": True}},
+        {"metadata": {date(2000, 2, 29): "typed key"}},
+        {"metadata": {"state": Enum("State", {"OPEN": "open"}).OPEN}},
+    ],
+)
+def test_compact_render_falls_back_for_fastapi_tree_semantics(payload):
+    assert not route._can_encode_compact_week_directly(payload)
+    assert route._render(payload, compact_week=True) == route._render(payload)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), Decimal("NaN")])
+def test_compact_render_rejects_the_same_nonfinite_values(value):
+    payload = {"values": (value,)}
+    with pytest.raises((TypeError, ValueError)) as baseline:
+        route._render(payload)
+    with pytest.raises(type(baseline.value)) as compact:
+        route._render(payload, compact_week=True)
+    assert str(compact.value) == str(baseline.value)
 
 
 async def test_every_remaining_market_is_reachable_once_even_if_activity_changes():
