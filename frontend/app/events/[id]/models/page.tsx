@@ -14,6 +14,7 @@ import {
   sourceIsStale,
 } from "@/lib/sourceAge";
 import { drawableChartSources } from "@/lib/event/chartDrawableSources";
+import { isStoredOpeningChance } from "@/lib/probabilityEvidence";
 import {
   EVENT_BOOT_HISTORY_HOURS,
   EVENT_BOOT_HISTORY_RANGE,
@@ -174,7 +175,7 @@ export default function ModelsPage({ params }: ModelsPageProps) {
       ...bettingMeta,
       snapshot_count: bettingMeta.snapshot_count ?? historyData?.points ?? 0,
     },
-    currentValue: event.current_odds?.home_probability ?? null,
+    currentValue: isStoredOpeningChance(event) ? null : event.current_odds?.home_probability ?? null,
     stamp: stampFor("betting"),
   });
 
