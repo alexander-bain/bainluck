@@ -1,0 +1,184 @@
+{
+  "renders": {
+    "scenarios": {
+      "flowing": {
+        "clock": "2026-11-18T18:08:30Z",
+        "source_generated_at": "2026-11-18T18:08:19.706197Z",
+        "captures": [
+          {
+            "file": "flowing-light-390.png",
+            "width": 390,
+            "theme": "light",
+            "documentWidth": 390,
+            "pageErrors": []
+          },
+          {
+            "file": "flowing-light-1280.png",
+            "width": 1280,
+            "theme": "light",
+            "documentWidth": 1280,
+            "pageErrors": []
+          },
+          {
+            "file": "flowing-dark-390.png",
+            "width": 390,
+            "theme": "dark",
+            "documentWidth": 390,
+            "pageErrors": []
+          },
+          {
+            "file": "flowing-dark-1280.png",
+            "width": 1280,
+            "theme": "dark",
+            "documentWidth": 1280,
+            "pageErrors": []
+          }
+        ]
+      },
+      "stopped": {
+        "clock": "2026-11-18T18:10:00Z",
+        "source_generated_at": "2026-11-18T18:10:00Z",
+        "captures": [
+          {
+            "file": "stopped-light-390.png",
+            "width": 390,
+            "theme": "light",
+            "documentWidth": 390,
+            "pageErrors": []
+          },
+          {
+            "file": "stopped-light-1280.png",
+            "width": 1280,
+            "theme": "light",
+            "documentWidth": 1280,
+            "pageErrors": []
+          },
+          {
+            "file": "stopped-dark-390.png",
+            "width": 390,
+            "theme": "dark",
+            "documentWidth": 390,
+            "pageErrors": []
+          },
+          {
+            "file": "stopped-dark-1280.png",
+            "width": 1280,
+            "theme": "dark",
+            "documentWidth": 1280,
+            "pageErrors": []
+          }
+        ]
+      },
+      "behind": {
+        "clock": "2026-11-18T18:12:00Z",
+        "source_generated_at": "2026-11-18T15:58:32.664542Z",
+        "captures": [
+          {
+            "file": "behind-light-390.png",
+            "width": 390,
+            "theme": "light",
+            "documentWidth": 390,
+            "pageErrors": []
+          },
+          {
+            "file": "behind-light-1280.png",
+            "width": 1280,
+            "theme": "light",
+            "documentWidth": 1280,
+            "pageErrors": []
+          },
+          {
+            "file": "behind-dark-390.png",
+            "width": 390,
+            "theme": "dark",
+            "documentWidth": 390,
+            "pageErrors": []
+          },
+          {
+            "file": "behind-dark-1280.png",
+            "width": 1280,
+            "theme": "dark",
+            "documentWidth": 1280,
+            "pageErrors": []
+          }
+        ]
+      },
+      "unreadable": {
+        "clock": "2026-11-18T18:14:00Z",
+        "captures": [
+          {
+            "file": "unreadable-light-390.png",
+            "width": 390,
+            "theme": "light",
+            "documentWidth": 390,
+            "pageErrors": []
+          },
+          {
+            "file": "unreadable-light-1280.png",
+            "width": 1280,
+            "theme": "light",
+            "documentWidth": 1280,
+            "pageErrors": []
+          },
+          {
+            "file": "unreadable-dark-390.png",
+            "width": 390,
+            "theme": "dark",
+            "documentWidth": 390,
+            "pageErrors": []
+          },
+          {
+            "file": "unreadable-dark-1280.png",
+            "width": 1280,
+            "theme": "dark",
+            "documentWidth": 1280,
+            "pageErrors": []
+          }
+        ]
+      }
+    },
+    "interactions": {
+      "crateDialog": true,
+      "escape": true,
+      "phoneScroll": {
+        "left": 618,
+        "max": 618
+      },
+      "reducedMotion": true,
+      "hiddenTabPaused": true
+    }
+  },
+  "recordings": {
+    "crateTravel": true,
+    "flowing": {
+      "elapsed_ms": 6696,
+      "file": "flowing.webm"
+    },
+    "stoppedBelts": 0,
+    "stopped": {
+      "elapsed_ms": 6738,
+      "file": "stopped.webm"
+    }
+  },
+  "source": "Saved public GitHub changes with controlled scenario clocks and stoppage signals. The flowing recording adds a controlled live receipt to exercise delivery animation.",
+  "files": {
+    "behind-dark-1280.png": "a3b994855e966036b9f632c9c7a48769c8f3ae881345872738e7e3667eb1f411",
+    "behind-dark-390.png": "31721b867a3d5f8638917baf0c0eee978dc02f182b7a81d2c8107ef64ca00987",
+    "behind-light-1280.png": "e3322353c6135518c575213ef4726c4ba7b707b840c8fd6154cabda56385112c",
+    "behind-light-390.png": "c4e0c299583fb82e86d382954959cfa796a55cc99830713fbcdaf9d1905ad281",
+    "flowing-dark-1280.png": "1a59485627ed096ddc9dc5e185c6996c39311d1777949cf0b1464a2dd9e0125c",
+    "flowing-dark-390.png": "a26f3d9383a1e3e2dcc4696cb8bf3a405e5db7d9eac7aafd157d145b023cdb62",
+    "flowing-light-1280.png": "cc87e9623920e73d2e744a3d79ba229c40931aa758a96a9b163510ddc039b5a6",
+    "flowing-light-390.png": "20ddcc9f3e25b180b8e7c316cda9cede5dc1e43456374d2747834fccb4b40f9d",
+    "stopped-dark-1280.png": "87dade1822a9eac56f290a2d0d13e274774eaf6a8bd8c3aeb0cfc547b2e82574",
+    "stopped-dark-390.png": "ac9e2ea731c5c323122434d9c088c83f6d74c8c304db420f3821db8dcf586e20",
+    "stopped-light-1280.png": "a31c92065215ec98ac95a9462f30e8ccc8037d35791164020670622ca40d926d",
+    "stopped-light-390.png": "033c76dfdd33bcac9328a99083d9fdf8e2925ab43516711e3f5c92c0fb0aa90e",
+    "unreadable-dark-1280.png": "08990c3fd11e84aa914ff69d14931cd81f643f6dd45e6dfe66dea6bde54a89f7",
+    "unreadable-dark-390.png": "346a79a97355358e940767b21d4cf5de2ce089cb0dbb20bf274be636ced9a275",
+    "unreadable-light-1280.png": "8e186eba2e30324f8cddebf9f117109740ebefeaf7b8c94f0a972ef3ee53f9fa",
+    "unreadable-light-390.png": "b1e2ecaca4628fb4fe0411cba134e4370bb6389c348c32a5a87f1981e86dce21",
+    "flowing.webm": "6c42f5bfefb3b1a2be3e44984007ccc165d3e36a0458b8654651a5cc800251f5",
+    "stopped.webm": "c79602f43e1079684e1aa09f01ed5c4ab9ac39a4aa1e7bca2a08c34fc539f007"
+  }
+}
