@@ -2255,6 +2255,16 @@ export default function EventPage({ params }: EventPageProps) {
   // where the number still IS the complement.
   const awaySlotWithheld = sportPricesADraw(event.sport);
   const awayProb = printableAway(servedAwayProb, event.sport);
+  // At rest this card shows the same in-play chance as the headline.
+  // Explicit chart scrubs still show the reading from that point in time.
+  const restingChartPoint = isLive && lastChartPoint
+    ? {
+        ...lastChartPoint,
+        homeProb: homeProb ?? lastChartPoint.homeProb,
+        awayProb: servedAwayProb ?? lastChartPoint.awayProb,
+        probKnown: homeProb !== null && (awaySlotWithheld || servedAwayProb !== null),
+      }
+    : lastChartPoint;
   const awayPct = printableAway(servedAwayPct, event.sport);
 
   // #10090 decision J under a preview (native #11816's rule, web half).
@@ -3266,7 +3276,7 @@ export default function EventPage({ params }: EventPageProps) {
               awayTeamSecondaryColor={resolvedAwaySecondary || event.away_team_data?.secondary_color || undefined}
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
-              lastPoint={lastChartPoint}
+              lastPoint={restingChartPoint}
               /* #6238 — the same single derivation the hero reads, handed to
                  the readout below the chart. On `/events/15305024` (2–2 final)
                  this card printed `Citizen 1% — Steelers 99%` two cards above
