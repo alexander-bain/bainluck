@@ -292,6 +292,11 @@ async def _assemble_event_cards(
         snapshots_by_event[snap.event_id].append(snap)
 
     by_id = {e.id: e for e in events}
+    # #12938 / ruling 233: A: live games project from current lines only.
+    from app.utils.live_line_clock import apply_live_line_projection, event_state_clock
+
+    live_clocks = {e.id: event_state_clock(e) for e in events}
+    clock_now = datetime.now(timezone.utc)
     odds_map: dict = {}
     for event_id, snaps in snapshots_by_event.items():
         ev = by_id.get(event_id)
@@ -305,7 +310,11 @@ async def _assemble_event_cards(
         odds_map[event_id] = {
             "snapshots": filtered,
             "all_snapshots": snaps,
-            "aggregated": aggregate_bookmaker_odds(agg if agg else filtered),
+            "aggregated": apply_live_line_projection(
+                aggregate_bookmaker_odds(agg if agg else filtered),
+                agg if agg else filtered,
+                now=clock_now, state_changed_at=live_clocks.get(event_id),
+            ),
             "captured_at": max(s.captured_at for s in filtered) if filtered else None,
         }
     # #12595: a scheduled game's pair comes from recent line readings.

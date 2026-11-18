@@ -834,6 +834,8 @@ async def _game_state_changed_at(
     newest row is the last change we know of. A change recorded before the
     start (a stale pregame row) does not count: the start is later.
     """
+    from app.utils.live_line_clock import game_state_clock
+
     last_score = (
         await session.execute(
             select(func.max(ScoreSnapshot.captured_at)).where(
@@ -841,9 +843,7 @@ async def _game_state_changed_at(
             )
         )
     ).scalar()
-    stamps = [t for t in (last_score, commence_time) if isinstance(t, datetime)]
-    stamps = [t if t.tzinfo else t.replace(tzinfo=timezone.utc) for t in stamps]
-    return max(stamps) if stamps else None
+    return game_state_clock(last_score, commence_time)
 
 
 async def _ingest_event_odds(
@@ -992,6 +992,13 @@ async def _ingest_event_odds(
             all_spreads.append(q["spread"])
         if q["ou"] is not None:
             all_ous.append(q["ou"])
+    # The page and cards build the projected final from the same current lines,
+    # reading this clock from the bag instead of reading the scores again
+    # (#12938, Fable option A: the card pair's read stays one statement).
+    live_clock_metadata: dict = {}
+    if live_rule is not None and live_rule["state_changed_at"] is not None:
+        from app.utils.live_line_clock import LIVE_STATE_CLOCK_KEY
+        live_clock_metadata = {LIVE_STATE_CLOCK_KEY: live_rule["state_changed_at"]}
     # The Sportsbooks number is as old as its oldest counted line (#12938):
     # dated by the poll it would claim to be fresh while built from lines that
     # stopped moving minutes ago. Pregame keeps the receipt clock.
@@ -1011,7 +1018,7 @@ async def _ingest_event_odds(
         )
         await write_nonvenue_probability(
             session, event, "betting", None,
-            metadata={"betting_book_count": 0},
+            metadata={"betting_book_count": 0, **live_clock_metadata},
             received_at=received_at,
             evidence={
                 "rule": "median",
@@ -1190,7 +1197,7 @@ async def _ingest_event_odds(
             await write_nonvenue_probability(
                 session, event, "betting",
                 _betting_value,
-                metadata={"betting_book_count": _book_count},
+                metadata={"betting_book_count": _book_count} | live_clock_metadata,
                 received_at=received_at,
                 evidence={
                     "rule": "median",
