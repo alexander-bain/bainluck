@@ -109,10 +109,11 @@ from app.utils.container_read_cache import (
     payload_deadlines,
 )
 from app.utils.container_week_preview import (
-    MarketSummary, PAGE_DEFAULT, PAGE_MAX, PREVIEW_LIMIT,
+    MarketSummary, PAGE_DEFAULT, PAGE_MAX, PREVIEW_LIMIT, PreparedWeekMarketPreview,
+    decode_prepared_week_preview,
     decode_cursor as decode_week_cursor,
     encode_cursor as encode_week_cursor,
-    presented_members, ranked_preview,
+    market_member_classes, plan_market_preview, prepared_week_preview_key, presented_members,
 )
 
 logger = logging.getLogger(__name__)
@@ -661,6 +662,7 @@ async def _get_container(
 async def _build_published_payload(
     db: AsyncSession, published, include_children: bool, compact: bool = False,
     week_page: Optional[tuple] = None,
+    prepared_preview: PreparedWeekMarketPreview | None = None,
 ) -> dict:
     """The full 200 for a ``published`` / ``empty`` read — the uncached build."""
     payload = _state_payload(published, edition_for_slug(published.slug))
@@ -701,9 +703,7 @@ async def _build_published_payload(
         for c in child_rows
     ]
 
-    members = list(published.members)
-    if not include_children:
-        members = [m for m in members if m.get("container_id") == published.container_id]
+    members = _scoped_members(published, include_children)
 
     event_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_EVENT})
     market_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_MARKET})
@@ -721,35 +721,27 @@ async def _build_published_payload(
     if compact and market_ids:
         after, excluded, page_limit = week_page or (0, [], PREVIEW_LIMIT)
         candidates = [mid for mid in market_ids if mid > after and mid not in excluded]
-        # Continuations need only their bounded slice's descriptors. Entry
-        # ranks narrow metadata for all members, never all outcome rows.
-        asked = candidates[:page_limit] if week_page is not None else market_ids
-        with _time_stage("market_descriptors"):
-            rows = (
-                await db.execute(
-                    text(
-                        "SELECT id, event_id, name, external_id, volume_24h, volume "
-                        "FROM futures_markets WHERE id = ANY(:market_ids)"
-                    ),
-                    {"market_ids": asked},
-                )
-            ).fetchall()
-        summaries = {int(row[0]): MarketSummary(*row) for row in rows}
-        selected = (asked if week_page is not None else ranked_preview(list(summaries.values()), set(event_ids)))
         if week_page is None:
+            if prepared_preview is None:
+                summaries = await _read_week_market_summaries(db, market_ids)
+                preview = plan_market_preview(members, summaries, set(event_ids))
+            else:
+                preview = prepared_preview.plan
+            selected = preview.selected
+            classes = preview.classes_by_market
             excluded = selected
-            deferred = set(all_market_ids) - set(selected)
-            related_counts = Counter(
-                row.event_id for mid, row in summaries.items()
-                if mid in deferred and row.event_id in event_cards
+            related_counts = {
+                event_id: count for event_id, count in preview.related_by_event.items()
+                if event_id in event_cards
+            }
+            unclassified_count = sum(
+                count for event_id, count in preview.unclassified_by_event.items()
+                if event_id in event_cards
             )
-            unclassified_count = len({
-                m["id"] for m in members
-                if m.get("type") == MEMBER_MARKET and m["id"] in deferred
-                and (m.get("class") or CLASS_UNCLASSIFIED) == CLASS_UNCLASSIFIED
-                and m["id"] in summaries and summaries[m["id"]].event_id in event_cards
-            })
         else:
+            selected = candidates[:page_limit]
+            summaries = await _read_week_market_summaries(db, selected)
+            classes = market_member_classes(summaries, selected, set(event_ids))
             after = selected[-1] if selected else after
             members = [m for m in members if m.get("type") == MEMBER_MARKET]
         remaining = [mid for mid in all_market_ids if mid > after and mid not in excluded]
@@ -766,9 +758,7 @@ async def _build_published_payload(
                          "include_children": str(include_children).lower(),
                      }) if next_cursor else None},
         }
-        members = presented_members(
-            members, summaries, selected, set(event_ids)
-        )
+        members = presented_members(members, selected, classes)
         market_ids = selected
     market_cards, market_event_ids, market_failed = await _hydrate_market_cards(
         db, market_ids, nfl_week=(payload["edition"] or {}).get("kind") == EDITION_NFL_WEEK
@@ -816,6 +806,37 @@ async def _build_published_payload(
     if week_metadata is not None:
         result.update(week_metadata)
     return result
+
+
+def _scoped_members(published, include_children: bool) -> list[dict]:
+    if include_children:
+        return list(published.members)
+    return [m for m in published.members if m.get("container_id") == published.container_id]
+
+
+async def _read_week_market_summaries(db: AsyncSession, market_ids: list[int]) -> dict[int, MarketSummary]:
+    # Continuation passes only its page. Entry preparation ranks the eligible
+    # members without loading their outcomes.
+    with _time_stage("market_descriptors"):
+        rows = (await db.execute(
+            text(
+                "SELECT id, event_id, name, external_id, volume_24h, volume "
+                "FROM futures_markets WHERE id = ANY(:market_ids)"
+            ),
+            {"market_ids": market_ids},
+        )).fetchall()
+    return {int(row[0]): MarketSummary(*row) for row in rows}
+
+
+async def _prepare_week_market_preview(db: AsyncSession, published) -> PreparedWeekMarketPreview | None:
+    members = _scoped_members(published, True)
+    market_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_MARKET})
+    if not market_ids:
+        return None
+    event_ids = {int(m["id"]) for m in members if m.get("type") == MEMBER_EVENT}
+    observed_at = time.time()
+    summaries = await _read_week_market_summaries(db, market_ids)
+    return PreparedWeekMarketPreview(observed_at, plan_market_preview(members, summaries, event_ids))
 
 
 def _week_page_params(published, include_children, revision, cursor, limit) -> tuple:
@@ -947,15 +968,42 @@ def _store_entry(key: str, entry: CachedRead) -> None:
 
 
 async def _build_entry(
-    db: AsyncSession, published, include_children: bool, compact: bool = False
+    db: AsyncSession, published, include_children: bool, compact: bool = False,
+    *, prepared_preview: PreparedWeekMarketPreview | None = None,
 ) -> CachedRead:
     # The age origin is when the build STARTED reading, not when it finished.
     built_at = time.time()
-    payload = await _build_published_payload(db, published, include_children, compact=compact)
+    if prepared_preview is not None:
+        built_at = min(built_at, prepared_preview.observed_at)
+    payload = await _build_published_payload(
+        db, published, include_children, compact=compact, prepared_preview=prepared_preview
+    )
     fresh_until, stale_until = payload_deadlines(payload, built_at)
     return CachedRead(
         body=_render(payload), built_at=built_at, fresh_until=fresh_until, stale_until=stale_until
     )
+
+
+async def _build_reader_entry(db, published, include_children: bool, compact: bool) -> CachedRead:
+    from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+    preview = None
+    if compact and include_children:
+        key = container_read_cache_key(published.slug, published.revision, True, True)
+        try:
+            with _time_stage("market_preview_cache"):
+                client = await get_shared_async_redis()
+                result = await bounded_redis_call(lambda: client.get(prepared_week_preview_key(key)))
+                if result.is_ok:
+                    preview = decode_prepared_week_preview(result.value, time.time())
+        except Exception:  # noqa: BLE001 — fall back to the ordinary complete read
+            logger.debug("NFL week: prepared preview unavailable", exc_info=True)
+        if preview is not None:
+            market_ids = {int(m["id"]) for m in published.members if m.get("type") == MEMBER_MARKET}
+            event_ids = {int(m["id"]) for m in published.members if m.get("type") == MEMBER_EVENT}
+            if set(preview.plan.selected) <= market_ids and preview.plan.related_by_event.keys() <= event_ids:
+                return await _build_entry(db, published, include_children, compact, prepared_preview=preview)
+    return await _build_entry(db, published, include_children, compact=compact)
 
 
 #: Sent with a waiter's 503: by then the owner's build is seconds from landing.
@@ -1011,7 +1059,7 @@ async def _refresh_in_background(
         async with async_session_maker() as session:
             published = await read_published(session, slug)
             if published.state in (READ_PUBLISHED, READ_EMPTY):
-                entry = await _build_entry(session, published, include_children, compact=compact)
+                entry = await _build_reader_entry(session, published, include_children, compact)
                 fresh_key = container_read_cache_key(slug, published.revision, include_children, compact)
                 _store_entry(fresh_key, entry)
                 if fresh_key == key:
@@ -1097,7 +1145,7 @@ async def _serve_cached(
 
     entry = None
     try:
-        entry = await _build_entry(db, published, include_children, compact=compact)
+        entry = await _build_reader_entry(db, published, include_children, compact)
     finally:
         # Resolved on EVERY exit (request_cache's single-owner invariant); a
         # failed or cancelled build hands waiters None and they elect a new owner.

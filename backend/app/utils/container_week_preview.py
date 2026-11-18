@@ -11,9 +11,11 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import math
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
+from app.utils.container_read_cache import CONTAINER_READ_FRESH_TTL_SECONDS
 from app.utils.game_market_class import classify_game_market_class
 
 PREVIEW_LIMIT = 12
@@ -69,11 +71,104 @@ def ranked_preview(rows: list[MarketSummary], event_ids: set[int]) -> list[int]:
     return picked
 
 
+@dataclass(frozen=True)
+class WeekMarketPreview:
+    """The price-free part of the first page, before game-card hydration."""
+
+    selected: list[int]
+    related_by_event: dict[int, int]
+    unclassified_by_event: dict[int, int]
+    classes_by_market: dict[int, str]
+
+
+@dataclass(frozen=True)
+class PreparedWeekMarketPreview:
+    observed_at: float
+    plan: WeekMarketPreview
+
+    def encode(self) -> str:
+        return json.dumps(asdict(self), separators=(",", ":"))
+
+
+def prepared_week_preview_key(response_key: str) -> str:
+    return f"{response_key}:week-preview-v1"
+
+
+def decode_prepared_week_preview(
+    raw: bytes | str | None, now: float,
+) -> PreparedWeekMarketPreview | None:
+    # A malformed or expired derivative has the same fallback as a missing one.
+    if not raw or len(raw) > 16_384:
+        return None
+    try:
+        payload = json.loads(raw)
+        clock = payload["observed_at"]
+        plan = payload["plan"]
+        selected = plan["selected"]
+        related = {int(k): v for k, v in plan["related_by_event"].items()}
+        unclassified = {int(k): v for k, v in plan["unclassified_by_event"].items()}
+        classes = {int(k): v for k, v in plan["classes_by_market"].items()}
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    if (
+        type(clock) not in (int, float) or not math.isfinite(clock)
+        or not 0 <= now - clock < CONTAINER_READ_FRESH_TTL_SECONDS
+        or not isinstance(selected, list) or len(selected) > PREVIEW_LIMIT
+        or any(type(mid) is not int or mid <= 0 for mid in selected)
+        or len(set(selected)) != len(selected)
+        or any(eid <= 0 or type(count) is not int or count <= 0 for eid, count in related.items())
+        or any(type(count) is not int or not 0 < count <= related.get(eid, 0)
+               for eid, count in unclassified.items())
+        or not set(classes).issubset(selected)
+        or any(kind not in ("prop", "side_question") for kind in classes.values())
+    ):
+        return None
+    return PreparedWeekMarketPreview(
+        clock, WeekMarketPreview(selected, related, unclassified, classes)
+    )
+
+
+def plan_market_preview(
+    members: list[dict], summaries: dict[int, MarketSummary], event_ids: set[int]
+) -> WeekMarketPreview:
+    from app.utils.container_graph import CLASS_UNCLASSIFIED
+
+    selected = ranked_preview(list(summaries.values()), event_ids)
+    deferred = set(summaries).difference(selected)
+    related_by_event = Counter(
+        summaries[market_id].event_id for market_id in deferred
+        if summaries[market_id].event_id in event_ids
+    )
+    unclassified_ids = {
+        member["id"] for member in members
+        if member["type"] == "market" and member["id"] in deferred
+        and (member.get("class") or CLASS_UNCLASSIFIED) == CLASS_UNCLASSIFIED
+    }
+    unclassified_by_event = Counter(
+        summaries[market_id].event_id for market_id in unclassified_ids
+        if summaries[market_id].event_id in event_ids
+    )
+    return WeekMarketPreview(
+        selected, dict(related_by_event), dict(unclassified_by_event),
+        market_member_classes(summaries, selected, event_ids),
+    )
+
+
+def market_member_classes(
+    summaries: dict[int, MarketSummary], selected: list[int], event_ids: set[int]
+) -> dict[int, str]:
+    classes = {}
+    for market_id in selected:
+        row = summaries.get(market_id)
+        if row is not None and row.event_id in event_ids:
+            classes[market_id] = "prop" if row.group(event_ids) == "props" else "side_question"
+    return classes
+
+
 def presented_members(
     members: list[dict],
-    summaries: dict[int, MarketSummary],
     selected: list[int],
-    event_ids: set[int],
+    classes_by_market: dict[int, str],
 ) -> list[dict]:
     """Use the shared game classifier for linked derivatives, never 'Title'."""
     result = []
@@ -85,14 +180,8 @@ def presented_members(
             markets.setdefault(member["id"], member)
     for mid in selected:
         member = markets[mid]
-        row = summaries.get(member["id"])
-        if row is not None and row.event_id in event_ids:
-            group = row.group(event_ids)
-            result.append(
-                {**member, "class": "prop" if group == "props" else "side_question"}
-            )
-        else:
-            result.append(member)
+        kind = classes_by_market.get(mid)
+        result.append({**member, "class": kind} if kind else member)
     return result
 
 

@@ -1,7 +1,9 @@
 """The default NFL week never hydrates thousands of boards to show its games."""
 
+import json
 from collections import Counter
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -9,10 +11,14 @@ import pytest
 from fastapi import FastAPI, HTTPException
 
 from app.routes import containers as route
+from app.utils import request_cache
+from app.utils.container_read_cache import container_read_cache_key
 from app.utils.container_week_preview import (
     MarketSummary,
+    PreparedWeekMarketPreview,
     decode_cursor,
     encode_cursor,
+    prepared_week_preview_key,
     ranked_preview,
 )
 from tests.test_container_hydrated_reader_9636 import (
@@ -141,6 +147,41 @@ async def test_real_default_http_keeps_all_14_games_but_hydrates_only_12_boards(
         for member in section["members"]:
             if member["card"].get("name") == "1st Quarter Winner":
                 assert section["class"] == "side_question"
+
+
+@pytest.mark.parametrize("copy", ["current", "other_revision", "expired"])
+async def test_response_cache_miss_can_share_a_prepared_preview(monkeypatch, copy):
+    worker = WeekSession()
+    published = await route.read_published(worker, worker.hub.slug)
+    prepared = await route._prepare_week_market_preview(worker, published)
+    assert prepared is not None and len(worker.descriptors[0]) == 4984
+    expected = json.loads(route._render(await get(WeekSession())))
+    revision = published.revision - 1 if copy == "other_revision" else published.revision
+    if copy == "expired":
+        prepared = PreparedWeekMarketPreview(prepared.observed_at - 600, prepared.plan)
+    key = prepared_week_preview_key(container_read_cache_key(worker.hub.slug, revision, True, True))
+    store = {key: prepared.encode()}
+
+    async def get_redis():
+        return store
+
+    async def bounded_read(read):
+        return SimpleNamespace(is_ok=True, value=read())
+
+    monkeypatch.setattr(request_cache, "get_shared_async_redis", get_redis)
+    monkeypatch.setattr(request_cache, "bounded_redis_call", bounded_read)
+    monkeypatch.setattr(route, "_store_entry", lambda *args: None)
+    monkeypatch.setattr(route, "_local_entries", {})
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+    reader = WeekSession()
+
+    response = await get(reader, debug_timing=True)
+
+    assert response.headers["X-Feed-Cache"] == "miss"
+    assert json.loads(response.body) == expected
+    assert len(reader.hydrated[0]) == 12
+    assert len(reader.descriptors) == (0 if copy == "current" else 1)
+    assert ("market_descriptors=" in response.headers["X-Container-Timing"]) == (copy != "current")
 
 
 async def test_every_remaining_market_is_reachable_once_even_if_activity_changes():
