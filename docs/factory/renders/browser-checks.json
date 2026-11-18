@@ -1,16 +1,16 @@
 {
-  "testedAt": "2026-11-18T01:10:30.595Z",
+  "testedAt": "2026-11-18T02:25:16.536Z",
   "url": "http://localhost:3128/factory",
-  "mode": "production Next.js server, real saved GitHub data",
-  "normalMotionAnimations": 3,
+  "mode": "production Next.js server with current read-only collector response through local test transport",
+  "normalMotionAnimations": 6,
   "viewports": [
     {
       "documentWidth": 1280,
       "viewport": 1280,
       "floorWidth": 1206,
       "floorClient": 1206,
-      "firstContentfulPaintMs": 112,
-      "responseStartMs": 10.5,
+      "firstContentfulPaintMs": 148,
+      "responseStartMs": 96.19999998807907,
       "headingFont": "__Space_Grotesk_c219ed, __Space_Grotesk_Fallback_c219ed, sans-serif",
       "headings": [
         "The Factory",
@@ -21,7 +21,99 @@
       ],
       "ellipses": 0,
       "reducedMotionAnimations": 0,
-      "snapshot": "Nov 17 at 5:05 PM PT",
+      "snapshot": "Nov 17 at 6:17 PM PT",
+      "bays": [
+        {
+          "count": 7,
+          "height": 278,
+          "amber": false
+        },
+        {
+          "count": 11,
+          "height": 376,
+          "amber": true
+        },
+        {
+          "count": 11,
+          "height": 376,
+          "amber": true
+        },
+        {
+          "count": 12,
+          "height": 376,
+          "amber": true
+        },
+        {
+          "count": 5,
+          "height": 229,
+          "amber": false
+        },
+        {
+          "count": 20,
+          "height": 585.5,
+          "amber": false
+        },
+        {
+          "count": 0,
+          "height": 129,
+          "amber": false
+        },
+        {
+          "count": 1,
+          "height": 131,
+          "amber": false
+        },
+        {
+          "count": 0,
+          "height": 129,
+          "amber": false
+        },
+        {
+          "count": 1,
+          "height": 131,
+          "amber": false
+        },
+        {
+          "count": 0,
+          "height": 129,
+          "amber": false
+        },
+        {
+          "count": 8,
+          "height": 291.5,
+          "amber": false
+        },
+        {
+          "count": 1,
+          "height": 131,
+          "amber": false
+        },
+        {
+          "count": 1,
+          "height": 131,
+          "amber": false
+        },
+        {
+          "count": 0,
+          "height": 129,
+          "amber": false
+        },
+        {
+          "count": 1,
+          "height": 131,
+          "amber": false
+        },
+        {
+          "count": 0,
+          "height": 129,
+          "amber": false
+        },
+        {
+          "count": 9,
+          "height": 340.5,
+          "amber": false
+        }
+      ],
       "status": 200,
       "dialogLink": true,
       "escapeCloses": true,
@@ -33,8 +125,8 @@
       "viewport": 390,
       "floorWidth": 1034,
       "floorClient": 356,
-      "firstContentfulPaintMs": 28,
-      "responseStartMs": 6,
+      "firstContentfulPaintMs": 44,
+      "responseStartMs": 15.300000011920929,
       "headingFont": "__Space_Grotesk_c219ed, __Space_Grotesk_Fallback_c219ed, sans-serif",
       "headings": [
         "The Factory",
@@ -45,7 +137,99 @@
       ],
       "ellipses": 0,
       "reducedMotionAnimations": 0,
-      "snapshot": "Nov 17 at 5:05 PM PT",
+      "snapshot": "Nov 17 at 6:17 PM PT",
+      "bays": [
+        {
+          "count": 7,
+          "height": 278,
+          "amber": false
+        },
+        {
+          "count": 11,
+          "height": 376,
+          "amber": true
+        },
+        {
+          "count": 11,
+          "height": 376,
+          "amber": true
+        },
+        {
+          "count": 12,
+          "height": 376,
+          "amber": true
+        },
+        {
+          "count": 5,
+          "height": 229,
+          "amber": false
+        },
+        {
+          "count": 20,
+          "height": 585.5,
+          "amber": false
+        },
+        {
+          "count": 0,
+          "height": 129,
+          "amber": false
+        },
+        {
+          "count": 1,
+          "height": 131,
+          "amber": false
+        },
+        {
+          "count": 0,
+          "height": 129,
+          "amber": false
+        },
+        {
+          "count": 1,
+          "height": 131,
+          "amber": false
+        },
+        {
+          "count": 0,
+          "height": 129,
+          "amber": false
+        },
+        {
+          "count": 8,
+          "height": 291.5,
+          "amber": false
+        },
+        {
+          "count": 1,
+          "height": 131,
+          "amber": false
+        },
+        {
+          "count": 1,
+          "height": 131,
+          "amber": false
+        },
+        {
+          "count": 0,
+          "height": 129,
+          "amber": false
+        },
+        {
+          "count": 1,
+          "height": 131,
+          "amber": false
+        },
+        {
+          "count": 0,
+          "height": 129,
+          "amber": false
+        },
+        {
+          "count": 9,
+          "height": 340.5,
+          "amber": false
+        }
+      ],
       "status": 200,
       "dialogLink": true,
       "escapeCloses": true,

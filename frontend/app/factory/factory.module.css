@@ -85,8 +85,17 @@
   margin-top: 4px;
   background: var(--green);
 }
-.savedDot {
-  background: var(--amber);
+.unavailable {
+  padding: 26px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: var(--paper);
+}
+.unavailable p {
+  margin-top: 12px;
+  color: var(--secondary);
+  font-size: 13px;
+  line-height: 1.6;
 }
 .numbers {
   display: grid;
@@ -222,13 +231,14 @@
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
   padding-bottom: 29px;
+  align-items: start;
 }
 .machine {
   background: var(--ink);
   color: var(--paper);
   border: 2px solid var(--ink);
   border-radius: 8px;
-  min-height: 153px;
+  min-height: 104px;
   padding: 12px 9px 10px;
   display: flex;
   flex-direction: column;
@@ -255,8 +265,7 @@
   flex-wrap: wrap;
   gap: 5px;
   align-content: flex-start;
-  flex: 1;
-  padding-bottom: 14px;
+  padding-bottom: 10px;
 }
 .crate {
   position: relative;
@@ -362,7 +371,8 @@
 .backedUp {
   border-color: var(--amber);
 }
-.backedUp .lamp {
+.backedUp .lamp,
+.jammed .lamp {
   opacity: 1;
   background: var(--amber-light);
   box-shadow: 0 0 0 3px var(--amber);

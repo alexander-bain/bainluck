@@ -1,74 +1,78 @@
 name: The Factory
 
 on:
-  pull_request:
-    types:
-      [
-        opened,
-        edited,
-        reopened,
-        synchronize,
-        closed,
-        ready_for_review,
-        converted_to_draft,
-      ]
-  pull_request_review:
-    types: [submitted, edited, dismissed]
   workflow_run:
-    # Explicit producer names prevent our own completion from starting another
-    # workflow run. A skipped job would itself still complete a workflow.
     workflows:
-      - CI
-      - CodeQL
-      - gitleaks
-      - Claude Code
-      - Tier-B review
-      - Tier-B review policy
-      - LOOK rail guard
-      - Watch MVP
-      - Watch live journey (opt-in)
-      - TestFlight release
-    types: [completed]
-  status:
+      [CI, Claude Code, Tier-B review, Tier-B review policy, TestFlight release]
+    types: [requested, completed]
+  push:
+    branches: [master]
   issue_comment:
     types: [created, edited, deleted]
+  status:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: read
-  issues: read
-  checks: read
-  statuses: read
-  actions: read
+  contents: read
 
-# One publisher owns the previous snapshot and its jam clock. A pending event
-# may be coalesced because every run reconciles the complete open-pull list.
 concurrency:
   group: factory-public-snapshot
   cancel-in-progress: false
 
 jobs:
-  snapshot:
-    name: Update the factory
+  preflight:
+    name: Check factory freshness
     if: >-
-      (github.event_name != 'workflow_run' || github.event.workflow_run.name != 'The Factory') &&
-      (github.event_name != 'issue_comment' || github.event.issue.number == 12779 || github.event.issue.pull_request) &&
-      (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository)
+      github.ref == 'refs/heads/master' &&
+      (github.event_name != 'status' ||
+       ((github.event.context == 'Vercel' || github.event.context == 'Bain Luck | TestFlight from master') &&
+        (github.event.state == 'success' || github.event.state == 'failure' || github.event.state == 'error'))) &&
+      (github.event_name != 'issue_comment' || github.event.issue.number == 12779 || startsWith(github.event.comment.body, '**Fable'))
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      refresh: ${{ steps.gate.outputs.refresh }}
     steps:
-      # Same-repository pull events exercise this workflow before merge. Forks
-      # cannot enter this write-enabled job. All other events run master.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || 'master' }}
-          fetch-depth: 0
+          ref: master
+          fetch-depth: 1
+          sparse-checkout: scripts/factory
           persist-credentials: false
-      - name: Verify the factory rules
-        run: python3 -m unittest discover -s scripts/factory/tests -v
-      - name: Reconcile and publish the public snapshot
+      - name: Skip recent snapshots unless a change opened or left the floor
+        id: gate
         env:
           GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/factory/preflight.cjs
+
+  snapshot:
+    name: Publish the factory from master
+    needs: preflight
+    if: needs.preflight.outputs.refresh == 'true' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: read
+      issues: read
+      checks: read
+      statuses: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 1
+          sparse-checkout: scripts/factory
+          persist-credentials: false
+      - name: Read master ancestry without historical file contents
+        env:
           GH_TOKEN: ${{ github.token }}
+        run: git -c credential.helper= -c credential.helper='!gh auth git-credential' fetch --filter=blob:none --no-tags --unshallow origin master
+      - name: Reconcile and publish the snapshot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: python3 scripts/factory/collect.py --output /tmp/factory.json --publish

@@ -19,7 +19,16 @@ from model import (
     line_for,
     public_title,
 )
-from collect import is_review_bot
+from collect import (
+    is_review_bot,
+    safe_comment,
+    needs_refresh,
+    authorize_publication,
+    read_published,
+    publish_asset,
+    GitHub,
+)
+from unittest.mock import patch
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -273,17 +282,24 @@ class FactoryRules(unittest.TestCase):
     def test_event_only_release_publication_cannot_push_code(self):
         workflow = (ROOT / ".github/workflows/factory.yml").read_text()
         for event in (
-            "pull_request:",
-            "pull_request_review:",
             "workflow_run:",
+            "push:",
             "status:",
             "issue_comment:",
             "workflow_dispatch:",
         ):
             self.assertIn(event, workflow)
         self.assertNotIn("cron:", workflow)
+        self.assertNotRegex(workflow, r"(?m)^  pull_request(?:_review)?:")
+        self.assertNotIn("pull_request.head", workflow)
         self.assertIn("github.event.issue.number == 12779", workflow)
-        self.assertIn("github.event.workflow_run.name != 'The Factory'", workflow)
+        self.assertIn("github.event.context == 'Vercel'", workflow)
+        self.assertIn("github.ref == 'refs/heads/master'", workflow)
+        self.assertIn("ref: master", workflow)
+        test_workflow = (ROOT / ".github/workflows/factory-tests.yml").read_text()
+        self.assertIn("scripts/factory/**", test_workflow)
+        self.assertNotIn("write", test_workflow)
+        self.assertNotIn("--publish", test_workflow)
         collector = (ROOT / "scripts/factory/collect.py").read_text()
         for verb in ('"push"', '"commit"', '"update-ref"'):
             self.assertNotIn('["git", ' + verb, collector)
@@ -292,6 +308,179 @@ class FactoryRules(unittest.TestCase):
                 self.assertNotRegex(path.read_text(), r"(?m)^  release:")
         self.assertIn("GITHUB_TOKEN: ${{ github.token }}", workflow)
         self.assertNotIn("secrets.", workflow)
+
+    def test_explicit_no_look_description_clears_the_fable_gate(self):
+        pull = self.ready()
+        pull.update(
+            fable_needed=True,
+            fable_not_needed=True,
+            comments_complete=False,
+            commits_complete=False,
+        )
+        self.assertEqual(self.place(pull)["station"], "Merge line")
+
+    def test_trusted_no_look_comment_is_bound_to_the_last_non_merge_commit(self):
+        pull = self.ready()
+        pull.update(
+            fable_needed=True, commits=[{"parents": 1, "at": "2026-11-17T10:00:00Z"}]
+        )
+        comment = safe_comment(
+            {
+                "body": "**Fable** no look needed for these fields",
+                "created_at": "2026-11-17T11:00:00Z",
+                "updated_at": "2026-11-17T11:00:00Z",
+                "author_association": "OWNER",
+            }
+        )
+        pull["comments"] = [comment]
+        self.assertEqual(self.place(pull)["station"], "Merge line")
+        comment["association"] = "NONE"
+        self.assertEqual(self.place(pull)["station"], "Review")
+        self.assertFalse(
+            safe_comment(
+                {
+                    **comment,
+                    "body": "Something **Fable** ACCEPT",
+                    "author_association": "OWNER",
+                }
+            )["fable_accept"]
+        )
+
+    def test_timing_omits_merges_before_observation(self):
+        first = build(self.snapshot)
+        self.assertTrue(
+            all(c["merge_to_live_seconds"] is None for c in first["changes"])
+        )
+        observed = {"observed_since": "2026-01-01T00:00:00Z"}
+        later = build(self.snapshot, observed)
+        self.assertTrue(
+            any(c["merge_to_live_seconds"] is not None for c in later["changes"])
+        )
+
+    def test_recent_copy_defers_updates_but_not_opened_or_closed_changes(self):
+        previous = {
+            "generated_at": iso(self.now),
+            "changes": [{"number": 1, "merged_at": None}],
+        }
+        self.assertFalse(
+            needs_refresh(previous, [{"number": 1}], self.now + timedelta(seconds=179))
+        )
+        self.assertTrue(
+            needs_refresh(previous, [{"number": 1}], self.now + timedelta(seconds=180))
+        )
+        self.assertTrue(
+            needs_refresh(previous, [{"number": 1}, {"number": 2}], self.now)
+        )
+        self.assertTrue(needs_refresh(previous, [], self.now))
+
+    def test_branch_or_pull_request_publication_is_refused(self):
+        with patch.dict(
+            "os.environ",
+            {"GITHUB_ACTIONS": "true", "GITHUB_REF": "refs/heads/factory/the-factory"},
+        ):
+            with self.assertRaisesRegex(RuntimeError, "master"):
+                authorize_publication()
+
+        with patch.dict(
+            "os.environ",
+            {
+                "GITHUB_ACTIONS": "true",
+                "GITHUB_REF": "refs/heads/master",
+                "GITHUB_EVENT_NAME": "pull_request",
+            },
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Pull request"):
+                authorize_publication()
+        with patch.dict(
+            "os.environ",
+            {
+                "GITHUB_ACTIONS": "true",
+                "GITHUB_REF": "refs/heads/master",
+                "GITHUB_EVENT_NAME": "push",
+                "GITHUB_TOKEN": "fixture",
+            },
+        ):
+            with patch(
+                "collect.git",
+                side_effect=lambda *args: (
+                    "master" if args[0] == "branch" else "older-master-commit"
+                ),
+            ), patch("collect.contains", return_value=True):
+                authorize_publication()
+
+    def test_read_only_client_refuses_a_mutation_before_any_request(self):
+        api = object.__new__(GitHub)
+        api.read_only = True
+        with self.assertRaisesRegex(RuntimeError, "read-only"):
+            api.request("repos/example/releases", {"name": "example"}, method="POST")
+
+    def test_mismatched_cache_keeps_the_public_history_and_forces_a_reread(self):
+        class API:
+            def request(self, endpoint):
+                return {
+                    "id": 1,
+                    "assets": [
+                        {
+                            "name": "factory.json",
+                            "browser_download_url": "public",
+                            "updated_at": "1",
+                        },
+                        {
+                            "name": "factory-cache.json",
+                            "browser_download_url": "cache",
+                            "updated_at": "2",
+                        },
+                    ],
+                }
+
+            def public_json(self, url):
+                return (
+                    {"generated_at": "old", "changes": [], "jams": [{"key": "kept"}]}
+                    if url.startswith("public")
+                    else {"generated_at": "new", "pulls": {"1": {}}}
+                )
+
+        _, previous, cache = read_published(API())
+        self.assertEqual(previous["jams"], [{"key": "kept"}])
+        self.assertEqual(cache, {})
+
+    def test_cache_and_public_snapshot_are_uploaded_as_distinct_assets(self):
+        class API:
+            def __init__(self):
+                self.assets = {}
+                self.calls = []
+
+            def request(self, endpoint, data=None, method=None, binary=None):
+                self.calls.append((endpoint, method))
+                if binary is not None:
+                    name = endpoint.split("name=")[1]
+                    asset = {
+                        "id": len(self.calls),
+                        "name": name,
+                        "payload": json.loads(binary),
+                    }
+                    self.assets[asset["id"]] = asset
+                    return asset
+                if method == "PATCH":
+                    asset = self.assets[int(endpoint.rsplit("/", 1)[1])]
+                    asset["name"] = data["name"]
+                    return asset
+                if method == "DELETE":
+                    return self.assets.pop(int(endpoint.rsplit("/", 1)[1]))
+                return list(self.assets.values())
+
+        api = API()
+        release = {
+            "id": 1,
+            "upload_url": "https://uploads.github.com/repos/example/releases/1/assets{?name,label}",
+        }
+        publish_asset(
+            api, release, "factory-cache.json", {"pulls": {"1": {"head_sha": "abc"}}}
+        )
+        publish_asset(api, release, "factory.json", {"changes": []})
+        assets = {a["name"]: a["payload"] for a in api.assets.values()}
+        self.assertEqual(set(assets), {"factory-cache.json", "factory.json"})
+        self.assertEqual(assets["factory.json"], {"changes": []})
 
 
 if __name__ == "__main__":

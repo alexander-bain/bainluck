@@ -1,0 +1,20 @@
+name: Factory rules
+
+on:
+  pull_request:
+    paths: ["scripts/factory/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  rules:
+    name: Test factory rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s scripts/factory/tests -v
+      - run: node --test scripts/factory/tests/preflight.test.cjs

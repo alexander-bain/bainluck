@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { Inter, Space_Grotesk } from "next/font/google";
+import { unstable_cache } from "next/cache";
 import FactoryFloor from "./FactoryFloor";
-import savedSnapshot from "./initial.json";
-import type { FactoryData } from "./types";
+import { createFactoryReader } from "./data";
 
 export const revalidate = 60;
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "The Factory",
@@ -23,48 +24,17 @@ const spaceGrotesk = Space_Grotesk({
   display: "swap",
   variable: "--factory-heading",
 });
-const dataUrl =
-  "https://github.com/alexander-bain/bainluck/releases/download/factory-data/factory.json";
-
-async function loadFactory(): Promise<{ data: FactoryData; saved: boolean }> {
-  try {
-    const response = await fetch(dataUrl, {
-      next: { revalidate: 60 },
-      signal: AbortSignal.timeout(4000),
-    });
-    if (!response.ok) throw new Error("Snapshot unavailable");
-    const payload = await response.json();
-    if (
-      payload.schema_version !== 1 ||
-      !Array.isArray(payload.changes) ||
-      !Array.isArray(payload.jams) ||
-      !Number.isFinite(Date.parse(payload.generated_at))
-    )
-      throw new Error("Snapshot incomplete");
-    // The release also holds the collector's metadata cache. Never send it to
-    // the browser. Only this explicit public projection crosses the boundary.
-    const data: FactoryData = {
-      schema_version: payload.schema_version,
-      generated_at: payload.generated_at,
-      observed_since: payload.observed_since,
-      changes: payload.changes,
-      jams: payload.jams,
-      signals: payload.signals,
-      coverage: payload.coverage,
-    };
-    return { data, saved: false };
-  } catch {
-    return { data: savedSnapshot as FactoryData, saved: true };
-  }
-}
+const loadFactory = unstable_cache(createFactoryReader(), ["factory-live-v3"], {
+  revalidate: 60,
+});
 
 export default async function FactoryPage() {
-  const { data, saved } = await loadFactory();
+  const { data, lastGoodAt } = await loadFactory();
   return (
     <div className={`${inter.variable} ${spaceGrotesk.variable}`}>
       <FactoryFloor
         data={data}
-        saved={saved}
+        lastGoodAt={lastGoodAt}
         renderedAt={new Date().toISOString()}
       />
     </div>

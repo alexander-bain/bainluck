@@ -45,7 +45,7 @@ const builders: { key: Builder; name: string }[] = [
   { key: "D", name: "Atlas" },
   { key: "E", name: "Builder E" },
   { key: "F", name: "Builder F" },
-  { key: "Other", name: "Other" },
+  { key: "Other", name: "Earlier work" },
 ];
 const machineIcons = [
   Code2,
@@ -100,11 +100,11 @@ function jamTitle(jam: Jam) {
 
 export default function FactoryFloor({
   data,
-  saved,
+  lastGoodAt,
   renderedAt,
 }: {
-  data: FactoryData;
-  saved: boolean;
+  data: FactoryData | null;
+  lastGoodAt: string | null;
   renderedAt: string;
 }) {
   usePageTracking({ pageType: "home", pageTitle: "The Factory" });
@@ -113,11 +113,27 @@ export default function FactoryFloor({
   const router = useRouter();
   const [now, setNow] = useState(renderedAt);
   const [selectedNumber, selectNumber] = useState<number | null>(null);
+  const [knownGoodAt, setKnownGoodAt] = useState(lastGoodAt);
   const floor = useRef<HTMLDivElement>(null);
   const oldPositions = useRef(
     new Map<string, { rect: DOMRect; station: string }>(),
   );
   const detail = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    try {
+      const timestamp =
+        data?.generated_at ||
+        lastGoodAt ||
+        localStorage.getItem("factory-last-good-at");
+      if (timestamp && Number.isFinite(Date.parse(timestamp))) {
+        setKnownGoodAt(timestamp);
+        if (data) localStorage.setItem("factory-last-good-at", timestamp);
+      }
+    } catch {
+      setKnownGoodAt(lastGoodAt);
+    }
+  }, [data, lastGoodAt]);
 
   useEffect(() => {
     if (selectedNumber !== null && detail.current && !detail.current.open) {
@@ -163,7 +179,29 @@ export default function FactoryFloor({
         nextPositions.set(id, { rect, station });
       });
     oldPositions.current = nextPositions;
-  }, [data.generated_at]);
+  }, [data?.generated_at]);
+
+  if (!data) {
+    return (
+      <article className={styles.factory} data-factory="true">
+        <header className={styles.heading}>
+          <div>
+            <p className={styles.eyebrow}>Bain Luck, in the making</p>
+            <h1>The Factory</h1>
+          </div>
+        </header>
+        <section className={styles.unavailable} role="status">
+          <h2>{"The floor can't be read right now"}</h2>
+          <p>
+            {knownGoodAt
+              ? `Last good copy from ${new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric" }).format(new Date(knownGoodAt))} at ${time(knownGoodAt)} PT.`
+              : "No successful copy has been read yet."}
+          </p>
+          <p>This page will try again on its next update.</p>
+        </section>
+      </article>
+    );
+  }
 
   const today = pacificDay(now);
   const shipped = data.changes.filter(
@@ -175,12 +213,10 @@ export default function FactoryFloor({
   );
   const sideTrack = data.changes.filter((c) => c.side_track);
   const visible = [...onFloor, ...shipped];
-  const stationCounts = stations
-    .slice(0, -1)
-    .map((station) => ({
-      station,
-      count: onFloor.filter((c) => c.station === station).length,
-    }));
+  const stationCounts = stations.slice(0, -1).map((station) => ({
+    station,
+    count: onFloor.filter((c) => c.station === station).length,
+  }));
   const busiest = stationCounts.reduce((best, current) =>
     current.count > best.count ? current : best,
   );
@@ -234,12 +270,9 @@ export default function FactoryFloor({
           </p>
         </div>
         <div className={styles.updated}>
-          <span
-            className={`${styles.statusDot} ${saved ? styles.savedDot : ""}`}
-            aria-hidden="true"
-          />
+          <span className={styles.statusDot} aria-hidden="true" />
           <div>
-            <strong>{saved ? "Saved snapshot" : "Updated from GitHub"}</strong>
+            <strong>Updated from GitHub</strong>
             <span>
               {new Intl.DateTimeFormat("en-US", {
                 timeZone: "America/Los_Angeles",
@@ -333,18 +366,19 @@ export default function FactoryFloor({
                       const changes = visible.filter(
                         (c) => c.line === line && c.station === station,
                       );
-                      const backup =
-                        station !== "Live" &&
-                        stationCounts.find((c) => c.station === station)!
-                          .count >= 10;
+                      const backup = station !== "Live" && changes.length >= 10;
                       const jammed = activeJams.some(
                         (j) =>
-                          j.station === station && (!j.line || j.line === line),
+                          j.station === station &&
+                          (j.kind === "crowd" ? backup : j.line === line),
                       );
                       return (
                         <div
                           key={station}
-                          className={`${styles.machine} ${station === "Live" ? styles.liveMachine : ""} ${backup || jammed ? styles.backedUp : ""}`}
+                          className={`${styles.machine} ${station === "Live" ? styles.liveMachine : ""} ${backup ? styles.backedUp : ""} ${jammed ? styles.jammed : ""}`}
+                          data-line={line}
+                          data-bay={station}
+                          data-waiting={changes.length}
                         >
                           <div className={styles.machineTop}>
                             <MachineIcon size={22} strokeWidth={1.6} />
@@ -544,7 +578,11 @@ export default function FactoryFloor({
         <div className={styles.delivery}>
           {lines.map((line) => {
             const delivered = shipped.filter(
-              (c) => c.line === line && c.merged_at && c.live_at,
+              (c) =>
+                c.line === line &&
+                c.merged_at &&
+                c.live_at &&
+                Date.parse(c.merged_at) >= Date.parse(data.observed_since),
             );
             const timings = delivered
               .map(
@@ -569,12 +607,12 @@ export default function FactoryFloor({
                 <strong>
                   {timings.length
                     ? `${upperBound ? "Within " : ""}${duration(median)}`
-                    : "Waiting for a delivery"}
+                    : "Not timed yet"}
                 </strong>
                 <span>
                   {timings.length
                     ? `Median of ${timings.length} ${timings.length === 1 ? "change" : "changes"}`
-                    : "No confirmed delivery today"}
+                    : "Timing starts with an observed merge"}
                 </span>
                 {last && (
                   <span className={styles.lastDelivery}>
@@ -586,8 +624,8 @@ export default function FactoryFloor({
           })}
         </div>
         <p className={styles.timingNote}>
-          “Within” uses the first confirmed sighting. The change may have gone
-          live sooner.
+          Only changes merged since recording began are timed. “Within” uses the
+          first confirmed sighting.
         </p>
       </section>
       <footer className={styles.notes}>
@@ -595,12 +633,6 @@ export default function FactoryFloor({
           Changes move when GitHub sends an update. This page refreshes once a
           minute while open. All times are Pacific.
         </p>
-        {saved && (
-          <p>
-            The live update is unavailable. You’re viewing the saved GitHub
-            snapshot shown above.
-          </p>
-        )}
         {data.coverage.map((note) => (
           <p key={note}>{note}</p>
         ))}

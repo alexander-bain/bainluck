@@ -21,6 +21,7 @@ export interface Change {
   merged_at: string | null;
   live_at: string | null;
   timing: "reported" | "observed" | null;
+  merge_to_live_seconds?: number | null;
 }
 
 export interface Jam {

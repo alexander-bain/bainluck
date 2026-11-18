@@ -10,8 +10,11 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
+import urllib.parse
 
 from model import build, instant, iso, public_title, PACIFIC, TRUSTED
 
@@ -21,25 +24,36 @@ ASSET_URL = f"https://github.com/{REPO}/releases/download/{RELEASE}/factory.json
 
 
 class GitHub:
-    def __init__(self):
-        self.token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-
-    def request(self, endpoint, data=None, method=None, raw=False):
+    def __init__(self, token=None, read_only=True):
+        self.token = (
+            token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        )
         if not self.token:
-            command = ["gh", "api", endpoint]
-            if method:
-                command += ["--method", method]
-            if data is not None:
-                command += ["--input", "-"]
-            result = subprocess.run(
-                command,
-                input=json.dumps(data) if data is not None else None,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            return json.loads(result.stdout) if result.stdout else None
-        body = json.dumps(data).encode() if data is not None else None
+            self.token = subprocess.check_output(
+                ["gh", "auth", "token"], text=True
+            ).strip()
+        self.read_only = read_only
+        self.api_calls = 0
+        self.api_calls_by_resource = {"core": 0, "graphql": 0}
+        self.public_reads = 0
+        self.rates = {}
+        self.lock = threading.Lock()
+        self.started_at = time.monotonic()
+
+    def request(self, endpoint, data=None, method=None, binary=None):
+        method = method or ("POST" if data is not None or binary is not None else "GET")
+        graphql_read = (
+            endpoint == "graphql"
+            and data
+            and not re.search(r"\bmutation\b", data.get("query", ""))
+        )
+        if self.read_only and method != "GET" and not graphql_read:
+            raise RuntimeError("This collector run has read-only API access")
+        body = (
+            binary
+            if binary is not None
+            else json.dumps(data).encode() if data is not None else None
+        )
         url = (
             endpoint
             if endpoint.startswith("https://")
@@ -53,12 +67,53 @@ class GitHub:
                 "Authorization": f"Bearer {self.token}",
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
-                "Content-Type": "application/json",
+                "Content-Type": (
+                    "application/octet-stream"
+                    if binary is not None
+                    else "application/json"
+                ),
             },
         )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            content = response.read()
-        return content if raw else json.loads(content) if content else None
+        with self.lock:
+            self.api_calls += 1
+            self.api_calls_by_resource[
+                "graphql" if endpoint == "graphql" else "core"
+            ] += 1
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                self._remember_rate(response.headers)
+                content = response.read()
+        except urllib.error.HTTPError as error:
+            self._remember_rate(error.headers)
+            raise
+        return json.loads(content) if content else None
+
+    def _remember_rate(self, headers):
+        remaining = headers.get("X-RateLimit-Remaining")
+        if remaining is not None:
+            with self.lock:
+                self.rates[headers.get("X-RateLimit-Resource", "core")] = int(remaining)
+
+    def public_json(self, url):
+        self.public_reads += 1
+        return read_public(url)
+
+    def metrics(self):
+        try:
+            limits = self.request("rate_limit")["resources"]
+            self.rates.setdefault("core", limits["core"]["remaining"])
+            self.rates.setdefault("graphql", limits["graphql"]["remaining"])
+        except (urllib.error.URLError, ValueError, KeyError):
+            pass
+        return {
+            "phase": "collector",
+            "github_api_calls": self.api_calls,
+            "api_calls_by_resource": self.api_calls_by_resource,
+            "public_reads": self.public_reads,
+            "rate_limit_remaining": self.rates.get("core"),
+            "graphql_remaining": self.rates.get("graphql"),
+            "elapsed_seconds": round(time.monotonic() - self.started_at, 2),
+        }
 
     def pages(self, endpoint, field=None):
         result = []
@@ -85,12 +140,12 @@ def safe_comment(comment):
         "created_at": comment["created_at"],
         "updated_at": comment["updated_at"],
         "association": comment.get("author_association"),
-        "fable_accept": body.startswith("**Fable look")
-        and bool(re.search(r"\bACCEPT\b", body)),
+        "fable_accept": body.startswith("**Fable")
+        and bool(re.search(r"\bACCEPT\b|\bno look needed\b", body, re.I)),
     }
 
 
-def collect_pull(api, summary, cached=None, refresh=False):
+def collect_pull(api, summary, cached=None):
     number = summary["number"]
     core = {
         k: summary.get(k)
@@ -110,6 +165,9 @@ def collect_pull(api, summary, cached=None, refresh=False):
         head_sha=summary["head"]["sha"],
         fable_needed=bool(
             re.search(r"Fable\s*:\s*needed", summary.get("body") or "", re.I)
+        ),
+        fable_not_needed=bool(
+            re.search(r"Fable\s*:\s*not needed", summary.get("body") or "", re.I)
         ),
     )
     # Files and commit topology are immutable at one head. Mutable evidence
@@ -335,7 +393,7 @@ def history_signals(api, midnight):
     return receipts, latest
 
 
-def collect(api, previous=None, cache=None, event=None):
+def collect(api, previous=None, cache=None, event=None, open_summaries=None):
     previous, cache, event = previous or {}, cache or {}, event or {}
     now = datetime.now(timezone.utc)
     midnight = now.astimezone(PACIFIC).replace(
@@ -344,7 +402,7 @@ def collect(api, previous=None, cache=None, event=None):
     coverage = []
     receipts, latest = history_signals(api, midnight)
     try:
-        health = read_public("https://api.bainluck.com/api/health")
+        health = api.public_json("https://api.bainluck.com/api/health")
         deployed = git("rev-parse", "--verify", f"{health['commit']}^{{commit}}")
         if health.get("status") == "ok":
             receipts.append(
@@ -369,7 +427,11 @@ def collect(api, previous=None, cache=None, event=None):
         last = max(successes, key=lambda d: d["at"])
         dates.append(instant(git("show", "-s", "--format=%cI", last["commit"])))
     floor = min(dates)
-    summaries = api.pages("pulls?state=open&sort=updated&direction=desc")
+    summaries = (
+        open_summaries
+        if open_summaries is not None
+        else api.pages("pulls?state=open&sort=updated&direction=desc")
+    )
     for page in range(1, 1001):
         rows = api.request(
             f"repos/{REPO}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page={page}"
@@ -383,15 +445,6 @@ def collect(api, previous=None, cache=None, event=None):
     for old in previous.get("changes", []):
         if old["station"] == "Ship" and old["number"] not in numbers:
             summaries.append(api.request(f"repos/{REPO}/pulls/{old['number']}"))
-    affected = {
-        (event.get("pull_request") or {}).get("number"),
-        (event.get("issue") or {}).get("number"),
-    }
-    affected.update(
-        p["number"] for p in (event.get("workflow_run") or {}).get("pull_requests", [])
-    )
-    sha = event.get("sha") or (event.get("workflow_run") or {}).get("head_sha")
-    full = not event or os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
     with ThreadPoolExecutor(max_workers=4) as workers:
         pulls = list(
             workers.map(
@@ -399,7 +452,6 @@ def collect(api, previous=None, cache=None, event=None):
                     api,
                     p,
                     cache.get(str(p["number"])),
-                    full or p["number"] in affected or p["head"]["sha"] == sha,
                 ),
                 summaries,
             )
@@ -491,98 +543,157 @@ def collect(api, previous=None, cache=None, event=None):
     }
 
 
+def needs_refresh(previous, open_summaries, now):
+    if not previous:
+        return True
+    before = {c["number"] for c in previous["changes"] if not c.get("merged_at")}
+    after = {p["number"] for p in open_summaries}
+    age = (now - instant(previous["generated_at"])).total_seconds()
+    return before != after or age < 0 or age >= 180
+
+
+def authorize_publication():
+    if (
+        os.environ.get("GITHUB_ACTIONS") != "true"
+        or os.environ.get("GITHUB_REF") != "refs/heads/master"
+    ):
+        raise RuntimeError("Publication requires a master GitHub Actions run")
+    if os.environ.get("GITHUB_EVENT_NAME") in {
+        "pull_request",
+        "pull_request_review",
+        "pull_request_target",
+    }:
+        raise RuntimeError("Pull request events cannot publish")
+    if git("branch", "--show-current") != "master" or not contains(
+        "origin/master", git("rev-parse", "HEAD")
+    ):
+        raise RuntimeError("Publication requires the checked-out master commit")
+    if not os.environ.get("GITHUB_TOKEN"):
+        raise RuntimeError("Publication requires the built-in GitHub token")
+
+
+def read_published(api):
+    try:
+        release = api.request(f"repos/{REPO}/releases/tags/{RELEASE}")
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return None, {}, {}
+        raise
+    assets = {a["name"]: a for a in release["assets"]}
+    asset = assets.get("factory.json") or assets.get("factory-next.json")
+    if not asset:
+        return release, {}, {}
+    previous = api.public_json(
+        asset["browser_download_url"] + "?v=" + asset["updated_at"]
+    )
+    # Existing v1 releases can be consumed once, then written as two assets.
+    cache = previous.pop("_collector", {})
+    cache_asset = assets.get("factory-cache.json")
+    if cache_asset:
+        payload = api.public_json(
+            cache_asset["browser_download_url"] + "?v=" + cache_asset["updated_at"]
+        )
+        if payload.get("generated_at") == previous.get("generated_at"):
+            cache = payload.get("pulls", {})
+    return release, previous, cache
+
+
+def publish_asset(api, release, name, payload):
+    temporary = name.removesuffix(".json") + "-next.json"
+    assets = api.request(f"repos/{REPO}/releases/{release['id']}/assets")
+    for asset in assets:
+        if asset["name"] == temporary:
+            api.request(f"repos/{REPO}/releases/assets/{asset['id']}", method="DELETE")
+    url = release["upload_url"].split("{")[0] + "?name=" + urllib.parse.quote(temporary)
+    uploaded = api.request(
+        url, method="POST", binary=json.dumps(payload, separators=(",", ":")).encode()
+    )
+    for asset in assets:
+        if asset["name"] == name:
+            api.request(f"repos/{REPO}/releases/assets/{asset['id']}", method="DELETE")
+    api.request(
+        f"repos/{REPO}/releases/assets/{uploaded['id']}", {"name": name}, method="PATCH"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--capture", type=Path)
     parser.add_argument("--previous", type=Path)
+    parser.add_argument("--cache-input", type=Path)
+    parser.add_argument("--cache-output", type=Path)
     parser.add_argument("--publish", action="store_true")
     args = parser.parse_args()
-    api = GitHub()
-    previous, cache, release = {}, {}, None
-    if args.previous:
-        previous = json.loads(args.previous.read_text())
     if args.publish:
-        try:
-            release = api.request(f"repos/{REPO}/releases/tags/{RELEASE}")
-        except urllib.error.HTTPError as error:
-            if error.code != 404:
-                raise
-        if release:
-            assets = api.request(f"repos/{REPO}/releases/{release['id']}/assets")
-            asset = next((a for a in assets if a["name"] == "factory.json"), None)
-            asset = asset or next(
-                (a for a in assets if a["name"] == "factory-next.json"), None
-            )
-            if asset:
-                previous = read_public(
-                    asset["browser_download_url"] + "?v=" + asset["updated_at"]
+        authorize_publication()
+    api = GitHub(read_only=not args.publish)
+    try:
+        previous = json.loads(args.previous.read_text()) if args.previous else {}
+        cache = (
+            json.loads(args.cache_input.read_text()).get("pulls", {})
+            if args.cache_input
+            else {}
+        )
+        release, summaries = None, None
+        if args.publish:
+            release, previous, cache = read_published(api)
+            summaries = api.pages("pulls?state=open&sort=updated&direction=desc")
+            if not needs_refresh(previous, summaries, datetime.now(timezone.utc)):
+                print(
+                    json.dumps(
+                        {
+                            "skipped": True,
+                            "reason": "published copy is under three minutes old",
+                        }
+                    )
                 )
-                cache = previous.pop("_collector", {})
-    event_path = os.environ.get("GITHUB_EVENT_PATH")
-    event = json.loads(Path(event_path).read_text()) if event_path else None
-    snapshot = collect(api, previous, cache, event)
-    result = build(snapshot, previous)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, indent=2) + "\n")
-    if args.capture:
-        args.capture.parent.mkdir(parents=True, exist_ok=True)
-        args.capture.write_text(json.dumps(snapshot, indent=2) + "\n")
-    if args.publish:
-        if release is None:
-            release = api.request(
-                f"repos/{REPO}/releases",
-                {
-                    "tag_name": RELEASE,
-                    "target_commitish": git("rev-parse", "origin/master"),
-                    "name": "The Factory data",
-                    "body": "Public event snapshots for /factory.",
-                    "make_latest": "false",
-                    "prerelease": True,
-                },
-                method="POST",
-            )
-        result["_collector"] = {str(p["number"]): p for p in snapshot["pulls"]}
+                return
+        event_path = os.environ.get("GITHUB_EVENT_PATH")
+        event = json.loads(Path(event_path).read_text()) if event_path else None
+        snapshot = collect(api, previous, cache, event, summaries)
+        result = build(snapshot, previous)
+        cache_payload = {
+            "schema_version": 1,
+            "generated_at": result["generated_at"],
+            "pulls": {str(p["number"]): p for p in snapshot["pulls"]},
+        }
+        args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, separators=(",", ":")) + "\n")
-        # gh uses the SAME built-in token as every API call. Upload completes
-        # before the stable-name swap. Readers retain their previous ISR page
-        # during the brief swap, rather than interpreting a 404 as an empty floor.
-        temporary = args.output.with_name("factory-next.json")
-        temporary.write_bytes(args.output.read_bytes())
-        subprocess.run(
-            [
-                "gh",
-                "release",
-                "upload",
-                RELEASE,
-                str(temporary),
-                "--clobber",
-                "--repo",
-                REPO,
-            ],
-            check=True,
-        )
-        assets = api.request(f"repos/{REPO}/releases/{release['id']}/assets")
-        for asset in assets:
-            if asset["name"] == "factory.json":
-                api.request(
-                    f"repos/{REPO}/releases/assets/{asset['id']}", method="DELETE"
+        if args.capture:
+            args.capture.parent.mkdir(parents=True, exist_ok=True)
+            args.capture.write_text(json.dumps(snapshot, indent=2) + "\n")
+        if args.cache_output:
+            args.cache_output.write_text(
+                json.dumps(cache_payload, separators=(",", ":")) + "\n"
+            )
+        if args.publish:
+            if release is None:
+                release = api.request(
+                    f"repos/{REPO}/releases",
+                    {
+                        "tag_name": RELEASE,
+                        "target_commitish": git("rev-parse", "origin/master"),
+                        "name": "The Factory data",
+                        "body": "Public event snapshots for /factory.",
+                        "make_latest": "false",
+                        "prerelease": True,
+                    },
+                    method="POST",
                 )
-        uploaded = next(a for a in assets if a["name"] == "factory-next.json")
-        api.request(
-            f"repos/{REPO}/releases/assets/{uploaded['id']}",
-            {"name": "factory.json"},
-            method="PATCH",
+            publish_asset(api, release, "factory-cache.json", cache_payload)
+            publish_asset(api, release, "factory.json", result)
+        print(
+            json.dumps(
+                {
+                    "changes": len(result["changes"]),
+                    "captured_at": result["generated_at"],
+                    "published": args.publish,
+                }
+            )
         )
-    print(
-        json.dumps(
-            {
-                "changes": len(result["changes"]),
-                "captured_at": result["generated_at"],
-                "published": args.publish,
-            }
-        )
-    )
+    finally:
+        print("FACTORY_METRICS " + json.dumps(api.metrics()))
 
 
 if __name__ == "__main__":

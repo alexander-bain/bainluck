@@ -126,7 +126,7 @@ def classify(pull, deployments, now):
             change["reasons"].append("Checks on this version could not be confirmed.")
         return change
     change["station"] = "Review"
-    if not pull.get("reviews_complete") or not pull.get("commits_complete"):
+    if not pull.get("reviews_complete"):
         change["unsure"] = True
         change["reasons"].append("Review evidence could not be confirmed.")
         return change
@@ -140,9 +140,13 @@ def classify(pull, deployments, now):
     )
     if latest_review.get("state") != "APPROVED":
         return change
-    if pull.get("fable_needed"):
+    if pull.get("fable_needed") and not pull.get("fable_not_needed"):
         non_merge = [c for c in pull.get("commits", []) if c["parents"] == 1]
-        if not pull.get("comments_complete") or not non_merge:
+        if (
+            not pull.get("commits_complete")
+            or not pull.get("comments_complete")
+            or not non_merge
+        ):
             change["unsure"] = True
             change["reasons"].append("The final review could not be confirmed.")
             return change
@@ -230,6 +234,16 @@ def build(snapshot, previous=None):
             change["live_at"] = min(old["live_at"], change["live_at"], key=instant)
             if old["live_at"] == change["live_at"]:
                 change["timing"] = old["timing"]
+        observed_since = previous.get("observed_since", snapshot["captured_at"])
+        change["merge_to_live_seconds"] = None
+        if (
+            change["merged_at"]
+            and change["live_at"]
+            and instant(change["merged_at"]) >= instant(observed_since)
+        ):
+            change["merge_to_live_seconds"] = (
+                instant(change["live_at"]) - instant(change["merged_at"])
+            ).total_seconds()
     return {
         "schema_version": 1,
         "generated_at": snapshot["captured_at"],
