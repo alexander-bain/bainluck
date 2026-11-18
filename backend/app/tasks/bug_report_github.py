@@ -137,13 +137,25 @@ def format_issue_body(
         "",
     ]
 
+    crash_log = state.get("crash_log") if state.get("source") == "testflight" else None
+    if crash_log:
+        head = "\n".join(str(crash_log).splitlines()[:60]).replace("`", "'")
+        lines += ["<details><summary>Crash log (first 60 lines)</summary>", "", "```", head, "```", "</details>", ""]
+
     if has_screenshot:
         lines.append("### Screenshot")
         lines.append(f"[View screenshot + full app state →]({admin_url})")
         lines.append("")
 
     lines.append("---")
-    lines.append(f"*Auto-created from rage shake (report #{report_id}). [Admin detail →]({admin_url})*")
+    if state.get("source") == "testflight":
+        kind = "crash" if state.get("testflight_kind") == "crash" else "screenshot"
+        lines.append(
+            f"*Auto-created from TestFlight {kind} feedback (report #{report_id}); "
+            f"the full submission is in App Store Connect. [Admin detail →]({admin_url})*"
+        )
+    else:
+        lines.append(f"*Auto-created from rage shake (report #{report_id}). [Admin detail →]({admin_url})*")
 
     return "\n".join(lines)
 
@@ -214,6 +226,10 @@ def compute_fingerprint(
     cat = (category or "other").strip().lower()
     diagnosis = compute_root_cause(description).strip().lower()
     raw = f"{page}|{cat}|{diagnosis}"
+    # 220-A: a TestFlight report carries no screen name, so page+category would
+    # fold every tester's report into one issue. Each submission files its own.
+    if state.get("source") == "testflight" and state.get("testflight_submission_id"):
+        raw = f"testflight|{state['testflight_submission_id']}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 

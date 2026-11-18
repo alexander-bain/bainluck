@@ -26,7 +26,7 @@ struct ContainerHubView: View {
             }
         }
         .background(DS.surface)
-        .navigationTitle(displayName)
+        .navigationTitle(effectiveNavigationTitle)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
@@ -38,14 +38,33 @@ struct ContainerHubView: View {
         }
     }
 
+    private var effectiveNavigationTitle: String {
+        if GroupingMachineryGate12288.isMachineryCandidateSlug(vm.slug), displayName.count > 28 {
+            return ""
+        }
+        return displayName
+    }
+
     private func hub(_ presentation: ContainerHubPresentation) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 if let title = presentation.title {
-                    Text(title).font(.title2.weight(.bold)).foregroundStyle(DS.textPrimary)
+                    Text(title)
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(DS.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let subtitle = presentation.subtitle {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if let note = presentation.note {
-                    Text(note).font(.subheadline).foregroundStyle(DS.textSecondary)
+                    Text(note)
+                        .font(.subheadline)
+                        .foregroundStyle(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if presentation.response.edition?.isTheme == true, presentation.isPartial {
                     Button("Retry unavailable markets") { Task { await vm.load() } }
@@ -103,20 +122,45 @@ struct ContainerHubView: View {
                 // linked to a rendered event are reached through that game's page.
                 let coveredIds = vm.pairedCoveredMarketIds
                 ForEach(presentation.displaySections) { section in
-                    let visibleMembers = coveredIds.isEmpty
-                        ? section.members
-                        : section.members.filter { !($0.type == "market" && coveredIds.contains($0.memberId)) }
-                    if !visibleMembers.isEmpty {
+                    if let visualBlock = section.visualBlock {
                         Section {
-                            ForEach(visibleMembers) { member in
-                                memberCard(member, presentation: presentation)
-                                    .id(member.id)
-                            }
+                            MachinerySectionBlockView(
+                                visualBlock: visualBlock,
+                                members: section.members
+                            )
                         } header: {
-                            Text(presentation.sectionTitle(section.sectionClass))
-                                .font(.headline)
-                                .foregroundStyle(DS.textPrimary)
-                                .padding(.top, 8)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(presentation.resolvedSectionTitle(section))
+                                    .font(.headline)
+                                    .foregroundStyle(DS.textPrimary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let sectionNote = section.note?.trimmingCharacters(in: .whitespacesAndNewlines),
+                                   !sectionNote.isEmpty {
+                                    Text(sectionNote)
+                                        .font(.subheadline)
+                                        .foregroundStyle(DS.textSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .padding(.top, 8)
+                        }
+                    } else {
+                        let visibleMembers = coveredIds.isEmpty
+                            ? section.members
+                            : section.members.filter { !($0.type == "market" && coveredIds.contains($0.memberId)) }
+                        if !visibleMembers.isEmpty {
+                            Section {
+                                ForEach(visibleMembers) { member in
+                                    memberCard(member, presentation: presentation)
+                                        .id(member.id)
+                                }
+                            } header: {
+                                Text(presentation.resolvedSectionTitle(section))
+                                    .font(.headline)
+                                    .foregroundStyle(DS.textPrimary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .padding(.top, 8)
+                            }
                         }
                     }
                 }

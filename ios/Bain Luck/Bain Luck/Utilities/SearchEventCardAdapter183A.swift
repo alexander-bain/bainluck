@@ -11,14 +11,23 @@ enum SearchEventCardAdapter183A {
         sportDisplayName: String?
     ) -> FeedEventData {
         let resolvedCurrentOdds: CurrentOdds? = {
-            if let current = event.currentOdds {
+            let isOpeningLine = event.heroProbabilitySource == OpeningLineHero.openingSource
+            if var current = event.currentOdds {
+                if isOpeningLine {
+                    // The old serializer's snapshot stamp dates the book rows, not the win chance.
+                    current.homeProbability = nil
+                    current.awayProbability = nil
+                    current.drawProbability = nil
+                    current.homeRenderedPercent = nil
+                    current.awayRenderedPercent = nil
+                }
                 return current
             }
             // #4967 — search rows without `current_odds` still serve `hero_probability` /
             // `hero_probability_away`. Populate `CurrentOdds` when gradable so the card
             // renders the server's blended probability (`EventCardView.currentAwayIsWithheld`
             // enforces #5363 on draw-priced sports).
-            guard EventState.canStillBeGraded(
+            guard !isOpeningLine, EventState.canStillBeGraded(
                 event.status,
                 commenceTime: event.commenceTime?.asDate
             ), event.heroProbability != nil || event.heroProbabilityAway != nil else {
@@ -54,7 +63,7 @@ enum SearchEventCardAdapter183A {
             homeScore: event.homeScore,
             awayScore: event.awayScore,
             blendFoldRevision: nil,
-            heroProbabilitySource: nil,
+            heroProbabilitySource: event.heroProbabilitySource,
             heroProbabilityObservedAt: nil,
             currentOdds: resolvedCurrentOdds,
             openingOdds: event.openingOdds,

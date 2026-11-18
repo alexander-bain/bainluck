@@ -31,6 +31,7 @@ from app.utils.container_presentation import (
     event_destination,
     market_destination,
 )
+from app.utils.graded_card import rendered_card_percents, rendered_duel_percents
 
 __all__ = [
     "CANDIDATE_2028_PRESIDENTIAL_PATH",
@@ -388,6 +389,66 @@ def _proper_case_outcome_label(label: str) -> str:
     return " ".join(fixed)
 
 
+def _format_bps_number(val: float) -> str:
+    if abs(val - round(val)) < 1e-6:
+        return str(int(round(val)))
+    return f"{val:g}"
+
+
+def _clean_outcome_label(label: str) -> str:
+    """Canonicalize venue outcome labels into one Bain Luck house style (Slice 5 Note 5)."""
+    trimmed = re.sub(r"\s+", " ", label.strip())
+    if not trimmed:
+        return trimmed
+    low = trimmed.lower()
+    if low == "democratic party":
+        return "Democratic Party"
+    if low == "republican party":
+        return "Republican Party"
+
+    # Strip redundant leading 'Exactly ' on numerical-scale brackets ('Exactly 4.1%' -> '4.1%').
+    if re.match(r"^exactly\s+[-+$€£\d]", trimmed, re.IGNORECASE):
+        trimmed = re.sub(r"^exactly\s+", "", trimmed, flags=re.IGNORECASE).strip()
+
+    # Unify FOMC / rate-move outcomes onto house style ('25 bps decrease', 'No change', '25 bps increase', '50+ bps increase').
+    if _HOLD_MOVE_RE.match(trimmed):
+        return "No change"
+
+    m_pre = _SIGNED_PREFIX_MOVE_RE.match(trimmed)
+    if m_pre and re.search(r"bps|basis\s+points?", trimmed, re.IGNORECASE):
+        direction = -1 if m_pre.group(1).lower() in {"cut", "cuts", "decrease", "lower"} else 1
+        op_tok = (m_pre.group(2) or "").strip()
+        plus_tok = (m_pre.group(4) or "").strip()
+        val = _parse_float(m_pre.group(3))
+        if math.isfinite(val):
+            # Strict '>' on the FOMC 25-bps grid ('Hike >25bps', 'Cut >25bps') means 50+ bps.
+            if op_tok.startswith(">") and not op_tok.startswith(">=") and abs(val - 25.0) < 1e-6:
+                val = 50.0
+                is_open = True
+            else:
+                is_open = bool(op_tok or plus_tok)
+            word = "decrease" if direction < 0 else "increase"
+            return f"{_format_bps_number(val)}{'+' if is_open else ''} bps {word}"
+
+    m_suf = _SIGNED_SUFFIX_MOVE_RE.match(trimmed)
+    if m_suf and re.search(r"bps|basis\s+points?", trimmed, re.IGNORECASE):
+        direction = -1 if m_suf.group(4).lower() in {"cut", "cuts", "decrease"} else 1
+        op_tok = (m_suf.group(1) or "").strip()
+        plus_tok = (m_suf.group(3) or "").strip()
+        or_more = bool(re.search(r"\bor\s+(?:more|larger|greater)$", trimmed, re.IGNORECASE))
+        val = _parse_float(m_suf.group(2))
+        if math.isfinite(val):
+            if op_tok.startswith(">") and not op_tok.startswith(">=") and abs(val - 25.0) < 1e-6:
+                val = 50.0
+                is_open = True
+            else:
+                is_open = bool(op_tok or plus_tok or or_more)
+            word = "decrease" if direction < 0 else "increase"
+            return f"{_format_bps_number(val)}{'+' if is_open else ''} bps {word}"
+
+    return _proper_case_outcome_label(trimmed)
+
+
 _PALETTE_FALLBACK: tuple[str, ...] = (
     "#059669",
     "#2563EB",
@@ -612,29 +673,211 @@ def choose_section_form(
     return "sibling_fields_grid"
 
 
+_MONTH_FULL_MAP: dict[str, str] = {
+    "jan": "January",
+    "january": "January",
+    "feb": "February",
+    "february": "February",
+    "mar": "March",
+    "march": "March",
+    "apr": "April",
+    "april": "April",
+    "may": "May",
+    "jun": "June",
+    "june": "June",
+    "jul": "July",
+    "july": "July",
+    "aug": "August",
+    "august": "August",
+    "sep": "September",
+    "sept": "September",
+    "september": "September",
+    "oct": "October",
+    "october": "October",
+    "nov": "November",
+    "november": "November",
+    "dec": "December",
+    "december": "December",
+}
+
+
+def _expand_month_token(tok: str) -> str:
+    return _MONTH_FULL_MAP.get(tok.strip().lower(), tok.strip().capitalize())
+
+
 def _clean_section_market_label(name: str) -> str:
-    cleaned = name.strip()
-    cleaned = re.sub(
-        r"^what\s+will\s+the\s+fed\s+rate\s+be\s+at\s+the\s+end\s+of\s+(\d{4})\??$",
-        r"End-of-\1 Fed Rate",
+    """Rewrite raw venue strings into clean Bain Luck market titles (Slice 5 Note 5)."""
+    cleaned = re.sub(r"\s+", " ", name.strip())
+    if not cleaned:
+        return ""
+
+    # ── Federal Reserve & U.S. Macro house titles ────────────────────────
+    m = re.match(
+        r"^what\s+will\s+(?:the\s+)?fed\s+rate\s+be\s+at\s+the\s+end\s+of\s+(\d{4})\??$",
         cleaned,
-        flags=re.IGNORECASE,
+        re.IGNORECASE,
     )
-    cleaned = re.sub(
-        r"^how\s+many\s+fed\s+rate\s+hikes\s+in\s+(\d{4})\??$",
-        r"\1 Fed Rate Hikes",
+    if m:
+        return f"End-of-{m.group(1)} Fed Rate"
+
+    m = re.match(
+        r"^what\s+will\s+(?:the\s+)?fed\s+rate\s+hit\s+before\s+(\d{4})\??$",
         cleaned,
-        flags=re.IGNORECASE,
+        re.IGNORECASE,
     )
+    if m:
+        return f"Fed Rate Highs & Lows Before {m.group(1)}"
+
+    m = re.match(
+        r"^how\s+many\s+fed\s+rate\s+(hikes|cuts)\s+in\s+(\d{4})\??$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if m:
+        return f"{m.group(2)} Fed Rate {m.group(1).capitalize()}"
+
+    m = re.match(
+        r"^fed\s+decision\s+in\s+([a-z]+)(?:\s+(\d{4}))?\??$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if m:
+        mon = _expand_month_token(m.group(1))
+        yr = (m.group(2) or "").strip()
+        return f"{mon} {yr + ' ' if yr else ''}Fed Decision"
+
+    m = re.match(r"^fed\s+decisions\s*\(([^)]+)\)\??$", cleaned, re.IGNORECASE)
+    if m:
+        span = m.group(1).strip().replace("-", "–")
+        return f"{span} FOMC Rate Path"
+
+    if re.match(r"^fed\s+rate\s+cut\s+by(?:\.\.\.|…)?\??$", cleaned, re.IGNORECASE):
+        return "First Fed Rate Cut Timing"
+
+    if re.match(r"^next\s+fed\s+rate\s+cut\??$", cleaned, re.IGNORECASE):
+        return "Next Fed Rate Cut"
+
+    if re.match(r"^predicted\s+fed\s+rate\s+under\s+each\s+fed\s+chair\??$", cleaned, re.IGNORECASE):
+        return "Implied Rate by Fed Chair"
+
+    m = re.match(
+        r"^(?:us|u\.s\.)\s+(?:real\s+)?gdp\s+growth\s+in\s+(q[1-4]\s+\d{4}|\d{4})\??$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if m:
+        return f"{m.group(1).upper()} U.S. GDP Growth"
+
+    m = re.match(r"^gdp\s+growth\s+in\s+(\d{4})\??$", cleaned, re.IGNORECASE)
+    if m:
+        return f"{m.group(1)} U.S. GDP Growth"
+
+    m = re.match(
+        r"^unemployment\s+rate\s+in\s+([a-z]+)(?:\s+(\d{4}))?\??$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if m:
+        mon = _expand_month_token(m.group(1))
+        yr = (m.group(2) or "").strip()
+        short_mon = mon[:3] if yr and len(mon) > 5 else mon
+        return f"{short_mon} {yr + ' ' if yr else ''}U.S. Unemployment"
+
+    m = re.match(r"^([a-z]+)\s+unemployment\s+rate\??$", cleaned, re.IGNORECASE)
+    if m and m.group(1).lower() in _MONTH_FULL_MAP:
+        return f"{_expand_month_token(m.group(1))} U.S. Unemployment"
+
+    m = re.match(r"^recession\s+in\s+(\d{4})\??$", cleaned, re.IGNORECASE)
+    if m:
+        return f"{m.group(1)} U.S. Recession"
+
+    m = re.match(r"^(?:us|u\.s\.)\s+recession\s+by\s+end\s+of\s+(\d{4})\??$", cleaned, re.IGNORECASE)
+    if m:
+        return f"U.S. Recession by End of {m.group(1)}"
+
+    # ── Politics / Elections house titles ────────────────────────────────
+    if re.match(r"^2028\s+presidential\s+election\s+winner\??\s*\(party\)$", cleaned, re.IGNORECASE):
+        return "White House Party Control"
+
+    m = re.match(
+        r"^(?:2028\s+)?presidential\s+election:\s*(.+?)\s+winner\??(?:\s*\(\d{4}\))?$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if m:
+        return f"{m.group(1).strip()} Presidential Race"
+
+    m = re.match(
+        r"^(.+?)\s+(republican|democratic)\s+presidential\s+(primary|caucus)\s+winner(?:\s+\d{4})?\??$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if m:
+        return f"{m.group(1).strip()} {m.group(2).capitalize()} {m.group(3).capitalize()}"
+
+    if re.match(r"^(?:2028\s+)?(?:u\.s\.\s+)?vice-presidential\s+election\s+winner\??$", cleaned, re.IGNORECASE):
+        return "Vice-Presidential Race"
+
+    m = re.match(r"^(?:2028\s+)?(democratic|republican)\s+vp\s+nominee\??$", cleaned, re.IGNORECASE)
+    if m:
+        return f"{m.group(1).capitalize()} VP Nominee"
+
+    m = re.match(r"^(?:2028\s+)?(democratic|republican)\s+presidential\s+ticket\??$", cleaned, re.IGNORECASE)
+    if m:
+        return f"{m.group(1).capitalize()} Presidential Ticket"
+
+    m = re.match(
+        r"^(democratic|republican)\s+presidential\s+nominee(?:\s+\d{4})?\??(?:\s*\(\d{4}\))?$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if m:
+        return f"{m.group(1).capitalize()} Presidential Nominee"
+
+    if re.match(r"^(?:2028\s+)?house\s+winner\??(?:\s*\(\d{4}\))?$", cleaned, re.IGNORECASE):
+        return "U.S. House Control"
+
+    m = re.match(
+        r"^(.+?)\s+(senate|house|gubernatorial|governor)\s+winner\??(?:\s*\(\d{4}\))?$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if m:
+        return f"{m.group(1).strip()} {m.group(2).capitalize()} Race"
+
+    # ── Sports / Awards / General cleanup ────────────────────────────────
+    is_oscar_nom = bool(re.match(r"^oscar\s+nominees?:", cleaned, re.IGNORECASE))
     cleaned = re.sub(
-        r"^(?:NFL:\s*|Pro\s+Football:?\s*|NFL\s+(?=(?:Passing|Rushing|Receiving)\b)|Oscar\s+Winner:\s*|Oscar\s+winner:\s*|Oscars\s+\d{4}:\s*|2028\s+U\.S\.\s*|2028\s+)",
+        r"^(?:NFL:\s*|Pro\s+Football:?\s*|NFL\s+(?=(?:Passing|Rushing|Receiving)\b)|Oscar\s+Winners?:\s*|Oscar\s+nominees?:\s*|Oscars?\s+\d{4}:\s*|2028\s+U\.S\.\s*|2028\s+)",
         "",
         cleaned,
         flags=re.IGNORECASE,
     )
+    if is_oscar_nom and not re.search(r"\bnominations?\b", cleaned, re.IGNORECASE):
+        cleaned = f"{cleaned.strip()} Nominations"
+    if re.match(r"^best\s+music\s*\(\s*original\s+score\s*\)", cleaned, re.IGNORECASE):
+        cleaned = re.sub(
+            r"^best\s+music\s*\(\s*original\s+score\s*\)",
+            "Best Original Score",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+    if re.match(r"^best\s+", cleaned, re.IGNORECASE):
+        cleaned = re.sub(r"\s+film\s+winner$", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s+film(?=\s+nominations$|$)", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s+winner$", "", cleaned, flags=re.IGNORECASE)
+
+    # Strip venue trailing '? (2028)', '(2028)', '?', and conversational prefixes
+    cleaned = re.sub(r"\?\s*\(\d{4}\)\s*$", "", cleaned)
+    cleaned = re.sub(r"\s*\(\d{4}\)\s*$", "", cleaned)
     cleaned = re.sub(r"\s*\?\s*$", "", cleaned)
     cleaned = re.sub(r"\s+2028$", "", cleaned)
-    return cleaned.strip() or name.strip()
+    cleaned = re.sub(r"^(?:what\s+will\s+(?:the\s+)?|who\s+will\s+(?:be\s+|win\s+)?)", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+winner$", " Winner", cleaned)
+    cleaned = cleaned.strip()
+    if cleaned and cleaned[0].islower():
+        cleaned = cleaned[0].upper() + cleaned[1:]
+    return cleaned or name.strip()
 
 
 _CUMULATIVE_OUTCOME_RE = re.compile(
@@ -753,9 +996,15 @@ def _hydrate_market_visual_item(
         ]
     else:
         kept = valid[:max_outcomes]
+        # Slice 5 Note 1: two-outcome complement pairs go through rendered_card_percents so they sum to 100.
+        pair_pcts: Optional[list[Optional[int]]] = (
+            rendered_card_percents([float(o["probability"]) for o in kept])
+            if len(valid) == 2 and len(kept) == 2
+            else None
+        )
         outcomes_out = []
         for idx, o in enumerate(kept):
-            o_name = _proper_case_outcome_label(str(o.get("name") or "").strip())
+            o_name = _clean_outcome_label(str(o.get("name") or "").strip())
             p = float(o["probability"])
             oid = int(o.get("id") or (mid * 100 + idx + 1))
             if idx == 0:
@@ -765,12 +1014,17 @@ def _hydrate_market_visual_item(
                 o_name,
                 explicit_url=(str(o["image_url"]) if o.get("image_url") else None),
             )
+            pct_val = (
+                int(pair_pcts[idx])
+                if pair_pcts is not None and pair_pcts[idx] is not None
+                else _half_up_pct(p)
+            )
             outcomes_out.append(
                 {
                     "outcome_id": oid,
                     "name": o_name,
                     "probability": p,
-                    "rendered_percent": _half_up_pct(p),
+                    "rendered_percent": pct_val,
                     "opening_probability": o.get("opening_probability"),
                     "art": art,
                 }
@@ -848,6 +1102,15 @@ def _hydrate_event_visual_item(
         explicit_color=away_td.get("primary_color"),
     )
 
+    # Slice 5 Note 1: send two-way game pairs through rendered_duel_percents so away_pct + home_pct == 100.
+    away_pct_raw, home_pct_raw = rendered_duel_percents(ap, hp)
+    away_pct = int(away_pct_raw) if away_pct_raw is not None else _half_up_pct(ap)
+    home_pct = int(home_pct_raw) if home_pct_raw is not None else _half_up_pct(hp)
+
+    card_ev = dict(event)
+    card_ev["rendered_away_percent"] = away_pct
+    card_ev["rendered_home_percent"] = home_pct
+
     fav_prob = max(hp, ap)
     return {
         "event_id": eid,
@@ -861,15 +1124,15 @@ def _hydrate_event_visual_item(
         "away_short": away_team.split()[-1] if away_team else "",
         "home_prob": hp,
         "away_prob": ap,
-        "home_pct": _half_up_pct(hp),
-        "away_pct": _half_up_pct(ap),
+        "home_pct": home_pct,
+        "away_pct": away_pct,
         "home_score": event.get("home_score"),
         "away_score": event.get("away_score"),
         "home_art": home_art,
         "away_art": away_art,
         "fav_prob": fav_prob,
         "closeness_to_50": abs(hp - 0.5),
-        "card": dict(event),
+        "card": card_ev,
     }
 
 
@@ -882,28 +1145,37 @@ def _downsample_points(points: Sequence[dict[str, Any]], limit: int = 20) -> lis
     return [pts[i] for i in idxs]
 
 
-def _history_chart_moved(chart_item: Mapping[str, Any], *, min_swing_pp: int = 2) -> bool:
-    """True when at least one series moved by >= ``min_swing_pp`` percentage points.
-
-    Slice 4 (Fable #12897 note 2): a flat line is not a picture — only a chart whose
-    number actually moved may render as ``probability_history_chart`` or count toward
-    Point 1 ('a picture on every screen').
+def _history_chart_moved(chart_item: Mapping[str, Any], *, min_swing_pp: int = 3) -> bool:
+    """True when observed history genuinely moved by >= ``min_swing_pp`` percentage points
+    and is not a ceiling-pinned 95%+ lock whose leading line sat flat (Slice 4 & Slice 5 Note 2).
     """
     if chart_item.get("moved") is False:
         return False
-    series = chart_item.get("series") or ()
+    series = [s for s in (chart_item.get("series") or ()) if isinstance(s, Mapping)]
+    if not series:
+        return False
     max_swing = 0
+    lead_cur = -1
+    lead_swing = 0
     for s in series:
-        if not isinstance(s, Mapping):
-            continue
         pcts = [
             int(pt["pct"])
             for pt in (s.get("points") or ())
             if isinstance(pt, Mapping) and isinstance(pt.get("pct"), (int, float))
         ]
-        if len(pcts) >= 2:
-            max_swing = max(max_swing, max(pcts) - min(pcts))
-    return max_swing >= min_swing_pp
+        swing = (max(pcts) - min(pcts)) if len(pcts) >= 2 else 0
+        max_swing = max(max_swing, swing)
+        cur = int(s.get("current_pct")) if isinstance(s.get("current_pct"), (int, float)) else (pcts[-1] if pcts else 0)
+        if cur > lead_cur:
+            lead_cur = cur
+            lead_swing = swing
+    if max_swing < min_swing_pp:
+        return False
+    # Never treat a ceiling-pinned >=95% lock ('Hawaii Senate 95%', 'Kevin Warsh & Rate > 2.5% 99%')
+    # as a moving chart unless the leading line itself moved >= min_swing_pp.
+    if lead_cur >= 95 and lead_swing < min_swing_pp:
+        return False
+    return True
 
 
 def _build_history_visual_item(
@@ -918,6 +1190,7 @@ def _build_history_visual_item(
     start_default = (now_dt - timedelta(hours=max(24, hours))).isoformat()
     end_default = now_dt.isoformat()
     series_out: list[dict[str, Any]] = []
+    used_colors: set[str] = set()
     earliest_iso: Optional[str] = None
     latest_iso: Optional[str] = None
     max_swing_pp = 0
@@ -936,13 +1209,12 @@ def _build_history_visual_item(
             pts_clean.append({"t": ts, "pct": pct})
         pts_clean = _downsample_points(pts_clean, limit=20)
         if len(pts_clean) < 2:
-            open_p = o.get("opening_probability")
-            start_pct = _half_up_pct(float(open_p)) if isinstance(open_p, (int, float)) and 0.0 < float(open_p) < 1.0 else cur_pct
+            # Slice 5 Note 2: never synthesize a fake 2-point slope from months-old opening_probability.
             pts_clean = [
-                {"t": start_default, "pct": start_pct},
+                {"t": start_default, "pct": cur_pct},
                 {"t": end_default, "pct": cur_pct},
             ]
-        if len(pts_clean) >= 2:
+        else:
             s_pcts = [p["pct"] for p in pts_clean]
             max_swing_pp = max(max_swing_pp, max(s_pcts) - min(s_pcts))
         if pts_clean:
@@ -951,13 +1223,19 @@ def _build_history_visual_item(
             if latest_iso is None or pts_clean[-1]["t"] > latest_iso:
                 latest_iso = pts_clean[-1]["t"]
         art = o.get("art") if isinstance(o.get("art"), Mapping) else {}
-        color = str(art.get("accent_color") or "") or _PALETTE_FALLBACK[idx % len(_PALETTE_FALLBACK)]
+        cand_color = str(art.get("accent_color") or "").strip()
+        if not cand_color or cand_color.lower() in used_colors:
+            cand_color = next(
+                (c for c in _PALETTE_FALLBACK if c.lower() not in used_colors),
+                _PALETTE_FALLBACK[idx % len(_PALETTE_FALLBACK)],
+            )
+        used_colors.add(cand_color.lower())
         series_out.append(
             {
                 "outcome_id": oid,
                 "name": str(o["name"]),
                 "current_pct": cur_pct,
-                "color": color,
+                "color": cand_color,
                 "art": dict(art),
                 "points": pts_clean,
             }
@@ -974,7 +1252,7 @@ def _build_history_visual_item(
         if y_max - y_min < 15:
             y_min = max(0, y_max - 15)
 
-    moved = max_swing_pp >= 2
+    moved = _history_chart_moved({"series": series_out})
     card_copy = dict(hydrated_market.get("card") or {})
     card_copy["content_kind"] = "history" if moved else str(hydrated_market.get("content_kind") or "futures")
 
@@ -1018,7 +1296,7 @@ async def _load_snapshot_from_db(
             "market_histories": norm_mh,
         }
 
-    from sqlalchemy import and_, or_, select
+    from sqlalchemy import and_, func, or_, select
     from sqlalchemy.orm import selectinload
 
     from app.models.models import Event, FuturesMarket, FuturesOddsSnapshot
@@ -1117,9 +1395,12 @@ async def _load_snapshot_from_db(
                 continue
             all_toks = [str(t).strip() for t in (aq.get("title_all_tokens") or ()) if str(t).strip()]
             any_toks = [str(t).strip() for t in (aq.get("any_tokens") or ()) if str(t).strip()]
+            excl_toks = [str(t).strip() for t in (aq.get("exclude_tokens") or ()) if str(t).strip()]
             parts = [FuturesMarket.name.ilike(f"%{t}%") for t in all_toks]
             if any_toks:
                 parts.append(or_(*(FuturesMarket.name.ilike(f"%{t}%") for t in any_toks)))
+            for ex in excl_toks:
+                parts.append(~FuturesMarket.name.ilike(f"%{ex}%"))
             if parts:
                 extra_clauses.append(and_(*parts))
         if extra_clauses:
@@ -1128,7 +1409,7 @@ async def _load_snapshot_from_db(
                 .options(selectinload(FuturesMarket.outcomes))
                 .where(FuturesMarket.status == "open", or_(*extra_clauses))
                 .order_by(FuturesMarket.volume.desc().nullslast(), FuturesMarket.id.asc())
-                .limit(120)
+                .limit(200)
             )
             for fm in (await db.execute(targeted_stmt)).scalars().all():
                 if fm.id not in seen_mids:
@@ -1181,35 +1462,50 @@ async def _load_snapshot_from_db(
             wanted_oids: set[int] = set()
             max_hours = max([int(hq.get("hours") or 168) for hq in all_hist_queries] or [168])
             for hq in all_hist_queries:
-                for m_dict in markets_out:
-                    if _market_matches_query(m_dict, hq):
-                        outs_sorted = sorted(
-                            m_dict["top_outcomes"],
-                            key=lambda x: -float(x.get("probability") or 0.0),
-                        )
-                        for o_d in outs_sorted[:6]:
-                            wanted_oids.add(int(o_d["id"]))
+                matched_for_hq = [m_dict for m_dict in markets_out if _market_matches_query(m_dict, hq)]
+                for m_dict in matched_for_hq[:12]:
+                    outs_sorted = sorted(
+                        m_dict["top_outcomes"],
+                        key=lambda x: -float(x.get("probability") or 0.0),
+                    )
+                    for o_d in outs_sorted[:4]:
+                        wanted_oids.add(int(o_d["id"]))
             if wanted_oids:
                 cutoff = now_dt - timedelta(hours=max_hours)
-                h_stmt = (
-                    select(FuturesOddsSnapshot)
+                # Partition by outcome_id so large outcome IDs are never starved behind a global row cap.
+                ranked_subq = (
+                    select(
+                        FuturesOddsSnapshot.outcome_id.label("outcome_id"),
+                        FuturesOddsSnapshot.captured_at.label("captured_at"),
+                        FuturesOddsSnapshot.probability.label("probability"),
+                        func.row_number()
+                        .over(
+                            partition_by=FuturesOddsSnapshot.outcome_id,
+                            order_by=FuturesOddsSnapshot.captured_at.desc(),
+                        )
+                        .label("rn"),
+                    )
                     .where(
                         FuturesOddsSnapshot.outcome_id.in_(sorted(wanted_oids)),
                         FuturesOddsSnapshot.captured_at >= cutoff,
                     )
-                    .order_by(
-                        FuturesOddsSnapshot.outcome_id,
-                        FuturesOddsSnapshot.captured_at,
-                    )
-                    .limit(4000)
+                    .subquery()
                 )
-                h_rows = (await db.execute(h_stmt)).scalars().all()
-                for hr in h_rows:
-                    oid = int(hr.outcome_id)
+                h_stmt = (
+                    select(
+                        ranked_subq.c.outcome_id,
+                        ranked_subq.c.captured_at,
+                        ranked_subq.c.probability,
+                    )
+                    .where(ranked_subq.c.rn <= 96)
+                    .order_by(ranked_subq.c.outcome_id.asc(), ranked_subq.c.captured_at.asc())
+                )
+                for oid_val, cap_at, prob_val in (await db.execute(h_stmt)).all():
+                    oid = int(oid_val)
                     histories_out.setdefault(oid, []).append(
                         {
-                            "timestamp": hr.captured_at.isoformat() if hr.captured_at else "",
-                            "probability": float(hr.probability),
+                            "timestamp": cap_at.isoformat() if cap_at else "",
+                            "probability": float(prob_val),
                         }
                     )
 
@@ -1240,17 +1536,98 @@ def _match_paired_set(
     return None
 
 
+def _twin_market_key(title: str) -> str:
+    """Canonicalize cross-venue twin titles (e.g. 'April 2027 Fed Decision' vs 'April Fed Decision')."""
+    low = title.strip().lower()
+    m_fomc = re.match(r"^([a-z]+)(?:\s+\d{4})?\s+fed\s+decision$", low)
+    if m_fomc:
+        return f"fomc:{m_fomc.group(1)}"
+    m_unemp = re.match(r"^([a-z]+)(?:\s+\d{4})?\s+u\.s\.\s+unemployment(?:\s+rate)?$", low)
+    if m_unemp:
+        return f"us_unemp:{_expand_month_token(m_unemp.group(1)).lower()}"
+    return _norm_key(title)
+
+
 def _dedupe_twin_markets(markets: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep the highest-liquidity canonical market when two venues list the same cleaned title."""
     seen_titles: set[str] = set()
     out: list[dict[str, Any]] = []
     for m in markets:
-        norm_t = _norm_key(m["title"])
+        norm_t = _twin_market_key(str(m["title"]))
         if norm_t in seen_titles:
             continue
         seen_titles.add(norm_t)
         out.append(m)
     return out
+
+
+def _join_human_list(items: Sequence[str]) -> str:
+    parts = [s.strip() for s in items if s and s.strip()]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return f"{parts[0]} and {parts[1]}"
+    return f"{', '.join(parts[:-1])}, and {parts[-1]}"
+
+
+def _resolve_section_heading(
+    sec_cfg: Mapping[str, Any],
+    *,
+    aq_kind: str,
+    form_id: str,
+    rendered_items: Sequence[Mapping[str, Any]],
+    visible_limit: int = 3,
+    default_title: str = "Markets",
+) -> tuple[str, Optional[str]]:
+    """Ensure a section's title and description match BOTH its chosen form AND its actual items (Slice 5 Note 4)."""
+    raw_title = str(sec_cfg.get("title") or default_title).strip()
+    raw_note = str(sec_cfg.get("note") or "").strip() or None
+    shown_titles = [
+        str(it.get("title") or "").strip()
+        for it in rendered_items[: max(1, visible_limit)]
+        if isinstance(it, Mapping) and str(it.get("title") or "").strip()
+    ]
+
+    if aq_kind == "market_history":
+        if form_id == "probability_history_chart":
+            if len(shown_titles) >= 2:
+                note = f"7-day odds movement across {_join_human_list(shown_titles)}."
+            elif len(shown_titles) == 1:
+                note = f"7-day odds movement in {shown_titles[0]}."
+            else:
+                note = raw_note
+            return raw_title, note
+
+        # Form switched away from probability_history_chart because no matched market moved:
+        # switch BOTH title and description to current-odds wording naming the rendered items.
+        fb_title = str(sec_cfg.get("fallback_title") or "").strip()
+        if not fb_title:
+            fb_title = raw_title
+            fb_title = re.sub(r"\s+odds\s+over\s+the\s+past\s+week$", " Odds", fb_title, flags=re.IGNORECASE)
+            fb_title = re.sub(r"\s+over\s+the\s+past\s+week$", "", fb_title, flags=re.IGNORECASE)
+            fb_title = re.sub(r"\s+moves\s+this\s+week$", " Odds", fb_title, flags=re.IGNORECASE)
+            fb_title = re.sub(r"\s+over\s+time$", "", fb_title, flags=re.IGNORECASE)
+            fb_title = re.sub(r"\b(?:trends|moves|trajectories)\b", "Odds", fb_title, flags=re.IGNORECASE)
+            fb_title = re.sub(r"\s+", " ", fb_title).strip() or default_title
+        if len(shown_titles) >= 2:
+            fb_note = f"Current leaders across {_join_human_list(shown_titles)}."
+        elif len(shown_titles) == 1:
+            fb_note = f"Current odds in {shown_titles[0]}."
+        else:
+            fb_note = "Current market odds."
+        return fb_title, fb_note
+
+    if sec_cfg.get("dynamic_item_note") and shown_titles:
+        dyn_note = (
+            f"Current leaders across {_join_human_list(shown_titles)}."
+            if len(shown_titles) >= 2
+            else f"Current odds in {shown_titles[0]}."
+        )
+        return raw_title, dyn_note
+
+    return raw_title, raw_note
 
 
 def _format_event_date_span(events: Sequence[Mapping[str, Any]]) -> str:
@@ -1350,6 +1727,12 @@ def _prose_market_phrase(title: str, *, capitalize_first: bool = False) -> str:
         m = re.match(r"^(\d{4})\s+fed\s+rate\s+(hikes|cuts)$", low)
         assert m is not None
         out = f"{m.group(1)} Fed rate {m.group(2)}"
+    elif re.match(r"^([a-z]+(?:\s+\d{4})?)\s+fed\s+decision$", low):
+        m = re.match(r"^([a-z]+(?:\s+\d{4})?)\s+fed\s+decision$", raw, re.IGNORECASE)
+        assert m is not None
+        parts = m.group(1).strip().split()
+        parts[0] = _expand_month_token(parts[0])
+        out = f"the {' '.join(parts)} Fed decision"
     elif re.match(r"^fed\s+decision\s+in\s+([a-z]+(?:\s+\d{4})?)$", low):
         m = re.match(r"^fed\s+decision\s+in\s+([a-z]+(?:\s+\d{4})?)$", raw, re.IGNORECASE)
         assert m is not None
@@ -1523,7 +1906,6 @@ async def produce_container_machinery(
     all_member_envelopes: list[dict[str, Any]] = []
     seen_member_keys: set[tuple[str, int]] = set()
     lead_paired_set: Optional[dict[str, Any]] = None
-    lead_history_chart: Optional[dict[str, Any]] = None
 
     indexed_cfg = [
         (idx, sec_cfg)
@@ -1687,7 +2069,7 @@ async def produce_container_machinery(
                 and _market_matches_query(m, aq)
             ]
             matched_h = _dedupe_twin_markets(matched_h)
-            order_by = str(aq.get("order_by") or "lead_prob_desc")
+            order_by = str(aq.get("order_by") or "movement_desc")
             if order_by == "closeness_to_50":
                 matched_h.sort(key=lambda x: (x["closeness_to_50"], -x["lead_prob"]))
             else:
@@ -1699,9 +2081,21 @@ async def produce_container_machinery(
                 for hm in matched_h
             ]
             moving_charts = [ci for ci in all_chart_items if _history_chart_moved(ci)]
+            if order_by == "movement_desc":
+                moving_charts.sort(
+                    key=lambda ci: (-int(ci.get("max_swing_pp") or 0), ci["title"].casefold())
+                )
             if len(moving_charts) >= min_items:
                 chart_items = moving_charts[:max_items]
                 form_id = choose_section_form("market_history", chart_items)
+                eff_title, eff_note = _resolve_section_heading(
+                    sec_cfg,
+                    aq_kind="market_history",
+                    form_id=form_id,
+                    rendered_items=chart_items,
+                    visible_limit=initial_visible,
+                    default_title=sec_title,
+                )
                 sec_members = []
                 for ci in chart_items:
                     mid = int(ci["market_id"])
@@ -1717,8 +2111,8 @@ async def produce_container_machinery(
                         all_member_envelopes.append(env)
                 built_by_idx[sec_idx] = {
                     "class": sec_key,
-                    "title": sec_title,
-                    "note": sec_note,
+                    "title": eff_title,
+                    "note": eff_note,
                     "layout": form_id,
                     "members": sec_members,
                     "visual_block": {
@@ -1731,13 +2125,23 @@ async def produce_container_machinery(
                     },
                 }
             else:
-                # Slice 4 (Fable #12897 note 2): when no matched market moved, use another form instead of flat lines.
+                # Slice 4 & Slice 5 Note 4: when no matched market moved, switch BOTH form AND section copy.
+                if order_by == "movement_desc":
+                    matched_h.sort(key=lambda x: (x["closeness_to_50"], -x["lead_prob"]))
                 fallback_matched = matched_h[:max_items]
                 for fm_it in fallback_matched:
                     fm_it["content_kind"] = "futures"
                     if isinstance(fm_it.get("card"), dict):
                         fm_it["card"]["content_kind"] = "futures"
                 form_id = choose_section_form("markets", fallback_matched)
+                eff_title, eff_note = _resolve_section_heading(
+                    sec_cfg,
+                    aq_kind="market_history",
+                    form_id=form_id,
+                    rendered_items=fallback_matched,
+                    visible_limit=initial_visible,
+                    default_title=sec_title,
+                )
                 sec_members = []
                 for fm_it in fallback_matched:
                     mid = int(fm_it["market_id"])
@@ -1753,8 +2157,8 @@ async def produce_container_machinery(
                         all_member_envelopes.append(env)
                 built_by_idx[sec_idx] = {
                     "class": sec_key,
-                    "title": sec_title,
-                    "note": sec_note,
+                    "title": eff_title,
+                    "note": eff_note,
                     "layout": form_id,
                     "members": sec_members,
                     "visual_block": {
@@ -1792,6 +2196,14 @@ async def produce_container_machinery(
             return RoundupRefusal((("container_machinery", f"too_few_markets:{sec_key}"),))
 
         form_id = choose_section_form("markets", matched)
+        eff_title, eff_note = _resolve_section_heading(
+            sec_cfg,
+            aq_kind="markets",
+            form_id=form_id,
+            rendered_items=matched,
+            visible_limit=initial_visible,
+            default_title=sec_title,
+        )
         sec_members = []
         for it in matched:
             mid = it["market_id"]
@@ -1808,8 +2220,8 @@ async def produce_container_machinery(
 
         built_by_idx[sec_idx] = {
             "class": sec_key,
-            "title": sec_title,
-            "note": sec_note,
+            "title": eff_title,
+            "note": eff_note,
             "layout": form_id,
             "members": sec_members,
             "visual_block": {
@@ -1991,6 +2403,7 @@ def load_machinery_definition(path: Path | str) -> dict[str, Any]:
     for sec in validated["rule"].get("sections") or ():
         if isinstance(sec, Mapping):
             copy_fields.append(str(sec.get("title") or ""))
+            copy_fields.append(str(sec.get("fallback_title") or ""))
             copy_fields.append(str(sec.get("note") or ""))
     for text_val in copy_fields:
         if _FORBIDDEN_COPY_QUESTION_RE.search(text_val):

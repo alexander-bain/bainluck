@@ -1,0 +1,2347 @@
+{
+  "mode": "Recorded-event admission replay with real read-only collector requests",
+  "window_pacific": {
+    "start": "2026-11-17 16:30:00 PT",
+    "end": "2026-11-17 17:30:00 PT"
+  },
+  "coverage": "Recorded CI/review/TestFlight workflow events, master pushes, NOW/Fable comments and pull lifecycle events. Historic status deliveries are unavailable from the repository event feed.",
+  "recorded_eligible_events": 259,
+  "collections": 20,
+  "deferred_events": 239,
+  "actual_collector_requests": {
+    "all": 378,
+    "core": 169,
+    "graphql": 209,
+    "public_reads": 20
+  },
+  "preflight_measurement": {
+    "github_api_calls": 2,
+    "resource": "graphql",
+    "public_reads": 1,
+    "reported_remaining": 4674
+  },
+  "projected_preflight_requests_for_recorded_events": {
+    "graphql": 518,
+    "public_reads": 259
+  },
+  "collector_elapsed_seconds": {
+    "total": 617.37,
+    "median": 30.515,
+    "max": 37.98
+  },
+  "remaining_core_on_last_measured_run": 2983,
+  "authentication": "Existing local GitHub credentials, read-only requests. Production jobs use the built-in token.",
+  "limits": "Historical admission times were replayed against current live API data. Preflight hour totals are projections from the measured two-request gate. Production runner occupancy and the built-in token balance await master activation.",
+  "runs": [
+    {
+      "replayed_at": "2026-11-18T00:30:12Z",
+      "phase": "collector",
+      "github_api_calls": 21,
+      "api_calls_by_resource": {
+        "core": 11,
+        "graphql": 10
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3573,
+      "elapsed_seconds": 33.92
+    },
+    {
+      "replayed_at": "2026-11-18T00:34:21Z",
+      "phase": "collector",
+      "github_api_calls": 18,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 10
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3559,
+      "elapsed_seconds": 31.29
+    },
+    {
+      "replayed_at": "2026-11-18T00:37:30Z",
+      "phase": "collector",
+      "github_api_calls": 18,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 10
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3517,
+      "elapsed_seconds": 29.54
+    },
+    {
+      "replayed_at": "2026-11-18T00:40:52Z",
+      "phase": "collector",
+      "github_api_calls": 18,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 10
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3498,
+      "elapsed_seconds": 29.02
+    },
+    {
+      "replayed_at": "2026-11-18T00:44:21Z",
+      "phase": "collector",
+      "github_api_calls": 18,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 10
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3448,
+      "elapsed_seconds": 30.66
+    },
+    {
+      "replayed_at": "2026-11-18T00:48:53Z",
+      "phase": "collector",
+      "github_api_calls": 18,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 10
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3432,
+      "elapsed_seconds": 28.17
+    },
+    {
+      "replayed_at": "2026-11-18T00:50:04Z",
+      "phase": "collector",
+      "github_api_calls": 21,
+      "api_calls_by_resource": {
+        "core": 11,
+        "graphql": 10
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3407,
+      "elapsed_seconds": 31.71
+    },
+    {
+      "replayed_at": "2026-11-18T00:53:24Z",
+      "phase": "collector",
+      "github_api_calls": 18,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 10
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3359,
+      "elapsed_seconds": 30.66
+    },
+    {
+      "replayed_at": "2026-11-18T00:58:03Z",
+      "phase": "collector",
+      "github_api_calls": 18,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 10
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3341,
+      "elapsed_seconds": 29.45
+    },
+    {
+      "replayed_at": "2026-11-18T01:00:23Z",
+      "phase": "collector",
+      "github_api_calls": 18,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 10
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3297,
+      "elapsed_seconds": 27.18
+    },
+    {
+      "replayed_at": "2026-11-18T01:03:39Z",
+      "phase": "collector",
+      "github_api_calls": 18,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 10
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3282,
+      "elapsed_seconds": 31.66
+    },
+    {
+      "replayed_at": "2026-11-18T01:07:03Z",
+      "phase": "collector",
+      "github_api_calls": 22,
+      "api_calls_by_resource": {
+        "core": 11,
+        "graphql": 11
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3239,
+      "elapsed_seconds": 30.81
+    },
+    {
+      "replayed_at": "2026-11-18T01:07:51Z",
+      "phase": "collector",
+      "github_api_calls": 19,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 11
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3210,
+      "elapsed_seconds": 30.33
+    },
+    {
+      "replayed_at": "2026-11-18T01:11:02Z",
+      "phase": "collector",
+      "github_api_calls": 19,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 11
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3182,
+      "elapsed_seconds": 35.25
+    },
+    {
+      "replayed_at": "2026-11-18T01:11:35Z",
+      "phase": "collector",
+      "github_api_calls": 19,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 11
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3141,
+      "elapsed_seconds": 37.98
+    },
+    {
+      "replayed_at": "2026-11-18T01:15:00Z",
+      "phase": "collector",
+      "github_api_calls": 19,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 11
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3114,
+      "elapsed_seconds": 27.68
+    },
+    {
+      "replayed_at": "2026-11-18T01:18:24Z",
+      "phase": "collector",
+      "github_api_calls": 19,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 11
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3069,
+      "elapsed_seconds": 28.51
+    },
+    {
+      "replayed_at": "2026-11-18T01:21:30Z",
+      "phase": "collector",
+      "github_api_calls": 19,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 11
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 3039,
+      "elapsed_seconds": 30.37
+    },
+    {
+      "replayed_at": "2026-11-18T01:26:48Z",
+      "phase": "collector",
+      "github_api_calls": 19,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 11
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 2995,
+      "elapsed_seconds": 28.95
+    },
+    {
+      "replayed_at": "2026-11-18T01:29:41Z",
+      "phase": "collector",
+      "github_api_calls": 19,
+      "api_calls_by_resource": {
+        "core": 8,
+        "graphql": 11
+      },
+      "public_reads": 1,
+      "rate_limit_remaining": 2983,
+      "elapsed_seconds": 34.23
+    }
+  ],
+  "admissions": [
+    {
+      "at": "2026-11-18T00:30:12Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "completed",
+      "refresh": true,
+      "reason": "first observation"
+    },
+    {
+      "at": "2026-11-18T00:30:17Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:30:24Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:30:26Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:30:27Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:31:09Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:31:09Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:31:10Z",
+      "kind": "issue_comment",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:31:13Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:31:14Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:32:31Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:32:31Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:32:39Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:32:40Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:32:40Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:32:41Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:34:21Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": true,
+      "reason": "change opened, merged or closed",
+      "opened": [
+        12899
+      ],
+      "closed": []
+    },
+    {
+      "at": "2026-11-18T00:34:21Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:34:21Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:34:21Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:34:21Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:34:35Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:34:39Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:34:40Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:35:10Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:35:16Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:35:20Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:35:36Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:36:07Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:36:28Z",
+      "kind": "issue_comment",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:36:29Z",
+      "kind": "issue_comment",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:36:31Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:36:31Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:36:32Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:36:32Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:37:30Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": true,
+      "reason": "refresh due"
+    },
+    {
+      "at": "2026-11-18T00:37:31Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:37:55Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:37:56Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:40:52Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "completed",
+      "refresh": true,
+      "reason": "refresh due"
+    },
+    {
+      "at": "2026-11-18T00:40:55Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:41:50Z",
+      "kind": "issue_comment",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:41:53Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:41:54Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:42:20Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:42:21Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:42:40Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:42:40Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:42:41Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:42:41Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:42:41Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:42:42Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:42:49Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:42:50Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:43:05Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:43:06Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:43:06Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:43:07Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:43:09Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:43:10Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:43:12Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:43:13Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:43:20Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:43:22Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:43:31Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:44:21Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "completed",
+      "refresh": true,
+      "reason": "refresh due"
+    },
+    {
+      "at": "2026-11-18T00:44:24Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:46:25Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:46:26Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:46:34Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:46:39Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:46:40Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:48:53Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": true,
+      "reason": "refresh due"
+    },
+    {
+      "at": "2026-11-18T00:48:56Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:49:15Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:49:42Z",
+      "kind": "issue_comment",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:49:45Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:49:45Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:49:46Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:49:54Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:50:04Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "requested",
+      "refresh": true,
+      "reason": "change opened, merged or closed",
+      "opened": [
+        12900
+      ],
+      "closed": []
+    },
+    {
+      "at": "2026-11-18T00:50:04Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:50:04Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:50:06Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:50:11Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:50:19Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:50:19Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:50:20Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:50:21Z",
+      "kind": "issue_comment",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:50:22Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:50:24Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:50:30Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:50:33Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:50:34Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:50:40Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:51:06Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:53:24Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "completed",
+      "refresh": true,
+      "reason": "refresh due"
+    },
+    {
+      "at": "2026-11-18T00:53:29Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:53:30Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:53:32Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:53:33Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:53:38Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:53:48Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:54:03Z",
+      "kind": "issue_comment",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:54:06Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:54:07Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:54:18Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T00:58:03Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "completed",
+      "refresh": true,
+      "reason": "refresh due"
+    },
+    {
+      "at": "2026-11-18T00:58:07Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:23Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "requested",
+      "refresh": true,
+      "reason": "change opened, merged or closed",
+      "opened": [
+        12901
+      ],
+      "closed": []
+    },
+    {
+      "at": "2026-11-18T01:00:23Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:23Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:24Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:26Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:39Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:39Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:41Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:41Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:42Z",
+      "kind": "issue_comment",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:44Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:44Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:44Z",
+      "kind": "issue_comment",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:45Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:45Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:47Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:48Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:52Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:52Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:00:54Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:01:03Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:01:05Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:01:06Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:01:08Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:02:29Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:03:39Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": true,
+      "reason": "refresh due"
+    },
+    {
+      "at": "2026-11-18T01:03:40Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:04:24Z",
+      "kind": "issue_comment",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:04:27Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:04:28Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:04:40Z",
+      "kind": "issue_comment",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:04:43Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:04:44Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:04:46Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:04:47Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:04:49Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:04:50Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:04:53Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:03Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:05Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:08Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:08Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:10Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:13Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:13Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:17Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:18Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:18Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:18Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:21Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:29Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:30Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:32Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:39Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:05:42Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:06:24Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:07:03Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": true,
+      "reason": "refresh due"
+    },
+    {
+      "at": "2026-11-18T01:07:03Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:07:05Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:07:06Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:07:09Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:07:14Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:07:20Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:07:33Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:07:42Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:07:51Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": true,
+      "reason": "change opened, merged or closed",
+      "opened": [
+        12902
+      ],
+      "closed": []
+    },
+    {
+      "at": "2026-11-18T01:07:51Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:07:52Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:07:56Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:07:56Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:07:59Z",
+      "kind": "issue_comment",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:08:02Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:08:03Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:08:04Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:08:05Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:08:06Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:08:30Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:08:33Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:08:34Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:11:02Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": true,
+      "reason": "refresh due"
+    },
+    {
+      "at": "2026-11-18T01:11:15Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:11:17Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:11:35Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": true,
+      "reason": "change opened, merged or closed",
+      "opened": [
+        12903
+      ],
+      "closed": []
+    },
+    {
+      "at": "2026-11-18T01:11:35Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:11:35Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:11:36Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:11:39Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:11:58Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:11:59Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:11:59Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:12:00Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:12:00Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:12:00Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:12:00Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:12:01Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:12:07Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:12:08Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:12:09Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:12:10Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:12:12Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:13:25Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:13:29Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:14:26Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:15:00Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": true,
+      "reason": "refresh due"
+    },
+    {
+      "at": "2026-11-18T01:15:05Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:16:41Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:16:42Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:16:52Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:16:55Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:16:56Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:17:38Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:18:24Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": true,
+      "reason": "refresh due"
+    },
+    {
+      "at": "2026-11-18T01:18:24Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:18:25Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:18:25Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:18:49Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:19:30Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:20:30Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:20:33Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:21:30Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": true,
+      "reason": "refresh due"
+    },
+    {
+      "at": "2026-11-18T01:21:32Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:21:40Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:23:24Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:23:27Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:23:28Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:23:31Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:23:32Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:23:37Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:23:37Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:24:12Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:24:17Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:24:21Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:24:28Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:26:48Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": true,
+      "reason": "refresh due"
+    },
+    {
+      "at": "2026-11-18T01:26:49Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:26:50Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:26:51Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:28:42Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:28:45Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:29:31Z",
+      "kind": "issue_comment",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:29:32Z",
+      "kind": "issue_comment",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:29:34Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:29:34Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:29:35Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:29:41Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "requested",
+      "refresh": true,
+      "reason": "change opened, merged or closed",
+      "opened": [
+        12904
+      ],
+      "closed": []
+    },
+    {
+      "at": "2026-11-18T01:29:41Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:29:41Z",
+      "kind": "workflow_run",
+      "producer": "CI",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:29:42Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:29:45Z",
+      "kind": "workflow_run",
+      "producer": "Tier-B review policy",
+      "action": "requested",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    },
+    {
+      "at": "2026-11-18T01:29:45Z",
+      "kind": "workflow_run",
+      "producer": "Claude Code",
+      "action": "completed",
+      "refresh": false,
+      "reason": "published copy is under three minutes old"
+    }
+  ]
+}
