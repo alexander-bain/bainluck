@@ -3444,3 +3444,212 @@ def test_the_re_read_is_the_last_gate_before_the_push():
     assert code.index('if [ -z "$DISPATCH_FLAG" ]; then') < reread
     assert reread < code.index("BEHIND=") < code.index("git push heroku-heavy")
     assert "read_facts" in _extract_pre_push_reread()
+
+
+# ── 234: A — the floor does not apply to a diff that touches what heavy runs ────
+#
+# Alex, Wed Nov 18 2026, 10:21 AM PT. The 180-min floor stops applying to a sync
+# whose diff since heavy's deployed commit touches what heavy schedules or runs
+# (beat entries in tasks/__init__.py, or task code routed to queue heavy). The
+# :38-:58 band stays, and so does a daily cap of 12 releases.
+
+TASKS_V1 = '''
+HEAVY_TASKS = {"app.tasks.rebuild"}
+celery_app.conf.beat_schedule = {
+    "rebuild-hourly": {"task": "app.tasks.rebuild", "schedule": crontab(minute=15)},
+    "light-often": {"task": "app.tasks.light", "schedule": 60.0},
+}
+for _heavy_task in HEAVY_TASKS:
+    celery_app.conf.task_routes[_heavy_task] = {"queue": "heavy"}
+
+
+@celery_app.task(bind=True, name="app.tasks.rebuild")
+def rebuild(self):
+    from app.tasks.precompute_calibration import _rebuild
+    from app.tasks import heavy_memory_turns as turns
+    return _rebuild(turns)
+
+
+@celery_app.task(bind=True, name="app.tasks.light")
+def light(self):
+    from app.tasks.light_work import _light
+    return _light()
+'''
+
+
+def _exempt_reasons(new_source=TASKS_V1, changed=("backend/app/tasks/__init__.py",)):
+    return sync.floor_exempt_reasons(changed=list(changed), old_tasks_source=TASKS_V1,
+                                     new_tasks_source=new_source)
+
+
+def test_an_exempt_diff_inside_the_floor_pushes_inside_the_band():
+    held = sync.decide(main_live=A, heavy_live=B, heavy_is_ancestor=True,
+                       heavy_release_age_min=30, now=_at(42))
+    assert held.code == HOLD and "cycle floor" in held.reason
+    d = sync.decide(main_live=A, heavy_live=B, heavy_is_ancestor=True,
+                    heavy_release_age_min=30, now=_at(42),
+                    floor_exempt=True, heavy_releases_24h=5)
+    assert d.code == PUSH
+    assert "234: A" in d.reason and "5 of 12" in d.reason
+
+
+def test_the_exemption_never_opens_the_band_or_the_never_backwards_guard():
+    outside = sync.decide(main_live=A, heavy_live=B, heavy_is_ancestor=True,
+                          heavy_release_age_min=30, now=_at(5),
+                          floor_exempt=True, heavy_releases_24h=0)
+    assert outside.code == HOLD and "window" in outside.reason
+    diverged = sync.decide(main_live=A, heavy_live=B, heavy_is_ancestor=False,
+                           heavy_release_age_min=30, now=_at(42),
+                           floor_exempt=True, heavy_releases_24h=0)
+    assert diverged.code == REFUSE
+
+
+@pytest.mark.parametrize("releases", [12, 13, 40])
+def test_the_daily_cap_puts_the_floor_back(releases):
+    d = sync.decide(main_live=A, heavy_live=B, heavy_is_ancestor=True,
+                    heavy_release_age_min=30, now=_at(42),
+                    floor_exempt=True, heavy_releases_24h=releases)
+    assert d.code == HOLD
+    assert f"{releases} releases in the last 24 h (cap 12" in d.reason
+
+
+@pytest.mark.parametrize("exempt,releases", [(None, 0), (False, 0), (True, None)])
+def test_an_unreadable_or_negative_fact_grants_no_exemption(exempt, releases):
+    """A loosening needs both facts proven: the floor stays where it was otherwise."""
+    d = sync.decide(main_live=A, heavy_live=B, heavy_is_ancestor=True,
+                    heavy_release_age_min=30, now=_at(42),
+                    floor_exempt=exempt, heavy_releases_24h=releases)
+    assert d.code == HOLD and "cycle floor" in d.reason
+
+
+def test_the_cap_is_12_and_the_floor_still_comes_from_the_budget():
+    assert sync.DAILY_CYCLE_CAP == 12
+    assert sync.min_cycle_interval_min() == 180
+
+
+def test_an_exempt_run_sleeps_to_the_band_and_not_to_the_floor():
+    kwargs = dict(main_live=A, heavy_live=B, heavy_is_ancestor=True,
+                  heavy_release_age_min=30, now=_at(30))
+    assert sync.wait_seconds(**kwargs) == 0  # the floor clears hours after this band closes
+    assert sync.wait_seconds(**kwargs, floor_exempt=True, heavy_releases_24h=3) == 8 * 60
+    assert sync.wait_seconds(**kwargs, floor_exempt=True, heavy_releases_24h=12) == 0
+
+
+def test_a_changed_beat_entry_is_exempt_and_a_comment_is_not():
+    moved = TASKS_V1.replace("crontab(minute=15)", "crontab(minute=16)")
+    assert _exempt_reasons(moved) == ["backend/app/tasks/__init__.py: beat entries or heavy routing changed"]
+    # beat runs on heavy, so a beat entry for a task on another queue counts too (#12843)
+    light = TASKS_V1.replace('"schedule": 60.0', '"schedule": 30.0')
+    assert _exempt_reasons(light) == ["backend/app/tasks/__init__.py: beat entries or heavy routing changed"]
+    comment = TASKS_V1.replace('HEAVY_TASKS = {"app.tasks.rebuild"}',
+                               '# a note\nHEAVY_TASKS = {"app.tasks.rebuild"}  # why')
+    assert _exempt_reasons(comment) == []
+
+
+def test_heavy_routing_and_a_heavy_wrapper_count_and_other_tasks_do_not():
+    joined = TASKS_V1.replace('{"app.tasks.rebuild"}', '{"app.tasks.rebuild", "app.tasks.light"}')
+    assert any("heavy routing" in r for r in _exempt_reasons(joined))
+    wrapper = TASKS_V1.replace("return _rebuild(turns)", "return _rebuild(turns, fast=True)")
+    assert _exempt_reasons(wrapper) == ["backend/app/tasks/__init__.py: heavy task app.tasks.rebuild changed"]
+    other = TASKS_V1.replace("return _light()", "return _light(1)")
+    assert _exempt_reasons(other) == []
+
+
+def test_a_module_a_heavy_task_imports_counts_and_others_do_not():
+    assert _exempt_reasons(changed=["backend/app/tasks/precompute_calibration.py"]) == [
+        "backend/app/tasks/precompute_calibration.py: code a heavy task imports"]
+    # `from app.tasks import heavy_memory_turns as turns` imports a module
+    assert _exempt_reasons(changed=["backend/app/tasks/heavy_memory_turns.py"]) == [
+        "backend/app/tasks/heavy_memory_turns.py: code a heavy task imports"]
+    for path in ("backend/app/tasks/light_work.py", "frontend/app/page.tsx", "backend/app/routes/feed.py"):
+        assert _exempt_reasons(changed=[path]) == [], path
+
+
+def test_an_unparseable_source_is_unreadable_never_unchanged():
+    assert _exempt_reasons("HEAVY_TASKS = {") is None
+    assert sync.floor_exempt_reasons(changed=None, old_tasks_source=TASKS_V1,
+                                     new_tasks_source=TASKS_V1) is None
+    no_heavy = TASKS_V1.replace('HEAVY_TASKS = {"app.tasks.rebuild"}', "HEAVY_TASKS = set()")
+    assert _exempt_reasons(no_heavy) is None
+
+
+def test_the_real_tasks_file_maps_every_heavy_task_to_its_wrapper():
+    """Measured Nov 18: every task that runs on heavy is a wrapper in tasks/__init__.py."""
+    source = (REPO / "backend" / "app" / "tasks" / "__init__.py").read_text()
+    runs = set(sync.heavy_task_names(source)) | set(sync.heavy_queue_beat_tasks(source) or ())
+    entries = sync.heavy_entrypoints(source, runs)
+    assert set(entries) == runs
+    imported = {p for _, mods in entries.values() for m in mods for p in sync.module_paths(m)
+                if (REPO / p).exists()}
+    assert "backend/app/tasks/backfill_winners.py" in imported
+    assert len(imported) >= 20
+
+
+def _git_repo(tmp_path, *versions):
+    """A real repository with one commit per (tasks source, extra files) version."""
+    run = lambda *a: subprocess.run(["git", "-C", str(tmp_path), *a], check=True,
+                                    capture_output=True, text=True).stdout.strip()
+    run("init", "-q")
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "t")
+    shas = []
+    for source, extra in versions:
+        f = tmp_path / "backend" / "app" / "tasks" / "__init__.py"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(source)
+        for path, text in extra.items():
+            (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / path).write_text(text)
+        run("add", "-A")
+        run("commit", "-qm", "v", "--allow-empty")
+        shas.append(run("rev-parse", "HEAD"))
+    return shas
+
+
+def test_floor_exempt_between_reads_a_real_diff(tmp_path):
+    v1, v2, v3 = _git_repo(
+        tmp_path,
+        (TASKS_V1, {"frontend/x.ts": "1"}),
+        (TASKS_V1, {"frontend/x.ts": "2"}),
+        (TASKS_V1, {"backend/app/tasks/precompute_calibration.py": "x = 1"}),
+    )
+    assert sync.floor_exempt_between(v1, v2, repo=str(tmp_path))[0] is False
+    exempt, why = sync.floor_exempt_between(v2, v3, repo=str(tmp_path))
+    assert exempt is True and "precompute_calibration.py" in why
+    assert sync.floor_exempt_between(v1, "c" * 40, repo=str(tmp_path))[0] is None
+    assert sync.floor_exempt_between("short", v2, repo=str(tmp_path))[0] is None
+
+
+def test_the_cli_prints_the_value_alone_and_never_fails(tmp_path):
+    v1, v2 = _git_repo(tmp_path, (TASKS_V1, {}),
+                       (TASKS_V1.replace("minute=15", "minute=16"), {}))
+    ok = subprocess.run([sys.executable, str(SCRIPT), "floor-exempt", "--from", v1, "--to", v2],
+                        capture_output=True, text=True, cwd=tmp_path)
+    assert ok.returncode == 0 and ok.stdout == "true\n"
+    bad = subprocess.run([sys.executable, str(SCRIPT), "floor-exempt", "--from", "x", "--to", v2],
+                         capture_output=True, text=True, cwd=tmp_path)
+    assert bad.returncode == 0 and bad.stdout == ""
+
+
+def test_releases_in_the_last_24h_count_every_release_and_refuse_a_bad_stamp(monkeypatch):
+    now = datetime(2026, 9, 12, 14, 0, tzinfo=timezone.utc)
+    stamps = [now - timedelta(hours=h) for h in (0.1, 3, 23.9, 24.5, 30)]
+    monkeypatch.setattr(sync, "_heroku_get", lambda *a, **k: [
+        {"created_at": s.strftime("%Y-%m-%dT%H:%M:%SZ")} for s in stamps])
+    assert sync.heroku_releases_last_24h("bainluck-heavy", "t", now=now) == 3
+    monkeypatch.setattr(sync, "_heroku_get", lambda *a, **k: [{"created_at": "soon"}])
+    assert sync.heroku_releases_last_24h("bainluck-heavy", "t", now=now) is None
+    monkeypatch.setattr(sync, "_heroku_get", lambda *a, **k: {"id": "not a list"})
+    assert sync.heroku_releases_last_24h("bainluck-heavy", "t", now=now) is None
+
+
+def test_the_workflow_reads_both_facts_and_hands_them_to_every_judgement():
+    code = _workflow_code()
+    assert 'FLOOR_EXEMPT="$(python3 scripts/heavy_sync_decision.py floor-exempt --from "$HEAVY_LIVE" --to "$MAIN_LIVE")"' in code
+    # only a proven ancestor is diffed; anything else leaves it empty, which exempts nothing
+    assert 'FLOOR_EXEMPT=""\n            if [ "$ANCESTOR" = true ]; then\n              FLOOR_EXEMPT="$(' in code
+    assert 'HEAVY_RELEASES_24H="$(python3 scripts/heavy_sync_decision.py releases-24h --app bainluck-heavy)"' in code
+    judgements = code.count("scripts/heavy_sync_decision.py decide") + code.count("scripts/heavy_sync_decision.py wait-plan")
+    assert judgements == 3  # wait-plan, decide, and the re-decision on moved refs
+    assert code.count('--floor-exempt "${FLOOR_EXEMPT:-}"') == judgements
+    assert code.count('--heavy-releases-24h "${HEAVY_RELEASES_24H:-}"') == judgements
