@@ -126,21 +126,25 @@ def stopped_rules(changes, commands, master, last_merges, observed_since, now):
                 }
             )
         reviewing = [
-            c for c in changes if c["line"] == line and c["station"] == "Review"
+            c["station_since"]
+            for c in changes
+            if c["line"] == line
+            and c["station"] == "Review"
+            and c.get("station_since")
+            and timedelta(0) <= now - moment(c["last_activity"]) <= timedelta(hours=48)
+            and now - moment(c["station_since"]) > timedelta(hours=2)
         ]
         if reviewing:
-            oldest = min(c["station_since"] for c in reviewing)
-            if now - moment(oldest) > timedelta(hours=2):
-                stops.append(
-                    {
-                        "kind": "review-waiting",
-                        "line": line,
-                        "station": "Review",
-                        "since": oldest,
-                        "count": len(reviewing),
-                        "level": "amber",
-                    }
-                )
+            stops.append(
+                {
+                    "kind": "review-waiting",
+                    "line": line,
+                    "station": "Review",
+                    "since": min(reviewing, key=moment),
+                    "count": len(reviewing),
+                    "level": "amber",
+                }
+            )
     if master.get("tests") == "failing":
         stops.append(
             {

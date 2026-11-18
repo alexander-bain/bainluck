@@ -285,6 +285,10 @@ def annotate_test_commits(api, pulls, cache):
 def refresh_open_evidence(api, pulls):
     active = [p for p in pulls if p["state"] == "open"]
     fields = """headRefOid
+      timelineItems(last:1,itemTypes:[READY_FOR_REVIEW_EVENT,REOPENED_EVENT]) { nodes {
+        ... on ReadyForReviewEvent { createdAt }
+        ... on ReopenedEvent { createdAt }
+      } }
       reviews(last:100) { totalCount nodes { author { __typename login } state submittedAt commit { oid } } }
       comments(last:100) { totalCount nodes { body createdAt updatedAt authorAssociation } }
       commits(last:1) { nodes { commit { oid statusCheckRollup { contexts(first:100) {
@@ -315,6 +319,8 @@ def refresh_open_evidence(api, pulls):
                     checks_complete=False, files_complete=False, reviews_complete=False
                 )
                 continue
+            intake = node["timelineItems"]["nodes"]
+            pull["review_resumed_at"] = intake[0]["createdAt"] if intake else None
             reviews = node["reviews"]
             pull["reviews"] = [
                 {
@@ -347,16 +353,14 @@ def refresh_open_evidence(api, pulls):
             checks = []
             for check in contexts["nodes"]:
                 if "context" in check:
+                    pending = check["state"] in {"PENDING", "EXPECTED"}
                     checks.append(
                         {
                             "name": check["context"],
                             "app": "commit-status",
                             "started_at": check["createdAt"],
-                            "state": (
-                                "in_progress"
-                                if check["state"] in {"PENDING", "EXPECTED"}
-                                else "completed"
-                            ),
+                            "finished_at": None if pending else check["createdAt"],
+                            "state": "in_progress" if pending else "completed",
                             "conclusion": (
                                 "success" if check["state"] == "SUCCESS" else "failure"
                             ),
