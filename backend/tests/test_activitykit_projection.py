@@ -59,6 +59,28 @@ def test_current_reading_borrows_hero_clock_only_for_exact_pair(pair, clock):
     assert snapshot.home_rendered_percent == (80 if pair[0] == 0.8 else 57)
 
 
+@pytest.mark.parametrize("current_home", [None, 0.565])
+def test_cached_opening_pair_cannot_become_a_live_activity_chance(current_home):
+    detail = reading(
+        hero_probability_source="opening",
+        hero_probability_observed_at=None,
+        current_odds={"home_probability": current_home, "away_probability": 0.435},
+    )
+    snapshot = project_activitykit_snapshot(detail)
+
+    assert snapshot.lifecycle == "live"
+    assert (snapshot.home_score, snapshot.away_score) == (0, 1)
+    assert snapshot.score_observed_at == CLOCK
+    assert snapshot.home_rendered_percent is None
+    assert snapshot.probability_observed_at is None
+
+    detail["hero_probability_source"] = "blend"
+    detail["hero_probability_observed_at"] = CLOCK.isoformat()
+    current = project_activitykit_snapshot(detail)
+    assert current.home_rendered_percent == 57
+    assert current.probability_observed_at == CLOCK
+
+
 @pytest.mark.parametrize(
     "sport,expected", [("basketball_nba", 50), ("soccer_epl", 51), (None, 51)]
 )

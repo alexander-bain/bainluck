@@ -50,22 +50,23 @@ def _lifecycle(status: object) -> Lifecycle:
 def project_activitykit_snapshot(detail: Mapping[str, object]) -> GameActivitySnapshot:
     """Project canonical detail fields with the phone's current-then-hero selection.
 
+    A cached opening-tagged response supplies no current forecast.
     The hero clock dates current_odds only if BOTH values agree with that hero.
     An unmatched current reading remains displayable with unknown observation age.
     Terminal status never follows probability extremes or score comparisons.
     """
     lifecycle = _lifecycle(detail.get("status"))
-    hero = _probability(detail.get("hero_probability"))
-    raw_hero_away = detail.get("hero_probability_away")
-    odds = detail.get("current_odds")
-    odds = odds if isinstance(odds, Mapping) else {}
-    current = _probability(odds.get("home_probability"))
-    home = current if current is not None else hero
-    raw_away = odds.get("away_probability") if current is not None else raw_hero_away
-    away = _probability(raw_away)
     percent = None
     probability_clock = None
-    if lifecycle in {"scheduled", "live"}:
+    if lifecycle in {"scheduled", "live"} and detail.get("hero_probability_source") != "opening":
+        hero = _probability(detail.get("hero_probability"))
+        raw_hero_away = detail.get("hero_probability_away")
+        odds = detail.get("current_odds")
+        odds = odds if isinstance(odds, Mapping) else {}
+        current = _probability(odds.get("home_probability"))
+        home = current if current is not None else hero
+        raw_away = odds.get("away_probability") if current is not None else raw_hero_away
+        away = _probability(raw_away)
         sport = detail.get("sport")
         if (
             not isinstance(sport, str)
