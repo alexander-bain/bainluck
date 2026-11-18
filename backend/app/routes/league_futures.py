@@ -42,6 +42,10 @@ from app.utils.futures_market_snapshot import (
     normalized_field_comparisons,
     reader_change_24h,
 )
+from app.utils.futures_source_mark import (
+    describe_field_normalization,
+    futures_outcome_source_mark,
+)
 from app.utils.event_rails import (
     commence_time_was_never_a_kickoff,
     live_first_order,
@@ -2853,7 +2857,18 @@ def _serialize_outcomes(
             row["opening_probability"] = None
             row["movement_24h"] = None
 
-    return rows[:10]
+    preview = rows[:10]
+    for outcome, row in zip(ordered[:10], preview, strict=True):
+        mark = futures_outcome_source_mark(
+            market, outcome, row, served_settled=row["settled"]
+        )
+        describe_field_normalization(
+            mark,
+            input_probability=outcome.current_probability,
+            displayed_probability=row["probability"],
+        )
+        row["source_mark"] = mark
+    return preview
 
 
 def _competition_echoes_name(competition: str, market_name: str | None) -> bool:
