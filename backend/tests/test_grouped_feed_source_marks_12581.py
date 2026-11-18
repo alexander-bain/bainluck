@@ -1,6 +1,7 @@
 """Source attribution through the Sports grouped-feed route and its cache."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -21,11 +22,13 @@ from tests.test_grouped_feed_container_fold_route_4153 import (
 
 def _outcome(outcome_id, name, price, *, grade=None, authority=None):
     probability = Decimal(price) if price is not None else None
+    # Even a recent row update does not establish when the price was observed.
+    last_updated = datetime.now(timezone.utc) - timedelta(minutes=1)
     return SimpleNamespace(
         id=outcome_id, name=name, probability=probability,
         current_probability=probability, american_odds=None,
         is_winner=grade, resolution_source=authority,
-        last_updated="2026-11-17T19:00:00Z",
+        last_updated=last_updated.strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 
 
