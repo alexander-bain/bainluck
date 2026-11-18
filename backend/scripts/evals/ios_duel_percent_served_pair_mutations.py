@@ -197,20 +197,20 @@ MUTANTS: list[tuple[str, str, Path, str, str]] = [
     ),
     (
         "M6",
-        "the menu bar drops the source gate — current_odds' rounding beside opening_odds' probability",
+        "the menu bar displays an opening-tagged pair as the current chance",
         MENU_BAR,
-        """                    servedAway: fromCurrentOdds ? odds?.awayRenderedPercent : nil,
-                    servedHome: fromCurrentOdds ? odds?.homeRenderedPercent : nil""",
-        """                    servedAway: odds?.awayRenderedPercent,
-                    servedHome: odds?.homeRenderedPercent""",
+        """        guard heroSource != OpeningLineHero.openingSource,
+              let odds, let home = odds.homeProbability, (0...1).contains(home) else {""",
+        "        guard let odds, let home = odds.homeProbability, (0...1).contains(home) else {",
     ),
     (
         "M7",
         "the menu bar re-grows its third-tier naive rounding — a fourth unshared copy",
         MENU_BAR,
-        "                guard let awayPct = duel[0], let homePct = duel[1] else { return nil }",
-        "                let awayPct = duel[0] ?? Int((awayProbability * 100).rounded())\n"
-        "                let homePct = duel[1] ?? Int((homeProbability * 100).rounded())",
+        """        let awayPct = duel[0]
+        let homePct = duel[1]""",
+        """        let awayPct = duel[0] ?? Int((away * 100).rounded())
+        let homePct = duel[1] ?? Int((home * 100).rounded())""",
     ),
     (
         "M8",
