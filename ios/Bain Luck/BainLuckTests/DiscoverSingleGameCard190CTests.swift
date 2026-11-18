@@ -303,6 +303,7 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
         XCTAssertEqual(afterChart.points.first?.probability ?? -1, 0.64, accuracy: 0.001)
         XCTAssertEqual(afterChart.points[2].probability, 0.38, accuracy: 0.001, "Halftime dip to 38% preserved")
         XCTAssertEqual(afterChart.points.last?.probability ?? -1, 1.0, accuracy: 0.001, "Post-game 22:00Z 50% drift clipped")
+        XCTAssertTrue(afterChart.markedPoints.contains(where: \.isEndpoint))
 
         // C. #5271 / #5363 Three-Way Live Soccer: never complements `1 - home` even when away leads!
         let liveSoccer = try decodeEvent("""
@@ -395,6 +396,9 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
 
         let chart = DiscoverPictureChart191A.build(event: event, prematch: pregame, history: history)
         XCTAssertEqual(chart.points.map(\.probability), [0.54, 0.58])
+        XCTAssertTrue(chart.showsPregameLabel)
+        XCTAssertFalse(chart.showsEndpointDot)
+        XCTAssertFalse(chart.markedPoints.contains(where: \.isEndpoint))
         XCTAssertEqual(
             chart.accessibilityLabel,
             "Win chance chart for Raptors: Pregame 58% TOR, Current win chance unavailable"
@@ -404,12 +408,15 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
         {"event_id": 15346136, "home_team": "Toronto Raptors", "away_team": "Boston Celtics",
          "status": "live", "blend_edge_pinned": true, "history": [],
          "blend_edge_observed_at": "2026-11-13T18:45:00Z",
+         "win_prob_history": {"kalshi": [{"timestamp": "2026-11-13T18:45:00Z", "home_probability": 0.69}]},
          "aggregate_line": [
             {"timestamp": "2026-11-13T17:40:00Z", "home_probability": 0.58},
             {"timestamp": "2026-11-13T18:45:00Z", "home_probability": 0.69}
          ]}
         """)
         let pinned = DiscoverPictureChart191A.build(event: event, prematch: pregame, history: pinnedHistory)
+        XCTAssertFalse(pinned.showsPregameLabel)
+        XCTAssertTrue(pinned.markedPoints.contains(where: \.isEndpoint))
         XCTAssertEqual(
             pinned.accessibilityLabel,
             "Win chance chart for Raptors: Pregame 58% TOR, Now 69.0% TOR (+11.0 pts)"
@@ -437,6 +444,9 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
                 let chart = DiscoverPictureChart191A.build(
                     event: card.event, prematch: prematch(card.event), history: history
                 )
+                XCTAssertTrue(chart.showsPregameLabel)
+                XCTAssertEqual(chart.points.map(\.probability), [0.54, 0.58])
+                XCTAssertFalse(chart.markedPoints.contains(where: \.isEndpoint))
                 XCTAssertEqual(chart.accessibilityLabel,
                                "Win chance chart for Raptors: Pregame 58% TOR, Current win chance unavailable")
             }
@@ -456,7 +466,31 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
         let chart = DiscoverPictureChart191A.build(
             event: card.event, prematch: prematch(card.event), history: history
         )
+        XCTAssertFalse(chart.showsPregameLabel)
+        XCTAssertTrue(chart.showsEndpointDot)
+        XCTAssertEqual(chart.markedPoints.last(where: \.isEndpoint)?.probability, 0.70)
         XCTAssertEqual(chart.accessibilityLabel, "Win chance chart for Raptors: Pregame 58% TOR, Now 70.0% TOR (+12.0 pts)")
+    }
+
+    func testOpeningOnlyThreeWayChartKeepsAllThreeTrajectoriesWithoutEndpointDots() throws {
+        let event = try decodeEvent("""
+        {"id":15333846,"sport":"soccer_uefa_nations_league","status":"live",
+         "home_team":"Netherlands","away_team":"Greece","commence_time":"2026-11-13T19:45:00Z",
+         "hero_probability_source":"opening"}
+        """)
+        let history = try decodeHistory("""
+        {"event_id":15333846,"home_team":"Netherlands","away_team":"Greece","status":"live","history":[],
+         "aggregate_line":[
+           {"timestamp":"2026-11-13T19:05:00Z","home_probability":0.52,"draw_probability":0.26,"away_probability":0.22},
+           {"timestamp":"2026-11-13T19:25:00Z","home_probability":0.58,"draw_probability":0.23,"away_probability":0.19}
+         ]}
+        """)
+        let chart = DiscoverPictureChart191A.build(event: event, prematch: nil, history: history)
+        XCTAssertTrue(chart.showsPregameLabel)
+        XCTAssertEqual(chart.plottedThreeWayPoints.map(\.home), [0.52, 0.58])
+        XCTAssertEqual(chart.plottedThreeWayPoints.map(\.draw), [0.26, 0.23])
+        XCTAssertEqual(chart.plottedThreeWayPoints.map(\.away), [0.22, 0.19])
+        XCTAssertFalse(chart.plottedThreeWayPoints.contains(where: \.isEndpoint))
     }
 
     func testSharedCardMenuCopiesOnlyTheCurrentReading() throws {

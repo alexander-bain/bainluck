@@ -36,6 +36,27 @@ enum DiscoverPictureChart191A {
         let rightEndLabel: String
         let isFinished: Bool
         let rightEndUsesTeamAccent: Bool
+        let showsEndpointDot: Bool
+        let showsPregameLabel: Bool
+
+        var markedPoints: [Point] {
+            points.filter { point in
+                (showsEndpointDot || !point.isEndpoint)
+                    && (point.isOpening || point.isSolidMark || point.isEndpoint)
+            }
+        }
+
+        var plottedThreeWayPoints: [SoccerThreeLineChart211A.Point] {
+            guard !showsEndpointDot else { return threeWayPoints }
+            return threeWayPoints.map { point in
+                guard point.isEndpoint else { return point }
+                return SoccerThreeLineChart211A.Point(
+                    id: point.id, date: point.date, home: point.home, draw: point.draw, away: point.away,
+                    isLiveEdge: point.isLiveEdge, isOpening: point.isOpening,
+                    isSolidMark: false, isEndpoint: false
+                )
+            }
+        }
 
         var accessibilityLabel: String {
             "Win chance chart for \(plottedTeamShortName): \(leftEndLabel), \(rightEndLabel)"
@@ -128,7 +149,7 @@ enum DiscoverPictureChart191A {
             return perspective == .home ? home : 1 - home
         }()
 
-        let extractedPoints = extractPoints(
+        let (extractedPoints, playStart) = extractPoints(
             event: event,
             prematch: prematch,
             history: history,
@@ -195,6 +216,16 @@ enum DiscoverPictureChart191A {
             prematch: prematch,
             history: history
         )
+        // A live dot represents an admitted current chance. The line may still
+        // show earlier observations, including a run entirely before kickoff.
+        let showsEndpointDot = !isLive || currentSideProb != nil
+        let showsPregameLabel: Bool = {
+            guard !showsEndpointDot, let playStart,
+                  let lastDate = threeWayPoints.last?.date ?? extractedPoints.last?.date else {
+                return false
+            }
+            return lastDate <= playStart
+        }()
 
         return Model(
             perspective: perspective,
@@ -207,7 +238,9 @@ enum DiscoverPictureChart191A {
             leftEndLabel: leftEndLabel,
             rightEndLabel: rightEndLabel,
             isFinished: isFinished,
-            rightEndUsesTeamAccent: rightEndUsesTeamAccent
+            rightEndUsesTeamAccent: rightEndUsesTeamAccent,
+            showsEndpointDot: showsEndpointDot,
+            showsPregameLabel: showsPregameLabel
         )
     }
 
@@ -221,13 +254,13 @@ enum DiscoverPictureChart191A {
     /// sportsbook `consensus` fallback, zero client-side source averaging) and
     /// `OddsChartView.drawnWindow` (post-game drift clip + `Since Start` window
     /// with true pregame anchor carried onto the kickoff edge).
-    nonisolated static func extractPoints(
+    private nonisolated static func extractPoints(
         event: FeedEventData,
         prematch: PrematchReading?,
         history: EventHistoryResponse?,
         perspective: Perspective
-    ) -> [Point] {
-        guard let history else { return [] }
+    ) -> (points: [Point], playStart: Date?) {
+        guard let history else { return ([], nil) }
 
         let blendPoints = OddsChartView.servedBlendPoints(from: history)
         let consensusPoints: [ChartDataPoint] = history.history.compactMap { row in
@@ -251,8 +284,6 @@ enum DiscoverPictureChart191A {
         }
 
         let sortedHome = baseHomeSeries.sorted { $0.date < $1.date }
-        guard !sortedHome.isEmpty else { return [] }
-
         let window = OddsChartView.drawnWindow(
             status: event.status,
             commenceTime: event.commenceTime,
@@ -264,6 +295,7 @@ enum DiscoverPictureChart191A {
                 ObservedPlayStart.cut(scheduled: scheduled, history: history, sportKey: event.sport)
             }
         )
+        guard !sortedHome.isEmpty else { return ([], window.sinceStart) }
 
         let postGameClipped: [ChartDataPoint] = {
             if let endDate = window.finishedEnd {
@@ -316,11 +348,11 @@ enum DiscoverPictureChart191A {
         }
 
         let count = gameSeries.count
-        guard count > 0 else { return [] }
+        guard count > 0 else { return ([], window.sinceStart) }
         let stride = max(1, EventAtlasChartMarks11666.solidMarkStride(pointCount: count))
         let drawsIntermediateMarks = count <= 28
 
-        return gameSeries.enumerated().map { index, item in
+        let points = gameSeries.enumerated().map { index, item in
             let sideP = perspective == .home ? item.probability : (1.0 - item.probability)
             let clamped = min(max(sideP, 0.0), 1.0)
             let isFirst = index == 0
@@ -336,6 +368,7 @@ enum DiscoverPictureChart191A {
                 isEndpoint: isLast
             )
         }
+        return (points, window.sinceStart)
     }
 }
 
@@ -448,8 +481,15 @@ struct DiscoverPictureChartPanel191AView: View {
     var body: some View {
         Group {
             if !didFinishLoad || !model.points.isEmpty || !model.threeWayPoints.isEmpty {
-                plotCanvas
-                    .frame(height: plotHeight)
+                VStack(alignment: .leading, spacing: 6) {
+                    if model.showsPregameLabel {
+                        Text("Pregame")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .accessibilityHidden(true)
+                    }
+                    plotCanvas.frame(height: plotHeight)
+                }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 9)
                 .background(
@@ -526,7 +566,7 @@ struct DiscoverPictureChartPanel191AView: View {
     private func seriesMarks(floorY: Double) -> some ChartContent {
         if model.threeWayPoints.count >= 2 {
             SoccerThreeLineChart211A.chartMarks(
-                segments: [model.threeWayPoints],
+                segments: [model.plottedThreeWayPoints],
                 homeColor: homeColor,
                 drawColor: HeadlineStyleTable199.drawInk,
                 awayColor: awayColor,
@@ -560,17 +600,27 @@ struct DiscoverPictureChartPanel191AView: View {
                 .foregroundStyle(lineColor)
             }
 
-            ForEach(model.points.filter { $0.isOpening || $0.isSolidMark || $0.isEndpoint }) { point in
+            ForEach(model.markedPoints) { point in
                 pointMarks(for: point)
             }
         } else if let lone = model.points.first {
-            PointMark(
-                x: .value("Time", lone.date),
-                y: .value("Win chance", lone.probability)
-            )
-            .symbol(.circle)
-            .symbolSize(34)
-            .foregroundStyle(lineColor)
+            if model.showsEndpointDot {
+                PointMark(
+                    x: .value("Time", lone.date),
+                    y: .value("Win chance", lone.probability)
+                )
+                .symbol(.circle)
+                .symbolSize(34)
+                .foregroundStyle(lineColor)
+            } else {
+                PointMark(
+                    x: .value("Time", lone.date),
+                    y: .value("Win chance", lone.probability)
+                )
+                .symbol(.circle.strokeBorder(lineWidth: 1.6))
+                .symbolSize(34)
+                .foregroundStyle(lineColor)
+            }
         }
     }
 
