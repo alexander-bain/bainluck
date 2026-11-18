@@ -2320,9 +2320,20 @@ def test_the_prior_is_normalized_as_a_PAIR_like_every_other_number_here():
         results=_espn(),
         prices=_matchup_prices(a_open=0.55, b_open=0.50),
     )
-    priors = [p["prematch_probability"] for p in payload["matches"][0]["players"]]
-    assert sum(priors) == pytest.approx(1.0)
-    assert priors[0] != 0.55  # normalized, not passed through
+    players = {p["entity_key"]: p for p in payload["matches"][0]["players"]}
+    assert sum(p["prematch_probability"] for p in players.values()) == pytest.approx(1.0)
+    assert players["jacob-fearnley"]["prematch_probability"] == pytest.approx(0.523810)
+    for key, raw in {"jacob-fearnley": 0.55, "roberto-carballes-baena": 0.50}.items():
+        mark = players[key]["prematch_source_mark"]
+        assert mark["state"] == "single"
+        assert mark["method"] == "Bain Luck field · scaled with the other outcomes to total 100%"
+        assert mark["sources"] == [{
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": raw,
+            "observed_at": None,
+            "reason": "observation_unknown",
+        }]
 
 
 def test_an_INCOHERENT_opening_pair_yields_no_prior_at_all():
@@ -2338,6 +2349,7 @@ def test_an_INCOHERENT_opening_pair_yields_no_prior_at_all():
         prices=_matchup_prices(a_open=0.90, b_open=0.60),
     )
     assert all(p["prematch_probability"] is None for p in payload["matches"][0]["players"])
+    assert all("prematch_source_mark" not in p for p in payload["matches"][0]["players"])
     assert payload["with_prematch"] == 0
 
 

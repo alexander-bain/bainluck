@@ -82,8 +82,9 @@ from app.utils.prematch_reading import (
     BOOKS_SOURCE,
     is_prediction_market_source,
     prematch_source_rank,
-    resolve_prematch_reading,
+    serialize_prematch_odds,
 )
+from app.utils.source_mark import quote_source_mark
 from app.utils.tournament_board import (
     DARK_PRICE_HOURS,
     draw_label,
@@ -2308,8 +2309,8 @@ def _slate_freshness(
 
 def _prematch_by_pair(
     reg: TournamentRegister, prices: dict[int, dict[str, Any]]
-) -> dict[tuple, dict[str, float]]:
-    """``(draw, sorted entity keys) -> {entity_key: pre-match probability}``.
+) -> dict[tuple, dict[str, Any]]:
+    """Selected pre-match probabilities and marks by draw and sorted player keys.
 
     ═══ UX-P146: A RESULT WITHOUT ITS PRIOR IS HALF THE STORY ═══
 
@@ -2390,15 +2391,27 @@ def _prematch_by_pair(
                 loaded = prices.get(outcome_id) if isinstance(outcome_id, int) else None
                 raw.append(_as_float((loaded or {}).get("opening_probability")))
 
-            a_open, b_open, _sum, coherent = normalize_pair(raw[0], raw[1])
+            a_open, b_open, raw_sum, coherent = normalize_pair(raw[0], raw[1])
             if not coherent or a_open is None or b_open is None:
                 # Not "this pair has no prior" — "this VENUE has no coherent one".
                 # Falling through to the next rung is the whole point of an
                 # ordered ladder; the old single-block form could not.
                 continue
+            source = block.get("source")
+            # The source sheet names the original opening quote for this player.
+            # The price row's observation time belongs to the current quote.
+            marks = {
+                player: quote_source_mark([{"key": source, "probability": value}])
+                for player, value in zip(players, raw, strict=True)
+            }
+            if raw_sum != 1.0:
+                for mark in marks.values():
+                    if mark["state"] == "single":
+                        mark["method"] = "Bain Luck field · scaled with the other outcomes to total 100%"
             out[(str(matchup.get("draw")), tuple(sorted(players)))] = {
                 "probabilities": {players[0]: a_open, players[1]: b_open},
-                "source": block.get("source"),
+                "source": source,
+                "marks": marks,
             }
             break
     return out
@@ -2758,6 +2771,7 @@ def build_results(
             prematch = prematch_by_pair.get((draw, tuple(sorted(keys))))
             prematch_probs = (prematch or {}).get("probabilities") or {}
             prematch_source = (prematch or {}).get("source")
+            prematch_marks = (prematch or {}).get("marks") or {}
             if prematch:
                 with_prematch += 1
 
@@ -2802,7 +2816,8 @@ def build_results(
                      # PAIR and a row could one day hold two rungs; today both
                      # slots always agree, and a renderer that reads it off the
                      # player it labels cannot mislabel one of them.
-                     "prematch_source": prematch_source if prematch_probs.get(key) is not None else None}
+                     "prematch_source": prematch_source if prematch_probs.get(key) is not None else None,
+                     **({"prematch_source_mark": prematch_marks[key]} if key in prematch_marks else {})}
                     for key, entry in zip(keys, entries)
                 ],
                 "winner_entity_key": winner_key,
@@ -2971,10 +2986,12 @@ def apply_books_prematch(
         if not row:
             continue
 
-        pair = _pair_probabilities(row)
-        if pair is None:
+        reading = serialize_prematch_odds(
+            books_home=row.get("opening_home_probability"),
+            books_away=row.get("opening_away_probability"),
+        )
+        if reading is None:
             continue
-        home_prob, away_prob = pair
 
         home_matches = [p for p in players if _names_agree(p.get("display_name"), row.get("home_team_name"))]
         away_matches = [p for p in players if _names_agree(p.get("display_name"), row.get("away_team_name"))]
@@ -2988,10 +3005,12 @@ def apply_books_prematch(
             # are pairs and this is the expected outcome, not a fault.
             continue
 
-        home_player["prematch_probability"] = home_prob
+        home_player["prematch_probability"] = reading["home_probability"]
         home_player["prematch_source"] = BOOKS_SOURCE
-        away_player["prematch_probability"] = away_prob
+        home_player["prematch_source_mark"] = reading["source_mark"]
+        away_player["prematch_probability"] = reading["away_probability"]
         away_player["prematch_source"] = BOOKS_SOURCE
+        away_player["prematch_source_mark"] = reading["away_source_mark"]
         filled += 1
 
     if filled:
@@ -3003,22 +3022,6 @@ def apply_books_prematch(
             int(results.get("with_prematch_books") or 0) + filled
         )
     return results
-
-
-def _pair_probabilities(row: dict[str, Any]) -> Optional[tuple[float, float]]:
-    """``(home, away)`` from an events row's opening columns, or ``None``.
-
-    Through the shared ladder resolver rather than a local float cast, so the
-    endpoint refusal (a 0 or a 1 is a settled price, not a forecast) and the
-    derive-away-when-incoherent rule are the same ones the game cards use.
-    """
-    reading = resolve_prematch_reading(
-        books_home=row.get("opening_home_probability"),
-        books_away=row.get("opening_away_probability"),
-    )
-    if reading is None:
-        return None
-    return reading["home_probability"], reading["away_probability"]
 
 
 def _declared_legs(prop: dict[str, Any]) -> list[str]:
