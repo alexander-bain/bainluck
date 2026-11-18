@@ -315,18 +315,26 @@ def verify_runtime_support(payload, mapping, environment):
         raise ValueError("xctestrun changed beyond exact checker path relocation")
 
 
+# Hosted preflight can stall after simulator preparation, and xcrun can stall for
+# minutes on a loaded runner: run 44360250607 built every product, then
+# `xcrun swiftc --version` timed out twice at 60 s while packing, though the same
+# read answered at once when the job started. The one retry waits longer.
+TOOLCHAIN_READ_TIMEOUTS = (60, 240)
+
+
 def toolchain():
     def read(*command):
-        # Hosted preflight can stall after simulator preparation. Retry only a
-        # timed-out identity read once; real command failures still fail closed.
-        for attempt in range(2):
+        # Retry only a timed-out identity read, once; real command failures
+        # still fail closed.
+        for attempt, timeout in enumerate(TOOLCHAIN_READ_TIMEOUTS):
             try:
-                return subprocess.check_output(command, text=True, timeout=60).strip()
+                return subprocess.check_output(command, text=True, timeout=timeout).strip()
             except subprocess.TimeoutExpired:
-                if attempt == 1:
+                if attempt == len(TOOLCHAIN_READ_TIMEOUTS) - 1:
                     raise
                 print(
-                    f"Toolchain identity read timed out after 60s; retrying once: {command!r}",
+                    f"Toolchain identity read timed out after {timeout}s; retrying once"
+                    f" with {TOOLCHAIN_READ_TIMEOUTS[attempt + 1]}s: {command!r}",
                     file=sys.stderr,
                     flush=True,
                 )
