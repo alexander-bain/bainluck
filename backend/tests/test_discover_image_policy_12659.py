@@ -317,7 +317,13 @@ def test_every_commons_and_archive_entry_records_author_license_and_source_page_
         assert not (host.endswith(".archive.org") and host != "archive.org"), (
             f"Storage node address pinned for {entry['entity_key']}: {entry['url']}"
         )
-        if host in {"upload.wikimedia.org", "thumb.wikimedia.org", "coverartarchive.org", "archive.org"}:
+        if host in {
+            "upload.wikimedia.org",
+            "thumb.wikimedia.org",
+            "coverartarchive.org",
+            "archive.org",
+            "static.tvmaze.com",
+        }:
             commons_or_archive_count += 1
             for field in ("author", "license", "source_page"):
                 val = str(entry.get(field) or "").strip()

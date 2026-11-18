@@ -258,7 +258,7 @@ final class SearchTeamRowSportLabelTests: XCTestCase {
         }
         XCTAssertEqual(
             asks.count, 3,
-            "search should ask for the served sport name on all three rows; found \(asks.count):\n" + asks.joined(separator: "\n")
+            "search should ask for the served sport name on all three rows (the team row, the 183-A game card, and the event row); found \(asks.count):\n" + asks.joined(separator: "\n")
         )
         for ask in asks {
             XCTAssertTrue(

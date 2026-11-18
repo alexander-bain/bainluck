@@ -201,14 +201,9 @@ struct EventDetailView: View {
     static func heroLogoSize(stacked: Bool, regular: CGFloat) -> CGFloat {
         stacked ? min(regular, stackedHeroLogoSize) : regular
     }
+    static let readableDetailMaxWidth: CGFloat = 720
     private var scoreFontSize: CGFloat { isIPad ? 52 : 40 }
-    private var contentMaxWidth: CGFloat {
-        #if os(macOS)
-        return 1200
-        #else
-        return isIPad ? 1100 : 700
-        #endif
-    }
+    private var contentMaxWidth: CGFloat { Self.readableDetailMaxWidth }
 
     /// The title's rungs, or nil before a score exists to protect.
     private var titleRungs: EventNavTitle.Rungs? {
@@ -672,6 +667,8 @@ struct EventDetailView: View {
                     GameActivityControl(snapshot: reading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 4)
+                        // The Live Activity's crests, fetched while the page is open.
+                        .task(id: event.id) { await Self.prefetchActivityCrests(event) }
                 }
                 #endif
                 // #9483 — the NFL cards sit directly under the paired chart:
@@ -762,7 +759,8 @@ struct EventDetailView: View {
                         homeColor: teamColors(event).home,
                         awayColor: teamColors(event).away,
                         periodMarkers: vm.history?.periodMarkers,
-                        sportKey: event.sport
+                        sportKey: event.sport,
+                        pageProjectedPair: pageProjectedPointsPair(event)
                     )
                     .padding(16)
                     .background(Color.cardBackground)
@@ -1797,6 +1795,24 @@ struct EventDetailView: View {
             sportKey: event.sport, eventStatus: event.status, history: vm.history,
             finalHome: event.homeScore, finalAway: event.awayScore,
             asOf: vm.historyArrivedAt)
+    }
+
+    /// #12889 / #10573 — the page's own whole-number projected pair (`111` and
+    /// `114`), read through `projectionText`'s single gate so the Projected Final
+    /// Points card never prints one sportsbook's half-point line when the page
+    /// headline prints the whole-number pair.
+    func pageProjectedPointsPair(_ event: EventDetail) -> (away: Int, home: Int)? {
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        return EventDetailView.projectionText(
+            event,
+            ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
+            ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
+            hasScore: hasScore,
+            now: displayNow()
+        )
+        .map(Self.projectionFigure9483)
+        .flatMap(Self.projectedPair11285)
     }
 
     private func nflNames(_ event: EventDetail) -> (away: String, home: String) {

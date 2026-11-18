@@ -232,3 +232,373 @@ struct FuturesHeroBackground: View {
         }
     }
 }
+
+// MARK: - #12840 Grouped Card Banner, Crest & Monogram Fallback
+
+enum DiscoverBundleVisual12840 {
+    static let bannerHeight: CGFloat = 144
+
+    static let blockedPexelsPhotoIDs: Set<String> = [
+        "8919548", "6289047", "6289061", "31825810", "3970331",
+        "9321371", "8728168", "11460276", "12786869", "6326317",
+        "32417524", "8850837", "8850633", "8044086", "18326060",
+    ]
+
+    static let monogramPalette: [(bg: String, accent: String)] = [
+        ("#1e3a8a", "#2563eb"), // Royal cobalt
+        ("#312e81", "#4f46e5"), // Civic indigo
+        ("#0f766e", "#14b8a6"), // Editorial teal
+        ("#7c2d12", "#ea580c"), // Burnt sienna
+        ("#581c87", "#9333ea"), // Deep plum
+        ("#831843", "#db2777"), // Crimson rose
+        ("#14532d", "#16a34a"), // Forest emerald
+        ("#7f1d1d", "#dc2626"), // Arena crimson
+        ("#1e293b", "#475569"), // Cinema slate
+        ("#78350f", "#d97706"), // Warm amber
+    ]
+
+    struct ResolvedBanner: Equatable, Sendable {
+        let primaryURL: URL?
+        let presentation: String?
+        let fallbackCrestURL: URL?
+        let monogram: DiscoverImageMonogram
+    }
+
+    /// Mirrors `BundleHeader.tsx`: music / Grammys / album / song / Spotify / Billboard
+    /// bundles wear `🎵` instead of `🎬`.
+    static func eyebrowEmoji(title: String, category: String?) -> String {
+        if title.range(
+            of: #"\b(?:grammys?|latin\s+grammys?|album|song\s+of\s+the\s+year|spotify|billboard)\b"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil {
+            return "🎵"
+        }
+        return FuturesHero.emoji(for: category)
+    }
+
+    static func validBannerURL(_ raw: String?) -> URL? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty,
+              let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https"
+        else { return nil }
+
+        if let host = url.host?.lowercased(),
+           host == "images.pexels.com" || host.hasSuffix(".pexels.com"),
+           let match = trimmed.range(of: #"/photos/(\d+)/"#, options: .regularExpression) {
+            let digits = trimmed[match].replacingOccurrences(of: "/photos/", with: "").replacingOccurrences(of: "/", with: "")
+            if blockedPexelsPhotoIDs.contains(digits) {
+                return nil
+            }
+        }
+        return url
+    }
+
+    /// Mirrors `discoverEntityVisual.ts` `computeDiscoverInitials` & `hashPalette`.
+    static func deterministicMonogram(
+        title: String,
+        sharedQuestion: String?,
+        category: String?,
+        servedMonogram: DiscoverImageMonogram? = nil
+    ) -> DiscoverImageMonogram {
+        if let served = servedMonogram, !served.initials.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return served
+        }
+
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = cleanTitle.isEmpty ? (sharedQuestion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Bain Luck") : cleanTitle
+        let combined = "\(title) \(sharedQuestion ?? "")"
+
+        let kind: String = {
+            if combined.range(of: #"\b(?:grammys?|latin\s+grammys?|album|song|spotify|billboard)\b"#, options: [.regularExpression, .caseInsensitive]) != nil {
+                return "song"
+            }
+            if combined.range(of: #"\b(?:oscars?|academy\s+awards?|emmys?|golden\s+globes?|bafta|best\s+picture|rotten\s+tomatoes|box\s+office|netflix)\b"#, options: [.regularExpression, .caseInsensitive]) != nil {
+                return "film"
+            }
+            let cat = (category ?? "").lowercased()
+            if ["basketball", "football", "baseball", "hockey", "soccer"].contains(cat) {
+                return "team"
+            }
+            return "topic"
+        }()
+
+        let initials = computeInitials(label: label)
+        let colors = hashPalette(label: label, kind: kind)
+        return DiscoverImageMonogram(
+            initials: initials,
+            label: label,
+            kind: kind,
+            bgHex: colors.bg,
+            accentHex: colors.accent
+        )
+    }
+
+    static func computeInitials(label: String) -> String {
+        let raw = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.isEmpty { return "BL" }
+        if let tickerRange = raw.range(of: #"\(([A-Z]{2,5})\)"#, options: .regularExpression) {
+            let inner = String(raw[tickerRange].dropFirst().dropLast())
+            return inner.uppercased()
+        }
+        if raw.range(of: #"\bkimi\b.*\bmoonshot\b"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return "KM"
+        }
+        let cleaned = raw
+            .replacingOccurrences(of: #"\([^)]*\)"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let abbr = TeamShortName.abbreviation(cleaned.isEmpty ? raw : cleaned)
+        return abbr.isEmpty ? "BL" : abbr
+    }
+
+    static func hashPalette(label: String, kind: String) -> (bg: String, accent: String) {
+        if kind == "film" { return ("#1e293b", "#475569") }
+        if kind == "song" { return ("#581c87", "#9333ea") }
+        let norm = (label.isEmpty ? kind : label).lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        var h: UInt32 = 2_166_136_261
+        for unit in norm.utf16 {
+            h ^= UInt32(unit)
+            h = h &* 16_777_619
+        }
+        let signed = Int32(bitPattern: h)
+        let idx = Int(signed == Int32.min ? UInt32(Int32.max) + 1 : UInt32(abs(signed))) % monogramPalette.count
+        return monogramPalette[idx]
+    }
+
+    static func resolve(
+        title: String,
+        sharedQuestion: String?,
+        category: String?,
+        bundleImageUrl: String?,
+        bundlePresentation: String?,
+        bundleMonogram: DiscoverImageMonogram?,
+        items: [FeedItem]
+    ) -> ResolvedBanner {
+        let primaryFutures = items.first?.futures
+        let primaryURL = validBannerURL(bundleImageUrl) ?? validBannerURL(primaryFutures?.imageUrl)
+        let presentation = (bundlePresentation?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+            ?? (primaryFutures?.imagePresentation?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+
+        let fallbackCrestURL: URL? = {
+            for item in items {
+                if let ev = item.event {
+                    if let u = validBannerURL(ev.homeTeamData?.logoSmall ?? ev.awayTeamData?.logoSmall) {
+                        return u
+                    }
+                }
+                if let fut = item.futures,
+                   fut.imagePresentation == "logo",
+                   let u = validBannerURL(fut.imageUrl),
+                   u != primaryURL {
+                    return u
+                }
+            }
+            let cat = (category ?? "").lowercased()
+            if ["basketball", "football", "baseball", "hockey", "soccer"].contains(cat) {
+                let candidates = [title, primaryFutures?.topOutcomes?.first?.name].compactMap { $0 }
+                for name in candidates {
+                    if let espn = espnTeamLogoURL(for: name), let u = URL(string: espn), u != primaryURL {
+                        return u
+                    }
+                }
+            }
+            return nil
+        }()
+
+        let monogram = deterministicMonogram(
+            title: title,
+            sharedQuestion: sharedQuestion,
+            category: category,
+            servedMonogram: bundleMonogram ?? primaryFutures?.imageMonogram
+        )
+
+        return ResolvedBanner(
+            primaryURL: primaryURL,
+            presentation: presentation,
+            fallbackCrestURL: fallbackCrestURL,
+            monogram: monogram
+        )
+    }
+}
+
+struct DiscoverBundleArtContext12840: Equatable, Sendable {
+    var imageUrl: String? = nil
+    var imagePresentation: String? = nil
+    var imageMonogram: DiscoverImageMonogram? = nil
+}
+
+private struct DiscoverBundleArtKey12840: EnvironmentKey {
+    static let defaultValue = DiscoverBundleArtContext12840()
+}
+
+extension EnvironmentValues {
+    var discoverGroupBundleArt12840: DiscoverBundleArtContext12840 {
+        get { self[DiscoverBundleArtKey12840.self] }
+        set { self[DiscoverBundleArtKey12840.self] = newValue }
+    }
+}
+
+struct DiscoverGroupBannerView12840: View {
+    let resolved: DiscoverBundleVisual12840.ResolvedBanner
+    let category: String?
+    var preloadedImages: [URL: Image] = [:]
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var dividerColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.12) : DS.border
+    }
+
+    var body: some View {
+        let catGradient = FuturesHero.gradient(for: category)
+        ZStack {
+            if let url = resolved.primaryURL {
+                primaryBanner(url: url, catGradient: catGradient)
+            } else if let crestURL = resolved.fallbackCrestURL {
+                crestBanner(url: crestURL, catGradient: catGradient)
+            } else {
+                monogramBanner(resolved.monogram)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: DiscoverBundleVisual12840.bannerHeight)
+        .clipped()
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(dividerColor)
+                .frame(height: 0.75)
+        }
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func primaryBanner(url: URL, catGradient: (Color, Color)) -> some View {
+        if let preloaded = preloadedImages[url] {
+            ZStack {
+                LinearGradient(colors: [catGradient.0, catGradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
+                styledBannerImage(preloaded, url: url, presentation: resolved.presentation)
+            }
+        } else {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    ZStack {
+                        LinearGradient(colors: [catGradient.0, catGradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
+                        styledBannerImage(image, url: url, presentation: resolved.presentation)
+                    }
+                case .failure:
+                    if let crestURL = resolved.fallbackCrestURL {
+                        crestBanner(url: crestURL, catGradient: catGradient)
+                    } else {
+                        monogramBanner(resolved.monogram)
+                    }
+                case .empty:
+                    LinearGradient(colors: [catGradient.0, catGradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
+                @unknown default:
+                    monogramBanner(resolved.monogram)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func crestBanner(url: URL, catGradient: (Color, Color)) -> some View {
+        if let preloaded = preloadedImages[url] {
+            ZStack {
+                LinearGradient(colors: [catGradient.0, catGradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
+                preloaded
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 96, height: 96)
+                    .padding(.vertical, 12)
+                    .shadow(color: .black.opacity(0.28), radius: 6, x: 0, y: 2)
+            }
+        } else {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    ZStack {
+                        LinearGradient(colors: [catGradient.0, catGradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
+                        image
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 96, height: 96)
+                            .padding(.vertical, 12)
+                            .shadow(color: .black.opacity(0.28), radius: 6, x: 0, y: 2)
+                    }
+                default:
+                    monogramBanner(resolved.monogram)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func styledBannerImage(_ image: Image, url: URL, presentation: String?) -> some View {
+        let mode = presentation?.lowercased() ?? "photo"
+        if mode == "logo" {
+            image
+                .resizable()
+                .scaledToFit()
+                .frame(width: 96, height: 96)
+                .padding(.vertical, 12)
+                .shadow(color: .black.opacity(0.28), radius: 6, x: 0, y: 2)
+        } else if mode == "cover" {
+            image
+                .resizable()
+                .scaledToFit()
+                .frame(width: 112)
+                .padding(.vertical, 10)
+                .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 3)
+        } else if mode == "portrait", url.absoluteString.contains("espncdn.com/i/headshots/") {
+            VStack(spacing: 0) {
+                Spacer(minLength: 8)
+                image
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 160)
+                    .shadow(color: .black.opacity(0.32), radius: 8, x: 0, y: 2)
+            }
+        } else if mode == "portrait" {
+            GeometryReader { geo in
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+                    .clipped()
+            }
+        } else {
+            GeometryReader { geo in
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
+                    .clipped()
+            }
+        }
+    }
+
+    private func monogramBanner(_ monogram: DiscoverImageMonogram) -> some View {
+        LinearGradient(
+            colors: [Color(hex: monogram.bgHex), Color(hex: monogram.accentHex)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.white.opacity(0.14))
+                .frame(width: 60, height: 60)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.26), lineWidth: 1)
+                )
+                .overlay(
+                    Text(monogram.initials)
+                        .font(.system(size: 20, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white)
+                )
+                .shadow(color: .black.opacity(0.22), radius: 6, x: 0, y: 2)
+        }
+    }
+}

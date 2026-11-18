@@ -28,7 +28,10 @@ enum DiscoverPictureChart191A {
         let perspective: Perspective
         let plottedTeamShortName: String
         let plottedTeamCode: String
+        var awayShortName: String = ""
+        var homeShortName: String = ""
         let points: [Point]
+        var threeWayPoints: [SoccerThreeLineChart211A.Point] = []
         let leftEndLabel: String
         let rightEndLabel: String
         let isFinished: Bool
@@ -177,11 +180,20 @@ enum DiscoverPictureChart191A {
             return ("Now \(tenthsText) \(plottedTeamCode)", true)
         }()
 
+        let threeWayPoints = SoccerThreeLineChart211A.extractCardPoints(
+            event: event,
+            prematch: prematch,
+            history: history
+        )
+
         return Model(
             perspective: perspective,
             plottedTeamShortName: plottedShortName,
             plottedTeamCode: plottedTeamCode,
+            awayShortName: shortPair.away,
+            homeShortName: shortPair.home,
             points: extractedPoints,
+            threeWayPoints: threeWayPoints,
             leftEndLabel: leftEndLabel,
             rightEndLabel: rightEndLabel,
             isFinished: isFinished,
@@ -397,7 +409,6 @@ struct DiscoverPictureChartPanel191AView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var rawPlotHeight: CGFloat = 126
     @ScaledMetric(relativeTo: .caption2) private var yAxisFontSize: CGFloat = 9.5
-    @ScaledMetric(relativeTo: .caption) private var endLabelFontSize: CGFloat = 11.5
 
     @State private var loadedHistory: EventHistoryResponse?
     @State private var didFinishLoad = false
@@ -426,13 +437,9 @@ struct DiscoverPictureChartPanel191AView: View {
 
     var body: some View {
         Group {
-            if !didFinishLoad || !model.points.isEmpty {
-                VStack(alignment: .leading, spacing: 7) {
-                    plotCanvas
-                        .frame(height: plotHeight)
-
-                    labelledEndsRow
-                }
+            if !didFinishLoad || !model.points.isEmpty || !model.threeWayPoints.isEmpty {
+                plotCanvas
+                    .frame(height: plotHeight)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 9)
                 .background(
@@ -478,12 +485,9 @@ struct DiscoverPictureChartPanel191AView: View {
         sportKey: String?,
         points: [DiscoverPictureChart191A.Point]
     ) -> ChartProbabilityAxis9483.Window {
-        if OddsChartView.usesZeroToHundredVerticalScale201(sportKey: sportKey) {
-            return ChartProbabilityAxis9483.full
-        }
         let readings = points.map(\.probability)
         let mustShow = [points.first?.probability, points.last?.probability].compactMap { $0 }
-        return ChartProbabilityAxis9483.window(readings: readings, mustShow: mustShow)
+        return ChartScaleRule201.gameWindow(sportKey: sportKey, readings: readings, mustShow: mustShow)
     }
 
     private var yWindow: ChartProbabilityAxis9483.Window {
@@ -512,7 +516,15 @@ struct DiscoverPictureChartPanel191AView: View {
 
     @ChartContentBuilder
     private func seriesMarks(floorY: Double) -> some ChartContent {
-        if model.points.count >= 2 {
+        if model.threeWayPoints.count >= 2 {
+            SoccerThreeLineChart211A.chartMarks(
+                segments: [model.threeWayPoints],
+                homeColor: homeColor,
+                drawColor: HeadlineStyleTable199.drawInk,
+                awayColor: awayColor,
+                lineWidth: 2.1
+            )
+        } else if model.points.count >= 2 {
             ForEach(model.points) { point in
                 AreaMark(
                     x: .value("Time", point.date),
@@ -640,75 +652,5 @@ struct DiscoverPictureChartPanel191AView: View {
             .foregroundStyle(emphasized ? Color.primary.opacity(0.68) : DS.textSecondaryReadable.opacity(0.75))
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
-    }
-
-    // MARK: - Labelled Ends Row (Pregame X% TEAM · Now Y% TEAM (+Z pts) / Final · TEAM won A–B)
-
-    @ViewBuilder
-    private var labelledEndsRow: some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: 3) {
-                leftEndText
-                rightEndText(font: .footnote.weight(.bold).monospacedDigit())
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        } else {
-            let labelSize = min(endLabelFontSize, 13.0)
-            let leftFont = Font.system(size: labelSize, weight: .medium).monospacedDigit()
-            let rightFont = Font.system(size: labelSize, weight: .bold).monospacedDigit()
-
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(model.leftEndLabel)
-                        .font(leftFont)
-                        .foregroundStyle(DS.textSecondaryReadable)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-
-                    Spacer(minLength: 8)
-
-                    rightEndText(font: rightFont)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(model.leftEndLabel)
-                        .font(leftFont)
-                        .foregroundStyle(DS.textSecondaryReadable)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-
-                    Spacer(minLength: 6)
-
-                    rightEndText(font: rightFont)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.86)
-                }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(model.leftEndLabel)
-                        .font(leftFont)
-                        .foregroundStyle(DS.textSecondaryReadable)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    rightEndText(font: rightFont)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    private var leftEndText: some View {
-        Text(model.leftEndLabel)
-            .font(.footnote.weight(.medium).monospacedDigit())
-            .foregroundStyle(DS.textSecondaryReadable)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func rightEndText(font: Font) -> some View {
-        Text(model.rightEndLabel)
-            .font(font)
-            .foregroundStyle(model.rightEndUsesTeamAccent ? lineColor : DS.textSecondaryReadable)
     }
 }

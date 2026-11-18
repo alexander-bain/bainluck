@@ -311,20 +311,22 @@ final class LiveProjectedFinalOnCardsAndPage2920Tests: XCTestCase {
         haystack.components(separatedBy: needle).count - 1
     }
 
-    func testBothCardsDrawTheLiveLineOnceThroughTheHelper() throws {
+    func testBothCardsWireTheLiveProjectedColumnThroughTheHelperAndDrawNoGreyLine204C() throws {
         let sports = try source("Components/EventCardView.swift")
         let discover = try source("Components/DiscoverEventCard.swift")
+        let discoverModel = try source("Utilities/DiscoverSingleGameCard190C.swift")
         XCTAssertTrue(sports.contains("structEventCardView:View{"), "anti-vacuity")
         XCTAssertTrue(discover.contains("structNativeEventDiscoverCard:View{"), "anti-vacuity")
         for (name, code) in [("EventCardView", sports), ("DiscoverEventCard", discover)] {
-            XCTAssertEqual(occurrences("LiveProjectedFinalLine2920(", in: code), 1, name)
-            // W3 — which team each number sits beside, pinned on the call itself.
-            XCTAssertEqual(occurrences("LiveProjectedFinalLine2920(printed:liveProjection,awayName:event.awayTeam,homeName:event.homeTeam,sportKey:event.sport)", in: code), 1, name)
-            XCTAssertEqual(occurrences("ifletliveProjection=liveProjectedFinal2920{", in: code), 1, name)
+            // Ruling 204-C: phone cards render live projection in the `Proj.` column with NO grey line.
+            XCTAssertEqual(occurrences("LiveProjectedFinalLine2920(", in: code), 0, "\(name): no grey live line under 204-C")
             XCTAssertTrue(code.contains("guardisLive,!isSuspendedelse{returnnil}returnLiveProjectedFinal2920.card(event)"), name)
             XCTAssertFalse(code.contains("liveProjection?."), "\(name): the card never reads the object's fields itself")
             XCTAssertFalse(code.contains("projectedHomeScore"), "\(name): no live card reads the bare pair")
         }
+        XCTAssertTrue(sports.contains("CompactGameCard12616.liveProjectedColumnLabels(printed:liveProjectedFinal2920,"), "EventCardView wires Proj. column")
+        XCTAssertTrue(discoverModel.contains("CompactGameCard12616.liveProjectedColumnLabels(printed:LiveProjectedFinal2920.card(event),"), "DiscoverSingleGameCard190C wires Proj. column")
+        XCTAssertFalse(discoverModel.contains("projectedHomeScore"), "DiscoverSingleGameCard190C never reads bare pair")
     }
 
     func testTheLiveLinePrintsEachNameBesideItsOwnNumber() throws {

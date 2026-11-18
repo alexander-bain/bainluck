@@ -1596,11 +1596,7 @@ struct EvolutionChartView: View {
 
     nonisolated static func yCeilingPercent192A(entries: [EvolutionPoint]) -> Double {
         let peak = entries.map(\.probability).max() ?? 50
-        if peak <= 26 { return 30 }
-        if peak <= 46 { return 50 }
-        if peak <= 56 { return 60 }
-        if peak <= 76 { return 80 }
-        return 100
+        return ChartScaleRule201.futuresCeilingPercent(peakPercent: peak)
     }
 
     nonisolated static func shortEndLabel192A(name: String, percentValue: Double?) -> String {

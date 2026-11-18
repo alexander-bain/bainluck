@@ -77,6 +77,8 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             XCTAssertTrue(below.contains("22") && below.contains("29"), "\(name): forecast pair 22/29 missing — \(all)")
             for line in read where line.box.maxY < label.box.minY {
                 XCTAssertFalse(isElided(line.text), "\(name): '\(line.text)' is cut short — \(all)")
+                XCTAssertFalse(line.text.trimmingCharacters(in: .whitespaces).hasSuffix("-"),
+                               "\(name): '\(line.text)' broke mid-word — \(all)")
             }
         }
     }
@@ -325,10 +327,18 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             let name = "sports-nfl-393-large-\(status)-constructed-odds"
             let lines = try sportsLines(e, width: 393, size: .large, name: name)
             let all = describe(lines)
+            // Rulings 200-B / 204-C / 213-A: live cards print Score · Proj. · Now
+            // with NO 'Pregame' column header or team-row word, and carry at most the
+            // single one-line pregame summary beneath the rows/bar; scheduled and
+            // suspended cards print 'Pregame' nowhere on the card.
             if status == "live" {
-                // #12616 / #12684: live cards with pregame odds carry the "Pregame" column header once.
-                XCTAssertEqual(lines.filter { containsPregameToken($0.text) }.count, 1,
-                               "\(name): a live card with pregame odds must print the 'Pregame' header once — \(all)")
+                let homeScore = try XCTUnwrap(scoreLine("23", in: lines), "\(name): no live 23 — \(all)")
+                let headerAndRows = lines.filter { $0.box.maxY <= homeScore.box.maxY + 4 }
+                XCTAssertFalse(headerAndRows.contains { containsPregameToken($0.text) },
+                               "\(name): a live card printed 'Pregame' in its headers or rows — \(all)")
+                let belowRows = lines.filter { $0.box.minY > homeScore.box.maxY && containsPregameToken($0.text) }
+                XCTAssertLessThanOrEqual(belowRows.count, 1,
+                                         "\(name): expected at most one 200-B pregame summary line below rows — \(all)")
             } else {
                 XCTAssertFalse(lines.contains { containsPregameToken($0.text) },
                                "\(name): a \(status) card printed 'Pregame' — \(all)")
@@ -362,6 +372,8 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
                 || normalized(line.text).contains("Francisco")
                 || normalized(line.text).contains("49ers") {
                 XCTAssertFalse(isElided(line.text), "\(name): team name line '\(line.text)' is cut short — \(all)")
+                XCTAssertFalse(line.text.trimmingCharacters(in: .whitespaces).hasSuffix("-"),
+                               "\(name): team name line '\(line.text)' broke mid-word — \(all)")
             }
         }
     }
@@ -451,7 +463,10 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
     }
 
     private func containsPregameToken(_ text: String) -> Bool {
-        tokens(text).contains { $0.caseInsensitiveCompare("Pregame") == .orderedSame }
+        if text.localizedCaseInsensitiveContains("Pregame projection") {
+            return false
+        }
+        return tokens(text).contains { $0.caseInsensitiveCompare("Pregame") == .orderedSame }
     }
 
     private func isElided(_ text: String) -> Bool {
@@ -479,7 +494,11 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
     /// The topmost line reading `digits` above the forecast line (`Projection`
     /// on AX5 or `Projected` on compact 161-B).
     private func scoreLine(_ digits: String, in read: [Line]) -> Line? {
-        let label = read.first { $0.text.contains("Projection") || $0.text.hasPrefix("Projected ") }?.box.minY ?? .infinity
+        let label = read.first {
+            $0.text.contains("Projection")
+                || $0.text.hasPrefix("Projected ")
+                || $0.text.hasPrefix("Pregame projection")
+        }?.box.minY ?? .infinity
         return read.first {
             let t = $0.text.trimmingCharacters(in: .whitespaces)
             return (t == digits || valueTokens($0.text).last == digits) && $0.box.minY < label
@@ -517,9 +536,30 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         return nil
     }
 
-    /// Tokens with a percent read as "24 %" closed up to "24%".
+    /// Tokens with a percent read as "24 %" closed up to "24%", and the winner's
+    /// trailing score tick (`23 ✓`, which Vision without language correction reads
+    /// as `"23 ✓"`, `"23 v"`, or `"23v"`) stripped so `scoreLine` and `qualifiedRow`
+    /// still match the integer score (`"23"`).
     private func valueTokens(_ text: String) -> [String] {
-        tokens(text.replacingOccurrences(of: " %", with: "%"))
+        let raw = tokens(text.replacingOccurrences(of: " %", with: "%"))
+        var out: [String] = []
+        for token in raw {
+            if (token == "✓" || token == "✔" || token == "v" || token == "V"),
+               let prev = out.last, !prev.isEmpty, prev.allSatisfy(\.isNumber) {
+                continue
+            }
+            if let last = token.last,
+               (last == "✓" || last == "✔" || last == "v" || last == "V"),
+               token.count >= 2 {
+                let digits = String(token.dropLast())
+                if digits.allSatisfy(\.isNumber) {
+                    out.append(digits)
+                    continue
+                }
+            }
+            out.append(token)
+        }
+        return out
     }
 
     /// The lines directly under `score`, in its column, clear of the forecast

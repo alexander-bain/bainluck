@@ -49,6 +49,8 @@ logger = logging.getLogger(__name__)
 # Base URLs for ESPN API
 ESPN_API_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 ESPN_CORE_API = "https://sports.core.api.espn.com/v2/sports"
+#: #12824: the predictor request's pinned language and region (ESPN's own `$ref`).
+PREDICTOR_PIN = "lang=en&region=us"
 # #10103: sports whose box scores keep each athlete's ESPN id, team and picture
 # (`box_score_data.player_identities`). Widen this only together with a reader.
 # #10237: MLB's reader is the After props read (`prop_expectation_actual`), which
@@ -1307,6 +1309,31 @@ class ESPNAPIService:
             event.home_win_probability = home_win_prob
 
         return event
+
+    async def get_predictor(self, sport_key: str, event_id: str) -> Optional[dict]:
+        """ESPN's pregame matchup predictor for one game, raw (#12824).
+
+        ``sports.core.api.espn.com/.../events/{id}/competitions/{id}/predictor``.
+        Returns the body, ``None`` when ESPN has no predictor for the game (404,
+        an answer), and raises :class:`ESPNAuthorityDark` when ESPN did not
+        answer. The body's ``lastModified`` is the only age it carries; the
+        caller decides whether it is recent enough to show
+        (``tasks/espn_predictor.predictor_home_probability``).
+        """
+        path = self._get_espn_path(sport_key)
+        if not path:
+            return None
+        sport, league = path
+        # Pinned (#12824, Fable 5:16 AM Nov 17): the language and region ESPN's
+        # own `$ref` carries, so the copy we are served does not depend on
+        # where the caller sits. Two routes fetched the bare URL eleven hours
+        # apart and got Aug 31 and Nov 16 copies of the same predictor.
+        url = (
+            f"{ESPN_CORE_API}/{sport}/leagues/{league}"
+            f"/events/{event_id}/competitions/{event_id}/predictor"
+            f"?{PREDICTOR_PIN}"
+        )
+        return await self._get(url)
 
     async def get_win_probability(self, sport_key: str, event_id: str) -> Optional[list[dict]]:
         """

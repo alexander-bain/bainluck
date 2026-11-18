@@ -101,13 +101,77 @@ async def test_a_run_resumes_from_the_saved_cursor():
 @pytest.mark.asyncio
 async def test_the_walk_stops_at_its_share_of_the_budget_and_saves_its_place():
     rc, written, service = _Redis(), [], _Service()
-    # each clock read advances 120 s against a 300 s stop: two pages fit
+    # One clock read per page, 120 s apart, against a 300 s stop. Page 1 starts
+    # at 120. At 240 the slowest page so far (120 s) would end at 360, past the
+    # stop, so page 2 is never started (Nov 16: the walk used to start it and
+    # overran into the closing steps' time).
     out = await pm._keyset_walk_active_events(
         service, rc, seen_ids=set(), process_batch=_writer(written),
         started=0.0, stop_at_s=300, clock=_Clock(120),
     )
-    assert out["keyset_pages"] == 2 and out["keyset_complete"] is False
+    assert out["keyset_pages"] == 1 and out["keyset_complete"] is False
+    assert rc.store[pm.POLYMARKET_KEYSET_CURSOR_KEY] == "c1"
+    assert out["keyset_slowest_page_s"] == 120.0
+    assert out["keyset_elapsed_s"] == 240.0
+
+
+class _SteppedClock:
+    """Reads return the given times in order (one read per page)."""
+
+    def __init__(self, *times):
+        self.times = list(times)
+
+    def __call__(self):
+        return self.times.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_one_slow_page_makes_the_walk_give_way_before_the_next():
+    # Pages start at 10 and 20 (a 10 s page), then one 150 s page ends at 170.
+    # 170 + 150 >= 240, so the walk stops instead of starting a page that would
+    # end near 320 — the 7:15 AM overrun, in miniature.
+    rc, written = _Redis(), []
+
+    class _Long(_Service):
+        PAGES = {
+            None: ([{"id": "1"}], "c1"),
+            "c1": ([{"id": "2"}], "c2"),
+            "c2": ([{"id": "3"}], "c3"),
+            "c3": ([{"id": "4"}], None),
+        }
+
+    out = await pm._keyset_walk_active_events(
+        _Long(), rc, seen_ids=set(), process_batch=_writer(written),
+        started=0.0, stop_at_s=240, clock=_SteppedClock(10.0, 20.0, 170.0, 999.0),
+    )
+    assert written == [["1"], ["2"]]
+    assert out["keyset_slowest_page_s"] == 150.0
     assert rc.store[pm.POLYMARKET_KEYSET_CURSOR_KEY] == "c2"
+
+
+def test_the_closing_steps_keep_their_reserve_under_the_soft_limit():
+    """The three closing steps run after every page loop and have no budget of
+    their own, so the page loops must stop early enough to leave them one."""
+    from app.tasks import poll_polymarket_markets
+
+    assert poll_polymarket_markets.soft_time_limit == pm.POLYMARKET_POLL_SOFT_LIMIT_S
+    # Measured: the closing steps took 172 s on Nov 16 at 3:45 PM.
+    assert pm.POLYMARKET_CLOSING_RESERVE_S >= 172
+    assert pm.POLYMARKET_POLL_PAGE_BUDGET_S + pm.POLYMARKET_CLOSING_RESERVE_S <= (
+        pm.POLYMARKET_POLL_SOFT_LIMIT_S
+    )
+    # The walk gives way first: it stops well inside the page budget, leaving
+    # the settled pass its turn before the reserve.
+    assert pm.POLYMARKET_KEYSET_STOP_AT_S <= pm.POLYMARKET_POLL_PAGE_BUDGET_S - 120
+
+
+def test_the_settled_pass_forecasts_its_next_page_too():
+    import inspect
+
+    src = inspect.getsource(pm._poll_polymarket_markets)
+    assert "_MAX_SECONDS = POLYMARKET_POLL_PAGE_BUDGET_S" in src
+    assert src.count("+ _slowest_tag_page > _MAX_SECONDS") == 2
+    assert "_slowest_tag_page, _time.monotonic() - _tag_page_started" in src
 
 
 @pytest.mark.asyncio

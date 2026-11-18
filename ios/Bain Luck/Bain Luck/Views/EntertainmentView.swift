@@ -258,7 +258,7 @@ struct EntertainmentView: View {
 
             // Meta row: source + volume + resolution date
             HStack(spacing: 8) {
-                SourceChip(source: m.src)
+                SourceChip(source: m.src, onCardFace: true)
                 if let vol = m.volume24h, vol > 0 {
                     Text(formatVolume(vol))
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -363,8 +363,15 @@ struct EntertainmentView: View {
     }
 
     private func multiHeroBody(outcomes: [EntOutcome], isLead: Bool) -> some View {
-        VStack(spacing: 6) {
-            ForEach(Array(outcomes.prefix(isLead ? 5 : 3).enumerated()), id: \.offset) { _, o in
+        let limit = isLead ? 5 : 3
+        let shown = NumericalMarketScaleOrder228.orderedSlice(
+            outcomes,
+            limit: limit,
+            label: \.name,
+            probability: { $0.prob / 100.0 }
+        )?.map(\.element) ?? Array(outcomes.prefix(limit))
+        return VStack(spacing: 6) {
+            ForEach(Array(shown.enumerated()), id: \.offset) { _, o in
                 HStack(spacing: 8) {
                     Text(o.name)
                         .font(.system(size: 12))
@@ -460,7 +467,7 @@ struct EntertainmentView: View {
                             .lineLimit(2)
                     }
                     Spacer()
-                    SourceChip(source: best.src)
+                    SourceChip(source: best.src, onCardFace: true)
                 }
                 .padding(.bottom, 10)
 
@@ -632,8 +639,15 @@ struct EntertainmentView: View {
             if m.outcomeCount <= 2 {
                 yesNoBar(yes: m.prob, no: 100 - m.prob)
             } else {
+                let shown = NumericalMarketScaleOrder228.orderedSlice(
+                    m.topOutcomes,
+                    limit: 3,
+                    label: \.name,
+                    probability: { $0.prob / 100.0 },
+                    totalOutcomeCount: m.outcomeCount
+                )?.map(\.element) ?? Array(m.topOutcomes.prefix(3))
                 VStack(spacing: 6) {
-                    ForEach(Array(m.topOutcomes.prefix(3).enumerated()), id: \.offset) { _, o in
+                    ForEach(Array(shown.enumerated()), id: \.offset) { _, o in
                         HStack(spacing: 8) {
                             Text(o.name)
                                 .font(.system(size: 12))
@@ -649,7 +663,7 @@ struct EntertainmentView: View {
 
             // Footer
             HStack(spacing: 8) {
-                SourceChip(source: m.src)
+                SourceChip(source: m.src, onCardFace: true)
                 if let vol = m.volume24h, vol > 0 {
                     Text(formatVolume(vol))
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -761,9 +775,16 @@ struct EntertainmentView: View {
                     ProbabilityNumber(value: m.prob, size: 14)
                 }
             } else {
-                // Multi-outcome: top 3 with proper bars
+                // Multi-outcome: top 3 with proper bars (Direction 228 #12885: numerical scales list ascending)
+                let shown = NumericalMarketScaleOrder228.orderedSlice(
+                    m.topOutcomes,
+                    limit: 3,
+                    label: \.name,
+                    probability: { $0.prob / 100.0 },
+                    totalOutcomeCount: m.outcomeCount
+                )?.map(\.element) ?? Array(m.topOutcomes.prefix(3))
                 VStack(spacing: 6) {
-                    ForEach(Array(m.topOutcomes.prefix(3).enumerated()), id: \.offset) { _, o in
+                    ForEach(Array(shown.enumerated()), id: \.offset) { _, o in
                         HStack(spacing: 8) {
                             Text(o.name)
                                 .font(.system(size: 12))
@@ -788,7 +809,7 @@ struct EntertainmentView: View {
                         .foregroundStyle(DS.textMuted)
                 }
                 Spacer()
-                SourceChip(source: m.src)
+                SourceChip(source: m.src, onCardFace: true)
             }
         }
         .padding(14)
@@ -823,8 +844,15 @@ struct EntertainmentView: View {
                     }
                     .padding(.bottom, 8)
 
+                    let orderedThresholds = NumericalMarketScaleOrder228.orderedAll(
+                        group.thresholds,
+                        label: \.label,
+                        probability: { $0.prob / 100.0 },
+                        orderHint: "numerical",
+                        isCumulative: true
+                    )?.map(\.element) ?? group.thresholds
                     VStack(spacing: 6) {
-                        ForEach(Array(group.thresholds.enumerated()), id: \.offset) { _, t in
+                        ForEach(Array(orderedThresholds.enumerated()), id: \.offset) { _, t in
                             NavigationLink(value: Route.futuresDetail(id: t.marketId)) {
                                 HStack(spacing: 8) {
                                     Text(t.label)

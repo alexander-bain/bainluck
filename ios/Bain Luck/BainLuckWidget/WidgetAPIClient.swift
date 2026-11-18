@@ -129,6 +129,18 @@ actor WidgetAPIClient {
             let servedAwayPct = event.currentOdds?.awayRenderedPercent
             let bothServed = servedHomePct != nil && servedAwayPct != nil
 
+            let resolvedHexes = TeamTextContrast.cardColorHexes(
+                awayHex: event.awayTeamData?.primaryColor,
+                homeHex: event.homeTeamData?.primaryColor,
+                awaySecondaryHex: event.awayTeamData?.secondaryColor
+            )
+            let resolvedDarkHexes = TeamTextContrast.darkSurfaceColorHexes(
+                awayHex: event.awayTeamData?.primaryColor,
+                homeHex: event.homeTeamData?.primaryColor,
+                awaySecondaryHex: event.awayTeamData?.secondaryColor,
+                homeSecondaryHex: event.homeTeamData?.secondaryColor
+            )
+
             return WidgetGame(
                 id: event.id,
                 homeTeam: displayTeams.home,
@@ -144,8 +156,10 @@ actor WidgetAPIClient {
                 period: PeriodLabel.liveStatusText(
                     period: event.espn?.period, gameClock: event.espn?.gameClock) ?? "",
                 sport: event.sportName ?? event.sport ?? "",
-                homeColor: event.homeTeamData?.primaryColor,
-                awayColor: event.awayTeamData?.primaryColor
+                homeColor: resolvedHexes.home,
+                awayColor: resolvedHexes.away,
+                homeDarkColor: resolvedDarkHexes.home,
+                awayDarkColor: resolvedDarkHexes.away
             )
         }
         }

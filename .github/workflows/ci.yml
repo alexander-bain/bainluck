@@ -711,6 +711,24 @@ jobs:
             echo "::error::#12534 identity gate did not run all five cases"
             exit 1
           }
+      - name: "#12519 team-merge dedup keeps distinct names (real Postgres)"
+        id: db_12519_team_merge_dedup
+        if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
+        run: |
+          python -m pytest tests/test_team_merge_keeps_distinct_names_12519.py \
+            -v -rs > /tmp/dedup12519.txt 2>&1 || {
+            cat /tmp/dedup12519.txt
+            exit 1
+          }
+          cat /tmp/dedup12519.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/dedup12519.txt; then
+            echo "::error::#12519 dedup gate skipped"
+            exit 1
+          fi
+          grep -qE "[^0-9][1-9][0-9]* passed([,[:space:]]|$)" /tmp/dedup12519.txt || {
+            echo "::error::#12519 dedup gate ran no tests"
+            exit 1
+          }
       - name: Typeahead next-fixture contracts, or-NEXT and lead-team (real Postgres)
         id: db_010_typeahead_next_fixture_contracts_or_next
         if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
@@ -910,7 +928,7 @@ jobs:
       - name: "#5531 a hook's stamps survive the ingest poll's metadata replace (real Postgres)"
         id: db_039_5531_a_hook_s_stamps_survive_the_ingest_
         if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
-        run: "set -o pipefail\npython -m pytest tests/integration/test_hook_stamp_survives_ingest_poll_5531_pg.py \\\n  -v -rs 2>&1 | tee /tmp/hookstamp5531.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/hookstamp5531.txt; then\n  echo \"::error::#5531 hook-stamp merge contract SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\nif grep -qiE \"no tests ran|collected 0 items\" /tmp/hookstamp5531.txt; then\n  echo \"::error::#5531 hook-stamp merge contract collected NOTHING\"\n  exit 1\nfi\nPASSED=$(grep -oE \"[0-9]+ passed\" /tmp/hookstamp5531.txt | tail -1 | grep -oE \"[0-9]+\")\nif [ \"${PASSED:-0}\" -lt 13 ]; then\n  echo \"::error::#5531 expected 13 passing contracts, saw ${PASSED:-0} \u2014 a case was lost, not fixed\"\n  exit 1\nfi\n"
+        run: "set -o pipefail\npython -m pytest tests/integration/test_hook_stamp_survives_ingest_poll_5531_pg.py tests/integration/test_refused_book_stamp_198b_pg.py \\\n  -v -rs 2>&1 | tee /tmp/hookstamp5531.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/hookstamp5531.txt; then\n  echo \"::error::#5531 hook-stamp merge contract SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\nif grep -qiE \"no tests ran|collected 0 items\" /tmp/hookstamp5531.txt; then\n  echo \"::error::#5531 hook-stamp merge contract collected NOTHING\"\n  exit 1\nfi\nPASSED=$(grep -oE \"[0-9]+ passed\" /tmp/hookstamp5531.txt | tail -1 | grep -oE \"[0-9]+\")\nif [ \"${PASSED:-0}\" -lt 13 ]; then\n  echo \"::error::#5531 expected 13 passing contracts, saw ${PASSED:-0} \u2014 a case was lost, not fixed\"\n  exit 1\nfi\n"
       - name: "#8265 a board keeps its shape across the ingest poll's metadata replace (real Postgres)"
         id: db_040_8265_a_board_keeps_its_shape_across_the_
         # PILLAR: TRUTH. SHIP: a winner board where nobody bids or trades stops
@@ -4898,10 +4916,15 @@ jobs:
         # Random disposable schema; independent transactions exercise ownership CAS.
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
         run: "python -m pytest tests/integration/test_activitykit_registration_pg.py \\\n  -v -rs > /tmp/activitykit-registration10542.txt 2>&1 || {\n  cat /tmp/activitykit-registration10542.txt\n  exit 1\n}\ncat /tmp/activitykit-registration10542.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/activitykit-registration10542.txt; then\n  echo \"::error::#10542 registration ownership gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]5 passed([,[:space:]]|$)\" /tmp/activitykit-registration10542.txt || {\n  echo \"::error::#10542 registration ownership gate did not run all five cases\"\n  exit 1\n}\n"
+      - name: "#177-A a phone registers its pins and push tokens without an account (real Postgres)"
+        id: db_177a_push_devices_without_an_account
+        # Random disposable schema; the routes, phone-owned activities and the migration itself.
+        if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
+        run: "python -m pytest tests/integration/test_push_devices_177a_pg.py -v -rs > /tmp/pushdevices177a.txt 2>&1 || {\n  cat /tmp/pushdevices177a.txt\n  exit 1\n}\ncat /tmp/pushdevices177a.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/pushdevices177a.txt; then\n  echo \"::error::#177-A push-devices gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]9 passed([,[:space:]]|$)\" /tmp/pushdevices177a.txt || {\n  echo \"::error::#177-A push-devices gate did not run all nine cases\"\n  exit 1\n}\n"
       - name: "#10556 durable ActivityKit reservations (real Postgres)"
         id: db_301_10556_durable_activitykit_reservations_r
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-        run: "python -m pytest tests/integration/test_activitykit_worker_pg.py -v -rs > /tmp/activitykit-worker10556.txt 2>&1 || {\n  cat /tmp/activitykit-worker10556.txt\n  exit 1\n}\ncat /tmp/activitykit-worker10556.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/activitykit-worker10556.txt; then\n  echo \"::error::#10556 durable worker gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]17 passed([,[:space:]]|$)\" /tmp/activitykit-worker10556.txt || {\n  echo \"::error::#10556 durable worker gate did not run all seventeen cases\"\n  exit 1\n}\n"
+        run: "python -m pytest tests/integration/test_activitykit_worker_pg.py -v -rs > /tmp/activitykit-worker10556.txt 2>&1 || {\n  cat /tmp/activitykit-worker10556.txt\n  exit 1\n}\ncat /tmp/activitykit-worker10556.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/activitykit-worker10556.txt; then\n  echo \"::error::#10556 durable worker gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]18 passed([,[:space:]]|$)\" /tmp/activitykit-worker10556.txt || {\n  echo \"::error::#10556 durable worker gate did not run all eighteen cases\"\n  exit 1\n}\n"
       - name: "#10564 abandoned ActivityKit credentials expire (real Postgres)"
         id: db_302_10564_abandoned_activitykit_credentials_
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}

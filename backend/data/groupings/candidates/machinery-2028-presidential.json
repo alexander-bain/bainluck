@@ -1,0 +1,86 @@
+{
+  "slug": "machinery-2028-presidential",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "same_measure",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "POLITICS · 2028 RACE",
+  "name": "2028 Presidential Race: party control, field & nominations",
+  "category": "politics",
+  "tag": "POLITICS",
+  "section_title": "Presidential Contenders",
+  "footer": "One party and one candidate win the general election.",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 5,
+    "card_section_key": "presidential_field",
+    "sections": [
+      {
+        "key": "party_duel",
+        "title": "White House Party Control",
+        "note": "Two-party general-election balance.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["2028", "presidential", "party"],
+          "exclude_tokens": ["nominee"],
+          "shape": "two_way",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 2
+        }
+      },
+      {
+        "key": "presidential_field",
+        "title": "General Election Contenders",
+        "note": "Individual candidates priced highest to win the presidency.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["presidential", "election", "winner", "2028"],
+          "exclude_tokens": ["party", "vice"],
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 6
+        }
+      },
+      {
+        "key": "party_nominations",
+        "title": "Party Nominations & Running Mates",
+        "note": "Primary fields and ticket races feeding the general election.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["2028"],
+          "any_tokens": ["democratic presidential nominee", "republican presidential nominee", "vice-presidential election winner"],
+          "exclude_tokens": ["woman", "age", "trump family"],
+          "shape": "field",
+          "order_by": "closeness_to_50",
+          "min_items": 2,
+          "max_items": 3,
+          "max_outcomes": 4
+        }
+      },
+      {
+        "key": "ticket_benchmarks",
+        "title": "Ticket Benchmarks",
+        "note": "Yes-or-no questions on the composition of the major-party tickets.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["2028", "presidential", "nominee"],
+          "any_tokens": ["woman", "trump family"],
+          "shape": "binary",
+          "order_by": "lead_prob_desc",
+          "min_items": 2,
+          "max_items": 3,
+          "max_outcomes": 1
+        }
+      }
+    ]
+  }
+}

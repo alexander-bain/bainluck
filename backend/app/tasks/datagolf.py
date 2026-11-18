@@ -912,6 +912,31 @@ async def _poll_datagolf_live() -> dict:
                     )
                     markets = market_result.scalars().all()
                     stats[f"{tour}_markets"] = len(markets)
+
+                    # #12740: record when round 1 observably started, once per
+                    # event, as golf "Pregame"'s cutoff. Only this in-play event's
+                    # markets (named "<event> - <market>") name the event id, so
+                    # next week's open markets cannot borrow this week's start.
+                    try:
+                        from app.utils.golf_first_play import note_first_play
+
+                        _event_name = (in_play_info or {}).get("event_name") or ""
+                        _first_play_ids = {
+                            _event_id_of(m.external_id)
+                            for m in markets
+                            if _event_name and (m.name or "").startswith(f"{_event_name} - ")
+                        }
+                        _noted = note_first_play(
+                            r, tour=tour, event_ids=_first_play_ids, players=players
+                        )
+                        if _noted:
+                            stats[f"{tour}_first_play_noted"] = _noted
+                            logger.info(
+                                "DataGolf live: round 1 play first seen for %s event(s) %s",
+                                tour, _noted,
+                            )
+                    except Exception as _fp_exc:  # never fail the live poll for it
+                        logger.warning("DataGolf live: first-play note failed: %s", _fp_exc)
                     if markets:
                         stats[f"{tour}_market_statuses"] = list({m.status for m in markets})
 

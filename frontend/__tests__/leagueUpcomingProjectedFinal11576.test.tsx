@@ -121,6 +121,18 @@ function stamp(html: string): string | null {
   return m ? `${m[1]}-${m[2]} ${m[3]}` : null;
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the upcoming rail prints the served projected final", () => {
   pinClock(CAPTURED);
   it("Commanders @ 49ers: 30 – 22, home first, labelled as the event page labels it", () => {
