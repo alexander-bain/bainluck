@@ -30057,6 +30057,7 @@ async def _build_related_futures(
     from app.utils.team_linking import compute_relevance_score
     # #10248 D5. Function-local: the module's top-level imports are reserved.
     from app.utils.futures_market_snapshot import reader_change_24h
+    from app.utils.related_futures import dedup_by_merge_group, related_futures_quote_mark
     from app.utils.market_label_normalization import (
         normalize_market_label,
         classify_market_category,
@@ -31185,6 +31186,7 @@ async def _build_related_futures(
             outcome.name, market.name or ""
         )
 
+        probability = float(outcome.current_probability) if outcome.current_probability else None
         entry = {
             "market_id": market.id,
             "market_name": market.name,
@@ -31204,7 +31206,8 @@ async def _build_related_futures(
             # cross-source merge below resolves identity from it rather than
             # from the display string. Carried on the row, not re-queried.
             "external_id": outcome.external_id,
-            "probability": float(outcome.current_probability) if outcome.current_probability else None,
+            "probability": probability,
+            "source_mark": related_futures_quote_mark(market, outcome, probability),
             "american_odds": outcome.current_american_odds,
             # #10248 D5 — `reader_change_24h`. The relevance score above keeps
             # the stored column: it chooses, it does not print.
@@ -31298,8 +31301,6 @@ async def _build_related_futures(
     # list there's at most one entry per merge group per source.
     # Division winners use dynamic keys like "atlantic_division" —
     # match with suffix check.
-    from app.utils.related_futures import dedup_by_merge_group
-
     # #7068 / CERT-3099 — the attribution as it stands BEFORE any merge, where
     # every leg still carries its own market's id. The partial-field test below
     # needs a per-market leg count, and after the two merge passes that count is
