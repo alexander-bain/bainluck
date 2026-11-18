@@ -882,6 +882,30 @@ def _downsample_points(points: Sequence[dict[str, Any]], limit: int = 20) -> lis
     return [pts[i] for i in idxs]
 
 
+def _history_chart_moved(chart_item: Mapping[str, Any], *, min_swing_pp: int = 2) -> bool:
+    """True when at least one series moved by >= ``min_swing_pp`` percentage points.
+
+    Slice 4 (Fable #12897 note 2): a flat line is not a picture — only a chart whose
+    number actually moved may render as ``probability_history_chart`` or count toward
+    Point 1 ('a picture on every screen').
+    """
+    if chart_item.get("moved") is False:
+        return False
+    series = chart_item.get("series") or ()
+    max_swing = 0
+    for s in series:
+        if not isinstance(s, Mapping):
+            continue
+        pcts = [
+            int(pt["pct"])
+            for pt in (s.get("points") or ())
+            if isinstance(pt, Mapping) and isinstance(pt.get("pct"), (int, float))
+        ]
+        if len(pcts) >= 2:
+            max_swing = max(max_swing, max(pcts) - min(pcts))
+    return max_swing >= min_swing_pp
+
+
 def _build_history_visual_item(
     hydrated_market: Mapping[str, Any],
     outcome_histories: Mapping[int, Sequence[Mapping[str, Any]]],
@@ -896,6 +920,7 @@ def _build_history_visual_item(
     series_out: list[dict[str, Any]] = []
     earliest_iso: Optional[str] = None
     latest_iso: Optional[str] = None
+    max_swing_pp = 0
 
     for idx, o in enumerate(outcomes[:4]):
         oid = int(o["outcome_id"])
@@ -917,6 +942,9 @@ def _build_history_visual_item(
                 {"t": start_default, "pct": start_pct},
                 {"t": end_default, "pct": cur_pct},
             ]
+        if len(pts_clean) >= 2:
+            s_pcts = [p["pct"] for p in pts_clean]
+            max_swing_pp = max(max_swing_pp, max(s_pcts) - min(s_pcts))
         if pts_clean:
             if earliest_iso is None or pts_clean[0]["t"] < earliest_iso:
                 earliest_iso = pts_clean[0]["t"]
@@ -946,8 +974,9 @@ def _build_history_visual_item(
         if y_max - y_min < 15:
             y_min = max(0, y_max - 15)
 
+    moved = max_swing_pp >= 2
     card_copy = dict(hydrated_market.get("card") or {})
-    card_copy["content_kind"] = "history"
+    card_copy["content_kind"] = "history" if moved else str(hydrated_market.get("content_kind") or "futures")
 
     return {
         "market_id": mid,
@@ -958,6 +987,8 @@ def _build_history_visual_item(
         "end_iso": latest_iso or end_default,
         "y_min": y_min,
         "y_max": y_max,
+        "max_swing_pp": max_swing_pp,
+        "moved": moved,
         "series": series_out,
         "card": card_copy,
     }
@@ -1136,10 +1167,20 @@ async def _load_snapshot_from_db(
                 }
             )
 
-        if history_queries and markets_out:
+        card_sec_key = str((definition.get("rule") or {}).get("card_section_key") or "").strip()
+        card_market_queries = [
+            sec["atom_query"]
+            for idx, sec in enumerate(sections_cfg)
+            if isinstance(sec, Mapping)
+            and isinstance(sec.get("atom_query"), Mapping)
+            and sec["atom_query"].get("kind") == "markets"
+            and ((card_sec_key and str(sec.get("key") or "") == card_sec_key) or (not card_sec_key and idx == 0))
+        ]
+        all_hist_queries = list(history_queries) + card_market_queries
+        if all_hist_queries and markets_out:
             wanted_oids: set[int] = set()
-            max_hours = max(int(hq.get("hours") or 168) for hq in history_queries)
-            for hq in history_queries:
+            max_hours = max([int(hq.get("hours") or 168) for hq in all_hist_queries] or [168])
+            for hq in all_hist_queries:
                 for m_dict in markets_out:
                     if _market_matches_query(m_dict, hq):
                         outs_sorted = sorted(
@@ -1233,6 +1274,124 @@ def _format_event_date_span(events: Sequence[Mapping[str, Any]]) -> str:
     return f"{lo.strftime('%b')} {lo.day}–{hi.strftime('%b')} {hi.day}"
 
 
+_PROPER_WORDS_KEEP = frozenset(
+    {
+        "u.s.",
+        "us",
+        "fed",
+        "fomc",
+        "gdp",
+        "cpi",
+        "nfl",
+        "nba",
+        "mlb",
+        "nhl",
+        "wnba",
+        "afc",
+        "nfc",
+        "oscar",
+        "oscars",
+        "senate",
+        "house",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+        "jan",
+        "feb",
+        "mar",
+        "apr",
+        "jun",
+        "jul",
+        "aug",
+        "sep",
+        "sept",
+        "oct",
+        "nov",
+        "dec",
+    }
+)
+
+
+def _prose_outcome_name(name: str) -> str:
+    raw = name.strip()
+    low = raw.lower()
+    if low == "democratic party":
+        return "Democrats"
+    if low == "republican party":
+        return "Republicans"
+    return raw
+
+
+def _prose_market_phrase(title: str, *, capitalize_first: bool = False) -> str:
+    """Turn a Title-Case market label into natural prose instead of dropping capitals mid-sentence."""
+    raw = title.strip().rstrip("?")
+    if not raw:
+        return "this market"
+    low = raw.lower()
+
+    # Academy Award category names ("Best Picture", "Best Director") are established proper category titles.
+    if re.match(r"^best\s+[a-z]", low):
+        out = raw
+    elif "presidential election winner" in low or low == "presidential winner":
+        out = "the presidential race"
+    elif re.match(r"^end-of-(\d{4})\s+fed\s+rate$", low):
+        yr = re.match(r"^end-of-(\d{4})\s+fed\s+rate$", low).group(1)  # type: ignore[union-attr]
+        out = f"the end-of-{yr} Fed rate"
+    elif re.match(r"^(\d{4})\s+fed\s+rate\s+(hikes|cuts)$", low):
+        m = re.match(r"^(\d{4})\s+fed\s+rate\s+(hikes|cuts)$", low)
+        assert m is not None
+        out = f"{m.group(1)} Fed rate {m.group(2)}"
+    elif re.match(r"^fed\s+decision\s+in\s+([a-z]+(?:\s+\d{4})?)$", low):
+        m = re.match(r"^fed\s+decision\s+in\s+([a-z]+(?:\s+\d{4})?)$", raw, re.IGNORECASE)
+        assert m is not None
+        when_tok = m.group(1).strip()
+        month_map = {
+            "jan": "January",
+            "feb": "February",
+            "mar": "March",
+            "apr": "April",
+            "jun": "June",
+            "jul": "July",
+            "aug": "August",
+            "sep": "September",
+            "oct": "October",
+            "nov": "November",
+            "dec": "December",
+        }
+        parts = when_tok.split()
+        parts[0] = month_map.get(parts[0].lower(), parts[0].capitalize())
+        out = f"the {' '.join(parts)} Fed decision"
+    else:
+        cleaned = re.sub(r"\s+winner$", " race", raw, flags=re.IGNORECASE)
+        words = []
+        for w in cleaned.split():
+            core = w.strip("(),.:;")
+            if core.lower() in _PROPER_WORDS_KEEP or any(ch.isdigit() for ch in core):
+                if core.upper() in {"NFL", "NBA", "MLB", "NHL", "WNBA", "AFC", "NFC", "GDP", "CPI", "FOMC", "US"}:
+                    words.append(w.upper())
+                elif core.lower() == "u.s.":
+                    words.append("U.S.")
+                else:
+                    words.append(core.capitalize())
+            else:
+                words.append(w.lower())
+        joined = " ".join(words)
+        out = joined if joined.lower().startswith(("the ", "a ", "an ")) else f"the {joined}"
+
+    if capitalize_first and out:
+        return out[0].upper() + out[1:]
+    return out
+
+
 def _build_dynamic_title_from_set(
     definition: Mapping[str, Any],
     built_sections: Sequence[Mapping[str, Any]],
@@ -1313,9 +1472,11 @@ def _build_dynamic_title_from_set(
         sp_fav = _fav_outcome(spotlight_item)
         du_fav = _fav_outcome(duel_item)
         if sp_fav and du_fav:
+            sp_phrase = _prose_market_phrase(str(spotlight_item["title"]))
+            du_name = _prose_outcome_name(str(du_fav["name"]))
             return (
-                f"{sp_fav['name']} leads {spotlight_item['title']} at {sp_fav['rendered_percent']}%, "
-                f"with {du_fav['name']} at {du_fav['rendered_percent']}%"
+                f"{_prose_outcome_name(str(sp_fav['name']))} leads {sp_phrase} at {sp_fav['rendered_percent']}%, "
+                f"with {du_name} at {du_fav['rendered_percent']}%"
             )
 
     if spotlight_item is not None:
@@ -1323,12 +1484,15 @@ def _build_dynamic_title_from_set(
         if sp_fav and sibling_items:
             sib_fav = _fav_outcome(sibling_items[0])
             if sib_fav:
+                lead_subj = _prose_market_phrase(str(spotlight_item["title"]), capitalize_first=True)
+                sib_phrase = _prose_market_phrase(str(sibling_items[0]["title"]))
                 return (
-                    f"{spotlight_item['title']} prices {sp_fav['name']} at {sp_fav['rendered_percent']}%, "
-                    f"with {sib_fav['name']} leading {sibling_items[0]['title']} at {sib_fav['rendered_percent']}%"
+                    f"{lead_subj} prices {sp_fav['name']} at {sp_fav['rendered_percent']}%, "
+                    f"with {sib_fav['name']} leading {sib_phrase} at {sib_fav['rendered_percent']}%"
                 )
         if sp_fav:
-            return f"{sp_fav['name']} leads {spotlight_item['title']} at {sp_fav['rendered_percent']}%"
+            sp_phrase = _prose_market_phrase(str(spotlight_item["title"]))
+            return f"{_prose_outcome_name(str(sp_fav['name']))} leads {sp_phrase} at {sp_fav['rendered_percent']}%"
 
     return str(definition.get("name") or definition.get("slug") or "Round-Up")
 
@@ -1528,44 +1692,80 @@ async def produce_container_machinery(
                 matched_h.sort(key=lambda x: (x["closeness_to_50"], -x["lead_prob"]))
             else:
                 matched_h.sort(key=lambda x: (-x["lead_prob"], x["title"].casefold()))
-            matched_h = matched_h[:max_items]
             if len(matched_h) < min_items:
                 return RoundupRefusal((("container_machinery", f"too_few_history_markets:{sec_key}"),))
-            chart_items = [
+            all_chart_items = [
                 _build_history_visual_item(hm, market_histories, now_dt=now_dt, hours=hours)
                 for hm in matched_h
             ]
-            form_id = choose_section_form("market_history", chart_items)
-            sec_members = []
-            for ci in chart_items:
-                mid = int(ci["market_id"])
-                env = {
-                    "type": MEMBER_MARKET,
-                    "id": mid,
-                    "destination": market_destination(mid),
-                    "card": ci["card"],
+            moving_charts = [ci for ci in all_chart_items if _history_chart_moved(ci)]
+            if len(moving_charts) >= min_items:
+                chart_items = moving_charts[:max_items]
+                form_id = choose_section_form("market_history", chart_items)
+                sec_members = []
+                for ci in chart_items:
+                    mid = int(ci["market_id"])
+                    env = {
+                        "type": MEMBER_MARKET,
+                        "id": mid,
+                        "destination": market_destination(mid),
+                        "card": ci["card"],
+                    }
+                    sec_members.append(env)
+                    if (MEMBER_MARKET, mid) not in seen_member_keys:
+                        seen_member_keys.add((MEMBER_MARKET, mid))
+                        all_member_envelopes.append(env)
+                built_by_idx[sec_idx] = {
+                    "class": sec_key,
+                    "title": sec_title,
+                    "note": sec_note,
+                    "layout": form_id,
+                    "members": sec_members,
+                    "visual_block": {
+                        "form_id": form_id,
+                        "initial_visible_limit": initial_visible,
+                        "items": [
+                            {k: v for k, v in ci.items() if k != "card"}
+                            for ci in chart_items
+                        ],
+                    },
                 }
-                sec_members.append(env)
-                if (MEMBER_MARKET, mid) not in seen_member_keys:
-                    seen_member_keys.add((MEMBER_MARKET, mid))
-                    all_member_envelopes.append(env)
-            if lead_history_chart is None and chart_items:
-                lead_history_chart = {k: v for k, v in chart_items[0].items() if k != "card"}
-            built_by_idx[sec_idx] = {
-                "class": sec_key,
-                "title": sec_title,
-                "note": sec_note,
-                "layout": form_id,
-                "members": sec_members,
-                "visual_block": {
-                    "form_id": form_id,
-                    "initial_visible_limit": initial_visible,
-                    "items": [
-                        {k: v for k, v in ci.items() if k != "card"}
-                        for ci in chart_items
-                    ],
-                },
-            }
+            else:
+                # Slice 4 (Fable #12897 note 2): when no matched market moved, use another form instead of flat lines.
+                fallback_matched = matched_h[:max_items]
+                for fm_it in fallback_matched:
+                    fm_it["content_kind"] = "futures"
+                    if isinstance(fm_it.get("card"), dict):
+                        fm_it["card"]["content_kind"] = "futures"
+                form_id = choose_section_form("markets", fallback_matched)
+                sec_members = []
+                for fm_it in fallback_matched:
+                    mid = int(fm_it["market_id"])
+                    env = {
+                        "type": MEMBER_MARKET,
+                        "id": mid,
+                        "destination": market_destination(mid),
+                        "card": fm_it["card"],
+                    }
+                    sec_members.append(env)
+                    if (MEMBER_MARKET, mid) not in seen_member_keys:
+                        seen_member_keys.add((MEMBER_MARKET, mid))
+                        all_member_envelopes.append(env)
+                built_by_idx[sec_idx] = {
+                    "class": sec_key,
+                    "title": sec_title,
+                    "note": sec_note,
+                    "layout": form_id,
+                    "members": sec_members,
+                    "visual_block": {
+                        "form_id": form_id,
+                        "initial_visible_limit": initial_visible,
+                        "items": [
+                            {k: v for k, v in fm_it.items() if k != "card"}
+                            for fm_it in fallback_matched
+                        ],
+                    },
+                }
             continue
 
         # aq_kind == "markets"
@@ -1719,7 +1919,21 @@ async def produce_container_machinery(
             for r in (lead_paired_set.get("entries") or ())[:card_rows_limit]
             if isinstance(r, Mapping)
         )
-    mini_chart = lead_history_chart if (not has_card_art and lead_history_chart is not None) else None
+    # Slice 4 (Fable #12897 notes 1 & 2): a card's picture charts the card's OWN headline market
+    # (never a different market from another section), and only when that market's number moved.
+    mini_chart: Optional[dict[str, Any]] = None
+    if (
+        not has_card_art
+        and vb_form not in {"paired_stage_bars", "coin_flip_matchups", "matchup_slate"}
+        and (vb.get("items") or ())
+    ):
+        own_lead_market = vb["items"][0]
+        if isinstance(own_lead_market, Mapping) and own_lead_market.get("outcomes"):
+            own_chart = _build_history_visual_item(
+                own_lead_market, market_histories, now_dt=now_dt, hours=168
+            )
+            if _history_chart_moved(own_chart):
+                mini_chart = {k: v for k, v in own_chart.items() if k != "card"}
 
     machinery_card: dict[str, Any] = {
         "slug": slug,
@@ -1893,8 +2107,8 @@ def _visual_block_units(vb: Mapping[str, Any]) -> tuple[str, list[tuple[float, i
             items = items[:vis_limit]
         for it in items:
             if isinstance(it, Mapping):
-                has_series = bool(it.get("series"))
-                units.append((196.0, 1 if has_series else 0))
+                moved = bool(it.get("series")) and _history_chart_moved(it)
+                units.append((196.0, 1 if moved else 0))
     elif form in {"coin_flip_matchups", "matchup_slate"}:
         items = list(vb.get("items") or ())
         if vis_limit > 0:
@@ -2054,7 +2268,11 @@ def compute_visual_diversity_report(
                     card_pics += 1
             elif _has_verified_art(r):
                 card_pics += 1
-        if isinstance(mc.get("mini_chart"), Mapping) and mc["mini_chart"].get("series"):
+        if (
+            isinstance(mc.get("mini_chart"), Mapping)
+            and mc["mini_chart"].get("series")
+            and _history_chart_moved(mc["mini_chart"])
+        ):
             card_pics += 1
         if card_form in {"coin_flip_matchups", "matchup_slate"}:
             card_scale_checked, card_scale_violations = 0, []
