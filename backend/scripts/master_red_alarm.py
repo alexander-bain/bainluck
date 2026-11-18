@@ -6,8 +6,14 @@ red from 12:09 AM to 5:23 AM PT before anyone read it.
 
     stuck: master red, HOLD (server), <failing tests or jobs>, <run link>
 
-The HOLD (Fable, 7:26 PM Tue Nov 17) stops server merges until the next server
-"live" line; only a back-out or a fix for the named test merges while it holds.
+The HOLD (Fable, 7:26 PM Tue Nov 17) stops server merges: only a back-out or a
+fix for the named test merges while it holds. It ends at the first of (Fable,
+6:06 AM Wed Nov 18): the next server "live" line; a green master run containing
+the change that /api/health serves; Fable or Alex saying so.
+
+The HOLD is written only when the run's ``deploy`` job did not succeed. A red
+job outside deploy's needs (a canary, say) leaves the server deploying, so that
+line reports the failure and holds nothing.
 
 Run by ``.github/workflows/master-red-alarm.yml`` on ``workflow_run`` of CI.
 GitHub API only (standard library, ``GH_TOKEN``); never reads production.
@@ -76,6 +82,7 @@ def compose(
     conclusion: str,
     tests: list[str],
     failed_jobs: list[str],
+    deployed: bool = False,
 ) -> str:
     if tests:
         shown = ", ".join(f"`{t}`" for t in tests[:MAX_TESTS])
@@ -90,13 +97,25 @@ def compose(
     ref = pr_reference(title)
     headline = title.splitlines()[0][:120] if title else ""
     what = f"{ref} " if ref else ""
+    if deployed:
+        hold, policy = "", (
+            "This run's `deploy` job still succeeded, so the server slot is not held. "
+        )
+    else:
+        hold, policy = "HOLD (server), ", (
+            "This run's `deploy` job did not succeed, so nothing from it reaches the server. "
+            "Until the HOLD ends, the batch's lane may re-run the failed jobs once, and only a back-out "
+            "or a fix for the named test merges on the server; website and apps keep moving. "
+            "The HOLD ends at the first of: the next server \"live\" line; a green master run containing "
+            "this change that `/api/health` serves; Fable or Alex saying so. "
+        )
     return (
-        f"stuck: master red, HOLD (server), {shown}, [run {run_id}]({run_url})"
+        f"stuck: master red, {hold}{shown}, [run {run_id}]({run_url})"
         + (f" (attempt {attempt})" if attempt > 1 else "")
         + f"\n\nMaster `{sha[:10]}` — {what}{headline}. "
-        "Posted automatically by `master-red-alarm.yml`; no deploy goes out until master is green. "
-        "The HOLD ends at the next server \"live\" line; until then only a back-out or a fix for the named test merges. "
-        "Read the failing job before any re-run.\n\n"
+        "Posted automatically by `master-red-alarm.yml`. "
+        + policy
+        + "Read the failing job before any re-run.\n\n"
         + marker(run_id, attempt)
     )
 
@@ -177,6 +196,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         conclusion=conclusion,
         tests=tests,
         failed_jobs=[j.get("name", "?") for j in failed],
+        deployed=any(j.get("name") == "deploy" and j.get("conclusion") == "success" for j in jobs),
     )
     print(line)
     if args.dry_run:

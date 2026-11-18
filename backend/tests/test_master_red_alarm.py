@@ -5,6 +5,7 @@ The two specimens are the shapes of the Nov 15-16 red masters: run 43797011147
 print them — Actions timestamps and pytest's colour escapes included.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -76,10 +77,56 @@ def test_the_line_is_the_stuck_shape_fable_asked_for():
     line = _line()
     first = line.splitlines()[0]
     assert first.startswith("stuck: master red, HOLD (server), `tests/test_ci_shard.py::")
-    assert "HOLD ends at the next server" in line
+    assert "HOLD ends at the first of: the next server \"live\" line" in line
+    assert "`/api/health` serves" in line and "Fable or Alex" in line
     assert first.endswith("[run 43797011147](https://github.com/o/r/actions/runs/43797011147)")
     assert "`0e3c5e4aa5`" in line and "#12687" in line
     assert line.rstrip().endswith(alarm.marker(43797011147, 1))
+
+
+def test_a_red_job_outside_deploys_needs_reports_without_holding_the_server():
+    """The bot's point on #12788: when the run's own `deploy` job succeeded, the server
+    got the change, so the line reports the failure and must not freeze server merges."""
+    line = _line(failed_jobs=["flaky-canary"], deployed=True)
+    first = line.splitlines()[0]
+    assert first.startswith("stuck: master red, `tests/test_ci_shard.py::")
+    assert "HOLD" not in line
+    assert "`deploy` job still succeeded, so the server slot is not held" in line
+    held = _line(deployed=False)
+    assert "HOLD (server)" in held.splitlines()[0]
+    assert "`deploy` job did not succeed" in held
+
+
+def test_main_reads_deploy_from_the_runs_own_jobs(monkeypatch, capsys):
+    monkeypatch.setenv("REPO", "o/r")
+    monkeypatch.setenv("NOW_LINES_ISSUE", "12779")
+    monkeypatch.setenv("RUN_ID", "1")
+    """`deployed` comes from the run's jobs list: a failed shard with deploy skipped holds,
+    a failed canary with deploy green does not."""
+    def fake_gh(jobs):
+        def _gh(path, *rest, body=None):
+            if path.endswith("/jobs?filter=latest&per_page=100"):
+                return json.dumps({"jobs": jobs})
+            if "/logs" in path:
+                return ""
+            return json.dumps({
+                "id": 1, "run_attempt": 1, "event": "push", "head_branch": "master",
+                "conclusion": "failure", "head_sha": "a" * 40, "display_title": "t",
+                "html_url": "https://github.com/o/r/actions/runs/1",
+            })
+        return _gh
+    monkeypatch.setattr(alarm, "_gh", fake_gh([
+        {"id": 7, "name": "backend-tests (6)", "conclusion": "failure"},
+        {"id": 8, "name": "deploy", "conclusion": "skipped"},
+    ]))
+    assert alarm.main(["--dry-run"]) == 0
+    assert "HOLD (server)" in capsys.readouterr().out
+    monkeypatch.setattr(alarm, "_gh", fake_gh([
+        {"id": 7, "name": "flaky-canary", "conclusion": "failure"},
+        {"id": 8, "name": "deploy", "conclusion": "success"},
+    ]))
+    assert alarm.main(["--dry-run"]) == 0
+    assert "HOLD" not in capsys.readouterr().out
 
 
 def test_no_test_line_names_the_failed_jobs_and_long_lists_are_capped():
