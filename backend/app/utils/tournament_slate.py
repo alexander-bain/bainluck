@@ -2210,7 +2210,7 @@ def event_blend_view(event: Any) -> dict[str, Any]:
         effective_source_weights,
         parse_source_entry,
     )
-    from app.utils.source_mark import event_quote_source_marks
+    from app.utils.source_mark import blended_source_marks
 
     status = getattr(event, "status", None)
     keys, _values, _weights = effective_source_weights(event, status)
@@ -2227,7 +2227,7 @@ def event_blend_view(event: Any) -> dict[str, Any]:
     probability, _tier = compute_aggregate_probability_tiered(
         event, status, source_inputs=source_inputs, source_method=source_method,
     )
-    home_mark, away_mark = event_quote_source_marks(
+    home_mark, away_mark = blended_source_marks(
         event, source_inputs, method=source_method[0] if source_method else None,
     )
     return {

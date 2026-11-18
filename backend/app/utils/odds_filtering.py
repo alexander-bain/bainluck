@@ -45,6 +45,48 @@ def _carries_a_quote(snapshot) -> bool:
     )
 
 
+#: #12938 / ruling 233: A. In a live game a sportsbook line counts toward Now
+#: only while it is current. A line is current while its price changed in the
+#: last three minutes, OR changed after the game's last score change (the start,
+#: before any score). The second arm exists because a quiet line is not always a
+#: frozen one: hockey lines rest between goals. Replayed over 52 finished games
+#: (#12938): the plain three-minute rule took Sportsbooks out of 808 of 7,486
+#: live minutes (459 of 2,124 in the NHL) and left 17 with no other current
+#: source; this rule, 246 (84 NHL) and none.
+LIVE_LINE_CURRENT_SECONDS = 180
+
+
+def live_line_is_current(
+    changed_at: datetime | None,
+    *,
+    now: datetime,
+    state_changed_at: datetime | None,
+    window_seconds: int = LIVE_LINE_CURRENT_SECONDS,
+) -> bool:
+    """Whether one book's live line still counts toward the Sportsbooks number.
+
+    ``changed_at`` is when we first saw the line's current price: the snapshot's
+    ``captured_at``. NOT ``valid_until`` — that moves every time the Odds API
+    re-serves the same price, and re-serving a price a book stopped updating is
+    exactly the failure (#12938: eight books served unchanged from 9:05 to
+    9:19 PM through a lead change, 81% beside Polymarket's 99.5%).
+
+    ``state_changed_at`` is the game's last score change, or its start when no
+    score change is recorded. A line priced after it has seen the current score.
+    """
+    if changed_at is None:
+        return False
+    if changed_at.tzinfo is None:
+        changed_at = changed_at.replace(tzinfo=timezone.utc)
+    if (now - changed_at).total_seconds() <= window_seconds:
+        return True
+    if state_changed_at is None:
+        return False
+    if state_changed_at.tzinfo is None:
+        state_changed_at = state_changed_at.replace(tzinfo=timezone.utc)
+    return changed_at >= state_changed_at
+
+
 def filter_stale_bookmaker_snapshots(
     snapshots: list, event_status: str, commence_time: datetime = None
 ) -> list:

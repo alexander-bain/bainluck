@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -112,6 +112,15 @@ class PredictorRow:
     away_team_normalized: Optional[str] = None
     home_team_alt_names: Optional[list] = None
     away_team_alt_names: Optional[list] = None
+    # The readings the PAGE serves for this game: the row's own plus any source
+    # only a proven duplicate row holds (`folded_probability_sources_batch`).
+    # A venue that priced the duplicate prices the game (Ole Miss–Wofford,
+    # Nov 17: Kalshi on the duplicate, ESPN written on the row). None = not
+    # folded (fall back to the row's own).
+    price_sources: Optional[dict] = None
+    # Set when this row is itself a proven duplicate: it is never read, and an
+    # ESPN reading stored on it leaves (the page would fold it in).
+    duplicate_of: Optional[int] = None
 
 
 def _stat(side: dict, name: str) -> Optional[float]:
@@ -188,14 +197,47 @@ def is_priced(sources: Any) -> bool:
     return False
 
 
+def pricing_view(row: PredictorRow) -> dict:
+    """What decides "priced": the page's folded readings when known, else the row's."""
+    return row.price_sources if row.price_sources is not None else (row.sources or {})
+
+
 def wants_reading(row: PredictorRow) -> bool:
-    """226: A. Only a game with no price source is read."""
-    return not is_priced(row.sources)
+    """226: A. Only a game with no price source is read, and never a duplicate row."""
+    return row.duplicate_of is None and not is_priced(pricing_view(row))
 
 
 def must_leave(row: PredictorRow) -> bool:
-    """226: A. A priced game holding an ESPN pregame reading loses it this run."""
-    return is_priced(row.sources) and "espn" in (row.sources or {})
+    """226: A. A priced game holding an ESPN pregame reading loses it this run.
+
+    So does a proven duplicate row holding one: the page folds a duplicate's
+    sources into its game, and nothing refreshes a reading on a row never read.
+    """
+    if "espn" not in (row.sources or {}):
+        return False
+    return row.duplicate_of is not None or is_priced(pricing_view(row))
+
+
+async def twin_price_views(session, rows: list[PredictorRow]) -> dict[int, dict]:
+    """``{event_id: folded sources}`` for the non-duplicate rows, in one lookup.
+
+    The same fold the event page and the lists serve (`proven_duplicates`), so
+    "priced" here means priced on the page. Errors propagate: the caller fails
+    closed (reads nothing this run).
+    """
+    from types import SimpleNamespace
+
+    from app.utils.proven_duplicates import folded_probability_sources_batch
+
+    games = [
+        SimpleNamespace(id=row.event_id, home_team_name=row.home_team_name,
+                        away_team_name=row.away_team_name,
+                        win_probability_sources=row.sources)
+        for row in rows if row.duplicate_of is None
+    ]
+    if not games:
+        return {}
+    return await folded_probability_sources_batch(session, games)
 
 
 def stored_reading_age(row: PredictorRow, now: datetime) -> Optional[timedelta]:
@@ -309,6 +351,7 @@ def candidate_statement(now: datetime):
             Event.away_team_normalized,
             Event.home_team_alt_names,
             Event.away_team_alt_names,
+            Event.event_tags,
         )
         .join(Sport, Sport.id == Event.sport_id)
         .where(
@@ -401,6 +444,7 @@ async def _run_refresh_espn_predictor() -> dict:
     from types import SimpleNamespace
 
     from app.tasks.base import get_task_session
+    from app.utils.proven_duplicates import canonical_id_from_tags
     from app.utils.nonvenue_live_push import (
         publish_committed_nonvenue_frames,
         write_nonvenue_probability,
@@ -424,26 +468,47 @@ async def _run_refresh_espn_predictor() -> dict:
                 sources=r[6] if isinstance(r[6], dict) else {},
                 home_team_normalized=r[7], away_team_normalized=r[8],
                 home_team_alt_names=r[9], away_team_alt_names=r[10],
+                duplicate_of=canonical_id_from_tags(r[11]) if len(r) > 11 else None,
             )
             for r in result.all()
         ]
+        try:
+            folded = await twin_price_views(session, rows)
+        except Exception as exc:  # noqa: BLE001 — fail closed: no fold, no reads
+            folded = None
+            stats["errors"].append(f"fold: {type(exc).__name__}")
+            logger.warning("espn predictor: duplicate fold failed; reading nothing", exc_info=True)
+    if folded is not None:
+        rows = [replace(row, price_sources=folded.get(row.event_id)) for row in rows]
     stats["candidates"] = len(rows)
+    stats["duplicates"] = sum(1 for row in rows if row.duplicate_of is not None)
     stats["mode"] = predictor_mode()
     if stats["mode"] == "withdraw":
         leaving = [row for row in rows if "espn" in (row.sources or {})]
         reading: list[PredictorRow] = []
     else:
         leaving = [row for row in rows if must_leave(row)]
-        reading = [row for row in rows if wants_reading(row)]
+        reading = [row for row in rows if wants_reading(row)] if folded is not None else []
     stats["wanted"] = len(reading)
     stats["leaving_priced"] = 0 if stats["mode"] == "withdraw" else len(leaving)
-    rows = leaving + reading
+    # Fold failed: nothing is read, but a reading already stored still ages out
+    # under the 2-hour rule rather than standing unrefreshed.
+    held = (
+        [row for row in rows if "espn" in (row.sources or {}) and row not in leaving]
+        if folded is None and stats["mode"] != "withdraw" else []
+    )
+    rows = leaving + reading + held
     if not rows:
         stats["status"] = "no_candidates"
         return stats
 
-    reason = "switched-off" if stats["mode"] == "withdraw" else "priced"
-    plans = {row.event_id: ("remove", reason) for row in leaving}
+    def _leave_reason(row: PredictorRow) -> str:
+        if stats["mode"] == "withdraw":
+            return "switched-off"
+        return "duplicate" if row.duplicate_of is not None else "priced"
+
+    plans = {row.event_id: ("remove", _leave_reason(row)) for row in leaving}
+    plans.update({row.event_id: ("keep", "fold-failed") for row in held})
     if reading:
         plans.update(await _read_espn(reading, now, stats))
 
@@ -493,8 +558,8 @@ async def _run_refresh_espn_predictor() -> dict:
     stats["status"] = "ok"
     logger.info(
         "espn predictor: %d candidates, %d wanted, %d written, %d removed, %d kept, "
-        "%d unmatched, %d boards dark",
+        "%d unmatched, %d boards dark, %d duplicate rows",
         stats["candidates"], stats["wanted"], stats["written"], stats["removed"],
-        stats["kept"], stats["not_matched"], stats["boards_dark"],
+        stats["kept"], stats["not_matched"], stats["boards_dark"], stats["duplicates"],
     )
     return stats
