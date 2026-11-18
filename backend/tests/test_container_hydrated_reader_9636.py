@@ -480,6 +480,31 @@ async def test_an_nfl_week_serves_familiar_game_and_question_cards():
     assert "known_classes" in payload
 
 
+async def test_week_cards_read_each_scalar_sport_in_their_parent_statement():
+    hub, events, markets = _nfl_week()
+    markets[2].sport = None
+    markets[2].sport_id = None
+    session = _Session(hub, events=events, markets=markets)
+    payload = await _get(session, hub.slug)
+
+    event_sql, market_sql = [
+        sql
+        for sql in _cards_hydrated(session)
+        if "WHERE events.id IN" in sql or "WHERE futures_markets.id IN" in sql
+    ]
+    assert "FROM events LEFT OUTER JOIN sports" in event_sql
+    assert "FROM futures_markets LEFT OUTER JOIN sports" in market_sql
+    assert "JOIN futures_outcomes" not in market_sql
+    cards = {
+        member["id"]: member["card"]
+        for section in payload["sections"]
+        for member in section["members"]
+    }
+    assert cards[501]["sport"] == cards[9101]["sport"] == "americanfootball_nfl"
+    assert cards[9103]["sport"] is None
+    assert cards[9103]["sport_name"] is None
+
+
 async def test_a_member_whose_row_is_gone_is_withheld_never_a_card_or_a_link():
     hub, events, markets = _nfl_week()
     session = _Session(hub, events=events, markets=markets)
