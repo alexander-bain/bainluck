@@ -15,12 +15,20 @@ from app.utils.container_machinery import (
     CANDIDATE_NFL_WEEK_PATH,
     CANDIDATE_OSCARS_BEST_PICTURE_PATH,
     compute_visual_diversity_report,
+    discover_machinery_candidate_paths,
     evaluate_machinery_candidates_preview,
     load_machinery_definition,
     produce_container_machinery,
     serve_machinery_candidate_preview,
 )
 from tests.test_container_machinery_slice1_12288 import FIXED_NOW, _sample_snapshot
+
+CORE_FOUR_SLUGS = [
+    "machinery-nfl-week",
+    "machinery-oscars-best-picture",
+    "machinery-2028-presidential",
+    "machinery-fed-and-macro",
+]
 
 
 @pytest.mark.asyncio
@@ -65,7 +73,9 @@ async def test_slice6_2b_member_page_number_parity_passes_all_four_and_fails_on_
                 {"id": 502, "name": "Republican Party", "probability": 0.335},
             ]
 
-    items = await evaluate_machinery_candidates_preview(snap, now=FIXED_NOW)
+    items = await evaluate_machinery_candidates_preview(
+        snap, slugs=CORE_FOUR_SLUGS, now=FIXED_NOW
+    )
     assert len(items) == 4
     by_slug = {it["slug"]: it for it in items}
 
@@ -143,9 +153,9 @@ async def test_slice6_2c_failed_read_returns_error_state_never_empty_or_shorter_
     assert exc_info.value.detail["state"] == "unavailable"
     assert exc_info.value.detail["slug"] == "machinery-oscars-best-picture"
 
-    # 2. Preview list keeps all 4 groupings (never drops Oscars to return 3!), with status='error' on Oscars
+    # 2. Preview list keeps every requested grouping (never drops Oscars to return a shorter list!), with status='error' on Oscars
     preview_items = await evaluate_machinery_candidates_preview(
-        broken_oscars_snap, now=FIXED_NOW
+        broken_oscars_snap, slugs=CORE_FOUR_SLUGS, now=FIXED_NOW
     )
     assert len(preview_items) == 4
     by_slug = {it["slug"]: it for it in preview_items}
@@ -182,5 +192,5 @@ async def test_slice6_2c_failed_read_returns_error_state_never_empty_or_shorter_
     exploded = await evaluate_machinery_candidates_preview(
         _ExplodingSession(), now=FIXED_NOW
     )
-    assert len(exploded) == 4
+    assert len(exploded) == len(discover_machinery_candidate_paths())
     assert all(it["status"] == "error" and it["container"] is None for it in exploded)
