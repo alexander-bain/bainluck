@@ -79,7 +79,8 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import DBAPIError, TimeoutError as PoolTimeoutError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.services import get_db
 from app.services.midterms_collection import load_midterms_cards
@@ -204,17 +205,22 @@ def order_classes(present: set) -> list:
 
 
 @_timed_read("references")
+async def _load_event_card_references(db: AsyncSession, names: list[str]) -> tuple[dict, dict]:
+    from app.routes.events import _build_team_lookup, _load_gei_percentiles
+
+    with _time_stage("percentiles"):
+        percentiles = await _load_gei_percentiles(db)
+    with _time_stage("teams"):
+        teams = await _build_team_lookup(db, names)
+    return percentiles, teams
+
+
 async def _read_event_card_references(names: list[str]) -> tuple[dict, dict]:
     """Read the canonical EI/team references on one separate session."""
-    from app.routes.events import _build_team_lookup, _load_gei_percentiles
     from app.services.database import async_session_maker
 
     async with async_session_maker() as reference_db:
-        with _time_stage("percentiles"):
-            percentiles = await _load_gei_percentiles(reference_db)
-        with _time_stage("teams"):
-            teams = await _build_team_lookup(reference_db, names)
-    return percentiles, teams
+        return await _load_event_card_references(reference_db, names)
 
 
 @_timed_read("event_cards")
@@ -272,10 +278,8 @@ async def _assemble_event_cards(
     from datetime import datetime, timezone
 
     from app.routes.events import (
-        _build_team_lookup,
         _filter_stale_bookmaker_snapshots,
         _format_event_with_aggregated_odds,
-        _load_gei_percentiles,
         aggregate_bookmaker_odds,
         detect_reversed_bookmakers,
         latest_odds_per_bookmaker_query,
@@ -315,11 +319,8 @@ async def _assemble_event_cards(
         await apply_recent_line_projections(db, events, odds_map)
 
     if references is None:
-        with _time_stage("percentiles"):
-            gei_percentiles = await _load_gei_percentiles(db)
         names = {n for e in events for n in (e.home_team_name, e.away_team_name) if n}
-        with _time_stage("teams"):
-            team_lookup = await _build_team_lookup(db, sorted(names))
+        gei_percentiles, team_lookup = await _load_event_card_references(db, sorted(names))
         with _time_stage("folded_numbers"):
             folded_map = await folded_card_numbers_batch(db, events)
     else:
@@ -730,6 +731,89 @@ async def _get_container(
     return await _serve_cached(db, slug, published, include_children, compact=compact)
 
 
+# Keep at most one first-page market read per worker on a second connection.
+_week_market_read_slot = asyncio.Semaphore(1)
+_WEEK_MARKET_CHECKOUT_SECONDS = 0.15
+_WeekMarketRead = tuple[dict[int, MarketSummary], list[int], tuple[dict, dict, dict]]
+
+
+def _week_market_read_engine(db: AsyncSession) -> AsyncEngine | None:
+    engine = getattr(db, "bind", None)
+    if _week_market_read_slot.locked() or not isinstance(engine, AsyncEngine):
+        return None
+    try:
+        if engine.pool.checkedout() < engine.pool.size():
+            return engine
+    except (AttributeError, NotImplementedError):
+        pass
+    return None
+
+
+@_timed_read("market_descriptors")
+async def _read_week_market_summaries(
+    db: AsyncSession, market_ids: list[int]
+) -> dict[int, MarketSummary]:
+    rows = (
+        await db.execute(
+            text(
+                "SELECT id, event_id, name, external_id, volume_24h, volume "
+                "FROM futures_markets WHERE id = ANY(:market_ids)"
+            ),
+            {"market_ids": market_ids},
+        )
+    ).fetchall()
+    return {int(row[0]): MarketSummary(*row) for row in rows}
+
+
+async def _read_week_market_cards(
+    db: AsyncSession, market_ids: list[int], event_ids: set[int]
+) -> _WeekMarketRead:
+    summaries = await _read_week_market_summaries(db, market_ids)
+    selected = ranked_preview(list(summaries.values()), event_ids)
+    return summaries, selected, await _hydrate_market_cards(db, selected, nfl_week=True)
+
+
+async def _close_week_market_session(db: AsyncSession) -> None:
+    close = asyncio.create_task(db.close())
+    cancelled = None
+    while not close.done():
+        try:
+            await asyncio.shield(close)
+        except asyncio.CancelledError as exc:
+            # Keep returning the connection even during repeated cancellations.
+            cancelled = exc
+    close.result()
+    if cancelled is not None:
+        raise cancelled
+
+
+async def _read_week_cards_in_parallel(
+    engine: AsyncEngine, db: AsyncSession, event_ids: list[int], market_ids: list[int]
+) -> tuple[tuple[dict, dict], _WeekMarketRead] | None:
+    # Both read chains use only published IDs. Canonical event references stay
+    # on the request session so the build uses at most two connections.
+    async with _week_market_read_slot:
+        side = async_sessionmaker(engine, expire_on_commit=False)()
+        try:
+            try:
+                with _time_stage("market_pool_wait"):
+                    async with asyncio.timeout(_WEEK_MARKET_CHECKOUT_SECONDS):
+                        await side.connection()
+            except (OSError, PoolTimeoutError, DBAPIError):
+                # An unavailable side connection does not prevent the primary
+                # connection from serving the page.
+                return None
+            async with asyncio.TaskGroup() as reads:
+                markets = reads.create_task(
+                    _read_week_market_cards(side, market_ids, set(event_ids)),
+                    name="container-week-market-cards",
+                )
+                games = await _hydrate_event_cards(db, event_ids)
+            return games, markets.result()
+        finally:
+            await _close_week_market_session(side)
+
+
 async def _build_published_payload(
     db: AsyncSession, published, include_children: bool, compact: bool = False,
     week_page: Optional[tuple] = None,
@@ -780,9 +864,19 @@ async def _build_published_payload(
     event_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_EVENT})
     market_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_MARKET})
     all_market_ids = list(market_ids)
-    event_cards, event_failed = await _hydrate_event_cards(
-        db, [] if week_page is not None else event_ids, concurrent_references=compact
-    )
+    first_week_page = compact and week_page is None and bool(market_ids)
+    market_engine = _week_market_read_engine(db) if first_week_page and event_ids else None
+    parallel = await _read_week_cards_in_parallel(
+        market_engine, db, event_ids, market_ids
+    ) if market_engine is not None else None
+    if parallel is None:
+        event_cards, event_failed = await _hydrate_event_cards(
+            db, [] if week_page is not None else event_ids,
+            concurrent_references=compact and not first_week_page,
+        )
+        market_rows = None
+    else:
+        (event_cards, event_failed), (summaries, selected, market_rows) = parallel
     related_counts = {}
     unclassified_count = 0
     week_metadata = ({
@@ -795,19 +889,12 @@ async def _build_published_payload(
         candidates = [mid for mid in market_ids if mid > after and mid not in excluded]
         # Continuations need only their bounded slice's descriptors. Entry
         # ranks narrow metadata for all members, never all outcome rows.
-        asked = candidates[:page_limit] if week_page is not None else market_ids
-        with _time_stage("market_descriptors"):
-            rows = (
-                await db.execute(
-                    text(
-                        "SELECT id, event_id, name, external_id, volume_24h, volume "
-                        "FROM futures_markets WHERE id = ANY(:market_ids)"
-                    ),
-                    {"market_ids": asked},
-                )
-            ).fetchall()
-        summaries = {int(row[0]): MarketSummary(*row) for row in rows}
-        selected = (asked if week_page is not None else ranked_preview(list(summaries.values()), set(event_ids)))
+        if parallel is None:
+            asked = candidates[:page_limit] if week_page is not None else market_ids
+            summaries = await _read_week_market_summaries(db, asked)
+            selected = asked if week_page is not None else ranked_preview(
+                list(summaries.values()), set(event_ids)
+            )
         if week_page is None:
             excluded = selected
             deferred = set(all_market_ids) - set(selected)
@@ -842,9 +929,11 @@ async def _build_published_payload(
             members, summaries, selected, set(event_ids)
         )
         market_ids = selected
-    market_cards, market_event_ids, market_failed = await _hydrate_market_cards(
-        db, market_ids, nfl_week=(payload["edition"] or {}).get("kind") == EDITION_NFL_WEEK
-    )
+    if market_rows is None:
+        market_rows = await _hydrate_market_cards(
+            db, market_ids, nfl_week=(payload["edition"] or {}).get("kind") == EDITION_NFL_WEEK
+        )
+    market_cards, market_event_ids, market_failed = market_rows
     sections, withheld = present_sections(
         members,
         event_cards=event_cards,
