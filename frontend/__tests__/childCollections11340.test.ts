@@ -384,7 +384,11 @@ describe("child collections from an event hub (#11340)", () => {
       },
       oscarsHub,
     );
-    expect(restored.memberKey).toBe("container:oscars-2027-subject-the-odyssey");
-    expect(restored.offset).toBe(312);
+    expect(restored).toEqual({
+      slug: "oscars-2027",
+      memberKey: "container:oscars-2027-subject-the-odyssey",
+      offset: 312,
+      expanded: [],
+    });
   });
 });
