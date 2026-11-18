@@ -98,7 +98,7 @@ export default function CompactPlayerProps({
           search: `${player.name} ${stat.type}`,
           content: (
             <SectionErrorBoundary label={player.name} resetKey={stat}>
-              <div className="grid sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 sm:gap-5 py-3 border-b border-surface-border">
+              <div className="grid sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 sm:gap-5 lg:gap-2 2xl:gap-5 py-3 border-b border-surface-border">
                 <div className="flex items-center gap-2 min-w-0">
                   <span
                     aria-hidden="true"
