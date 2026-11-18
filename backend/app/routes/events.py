@@ -37921,8 +37921,13 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     # only half of "one number": `get_event` folds a suppressed twin's readings
     # in and this arm did not, so a twin-paired match could still print two
     # different percentages from one shared function.
-    _hero = resolve_hero(
+    _hero_view = (
         FoldedBlendView(event, folded_sources) if folded_sources is not None else event
+    )
+    _hero_inputs: list[tuple[str, float]] = []
+    _hero_method: list[str] = []
+    _hero = resolve_hero(
+        _hero_view, source_inputs=_hero_inputs, source_method=_hero_method,
     )
     if _hero is not None:
         response["hero_probability"] = _hero.home_probability
@@ -37944,6 +37949,16 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         response["hero_probability_source"] = _hero.source
         if _hero.settled_result is not None:
             response["hero_settled_result"] = _hero.settled_result
+
+    # #12581: list/search headlines carry the same admitted evidence as detail.
+    # The fold was read in the existing batch; formatting adds no query or clock.
+    from app.utils.source_mark import headline_source_marks
+
+    response["source_mark"], response["away_source_mark"] = headline_source_marks(
+        _hero_view, _hero, _hero_inputs,
+        method=_hero_method[0] if _hero_method else None,
+        away_available=response.get("hero_probability_away") is not None,
+    )
 
     # Compute highlight data (Level 1 + Level 2 if time_series available)
     # #12824 (226: A): an ESPN-only pregame number is never diffed against the
