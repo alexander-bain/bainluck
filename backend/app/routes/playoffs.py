@@ -65,7 +65,7 @@ from app.utils.odds_math import devig_consensus
 from app.utils.playoff_grid import enforce_monotonicity as _grid_enforce_monotonicity
 from app.utils.regex_to_ilike import regex_to_ilike
 from app.utils import season_windows  # #6266
-from app.utils.team_short_name import compact_team_label  # #7798
+from app.utils.team_short_name import compact_team_label, is_college_sport, school_label  # #7798
 
 logger = logging.getLogger(__name__)
 
@@ -2518,7 +2518,13 @@ async def _get_team_metadata(
             # "United". It also mis-parsed: `a or b if c else None` binds as
             # `(a or b) if c else None`, so a row with an abbreviation and no
             # name served null. 4 of 379 grid rows move; see the docstring.
-            "short_name": compact_team_label(team.name, team.abbreviation),
+            "short_name": compact_team_label(
+                team.name,
+                team.abbreviation,
+                # 194-A: a college team falls back to its school, not its mascot.
+                sport_key=team.sport.key if team.sport else None,
+                location=getattr(team, "location", None),
+            ),
             "abbreviation": getattr(team, "abbreviation", None),
             "logo_url": team.logo_url_small or team.logo_url_large,
             "primary_color": team.primary_color,
@@ -7837,7 +7843,14 @@ async def _get_team_progression_for_event_uncached(
 
         return {
             "name": display_name,
-            "short_name": meta.get("short_name") or display_name.split()[-1],
+            # 194-A: a college row with no team metadata serves its school, never
+            # the last word (its mascot); other sports keep the last word.
+            "short_name": meta.get("short_name")
+            or (
+                school_label(display_name)
+                if is_college_sport(sport_key)
+                else display_name.split()[-1]
+            ),
             "team_id": meta.get("team_id"),
             "logo_url": meta.get("logo_url"),
             "primary_color": meta.get("primary_color"),

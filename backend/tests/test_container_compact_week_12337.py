@@ -25,7 +25,8 @@ class CompactSession(_Session):
             )
         if statement.startswith("SELECT futures_markets.") and "WHERE futures_markets.id IN" in statement:
             self.statements.append(statement)
-            ids = set(sql.compile().params["id_1"])
+            (market_ids,) = sql.compile().params.values()
+            ids = set(market_ids)
             return _Result(market for market in self.markets if market.id in ids)
         return await super().execute(sql, params)
 

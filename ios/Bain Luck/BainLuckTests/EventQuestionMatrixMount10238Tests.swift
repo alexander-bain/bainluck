@@ -131,7 +131,7 @@ final class EventQuestionMatrixMount10238Tests: XCTestCase {
             .padding()
         }
 
-        let renderer = ImageRenderer(content: VStack(spacing: 0) {
+        let renderer = rendererForMeasurement(VStack(spacing: 0) {
             fixtureView(opening, label: "Cached opening line")
             Divider()
             fixtureView(observed, label: "Current reading")
