@@ -4,7 +4,10 @@ When a CI run on a push to master finishes red, post ONE line on the NOW-lines
 issue within minutes, so no lane has to notice by hand. On Nov 16 master sat
 red from 12:09 AM to 5:23 AM PT before anyone read it.
 
-    stuck: master red, <failing tests or jobs>, <run link>
+    stuck: master red, HOLD (server), <failing tests or jobs>, <run link>
+
+The HOLD (Fable, 7:26 PM Tue Nov 17) stops server merges until the next server
+"live" line; only a back-out or a fix for the named test merges while it holds.
 
 Run by ``.github/workflows/master-red-alarm.yml`` on ``workflow_run`` of CI.
 GitHub API only (standard library, ``GH_TOKEN``); never reads production.
@@ -88,10 +91,11 @@ def compose(
     headline = title.splitlines()[0][:120] if title else ""
     what = f"{ref} " if ref else ""
     return (
-        f"stuck: master red, {shown}, [run {run_id}]({run_url})"
+        f"stuck: master red, HOLD (server), {shown}, [run {run_id}]({run_url})"
         + (f" (attempt {attempt})" if attempt > 1 else "")
         + f"\n\nMaster `{sha[:10]}` — {what}{headline}. "
         "Posted automatically by `master-red-alarm.yml`; no deploy goes out until master is green. "
+        "The HOLD ends at the next server \"live\" line; until then only a back-out or a fix for the named test merges. "
         "Read the failing job before any re-run.\n\n"
         + marker(run_id, attempt)
     )

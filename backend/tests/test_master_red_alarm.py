@@ -75,7 +75,8 @@ def _line(**over):
 def test_the_line_is_the_stuck_shape_fable_asked_for():
     line = _line()
     first = line.splitlines()[0]
-    assert first.startswith("stuck: master red, `tests/test_ci_shard.py::")
+    assert first.startswith("stuck: master red, HOLD (server), `tests/test_ci_shard.py::")
+    assert "HOLD ends at the next server" in line
     assert first.endswith("[run 43797011147](https://github.com/o/r/actions/runs/43797011147)")
     assert "`0e3c5e4aa5`" in line and "#12687" in line
     assert line.rstrip().endswith(alarm.marker(43797011147, 1))
