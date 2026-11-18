@@ -2,10 +2,11 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import EventCard183A, {
   buildUnifiedCardFromEvent,
+  buildUnifiedCardFromFeed,
   resolveLiveSummarySideInk,
 } from "@/components/EventCard183A";
 import { contrastVsCardSurface, darkenTeamColorForCardText } from "@/lib/teamColors";
-import type { Event } from "@/lib/types";
+import type { Event, FeedEventData, FeedItem } from "@/lib/types";
 
 jest.mock("next/link", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -124,5 +125,37 @@ describe("#12616 — finished game start-time label & >=4.5:1 Chance text contra
     } finally {
       nowSpy.mockRestore();
     }
+  });
+
+  it("draws the same finished collection card after latest bookmaker fields are omitted", () => {
+    const data: FeedEventData = {
+      id: 14639206,
+      external_id: "week-10-finished-game",
+      sport: "americanfootball_nfl",
+      sport_name: "NFL",
+      away_team: "New England Patriots",
+      home_team: "Detroit Lions",
+      commence_time: "2026-11-15T18:00:00Z",
+      ended_at: "2026-11-15T21:12:00Z",
+      status: "completed",
+      away_score: 10,
+      home_score: 35,
+      prematch_odds: { away_probability: 0.42, home_probability: 0.58, source: "kalshi" },
+      opening_odds: { away_probability: 0.46, home_probability: 0.54, favorite: "home" },
+    };
+    const draw = (served: FeedEventData) => {
+      const item: FeedItem = { type: "event", score: 0, reason: "", headline: null, data: served };
+      return renderToStaticMarkup(<EventCard183A card={buildUnifiedCardFromFeed(item, served)} surface="standard" />);
+    };
+    const before = draw({
+      ...data,
+      current_odds: { away_probability: 0.02, home_probability: 0.98 },
+    });
+    const after = draw(data);
+
+    expect(after).toBe(before);
+    expect(after).toContain("42%");
+    expect(after).toContain("58%");
+    expect(after).not.toContain(">98%<");
   });
 });

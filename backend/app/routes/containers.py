@@ -219,7 +219,7 @@ async def _read_event_card_references(names: list[str]) -> tuple[dict, dict]:
 
 @_timed_read("event_cards")
 async def _hydrate_event_cards(
-    db: AsyncSession, event_ids: list, *, concurrent_references: bool = False
+    db: AsyncSession, event_ids: list, *, compact: bool = False
 ) -> tuple[dict, dict]:
     """``({event_id: card}, {("event", id): reason})`` in a constant query count.
 
@@ -248,7 +248,7 @@ async def _hydrate_event_cards(
         ).scalars().all()
     if not events:
         return {}, {}
-    if concurrent_references:
+    if compact:
         names = sorted(
             {
                 name
@@ -261,15 +261,16 @@ async def _hydrate_event_cards(
             references = reads.create_task(
                 _read_event_card_references(names), name="container-card-references"
             )
-            return await _assemble_event_cards(db, events, references=references)
+            return await _assemble_event_cards(db, events, references=references, compact=True)
     return await _assemble_event_cards(db, events)
 
 
 async def _assemble_event_cards(
-    db: AsyncSession, events: list, *, references: Optional[asyncio.Task] = None
+    db: AsyncSession, events: list, *, references: Optional[asyncio.Task] = None,
+    compact: bool = False,
 ) -> tuple[dict, dict]:
     from collections import defaultdict
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     from app.routes.events import (
         _build_team_lookup,
@@ -281,13 +282,37 @@ async def _assemble_event_cards(
         latest_odds_per_bookmaker_query,
     )
     from app.utils.proven_duplicates import folded_card_numbers_batch
+    from app.utils.settled_hero import resolve_settled_hero
     from app.utils.venue_settlement_reader import attach_venue_settlement
 
+    # The compact finished card draws the verified score and the dedicated
+    # pre-match reading, with the recorded opening as its historical fallback.
+    # Once the recent-finish highlight window has passed, there is no reason to
+    # load a finished game's latest sportsbook table just to draw that card.
+    # Unresolved, recent and still-playing games keep the ordinary enrichment.
+    finish_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    bookmaker_event_ids = [
+        event.id for event in events
+        if not (
+            compact
+            and event.completed_at is not None
+            and event.completed_at.tzinfo is not None
+            and event.completed_at <= finish_cutoff
+            and event.opening_home_probability
+            and event.opening_away_probability
+            and resolve_settled_hero(
+                status=event.status, home_score=event.home_score,
+                away_score=event.away_score, completed_at=event.completed_at,
+            ) is not None
+        )
+    ]
     snapshots_by_event: dict = defaultdict(list)
     with _time_stage("bookmaker_odds"):
-        snapshots = (
-            await db.execute(latest_odds_per_bookmaker_query([e.id for e in events]))
-        ).scalars().all()
+        snapshots = []
+        if bookmaker_event_ids:
+            snapshots = (
+                await db.execute(latest_odds_per_bookmaker_query(bookmaker_event_ids))
+            ).scalars().all()
     for snap in snapshots:
         snapshots_by_event[snap.event_id].append(snap)
 
@@ -783,7 +808,7 @@ async def _build_published_payload(
     market_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_MARKET})
     all_market_ids = list(market_ids)
     event_cards, event_failed = await _hydrate_event_cards(
-        db, [] if week_page is not None else event_ids, concurrent_references=compact
+        db, [] if week_page is not None else event_ids, compact=compact
     )
     related_counts = {}
     unclassified_count = 0
