@@ -53,21 +53,35 @@
       },
       {
         "key": "race_history",
-        "title": "2028 Ticket & Battleground Trends",
-        "note": "Recent probability paths across vice-presidential, Senate, and battleground races.",
+        "title": "2028 Primary & Ticket Moves This Week",
+        "fallback_title": "2028 Primary & Ticket Odds",
+        "note": "7-day odds movement across early presidential primaries, battleground states, and ticket races.",
         "atom_query": {
           "kind": "market_history",
           "title_all_tokens": ["2028"],
           "any_tokens": [
+            "presidential primary",
+            "presidential caucus",
+            "presidential election:",
             "vice-presidential",
-            "house winner",
-            "senate winner",
-            "north carolina winner",
-            "primary winner"
+            "vp nominee",
+            "presidential ticket"
           ],
-          "exclude_tokens": ["uefa", "euro", "olympic"],
+          "exclude_tokens": [
+            "senate",
+            "house",
+            "governor",
+            "mayor",
+            "uefa",
+            "euro",
+            "olympic",
+            "odds hit",
+            "which state",
+            "which city",
+            "who will run"
+          ],
           "shape": "any",
-          "order_by": "lead_prob_desc",
+          "order_by": "movement_desc",
           "min_items": 1,
           "max_items": 3,
           "max_outcomes": 3,
@@ -78,6 +92,7 @@
         "key": "party_nominations",
         "title": "Party Nominations & Running Mates",
         "note": "Primary fields and ticket races feeding the general election.",
+        "dynamic_item_note": true,
         "atom_query": {
           "kind": "markets",
           "title_all_tokens": ["2028"],
