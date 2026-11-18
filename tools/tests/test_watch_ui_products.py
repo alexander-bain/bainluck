@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import plistlib
+import re
 import tarfile
 import tempfile
 import unittest
@@ -410,6 +411,156 @@ class RuntimeSupportTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "External absolute"):
             gate.check_layout(self.payload)
+
+
+class MainThreadCheckerRuntimeTests(unittest.TestCase):
+    """#11201: Xcode's cryptex checker path is admitted only where it exists."""
+
+    setUp = ProductContractTests.setUp
+    save = ProductContractTests.save
+    verify = ProductContractTests.verify
+    # Exact bytes refused on master run 38642007967 and widget run 39040371228.
+    HOSTED = (
+        "/private/var/run/com.apple.security.cryptexd/mnt/watchOS_24R362/"
+        "Library/Developer/CoreSimulator/Profiles/Runtimes/"
+        "watchOS 27.0.simruntime/Contents/Resources/RuntimeRoot/"
+        "usr/lib/libMainThreadChecker.dylib"
+    )
+    # The earlier retained mount spelling (see RuntimeSupportTests).
+    OTHER_MOUNT = HOSTED.replace(
+        "watchOS_24R362", "com.apple.WatchOS.SimulatorRuntime-v24.18.362.0.wdAulf"
+    )
+
+    def inject(self, value):
+        data = plistlib.loads(self.run.read_bytes())
+        data[gate.XCTEST]["TestingEnvironmentVariables"] = {
+            "DYLD_INSERT_LIBRARIES": value
+        }
+        self.run.write_bytes(plistlib.dumps(data))
+
+    def runner_files(self, present):
+        """This runner's answer for absolute paths; product files stay real."""
+        from unittest.mock import patch
+
+        real = gate.os.path.isfile
+        asked = []
+        local = (self.temp.name, gate.os.path.realpath(self.temp.name))
+
+        def isfile(path):
+            if str(path).startswith(local):
+                return real(path)
+            asked.append(path)
+            return path in present
+
+        return patch.object(gate.os.path, "isfile", side_effect=isfile), asked
+
+    def test_both_spellings_admitted_only_when_present_on_this_runner(self):
+        for path in (
+            self.HOSTED,
+            self.HOSTED.removeprefix("/private"),
+            self.OTHER_MOUNT,
+            self.OTHER_MOUNT.removeprefix("/private"),
+        ):
+            with self.subTest(path=path):
+                self.inject(path)
+                present, asked = self.runner_files({path})
+                with present:
+                    self.assertEqual(
+                        gate.check_layout(self.payload), self.manifest["xctestrun"]
+                    )
+                self.assertEqual(asked, [path])
+                absent, asked = self.runner_files(set())
+                with absent, self.assertRaisesRegex(
+                    ValueError, "absent on this runner: " + re.escape(path) + "$"
+                ):
+                    gate.check_layout(self.payload)
+                self.assertEqual(asked, [path])
+
+    def test_relocated_products_reverify_existence_on_the_reading_runner(self):
+        self.inject(self.HOSTED)
+        present, _ = self.runner_files({self.HOSTED})
+        with present:
+            self.manifest["xctestrun"] = gate.check_layout(self.payload)
+            self.manifest["files"] = gate.inventory(self.payload)
+            self.save()
+            self.verify()
+        archive = Path(self.temp.name) / "products.tar.gz"
+        with tarfile.open(archive, "w:gz") as stream:
+            for path in self.root.rglob("*"):
+                if path.is_file():
+                    stream.add(path, path.relative_to(self.root), recursive=False)
+        consumer = Path(self.temp.name) / "consumer-runner"
+        gate.unpack(archive, consumer)
+        # The producer's proof does not travel: the reader must hold the file.
+        absent, asked = self.runner_files(set())
+        with absent, self.assertRaisesRegex(ValueError, "absent on this runner"):
+            gate.verify_manifest(
+                consumer, "a" * 40, self.environment, "c" * 64, "b" * 64
+            )
+        self.assertEqual(asked, [self.HOSTED])
+        present, _ = self.runner_files({self.HOSTED})
+        with present:
+            self.assertEqual(
+                gate.verify_manifest(
+                    consumer, "a" * 40, self.environment, "c" * 64, "b" * 64
+                )["xctestrun"],
+                self.manifest["xctestrun"],
+            )
+
+    def test_unrelated_padded_or_traversing_paths_refused_even_if_present(self):
+        lib = "/usr/lib/libMainThreadChecker.dylib"
+        root = self.HOSTED.removesuffix(lib)
+        for path in (
+            root + "/usr/lib/libOther.dylib",
+            root + "/usr/lib/libMainThreadChecker.dylib.bak",
+            root + "/usr/lib/libmainthreadchecker.dylib",
+            root + "/usr/lib/../lib/libMainThreadChecker.dylib",
+            root + "/usr/lib/sub/libMainThreadChecker.dylib",
+            self.HOSTED + "/extra",
+            self.HOSTED + "\n",
+            "/tmp" + self.HOSTED,
+            "/private" + self.HOSTED,
+            self.HOSTED.replace("watchOS 27.0.simruntime", "iOS 27.0.simruntime"),
+            self.HOSTED.replace("watchOS 27.0.simruntime", "watchOS.simruntime"),
+            self.HOSTED.replace("/Profiles/Runtimes/", "/Profiles/Other/"),
+            self.HOSTED.replace("watchOS_24R362", ".."),
+            self.HOSTED.replace("watchOS_24R362", ""),
+            self.HOSTED.replace("watchOS_24R362", "watchOS_24R362/nested"),
+            self.HOSTED.replace("cryptexd/mnt", "cryptexd/other"),
+            # simctl's own runtimeRoot spelling is not Xcode's insert path.
+            "/Library/Developer/CoreSimulator/Volumes/watchOS_24R362/"
+            + self.HOSTED.split("/watchOS_24R362/", 1)[1],
+            "/var/run/unknown/libMainThreadChecker.dylib",
+            lib,
+        ):
+            with self.subTest(path=path):
+                self.inject(path)
+                present, asked = self.runner_files({path})
+                with present, self.assertRaisesRegex(
+                    ValueError, "^External absolute xctestrun path: /"
+                ):
+                    gate.check_layout(self.payload)
+                self.assertEqual(asked, [])
+
+    def test_checker_admission_admits_no_neighbour_in_the_same_setting(self):
+        for extra in (
+            "/var/run/unknown/libOther.dylib",
+            "/tmp/libMainThreadChecker.dylib",
+        ):
+            with self.subTest(extra=extra):
+                self.inject(self.HOSTED + ":" + extra)
+                present, _ = self.runner_files({self.HOSTED, extra})
+                with present, self.assertRaisesRegex(
+                    ValueError, "External absolute xctestrun path: " + re.escape(extra)
+                ):
+                    gate.check_layout(self.payload)
+
+    def test_librpac_exception_unchanged_and_never_probed(self):
+        self.inject("/usr/lib/libRPAC.dylib")
+        absent, asked = self.runner_files(set())
+        with absent:
+            gate.check_layout(self.payload)
+        self.assertEqual(asked, [])
 
 
 class CarrierStubTests(unittest.TestCase):
