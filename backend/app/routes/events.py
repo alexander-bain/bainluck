@@ -11915,6 +11915,14 @@ async def search_events(
 
         # Build event lookups for stale bookmaker filtering
         event_info_map = {e.id: e for e in events}
+        # #12938 / ruling 233: A: live games project from current lines only.
+        from app.utils.live_line_clock import (
+            apply_live_line_projection as _apply_live_line_projection,
+            live_state_clocks as _live_state_clocks,
+        )
+
+        _live_clocks = await _live_state_clocks(db, events)
+        _clock_now = datetime.now(timezone.utc)
 
         for event_id, snaps in snapshots_by_event.items():
             ev = event_info_map.get(event_id)
@@ -11931,8 +11939,13 @@ async def search_events(
             aggregated_odds_map[event_id] = {
                 "snapshots": filtered_snaps,
                 "all_snapshots": all_snaps,
-                "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
+                "aggregated": _apply_live_line_projection(
+                    aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
+                    agg_snaps if agg_snaps else filtered_snaps,
+                    now=_clock_now, state_changed_at=_live_clocks.get(event_id),
+                ),
                 "captured_at": latest_time,
+                "live_clock": _live_clocks.get(event_id),
             }
         # #12595: a scheduled game's pair comes from recent line readings.
         from app.utils.recent_line_readings import apply_recent_line_projections
@@ -11986,6 +11999,7 @@ async def search_events(
                             event,
                             served_status=formatted.get("status"),
                             sport_key=loaded_sport_key(event),
+                            state_changed_at=_odds_entry.get("live_clock"),
                         )
                     },
                 )
@@ -19141,6 +19155,14 @@ async def list_events(
 
         # Build event lookups for stale bookmaker filtering
         event_info_map = {e.id: e for e in events}
+        # #12938 / ruling 233: A: live games project from current lines only.
+        from app.utils.live_line_clock import (
+            apply_live_line_projection as _apply_live_line_projection,
+            live_state_clocks as _live_state_clocks,
+        )
+
+        _live_clocks = await _live_state_clocks(db, events)
+        _clock_now = datetime.now(timezone.utc)
 
         for event_id, snaps in snapshots_by_event.items():
             ev = event_info_map.get(event_id)
@@ -19157,8 +19179,13 @@ async def list_events(
             aggregated_odds_map[event_id] = {
                 "snapshots": filtered_snaps,
                 "all_snapshots": all_snaps,
-                "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
+                "aggregated": _apply_live_line_projection(
+                    aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
+                    agg_snaps if agg_snaps else filtered_snaps,
+                    now=_clock_now, state_changed_at=_live_clocks.get(event_id),
+                ),
                 "captured_at": latest_time,
+                "live_clock": _live_clocks.get(event_id),
             }
         # #12595: a scheduled game's pair comes from recent line readings.
         from app.utils.recent_line_readings import apply_recent_line_projections
@@ -20740,6 +20767,19 @@ async def get_event(
                 )).get(event.id),
             )
 
+        # #12938 / ruling 233: A: a live game's projected final is built from
+        # the same current lines as Sportsbooks in Now (no clock: unchanged).
+        from app.utils.live_line_clock import (
+            apply_live_line_projection as _apply_live_line_projection,
+            live_state_clocks as _live_state_clocks,
+        )
+
+        _live_clock = (await _live_state_clocks(db, [event])).get(event.id)
+        aggregated = _apply_live_line_projection(
+            aggregated, agg_snapshots,
+            now=datetime.now(timezone.utc), state_changed_at=_live_clock,
+        )
+
         # Hero probability: use multi-source aggregate (matching feed),
         # fall back to bookmaker-only consensus if aggregate unavailable.
         #
@@ -20840,6 +20880,7 @@ async def get_event(
                         event,
                         served_status=response.get("status"),
                         sport_key=event_sport_key,
+                        state_changed_at=_live_clock,
                     )
                 },
             )

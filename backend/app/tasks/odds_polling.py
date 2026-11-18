@@ -834,6 +834,8 @@ async def _game_state_changed_at(
     newest row is the last change we know of. A change recorded before the
     start (a stale pregame row) does not count: the start is later.
     """
+    from app.utils.live_line_clock import game_state_clock
+
     last_score = (
         await session.execute(
             select(func.max(ScoreSnapshot.captured_at)).where(
@@ -841,9 +843,7 @@ async def _game_state_changed_at(
             )
         )
     ).scalar()
-    stamps = [t for t in (last_score, commence_time) if isinstance(t, datetime)]
-    stamps = [t if t.tzinfo else t.replace(tzinfo=timezone.utc) for t in stamps]
-    return max(stamps) if stamps else None
+    return game_state_clock(last_score, commence_time)
 
 
 async def _ingest_event_odds(
