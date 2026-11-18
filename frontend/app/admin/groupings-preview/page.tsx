@@ -94,7 +94,8 @@ function GroupingsPreviewBody() {
             </h1>
             <p className="text-sm text-text-secondary">
               One definition produces both the Discover card and the multi-section
-              container page, with Ruling 227-A report-only diversity counts.
+              container page, with 227: A Diversity Report counts and member-page
+              number parity.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
