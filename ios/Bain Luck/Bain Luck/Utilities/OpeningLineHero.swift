@@ -42,6 +42,17 @@ nonisolated struct OpeningLineHero: Equatable, Sendable {
     static let openingSource = "opening"
     static let caption = "Opening line"
 
+    static func currentOddsForCard(_ odds: CurrentOdds?, heroSource: String?) -> CurrentOdds? {
+        // Older feed payloads put the opening pair in currentOdds as well.
+        guard heroSource == openingSource, var reading = odds else { return odds }
+        reading.homeProbability = nil
+        reading.awayProbability = nil
+        reading.drawProbability = nil
+        reading.homeRenderedPercent = nil
+        reading.awayRenderedPercent = nil
+        return reading
+    }
+
     static func resolve(_ currentOdds: CurrentOdds, for event: EventDetail) -> OpeningLineHero {
         if event.heroProbabilitySource == openingSource,
            event.status != "live", !EventState.isFinished(event.status),
