@@ -661,10 +661,68 @@ async def get_container(
                                 ) + ";basis=overlapping_wall_ms"
                             return result
 
+            if isinstance(slug, str) and containers_read_enabled():
+                from app.utils.discovered_child_collections import (
+                    attach_discovered_theme_children,
+                    event_hub_child_discovery_enabled,
+                    is_discovered_child_collection_slug,
+                    serve_discovered_child_collection,
+                )
+
+                def _has_admin_header(req: Optional[Request]) -> bool:
+                    if req is None:
+                        return False
+                    hdrs = getattr(req, "headers", None) or {}
+                    return bool(hdrs.get("Authorization") or hdrs.get("X-Admin-Secret"))
+
+                if is_discovered_child_collection_slug(slug):
+                    allow_child = event_hub_child_discovery_enabled()
+                    if not allow_child and _has_admin_header(request):
+                        from app.routes.admin_utils import _check_admin_auth
+
+                        allow_child = await _check_admin_auth(None, request, db)
+                    if allow_child:
+                        result = await serve_discovered_child_collection(
+                            slug, db, include_children=include_children
+                        )
+                        if timings is not None and not isinstance(result, Response):
+                            result = Response(content=_render(result), media_type="application/json")
+                        if timings is not None:
+                            result.headers["X-Container-Timing"] = ";".join(
+                                f"{name}={elapsed:.1f}" for name, elapsed in sorted(timings.items())
+                            ) + ";basis=overlapping_wall_ms"
+                        return result
+
             result = await _get_container(
                 slug, include_children, revision, cursor, limit,
                 market_revision, market_cursor, market_limit, compact, db,
             )
+            if (
+                isinstance(result, dict)
+                and result.get("state") == READ_PUBLISHED
+                and _is_theme_edition(result.get("edition"))
+                and include_children
+                and cursor is None
+            ):
+                from app.utils.discovered_child_collections import (
+                    attach_discovered_theme_children,
+                    event_hub_child_discovery_enabled,
+                )
+
+                allow_theme_children = event_hub_child_discovery_enabled()
+                if (
+                    not allow_theme_children
+                    and request is not None
+                    and ((getattr(request, "headers", None) or {}).get("Authorization")
+                         or (getattr(request, "headers", None) or {}).get("X-Admin-Secret"))
+                ):
+                    from app.routes.admin_utils import _check_admin_auth
+
+                    allow_theme_children = await _check_admin_auth(None, request, db)
+                if allow_theme_children:
+                    await attach_discovered_theme_children(
+                        result, db, include_children=include_children
+                    )
             if timings is not None and not isinstance(result, Response):
                 result = Response(content=_render(result), media_type="application/json")
         if timings is not None:
