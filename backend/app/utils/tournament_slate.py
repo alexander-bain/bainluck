@@ -84,7 +84,6 @@ from app.utils.prematch_reading import (
     prematch_source_rank,
     serialize_prematch_odds,
 )
-from app.utils.source_mark import quote_source_mark
 from app.utils.tournament_board import (
     DARK_PRICE_HOURS,
     draw_label,
@@ -2345,6 +2344,9 @@ def _prematch_by_pair(
     their chance of winning a first-round match) would be a fabricated number
     wearing a real player's name.
     """
+    # The standalone prop specimen imports this module without backend packages.
+    from app.utils.source_mark import quote_source_mark
+
     out: dict[tuple, dict[str, Any]] = {}
     for matchup in reg.matchups:
         players = matchup.get("players")
