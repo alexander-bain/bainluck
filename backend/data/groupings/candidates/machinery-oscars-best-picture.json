@@ -1,0 +1,94 @@
+{
+  "slug": "machinery-oscars-best-picture",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "implies",
+    "sibling",
+    "movement"
+  ],
+  "level": "member",
+  "parent_slug": "oscars-2027",
+  "parent_name": "Oscars 2027",
+  "kicker": "THE OSCARS · BEST PICTURE",
+  "name": "Oscars Best Picture",
+  "category": "entertainment",
+  "tag": "ENTERTAINMENT",
+  "section_title": "Best Picture: Nominated & Wins",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "sections": [
+      {
+        "key": "best_picture_paired",
+        "title": "Best Picture: Nominated & Wins",
+        "note": "Each contender's chance of earning a nomination beside its chance of winning Best Picture.",
+        "atom_query": {
+          "kind": "paired_stage",
+          "ceremony": "oscars",
+          "category_name": "Best Picture",
+          "min_items": 3,
+          "max_items": 8
+        }
+      },
+      {
+        "key": "best_picture_history",
+        "title": "Companion Award Odds Over the Past Week",
+        "note": "Recent probability paths across Best Actress, Supporting Actor, and Animated Feature.",
+        "atom_query": {
+          "kind": "market_history",
+          "title_all_tokens": ["oscar"],
+          "any_tokens": [
+            "best actress",
+            "supporting actor",
+            "supporting actress",
+            "animated feature",
+            "international feature"
+          ],
+          "exclude_tokens": ["nomin", "odds hit"],
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 4,
+          "max_outcomes": 3,
+          "hours": 168
+        }
+      },
+      {
+        "key": "best_director",
+        "title": "Best Director Contenders",
+        "note": "Filmmakers leading the Academy's directing field.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["oscar", "best director"],
+          "exclude_tokens": ["nomin"],
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 5
+        }
+      },
+      {
+        "key": "acting_categories",
+        "title": "Acting Races",
+        "note": "Companion acting fields sharing the same Best Picture contenders.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["oscar"],
+          "any_tokens": ["best actor", "best actress"],
+          "exclude_tokens": ["nomin", "supporting"],
+          "shape": "field",
+          "order_by": "closeness_to_50",
+          "min_items": 2,
+          "max_items": 2,
+          "max_outcomes": 3
+        }
+      }
+    ]
+  }
+}

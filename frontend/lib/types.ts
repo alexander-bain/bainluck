@@ -2333,6 +2333,7 @@ export interface FeedRoundupContract {
   presentation?: string | null;
   destination_href?: string | null;
   paired_metric_set?: import("@/lib/discover/visualForms").PairedMetricSet | null;
+  machinery_card?: import("@/components/collections/MachinerySectionRenderer").MachineryCardContract | null;
   rows: FeedRoundupRow[];
 }
 

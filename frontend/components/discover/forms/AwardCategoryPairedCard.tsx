@@ -246,6 +246,7 @@ export interface AwardCategoryPairedCardProps {
   set: PairedMetricSet;
   surface?: "discover" | "collection" | "category";
   defaultExpanded?: boolean;
+  initialLimit?: number;
   kidSurface?: boolean;
   currentMarketId?: number | null;
 }
@@ -254,12 +255,12 @@ export function AwardCategoryPairedCard({
   set,
   surface = "discover",
   defaultExpanded = false,
+  initialLimit = 5,
   kidSurface = false,
   currentMarketId = null,
 }: AwardCategoryPairedCardProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const sorted = sortPairedEntries(set.entries);
-  const initialLimit = 5;
   const visibleRows = expanded ? sorted : sorted.slice(0, initialLimit);
   const hiddenCount = Math.max(0, sorted.length - initialLimit);
   const subtitle = cleanPairedCardSubtitle(set.subtitle);

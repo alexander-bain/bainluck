@@ -59,7 +59,7 @@ def test_update_matches_swift_content_state_default_date_wire_contract():
                 "probabilityObservedAt": 812894390,
             }
         },
-        "stale-date": 1791201690,
+        "stale-date": 1791201930,  # the score's clock (30 s old) + 6 min
     }
     assert push.headers == {
         "apns-push-type": "liveactivity",
@@ -92,10 +92,10 @@ def test_unknown_displayed_clock_is_omitted_and_marks_stale_now(missing):
 
 
 def test_old_reading_does_not_get_fresh_expiry_from_send_time():
-    reading = snapshot(score_observed_at=SENT - timedelta(minutes=5))
+    reading = snapshot(score_observed_at=SENT - timedelta(minutes=7))
     first = aps(build_activitykit_update(reading, sent_at=SENT))
     later = aps(build_activitykit_update(reading, sent_at=SENT + timedelta(minutes=1)))
-    assert first["stale-date"] == 1791201420 < first["timestamp"]
+    assert first["stale-date"] == 1791201540 < first["timestamp"]
     assert later["stale-date"] == first["stale-date"]
     assert later["content-state"] == first["content-state"]
     assert later["timestamp"] > first["timestamp"]
@@ -104,7 +104,7 @@ def test_old_reading_does_not_get_fresh_expiry_from_send_time():
 def test_probability_only_reading_uses_its_clock_not_an_absent_score_clock():
     reading = snapshot(home_score=None, away_score=None, score_observed_at=None)
     result = aps(build_activitykit_update(reading, sent_at=SENT))
-    assert result["stale-date"] == 1791201710
+    assert result["stale-date"] == 1791201950  # no score: the chance's clock + 6 min
     assert "homeScore" not in result["content-state"]["snapshot"]
     assert "scoreObservedAt" not in result["content-state"]["snapshot"]
 
@@ -112,9 +112,20 @@ def test_probability_only_reading_uses_its_clock_not_an_absent_score_clock():
 def test_score_only_reading_uses_its_clock_and_never_invents_probability():
     reading = snapshot(home_rendered_percent=None, probability_observed_at=None)
     result = aps(build_activitykit_update(reading, sent_at=SENT))
-    assert result["stale-date"] == 1791201690
+    assert result["stale-date"] == 1791201930
     assert "homeRenderedPercent" not in result["content-state"]["snapshot"]
     assert "probabilityObservedAt" not in result["content-state"]["snapshot"]
+
+
+def test_an_older_chance_never_makes_a_live_score_stale():
+    """#10542 step 4: during play the score's clock decides. A chance last moved
+    five minutes ago prints its own age; it doesn't turn the activity stale."""
+    reading = snapshot(
+        score_observed_at=SENT - timedelta(seconds=20),
+        probability_observed_at=SENT - timedelta(minutes=5),
+    )
+    result = aps(build_activitykit_update(reading, sent_at=SENT))
+    assert result["stale-date"] == 1791201600 - 20 + 360
 
 
 @pytest.mark.parametrize("lifecycle", ["suspended", "unknown"])
