@@ -591,7 +591,13 @@ async def _get_container(
     if not containers_read_enabled() or (slug == MIDTERMS_SLUG and not midterms_enabled()):
         raise HTTPException(status_code=404, detail="Not found")
 
-    from app.utils.roundup_containers import ROUNDUP_PRODUCERS, serve_roundup
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        ensure_optional_roundup_candidates,
+        serve_roundup,
+    )
+
+    ensure_optional_roundup_candidates()
 
     if slug in ROUNDUP_PRODUCERS:
         return await serve_roundup(slug, db, include_children=include_children)

@@ -14,7 +14,44 @@ export interface CollectionMember {
   linkPresentation?: "game" | "inline" | "secondary";
   relatedMarketCount?: number;
 }
-export interface CollectionSection { key: string; cls: string; title: string; note: string | null; layout?: string; members: CollectionMember[] }
+export interface MachinerySubjectArt {
+  url: string | null;
+  kind: string;
+  detail: string;
+  accent_color: string;
+  initials: string;
+}
+
+export interface MachineryOutcomeVisual {
+  outcome_id: number;
+  name: string;
+  probability: number;
+  rendered_percent: number;
+  art: MachinerySubjectArt;
+}
+
+export interface MachineryVisualBlock {
+  form_id:
+    | "paired_stage_bars"
+    | "coin_flip_matchups"
+    | "matchup_slate"
+    | "duel_bar"
+    | "contender_spotlight"
+    | "sibling_fields_grid"
+    | "benchmark_strip";
+  paired_metric_set?: import("@/lib/discover/visualForms").PairedMetricSet;
+  items?: Record<string, unknown>[];
+}
+
+export interface CollectionSection {
+  key: string;
+  cls: string;
+  title: string;
+  note: string | null;
+  layout?: string;
+  visualBlock?: MachineryVisualBlock;
+  members: CollectionMember[];
+}
 export interface CollectionPin { slug: string; name: string; href: string; subtitle: string; pin_until: string }
 export interface CollectionCaptionFigure {
   memberId: string;
@@ -229,8 +266,11 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
     if (section.count !== section.members.length || accepted.length !== section.members.length) partial = true;
     if (accepted.length) sections.push({ key: `${index}:${section.class}`, cls: section.class,
       title: (slug === "midterms-2026" || isRoundup) && text(section.title) ? section.title : familyTitles?.[section.class as string]?.title ?? titles[section.class] ?? "More",
-      note: familyTitles?.[section.class as string]?.note ?? null,
-      layout: slug === "midterms-2026" && text(section.layout) ? section.layout : undefined,
+      note: (isRoundup && text(section.note) ? section.note : null) ?? familyTitles?.[section.class as string]?.note ?? null,
+      layout: (slug === "midterms-2026" || isRoundup) && text(section.layout) ? section.layout : undefined,
+      visualBlock: isRoundup && object(section.visual_block) && text(object(section.visual_block)?.form_id)
+        ? (section.visual_block as unknown as MachineryVisualBlock)
+        : undefined,
       members: accepted });
   });
   const members = sections.flatMap((section) => section.members);
