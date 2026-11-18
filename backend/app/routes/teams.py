@@ -34,6 +34,7 @@ from app.utils.sport_keys import (
     sport_display_name,
 )
 from app.utils.standings_shape import public_standings
+from app.utils.source_mark import quote_source_mark, settled_source_mark
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, or_, and_, func
@@ -1396,12 +1397,20 @@ async def _get_championship_path(
             )
             avg_prob = 1.0
 
+        source_mark = quote_source_mark(
+            (
+                {"key": getattr(market, "source", None), "probability": probability}
+                for probability, _, market in deduped
+            ),
+            method=f"Bain Luck blend · average of {len(deduped)} prices before rounding",
+        )
         path.append({
             "tier": tier,
             "label": _championship_tier_label(tier, team_sport_key, best_market.name),
             "market_name": best_market.name,
             "market_id": best_market.id,
             "probability": round(avg_prob, 4),
+            "source_mark": source_mark,
             "rank": best_outcome.rank,
             "movement": float(best_outcome.probability_change_24h) if best_outcome.probability_change_24h else None,
             # Season this number describes (Queue #242 Item 1). Every market that
@@ -1539,6 +1548,9 @@ def _stamp_grid_states(
                     break
         if state:
             step["state"] = state
+            step["source_mark"] = settled_source_mark(
+                None, "Won" if state == "won" else "Eliminated"
+            )
 
     for item in futures_items:
         state = _by_market(item.get("market_id"))
