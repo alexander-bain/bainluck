@@ -263,8 +263,18 @@ struct FuturesBrowseMarketRow: View {
                 // so the web list has always drawn nothing in this slot and this
                 // only brings the phone into line with it.
                 if let outcomes = market.topOutcomes, !outcomes.isEmpty {
+                    let shown = NumericalMarketScaleOrder228.orderedSlice(
+                        outcomes,
+                        limit: 3,
+                        label: \.name,
+                        probability: \.probability,
+                        explicitSortKey: \.sortKey,
+                        marketType: market.marketType,
+                        totalOutcomeCount: market.outcomeCount ?? outcomes.count,
+                        isCumulative: market.mutuallyExclusive == false
+                    )?.map(\.element) ?? Array(outcomes.prefix(3))
                     VStack(spacing: 5) {
-                        ForEach(Array(outcomes.prefix(3))) { outcome in
+                        ForEach(shown) { outcome in
                             FuturesBrowseOutcomeRow(outcome: outcome, tint: category.color)
                         }
                     }

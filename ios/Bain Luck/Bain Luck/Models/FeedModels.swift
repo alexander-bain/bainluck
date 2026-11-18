@@ -1016,6 +1016,8 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let canonicalMarketKey: String?
     let groupId: String?
     let groupType: String?
+    var marketType: String? = nil
+    var mutuallyExclusive: Bool? = nil
     let imageUrl: String?
     var imagePresentation: String? = nil
     var imageMonogram: DiscoverImageMonogram? = nil
@@ -1115,6 +1117,7 @@ nonisolated struct FeedDiscoverDistributionOutcome: Decodable, Sendable {
     /// `nil` on the "No release by…" residual and on every other board. The year
     /// is the server's (venue labels read `October 27`), never guessed here.
     var date: String? = nil
+    var sortKey: Double? = nil
 }
 
 // MARK: - Feed Tournament Data
@@ -1203,6 +1206,7 @@ nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
     let movement: Double?
     /// #11920 / #12581 (137-A): server-owned per-outcome source attribution mark.
     var sourceMark: SourceMark? = nil
+    var sortKey: Double? = nil
 
     init(
         id: Int,
@@ -1211,11 +1215,12 @@ nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
         rank: Int?,
         movement: Double?,
         priceObservedAt: String? = nil,
-        sourceMark: SourceMark? = nil
+        sourceMark: SourceMark? = nil,
+        sortKey: Double? = nil
     ) {
         self.id = id; self.name = name; self.probability = probability
         self.rank = rank; self.movement = movement; self.priceObservedAt = priceObservedAt
-        self.sourceMark = sourceMark
+        self.sourceMark = sourceMark; self.sortKey = sortKey
     }
 
 }

@@ -617,9 +617,16 @@ struct PoliticsView: View {
                 .foregroundStyle(DS.textPrimary)
                 .multilineTextAlignment(.leading)
 
-            // Outcome rows
+            // Outcome rows (Direction 228 #12885: numerical scales list ascending)
+            let shownOutcomes = NumericalMarketScaleOrder228.orderedSlice(
+                m.topOutcomes,
+                limit: 3,
+                label: \.name,
+                probability: { $0.prob / 100.0 },
+                totalOutcomeCount: m.outcomeCount
+            )?.map(\.element) ?? Array(m.topOutcomes.prefix(3))
             VStack(spacing: 5) {
-                ForEach(Array(m.topOutcomes.prefix(3).enumerated()), id: \.offset) { _, o in
+                ForEach(Array(shownOutcomes.enumerated()), id: \.offset) { _, o in
                     HStack(spacing: 6) {
                         Text(o.name)
                             .font(.system(size: 11))

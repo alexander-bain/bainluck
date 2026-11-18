@@ -1465,7 +1465,7 @@ struct SearchView: View {
 
             if let listing = market.relatedGameListing {
                 relatedGameListingText(listing, font: .caption)
-            } else if let top = market.dateLadderAnswer ?? market.topOutcomes?.first {
+            } else if let top = market.dateLadderAnswer ?? market.numericalLadderAnswer ?? market.topOutcomes?.first {
                 HStack(spacing: 4) {
                     Text(top.name)
                         .font(.caption)
