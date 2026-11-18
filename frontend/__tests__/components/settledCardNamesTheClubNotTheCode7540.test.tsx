@@ -114,6 +114,18 @@ function verdict(item: FeedItem): string {
   return match ? match[1] : "";
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#7540 — the settled Discover card names the club", () => {
   // The production specimen, exactly as page one served it at 15:57Z.
   it("names Manchester City rather than MNC", () => {

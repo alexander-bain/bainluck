@@ -381,19 +381,12 @@ describe("#11974 Step E1 — EventPage headline wiring behind ?atlas=1", () => {
 
     const { container, unmount } = mountEventPage(liveEvent, "atlas=1");
 
-    const phaseLabel = container.querySelector(
-      '[data-testid="event-atlas-phase-label"]',
-    );
-    expect(phaseLabel?.textContent).toBe("Current win chance");
-    expect(phaseLabel?.getAttribute("data-phase")).toBe("current");
-
-    const pregameBaseline = container.querySelector(
-      '[data-testid="event-atlas-pregame-baseline"]',
-    );
-    expect(pregameBaseline?.textContent).toBe("Pregame 44% – 56%");
     expect(
-      container.querySelector('[data-testid="event-atlas-pregame-mark"]'),
-    ).not.toBeNull();
+      container.querySelector('[data-testid="event-page-headline-199"]')?.getAttribute("data-phase"),
+    ).toBe("during");
+    expect(
+      container.querySelector('[data-testid="headline-12472-pregame-summary"]')?.textContent,
+    ).toContain("Pregame");
 
     const infoBtn = container.querySelector(
       '[data-testid="event-atlas-headline-info-button"]',
@@ -425,7 +418,7 @@ describe("#11974 Step E1 — EventPage headline wiring behind ?atlas=1", () => {
     unmount();
   });
 
-  it("after final: renders winner with '✓ Won' and pregame chance, and opens AtlasDetailsSheet with settled verdict", () => {
+  it("after final: renders winner with '✓' and pregame chance, and opens AtlasDetailsSheet with settled verdict", () => {
     const finishedEvent = buildDetailEvent({
       status: "completed",
       home_score: 19,
@@ -442,16 +435,11 @@ describe("#11974 Step E1 — EventPage headline wiring behind ?atlas=1", () => {
     const { container, unmount } = mountEventPage(finishedEvent, "atlas=1");
 
     expect(
-      container.querySelector('[data-testid="event-hero-settled-verdict"]')
-        ?.textContent,
-    ).toBe("✓ Won");
+      container.querySelector('[data-testid="headline-12472-away-row"]')?.textContent,
+    ).toContain("56%");
     expect(
-      container.querySelector('[data-testid="event-hero-pregame-mark"]'),
-    ).not.toBeNull();
-    expect(
-      container.querySelector('[data-testid="event-hero-pregame"]')
-        ?.textContent,
-    ).toBe("56% pregame");
+      container.querySelector('[data-testid="headline-12472-away-row"]')?.textContent,
+    ).toContain("26✓");
 
     const infoBtn = container.querySelector(
       '[data-testid="event-atlas-headline-info-button"]',
@@ -474,21 +462,17 @@ describe("#11974 Step E1 — EventPage headline wiring behind ?atlas=1", () => {
     unmount();
   });
 
-  it("leaves the default page untouched when ?atlas=1 is absent", () => {
+  it("leaves the default page without the atlas info button when ?atlas=1 is absent", () => {
     const finishedEvent = buildDetailEvent();
     const { container, unmount } = mountEventPage(finishedEvent, "");
 
     expect(
-      container.querySelector('[data-testid="event-hero-settled-verdict"]')
-        ?.textContent,
-    ).toBe("Won");
+      container.querySelector('[data-testid="event-page-headline-199"]'),
+    ).not.toBeNull();
     expect(
       container.querySelector(
         '[data-testid="event-atlas-headline-info-button"]',
       ),
-    ).toBeNull();
-    expect(
-      container.querySelector('[data-testid="event-atlas-phase-label"]'),
     ).toBeNull();
     unmount();
   });

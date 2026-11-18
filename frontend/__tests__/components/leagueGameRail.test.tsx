@@ -49,6 +49,18 @@ const game = (over: Partial<LeagueGameBrief> = {}): LeagueGameBrief =>
     ...over,
   }) as LeagueGameBrief;
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("LeagueGameRail — the cap declaration follows the rail", () => {
   test("the UPCOMING rail does not describe future fixtures as 'most recent'", () => {
     const html = renderToStaticMarkup(

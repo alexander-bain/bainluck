@@ -12,7 +12,7 @@
  */
 
 import { discoverCrestBadge, teamShortNames } from "@/lib/teamShortName";
-import { teamTextColor } from "@/lib/teamColors";
+import { resolveMatchupTeamColors, teamTextColor } from "@/lib/teamColors";
 import { KernelCard, type KernelState, type KernelGrade } from "./KernelCard";
 import type { AngleValue } from "./AngleBadge";
 import { CATEGORY_GRADIENTS } from "../constants";
@@ -23,6 +23,7 @@ export interface DuelKernelProps {
   homeTeam: string;
   awayColor?: string;
   homeColor?: string;
+  awaySecondaryColor?: string | null;
   awayLogo?: string | null;
   homeLogo?: string | null;
   awayScore?: number | null;
@@ -96,8 +97,13 @@ export function DuelKernel(props: DuelKernelProps) {
     state, awayTeam, homeTeam, awayScore, homeScore, awayProb, homeProb,
     awayWithheld = false,
   } = props;
-  const awayColor = props.awayColor || "#6b7280";
-  const homeColor = props.homeColor || "#374151";
+  const resolvedColors = resolveMatchupTeamColors({
+    homePrimary: props.homeColor,
+    awayPrimary: props.awayColor,
+    awaySecondary: props.awaySecondaryColor,
+  });
+  const awayColor = resolvedColors.away || props.awayColor || "#6b7280";
+  const homeColor = resolvedColors.home || props.homeColor || "#374151";
   // #5696 — these colours are the split bar's FILL as well as the two
   // percents' text. Only the text takes #5165's contrast floor; a brand
   // colour is a legitimate fill and repainting the bar would be a redesign.

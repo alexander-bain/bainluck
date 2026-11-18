@@ -49,6 +49,18 @@ function makeEvent(overrides: Partial<Event> = {}): Event {
   };
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("EventCard", () => {
   it("shows projected score footer for scheduled events", () => {
     const html = renderToStaticMarkup(
@@ -173,7 +185,7 @@ describe("EventCard", () => {
     expect(html).toContain("55%");
     expect(html).toContain("45%");
     expect(html).toContain('data-testid="event-card-prematch-home"');
-    expect(html).toContain("Pre-match · sportsbooks");
+    expect(html).toContain("Pregame · sportsbooks");
 
     // The absence assertions above are only worth anything if they name
     // strings something actually emits. A PREGAME card renders the bar and the

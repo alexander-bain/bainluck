@@ -19,8 +19,20 @@ struct ComparisonCardView: View {
         data.topOutcomes ?? []
     }
 
-    private var shownOutcomes: [FeedFuturesOutcome] {
-        Array(outcomes.prefix(4))
+    private var listedOutcomes: [(outcome: FeedFuturesOutcome, isLeader: Bool)] {
+        if let ordered = NumericalMarketScaleOrder228.orderedSlice(
+            outcomes,
+            limit: 4,
+            label: \.name,
+            probability: \.probability,
+            explicitSortKey: \.sortKey,
+            marketType: data.marketType,
+            totalOutcomeCount: totalOutcomeCount,
+            isCumulative: data.mutuallyExclusive == false
+        ) {
+            return ordered.map { ($0.element, $0.isLeader) }
+        }
+        return Array(outcomes.prefix(4).enumerated()).map { ($0.element, $0.offset == 0) }
     }
 
     private var maxProbability: Double {
@@ -70,8 +82,8 @@ struct ComparisonCardView: View {
 
             // Leaderboard rows
             VStack(spacing: 0) {
-                ForEach(Array(shownOutcomes.enumerated()), id: \.element.id) { index, outcome in
-                    outcomeRow(outcome, isLeader: index == 0)
+                ForEach(Array(listedOutcomes.enumerated()), id: \.element.outcome.id) { _, item in
+                    outcomeRow(item.outcome, isLeader: item.isLeader)
                 }
             }
 
@@ -134,7 +146,6 @@ struct ComparisonCardView: View {
     @ViewBuilder
     private func outcomeRow(_ outcome: FeedFuturesOutcome, isLeader: Bool) -> some View {
         let probability = outcome.probability ?? 0
-        let pct = Int((probability * 100).rounded())
         let barWidth = max(5, probability / maxProbability * 100)
         let barOpacity: Double = probability >= 0.4 ? 1.0 : 0.55
 
@@ -163,10 +174,11 @@ struct ComparisonCardView: View {
                 .frame(width: 100, height: 7)
 
                 // Percentage
-                Text(probability > 0 ? "\(pct)%" : "\u{2014}")
+                Text(probability > 0 ? formatProbability(probability, renderedPercent: outcome.renderedPercent) : "\u{2014}")
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundStyle(DS.textPrimary)
-                    .frame(width: 36, alignment: .trailing)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(minWidth: 38, alignment: .trailing)
             }
             .padding(.vertical, 8)
         }

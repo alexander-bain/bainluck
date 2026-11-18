@@ -203,6 +203,42 @@ nonisolated struct DiscoverInteractionEvent: Encodable, Sendable {
 
 // MARK: - Feed Item (Polymorphic)
 
+/// Deterministic monogram metadata served on `/api/feed` (`image_monogram`, #12659 / #12840).
+nonisolated struct DiscoverImageMonogram: Decodable, Equatable, Sendable {
+    let initials: String
+    let label: String
+    let kind: String
+    let bgHex: String
+    let accentHex: String
+
+    private enum CodingKeys: String, CodingKey {
+        case initials, label, kind, bgHex, accentHex
+        case bgHexSnake = "bg_hex"
+        case accentHexSnake = "accent_hex"
+    }
+
+    init(initials: String, label: String, kind: String, bgHex: String, accentHex: String) {
+        self.initials = initials
+        self.label = label
+        self.kind = kind
+        self.bgHex = bgHex
+        self.accentHex = accentHex
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        initials = try c.decode(String.self, forKey: .initials)
+        label = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? ""
+        kind = (try? c.decodeIfPresent(String.self, forKey: .kind)) ?? "topic"
+        bgHex = (try? c.decodeIfPresent(String.self, forKey: .bgHex))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .bgHexSnake))
+            ?? "#1e293b"
+        accentHex = (try? c.decodeIfPresent(String.self, forKey: .accentHex))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .accentHexSnake))
+            ?? "#475569"
+    }
+}
+
 /// Polymorphic feed card wrapper for either a sports event or a futures market.
 nonisolated struct FeedBundle: Decodable, Sendable {
     let id: String
@@ -220,6 +256,10 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     let visualForm: String?
     /// Discover round-up contract (`data.roundup`) for `kind == "roundup"` containers.
     let roundupContract: FeedRoundupContract?
+    /// #12840 / #12825: bundle-level verified banner art (`image_url`, `image_presentation`, `image_monogram`).
+    let imageUrl: String?
+    let imagePresentation: String?
+    let imageMonogram: DiscoverImageMonogram?
 
     private nonisolated struct RoundupPairedEnvelope: Decodable {
         let pairedMetricSet: PairedMetricSet?
@@ -251,6 +291,12 @@ nonisolated struct FeedBundle: Decodable, Sendable {
         case visualForm
         case visualFormSnake = "visual_form"
         case roundup
+        case imageUrl
+        case imageUrlSnake = "image_url"
+        case imagePresentation
+        case imagePresentationSnake = "image_presentation"
+        case imageMonogram
+        case imageMonogramSnake = "image_monogram"
     }
 
     init(from decoder: Decoder) throws {
@@ -275,6 +321,12 @@ nonisolated struct FeedBundle: Decodable, Sendable {
             ?? (try? c.decodeIfPresent(String.self, forKey: .visualFormSnake))
             ?? nestedRoundup?.visualForm
             ?? pairedMetricSet?.preferredVisualForm
+        imageUrl = (try? c.decodeIfPresent(String.self, forKey: .imageUrl))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .imageUrlSnake))
+        imagePresentation = (try? c.decodeIfPresent(String.self, forKey: .imagePresentation))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .imagePresentationSnake))
+        imageMonogram = (try? c.decodeIfPresent(DiscoverImageMonogram.self, forKey: .imageMonogram))
+            ?? (try? c.decodeIfPresent(DiscoverImageMonogram.self, forKey: .imageMonogramSnake))
     }
 
     /// Memberwise init so a sanitized bundle can be rebuilt with a lifecycle-
@@ -290,7 +342,10 @@ nonisolated struct FeedBundle: Decodable, Sendable {
         collectionRef: FeedThemeCollectionRef? = nil,
         pairedMetricSet: PairedMetricSet? = nil,
         visualForm: String? = nil,
-        roundupContract: FeedRoundupContract? = nil
+        roundupContract: FeedRoundupContract? = nil,
+        imageUrl: String? = nil,
+        imagePresentation: String? = nil,
+        imageMonogram: DiscoverImageMonogram? = nil
     ) {
         self.id = id
         self.title = title
@@ -302,6 +357,9 @@ nonisolated struct FeedBundle: Decodable, Sendable {
         self.pairedMetricSet = pairedMetricSet
         self.visualForm = visualForm
         self.roundupContract = roundupContract
+        self.imageUrl = imageUrl
+        self.imagePresentation = imagePresentation
+        self.imageMonogram = imageMonogram
     }
 
     /// Rebuild the bundle with a new child list, preserving all other metadata
@@ -320,7 +378,10 @@ nonisolated struct FeedBundle: Decodable, Sendable {
             collectionRef: collectionRef,
             pairedMetricSet: pairedMetricSet,
             visualForm: visualForm,
-            roundupContract: roundupContract
+            roundupContract: roundupContract,
+            imageUrl: imageUrl,
+            imagePresentation: imagePresentation,
+            imageMonogram: imageMonogram
         )
     }
 
@@ -955,7 +1016,11 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let canonicalMarketKey: String?
     let groupId: String?
     let groupType: String?
+    var marketType: String? = nil
+    var mutuallyExclusive: Bool? = nil
     let imageUrl: String?
+    var imagePresentation: String? = nil
+    var imageMonogram: DiscoverImageMonogram? = nil
     let hookDescription: String?
     let matchedOutcomes: [MatchedOutcome]?
     let discoverCard: FeedDiscoverCard?
@@ -1003,6 +1068,8 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     /// the served answer agrees with a local derivation on all 98. `CardSum.swift`
     /// carries the full reasoning.
     let cardSumReason: String?
+    /// #11920 / #12581 (137-A): server-owned source attribution mark for collection and feed cards.
+    var sourceMark: SourceMark? = nil
 }
 
 // MARK: - Discover Card Archetype
@@ -1050,6 +1117,7 @@ nonisolated struct FeedDiscoverDistributionOutcome: Decodable, Sendable {
     /// `nil` on the "No release by…" residual and on every other board. The year
     /// is the server's (venue labels read `October 27`), never guessed here.
     var date: String? = nil
+    var sortKey: Double? = nil
 }
 
 // MARK: - Feed Tournament Data
@@ -1136,10 +1204,23 @@ nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
     let priceObservedAt: String?
     let rank: Int?
     let movement: Double?
+    /// #11920 / #12581 (137-A): server-owned per-outcome source attribution mark.
+    var sourceMark: SourceMark? = nil
+    var sortKey: Double? = nil
 
-    init(id: Int, name: String, probability: Double?, rank: Int?, movement: Double?, priceObservedAt: String? = nil) {
+    init(
+        id: Int,
+        name: String,
+        probability: Double?,
+        rank: Int?,
+        movement: Double?,
+        priceObservedAt: String? = nil,
+        sourceMark: SourceMark? = nil,
+        sortKey: Double? = nil
+    ) {
         self.id = id; self.name = name; self.probability = probability
         self.rank = rank; self.movement = movement; self.priceObservedAt = priceObservedAt
+        self.sourceMark = sourceMark; self.sortKey = sortKey
     }
 
 }

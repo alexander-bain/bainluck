@@ -189,33 +189,7 @@ def test_a_finished_row_with_no_completed_at_does_not_resolve_as_settled():
     assert "hero_settled_result" not in data
 
 
-def test_an_opening_only_row_is_labelled_opening():
-    """THE PIN THIS TEST USED TO BE HAS BEEN PAID (#6694).
-
-    It was a characterization of a WRONG label, and its own closing line said so:
-    "When the label is fixed, this test fails and is updated to assert `opening`
-    — which is the point of pinning it here." That is what happened; the
-    assertion below is the same test with the fix applied to it.
-
-    What was wrong. `resolve_hero`'s third arm is supposed to say `opening` for a
-    row nobody has quoted since the line was posted, and it was UNREACHABLE:
-    `compute_aggregate_probability` Tier 3 returns `opening_home_probability`
-    itself, so the blend arm answered first and called a bare opening line
-    "blend". `resolve_hero` now asks the aggregator WHICH TIER answered
-    (`compute_aggregate_probability_tiered`) and stands aside for the opening arm
-    when the answer was Tier 3, so the arm is reachable and says its own name.
-
-    This was never cosmetic, and the old docstring named the reason:
-    `routes/events.py::_PINNABLE_HERO_SOURCE` is `"blend"`, so an opening line
-    wearing that label was PINNED to the chart as the curve's live edge —
-    precisely the "a number no aggregator produced" outcome that constant's own
-    comment says it exists to prevent. With the label honest, that guard works as
-    written for the first time.
-
-    🔴 The NUMBER is unchanged and is asserted first, deliberately. The fix moved
-    the claim, not the value — see `test_hero_opening_not_blend_6694.py` for why
-    reaching for the fresher single-book price instead would rebuild #1841.
-    """
+def test_an_opening_only_row_has_no_current_hero():
     row = _Row(
         status="scheduled",
         completed_at=None,
@@ -225,9 +199,8 @@ def test_an_opening_only_row_is_labelled_opening():
     data = _card(
         status="scheduled", home_score=None, away_score=None, hero=resolve_hero(row)
     )
-
-    assert data["hero_probability"] == 0.5865
-    assert data["hero_probability_source"] == "opening"
+    assert "hero_probability" not in data
+    assert "hero_probability_source" not in data
 
 
 def test_no_hero_means_no_keys_and_never_a_zero():

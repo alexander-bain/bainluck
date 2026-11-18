@@ -1379,7 +1379,25 @@ actor APIClient {
     /// #9652: publication state/revision and cards come from one fresh read.
     /// Never reuse a slug-only cached publication after a withdrawal.
     func fetchContainerHub(slug: String) async throws -> ContainerHubResponse {
-        try await fetch(ContainerHubService.path(for: slug), requiresNetwork: true)
+        if GroupingMachineryGate12288.isMachineryCandidateSlug(slug),
+           !GroupingMachineryGate12288.canAccessMachineryCurrentUser() {
+            throw APIError.httpError(statusCode: 404, body: nil)
+        }
+        return try await fetch(ContainerHubService.path(for: slug), requiresNetwork: true)
+    }
+
+    /// #12288: Fetches the four machinery-built groupings ONLY when `user` is Alex
+    /// AND the owner-only Preferences switch is turned `on`. Public, signed-out, and
+    /// switched-off callers return `[]` immediately with zero network requests.
+    func fetchMachineryPreview(user: AuthUser?) async throws -> [MachineryPreviewEntry] {
+        guard GroupingMachineryGate12288.canAccessMachinery(user: user) else {
+            return []
+        }
+        let response: MachineryPreviewResponse = try await fetch(
+            "/api/containers/preview/machinery",
+            requiresNetwork: true
+        )
+        return response.items
     }
 
     /// Theme cursors are positions within their exact published revision.
@@ -1393,6 +1411,38 @@ actor APIClient {
     /// No local TTL or last-good fallback may restore a revoked entry.
     func fetchContainerDiscovery(_ request: ContainerDiscoveryRequest) async throws -> ContainerDiscoveryResponse {
         try await fetch(ContainerDiscoveryRequest.path, query: request.query, requiresNetwork: true)
+    }
+
+    // MARK: - Paired-Metric Award & Stage Cards (#12577 / #12849)
+
+    private nonisolated struct PairedMetricByMarketEnvelope: Decodable {
+        let set: PairedMetricSet?
+    }
+
+    private nonisolated struct PairedMetricCeremonyEnvelope: Decodable {
+        let sets: [PairedMetricSet]?
+    }
+
+    /// Fetches the server-hydrated paired-metric set (`Nominated %` + `Wins %`) for a category market,
+    /// or `nil` when the market is not part of a paired award/stage category.
+    func fetchPairedMetricByMarket(marketId: Int) async throws -> PairedMetricSet? {
+        guard marketId > 0 else { return nil }
+        let env: PairedMetricByMarketEnvelope = try await fetch(
+            "/api/paired-metrics/by-market/\(marketId)",
+            cacheTTL: 60
+        )
+        guard let set = env.set, !set.entries.isEmpty else { return nil }
+        return set
+    }
+
+    /// Fetches all server-hydrated paired-metric sets for a ceremony (e.g. `"oscars"`).
+    func fetchPairedMetrics(ceremony: String) async throws -> [PairedMetricSet] {
+        let env: PairedMetricCeremonyEnvelope = try await fetch(
+            "/api/paired-metrics",
+            query: ["ceremony": ceremony],
+            cacheTTL: 60
+        )
+        return (env.sets ?? []).filter { !$0.entries.isEmpty }
     }
 
     /// Fetches a registered tournament hub (`us-open`, …) — the same payload the

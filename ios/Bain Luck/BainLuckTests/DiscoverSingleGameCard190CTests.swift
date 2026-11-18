@@ -60,7 +60,8 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
             prematch: prematch(liveGame),
             usesPictureLayout: true
         )
-        XCTAssertNil(livePictureModel.bar, "191-A chart panel replaces the 5pt bar on live games")
+        XCTAssertNotNil(livePictureModel.bar, "Ruling 204-C: live Discover card keeps the segmented bar with pregame tick above the 191-A chart panel")
+        XCTAssertEqual(livePictureModel.bar?.pregameNotch ?? -1, 0.64, accuracy: 0.001)
 
         // Finished game: carries the 191-A chart panel under the rows.
         let finishedGame = try decodeEvent("""
@@ -117,14 +118,14 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
                           "projected_away_score": 19.6, "projected_home_score": 22.6}}
         """)
         let nflModel = DiscoverSingleGameCard190C.build(event: beforeNFL, prematch: prematch(beforeNFL))
-        XCTAssertEqual(nflModel.headers, .init(score: nil, pregame: nil, primary: "Now"), "Before kickoff, show Now only (no Pregame column)")
+        XCTAssertEqual(nflModel.headers, .init(score: nil, pregame: "Proj.", primary: "Chance"), "Before kickoff: Proj. · Chance columns everywhere")
         XCTAssertEqual(nflModel.rows.map(\.shortName), ["Vikings", "Packers"])
-        XCTAssertEqual(nflModel.rows.map(\.pregameText), [nil, nil])
+        XCTAssertEqual(nflModel.rows.map(\.pregameText), ["20", "23"])
         XCTAssertEqual(nflModel.rows.map(\.primaryCell), [.probability("41%"), .probability("59%")])
         XCTAssertNotNil(nflModel.bar)
-        XCTAssertEqual(nflModel.scheduledProjectedLine, "Projected: VIK 20 \u{2013} GBP 23")
+        XCTAssertNil(nflModel.scheduledProjectedLine)
 
-        // 2. Before (187-A Three-Way Soccer: Draw in the middle of both rows and bar, Now only before kickoff!)
+        // 2. Before (187-A Three-Way Soccer: Draw in the middle of both rows and bar, Chance only before kickoff!)
         let soccerThreeWay = try decodeEvent("""
         {"id": 15333846, "sport": "soccer_uefa_nations_league", "sport_name": "UEFA",
          "away_team": "Greece", "home_team": "Netherlands",
@@ -133,7 +134,7 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
          "current_odds": {"away_probability": 0.17, "home_probability": 0.63, "draw_probability": 0.20}}
         """)
         let soccerModel = DiscoverSingleGameCard190C.build(event: soccerThreeWay, prematch: prematch(soccerThreeWay))
-        XCTAssertEqual(soccerModel.headers, .init(score: nil, pregame: nil, primary: "Now"))
+        XCTAssertEqual(soccerModel.headers, .init(score: nil, pregame: nil, primary: "Chance"))
         XCTAssertEqual(soccerModel.rows.map(\.kind), [.away, .draw, .home], "187-A puts Draw in the middle")
         XCTAssertEqual(soccerModel.rows.map(\.shortName), ["Greece", "Draw", "Netherlands"])
         XCTAssertEqual(soccerModel.rows.map(\.pregameText), [nil, nil, nil])
@@ -153,7 +154,7 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
         XCTAssertEqual(complementModel.rows[1].primaryCell, .probability("68%"))
         XCTAssertEqual(complementModel.bar?.awayIsWithheld, true)
 
-        // 3. During (Live NBA: Score | Pregame | Now, streaming tenths summing to 100.0%)
+        // 3. During (Ruling 204-C Live NBA: Score | Proj. | Now, no Pregame column, pregame tick on bar)
         let liveNBA = try decodeEvent("""
         {"id": 15346136, "sport": "basketball_nba", "sport_name": "NBA",
          "away_team": "Boston Celtics", "home_team": "Toronto Raptors",
@@ -162,20 +163,30 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
          "espn": {"period": "Halftime"},
          "prematch_odds": {"away_probability": 0.64, "home_probability": 0.36,
                            "away_rendered_percent": 64, "home_rendered_percent": 36, "source": "kalshi"},
-         "current_odds": {"away_probability": 0.429, "home_probability": 0.571}}
+         "current_odds": {"away_probability": 0.429, "home_probability": 0.571,
+                          "live_projection": {
+                              "projected_away_score": 112.4, "projected_home_score": 116.8,
+                              "kind": "in_play", "boundary": "commence_time",
+                              "boundary_at": "2026-11-13T18:00:00Z",
+                              "earliest_confirmed_at": "2026-11-13T18:35:00Z",
+                              "latest_captured_at": "2026-11-13T18:36:00Z",
+                              "source": "sportsbooks", "basis": "consensus_spread_total",
+                              "bookmaker_count": 4, "unit": "points", "period": "full_game"
+                          }}}
         """)
         let liveModel = DiscoverSingleGameCard190C.build(
             event: liveNBA,
             prematch: prematch(liveNBA),
-            usesPictureLayout: false
+            usesPictureLayout: true
         )
-        XCTAssertEqual(liveModel.headers, .init(score: "Score", pregame: "Pregame", primary: "Now"))
+        XCTAssertEqual(liveModel.headers, .init(score: "Score", pregame: "Proj.", primary: "Now"))
         XCTAssertEqual(liveModel.rows.map(\.scoreText), ["54", "61"])
-        XCTAssertEqual(liveModel.rows.map(\.pregameText), ["64%", "36%"])
+        XCTAssertEqual(liveModel.rows.map(\.pregameText), ["112", "117"])
         XCTAssertEqual(liveModel.rows.map(\.primaryCell), [.probability("42.9%"), .probability("57.1%")])
         XCTAssertNotNil(liveModel.bar)
+        XCTAssertEqual(liveModel.bar?.pregameNotch ?? -1, 0.64, accuracy: 0.001)
 
-        // 4. After (Finished NBA: Score | Pregame | Result, Won ✓ on winner, — on loser, NO bar)
+        // 4. After (One layout per state: Pregame · Final, tick after winner's score, no bar, no Result column)
         let afterNBA = try decodeEvent("""
         {"id": 15346137, "sport": "basketball_nba", "sport_name": "NBA",
          "away_team": "Boston Celtics", "home_team": "Toronto Raptors",
@@ -185,10 +196,16 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
                            "away_rendered_percent": 64, "home_rendered_percent": 36, "source": "kalshi"}}
         """)
         let afterModel = DiscoverSingleGameCard190C.build(event: afterNBA, prematch: prematch(afterNBA))
-        XCTAssertEqual(afterModel.headers, .init(score: "Score", pregame: "Pregame", primary: "Result"))
-        XCTAssertEqual(afterModel.rows.map(\.scoreText), ["98", "93"])
+        XCTAssertEqual(afterModel.headers, .init(score: nil, pregame: "Pregame", primary: "Final"))
+        XCTAssertEqual(afterModel.rows.map(\.scoreText), [nil, nil])
         XCTAssertEqual(afterModel.rows.map(\.pregameText), ["64%", "36%"])
-        XCTAssertEqual(afterModel.rows.map(\.primaryCell), [.won("Won \u{2713}"), .settledDash])
+        XCTAssertEqual(
+            afterModel.rows.map(\.primaryCell),
+            [
+                .finalScore(text: "98", won: true, isDrawOutcome: false),
+                .finalScore(text: "93", won: false, isDrawOutcome: false)
+            ]
+        )
         XCTAssertNil(afterModel.bar, "Finished Discover card draws no settled probability bar")
 
         // 5. Suspended-and-started (#6010): withholds `Now` and bar even if stale `current_odds` exist.
@@ -286,6 +303,7 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
         XCTAssertEqual(afterChart.points.first?.probability ?? -1, 0.64, accuracy: 0.001)
         XCTAssertEqual(afterChart.points[2].probability, 0.38, accuracy: 0.001, "Halftime dip to 38% preserved")
         XCTAssertEqual(afterChart.points.last?.probability ?? -1, 1.0, accuracy: 0.001, "Post-game 22:00Z 50% drift clipped")
+        XCTAssertTrue(afterChart.markedPoints.contains(where: \.isEndpoint))
 
         // C. #5271 / #5363 Three-Way Live Soccer: never complements `1 - home` even when away leads!
         let liveSoccer = try decodeEvent("""
@@ -323,6 +341,163 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
         )
         XCTAssertTrue(nearCertainChart.rightEndLabel.contains(">99%"))
         XCTAssertFalse(nearCertainChart.rightEndLabel.contains("100"))
+    }
+
+    private enum ChanceFixture {
+        case pregameHistory
+        case cachedOpening
+        case timedCurrent
+    }
+
+    private func discoverChanceFixture(
+        _ chance: ChanceFixture,
+        status: String = "live"
+    ) throws -> (FeedEventData, EventHistoryResponse) {
+        let forecastFields: String
+        switch chance {
+        case .pregameHistory:
+            forecastFields = #""current_odds":{"away_probability":null,"home_probability":null}"#
+        case .cachedOpening:
+            forecastFields = #""hero_probability_source":"opening","current_odds":{"away_probability":0.42,"home_probability":0.58,"away_rendered_percent":42,"home_rendered_percent":58}"#
+        case .timedCurrent:
+            forecastFields = #""hero_probability_source":"blend","hero_probability_observed_at":"2026-11-13T18:45:00Z","current_odds":{"away_probability":0.30,"home_probability":0.70}"#
+        }
+        let event = try decodeEvent("""
+        {"id": 15346136, "sport": "basketball_nba", "sport_name": "NBA",
+         "away_team": "Boston Celtics", "home_team": "Toronto Raptors",
+         "away_team_data": {"primary_color": "#007A33", "abbreviation": "BOS"},
+         "home_team_data": {"primary_color": "#CE1141", "abbreviation": "TOR"},
+         "commence_time": "2026-11-13T18:00:00Z", "status": "\(status)",
+         "away_score": 68, "home_score": 72, "espn": {"period": "Q3"},
+         "opening_odds": {"away_probability": 0.42, "home_probability": 0.58},
+         \(forecastFields)}
+        """)
+        let inPlayPoint = chance == .timedCurrent
+            ? #", {"timestamp":"2026-11-13T18:45:00Z","home_probability":0.70}"#
+            : ""
+        let history = try decodeHistory("""
+        {"event_id": 15346136, "home_team": "Toronto Raptors", "away_team": "Boston Celtics",
+         "status": "live", "blend_edge_pinned": false,
+         "history": [
+            {"timestamp": "2026-11-13T17:20:00Z", "home_probability": 0.54},
+            {"timestamp": "2026-11-13T17:40:00Z", "home_probability": 0.58}\(inPlayPoint)
+         ]}
+        """)
+        return (event, history)
+    }
+
+    func testLivePictureChartDoesNotSpeakAStoredOpeningAsNow() throws {
+        let (event, history) = try discoverChanceFixture(.pregameHistory)
+        let pregame = prematch(event)
+        XCTAssertTrue(DiscoverSingleGameCard190C.usesPictureLayout(event: event, prematch: pregame))
+        let card = DiscoverSingleGameCard190C.build(event: event, prematch: pregame, usesPictureLayout: true)
+        XCTAssertEqual(card.rows.map(\.scoreText), ["68", "72"])
+        XCTAssertNil(card.headers.primary)
+
+        let chart = DiscoverPictureChart191A.build(event: event, prematch: pregame, history: history)
+        XCTAssertEqual(chart.points.map(\.probability), [0.54, 0.58])
+        XCTAssertTrue(chart.showsPregameLabel)
+        XCTAssertFalse(chart.showsEndpointDot)
+        XCTAssertFalse(chart.markedPoints.contains(where: \.isEndpoint))
+        XCTAssertEqual(
+            chart.accessibilityLabel,
+            "Win chance chart for Raptors: Pregame 58% TOR, Current win chance unavailable"
+        )
+
+        let pinnedHistory = try decodeHistory("""
+        {"event_id": 15346136, "home_team": "Toronto Raptors", "away_team": "Boston Celtics",
+         "status": "live", "blend_edge_pinned": true, "history": [],
+         "blend_edge_observed_at": "2026-11-13T18:45:00Z",
+         "win_prob_history": {"kalshi": [{"timestamp": "2026-11-13T18:45:00Z", "home_probability": 0.69}]},
+         "aggregate_line": [
+            {"timestamp": "2026-11-13T17:40:00Z", "home_probability": 0.58},
+            {"timestamp": "2026-11-13T18:45:00Z", "home_probability": 0.69}
+         ]}
+        """)
+        let pinned = DiscoverPictureChart191A.build(event: event, prematch: pregame, history: pinnedHistory)
+        XCTAssertFalse(pinned.showsPregameLabel)
+        XCTAssertTrue(pinned.markedPoints.contains(where: \.isEndpoint))
+        XCTAssertEqual(
+            pinned.accessibilityLabel,
+            "Win chance chart for Raptors: Pregame 58% TOR, Now 69.0% TOR (+11.0 pts)"
+        )
+    }
+
+    func testDiscoverNativeCardWithholdsACachedOpeningAndKeepsATimedCurrentChance() throws {
+        for status in ["scheduled", "live"] {
+            let (cached, history) = try discoverChanceFixture(.cachedOpening, status: status)
+            XCTAssertEqual(cached.currentOdds?.homeProbability, 0.58)
+            let card = NativeEventDiscoverCard(
+                event: cached, feedContext: nil, expandedContext: nil,
+                navigationPath: .constant(NavigationPath()), chartHistory: history
+            )
+            let model = DiscoverSingleGameCard190C.build(
+                event: card.event, prematch: prematch(card.event), usesPictureLayout: card.usesPictureLayout190C
+            )
+            XCTAssertEqual(card.usesPictureLayout190C, status == "live")
+            XCTAssertNil(model.headers.primary)
+            XCTAssertEqual(model.rows.map(\.primaryCell), [.none, .none])
+            XCTAssertEqual(prematch(card.event)?.homeProbability, 0.58)
+            XCTAssertEqual(card.event.awayScore, 68)
+            XCTAssertEqual(card.event.homeScore, 72)
+            if status == "live" {
+                let chart = DiscoverPictureChart191A.build(
+                    event: card.event, prematch: prematch(card.event), history: history
+                )
+                XCTAssertTrue(chart.showsPregameLabel)
+                XCTAssertEqual(chart.points.map(\.probability), [0.54, 0.58])
+                XCTAssertFalse(chart.markedPoints.contains(where: \.isEndpoint))
+                XCTAssertEqual(chart.accessibilityLabel,
+                               "Win chance chart for Raptors: Pregame 58% TOR, Current win chance unavailable")
+            }
+        }
+
+        let (current, history) = try discoverChanceFixture(.timedCurrent)
+        let card = NativeEventDiscoverCard(
+            event: current, feedContext: nil, expandedContext: nil,
+            navigationPath: .constant(NavigationPath()), chartHistory: history
+        )
+        let model = DiscoverSingleGameCard190C.build(
+            event: card.event, prematch: prematch(card.event), usesPictureLayout: card.usesPictureLayout190C
+        )
+        XCTAssertEqual(card.event.heroProbabilityObservedAt, "2026-11-13T18:45:00Z")
+        XCTAssertEqual(model.headers.primary, "Now")
+        XCTAssertEqual(model.rows.map(\.primaryCell), [.probability("30.0%"), .probability("70.0%")])
+        let chart = DiscoverPictureChart191A.build(
+            event: card.event, prematch: prematch(card.event), history: history
+        )
+        XCTAssertFalse(chart.showsPregameLabel)
+        XCTAssertTrue(chart.showsEndpointDot)
+        XCTAssertEqual(chart.markedPoints.last(where: \.isEndpoint)?.probability, 0.70)
+        XCTAssertEqual(chart.accessibilityLabel, "Win chance chart for Raptors: Pregame 58% TOR, Now 70.0% TOR (+12.0 pts)")
+    }
+
+    func testOpeningOnlyThreeWayChartKeepsAllThreeTrajectoriesWithoutEndpointDots() throws {
+        let event = try decodeEvent("""
+        {"id":15333846,"sport":"soccer_uefa_nations_league","status":"live",
+         "home_team":"Netherlands","away_team":"Greece","commence_time":"2026-11-13T19:45:00Z",
+         "hero_probability_source":"opening"}
+        """)
+        let history = try decodeHistory("""
+        {"event_id":15333846,"home_team":"Netherlands","away_team":"Greece","status":"live","history":[],
+         "aggregate_line":[
+           {"timestamp":"2026-11-13T19:05:00Z","home_probability":0.52,"draw_probability":0.26,"away_probability":0.22},
+           {"timestamp":"2026-11-13T19:25:00Z","home_probability":0.58,"draw_probability":0.23,"away_probability":0.19}
+         ]}
+        """)
+        let chart = DiscoverPictureChart191A.build(event: event, prematch: nil, history: history)
+        XCTAssertTrue(chart.showsPregameLabel)
+        XCTAssertEqual(chart.plottedThreeWayPoints.map(\.home), [0.52, 0.58])
+        XCTAssertEqual(chart.plottedThreeWayPoints.map(\.draw), [0.26, 0.23])
+        XCTAssertEqual(chart.plottedThreeWayPoints.map(\.away), [0.22, 0.19])
+        XCTAssertFalse(chart.plottedThreeWayPoints.contains(where: \.isEndpoint))
+    }
+
+    func testSharedCardMenuCopiesOnlyTheCurrentReading() throws {
+        let (cached, _) = try discoverChanceFixture(.cachedOpening)
+        let (current, _) = try discoverChanceFixture(.timedCurrent)
+        XCTAssertNil(CardContextMenu.copyableHomeProbability(for: cached))
+        XCTAssertEqual(CardContextMenu.copyableHomeProbability(for: current), 0.70)
     }
 
     // MARK: - 4. 390px Visual Render Export (191-A Picture States + Compact Before + Soccer + `.accessibility2`)
@@ -504,6 +679,23 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
             try XCTUnwrap(image.pngData()).write(to: outDir.appendingPathComponent(fileName))
         }
 
+        let (openingOnlyEvent, openingOnlyHistory) = try discoverChanceFixture(.cachedOpening)
+        let (timedEvent, timedHistory) = try discoverChanceFixture(.timedCurrent)
+        try renderSheet(
+            VStack(spacing: 14) {
+                NativeEventDiscoverCard(
+                    event: openingOnlyEvent, feedContext: nil, expandedContext: nil,
+                    navigationPath: .constant(NavigationPath()), chartHistory: openingOnlyHistory
+                )
+                NativeEventDiscoverCard(
+                    event: timedEvent, feedContext: nil, expandedContext: nil,
+                    navigationPath: .constant(NavigationPath()), chartHistory: timedHistory
+                )
+            },
+            fileName: "12824-discover-opening-and-current-390.png",
+            typeSize: .large
+        )
+
         try renderSheet(
             VStack(spacing: 14) {
                 NativeEventDiscoverCard(
@@ -558,5 +750,90 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
             fileName: "12616-discover-191a-soccer-and-a11y2-390.png",
             typeSize: .accessibility2
         )
+
+        let beforeSoccer = try decodeEvent("""
+        {"id": 15333846, "sport": "soccer_uefa_nations_league", "sport_name": "UEFA",
+         "away_team": "Greece", "home_team": "Netherlands",
+         "commence_time": "2026-11-15T19:45:00Z", "status": "scheduled",
+         "away_team_data": {"primary_color": "#0D5EAF", "abbreviation": "GRE"},
+         "home_team_data": {"primary_color": "#F36C21", "abbreviation": "NED"},
+         "prematch_odds": {"away_probability": 0.19, "home_probability": 0.60, "draw_probability": 0.21, "source": "kalshi"},
+         "current_odds": {"away_probability": 0.17, "home_probability": 0.63, "draw_probability": 0.20}}
+        """)
+
+        try renderSheet(
+            VStack(alignment: .leading, spacing: 14) {
+                NativeEventDiscoverCard(
+                    event: beforeNFL,
+                    feedContext: "One game, winner-take-all division tiebreaker at Lambeau",
+                    expandedContext: nil,
+                    navigationPath: .constant(NavigationPath())
+                )
+                NativeEventDiscoverCard(
+                    event: beforeSoccer,
+                    feedContext: "Top spot in League A Group 3 on the line in Amsterdam",
+                    expandedContext: nil,
+                    navigationPath: .constant(NavigationPath())
+                )
+                EventCardView(event: beforeNFL, reason: nil)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.black.opacity(0.08), lineWidth: 1)
+                    )
+            },
+            fileName: "sat6-pregame-chance-column-390.png",
+            typeSize: .large
+        )
+    }
+
+    func testChanceIsTheOnePregameColumnWordAcrossAllGameSurfaces() throws {
+        let scheduledFeedEvent = try decodeEvent("""
+        {"id": 14969886, "sport": "americanfootball_nfl", "sport_name": "NFL",
+         "away_team": "Minnesota Vikings", "home_team": "Green Bay Packers",
+         "commence_time": "2026-11-15T18:00:00Z", "status": "scheduled",
+         "prematch_odds": {"away_probability": 0.45, "home_probability": 0.55, "source": "kalshi"},
+         "current_odds": {"away_probability": 0.41, "home_probability": 0.59,
+                          "projected_away_score": 19.6, "projected_home_score": 22.6}}
+        """)
+        let discoverHeaders = DiscoverSingleGameCard190C.build(
+            event: scheduledFeedEvent,
+            prematch: prematch(scheduledFeedEvent)
+        ).headers
+        let compactHeaders = CompactGameCard12616.columnHeaders(
+            isScheduled: true,
+            isLive: false,
+            isFinished: false,
+            isSuspended: false,
+            hasProjectedBefore: true,
+            hasCurrentChance: true,
+            hasPrematchChance: true,
+            hasScore: false
+        )
+        let detailDecoder = JSONDecoder()
+        detailDecoder.keyDecodingStrategy = .convertFromSnakeCase
+        let scheduledDetail = try detailDecoder.decode(EventDetail.self, from: Data("""
+        {"id": 14969886, "sport": "americanfootball_nfl", "sport_name": "NFL",
+         "away_team": "Minnesota Vikings", "home_team": "Green Bay Packers",
+         "commence_time": "2026-11-15T18:00:00Z", "status": "scheduled",
+         "current_odds": {"away_probability": 0.41, "home_probability": 0.59,
+                          "projected_away_score": 19.6, "projected_home_score": 22.6}}
+        """.utf8))
+        let headlineNFL = EventSportHeadlines12472.resolve(
+            event: scheduledDetail,
+            awayFullName: scheduledDetail.awayTeam,
+            homeFullName: scheduledDetail.homeTeam,
+            liveStatusText: nil,
+            hasScore: false,
+            numberStreams: false,
+            now: ISO8601DateFormatter().date(from: "2026-11-15T12:00:00Z")!
+        )
+        XCTAssertEqual(discoverHeaders.primary, "Chance")
+        XCTAssertEqual(compactHeaders.medium, "Proj.")
+        XCTAssertEqual(compactHeaders.large, "Chance")
+        XCTAssertEqual(headlineNFL.pregameColumnHeaders?.chance, "Chance")
     }
 }

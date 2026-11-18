@@ -508,13 +508,12 @@ describe("#2920 / #11296 one pregame forecast per page", () => {
     expect(out[0]).toBe(milestone);
   });
 
-  it("the page passes the hero's PRINTED pregame pair: the final band, else the live baseline only where it renders", () => {
+  it("the page passes the hero's pregame pair to the NFL card deck", () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const src: string = require("fs").readFileSync(require("path").join(__dirname, "../app/events/[id]/page.tsx"), "utf8");
     expect(src).toMatch(
       /const heroPregamePair = heroFinalForecast\?\.forecast \?\? \(heroProjectedFinal && heroLiveBaseline \? heroLiveBaseline\.baseline : null\);/,
     );
-    expect(src).toMatch(/\{heroProjectedFinal && heroLiveBaseline && \(/);
-    expect(src).toMatch(/\{heroFinalForecast && \(/);
+    expect(src).toContain("withPageProjection(withPagePregame(nflCards, heroPregamePair), heroProjectedFinal)");
   });
 });

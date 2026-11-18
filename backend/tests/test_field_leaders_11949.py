@@ -186,10 +186,93 @@ async def test_opening_weekend_withholds_under_three_and_emits_at_three():
     ]
     emitted = await opening_weekend(three_films, now=NOW_UTC)
     assert isinstance(emitted, RoundupMembers)
+    # #12659: ordered by expected weekend gross descending ($120M–$140M > $90M–$110M > $60M–$75M),
+    # not raw modal bracket probability (where Gladiator II's 58% previously beat Wicked's 52%).
     assert [r["label"] for r in emitted.rows] == [
         "Moana 2 · $120M–$140M",
-        "Gladiator II · $60M–$75M",
         "Wicked: For Good · $90M–$110M",
+        "Gladiator II · $60M–$75M",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_opening_weekend_ranks_wide_releases_above_sub_2_5m_indie_12659():
+    from app.utils.field_leaders import OPENING_WEEKEND_PRODUCER
+
+    assert OPENING_WEEKEND_PRODUCER.order == "sequence"
+
+    films = [
+        {
+            "id": 69847039,
+            "name": '"Victorian Psycho" Opening Weekend Box Office',
+            "status": "open",
+            "source": "polymarket",
+            "category": "entertainment",
+            "mutually_exclusive": True,
+            "resolution_date": "2026-11-09T12:00:00Z",
+            "prices_updated_at": "2026-11-05T17:00:00Z",
+            "outcomes": [
+                {"id": 11, "name": "<2.5m", "probability": 0.92},
+                {"id": 12, "name": "2.5m-4m", "probability": 0.06},
+                {"id": 13, "name": "4m+", "probability": 0.02},
+            ],
+        },
+        {
+            "id": 69847040,
+            "name": '"How to Rob a Bank" Opening Weekend Box Office',
+            "status": "open",
+            "source": "polymarket",
+            "category": "entertainment",
+            "mutually_exclusive": True,
+            "resolution_date": "2026-11-09T12:00:00Z",
+            "prices_updated_at": "2026-11-05T17:00:00Z",
+            "outcomes": [
+                {"id": 21, "name": "<7m", "probability": 0.88},
+                {"id": 22, "name": "7m-9m", "probability": 0.08},
+                {"id": 23, "name": "9m+", "probability": 0.04},
+            ],
+        },
+        {
+            "id": 69847041,
+            "name": '"Ebenezer" Opening Weekend Box Office',
+            "status": "open",
+            "source": "polymarket",
+            "category": "entertainment",
+            "mutually_exclusive": True,
+            "resolution_date": "2026-11-09T12:00:00Z",
+            "prices_updated_at": "2026-11-05T17:00:00Z",
+            "outcomes": [
+                {"id": 31, "name": "<16m", "probability": 0.20},
+                {"id": 32, "name": "16m-19m", "probability": 0.25},
+                {"id": 33, "name": "19m-22m", "probability": 0.38},
+                {"id": 34, "name": "22m+", "probability": 0.17},
+            ],
+        },
+        {
+            "id": 69847099,
+            "name": '"Toy Story 5" Opening Weekend Box Office',
+            "status": "open",
+            "source": "polymarket",
+            "category": "entertainment",
+            "mutually_exclusive": True,
+            "resolution_date": "2026-11-09T12:00:00Z",
+            "prices_updated_at": "2026-11-05T17:00:00Z",
+            "outcomes": [
+                {"id": 41, "name": "80m-100m", "probability": 0.34},
+                {"id": 42, "name": "100m-120m", "probability": 0.44},
+                {"id": 43, "name": "120m+", "probability": 0.22},
+            ],
+        },
+    ]
+
+    emitted = await opening_weekend(films, now=NOW_UTC)
+    assert isinstance(emitted, RoundupMembers)
+    # Top 3 by expected gross: Toy Story 5 (~$107.6M), Ebenezer (~$18.3M), How to Rob a Bank (~$4.0M).
+    # Victorian Psycho (<2.5m · 92%, expected ~$1.4M) no longer sorts #1 or displaces wide releases.
+    assert [r["label"] for r in emitted.rows] == [
+        '"Toy Story 5" · 100m-120m',
+        '"Ebenezer" · 19m-22m',
+        '"How to Rob a Bank" · <7m',
     ]
 
 

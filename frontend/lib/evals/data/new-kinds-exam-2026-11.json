@@ -1,0 +1,45 @@
+{
+  "slate_id": "new-kinds-exam-test-2026-11",
+  "grader": "alex bain",
+  "date": "2026-11-10",
+  "graded_on": "8fd8af11",
+  "total_graded": 20,
+  "total_yes": 20,
+  "total_no": 0,
+  "kinds": {
+    "season_stat_leaders": {
+      "kind": "season_stat_leaders",
+      "graded": 10,
+      "amazing": 8,
+      "fine": 2,
+      "yes": 10,
+      "no": 0,
+      "yes_pct": 100.0,
+      "passes_80pct_bar": true,
+      "passes_catalog_bar": true,
+      "is_licensed": false,
+      "can_reach_readers": false
+    },
+    "qualification_stage_board": {
+      "kind": "qualification_stage_board",
+      "graded": 10,
+      "amazing": 10,
+      "fine": 0,
+      "yes": 10,
+      "no": 0,
+      "yes_pct": 100.0,
+      "passes_80pct_bar": true,
+      "passes_catalog_bar": true,
+      "is_licensed": false,
+      "can_reach_readers": false
+    }
+  },
+  "bubble_50": {
+    "graded": 3,
+    "amazing": 3,
+    "fine": 0,
+    "no": 0,
+    "yes": 3,
+    "verdict": "PASS"
+  }
+}

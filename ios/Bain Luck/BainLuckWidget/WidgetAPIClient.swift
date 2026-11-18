@@ -84,10 +84,14 @@ actor WidgetAPIClient {
                 away: event.awayTeam,
                 home: event.homeTeam,
                 awayServed: event.awayTeamData?.abbreviation,
-                homeServed: event.homeTeamData?.abbreviation
+                homeServed: event.homeTeamData?.abbreviation,
+                sportKey: event.sport
             )
             let homeAbbrev = abbrevs.home
             let awayAbbrev = abbrevs.away
+            let displayTeams = TeamShortName.isCollegeSport(sportKey: event.sport)
+                ? TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+                : (away: event.awayTeam, home: event.homeTeam)
 
             // UX-P114: prefer the server's card-level percents. This widget draws
             // both sides of one question, and `awayProbability` above is
@@ -125,10 +129,22 @@ actor WidgetAPIClient {
             let servedAwayPct = event.currentOdds?.awayRenderedPercent
             let bothServed = servedHomePct != nil && servedAwayPct != nil
 
+            let resolvedHexes = TeamTextContrast.cardColorHexes(
+                awayHex: event.awayTeamData?.primaryColor,
+                homeHex: event.homeTeamData?.primaryColor,
+                awaySecondaryHex: event.awayTeamData?.secondaryColor
+            )
+            let resolvedDarkHexes = TeamTextContrast.darkSurfaceColorHexes(
+                awayHex: event.awayTeamData?.primaryColor,
+                homeHex: event.homeTeamData?.primaryColor,
+                awaySecondaryHex: event.awayTeamData?.secondaryColor,
+                homeSecondaryHex: event.homeTeamData?.secondaryColor
+            )
+
             return WidgetGame(
                 id: event.id,
-                homeTeam: event.homeTeam,
-                awayTeam: event.awayTeam,
+                homeTeam: displayTeams.home,
+                awayTeam: displayTeams.away,
                 homeAbbrev: homeAbbrev,
                 awayAbbrev: awayAbbrev,
                 homeScore: event.homeScore,
@@ -140,8 +156,10 @@ actor WidgetAPIClient {
                 period: PeriodLabel.liveStatusText(
                     period: event.espn?.period, gameClock: event.espn?.gameClock) ?? "",
                 sport: event.sportName ?? event.sport ?? "",
-                homeColor: event.homeTeamData?.primaryColor,
-                awayColor: event.awayTeamData?.primaryColor
+                homeColor: resolvedHexes.home,
+                awayColor: resolvedHexes.away,
+                homeDarkColor: resolvedDarkHexes.home,
+                awayDarkColor: resolvedDarkHexes.away
             )
         }
         }

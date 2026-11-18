@@ -417,7 +417,7 @@ def test_the_envelope_round_trips_and_refuses_garbage():
 
 def test_the_key_names_slug_revision_and_scope():
     key = cache.container_read_cache_key("nfl-2026-week-4", 2, True)
-    assert key == "container_read:v3:nfl-2026-week-4:r2:all"
+    assert key == "container_read:v4:nfl-2026-week-4:r2:all"
     assert cache.container_read_cache_key("nfl-2026-week-4", 3, True) != key
     assert cache.container_read_cache_key("nfl-2026-week-4", 2, False) != key
     assert cache.container_read_cache_key("nfl-2026-week-4", 2, True, compact=True) == f"{key}:compact"

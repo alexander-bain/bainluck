@@ -73,6 +73,9 @@ nonisolated enum EventAtlasLivePath11666 {
     ) -> OverlaidHeadlineReading? {
         let isPreview = BlendPreview.displayed(preview, held: event, now: now) != nil
         let overlaid = BlendPreview.overlay(event, preview, now: now)
+        if !isPreview, overlaid.heroProbabilitySource == OpeningLineHero.openingSource {
+            return nil
+        }
         let rawHome = overlaid.heroProbability ?? overlaid.currentOdds?.homeProbability
         let rawAway = overlaid.heroProbabilityAway ?? overlaid.currentOdds?.awayProbability
         guard let printable = DrawPricedWinner.printablePair(

@@ -54,7 +54,12 @@ enum FuturesAtlasPresentation11666 {
         case mutuallyExclusiveField
         case participationField
         case quantityLadder
+        case numericalScale
         case singleLegPredicate
+
+        var isNumericallyOrdered: Bool {
+            self == .quantityLadder || self == .numericalScale
+        }
     }
 
     // MARK: - Row & Header Display Values (170-A, 188 & Decide 80-A)
@@ -99,6 +104,11 @@ enum FuturesAtlasPresentation11666 {
             if case .won = self { return true }
             return false
         }
+
+        var rawProbabilityValue: Double? {
+            if case .chance(_, _, let prob, _, _, _) = self { return prob }
+            return nil
+        }
     }
 
     struct ContenderRow: Equatable, Identifiable {
@@ -108,6 +118,7 @@ enum FuturesAtlasPresentation11666 {
         let openingText: String?
         let displayValue: RowDisplayValue
         let thresholdValue: Double?
+        var isLeading: Bool = false
     }
 
     // MARK: - Header & Provenance Sheet Models (F1)
@@ -279,6 +290,15 @@ enum FuturesAtlasPresentation11666 {
         if isQuantityLadder(outcomes: outcomes, marketName: market.name) {
             return .quantityLadder
         }
+        let isSingleNumericalScale = outcomes.count >= 3 && NumericalMarketScaleOrder228.isNumericalScale(
+            labels: outcomes.map(\.name),
+            explicitSortKeys: outcomes.map(\.sortKey),
+            marketType: market.marketType,
+            totalOutcomeCount: outcomes.count
+        )
+        if isSingleNumericalScale {
+            return market.mutuallyExclusive == false ? .quantityLadder : .numericalScale
+        }
         if market.mutuallyExclusive == false {
             return .participationField
         }
@@ -363,24 +383,39 @@ enum FuturesAtlasPresentation11666 {
         timeZone: TimeZone = .current
     ) -> [ContenderRow] {
         let orderedOutcomes: [FuturesOutcome]
+        let leaderOutcomeId: Int?
         switch shape {
-        case .quantityLadder:
-            orderedOutcomes = market.outcomes.enumerated().sorted { lhs, rhs in
-                let lVal = parseThresholdValue(from: lhs.element.name)
-                let rVal = parseThresholdValue(from: rhs.element.name)
-                switch (lVal, rVal) {
-                case let (l?, r?) where l != r:
-                    return l < r
-                case (.some, .none):
-                    return true
-                case (.none, .some):
-                    return false
-                default:
-                    return lhs.offset < rhs.offset
-                }
-            }.map(\.element)
+        case .quantityLadder, .numericalScale:
+            if let ordered = NumericalMarketScaleOrder228.orderedAll(
+                market.outcomes,
+                label: \.name,
+                probability: \.probability,
+                explicitSortKey: \.sortKey,
+                marketType: market.marketType,
+                isCumulative: shape == .quantityLadder
+            ) {
+                orderedOutcomes = ordered.map(\.element)
+                leaderOutcomeId = ordered.first(where: \.isLeader)?.element.id
+            } else {
+                orderedOutcomes = market.outcomes.enumerated().sorted { lhs, rhs in
+                    let lVal = parseThresholdValue(from: lhs.element.name)
+                    let rVal = parseThresholdValue(from: rhs.element.name)
+                    switch (lVal, rVal) {
+                    case let (l?, r?) where l != r:
+                        return l < r
+                    case (.some, .none):
+                        return true
+                    case (.none, .some):
+                        return false
+                    default:
+                        return lhs.offset < rhs.offset
+                    }
+                }.map(\.element)
+                leaderOutcomeId = futuresDetailHeroOutcome(market)?.id
+            }
         case .singleLegPredicate:
             orderedOutcomes = market.outcomes
+            leaderOutcomeId = orderedOutcomes.first?.id
         case .twoWayDuel, .mutuallyExclusiveField, .participationField:
             orderedOutcomes = market.outcomes.sorted { a, b in
                 let lhs = a.probability ?? -1
@@ -390,6 +425,7 @@ enum FuturesAtlasPresentation11666 {
                 if nameCmp != .orderedSame { return nameCmp == .orderedAscending }
                 return a.id < b.id
             }
+            leaderOutcomeId = orderedOutcomes.first?.id
         }
 
         let isResolved = market.status == "resolved"
@@ -399,6 +435,7 @@ enum FuturesAtlasPresentation11666 {
                 "Opening chance \(formatWholePercent(opening * 100))%"
             }
             let threshold = parseThresholdValue(from: outcome.name)
+                ?? NumericalMarketScaleOrder228.parseLabelKey(outcome.name)?.primary
             let displayValue = resolveRowDisplayValue(
                 outcome: outcome,
                 market: market,
@@ -413,7 +450,8 @@ enum FuturesAtlasPresentation11666 {
                 name: outcome.name,
                 openingText: openingText,
                 displayValue: displayValue,
-                thresholdValue: threshold
+                thresholdValue: threshold,
+                isLeading: leaderOutcomeId != nil ? (outcome.id == leaderOutcomeId) : (index == 0)
             )
         }
     }
@@ -622,6 +660,17 @@ enum FuturesAtlasPresentation11666 {
                 allRows: allRows,
                 remainingCount: 0
             )
+        case .numericalScale:
+            return BodyModel(
+                shape: .numericalScale,
+                domainContext: domainContext,
+                sectionTitle: "Outcomes",
+                sliceCaption: nil,
+                subtitleBadge: nil,
+                primaryRows: allRows,
+                allRows: allRows,
+                remainingCount: 0
+            )
         case .singleLegPredicate:
             return BodyModel(
                 shape: .singleLegPredicate,
@@ -790,8 +839,43 @@ enum FuturesAtlasPresentation11666 {
             return Array(body.allRows.prefix(2))
         case .singleLegPredicate:
             return Array(body.allRows.prefix(1))
-        case .mutuallyExclusiveField, .participationField, .quantityLadder:
+        case .mutuallyExclusiveField, .participationField:
             return Array(body.allRows.prefix(firstScreenHeadlineLimit192A))
+        case .quantityLadder:
+            guard body.allRows.count > firstScreenHeadlineLimit192A else { return body.allRows }
+            let pickedIds = Set(
+                body.allRows.enumerated().sorted { lhs, rhs in
+                    let lp = lhs.element.displayValue.rawProbabilityValue
+                    let rp = rhs.element.displayValue.rawProbabilityValue
+                    switch (lp, rp) {
+                    case let (l?, r?):
+                        let ld = abs(l - 0.5)
+                        let rd = abs(r - 0.5)
+                        if abs(ld - rd) > 1e-9 { return ld < rd }
+                        if abs(l - r) > 1e-9 { return l > r }
+                        return lhs.offset < rhs.offset
+                    case (.some, .none): return true
+                    case (.none, .some): return false
+                    case (.none, .none): return lhs.offset < rhs.offset
+                    }
+                }
+                .prefix(firstScreenHeadlineLimit192A)
+                .map(\.element.id)
+            )
+            return body.allRows.filter { pickedIds.contains($0.id) }
+        case .numericalScale:
+            guard body.allRows.count > firstScreenHeadlineLimit192A else { return body.allRows }
+            let pickedIds = Set(
+                body.allRows.enumerated().sorted { lhs, rhs in
+                    let lp = lhs.element.displayValue.rawProbabilityValue ?? -1
+                    let rp = rhs.element.displayValue.rawProbabilityValue ?? -1
+                    if abs(lp - rp) > 1e-9 { return lp > rp }
+                    return lhs.offset < rhs.offset
+                }
+                .prefix(firstScreenHeadlineLimit192A)
+                .map(\.element.id)
+            )
+            return body.allRows.filter { pickedIds.contains($0.id) }
         }
     }
 
@@ -848,7 +932,7 @@ enum FuturesAtlasPresentation11666 {
             return "Independent chances · time range in full chart"
         case .quantityLadder:
             return "Each threshold priced on its own"
-        case .twoWayDuel, .mutuallyExclusiveField, .singleLegPredicate:
+        case .twoWayDuel, .mutuallyExclusiveField, .numericalScale, .singleLegPredicate:
             return "Past 7 days · time range in full chart"
         }
     }
@@ -879,6 +963,8 @@ struct FuturesAtlasPageView11666: View {
     let golfTournamentEnd: String?
     let chartRefreshToken: Int
     let representation: FuturesRepresentation
+    var pairedMetricSet: PairedMetricSet? = nil
+    var preloadedPairedImages: [String: PairedPlatformImage] = [:]
     var preloadedTimeline: ProbabilityTimelineResponse? = nil
     var referenceNow: Date? = nil
 
@@ -904,11 +990,23 @@ struct FuturesAtlasPageView11666: View {
                 header: presentation.header,
                 headlineRows: headlineRows,
                 allFieldLabel: allFieldLabel,
+                isNumericallyOrdered: presentation.body.shape.isNumericallyOrdered,
                 timelineOutcomes: preloadedTimeline?.outcomes,
                 onOpenDetails: { showDetailsSheet = true },
                 onOpenFullField: { showFullFieldSheet = true }
             )
             .contextualTipHero10876(type: "future", id: marketId, scrollSpace: FuturesDetailView.scrollSpace)
+
+            if let pairedSet = pairedMetricSet, !pairedSet.entries.isEmpty {
+                DiscoverPairedMetricCardView(
+                    set: pairedSet,
+                    form: .pairedBarsTop5Expandable,
+                    initialExpanded: true,
+                    currentMarketId: marketId,
+                    allowsRouteLinks: true,
+                    preloadedImages: preloadedPairedImages
+                )
+            }
 
             if !market.outcomes.isEmpty {
                 EvolutionChartView(
@@ -974,6 +1072,7 @@ struct FuturesAtlasPageView11666: View {
                 subtitleBadge: presentation.body.subtitleBadge,
                 rows: presentation.body.allRows,
                 selectedOutcomeId: presentation.header.selectedOutcomeId,
+                showsRank: !presentation.body.shape.isNumericallyOrdered,
                 onSelectOutcome: { id in
                     selectedOutcomeId = id
                     showFullFieldSheet = false
@@ -988,6 +1087,7 @@ struct FuturesAtlasHeadlineCard192A: View {
     let header: FuturesAtlasPresentation11666.HeaderModel
     let headlineRows: [FuturesAtlasPresentation11666.ContenderRow]
     let allFieldLabel: String?
+    var isNumericallyOrdered: Bool = false
     var timelineOutcomes: [TimelineOutcomeMeta]? = nil
     let onOpenDetails: () -> Void
     let onOpenFullField: () -> Void
@@ -1035,10 +1135,10 @@ struct FuturesAtlasHeadlineCard192A: View {
 
                 Spacer(minLength: 4)
 
-                if !header.isResolved {
-                    EkgTraceShape(beating: header.primaryDisplay.asOfText == nil)
+                if !header.isResolved, header.primaryDisplay.asOfText == nil {
+                    EkgTraceShape(beating: true)
                         .stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-                        .foregroundStyle(header.primaryDisplay.asOfText == nil ? Color.green : Color.secondary)
+                        .foregroundStyle(DS.emerald)
                         .frame(width: 26, height: 9)
                         .accessibilityHidden(true)
                 }
@@ -1163,6 +1263,11 @@ struct FuturesAtlasHeadlineCard192A: View {
                 color: color,
                 size: 22
             )
+        } else if isNumericallyOrdered {
+            Circle()
+                .fill(color)
+                .frame(width: 10, height: 10)
+                .frame(width: 16, height: 22)
         } else {
             Text(badgeInitials(for: name))
                 .font(.system(size: 8.5, weight: .bold))
@@ -1581,7 +1686,7 @@ struct FuturesAtlasBodyCardView11666: View {
                 duelView
             case .mutuallyExclusiveField, .participationField:
                 contenderListView(showRank: true)
-            case .quantityLadder:
+            case .quantityLadder, .numericalScale:
                 contenderListView(showRank: false)
             case .singleLegPredicate:
                 contenderListView(showRank: false)
@@ -1705,7 +1810,8 @@ struct FuturesAtlasBodyCardView11666: View {
     private func contenderListView(showRank: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(bodyModel.primaryRows.enumerated()), id: \.element.id) { index, row in
-                contenderRowView(row, showRank: showRank, isFirst: index == 0)
+                let isLeading = bodyModel.shape.isNumericallyOrdered ? row.isLeading : (index == 0)
+                contenderRowView(row, showRank: showRank, isFirst: isLeading)
                 if index < bodyModel.primaryRows.count - 1 {
                     Divider()
                         .overlay(DS.border)
@@ -1954,6 +2060,7 @@ struct FuturesAtlasFullFieldSheetView11666: View {
     let subtitleBadge: String?
     let rows: [FuturesAtlasPresentation11666.ContenderRow]
     let selectedOutcomeId: Int?
+    var showsRank: Bool = true
     let onSelectOutcome: (Int) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -1981,10 +2088,12 @@ struct FuturesAtlasFullFieldSheetView11666: View {
                             onSelectOutcome(row.id)
                         } label: {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text("#\(row.rank)")
-                                    .font(.caption.weight(.semibold).monospacedDigit())
-                                    .foregroundStyle(DS.textMuted)
-                                    .frame(width: 28, alignment: .leading)
+                                if showsRank {
+                                    Text("#\(row.rank)")
+                                        .font(.caption.weight(.semibold).monospacedDigit())
+                                        .foregroundStyle(DS.textMuted)
+                                        .frame(width: 28, alignment: .leading)
+                                }
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(row.name)
                                         .font(.subheadline.weight(row.id == selectedOutcomeId ? .semibold : .regular))

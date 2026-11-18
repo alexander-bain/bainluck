@@ -87,7 +87,7 @@ final class AboutStartExploringOpensDiscoverTests: XCTestCase {
         }
     }
 
-    func testAboutViewWiresInterceptHandOffToHandleOutgoingLink() throws {
+    func testAboutViewWiresStartExploringToHandleOutgoingLink() throws {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // BainLuckTests
             .deletingLastPathComponent()   // Bain Luck (project dir)
@@ -95,7 +95,7 @@ final class AboutStartExploringOpensDiscoverTests: XCTestCase {
             .appendingPathComponent("Views")
             .appendingPathComponent("AboutView.swift")
         let source = try String(contentsOf: url, encoding: .utf8)
-        XCTAssertTrue(source.contains("interceptHandOff:"))
         XCTAssertTrue(source.contains("Self.handleOutgoingLink("))
+        XCTAssertTrue(source.contains("Self.discoverURL"))
     }
 }

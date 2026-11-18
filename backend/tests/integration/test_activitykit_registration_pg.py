@@ -7,7 +7,6 @@ credential through replacement/stop. Explicit test URL only; random test schema.
 import asyncio
 import json
 import os
-from types import SimpleNamespace
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -18,6 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.requests import Request
 
 from app.models.activitykit import ActivityKitRegistration
+from app.models.push_device import PushDevice
 from app.models.activitykit_delivery import ActivityKitDelivery
 from app.routes import activitykit
 
@@ -48,6 +48,8 @@ async def pg():
         await conn.execute(text("CREATE TABLE events(id INTEGER PRIMARY KEY)"))
         await conn.execute(text("INSERT INTO users VALUES (1), (2)"))
         await conn.execute(text("INSERT INTO events VALUES (42), (43)"))
+        # 177-A: a registration may belong to a phone (FK target).
+        await conn.run_sync(PushDevice.__table__.create)
         await conn.run_sync(TABLE.create)
         await conn.run_sync(ActivityKitDelivery.__table__.create)
     yield async_sessionmaker(engine, expire_on_commit=False)
@@ -88,7 +90,7 @@ async def invoke(sessions, value, *, identity="activity-a", user=1, revoke=False
     async with sessions() as db:
         try:
             result = await activitykit._mutate(
-                request, identity, SimpleNamespace(id=user), db, revoke=revoke
+                request, identity, activitykit.Owner("user_id", user), db, revoke=revoke
             )
             return 200, result
         except HTTPException as error:

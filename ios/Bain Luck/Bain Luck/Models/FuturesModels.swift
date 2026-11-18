@@ -278,6 +278,7 @@ nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
     let status: String?
     let source: String?
     let externalId: String?
+    var marketType: String? = nil
     let mutuallyExclusive: Bool?
     let commenceTime: String?
     let resolutionDate: String?
@@ -305,6 +306,7 @@ nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
     /// `polymarket`). Metadata only — the hero names its OWN outcome's sources.
     @TolerantNumeric var contributingSources: [String]? = nil
     @TolerantNumeric var representationFallback: String? = nil
+    @TolerantNumeric var createdAt: String? = nil
 }
 
 /// #9387 — the provider-backed question a verified response answers. Every field
@@ -346,6 +348,8 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
     /// own result (`{"verdict","basis"}`). Absent on every other market and on
     /// older servers. Read only through ``SettledResultDisplay698``.
     @LenientDecode var settlementDisplay: SettlementDisplay698? = nil
+    /// Direction 228 (#12885): optional server-supplied numerical sort key.
+    @TolerantNumeric var sortKey: Double? = nil
 
     private enum CodingKeys: String, CodingKey {
         case id, name, probability, americanOdds, rank, renderedPercent
@@ -353,7 +357,7 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
         case probabilityChange24h = "probabilityChange24H"
         case openingProbability, openingAmericanOdds, isWinner, resolutionSource, lastUpdated
         case contributingSources, observedAt, aggregationRule
-        case settlementDisplay
+        case settlementDisplay, sortKey
     }
 }
 

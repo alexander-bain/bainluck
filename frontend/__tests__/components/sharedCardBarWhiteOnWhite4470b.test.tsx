@@ -223,6 +223,18 @@ const SLATE = "#374151"; // a colour that is comfortably visible at both
 const HOME_FAVOURITE = 0.62;
 const AWAY_FAVOURITE = 0.38;
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#4470b — the shared card's bar never paints an invisible segment", () => {
   describe("the production specimens", () => {
     it("white on the DIMMED side is rescued — Leeds United at 38%", () => {

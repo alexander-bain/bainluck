@@ -16,7 +16,7 @@ import EntityImage from "./EntityImage";
 import { isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { teamColorStyle } from "@/lib/teamColors";
 import TeamNameLink from "./TeamNameLink";
-import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
+import { isStoredOpeningChance, shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
@@ -284,9 +284,9 @@ export default function EventCard({
   if (isFinishedStatus(event.status) && opening) {
     homeProb = opening.home_probability;
     awayProb = opening.away_probability;
-  } else if (shouldWithholdProbability(event)) {
-    // UX-P042 (#1640) — the only evidence is an untraded Polymarket midpoint, so
-    // `current_odds` reads a confident 0.5/0.5 built from nothing. Show no number.
+  } else if (isStoredOpeningChance(event) || shouldWithholdProbability(event)) {
+    // A cached opening line and an untraded Polymarket midpoint are both
+    // withheld from the current chance.
     homeProb = null;
     awayProb = null;
   } else if (!odds) {
@@ -561,6 +561,9 @@ export default function EventCard({
     : isSuspended || noReading || !favoriteKnown || !homeFavorite
       ? "text-text-primary"
       : "text-text-secondary";
+  const maxTeamLen = Math.max(event.home_team.length, event.away_team.length);
+  const sharedTeamSizeClass =
+    maxTeamLen > 22 ? "text-xs" : maxTeamLen > 16 ? "text-[13px]" : "text-sm";
 
   // Format time and date compactly
   const gameTime = new Date(event.commence_time);
@@ -890,7 +893,8 @@ export default function EventCard({
                   name={event.home_team}
                   sportKey={event.sport}
                   className={cn(
-                    "text-sm font-medium truncate hover:underline",
+                    sharedTeamSizeClass,
+                    "font-medium truncate hover:underline",
                     homeNameClass,
                   )}
                 />
@@ -961,6 +965,7 @@ export default function EventCard({
                 awayWithheld={awayWithheld}
                 homeColor={event.home_team_data?.primary_color ?? undefined}
                 awayColor={event.away_team_data?.primary_color ?? undefined}
+                awaySecondary={event.away_team_data?.secondary_color ?? undefined}
                 height={isLive ? 3 : 5}
               />
             )}
@@ -998,7 +1003,8 @@ export default function EventCard({
                   name={event.away_team}
                   sportKey={event.sport}
                   className={cn(
-                    "text-sm font-medium truncate hover:underline",
+                    sharedTeamSizeClass,
+                    "font-medium truncate hover:underline",
                     awayNameClass,
                   )}
                 />
@@ -1098,7 +1104,7 @@ export default function EventCard({
                 data-testid="event-card-prematch-label"
                 data-prematch-source={prematch.source}
               >
-                Pre-match · {prematch.label}
+                Pregame · {prematch.label}
               </span>
             </div>
           )}

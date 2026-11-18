@@ -22,6 +22,8 @@ interface ProbabilityBarProps {
   homeColor?: string;
   /** Away team color — CSS color string or hex */
   awayColor?: string;
+  /** Away team secondary color — Ruling 197 fallback when sharing home's hue family */
+  awaySecondary?: string | null;
   /** Whether home team is the favorite (brighter segment) */
   homeFavorite?: boolean;
   /**
@@ -78,6 +80,7 @@ export default function ProbabilityBar({
   awayProbability,
   homeColor,
   awayColor,
+  awaySecondary,
   homeFavorite,
   height,
   size = "md",
@@ -125,10 +128,15 @@ export default function ProbabilityBar({
   //
   // Passing real colours rather than variables is what makes the rule possible,
   // so `useCSSVars` is gone: a caller now says what the colours ARE.
-  const pair = probabilityBarPair(awayColor, homeColor, {
-    away: awayOpacity,
-    home: homeOpacity,
-  });
+  const pair = probabilityBarPair(
+    awayColor,
+    homeColor,
+    {
+      away: awayOpacity,
+      home: homeOpacity,
+    },
+    awaySecondary,
+  );
   const hColor = pair.home;
   const aColor = pair.away;
 

@@ -10,7 +10,6 @@
  */
 import Link from "next/link";
 import type { PoliticsMarketRow } from "@/lib/api";
-import { SourceBadge } from "@/components/politics/atoms";
 import s from "@/app/politics/politics.module.css";
 
 export function SideMarketCard({ market }: { market: PoliticsMarketRow }) {
@@ -49,7 +48,6 @@ export function SideMarketCard({ market }: { market: PoliticsMarketRow }) {
             {Math.round(market.prob)}%
           </span>
         </div>
-        <SourceBadge source={market.src} />
       </div>
     </Link>
   );

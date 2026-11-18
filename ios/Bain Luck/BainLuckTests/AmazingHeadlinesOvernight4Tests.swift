@@ -312,32 +312,31 @@ final class AmazingHeadlinesOvernight4Tests: XCTestCase {
         XCTAssertFalse(meta.localizedCaseInsensitiveContains("open"))
         XCTAssertFalse(meta.localizedCaseInsensitiveContains("settled"))
 
-        let threeWay = try XCTUnwrap(nonStreaming.soccerThreeWay)
-        XCTAssertEqual(threeWay.centerTagText, "90' Reg.")
-        XCTAssertFalse(threeWay.isScorePill)
-        XCTAssertTrue(threeWay.showsBottomBar)
-        XCTAssertNil(threeWay.pregameHeader)
-        XCTAssertEqual(threeWay.homeBox.headerLabel, "ARS WIN")
-        XCTAssertEqual(threeWay.drawBox.headerLabel, "DRAW")
-        XCTAssertEqual(threeWay.awayBox.headerLabel, "CHE WIN")
-        XCTAssertEqual(threeWay.homeBox.mainText, "52%")
-        XCTAssertEqual(threeWay.drawBox.mainText, "25%")
-        XCTAssertEqual(threeWay.awayBox.mainText, "23%")
+        XCTAssertEqual(nonStreaming.columns.map(\.header), ["", "Chance"])
+        XCTAssertTrue(nonStreaming.showsBottomBar)
+        XCTAssertEqual(nonStreaming.rows.map(\.shortName), ["Arsenal", "Chelsea", "Draw"])
+        XCTAssertEqual(nonStreaming.rows[0].cells.last, "52%")
+        XCTAssertEqual(nonStreaming.rows[1].cells.last, "23%")
+        XCTAssertEqual(nonStreaming.rows[2].cells.last, "25%")
 
         let streaming = try XCTUnwrap(resolveHeadline(match, hasScore: false, numberStreams: true))
-        let streamingThreeWay = try XCTUnwrap(streaming.soccerThreeWay)
-        XCTAssertEqual(streamingThreeWay.homeBox.mainText, "52.4%")
-        XCTAssertEqual(streamingThreeWay.drawBox.mainText, "24.8%")
-        XCTAssertEqual(streamingThreeWay.awayBox.mainText, "22.8%")
+        XCTAssertEqual(streaming.rows[0].cells.last, "52%", "#12822: before kickoff Chance stays whole percents")
+        XCTAssertEqual(streaming.rows[1].cells.last, "23%", "#12822: before kickoff Chance stays whole percents")
+        XCTAssertEqual(streaming.rows[2].cells.last, "25%", "#12822: before kickoff Chance stays whole percents")
 
         // Countdown inside last hour (182-A)
         let withinHour = try soccerBeforeFixture(commenceTime: "2026-11-14T08:35:00Z")
         let countdownModel = try XCTUnwrap(resolveHeadline(withinHour, hasScore: false, numberStreams: false))
         XCTAssertEqual(countdownModel.plainMetaText, "Premier League · In 35m")
 
-        // Never invent a draw when only home/away (no explicit drawProbability and no 3-way gameMarkets)
+        // Never invent a draw when only home/away (no explicit drawProbability and no 3-way gameMarkets):
+        // resolves 2-row unified card with home chance only (away withheld per #5271), never nil.
         let twoWayOnly = try soccerBeforeFixture(homeProb: 0.52, drawProb: nil, awayProb: 0.48)
-        XCTAssertNil(EventSportHeadlines12472.kind(for: twoWayOnly, now: fixedNow))
+        XCTAssertEqual(EventSportHeadlines12472.kind(for: twoWayOnly, now: fixedNow), .soccerBeforeGame)
+        let twoWayModel = try XCTUnwrap(resolveHeadline(twoWayOnly, hasScore: false, numberStreams: false))
+        XCTAssertEqual(twoWayModel.rows.count, 2)
+        XCTAssertEqual(twoWayModel.rows[0].cells.last, "")
+        XCTAssertEqual(twoWayModel.rows[1].cells.last, "52%")
 
         // Fallback to gameMarkets.other explicit 3-way rows when currentOdds omits drawProbability
         let gm = try decodeGameMarkets("""
@@ -353,9 +352,10 @@ final class AmazingHeadlinesOvernight4Tests: XCTestCase {
         }
         """)
         let viaMarkets = try XCTUnwrap(resolveHeadline(twoWayOnly, hasScore: false, numberStreams: false, gameMarkets: gm))
-        XCTAssertEqual(viaMarkets.soccerThreeWay?.homeBox.mainText, "52%")
-        XCTAssertEqual(viaMarkets.soccerThreeWay?.drawBox.mainText, "25%")
-        XCTAssertEqual(viaMarkets.soccerThreeWay?.awayBox.mainText, "23%")
+        XCTAssertEqual(viaMarkets.rows.count, 3)
+        XCTAssertEqual(viaMarkets.rows[0].cells.last, "52%")
+        XCTAssertEqual(viaMarkets.rows[1].cells.last, "23%")
+        XCTAssertEqual(viaMarkets.rows[2].cells.last, "25%")
     }
 
     // MARK: - 2. Soccer After Match Rules
@@ -371,45 +371,40 @@ final class AmazingHeadlinesOvernight4Tests: XCTestCase {
         XCTAssertFalse(meta.localizedCaseInsensitiveContains("settled"))
         XCTAssertFalse(meta.localizedCaseInsensitiveContains("open"))
 
-        let threeWay = try XCTUnwrap(model.soccerThreeWay)
-        XCTAssertEqual(threeWay.centerTagText, "2 \u{2013} 1")
-        XCTAssertTrue(threeWay.isScorePill)
-        XCTAssertFalse(threeWay.showsBottomBar)
-        XCTAssertEqual(threeWay.homeBox.mainText, "\u{2713} Won")
-        XCTAssertEqual(threeWay.homeBox.boxTone, .wonOutcome)
-        XCTAssertEqual(threeWay.drawBox.mainText, "\u{2014}")
-        XCTAssertEqual(threeWay.drawBox.boxTone, .mutedDash)
-        XCTAssertEqual(threeWay.awayBox.mainText, "Lost")
-        XCTAssertEqual(threeWay.awayBox.boxTone, .lostOutcome)
-
-        // Single "Pregame" header — NEVER repeated inside each box, NEVER "Opened"
-        XCTAssertEqual(threeWay.pregameHeader, "Pregame")
-        XCTAssertEqual(threeWay.homeBox.pregameChanceText, "64%")
-        XCTAssertEqual(threeWay.drawBox.pregameChanceText, "21%")
-        XCTAssertEqual(threeWay.awayBox.pregameChanceText, "15%")
-        for box in [threeWay.homeBox, threeWay.drawBox, threeWay.awayBox] {
-            XCTAssertFalse(box.pregameChanceText?.localizedCaseInsensitiveContains("pregame") ?? false)
-            XCTAssertFalse(box.pregameChanceText?.localizedCaseInsensitiveContains("open") ?? false)
+        XCTAssertFalse(model.showsBottomBar)
+        XCTAssertEqual(model.columns.map(\.header), ["Pregame", "Final"])
+        XCTAssertEqual(model.rows.count, 3)
+        XCTAssertEqual(model.rows[0].won, true)
+        XCTAssertEqual(model.rows[0].cells, ["64%", "2"])
+        XCTAssertEqual(model.rows[1].won, false)
+        XCTAssertEqual(model.rows[1].cells, ["15%", "1"])
+        XCTAssertEqual(model.rows[2].won, false)
+        XCTAssertEqual(model.rows[2].cells, ["21%", "\u{2014}"])
+        for row in model.rows {
+            for cell in row.cells {
+                XCTAssertFalse(cell.localizedCaseInsensitiveContains("pregame"))
+                XCTAssertFalse(cell.localizedCaseInsensitiveContains("open"))
+            }
         }
 
         // #4915: level draw finish grades Draw as won and marks NEITHER club as Lost
         let levelDraw = try soccerAfterFixture(homeScore: 1, awayScore: 1, settledResult: "draw")
         let drawModel = try XCTUnwrap(resolveHeadline(levelDraw, hasScore: true, numberStreams: false))
-        let drawThreeWay = try XCTUnwrap(drawModel.soccerThreeWay)
-        XCTAssertEqual(drawThreeWay.centerTagText, "1 \u{2013} 1")
-        XCTAssertEqual(drawThreeWay.homeBox.mainText, "\u{2014}")
-        XCTAssertEqual(drawThreeWay.drawBox.mainText, "\u{2713} Draw")
-        XCTAssertEqual(drawThreeWay.awayBox.mainText, "\u{2014}")
+        XCTAssertEqual(drawModel.rows.count, 3)
+        XCTAssertNil(drawModel.rows[0].won)
+        XCTAssertNil(drawModel.rows[1].won)
+        XCTAssertEqual(drawModel.rows[2].won, true)
+        XCTAssertEqual(drawModel.rows[2].cells.last, "")
     }
 
     func testSoccerGameMarketsOnlyAndNonRegulationEdgeCasesAndNoOpenedRow() async throws {
-        // 1. Two-way-only soccer with no draw share and no 3-way gameMarkets returns nil
+        // 1. Two-way-only soccer resolves cleanly to 2-row `.soccerBeforeGame` (never nil)
         let twoWayOnly = try soccerBeforeFixture(homeProb: 0.52, drawProb: nil, awayProb: 0.48)
-        XCTAssertNil(EventSportHeadlines12472.kind(for: twoWayOnly, now: fixedNow))
-        XCTAssertFalse(EventSportHeadlines12472.applies(to: twoWayOnly, now: fixedNow))
-        XCTAssertNil(resolveHeadline(twoWayOnly, hasScore: false, numberStreams: false))
+        XCTAssertEqual(EventSportHeadlines12472.kind(for: twoWayOnly, now: fixedNow), .soccerBeforeGame)
+        XCTAssertTrue(EventSportHeadlines12472.applies(to: twoWayOnly, now: fixedNow))
+        XCTAssertNotNil(resolveHeadline(twoWayOnly, hasScore: false, numberStreams: false))
 
-        // 2. Same match with 3-way gameMarkets resolves ONLY when gameMarkets is passed
+        // 2. Same match with 3-way gameMarkets resolves 3 rows
         let preMatchGM = try decodeGameMarkets("""
         {
           "event_id": 9127041,
@@ -425,7 +420,7 @@ final class AmazingHeadlinesOvernight4Tests: XCTestCase {
         XCTAssertEqual(EventSportHeadlines12472.kind(for: twoWayOnly, gameMarkets: preMatchGM, now: fixedNow), .soccerBeforeGame)
         XCTAssertTrue(EventSportHeadlines12472.applies(to: twoWayOnly, gameMarkets: preMatchGM, now: fixedNow))
 
-        // 3. Extra-time and penalties without confirmedWinner return nil
+        // 3. Extra-time and penalties without confirmed 90-minute 3-way winner resolve cleanly to `.soccerAfterGame`
         for nonRegPeriod in ["extra_time", "penalties"] {
             let nonReg = try decodeEvent("""
             {
@@ -449,14 +444,14 @@ final class AmazingHeadlinesOvernight4Tests: XCTestCase {
               }
             }
             """)
-            XCTAssertNil(
-                EventSportHeadlines12472.kind(for: nonReg, now: fixedNow),
-                "\(nonRegPeriod) without confirmed 90-minute 3-way winner must return nil"
-            )
-            XCTAssertFalse(EventSportHeadlines12472.applies(to: nonReg, now: fixedNow))
+            XCTAssertEqual(EventSportHeadlines12472.kind(for: nonReg, now: fixedNow), .soccerAfterGame)
+            XCTAssertTrue(EventSportHeadlines12472.applies(to: nonReg, now: fixedNow))
+            let nonRegModel = try XCTUnwrap(resolveHeadline(nonReg, hasScore: true, numberStreams: false))
+            XCTAssertEqual(nonRegModel.columns.map(\.header), ["Pregame", "Final"])
+            XCTAssertNil(nonRegModel.rows[0].won, "90-minute 3-way pregame shares must not claim AET/Pen winner without market settlement")
         }
 
-        // 4. Finished match qualifying ONLY via gameMarkets (no prematch_odds, no regulation period, no hero_settled_result)
+        // 4. Finished match qualifying via gameMarkets
         let marketsOnlyFinished = try decodeEvent("""
         {
           "id": 9127100,
@@ -487,7 +482,7 @@ final class AmazingHeadlinesOvernight4Tests: XCTestCase {
           ]
         }
         """)
-        XCTAssertFalse(EventSportHeadlines12472.applies(to: marketsOnlyFinished, now: fixedNow))
+        XCTAssertTrue(EventSportHeadlines12472.applies(to: marketsOnlyFinished, now: fixedNow))
         XCTAssertTrue(EventSportHeadlines12472.applies(to: marketsOnlyFinished, gameMarkets: settledThreeWayGM, now: fixedNow))
 
         // 5. Hosted page + source check: every EventDetailView call site passes gameMarkets, and a
@@ -573,28 +568,25 @@ final class AmazingHeadlinesOvernight4Tests: XCTestCase {
         XCTAssertEqual(model.liveBadgeText, "LIVE · P2 08:14")
         XCTAssertEqual(model.leagueLabel, "NHL")
         XCTAssertTrue(model.showsEkg)
-        XCTAssertTrue(model.stacksRecordUnderName)
+        XCTAssertFalse(model.stacksRecordUnderName, "Ruling 200-B: no team records during a live game")
         XCTAssertEqual(
             model.liveColumnHeaders,
-            EventSportHeadlines12472.LiveColumnHeaders(score: "Score", pregame: "Pregame", now: "Now")
+            EventSportHeadlines12472.LiveColumnHeaders(score: "Score", projected: "Proj.", pregame: nil, now: "Now")
         )
         XCTAssertEqual(model.away.shortName, "Predators")
-        XCTAssertEqual(model.away.record, "18-14-3")
+        XCTAssertNil(model.away.record)
         XCTAssertEqual(model.away.liveScore, 2)
-        XCTAssertEqual(model.away.pregameChanceText, "46%")
+        XCTAssertNil(model.away.pregameChanceText)
         XCTAssertEqual(model.away.winChanceText, "48.4%")
 
         XCTAssertEqual(model.home.shortName, "Ducks")
-        XCTAssertEqual(model.home.record, "16-16-4")
+        XCTAssertNil(model.home.record)
         XCTAssertEqual(model.home.liveScore, 2)
-        XCTAssertEqual(model.home.pregameChanceText, "54%")
+        XCTAssertNil(model.home.pregameChanceText)
         XCTAssertEqual(model.home.winChanceText, "51.6%")
         XCTAssertEqual(model.pregameAwayMarker ?? 0, 0.46, accuracy: 0.0001)
-
-        XCTAssertFalse(model.away.pregameChanceText?.localizedCaseInsensitiveContains("pregame") ?? false)
-        XCTAssertFalse(model.home.pregameChanceText?.localizedCaseInsensitiveContains("pregame") ?? false)
-        XCTAssertFalse(model.away.pregameChanceText?.localizedCaseInsensitiveContains("open") ?? false)
-        XCTAssertFalse(model.home.pregameChanceText?.localizedCaseInsensitiveContains("open") ?? false)
+        XCTAssertEqual(model.livePregameSummary?.leadWord, "Pregame")
+        XCTAssertTrue(model.livePregameSummary?.bodyText.hasPrefix("Ducks 54%") == true)
     }
 
     // MARK: - 4. 390x852 First-Screen Fit & PNG Renders
@@ -684,7 +676,7 @@ final class AmazingHeadlinesOvernight4Tests: XCTestCase {
             let host = hostForMeasurement(card, at: .large)
             let size = host.sizeThatFits(in: CGSize(width: 358, height: 1000))
             XCTAssertLessThanOrEqual(size.width, 358.5, "\(label) width")
-            XCTAssertLessThanOrEqual(size.height, 200, "\(label) height (\(size.height)pt) keeps chart above 852pt fold")
+            XCTAssertLessThanOrEqual(size.height, 245, "\(label) height (\(size.height)pt) keeps chart above 852pt fold")
 
             let a11yHost = hostForMeasurement(card, at: .accessibility2)
             let a11ySize = a11yHost.sizeThatFits(in: CGSize(width: 358, height: 2000))

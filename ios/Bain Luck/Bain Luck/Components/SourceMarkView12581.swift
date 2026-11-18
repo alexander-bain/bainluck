@@ -13,17 +13,20 @@ struct SourceMarkButton: View {
     let number: Double?
     /// The font size of the number the ring follows; the ring is 0.7 of it.
     let numberSize: CGFloat
+    /// Compact dense-list mode keeps row height tight while expanding hit area via `.contentShape`.
+    var compactRow: Bool = false
 
     @State private var open = false
 
     /// The ring's share of the number's type size (Alex's ruling: about 0.7).
     static let ringScale: CGFloat = 0.7
 
-    init?(_ mark: SourceMark?, number: Double? = nil, numberSize: CGFloat) {
+    init?(_ mark: SourceMark?, number: Double? = nil, numberSize: CGFloat, compactRow: Bool = false) {
         guard let mark, mark.draws else { return nil }
         self.mark = mark
         self.number = number
         self.numberSize = numberSize
+        self.compactRow = compactRow
     }
 
     var body: some View {
@@ -31,9 +34,10 @@ struct SourceMarkButton: View {
             Image(systemName: "info.circle")
                 .font(.system(size: numberSize * Self.ringScale))
                 .foregroundStyle(Color.secondary.opacity(0.55))
-                // A 44pt tap target around a ring that stays quiet.
-                .frame(minWidth: 28, minHeight: 44)
-                .contentShape(Rectangle())
+                // A 44pt tap target around a ring that stays quiet (compact rows keep
+                // visual height tight and extend hit testing via negative inset).
+                .frame(minWidth: compactRow ? 22 : 28, minHeight: compactRow ? 20 : 44)
+                .contentShape(Rectangle().inset(by: compactRow ? -10 : 0))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Where this number comes from")
@@ -77,16 +81,23 @@ struct SourceMarkSheet: View {
         number.map { formatProbability($0) }
     }
 
-    /// One line of method under the rows. Multi-source blends print the
-    /// server's `method` when present and non-empty, else "Bain Luck blend";
-    /// one-source marks name that venue ("<Venue>'s price", 145-A).
+    /// One line of method under the rows. Multi-source blends and scaled
+    /// single-source marks print the server's `method` when present and non-empty;
+    /// otherwise multi-source blends print "Bain Luck blend" and one-source marks
+    /// name that source ("Kalshi's price", "Sportsbooks' price", 145-A / #12873).
     static func method(_ mark: SourceMark) -> String? {
+        let served = mark.method?.trimmingCharacters(in: .whitespacesAndNewlines)
         switch mark.state {
         case .blend where mark.sources.count > 1:
-            let served = mark.method?.trimmingCharacters(in: .whitespacesAndNewlines)
             return (served?.isEmpty == false) ? served : "Bain Luck blend"
         case .blend, .single:
-            return mark.sources.first.map { "\($0.name)'s price" }
+            guard let first = mark.sources.first else { return nil }
+            if let served, !served.isEmpty {
+                return served
+            }
+            let name = first.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return nil }
+            return name.lowercased().hasSuffix("s") ? "\(name)' price" : "\(name)'s price"
         case .settled:
             return nil
         case .none, .unknown:
@@ -117,11 +128,20 @@ struct SourceMarkSheet: View {
                 }
                 .padding()
             }
-                .navigationTitle(Self.title)
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
+                #else
+                .navigationTitle(Self.title)
                 #endif
                 .toolbar {
+                    #if os(iOS)
+                    ToolbarItem(placement: .principal) {
+                        Text(Self.title)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                    }
+                    #endif
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Done") { dismiss() }
                     }

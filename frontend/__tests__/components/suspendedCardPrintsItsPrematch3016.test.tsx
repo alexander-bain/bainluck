@@ -107,6 +107,18 @@ function nameClass(html: string, team: string): string {
   return match[1];
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("a suspended card prints its pre-match reading", () => {
   it("prints both pre-match percents", () => {
     // 0.4368 / 0.5632 rounded ONCE as a pair. The whole finding: before this,
@@ -120,7 +132,7 @@ describe("a suspended card prints its pre-match reading", () => {
     // `Pre-match · sportsbooks` — the same label the FINAL sibling wears, and
     // the approved word (notice 33). Asserted through `BOOKS_LABEL` rather
     // than a spelling, so a change to the word moves both at once.
-    expect(text(render(makeEvent()))).toContain(`Pre-match · ${BOOKS_LABEL}`);
+    expect(text(render(makeEvent()))).toContain(`Pregame · ${BOOKS_LABEL}`);
   });
 
   it("attaches them to the right sides", () => {

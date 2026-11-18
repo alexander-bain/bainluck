@@ -92,6 +92,18 @@ function render(overrides: Partial<TeamGameBrief> = {}, teamName = "Boston Red S
   );
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#5546 — the win-prob bar names both sides the same way", () => {
   test("THE DEFECT: the opponent end no longer prints the full club name beside a percentage", () => {
     // This is the assertion that is red before the fix. It is anchored to the

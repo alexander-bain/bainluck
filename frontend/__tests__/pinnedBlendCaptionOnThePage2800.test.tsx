@@ -135,42 +135,22 @@ function draw(): string {
   );
 }
 
-describe("#2800 the event page does not caption a pinned blend as live", () => {
-  test("THE BUG: a pinned price is not captioned 'Live' on the rendered page", () => {
+describe("#2800 the event page does not claim LIVE on a pinned blend", () => {
+  test("THE BUG: a pinned price withdraws the LIVE pill on the rendered page", () => {
     eventPayload = baseEvent(PINNED);
     const html = draw();
-    expect(html).not.toContain(LIVE_CAPTION);
-    expect(html).toContain(WITHDRAWN_CAPTION);
+    expect(html).not.toContain('data-testid="event-hero-live-pill"');
+    expect(html).toContain("Ended · no result reported");
   });
 
   test("the number survives the withdrawal — the reader keeps 99%", () => {
-    // Notice 34: the repair removes a word. A blank hero would be worse than a
-    // frozen one, and this asserts the fix did not reach the number.
     eventPayload = baseEvent(PINNED);
     expect(draw()).toContain("99");
   });
 
-  test("A BACKED, FRESH BLEND STILL SAYS 'Live' — the control (gotcha #43)", () => {
-    // If this arm ever goes red the change has eaten the ordinary live case,
-    // which is every live event on the site. It is also what proves the arm
-    // above is not passing merely because the caption never renders at all.
-    //
-    // ── WHY THE CONTROL IS AN ABSENT FIELD AND NOT `{pinned: false}` ──
-    //
-    // `liveClaimIsUnbacked` reads this field by TRUTHINESS (`if (pinned) return
-    // true`, `lib/eventLivePush.ts:214`) on the documented contract that the
-    // server sends it "ONLY when the server says so". A `{pinned: false}`
-    // fixture is therefore a shape that does not exist, and asserting against
-    // it would encode a fiction and read as a false red.
-    //
-    // MEASURED rather than taken from the docstring — 20 live events on
-    // production, 2026-09-14 07:45Z: 16 absent/null, 4 with `pinned: true`,
-    // ZERO present-but-false. The truthiness is load-bearing and currently safe.
-    // If a server change ever starts emitting the false shape, this file's first
-    // test would begin passing for the wrong reason and this comment is the
-    // pointer to why.
+  test("A BACKED, FRESH BLEND STILL SAYS 'LIVE' — the control (gotcha #43)", () => {
     eventPayload = baseEvent(undefined);
     const html = draw();
-    expect(html).toContain(LIVE_CAPTION);
+    expect(html).toContain('data-testid="event-hero-live-pill"');
   });
 });

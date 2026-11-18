@@ -89,6 +89,7 @@ describe("computeLastChartPoint (#1003 fraction fix)", () => {
     // under a hero that correctly showed "home 1%". Asymmetric probs (0.01 vs
     // 0.99) so an accidental 1-x swap cannot pass this test.
     const historyData = hist({
+      blend_edge_pinned: true,
       aggregate_line: [
         { timestamp: "2026-07-23T02:00:00Z", home_probability: 0.01 },
       ],
@@ -262,6 +263,7 @@ describe("resolveProbability — live hero binds to the blend (L2-163 Item 2b)",
         opening_odds: { home_probability: 0.5, away_probability: 0.5 } as never,
       }),
       hist({
+        blend_edge_pinned: true,
         aggregate_line: [
           { timestamp: "2026-07-23T00:10:00Z", home_probability: 0.22 },
           { timestamp: "2026-07-23T00:17:00Z", home_probability: 0.2 },
@@ -304,7 +306,7 @@ describe("resolveProbability — live hero binds to the blend (L2-163 Item 2b)",
       true, // isFinished
     );
     expect(r.homeProb).toBeCloseTo(0.35);
-    expect(r.probSourceLabel).toBe("Pre-game odds");
+    expect(r.probSourceLabel).toBe("Pregame odds");
   });
 });
 

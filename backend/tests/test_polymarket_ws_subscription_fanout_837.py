@@ -673,7 +673,15 @@ class TestCoverageIsCountedOnTheWire:
         ws = PolymarketWebSocket()
         with caplog.at_level(logging.WARNING, logger="app.services.polymarket_ws"):
             task = asyncio.create_task(ws.run(asset_ids=_ids(1500)))
-            await asyncio.sleep(0.3)
+            # Wait for the warning itself, not a fixed 0.3 s: on a loaded CI
+            # runner the shards' connects and the 0.05 s coverage ticks can all
+            # land after 0.3 s of wall clock, and the test failed with an empty
+            # log while the code was right (#12844's run, Nov 16). The bound is
+            # only a backstop; a missing warning still fails below.
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 10
+            while "served 0 distinct" not in caplog.text and loop.time() < deadline:
+                await asyncio.sleep(0.01)
             task.cancel()
             with pytest.raises((asyncio.CancelledError, Exception)):
                 await task

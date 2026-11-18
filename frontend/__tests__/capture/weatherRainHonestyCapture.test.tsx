@@ -195,11 +195,21 @@ describe("UX-P170 · the card stops claiming cities it does not have", () => {
     expect(text).not.toContain("10 cities");
   });
 
-  test("the footer agrees with the subtitle rather than contradicting it", () => {
+  test("the footer is dropped when every row's 24h change is zero, and agrees with the subtitle when shown (#12093)", () => {
     const text = visibleText(render(SERVED_BEFORE));
-    expect(text).toContain("Kalshi · 1 city");
-    // One card, one number: the two must not disagree.
-    expect(text.match(/1 city/g)).toHaveLength(2);
+    expect(text).toContain("1 city");
+    expect(text).not.toContain("Kalshi");
+    expect(text).not.toContain("24h change shown at right");
+    expect(text.match(/1 city/g)).toHaveLength(1);
+
+    const withDelta = {
+      daily: [],
+      monthly: [{ city: "NYC", period: "Aug 2026", prob: 61, src: "kalshi", delta24h: 4 }],
+    };
+    const deltaText = visibleText(render(withDelta));
+    expect(deltaText).toContain("24h change shown at right");
+    expect(deltaText).toContain("+4");
+    expect(deltaText.match(/1 city/g)).toHaveLength(2);
   });
 
   test("no count is claimed before the count is known", () => {
@@ -314,6 +324,6 @@ describe("UX-P170 · the parts of the section that were fine stay fine", () => {
     // (ux/1081, #3230) — the card still identifies itself, which is what this
     // test is for.
     expect(text).toContain("NYC · daily rain probability");
-    expect(text).toContain("Kalshi");
+    expect(text).not.toContain("Kalshi");
   });
 });

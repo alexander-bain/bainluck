@@ -150,3 +150,38 @@ def test_the_kickoff_bound_is_still_in_the_statement():
 
 def test_settled_statuses_are_the_two_the_card_grammar_calls_settled():
     assert SETTLED_STATUSES == frozenset({"completed", "closed"})
+
+
+def test_live_detail_opt_in_keeps_each_kickoff_and_leaves_list_reads_settled_only():
+    events = [
+        _event(1, "live", _T0 - timedelta(hours=1)),
+        _event(2, "scheduled", _T0 - timedelta(hours=2)),
+        _event(3, "completed", _T0 - timedelta(hours=3)),
+        _event(4, "live", _T0 + timedelta(seconds=1)),
+        _event(5, "live", None),
+        _event(6, "suspended", _T0 - timedelta(hours=4)),
+        _event(7, "live", _T0),
+    ]
+
+    default = prematch_prior_binds(events)
+    assert default["ids"] == [3]
+    detail = prematch_prior_binds(events, live_detail=True, now=_T0)
+    assert list(zip(detail["ids"], detail["cutoffs"])) == [
+        (1, _T0 - timedelta(hours=1)),
+        (3, _T0 - timedelta(hours=3)),
+        (7, _T0),
+    ]
+    assert detail["sources"] == list(PREDICTION_MARKET_SOURCES)
+    assert SETTLED_STATUSES == frozenset({"completed", "closed"})
+
+
+def test_live_detail_accepts_naive_utc_but_never_a_future_or_unknown_kickoff():
+    kickoff = _T0.replace(tzinfo=None)
+    event = _event(1, "live", kickoff)
+    assert prematch_prior_binds([event], live_detail=True, now=_T0)["cutoffs"] == [kickoff]
+    assert prematch_prior_binds(
+        [event], live_detail=True, now=_T0 - timedelta(microseconds=1)
+    ) is None
+    assert prematch_prior_binds(
+        [_event(1, "live", None)], live_detail=True, now=_T0
+    ) is None

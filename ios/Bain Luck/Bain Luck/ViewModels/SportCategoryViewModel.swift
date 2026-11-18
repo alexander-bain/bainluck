@@ -45,8 +45,9 @@ final class SportCategoryViewModel: ObservableObject {
     /// Seed `items` without a network call, so the section partition (#1471)
     /// can be tested on a captured production payload. Test-only by
     /// convention — `items` stays `private(set)` for every other caller.
-    func setItemsForTesting(_ newItems: [FeedItem]) {
+    func setItemsForTesting(_ newItems: [FeedItem], leagueMarkets: LeagueMarketsResponse? = nil) {
         items = newItems
+        self.leagueMarkets = leagueMarkets
         loading = false
     }
 

@@ -20,6 +20,7 @@ import { outcomeDisplayNames } from "@/lib/outcomeLabels";
 import { answerRung, inThresholdOrder, ladderSlice, leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 import { renderedPricesAsOf } from "@/lib/futuresCardPriceAge";
+import { formatAsOfStamp } from "@/lib/asOfStamp";
 // #5552 — the SAME predicate `components/futures/OutcomeRow` uses, imported rather
 // than restated. Its docstring records that restating `isResolved && is_winner === X`
 // per branch is exactly how that surface drifted, so this card calls the one function
@@ -30,6 +31,7 @@ import { categoryKeyLabel } from "@/lib/sportCategories";
 import { gamePropContextLine, spreadSideLabels, type GamePropGameRef } from "@/lib/gamePropCardContext";
 import { relatedGameListingText } from "@/lib/relatedGameListing";
 import { openFieldLegIsOut } from "@/lib/openFieldLegOut";
+import { numericalScaleOrderIndices } from "@/lib/numericalScaleOrder";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -158,17 +160,26 @@ export default function FuturesCard({
   // and prints the first character of a number. Decided over the WHOLE shipped
   // set for the same reason `outcomeLabels` is: a ladder is only recognisable
   // from its siblings, and the sliced five must not be able to manufacture one.
-  const numericLadder = isNumericLadder(outcomes.map((o) => o.name));
-  // #8834: a ladder served in threshold order keeps it — search serves the rungs
-  // around the crossing that way, and a probability sort swapped the near-tied
-  // ones (`Above 3.75%` 0.995 drawn over `Above 3.50%` 0.99). The same five rows
-  // survive either way (`ladderSlice` keeps the leader, #1526). Its highlighted
-  // row is the rung nearest even — the one that says where the number lands —
-  // rather than whichever rung happens to be served first. Anything that is not
-  // visibly a ladder in order is sorted leader-first exactly as before (#2789).
+  const scaleLadder =
+    numericalScaleOrderIndices(outcomes, { marketType: market.market_type }) !== null;
+  const numericLadder = scaleLadder || isNumericLadder(outcomes.map((o) => o.name));
+  // #8834 + Direction 228 (#12885): any numeric ladder, range, count, rate, or
+  // signed bps market lists its kept rows in ascending numerical order (keeping
+  // the leader via `leaderFirstSlice`, #1526), never by probability.
   const servedLadder = inThresholdOrder(outcomes.map((o) => o.name));
-  const topOutcomes = servedLadder ? ladderSlice(labelled, 5) : leaderFirstSlice(labelled, 5);
-  const highlighted = servedLadder ? answerRung(topOutcomes) : topOutcomes[0];
+  const leaderCut = leaderFirstSlice(labelled, 5);
+  const scaleIdx = scaleLadder
+    ? numericalScaleOrderIndices(
+        leaderCut.map((r) => ({ name: r.outcome.name })),
+        { marketType: market.market_type },
+      )
+    : null;
+  const topOutcomes = scaleIdx
+    ? scaleIdx.map((i) => leaderCut[i])
+    : servedLadder
+      ? ladderSlice(labelled, 5)
+      : leaderCut;
+  const highlighted = scaleLadder || servedLadder ? answerRung(topOutcomes) : topOutcomes[0];
   const isResolved = market.status === "resolved";
   // UX-P276 (#2710). Resolved once here rather than in the chip so the chip's
   // truthiness gate and the text it renders are the same value — a chip that
@@ -542,22 +553,7 @@ function OutcomeRow({
 }
 
 function formatRelativeTime(isoString: string): string {
-  const date = new Date(isoString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / (1000 * 60));
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffMins < 1) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
+  return formatAsOfStamp(isoString) ?? "";
 }
 
 /* #7165 — the local `PinIcon` is gone; this card imports the shared one. Its

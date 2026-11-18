@@ -352,6 +352,18 @@ const RENDER_PATHS: {
 // PART 1 — BEHAVIOUR: the cue is on the page, on every path, in both directions.
 // ─────────────────────────────────────────────────────────────────────────────
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("PART 1 — every card path renders the cue for a boosted reader", () => {
   it.each(RENDER_PATHS.map((p) => [p.name, p] as const))("%s", (_name, p) => {
     const html = p.render(BOOSTED);

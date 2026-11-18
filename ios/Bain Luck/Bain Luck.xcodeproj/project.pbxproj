@@ -137,9 +137,14 @@
 				Utilities/GameContinuation.swift,
 				Utilities/StoryContinuation.swift,
 				Utilities/PeriodLabel.swift,
+				Utilities/ProbabilityBarPalette.swift,
 				Utilities/RenderedPercent.swift,
 				Utilities/SportVocab.swift,
+				Utilities/HeadlineStyleTable199.swift,
+				Utilities/TeamShortName.swift,
+				Utilities/TeamTextContrast.swift,
 				Utilities/WatchTelemetryProtocol.swift,
+				Utilities/WatchWristTile12616.swift,
 			);
 			target = A70F40102FA6C20000170BF2 /* BainLuckWatch Watch App */;
 		};
@@ -163,6 +168,8 @@
 				WatchDiscoveryStore.swift,
 				WatchDiscoveryAPIClient.swift,
 				WatchPinsModels12640.swift,
+				WatchSelectedGameModels.swift,
+				WatchMatchupReading217.swift,
 			);
 			target = A7C0000000000000000000E1 /* BainLuckTests */;
 		};
@@ -187,12 +194,15 @@
 				WatchSavedComplicationContent.swift,
 				WatchComplicationSnapshot.swift,
 				WatchLaunchRoute.swift,
+				WatchMatchupComplication217.swift,
+				WatchMatchupReading217.swift,
 			);
 			target = A7C0000000000000000000D1 /* BainLuckComplication */;
 		};
 		A7C0000000000000000000DF /* Exceptions for "Bain Luck" folder in "BainLuckComplication" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Utilities/HeadlineStyleTable199.swift,
 			);
 			target = A7C0000000000000000000D1 /* BainLuckComplication */;
 		};
@@ -202,7 +212,10 @@
 				Utilities/DrawPricedWinner.swift,
 				Utilities/GameActivityAttributes.swift,
 				Utilities/GameActivitySnapshot.swift,
+				Utilities/GameActivityCrests.swift,
+				Utilities/EventHeadlineTenths10090.swift,
 				Utilities/GameContinuation.swift,
+				Utilities/HeadlineStyleTable199.swift,
 				Utilities/RenderedPercent.swift,
 				Utilities/PeriodLabel.swift,
 				Utilities/SportVocab.swift,
@@ -215,6 +228,7 @@
 				Utilities/ProbabilityBarPalette.swift,
 				Utilities/TeamTextContrast.swift,
 				Intents/IntentRouteHandoff10873.swift,
+				Widgets10875/SavedGameHeadlineWidget12616.swift,
 				Widgets10875/SavedItemOpenIntent12305.swift,
 				Widgets10875/SavedWidgetArt12466.swift,
 				Widgets10875/SavedWidgetBridge10875.swift,

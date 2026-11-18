@@ -267,6 +267,7 @@ from app.utils.search_match_class import (
 )
 from app.utils.blank_event_cards import not_a_blank_card
 from app.utils.event_list_order import in_reader_order
+from app.utils.settled_prematch_batch import attach_settled_prematch_odds
 from app.utils.feed_market_quality import (
     FEED_MIN_REAL_PROBABILITY,
     has_no_real_price,
@@ -6640,8 +6641,8 @@ def _split_futures_arms(expanded: list[tuple[str, str | None]]) -> list:
     for zero rows. Contiguous cuts only, and only up to
     `_SPLIT_FUTURES_MAX_TERMS`, so 3 terms cost 4 arms rather than every subset.
 
-    The outcome test is a correlated EXISTS, NOT `_market_has_outcome`'s ARRAY
-    InitPlan, because here the NAME run is the selective side. The InitPlan
+    Without a maintained open-outcome copy, the outcome test is a correlated
+    EXISTS, because the NAME run is the selective side. An archive-wide InitPlan
     resolves every outcome spelling `series` before it looks at a single name;
     the EXISTS probes only the markets the name run returned, by `market_id`.
     Production 2026-10-01, the union of a query's arms, two reads each:
@@ -6666,6 +6667,16 @@ def _split_futures_arms(expanded: list[tuple[str, str | None]]) -> list:
     measured and is worse: `dodgers world series` 0.2 -> 5.6 s and `lakers
     championship` past 8 s, driven from the broad name side.
 
+    #11933: while #4437's open-outcome copy is maintained, use its name-only
+    lookup plus the direct recent-outcome overlay. The split arm had bypassed
+    that existing search path and still searched the full historical table;
+    82 of 174 public diagnostic reads on Nov 14 exhausted its one-second bound.
+    ARRAY fixes the match-set read as an InitPlan over the smaller copy. An
+    absent/stale/incomplete state or disabled reader keeps the original EXISTS,
+    rather than bringing back the archive-wide InitPlan measured above. The
+    whole-word and single-outcome predicates, market filters, tier and budgets
+    remain the same. The copy retains #4437's existing rename/reopen lag bound.
+
     UNION arms like the alias and nickname arms, so recall can only grow and a
     one-term query (returns ``[]``) compiles byte-identical SQL.
     """
@@ -6679,15 +6690,22 @@ def _split_futures_arms(expanded: list[tuple[str, str | None]]) -> list:
     for cut in range(1, len(expanded)):
         head, tail = expanded[:cut], expanded[cut:]
         for name_run, outcome_run in ((head, tail), (tail, head)):
+            outcome_where = [_outcome_whole_word(t) for t, _e in outcome_run]
+            open_ids = market_ids_with_outcome(*outcome_where)
+            outcome_match = (
+                FuturesMarket.id == any_(func.array(open_ids.scalar_subquery()))
+                if open_ids is not None
+                else select(FuturesOutcome.id)
+                .where(
+                    FuturesOutcome.market_id == FuturesMarket.id,
+                    *outcome_where,
+                )
+                .exists()
+            )
             arms.append(
                 and_(
                     *[_futures_name_match_term(t, e) for t, e in name_run],
-                    select(FuturesOutcome.id)
-                    .where(
-                        FuturesOutcome.market_id == FuturesMarket.id,
-                        *[_outcome_whole_word(t) for t, _e in outcome_run],
-                    )
-                    .exists(),
+                    outcome_match,
                 )
             )
     return arms
@@ -9487,16 +9505,30 @@ def latest_odds_per_bookmaker_query(event_ids: list[int]):
             .scalar_subquery(),
         ).where(_prev.c.bookmaker.isnot(None))
     )
+    # #12337: seek the newest clock first, then break ties only at that clock.
+    # The existing (event_id, bookmaker, captured_at) index covers this seek.
+    # Asking for captured_at DESC, id DESC together can make PostgreSQL sort
+    # a book's entire history because id is not an index key. Equality on the
+    # newest captured_at bounds that final sort to simultaneous readings.
+    latest_clock = (
+        select(OddsSnapshot.captured_at)
+        .where(
+            OddsSnapshot.event_id == bookmakers.c.event_id,
+            OddsSnapshot.bookmaker == bookmakers.c.bookmaker,
+        )
+        .order_by(OddsSnapshot.captured_at.desc())
+        .limit(1)
+        .correlate(bookmakers)
+        .scalar_subquery()
+    )
     latest_snap = (
         select(OddsSnapshot)
         .where(
             OddsSnapshot.event_id == bookmakers.c.event_id,
             OddsSnapshot.bookmaker == bookmakers.c.bookmaker,
+            OddsSnapshot.captured_at == latest_clock,
         )
-        .order_by(
-            OddsSnapshot.captured_at.desc(),
-            OddsSnapshot.id.desc(),
-        )
+        .order_by(OddsSnapshot.id.desc())
         .limit(1)
         .lateral("latest_snap")
     )
@@ -11699,10 +11731,13 @@ async def search_events(
         )
 
     _twin_duplicates_dropped = 0
+    _prematch_absorbed_ids: dict[int, list[int]] = {}
     if events:
         try:
             _fold = fold_twin_events(events)
             if _fold.dropped_ids:
+                for _loser, _survivor in _fold.survivor_of.items():
+                    _prematch_absorbed_ids.setdefault(_survivor, []).append(_loser)
                 for _survivor_id, _merged in _fold.merged_sources.items():
                     _survivor = next(e for e in _fold.events if e.id == _survivor_id)
                     set_committed_value(_survivor, "win_probability_sources", _merged)
@@ -11929,12 +11964,14 @@ async def search_events(
 
     # The page's folds (#3937), batched before the loop rather than per row in
     # it. Search returns at most `per_page` = 100, so this is one statement.
-    folded_map = await folded_probability_sources_batch(db, events)
+    folded_map = await folded_card_numbers_batch(db, events)
 
     for event in events:
+        _folded = folded_map.get(event.id)
         formatted = _format_event_with_aggregated_odds(
             event, aggregated_odds_map.get(event.id), gei_percentiles, team_lookup,
-            folded_sources=folded_map.get(event.id),
+            folded_sources=_folded.win_probability_sources if _folded is not None else None,
+            folded_opening=_folded.opening if _folded is not None else None,
         )
         # #2920 — the event page's marked in-play pair, from the rows this route
         # already read, so a search row and the page it opens agree.
@@ -11993,6 +12030,14 @@ async def search_events(
     # this mark they were billed to `futures`, so a slow futures number could not
     # say whether the futures arms or the event formatting spent it.
     _mark("event_format")
+
+    await attach_settled_prematch_odds(
+        db, events, formatted_results, folded_map,
+        absorbed_ids=_prematch_absorbed_ids,
+        timeout_ms=card_projection_read_timeout_ms(_deadline - time.monotonic()),
+        surface="search",
+    )
+    _mark("prematch_odds")
 
     # #11296: a final row's pregame projected score, the same object the event
     # page serves. One bounded statement for the page, billed to its own stage;
@@ -13163,6 +13208,12 @@ async def search_events(
     # between them is a DB lane with its own clock (`futures_containers`).
     _mark("futures_refill")
 
+    # #11933: start the first title composition while the independent container
+    # and headline reads run. It already owns a separate session and single-flight
+    # task. Keep the handle even if it finishes without a cached verdict, so this
+    # request never starts that same read twice.
+    _title_started = _prime_search_verified_title(db, deduped_futures, _deadline)
+
     # #8375: a Polymarket game CONTAINER is not a market. It is the game's event
     # row, and its "outcomes" are copies of its own sub-markets' lead legs, so
     # `q=falcons packers` answered "Falcons vs. Packers · O/U 24.5 95%". The game
@@ -13584,7 +13635,8 @@ async def search_events(
     # prints — the verified-title blend, not the one venue this row came from.
     _verified_missed: list = []
     _verified_by_id = await _search_verified_titles(
-        db, (*deduped_futures, *futures_markets), _deadline, missed=_verified_missed
+        db, (*deduped_futures, *futures_markets), _deadline, missed=_verified_missed,
+        started=_title_started,
     )
     if _verified_missed:
         # #12335 step 4: the card printed its own venue's prices because the
@@ -18973,9 +19025,12 @@ async def list_events(
             "serving the stored kick-offs"
         )
 
+    _prematch_absorbed_ids: dict[int, list[int]] = {}
     try:
         _fold = fold_twin_events(events)
         if _fold.dropped_ids:
+            for _loser, _survivor in _fold.survivor_of.items():
+                _prematch_absorbed_ids.setdefault(_survivor, []).append(_loser)
             for _survivor_id, _merged in _fold.merged_sources.items():
                 _survivor = next(e for e in _fold.events if e.id == _survivor_id)
                 set_committed_value(_survivor, "win_probability_sources", _merged)
@@ -19219,6 +19274,12 @@ async def list_events(
     # still ahead of its kickoff is refused before a statement is issued, so
     # the ordinary page pays nothing at all.
     await attach_venue_settlement(db, events, formatted, now)
+
+    await attach_settled_prematch_odds(
+        db, events, formatted, folded_map,
+        absorbed_ids=_prematch_absorbed_ids,
+        timeout_ms=card_projection_read_timeout_ms(None), surface="events list",
+    )
 
     # #11296: a final row's pregame projected score and its score's period, the
     # same object search and the event page serve. `/sports/{key}` reads this
@@ -20178,9 +20239,10 @@ async def resolve_served_event(
 
 
 async def _settled_prematch_odds(
-    db: AsyncSession, event: Event, sport_key: Optional[str], absorbed=()
+    db: AsyncSession, event: Event, sport_key: Optional[str], absorbed=(),
+    *, live_detail: bool = False,
 ) -> Optional[dict]:
-    """The settled page's pre-game reading, the one its Discover card prints (#8315).
+    """The page's pre-game reading, also used by its settled card (#8315).
 
     The card has followed Alex's ladder — Kalshi → Polymarket → sportsbooks —
     since ux/1036, served by `routes/feed.py` as `prematch_odds`. This route
@@ -20192,10 +20254,14 @@ async def _settled_prematch_odds(
     and the books disagree more.
 
     NO SECOND LADDER. The same statement (`PREMATCH_PRIOR_SQL`, bound by
-    `prematch_prior_binds` so a non-settled or kickoff-less event never reads),
+    `prematch_prior_binds` with the detail-only live opt-in, always cutoff-bound),
     the same row shape (`prematch_row_to_reading`), the same resolver, the same
     books inputs — including the feed's truthiness test on the opening columns —
     and the same sport. The served shape is the card's, rounded once as a pair.
+
+    #12633: the live headline also prints this prior. Its route opts in only
+    when the served status is live; future and missing kickoffs cannot read.
+    The existing per-kickoff cache and the feed/list default stay unchanged.
 
     A failed read costs the page nothing but this key: it runs in a SAVEPOINT so
     an error cannot poison the transaction the rest of the route is still using,
@@ -20208,7 +20274,7 @@ async def _settled_prematch_odds(
     rule `merge_probability_sources` applies to the live number.
     """
     by_source: dict[str, tuple] = {}
-    binds = prematch_prior_binds([event])
+    binds = prematch_prior_binds([event], live_detail=live_detail)
     if binds is not None and absorbed:
         cutoff = binds["cutoffs"][0]
         for row in absorbed:
@@ -20696,7 +20762,7 @@ async def get_event(
         hero_home_prob = current_odds_probability(
             agg_prob, agg_tier, aggregated["home_probability"], event.status
         )
-        hero_away_prob = round(1.0 - hero_home_prob, 6) if hero_home_prob is not None else aggregated["away_probability"]
+        hero_away_prob = round(1.0 - hero_home_prob, 6) if hero_home_prob is not None else None
 
         # ── #6238: AND ON A THREE-OUTCOME WINNER MARKET THAT SECOND NUMBER IS
         #    NOT THE AWAY TEAM'S PRICE ────────────────────────────────────────
@@ -20898,12 +20964,13 @@ async def get_event(
             "favorite": event.opening_favorite,
         }
 
-    # #8315 — the settled hero's pre-game number follows the card's ladder. See
-    # `_settled_prematch_odds`. Settled only: that is the only state whose hero
-    # prints it, and `prematch_prior_binds` would skip the venue read otherwise.
-    if event.status in SETTLED_STATUSES:
+    # #8315/#12633 — the finished and live headlines share the kickoff prior.
+    # Use the served status so a premature stored live claim cannot ask early.
+    # Feed/list callers keep their settled-only binds and read cost.
+    _prior_status = response.get("status")
+    if _prior_status in SETTLED_STATUSES or _prior_status == "live":
         _prematch_odds = await _settled_prematch_odds(
-            db, event, event_sport_key, absorbed
+            db, event, event_sport_key, absorbed, live_detail=_prior_status == "live",
         )
         if _prematch_odds is not None:
             response["prematch_odds"] = _prematch_odds
@@ -23910,6 +23977,8 @@ _PROP_NAME_STAT_COMBOS = [
     ("points + rebounds", ["points", "rebounds"]),
     ("points + assists", ["points", "assists"]),
     ("rebounds + assists", ["rebounds", "assists"]),
+    # #12633: otherwise the singles path below grades this from blocks alone.
+    ("steals + blocks", ["steals", "blocks"]),
 ]
 # Outcome names that are a SIDE, never a person. Looking these up in the box
 # score is the miss that made a settled game report 12 ungradeable rungs.
@@ -26829,6 +26898,9 @@ async def _build_game_markets(
                     FuturesMarket.source == "polymarket",
                     FuturesMarket.group_id.isnot(None),
                     FuturesMarket.group_type.in_(["polymarket_event", "negrisk"]),
+                    # #12633: New England/Miami also names an MLS fixture.
+                    # Parent rescue needs the same sport evidence as unlinked markets.
+                    sport_filter,
                     or_(*home_conditions),
                     or_(*away_conditions),
                     FuturesMarket.commence_time.isnot(None),
@@ -27837,7 +27909,8 @@ async def _build_game_markets(
     # #12581: preserve the actual admitted quote before any row is averaged,
     # capped or selected. Poll touches are never used as quote observations.
     from app.utils.source_mark import (
-        cap_source_mark, no_source_mark, quote_source_mark, settled_source_mark,
+        cap_source_mark, fold_prop_source_marks, no_source_mark, quote_source_mark,
+        settled_source_mark,
     )
 
     _source_legs = {o.id: o for o in outcomes}
@@ -28661,11 +28734,9 @@ async def _build_game_markets(
                 best["over_probability"] = avg_prob
                 best["all_sources"] = list({e.get("source") for e in entries})
                 best["source_count"] = len(best["all_sources"])
-                best["source_mark"] = quote_source_mark(
-                    source for entry in entries
-                    for source in entry.get("source_mark", {}).get("sources", [])
-                ) if all(entry.get("source_mark", {}).get("state") in {"single", "blend"}
-                         for entry in entries) else no_source_mark("source_evidence_incomplete")
+                best["source_mark"] = fold_prop_source_marks(
+                    entry.get("source_mark") for entry in entries
+                )
 
                 # 🔴 #4970 / CERT-2647: READ EVERY CONTRIBUTOR'S CLOCK BEFORE
                 # WRITING ANY OF THEM. `best` IS one of `entries` — the same
@@ -37632,11 +37703,11 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         captured_at = odds_data.get("captured_at")
         snapshots = odds_data.get("snapshots", [])
 
-        _hero_home = _blend if _blend is not None else aggregated["home_probability"]
+        _hero_home = _blend
         _hero_away = (
             round(1.0 - _hero_home, 6)
             if _hero_home is not None
-            else aggregated["away_probability"]
+            else None
         )
         current_home_prob = _hero_home
         current_away_prob = _hero_away
@@ -37674,7 +37745,7 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         _served_away = (
             round(1.0 - _served_home, 6)
             if _served_home is not None
-            else aggregated["away_probability"]
+            else None
         )
 
         response["current_odds"] = {
@@ -37780,6 +37851,11 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             response["hero_settled_result"] = _hero.settled_result
 
     # Compute highlight data (Level 1 + Level 2 if time_series available)
+    # #12824 (226: A): an ESPN-only pregame number is never diffed against the
+    # opening line; see `pregame_blend_rests_on_espn_alone`.
+    from app.utils.aggregation import pregame_blend_rests_on_espn_alone
+
+    _espn_alone = pregame_blend_rests_on_espn_alone(event)
     highlight_result = compute_highlight(
         status=event.status,
         commence_time=event.commence_time,
@@ -37788,8 +37864,8 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         current_away_prob=current_away_prob,
         current_home_spread=current_spread,
         current_over_under=current_ou,
-        opening_home_prob=float(_open_home) if _open_home else None,
-        opening_away_prob=float(_open_away) if _open_away else None,
+        opening_home_prob=float(_open_home) if _open_home and not _espn_alone else None,
+        opening_away_prob=float(_open_away) if _open_away and not _espn_alone else None,
         opening_home_spread=float(event.opening_home_spread) if event.opening_home_spread else None,
         opening_over_under=float(event.opening_over_under) if event.opening_over_under else None,
         opening_favorite=event.opening_favorite,
@@ -40902,8 +40978,39 @@ def _verified_title_in_background(engine, market_id: int):
     return task
 
 
+def _verified_title_pool_available(engine) -> bool:
+    try:
+        return engine.pool.checkedout() < engine.pool.size()
+    except Exception:  # noqa: BLE001 — no counters means no spare connection proved
+        return False
+
+
+def _prime_search_verified_title(db, markets, deadline: float | None) -> dict:
+    """Start at most one already-required composition; never wait or use ``db``."""
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from app.routes.futures import _held_verified_title, _verified_title_facts
+    from app.utils.futures_verified_title import question_for
+
+    engine = getattr(db, "bind", None)
+    if not isinstance(db, AsyncSession) or not isinstance(engine, AsyncEngine):
+        return {}
+    if deadline is not None and deadline - _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S <= time.monotonic():
+        return {}
+    for market in markets:
+        if (question_for(_verified_title_facts(market)) is None
+                or _held_verified_title(market.id) is not None):
+            continue
+        task = _VERIFIED_TITLE_BACKGROUND.get(market.id)
+        if task is None and not _verified_title_pool_available(engine):
+            return {}
+        return {market.id: task if task is not None else _verified_title_in_background(engine, market.id)}
+    return {}
+
+
 async def _search_verified_titles(
-    db, markets, deadline: float | None, *, missed: list | None = None
+    db, markets, deadline: float | None, *, missed: list | None = None,
+    started: dict | None = None,
 ) -> dict:
     """``{market id: Composition}`` for the title questions among ``markets``.
 
@@ -40935,6 +41042,11 @@ async def _search_verified_titles(
     ``missed`` collects the ids of title markets that got no verdict in time
     (the bound, the deadline floor, or a full pool), so the caller can cache
     that page briefly rather than pin the card's own prices for 180 s.
+
+    ``started`` holds the first composition overlapped with earlier route work
+    (#11933), including a completed refusal. Reuse it even if its own connection
+    fills the pool; waiting on it needs no new checkout. All waits retain the
+    existing shared budget and deadline floor.
     """
     from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -40960,14 +41072,6 @@ async def _search_verified_titles(
             out[m.id] = held
     if not pending:
         return out
-    try:
-        pool_full = engine.pool.checkedout() >= engine.pool.size()
-    except Exception:  # noqa: BLE001 — a pool without counters keeps the cards as they are
-        pool_full = True
-    if pool_full:
-        if missed is not None:
-            missed.extend(m.id for m in pending)
-        return out
     import asyncio
 
     budget_ends = time.monotonic() + _search_verified_title_wait_s()
@@ -40988,7 +41092,13 @@ async def _search_verified_titles(
             if missed is not None:
                 missed.append(m.id)
             continue
-        task = _verified_title_in_background(engine, m.id)
+        task = (started or {}).get(m.id) or _VERIFIED_TITLE_BACKGROUND.get(m.id)
+        if task is None:
+            if not _verified_title_pool_available(engine):
+                if missed is not None:
+                    missed.append(m.id)
+                continue
+            task = _verified_title_in_background(engine, m.id)
         left = min(budget_ends, floor_ends if floor_ends is not None else budget_ends) - now
         if left <= 0:
             if missed is not None:

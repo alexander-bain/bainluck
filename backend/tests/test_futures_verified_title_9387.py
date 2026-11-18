@@ -454,6 +454,65 @@ NEW_OUTCOME_KEYS = {"contributing_sources", "observed_at", "aggregation_rule"}
 VERIFIED = "verified_title"
 
 
+class TestVerifiedTitleGameDate12530:
+    @pytest.mark.parametrize("mid", [ODDS_ID, KALSHI_ID, PM_ID])
+    async def test_detail_and_search_share_the_proved_game_date(self, mid):
+        from app.routes.events import _format_futures_for_search
+
+        markets = trio()
+        stored_dates = [m.resolution_date for m in markets]
+        source_before, _ = await detail(mid, markets, "source")
+        payload, _ = await detail(mid, markets, VERIFIED)
+        requested = next(m for m in markets if m.id == mid)
+        with _at():
+            verdict = await futures_routes._compose_verified_title(_DB(markets), requested)
+            card = _format_futures_for_search(requested, set(), verified=verdict)
+
+        # The same earliest corroborated game instant used by membership;
+        # neither Polymarket's no-winner cutoff nor Kalshi's tail expiration.
+        game_at = "2027-02-14T23:30:00+00:00"
+        assert payload["representation"] == VERIFIED
+        assert payload["resolution_date"] == card["resolution_date"] == game_at
+        assert [m.resolution_date for m in markets] == stored_dates
+        source_after, _ = await detail(mid, markets, "source")
+        assert source_after == source_before
+
+    @pytest.mark.parametrize("mid", [ODDS_ID, KALSHI_ID, PM_ID])
+    async def test_conflicting_game_dates_keep_each_source_date(self, mid):
+        markets = trio(kalshi=kalshi_market(
+            resolution_date=datetime(2027, 2, 7, 23, 30, tzinfo=timezone.utc),
+        ))
+        source, _ = await detail(mid, markets, "source")
+        payload, _ = await detail(mid, markets, VERIFIED)
+        assert payload["representation"] == "source"
+        assert payload["representation_fallback"] == "edition_instant_conflict"
+        assert payload["resolution_date"] == source["resolution_date"]
+
+    @pytest.mark.parametrize("mid", [KALSHI_ID, PM_ID])
+    async def test_kalshi_dates_the_field_when_sportsbooks_are_absent(self, mid):
+        markets = [m for m in trio() if m.id != ODDS_ID]
+        payload, _ = await detail(mid, markets, VERIFIED)
+        assert payload["representation"] == VERIFIED
+        assert payload["resolution_date"] == "2027-02-14T23:30:00+00:00"
+
+    async def test_cached_peer_keeps_the_date_of_its_verified_snapshot(self, monkeypatch):
+        markets = trio()
+        db = _DB(markets)
+        monkeypatch.setenv("VERIFIED_TITLE_CACHE_SECONDS", "60")
+        futures_routes._VERIFIED_TITLE_CACHE.clear()
+        try:
+            with _at():
+                first = await futures_routes._resolve_verified_title(db, markets[0])
+                reads = list(db.kinds)
+                markets[1].resolution_date = datetime(2028, 2, 13, tzinfo=timezone.utc)
+                peer = await futures_routes._resolve_verified_title(db, markets[1])
+            assert db.kinds == reads
+            assert first.canonical_card_fields["resolution_date"] == "2027-02-14T23:30:00+00:00"
+            assert peer.canonical_card_fields["resolution_date"] == first.canonical_card_fields["resolution_date"]
+        finally:
+            futures_routes._VERIFIED_TITLE_CACHE.clear()
+
+
 def _why(payload):
     return f"served {payload.get('representation')!r}, fallback {payload.get('representation_fallback')!r}"
 

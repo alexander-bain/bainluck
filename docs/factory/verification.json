@@ -1,0 +1,57 @@
+{
+  "revision": "Timer revision after Fable comment 6967579689",
+  "render_data_captured_at": "2026-11-18T02:17:52.530830Z",
+  "render_data_sha256": "7a01c9756aca67eb974551a6a7c2e53dd01cf42c53547edcad0ee47dc4fbafe1",
+  "python_rules": {
+    "passed": 25,
+    "real_change_fixtures": 18
+  },
+  "frontend_failure_tests": {
+    "passed": 4
+  },
+  "build": {
+    "exit_code": 0,
+    "route": "/factory",
+    "rendering": "server-rendered, data cached for 60 seconds"
+  },
+  "typecheck": {
+    "exit_code": 0,
+    "errors": 65,
+    "baseline": 65
+  },
+  "startup": {
+    "passed": 4
+  },
+  "images_branch": "factory/images-nov17-review",
+  "images_commit": "d388ad7cd9f485097e743a99aefffead6ceb6aad",
+  "renders": {
+    "1280": {
+      "first_contentful_paint_ms": 148,
+      "page_errors": [],
+      "document_width": 1280,
+      "max_empty_bay_height": 129
+    },
+    "390": {
+      "first_contentful_paint_ms": 44,
+      "page_errors": [],
+      "document_width": 390,
+      "max_empty_bay_height": 129
+    }
+  },
+  "publisher_verification": "Master-only timer publication, comparison and upload suppression verified by unit tests. API estimates use the prior read-only warm-cache measurements.",
+  "analytics_guard": {
+    "passed": 3,
+    "delegated_hooks": "FactoryFloor.tsx"
+  },
+  "timer": {
+    "cron": "*/5 * * * *",
+    "runs_per_hour": 12,
+    "additional_runs": "one per master push and manual dispatch",
+    "warm_api_calls_per_unchanged_run": 20,
+    "warm_api_calls_per_changed_run": 28,
+    "timer_hour_api_range": [
+      240,
+      336
+    ]
+  }
+}

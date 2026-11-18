@@ -1,0 +1,42 @@
+name: The Factory
+
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: read
+  issues: read
+  checks: read
+  statuses: read
+  actions: read
+
+concurrency:
+  group: factory-public-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    name: Read and update the factory from master
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 1
+          sparse-checkout: scripts/factory
+          persist-credentials: false
+      - name: Read master ancestry without historical file contents
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git -c credential.helper= -c credential.helper='!gh auth git-credential' fetch --filter=blob:none --no-tags --unshallow origin master
+      - name: Collect, compare and publish a changed floor
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/factory/collect.py --output /tmp/factory.json --publish
