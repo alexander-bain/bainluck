@@ -244,6 +244,7 @@ tests/test_midterms_collection.py  clock-invariant at +1/+31/+60 d (timebomb_con
 tests/test_midterms_publication.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_misfiled_subject.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_mlb_reschedule_ghosts_8547.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
+tests/test_music_image_guard_12659.py  clock-invariant at +1/+31/+60 d (timebomb_confirm --whole-clock 2026-11-17); "(November 17)" and "(Dec 19, 2026)" are venue market title strings read by no clock
 tests/test_national_race_representative_10356.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_native_upload_preflight.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_nfl_postseason_placeholders_are_not_contests_d106.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
