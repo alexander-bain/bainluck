@@ -151,13 +151,15 @@
   "recordings": {
     "crateTravel": true,
     "flowing": {
-      "elapsed_ms": 6696,
-      "file": "flowing.webm"
+      "elapsed_ms": 6660,
+      "file": "flowing.webm",
+      "duration_seconds": 7.2
     },
     "stoppedBelts": 0,
     "stopped": {
-      "elapsed_ms": 6738,
-      "file": "stopped.webm"
+      "elapsed_ms": 6647,
+      "file": "stopped.webm",
+      "duration_seconds": 7.4
     }
   },
   "source": "Saved public GitHub changes with controlled scenario clocks and stoppage signals. The flowing recording adds a controlled live receipt to exercise delivery animation.",
@@ -178,7 +180,8 @@
     "unreadable-dark-390.png": "346a79a97355358e940767b21d4cf5de2ce089cb0dbb20bf274be636ced9a275",
     "unreadable-light-1280.png": "8e186eba2e30324f8cddebf9f117109740ebefeaf7b8c94f0a972ef3ee53f9fa",
     "unreadable-light-390.png": "b1e2ecaca4628fb4fe0411cba134e4370bb6389c348c32a5a87f1981e86dce21",
-    "flowing.webm": "6c42f5bfefb3b1a2be3e44984007ccc165d3e36a0458b8654651a5cc800251f5",
-    "stopped.webm": "c79602f43e1079684e1aa09f01ed5c4ab9ac39a4aa1e7bca2a08c34fc539f007"
-  }
+    "flowing.webm": "bde7258d91bece627507875dd14571067bf74faeb6d3032f4d3680ae730b13c6",
+    "stopped.webm": "950e9ec1f0254c37c9c68bdddfadd53a13360f6fa9d078f44beb6b2eab95ebfe"
+  },
+  "recording_source_commit": "d73bac1a30b524a99046c0c9a95928c08311d2e5"
 }
