@@ -26,7 +26,7 @@ const arg = (name, dflt) => {
 };
 const BASE = arg("base", "https://www.bainluck.com").replace(/\/$/, "");
 const WEEK = arg("week");
-const OUT = arg("out", "/tmp/screens");
+const OUT = arg("out");  // required: no default folder (CodeQL js/insecure-temporary-file)
 
 // The pool: every surface 227-A counts. The week seeds which screen of each page is taken.
 export const POOL = [
@@ -78,6 +78,10 @@ export function countForms(forms) {
 async function main() {
   if (!/^\d{4}-w\d{2}$/.test(WEEK || "")) {
     console.error("--week YYYY-wNN is required");
+    process.exit(2);
+  }
+  if (!OUT) {
+    console.error("--out DIR is required");
     process.exit(2);
   }
   const require = createRequire(import.meta.url);
