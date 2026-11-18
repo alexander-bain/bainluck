@@ -274,3 +274,68 @@ async def submit_bug_report(
     background_tasks.add_task(_enqueue_bug_report_github_issue, report.id)
 
     return {"status": "ok", "id": report.id, "category": report.category}
+
+
+@router.post("/testflight-webhook")
+async def testflight_feedback_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """Decision 220-A: App Store Connect's beta-feedback webhook.
+
+    Checks Apple's signature, fetches the screenshot or crash submission with
+    the App Store Connect key, stores it as a ``BugReport`` and files it through
+    the same task as a shake report. Switched off (404) until its four settings
+    exist; see ``app/services/testflight_feedback.py``. A delivery we already
+    stored files nothing new, so Apple's retries are safe."""
+    import os
+
+    import httpx
+    from fastapi import HTTPException
+
+    from app.services import testflight_feedback as tf
+
+    config = tf.config_from_env(os.environ)
+    if config is None:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    body = await request.body()
+    if len(body) > tf.MAX_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Payload too large")
+    if not tf.verify_signature(config.secret, body, request.headers.get(tf.SIGNATURE_HEADER)):
+        logger.warning("TestFlight webhook: signature check failed")
+        raise HTTPException(status_code=401, detail="Bad signature")
+
+    import json
+    try:
+        payload = json.loads(body or b"{}")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Body is not JSON")
+    event = tf.parse_event(payload)
+    if event == "ping":
+        return {"status": "ping"}
+    if event is None:
+        return {"status": "ignored"}
+
+    key = tf.session_key(event)
+    existing = await db.execute(select(BugReport.id).where(BugReport.session_id == key).limit(1))
+    prior = existing.scalar_one_or_none()
+    if prior is not None:
+        return {"status": "duplicate", "id": prior}
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            fetched = await tf.fetch_submission(config, event, client)
+    except Exception as exc:
+        # Non-2xx tells Apple to deliver again later.
+        logger.warning("TestFlight webhook: fetching %s failed (%s)", key, type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Could not fetch the feedback yet")
+
+    report = BugReport(status="new", **tf.bug_report_fields(event, fetched))
+    db.add(report)
+    await db.commit()
+    await db.refresh(report)
+    logger.info("TestFlight %s stored as bug report #%d", key, report.id)
+    background_tasks.add_task(_enqueue_bug_report_github_issue, report.id)
+    return {"status": "ok", "id": report.id}

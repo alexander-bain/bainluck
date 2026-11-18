@@ -16,10 +16,10 @@ pays the whole build — on Alex's iPhone (build 34) "very slow to open".
 
 ## What a pass does
 
-For each hub Browse would offer (``discover_collections``, at most
-:data:`MAX_HUBS`), read the published revision — the same read the route makes,
-so the key matches the one a reader's request will look up — and rebuild the
-shared (Redis) entry only when a reader could soon miss it:
+For up to :data:`MAX_HUBS` published hubs from Browse, read the current
+revision and rebuild the default response only when a reader could soon miss
+the shared Redis entry. The NFL seats go to the most recent available weeks,
+and warm the compact page that the normal reader opens:
 
 * no entry for the current revision (never built, expired, or republished), or
 * the entry is past ``fresh_until`` AND has under :data:`REFRESH_AHEAD_S` of
@@ -54,6 +54,8 @@ import os
 import time
 from typing import Optional
 
+from app.utils.container_nfl import STAGE_POSTSEASON, STAGE_REGULAR
+from app.utils.container_presentation import EDITION_NFL_WEEK, edition_for_slug
 from app.utils.container_read_cache import CachedRead, decode_entry, encode_entry
 
 logger = logging.getLogger(__name__)
@@ -112,11 +114,32 @@ def _write_shared(client, key: str, entry: CachedRead) -> None:
     client.set(key, encode_entry(entry), ex=ttl)
 
 
+def _reader_hubs(collections: list[dict]) -> list[tuple[str, bool]]:
+    """Give the existing NFL slots to recent weeks, even without window dates."""
+    candidates = []
+    nfl_weeks = []
+    stage_order = {STAGE_REGULAR: 1, STAGE_POSTSEASON: 2}
+    for collection in collections:
+        slug = collection.get("slug")
+        if not slug:
+            continue
+        edition = edition_for_slug(slug) or {}
+        compact = edition.get("kind") == EDITION_NFL_WEEK
+        candidates.append((slug, compact))
+        if compact:
+            nfl_weeks.append((edition["season"], stage_order.get(edition["stage"], 0), edition["week"], slug))
+    selected = candidates[:MAX_HUBS]
+    if len(selected) == len(candidates):
+        return selected
+    latest_weeks = iter(sorted(nfl_weeks, reverse=True))
+    return [(next(latest_weeks)[-1], True) if compact else (slug, False) for slug, compact in selected]
+
+
 async def _warm_container_hubs() -> dict:
     """One pass. Returns a summary whose ``status`` is ``ok`` unless a build failed."""
     from app.routes.containers import _build_entry
     from app.tasks.redis_state import get_redis_client
-    from app.services.container_discovery import discover_collections
+    from app.services.container_discovery import MAX_COLLECTIONS, discover_collections
     from app.services.database import async_session_maker
     from app.utils.container_corrections import READ_EMPTY, READ_PUBLISHED, read_published
     from app.utils.container_read_cache import (
@@ -132,11 +155,11 @@ async def _warm_container_hubs() -> dict:
     started = time.monotonic()
     client = get_redis_client()
     async with async_session_maker() as session:
-        read = await discover_collections(session, limit=MAX_HUBS)
-    slugs = [c.get("slug") for c in read.collections if isinstance(c, dict) and c.get("slug")]
-    summary["hubs"] = len(slugs)
+        read = await discover_collections(session, limit=MAX_COLLECTIONS)
+    candidates = _reader_hubs([card for card in read.collections if isinstance(card, dict)])
+    summary["hubs"] = len(candidates)
 
-    for slug in slugs:
+    for slug, compact in candidates:
         if time.monotonic() - started > PASS_BUDGET_S:
             summary["status"] = "partial"
             break
@@ -146,13 +169,13 @@ async def _warm_container_hubs() -> dict:
                 if published.state not in (READ_PUBLISHED, READ_EMPTY):
                     summary["skipped"].append(slug)
                     continue
-                # `include_children=True` is the route's default, and what the
-                # web hub and the iPhone both request.
-                key = container_read_cache_key(slug, published.revision, True)
+                # The reader opens the compact NFL week. A full inventory has
+                # a separate key and does not warm that page.
+                key = container_read_cache_key(slug, published.revision, True, compact)
                 if not needs_rebuild(_read_shared(client, key), time.time()):
                     summary["skipped"].append(slug)
                     continue
-                fresh = await _build_entry(session, published, True)
+                fresh = await _build_entry(session, published, True, compact=compact)
             _write_shared(client, key, fresh)
             summary["built"].append(slug)
         except Exception:  # noqa: BLE001 — one hub never stops the others
