@@ -34944,8 +34944,8 @@ async def get_event_odds_history(
     # change (the snapshot dedup only emits a row on a probability change). Placed
     # before aggregate_line (computed from win_prob_history) so it propagates there.
     #
-    # #6863 / #12824: a folded venue's pregame tail needs an admitted live
-    # observation of that exact price before it can be carried to now.
+    # #6863 / #12824: a pregame tail needs an admitted live observation
+    # of that exact price before it can be carried to now.
     from app.utils.aggregation import effective_source_weights, source_price_read_time
 
     # Keep the sportsbook history's existing folded coverage policy separate
@@ -34959,32 +34959,59 @@ async def get_event_odds_history(
     speaking_sources = _hero_sources
     folded_blend_view = None
     folded_blend_revision = None
+    withhold_opening_only_pin = False
     kickoff = event.commence_time
     if (
-        _is_live_now and _hero_sources is None and kickoff is not None
-        and kickoff <= now and not _commence_time_is_venue_expiration(event)
+        _is_live_now and kickoff is not None and kickoff <= now
+        and not _commence_time_is_venue_expiration(event)
     ):
         live_now = now.replace(microsecond=0)
+        candidates = win_prob_history if _hero_sources is None else _hero_sources
         pregame_tails = {
-            source: points[-1]["home_probability"]
-            for source, points in win_prob_history.items()
-            if (tail := _stale_live_edge_timestamp(points, live_now)) is not None
+            source: (points[-1]["home_probability"], tail)
+            for source in candidates
+            if (points := win_prob_history.get(source))
+            and (tail := _stale_live_edge_timestamp(points, now, min_stale_seconds=0)) is not None
             and tail < kickoff and points[-1]["home_probability"] is not None
         }
-        if pregame_tails:
-            folded_sources, folded_blend_revision = (
-                await folded_probability_sources_with_revision(db, event, absorbed)
+        # A rollup can pin as soon as the game starts. A young tail on its
+        # own cannot extend yet, so it needs no extra fold read.
+        if pregame_tails and (
+            any(
+                (live_now - tail).total_seconds() >= _LIVE_EDGE_MIN_AGE_SECONDS
+                for _, tail in pregame_tails.values()
             )
-            folded_blend_view = FoldedBlendView(event, folded_sources)
+            or history
+            or sum(bool(points) for points in win_prob_history.values()) > 1
+        ):
+            edge_view = event
+            if _hero_sources is None:
+                folded_sources, folded_blend_revision = (
+                    await folded_probability_sources_with_revision(db, event, absorbed)
+                )
+                folded_blend_view = FoldedBlendView(event, folded_sources)
+                edge_view = folded_blend_view
+
             selected_inputs: list[tuple[str, float]] = []
-            resolve_hero(folded_blend_view, source_inputs=selected_inputs)
-            speaking_sources = [source for source in win_prob_history if source not in pregame_tails]
+            resolve_hero(edge_view, source_inputs=selected_inputs)
+            speaking_sources = [source for source in candidates if source not in pregame_tails]
+            unconfirmed_inputs = 0
             for source, value in selected_inputs:
-                if pregame_tails.get(source) != value:
+                tail = pregame_tails.get(source)
+                if tail is None or tail[0] != value:
                     continue
-                observed_at = source_price_read_time(folded_sources, source, value, now=now)
+                observed_at = source_price_read_time(
+                    edge_view.win_probability_sources, source, value, now=now,
+                )
                 if observed_at is not None and observed_at >= kickoff:
                     speaking_sources.append(source)
+                else:
+                    unconfirmed_inputs += 1
+            # A historical rollup may still be drawable. Its live pin needs
+            # a blend that rests on more than the same unconfirmed openings.
+            withhold_opening_only_pin = bool(selected_inputs) and unconfirmed_inputs == len(
+                selected_inputs
+            )
     _extend_win_prob_history_to_live_edge(
         win_prob_history,
         win_prob_sources_meta,
@@ -35172,7 +35199,7 @@ async def get_event_odds_history(
     # #9051: the revision vector of the fold the pinned edge's VALUE came from,
     # set beside that value in both arms below and never from a different read.
     blend_edge_fold_revision = None
-    if aggregate_line:
+    if aggregate_line and not withhold_opening_only_pin:
         # THE NUMBER THE HERO IS ACTUALLY SHOWING, when one is being served.
         # `_cached_detail_payload` applies the identical TTL ladder `get_event`
         # applies, so "the detail route would serve this right now" is one
@@ -35229,7 +35256,7 @@ async def get_event_odds_history(
     # that do not agree). That policy stays here, and only its ANSWER travels:
     # the backend says whether this line's right edge is a "now" claim, the
     # client supplies which number that claim should carry.
-    blend_edge_pinned = _pin_blend_edge(
+    blend_edge_pinned = not withhold_opening_only_pin and _pin_blend_edge(
         aggregate_line,
         pin_event,
         is_live=_is_live_now,

@@ -296,9 +296,11 @@ def _fresh_opening_chance(now):
     }}
 
 
-async def _serve_opening_history(now, rows, *, sources=None, folded=True, chart_range="all"):
+async def _serve_opening_history(
+    now, rows, *, sources=None, folded=True, chart_range="all", kickoff=None,
+):
     event = _live_event({} if folded else sources or {})
-    event.commence_time = now - timedelta(minutes=15)
+    event.commence_time = kickoff if kickoff is not None else now - timedelta(minutes=15)
     event.opening_home_probability = 0.495
     twin = SimpleNamespace(
         id=event.id + 1,
@@ -411,3 +413,90 @@ async def test_no_new_fold_read_without_a_live_folded_source_series(folded, incl
     payload, reads = await _serve_opening_history(now, rows, folded=folded)
     assert reads == 0
     assert [p["timestamp"] for p in _points(payload)] == [r.captured_at.isoformat() for r in rows]
+
+
+@pytest.mark.parametrize("folded", [False, True], ids=["canonical", "folded"])
+@pytest.mark.parametrize("rollup", [False, True], ids=["one-series", "rollup"])
+@pytest.mark.parametrize(
+    ("witness", "live_confirmed"),
+    [("pregame", False), ("write-time-only", False), ("in-play", True)],
+)
+async def test_opening_tail_keeps_its_time_until_the_same_quote_is_confirmed(
+    folded, rollup, witness, live_confirmed,
+):
+    now = datetime.now(UTC)
+    opening = _opening_snapshot(now)
+    tail = _snapshot(now - timedelta(hours=2), 0.495)
+    rows = [opening, tail]
+    if rollup:
+        rows.extend([
+            _snapshot(now - timedelta(hours=3), 0.56, source="kalshi"),
+            _snapshot(now - timedelta(hours=2), 0.59, source="kalshi"),
+        ])
+    _, sources = _fresh_opening_chance(now)
+    if witness == "pregame":
+        sources["polymarket"]["price_read"] = make_price_read(0.495, tail.captured_at)
+    if witness == "write-time-only":
+        sources["polymarket"].pop("price_read")
+
+    payload, reads = await _serve_opening_history(now, rows, sources=sources, folded=folded)
+    assert payload["status"] == "live"
+    points = _points(payload)
+    historical = [point for point in points if not point.get("live_edge")]
+    assert [(p["timestamp"], p["home_probability"]) for p in historical] == [
+        (row.captured_at.isoformat(), row.home_win_probability) for row in (opening, tail)
+    ]
+    edges = [point for point in points if point.get("live_edge")]
+    assert len(edges) == int(live_confirmed), points
+    if live_confirmed:
+        assert edges[0]["home_probability"] == 0.495
+        assert edges[0]["evidence"] == {"kind": "live_edge"}
+        assert abs(datetime.fromisoformat(edges[0]["timestamp"]) - now) < timedelta(seconds=5)
+
+    aggregate = payload["aggregate_line"]
+    assert bool(aggregate) is rollup
+    assert payload["blend_edge_pinned"] is (rollup and live_confirmed), aggregate
+    if rollup:
+        aggregate_end = datetime.fromisoformat(aggregate[-1]["timestamp"])
+        if live_confirmed:
+            assert aggregate[-1]["home_probability"] == 0.495
+            assert abs(aggregate_end - now) < timedelta(seconds=5)
+        else:
+            assert aggregate_end <= tail.captured_at
+    assert reads == int(folded or (rollup and live_confirmed))
+
+
+@pytest.mark.parametrize("folded", [False, True], ids=["canonical", "folded"])
+@pytest.mark.parametrize("rollup", [False, True], ids=["one-series", "rollup"])
+@pytest.mark.parametrize("live_confirmed", [False, True], ids=["pregame", "confirmed-live"])
+async def test_a_young_pregame_tail_cannot_pin_a_rollup_without_an_in_play_read(
+    folded, rollup, live_confirmed,
+):
+    now = datetime.now(UTC).replace(microsecond=0)
+    kickoff = now - timedelta(seconds=10)
+    opening = _opening_snapshot(now)
+    tail = _snapshot(kickoff - timedelta(seconds=2), 0.495)
+    rows = [opening, tail]
+    if rollup:
+        rows.extend([
+            _snapshot(opening.captured_at, 0.56, source="kalshi"),
+            _snapshot(tail.captured_at, 0.59, source="kalshi"),
+        ])
+    _, sources = _fresh_opening_chance(now)
+    price_read_at = now - timedelta(seconds=2) if live_confirmed else tail.captured_at
+    sources["polymarket"]["price_read"] = make_price_read(0.495, price_read_at)
+
+    payload, reads = await _serve_opening_history(
+        now, rows, sources=sources, folded=folded, kickoff=kickoff,
+    )
+
+    points = _points(payload)
+    assert [p["timestamp"] for p in points] == [
+        opening.captured_at.isoformat(), tail.captured_at.isoformat(),
+    ]
+    assert not any(p.get("live_edge") for p in points), points
+    assert bool(payload["aggregate_line"]) is rollup
+    assert payload["blend_edge_pinned"] is (rollup and live_confirmed)
+    if rollup and not live_confirmed:
+        assert datetime.fromisoformat(payload["aggregate_line"][-1]["timestamp"]) < kickoff
+    assert reads == int(rollup and (folded or live_confirmed))
