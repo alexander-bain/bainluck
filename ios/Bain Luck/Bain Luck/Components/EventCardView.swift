@@ -13,6 +13,24 @@ struct EventCardView: View {
     /// away probability via `_away_three_way_price` (#11541).
     var awayReadingIsServerVerified: Bool = false
 
+    init(
+        event: FeedEventData,
+        reason: String?,
+        personalizationReasons: [String]? = nil,
+        headline: String? = nil,
+        compactScheduleStyle: Bool = false,
+        awayReadingIsServerVerified: Bool = false
+    ) {
+        var cardEvent = event
+        cardEvent.currentOdds = CompactGameCard12616.currentOddsForCard(event)
+        self.event = cardEvent
+        self.reason = reason
+        self.personalizationReasons = personalizationReasons
+        self.headline = headline
+        self.compactScheduleStyle = compactScheduleStyle
+        self.awayReadingIsServerVerified = awayReadingIsServerVerified
+    }
+
     /// #11325 — selects the finished card's accessibility arm; see
     /// `FinishedCardAccessibility11325`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
