@@ -50,9 +50,8 @@ def _lifecycle(status: object) -> Lifecycle:
 def project_activitykit_snapshot(detail: Mapping[str, object]) -> GameActivitySnapshot:
     """Project canonical detail fields with the phone's current-then-hero selection.
 
-    A cached opening-tagged response supplies no current forecast.
     The hero clock dates current_odds only if BOTH values agree with that hero.
-    An unmatched current reading remains displayable with unknown observation age.
+    An opening-tagged or undated reading supplies no current forecast.
     Terminal status never follows probability extremes or score comparisons.
     """
     lifecycle = _lifecycle(detail.get("status"))
@@ -78,6 +77,8 @@ def project_activitykit_snapshot(detail: Mapping[str, object]) -> GameActivitySn
             percent = rendered_duel_percents(away, home)[1]
         if percent is not None and home == hero and raw_away == raw_hero_away:
             probability_clock = _clock(detail.get("hero_probability_observed_at"))
+        if probability_clock is None:
+            percent = None
     home_score = detail.get("home_score")
     away_score = detail.get("away_score")
     home_score = home_score if type(home_score) is int and home_score >= 0 else None
