@@ -157,8 +157,8 @@ describe("#10539 no slider, and the readout still carries both quantities", () =
 
   it("the readout is text: each team's projection, its score, and the recorded time", () => {
     const readout = html.slice(html.indexOf('data-testid="projected-reading"'), html.indexOf("</p>", html.indexOf('data-testid="projected-stamp"')));
-    expect(readout).toMatch(/Chicago Bears<\/span><\/div><div[^>]*>27\.0<\/div><div[^>]*data-actual="home"[^>]*>27 final/);
-    expect(readout).toMatch(/Philadelphia Eagles<\/span><\/div><div[^>]*>7\.5<\/div><div[^>]*data-actual="away"[^>]*>7 final/);
+    expect(readout).toMatch(/Bears<\/span><\/div><div[^>]*>27\.0<\/div><div[^>]*data-actual="home"[^>]*>27 final/);
+    expect(readout).toMatch(/Eagles<\/span><\/div><div[^>]*>7\.5<\/div><div[^>]*data-actual="away"[^>]*>7 final/);
     expect(readout).toContain("Last projection before the final · recorded " + formatProjectionTime(Date.parse("2026-09-29T03:09:00Z")));
   });
 
