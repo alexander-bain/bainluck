@@ -9505,16 +9505,30 @@ def latest_odds_per_bookmaker_query(event_ids: list[int]):
             .scalar_subquery(),
         ).where(_prev.c.bookmaker.isnot(None))
     )
+    # #12337: seek the newest clock first, then break ties only at that clock.
+    # The existing (event_id, bookmaker, captured_at) index covers this seek.
+    # Asking for captured_at DESC, id DESC together can make PostgreSQL sort
+    # a book's entire history because id is not an index key. Equality on the
+    # newest captured_at bounds that final sort to simultaneous readings.
+    latest_clock = (
+        select(OddsSnapshot.captured_at)
+        .where(
+            OddsSnapshot.event_id == bookmakers.c.event_id,
+            OddsSnapshot.bookmaker == bookmakers.c.bookmaker,
+        )
+        .order_by(OddsSnapshot.captured_at.desc())
+        .limit(1)
+        .correlate(bookmakers)
+        .scalar_subquery()
+    )
     latest_snap = (
         select(OddsSnapshot)
         .where(
             OddsSnapshot.event_id == bookmakers.c.event_id,
             OddsSnapshot.bookmaker == bookmakers.c.bookmaker,
+            OddsSnapshot.captured_at == latest_clock,
         )
-        .order_by(
-            OddsSnapshot.captured_at.desc(),
-            OddsSnapshot.id.desc(),
-        )
+        .order_by(OddsSnapshot.id.desc())
         .limit(1)
         .lateral("latest_snap")
     )
