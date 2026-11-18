@@ -10,6 +10,7 @@ import type {
 } from "@/lib/types";
 import { marketEventKey, tournamentEventKey, eventPath } from "@/lib/eventKey";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
+import { isStoredOpeningChance } from "@/lib/probabilityEvidence";
 // UX-P053 (#1717) — the ONE formatter for "Resolves <date>", shared with the
 // tournament card rather than reimplemented here. See `resolvesLabel` below.
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
@@ -1131,7 +1132,8 @@ export function feedItemCanBeGuessed(item: FeedItem | null | undefined): boolean
   }
   if (item.type === "event") {
     if (eventIsSettled(item)) return false;
-    return (item.data as FeedEventData)?.current_odds?.home_probability != null;
+    const event = item.data as FeedEventData | null | undefined;
+    return event != null && !isStoredOpeningChance(event) && event.current_odds?.home_probability != null;
   }
   return false;
 }
