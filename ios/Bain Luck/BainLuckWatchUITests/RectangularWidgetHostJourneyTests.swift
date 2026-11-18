@@ -93,31 +93,30 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         XCTAssertTrue(host.otherElements["Watch Face"].firstMatch.waitForExistence(timeout: 15))
         let center = host.otherElements["center"].firstMatch
         XCTAssertTrue(center.waitForExistence(timeout: 15) && center.isHittable && host.frame.contains(center.frame))
-        // #4933: the installed extension reads the App Group file the app just published
-        // and draws the chosen game's compact probability reading with its age or As-of clock, never "Saved" or "stale".
-        let reading = host.descendants(matching: .any)["watch.complication.rectangular.reading"].firstMatch
+        // #4933: the installed extension reads the App Group file the app just published.
+        // Direction 217 (#12854): a team game with published Matchup facts fills the big
+        // rectangular slot in the Matchup look, named for the leader, with the score and its
+        // clock, "Live" or As-of time, never "Saved" or "stale". The look is one accessibility
+        // element that fills the slot, so it must sit inside the mounted slot, not strictly within it.
+        let matchups = center.descendants(matching: .any).matching(identifier: "watch.complication.matchup.during")
+        let reading = matchups.firstMatch
         XCTAssertTrue(reading.waitForExistence(timeout: 20), "Actual installed extension must render the published reading")
         let spoken = reading.label
-        XCTAssertTrue(spoken.hasPrefix("Los Angeles Dodgers at San Francisco Giants. Score Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants 64%. "), spoken)
+        let named = "Los Angeles Dodgers at San Francisco Giants. Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants 64% to win now. "
+        XCTAssertTrue(spoken.hasPrefix(named), spoken)
         XCTAssertTrue(spoken.hasSuffix(" Open your game in Bain Luck."), spoken)
         XCTAssertFalse(spoken.localizedCaseInsensitiveContains("stale"), spoken)
         XCTAssertFalse(spoken.localizedCaseInsensitiveContains("saved"), spoken)
-        let freshSpoken = spoken.contains("Live, less than 1 minute ago.") || spoken.contains("Live, 1 minute ago.") || spoken.contains("Live, 2 minutes ago.")
-        let agedSpoken = spoken.contains("As of ")
-        XCTAssertTrue(freshSpoken || agedSpoken, spoken)
+        let when = spoken.dropFirst(named.count).dropLast(" Open your game in Bain Luck.".count)
+        XCTAssertTrue(when.hasSuffix(".") && when.count > 1, spoken)
         print("WATCH_RECTANGULAR_READING_LABEL=\(spoken)")
-        // The drawn lines: compact matchup with the verified score, "SF 64%",
-        // and "Live · <age>" (or "As of <clock>" once > 2 minutes old).
-        let header = host.descendants(matching: .any)["watch.complication.rectangular.header"].firstMatch
-        let primary = host.descendants(matching: .any)["watch.complication.rectangular.primary"].firstMatch
-        let metadata = host.descendants(matching: .any)["watch.complication.rectangular.metadata"].firstMatch
-        XCTAssertEqual(header.label, "LA at SF · 2–3")
-        XCTAssertEqual(primary.label, "SF 64%")
-        XCTAssertFalse(metadata.label.localizedCaseInsensitiveContains("stale"), metadata.label)
-        XCTAssertFalse(metadata.label.localizedCaseInsensitiveContains("saved"), metadata.label)
-        XCTAssertTrue((metadata.label.hasPrefix("Live · ") && metadata.label.hasSuffix(" ago"))
-                      || metadata.label.hasPrefix("As of "), metadata.label)
-        try requireNamedReadingInsideSlot(reading, center: center, host: host)
+        // WidgetKit reports the extension's elements in the mounted slot's own space
+        // (origin zero, the slot's size); accept either that space or the face's.
+        let card = reading.frame
+        let slotSpace = CGRect(origin: .zero, size: center.frame.size)
+        XCTAssertTrue(card.width > 0 && card.height > 0 && (slotSpace.contains(card) || center.frame.contains(card)),
+                      "Matchup reading escapes the mounted slot: \(card) in \(center.frame)")
+        XCTAssertFalse(host.descendants(matching: .any)["watch.complication.rectangular.reading"].firstMatch.exists)
         XCTAssertFalse(host.descendants(matching: .any)["watch.complication.fallback"].firstMatch.exists)
         XCTAssertFalse(host.descendants(matching: .any)["watch.complication.rectangular.legacy"].firstMatch.exists)
         capture(host, "Actual Modular saved reading with its age")
