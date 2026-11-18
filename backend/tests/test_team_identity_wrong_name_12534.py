@@ -126,6 +126,78 @@ async def test_wrong_club_writes_nothing(
 
 
 @pytest.mark.asyncio
+async def test_womens_lacrosse_name_cannot_reuse_a_mens_mapping(monkeypatch, caplog):
+    session = Session(team(1416, "Army Knights"))
+    service = TeamIdentityService()
+    lookup = AsyncMock(return_value=session.target)
+    monkeypatch.setattr(service, "_lookup_by_source_name", lookup)
+
+    resolved = await service.resolve_team(
+        session, "polymarket", "lacrosse_ncaa", source_name="Army Black Knights (W)"
+    )
+
+    assert resolved is None
+    lookup.assert_not_awaited()
+    assert "women's team name in a men's league" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_verified_source_id_still_resolves_before_the_name_check(monkeypatch):
+    session = Session(team(1416, "Army Knights"))
+    service = TeamIdentityService()
+    lookup = AsyncMock(return_value=session.target)
+    monkeypatch.setattr(service, "_lookup_by_source_id", lookup)
+
+    resolved = await service.resolve_team(
+        session,
+        "polymarket",
+        "lacrosse_ncaa",
+        source_id="verified-team",
+        source_name="Army Black Knights (W)",
+    )
+
+    assert resolved is session.target
+    lookup.assert_awaited_once_with(session, "polymarket", "verified-team", "lacrosse_ncaa")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["kalshi", "polymarket", "futures"])
+async def test_womens_lacrosse_name_cannot_be_registered_in_the_mens_league(source):
+    session = Session(team(1416, "Army Knights"))
+
+    admitted = await TeamIdentityService().register_team_identity(
+        session, 1416, source, "lacrosse_ncaa", source_name="Army Black Knights (W)"
+    )
+
+    assert admitted is False
+    assert not session.gets
+    assert not session.reads
+    assert not session.writes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sport,name,target",
+    [
+        ("lacrosse_ncaa", "Army Black Knights", "Army Knights"),
+        ("basketball_wncaab", "Army Black Knights (W)", "Army Black Knights"),
+        ("soccer_other", "Chelsea (W)", "Chelsea"),
+    ],
+)
+async def test_unmarked_names_and_other_leagues_keep_their_existing_admission(
+    sport, name, target
+):
+    session = Session(team(1, target))
+
+    admitted = await TeamIdentityService().register_team_identity(
+        session, 1, "polymarket", sport, source_name=name
+    )
+
+    assert admitted is True
+    assert len(session.writes) == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "name,target,aliases",
     [
