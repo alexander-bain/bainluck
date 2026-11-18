@@ -12,7 +12,7 @@ import time
 import pytest
 
 from app.tasks import prediction_market_matching as poll
-from app.tasks.live_blend_refresh import LiveBlendRefresher
+from app.tasks.live_blend_refresh import LiveBlendRefresher, _CachedInversion
 from app.utils.live_blend import (
     MarketOutcomes,
     compute_source_home_probability,
@@ -245,7 +245,7 @@ async def test_actual_ws_resolver_clears_flip_before_snapshot_and_stream(monkeyp
         "app.tasks.snapshots._create_or_update_win_prob_snapshot", snapshot
     )
     arm = LiveBlendRefresher("kalshi")
-    arm._inversion[1] = (time.monotonic() + 150, True)
+    arm._inversion[1] = _CachedInversion(time.monotonic() + 150, True, (False, None))
     monkeypatch.setattr(arm, "_publish", publish)
     stats = await arm.refresh([1])
     await arm.drain_history()

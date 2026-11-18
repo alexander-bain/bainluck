@@ -7,7 +7,8 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.sql.dml import Update
 
-from app.tasks.live_blend_refresh import FRESH_STAMP_WORKERS
+from app.tasks.prediction_market_matching import _InversionDecision
+from app.tasks.live_blend_refresh import FRESH_STAMP_WORKERS, _CachedInversion
 from app.utils.repair_lock_budget import (
     SET_LOCK_AND_STATEMENT_TIMEOUT_SQL, SET_LOCK_TIMEOUT_SQL, SET_STATEMENT_TIMEOUT_SQL,
 )
@@ -74,7 +75,7 @@ def rig(
     r, frames = _one_event_refresher(monkeypatch, session, min_refresh_interval_s=0)
     r._last_snapshot_at = dict.fromkeys(range(1, count + 1), 1000)
     if not cold:
-        r._inversion = dict.fromkeys(range(1, count + 1), (float("inf"), False))
+        r._inversion = dict.fromkeys(range(1, count + 1), _CachedInversion(float("inf"), False, (True, None)))
     if skipped == "unchanged":
         r._last_written_value = dict.fromkeys(range(1, count + 1), 0.9)
         r._last_write_at = dict.fromkeys(range(1, count + 1), 1000)
@@ -92,11 +93,11 @@ def rig(
         session.calls.append("orientation_read")
         if cancel == "orientation":
             raise _Canceled("canceling statement due to user request")
-        return home_prob
+        return _InversionDecision(home_prob)
 
     monkeypatch.setattr("app.utils.live_blend.compute_source_home_probability", reading)
     monkeypatch.setattr(
-        "app.tasks.prediction_market_matching._check_and_fix_inversion", orientation_read,
+        "app.tasks.prediction_market_matching._inversion_decision", orientation_read,
     )
     return SimpleNamespace(**locals())
 

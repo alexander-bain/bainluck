@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.sql.dml import Update
 
+from app.tasks.live_blend_refresh import _CachedInversion
 from app.utils.repair_lock_budget import (
     SET_LOCK_AND_STATEMENT_TIMEOUT_SQL, SET_LOCK_TIMEOUT_SQL, SET_STATEMENT_TIMEOUT_SQL,
 )
@@ -29,7 +30,10 @@ def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None, block
         rows.append((m, e))
     returned = {"polymarket": {"value": 0.9, "updated_at": "2026-10-08T18:00:00+00:00"}}
     r, frames = _one_event_refresher(monkeypatch, None, min_refresh_interval_s=0)
-    r._inversion = dict.fromkeys(range(1, count + 1), (float("inf"), False))
+    r._inversion = {
+        e.id: _CachedInversion(float("inf"), False, (e.status == "live", None))
+        for _, e in rows
+    }
     r._last_snapshot_at = dict.fromkeys(range(1, count + 1), 1000)
     sessions, committed, published, commands = [], [], [], []
     recovery_sessions = []

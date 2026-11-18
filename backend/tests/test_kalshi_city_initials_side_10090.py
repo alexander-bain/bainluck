@@ -385,20 +385,23 @@ def _forbid_inversion_fallback(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.tasks.prediction_market_matching._check_and_fix_inversion", forbidden,
     )
+    monkeypatch.setattr(
+        "app.tasks.prediction_market_matching._inversion_decision", forbidden,
+    )
 
 
 async def test_a_stale_cached_flip_cannot_invert_the_selected_clippers_row(monkeypatch):
     """The live refresher's actual `_oriented`: the named home quote evicts the
     cached flip and never reaches the fallback reads."""
     from app.tasks import prediction_market_matching as poll
-    from app.tasks.live_blend_refresh import LiveBlendRefresher
+    from app.tasks.live_blend_refresh import LiveBlendRefresher, _CachedInversion
 
     _forbid_inversion_fallback(monkeypatch)
     reading = lb.compute_source_home_probability(
         [_den_lac()], "LA Clippers", "Denver Nuggets",
     )
     arm = LiveBlendRefresher("kalshi")
-    arm._inversion[15326747] = (time.monotonic() + 150, True)
+    arm._inversion[15326747] = _CachedInversion(time.monotonic() + 150, True, (False, None))
 
     async def no_fallback():
         raise AssertionError("before_fallback reached")
@@ -417,7 +420,7 @@ async def test_a_stale_cached_flip_cannot_invert_the_selected_clippers_row(monke
 async def test_strawman_guards_on_the_linker_rule_let_the_cached_flip_invert_it(monkeypatch):
     """At ee8cd3ae20's guards the row is selected but unproven, and the same
     stale flip prints ``1 - 0.545`` as the Clippers' chance."""
-    from app.tasks.live_blend_refresh import LiveBlendRefresher
+    from app.tasks.live_blend_refresh import LiveBlendRefresher, _CachedInversion
 
     _guards_on_the_linker_rule(monkeypatch)
     reading = lb.compute_source_home_probability(
@@ -426,7 +429,7 @@ async def test_strawman_guards_on_the_linker_rule_let_the_cached_flip_invert_it(
     assert reading.outcome.id == 243704122
     assert reading.named_home_quote is False
     arm = LiveBlendRefresher("kalshi")
-    arm._inversion[15326747] = (time.monotonic() + 150, True)
+    arm._inversion[15326747] = _CachedInversion(time.monotonic() + 150, True, (False, None))
     oriented = await arm._oriented(
         _NoFallbackSession(), 15326747, reading.home_probability, reading=reading,
     )

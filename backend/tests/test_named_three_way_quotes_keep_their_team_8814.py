@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.tasks import prediction_market_matching as poll
-from app.tasks.live_blend_refresh import LiveBlendRefresher
+from app.tasks.live_blend_refresh import LiveBlendRefresher, _CachedInversion
 from app.utils.live_blend import MarketOutcomes, compute_source_home_probability
 
 
@@ -196,7 +196,7 @@ async def test_ws_writer_streams_real_home_and_keeps_snapshot_partition(monkeypa
         frames.extend(batch)
 
     r = LiveBlendRefresher("kalshi")
-    r._inversion[15314954] = (time.monotonic() + 150, True)
+    r._inversion[15314954] = _CachedInversion(time.monotonic() + 150, True, (False, None))
     monkeypatch.setattr(r, "_publish", publish)
     stats = await r.refresh([15314954])
     await r.drain_history()
