@@ -3596,7 +3596,6 @@ def compute_visual_diversity_report(
 
 
 def _machinery_preview_error_response(
-    slug: str,
     defn: Mapping[str, Any],
     *,
     error_code: str,
@@ -3608,11 +3607,14 @@ def _machinery_preview_error_response(
     """
     from fastapi import HTTPException
 
+    canonical_slug = str(defn.get("slug") or "unknown").replace("\r", "").replace("\n", "")
+    safe_exc = str(exc_class or "Exception").replace("\r", "").replace("\n", "")
+    safe_code = str(error_code or "read_failed").replace("\r", "").replace("\n", "")
     logger.warning(
         "machinery_preview_error slug=%s exception_class=%s error_code=%s",
-        slug,
-        exc_class,
-        error_code,
+        canonical_slug,
+        safe_exc,
+        safe_code,
     )
     msg = "Couldn't load this grouping right now. Please try again."
     if not allow_error_envelope:
@@ -3620,19 +3622,19 @@ def _machinery_preview_error_response(
             status_code=503,
             detail={
                 "state": "unavailable",
-                "slug": slug,
-                "error_code": error_code,
+                "slug": canonical_slug,
+                "error_code": safe_code,
                 "message": msg,
             },
         )
     return {
-        "slug": slug,
+        "slug": canonical_slug,
         "status": "error",
         "error": msg,
-        "error_code": error_code,
+        "error_code": safe_code,
         "definition": {
-            "slug": str(defn.get("slug") or slug),
-            "name": str(defn.get("name") or slug),
+            "slug": canonical_slug,
+            "name": str(defn.get("name") or canonical_slug),
             "category": str(defn.get("category") or ""),
             "kicker": str(defn.get("kicker") or ""),
             "footer": str(defn.get("footer") or ""),
@@ -3691,7 +3693,6 @@ async def serve_machinery_candidate_preview(
                     else "read_refused"
                 )
                 return _machinery_preview_error_response(
-                    slug,
                     defn,
                     error_code=str(code),
                     exc_class=type(outcome).__name__ if outcome is not None else "RoundupRefusal",
@@ -3710,9 +3711,9 @@ async def serve_machinery_candidate_preview(
                 if inspect.isawaitable(rb):
                     await rb
             except Exception:
-                pass
+                # Best-effort rollback on an aborted DB session; return the primary read error below.
+                logger.debug("machinery preview session rollback failed", exc_info=True)
         return _machinery_preview_error_response(
-            slug,
             defn,
             error_code="read_failed",
             exc_class=exc_name,
@@ -3726,7 +3727,6 @@ async def serve_machinery_candidate_preview(
         or int(payload.get("member_count") or 0) <= 0
     ):
         return _machinery_preview_error_response(
-            slug,
             defn,
             error_code="incomplete_read",
             exc_class="RoundupRefusal",
