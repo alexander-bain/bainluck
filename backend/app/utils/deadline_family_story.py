@@ -58,15 +58,20 @@ from app.utils.futures_market_snapshot import (
     outcome_prints_a_price,
     read_dated_basis_entry,
 )
+from app.utils.graded_card import rendered_percent
 from app.utils.market_staleness import (
     prices_have_stopped,
     stale_observation_keys,
 )
+from app.utils.outcome_display import normalize_display_probs
 from app.utils.resolution_authority import (
+    DETERMINISTIC_SOURCES,
     GUESS_FAMILY_SOURCES,
+    PRICE_DERIVED_SOURCES,
     can_write_winner,
     is_authoritative,
 )
+from app.utils.source_mark import no_source_mark, quote_source_mark, settled_source_mark
 
 DEADLINE_FAMILY_STORY_PREFIX = "story:deadline_family:"
 
@@ -1757,6 +1762,63 @@ def _verify_member_rule_equivalence(
     )
 
 
+def _deadline_leg_mark(
+    source: str, side: str, probability: float | None,
+    settlement: Mapping[str, Any], result_source: str | None,
+) -> dict[str, Any]:
+    state = settlement["state"]
+    if state == "resolved":
+        if result_source is None:
+            return no_source_mark("result_unknown")
+        return settled_source_mark(
+            result_source, "Won" if settlement["result"] == side else "Lost"
+        )
+    if state != "open":
+        return no_source_mark("result_unknown" if state == "unknown" else state)
+    if probability is None:
+        return no_source_mark("no_probability")
+    # The two legs each own their stored price. Both legacy observation clocks
+    # trace to row revisions; neither dates a venue input.
+    return quote_source_mark([{"key": source, "probability": probability}])
+
+
+def _deadline_yes_display_mark(
+    mark: dict[str, Any], yes: float | None, no: float | None,
+    percent: int | None, printed_row: Mapping[str, Any],
+) -> dict[str, Any]:
+    if mark["state"] != "single" or yes is None or percent is None:
+        return mark
+    conflict = no_source_mark("display_basis_conflict")
+    if printed_row.get("source_mark") == conflict:
+        return conflict
+    # Feed may already have scaled this precise Yes/No pair. A normalized
+    # top-outcome row is the witness at production; its checked mark survives
+    # the bundler's JSON round trip. A matching number alone is insufficient.
+    display_value = _readable_probability(printed_row)
+    method = "The card scales the Yes and No prices together to total 100%"
+    scaled_mark = {**mark, "method": method}
+    uses_scaling = (
+        display_value is not None and abs(display_value - yes) > 1e-8
+    ) or printed_row.get("source_mark") == scaled_mark
+    if uses_scaling:
+        pair = [{"name": "Yes", "probability": yes}, {"name": "No", "probability": no}]
+        if (
+            normalize_display_probs(pair)
+            and pair[0].get("rendered_percent") == percent
+            and (display_value is None or abs(pair[0]["probability"] - display_value) <= 1e-8)
+        ):
+            return scaled_mark
+        return conflict
+    if percent == rendered_percent(yes):
+        return mark
+    if abs(100 * yes - percent) <= 0.5 + 1e-8:
+        return {
+            **mark,
+            "method": f"The source gave {100 * yes:g}%. The card rounds it to {percent}%.",
+        }
+    return conflict
+
+
 def build_deadline_member_contract(
     *,
     market_id: Any,
@@ -1825,9 +1887,11 @@ def build_deadline_member_contract(
     no_probability = _readable_probability(no_outcome, withheld_outcome_ids)
 
     yes_rendered_percent: int | None = None
+    printed_yes: Mapping[str, Any] = {}
     if top_outcomes_data:
         for row in top_outcomes_data:
             if isinstance(row, Mapping) and row.get("id") == yes_outcome_id:
+                printed_yes = row
                 rp = row.get("rendered_percent")
                 if isinstance(rp, int) and not isinstance(rp, bool):
                     yes_rendered_percent = rp
@@ -2034,6 +2098,21 @@ def build_deadline_member_contract(
     ):
         verified_family_count = raw_verified_family_count
 
+    result_source = settlement["authoritative_source"]
+    if result_source == "deadline_rule_contract":
+        # Only the venue's resolved record for this condition proves a result.
+        result_source = clean_source if (
+            clean_source == "polymarket"
+            and rule_contract_meta.get("condition_id") == clean_external_id
+            and rule_contract_meta.get("venue_closed") is True
+            and rule_contract_meta.get("uma_resolution_status") == "resolved"
+        ) else None
+    elif not (
+        result_source in DETERMINISTIC_SOURCES
+        or (is_authoritative(result_source) and result_source not in PRICE_DERIVED_SOURCES)
+    ):
+        result_source = None
+
     return {
         "market_id": clean_market_id,
         "name": str(name).strip(),
@@ -2064,6 +2143,13 @@ def build_deadline_member_contract(
         "yes_probability": yes_probability,
         "yes_rendered_percent": yes_rendered_percent,
         "no_probability": no_probability,
+        "source_mark": _deadline_yes_display_mark(
+            _deadline_leg_mark(clean_source, "Yes", yes_probability, settlement, result_source),
+            yes_probability, no_probability, yes_rendered_percent, printed_yes,
+        ),
+        "no_source_mark": _deadline_leg_mark(
+            clean_source, "No", no_probability, settlement, result_source
+        ),
         "price_observed_at": yes_price_observed_at,
         "yes_price_observed_at": yes_price_observed_at,
         "yes_observation_fresh": (yes_observed_dt is not None and not yes_observation_stale),
@@ -2228,7 +2314,7 @@ def _validate_member_contract_dict(
             "price_observed_at": yes_obs_iso,
             "is_winner": True if state_in == "resolved" and result_in == "Yes" else False,
             "resolution_source": (
-                "api_settlement"
+                auth_src_in
                 if state_in == "resolved" and result_in == "Yes"
                 else "ungradeable_result"
                 if state_in == "void"
@@ -2244,7 +2330,7 @@ def _validate_member_contract_dict(
             "price_observed_at": yes_obs_iso,
             "is_winner": True if state_in == "resolved" and result_in == "No" else False,
             "resolution_source": (
-                "api_settlement"
+                auth_src_in
                 if state_in == "resolved" and result_in == "No"
                 else None
             ),
@@ -2301,7 +2387,8 @@ def _validate_member_contract_dict(
         synthetic_meta["verified_family_count"] = member_contract.get("verified_family_count")
 
     top_outcomes_in = (
-        [{"id": yes_outcome_id, "rendered_percent": member_contract.get("yes_rendered_percent")}]
+        [{"id": yes_outcome_id, "rendered_percent": member_contract.get("yes_rendered_percent"),
+          "source_mark": member_contract.get("source_mark")}]
         if member_contract.get("yes_rendered_percent") is not None
         else None
     )
@@ -2332,6 +2419,13 @@ def _validate_member_contract_dict(
     )
     if rebuilt is None:
         return None, "invalid_or_missing_member_contract"
+    if rebuilt["settlement"]["state"] == "resolved" and any(
+        member_contract.get(key) != rebuilt[key] for key in ("source_mark", "no_source_mark")
+    ):
+        # Old bundles called every reconstructed winner api_settlement. Their
+        # generic label cannot certify an official result on either side.
+        rebuilt["source_mark"] = no_source_mark("result_unknown")
+        rebuilt["no_source_mark"] = no_source_mark("result_unknown")
     if state_in == "deadline_passed" and rebuilt["settlement"]["state"] == "open":
         rebuilt["settlement"] = {
             "state": "deadline_passed",
@@ -2344,6 +2438,8 @@ def _validate_member_contract_dict(
             "lagging_local_status": False,
         }
         rebuilt["movement_status"] = "deadline_passed_suppressed"
+        rebuilt["source_mark"] = no_source_mark("deadline_passed")
+        rebuilt["no_source_mark"] = no_source_mark("deadline_passed")
         rebuilt["supported_move"] = None
         rebuilt["supported_move_points"] = None
         rebuilt["show_hero_movement_chip"] = False
