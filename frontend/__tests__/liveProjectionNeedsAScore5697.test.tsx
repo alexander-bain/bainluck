@@ -60,7 +60,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-const PROJECTION = "Projected final";
+const PROJECTION = ">Proj.<";
 
 /** NCAAF FCS resolves through the `americanfootball` entry in `SPORT_SCORING`,
  *  which declares `hasDerivedSpread: true` — the sport gate the projection sits

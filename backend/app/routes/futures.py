@@ -987,7 +987,10 @@ def _build_movers_query(limit: int, *, pooled: bool):
     `pooled=False` is the legacy full-scan arm, kept as rollback and as the
     equivalence oracle the gate drives both paths through.
     """
-    conditions = [FuturesOutcome.probability_change_24h.isnot(None)]
+    conditions = [
+        FuturesOutcome.probability_change_24h.isnot(None),
+        FuturesOutcome.current_probability.isnot(None),
+    ]
 
     if pooled:
         # LAT-P151: the pool SHAPE moved to `app/utils/movement_pool.py` so the
@@ -1096,10 +1099,15 @@ def _movers_payload(outcomes, hours: int) -> dict:
     # basis must support the move before it may appear in the public list.
     outcomes = [
         o for o in outcomes
-        if getattr(o.market, "source", None) != "polymarket"
-        or reader_change_24h(
-            o.market, o.id, o.current_probability, o.probability_change_24h
-        ) not in (None, 0)
+        # #12658: a retained delta cannot advertise a move after its current
+        # price was withdrawn. This applies to every venue, including Kalshi.
+        if o.current_probability is not None
+        and (
+            getattr(o.market, "source", None) != "polymarket"
+            or reader_change_24h(
+                o.market, o.id, o.current_probability, o.probability_change_24h
+            ) not in (None, 0)
+        )
     ]
     return {
         "movers": [
@@ -1167,7 +1175,12 @@ async def get_futures_movers(
         redis = get_redis_client()
         cached = redis.get(movers_cache_key(hours, limit))
         if cached:
-            return _json.loads(cached)
+            payload = _json.loads(cached)
+            # A worker on the previous release can still warm this shared key.
+            payload["movers"] = [
+                row for row in payload["movers"] if row.get("current_probability") is not None
+            ]
+            return payload
     except Exception:
         pass
 
@@ -5877,6 +5890,9 @@ async def _compose_verified_title(db: AsyncSession, market: FuturesMarket):
             value.observed_at for value in canonical_verdict.overlay.values()
             if value.probability is not None and value.observed_at is not None
         ]
+        # Membership already proves this game instant across the loaded
+        # venues. A no-winner deadline (Polymarket) is not the game's date.
+        game_at = min((m.instant for m in members if m.instant is not None), default=None)
         card_fields = {
             "sport": canonical.sport.key if canonical.sport else None,
             "sport_name": (
@@ -5884,7 +5900,7 @@ async def _compose_verified_title(db: AsyncSession, market: FuturesMarket):
                 if canonical.sport else None
             ),
             "resolution_date": (
-                canonical.resolution_date.isoformat() if canonical.resolution_date else None
+                game_at.isoformat() if game_at is not None else None
             ),
             "outcome_count": len(boards[canonical.id]),
             "updated_at": canonical.updated_at.isoformat() if canonical.updated_at else None,
@@ -6043,6 +6059,9 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
     _stamp_representation(detail, verdict)
     changed = False
     if isinstance(verdict, Composition):
+        game_at = verdict.canonical_card_fields.get("resolution_date")
+        if game_at is not None:
+            detail["resolution_date"] = game_at
         for row in detail["outcomes"]:
             changed |= _overlay_current(row, verdict.overlay.get(row["id"]), "probability")
     # A source-only/refused composition can retain complete references. A

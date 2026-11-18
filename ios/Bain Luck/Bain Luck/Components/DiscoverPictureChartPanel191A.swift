@@ -28,11 +28,39 @@ enum DiscoverPictureChart191A {
         let perspective: Perspective
         let plottedTeamShortName: String
         let plottedTeamCode: String
+        var awayShortName: String = ""
+        var homeShortName: String = ""
         let points: [Point]
+        var threeWayPoints: [SoccerThreeLineChart211A.Point] = []
         let leftEndLabel: String
         let rightEndLabel: String
         let isFinished: Bool
         let rightEndUsesTeamAccent: Bool
+        let showsEndpointDot: Bool
+        let showsPregameLabel: Bool
+
+        var markedPoints: [Point] {
+            points.filter { point in
+                (showsEndpointDot || !point.isEndpoint)
+                    && (point.isOpening || point.isSolidMark || point.isEndpoint)
+            }
+        }
+
+        var plottedThreeWayPoints: [SoccerThreeLineChart211A.Point] {
+            guard !showsEndpointDot else { return threeWayPoints }
+            return threeWayPoints.map { point in
+                guard point.isEndpoint else { return point }
+                return SoccerThreeLineChart211A.Point(
+                    id: point.id, date: point.date, home: point.home, draw: point.draw, away: point.away,
+                    isLiveEdge: point.isLiveEdge, isOpening: point.isOpening,
+                    isSolidMark: false, isEndpoint: false
+                )
+            }
+        }
+
+        var accessibilityLabel: String {
+            "Win chance chart for \(plottedTeamShortName): \(leftEndLabel), \(rightEndLabel)"
+        }
     }
 
     /// Resolves which side the single win-chance trajectory line represents:
@@ -105,16 +133,23 @@ enum DiscoverPictureChart191A {
 
         let currentSideProb: Double? = {
             guard isLive else { return nil }
-            if pricesADraw {
-                return CompactGameCard12616.usableProbability(event.currentOdds?.homeProbability)
-            }
             let raw = perspective == .home
                 ? event.currentOdds?.homeProbability
                 : event.currentOdds?.awayProbability
-            return CompactGameCard12616.usableProbability(raw)
+            if let served = CompactGameCard12616.usableProbability(raw) {
+                return served
+            }
+            // A retained chart endpoint can be pregame. Only the server's
+            // explicit live pin can serve as a current fallback.
+            guard let history, history.eventId == event.id, history.blendEdgePinned == true,
+                  let pin = history.aggregateLine?.last, pin.timestamp.asDate != nil,
+                  let home = CompactGameCard12616.usableProbability(pin.homeProbability) else {
+                return nil
+            }
+            return perspective == .home ? home : 1 - home
         }()
 
-        let extractedPoints = extractPoints(
+        let (extractedPoints, playStart) = extractPoints(
             event: event,
             prematch: prematch,
             history: history,
@@ -160,10 +195,9 @@ enum DiscoverPictureChart191A {
                 return ("Final", false)
             }
 
-            let effectiveCurrent = currentSideProb ?? extractedPoints.last?.probability
-            guard let curP = effectiveCurrent,
+            guard let curP = currentSideProb,
                   let tenthsText = CompactGameCard12616.formatSingleLiveTenths(curP) else {
-                return ("Now \(plottedTeamCode)", true)
+                return ("Current win chance unavailable", false)
             }
 
             if let preP = pregameSideProb {
@@ -177,15 +211,36 @@ enum DiscoverPictureChart191A {
             return ("Now \(tenthsText) \(plottedTeamCode)", true)
         }()
 
+        let threeWayPoints = SoccerThreeLineChart211A.extractCardPoints(
+            event: event,
+            prematch: prematch,
+            history: history
+        )
+        // A live dot represents an admitted current chance. The line may still
+        // show earlier observations, including a run entirely before kickoff.
+        let showsEndpointDot = !isLive || currentSideProb != nil
+        let showsPregameLabel: Bool = {
+            guard !showsEndpointDot, let playStart,
+                  let lastDate = threeWayPoints.last?.date ?? extractedPoints.last?.date else {
+                return false
+            }
+            return lastDate <= playStart
+        }()
+
         return Model(
             perspective: perspective,
             plottedTeamShortName: plottedShortName,
             plottedTeamCode: plottedTeamCode,
+            awayShortName: shortPair.away,
+            homeShortName: shortPair.home,
             points: extractedPoints,
+            threeWayPoints: threeWayPoints,
             leftEndLabel: leftEndLabel,
             rightEndLabel: rightEndLabel,
             isFinished: isFinished,
-            rightEndUsesTeamAccent: rightEndUsesTeamAccent
+            rightEndUsesTeamAccent: rightEndUsesTeamAccent,
+            showsEndpointDot: showsEndpointDot,
+            showsPregameLabel: showsPregameLabel
         )
     }
 
@@ -199,13 +254,13 @@ enum DiscoverPictureChart191A {
     /// sportsbook `consensus` fallback, zero client-side source averaging) and
     /// `OddsChartView.drawnWindow` (post-game drift clip + `Since Start` window
     /// with true pregame anchor carried onto the kickoff edge).
-    nonisolated static func extractPoints(
+    private nonisolated static func extractPoints(
         event: FeedEventData,
         prematch: PrematchReading?,
         history: EventHistoryResponse?,
         perspective: Perspective
-    ) -> [Point] {
-        guard let history else { return [] }
+    ) -> (points: [Point], playStart: Date?) {
+        guard let history else { return ([], nil) }
 
         let blendPoints = OddsChartView.servedBlendPoints(from: history)
         let consensusPoints: [ChartDataPoint] = history.history.compactMap { row in
@@ -229,8 +284,6 @@ enum DiscoverPictureChart191A {
         }
 
         let sortedHome = baseHomeSeries.sorted { $0.date < $1.date }
-        guard !sortedHome.isEmpty else { return [] }
-
         let window = OddsChartView.drawnWindow(
             status: event.status,
             commenceTime: event.commenceTime,
@@ -242,6 +295,7 @@ enum DiscoverPictureChart191A {
                 ObservedPlayStart.cut(scheduled: scheduled, history: history, sportKey: event.sport)
             }
         )
+        guard !sortedHome.isEmpty else { return ([], window.sinceStart) }
 
         let postGameClipped: [ChartDataPoint] = {
             if let endDate = window.finishedEnd {
@@ -294,11 +348,11 @@ enum DiscoverPictureChart191A {
         }
 
         let count = gameSeries.count
-        guard count > 0 else { return [] }
+        guard count > 0 else { return ([], window.sinceStart) }
         let stride = max(1, EventAtlasChartMarks11666.solidMarkStride(pointCount: count))
         let drawsIntermediateMarks = count <= 28
 
-        return gameSeries.enumerated().map { index, item in
+        let points = gameSeries.enumerated().map { index, item in
             let sideP = perspective == .home ? item.probability : (1.0 - item.probability)
             let clamped = min(max(sideP, 0.0), 1.0)
             let isFirst = index == 0
@@ -314,6 +368,7 @@ enum DiscoverPictureChart191A {
                 isEndpoint: isLast
             )
         }
+        return (points, window.sinceStart)
     }
 }
 
@@ -397,7 +452,6 @@ struct DiscoverPictureChartPanel191AView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var rawPlotHeight: CGFloat = 126
     @ScaledMetric(relativeTo: .caption2) private var yAxisFontSize: CGFloat = 9.5
-    @ScaledMetric(relativeTo: .caption) private var endLabelFontSize: CGFloat = 11.5
 
     @State private var loadedHistory: EventHistoryResponse?
     @State private var didFinishLoad = false
@@ -426,12 +480,15 @@ struct DiscoverPictureChartPanel191AView: View {
 
     var body: some View {
         Group {
-            if !didFinishLoad || !model.points.isEmpty {
-                VStack(alignment: .leading, spacing: 7) {
-                    plotCanvas
-                        .frame(height: plotHeight)
-
-                    labelledEndsRow
+            if !didFinishLoad || !model.points.isEmpty || !model.threeWayPoints.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    if model.showsPregameLabel {
+                        Text("Pregame")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .accessibilityHidden(true)
+                    }
+                    plotCanvas.frame(height: plotHeight)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 9)
@@ -444,9 +501,7 @@ struct DiscoverPictureChartPanel191AView: View {
                         .stroke(Color.primary.opacity(0.07), lineWidth: 0.5)
                 )
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel(
-                    "Win chance chart for \(model.plottedTeamShortName): \(model.leftEndLabel), \(model.rightEndLabel)"
-                )
+                .accessibilityLabel(model.accessibilityLabel)
                 .accessibilityIdentifier("discover-card-191a-chart-panel")
             }
         }
@@ -478,12 +533,9 @@ struct DiscoverPictureChartPanel191AView: View {
         sportKey: String?,
         points: [DiscoverPictureChart191A.Point]
     ) -> ChartProbabilityAxis9483.Window {
-        if OddsChartView.usesZeroToHundredVerticalScale201(sportKey: sportKey) {
-            return ChartProbabilityAxis9483.full
-        }
         let readings = points.map(\.probability)
         let mustShow = [points.first?.probability, points.last?.probability].compactMap { $0 }
-        return ChartProbabilityAxis9483.window(readings: readings, mustShow: mustShow)
+        return ChartScaleRule201.gameWindow(sportKey: sportKey, readings: readings, mustShow: mustShow)
     }
 
     private var yWindow: ChartProbabilityAxis9483.Window {
@@ -512,7 +564,15 @@ struct DiscoverPictureChartPanel191AView: View {
 
     @ChartContentBuilder
     private func seriesMarks(floorY: Double) -> some ChartContent {
-        if model.points.count >= 2 {
+        if model.threeWayPoints.count >= 2 {
+            SoccerThreeLineChart211A.chartMarks(
+                segments: [model.plottedThreeWayPoints],
+                homeColor: homeColor,
+                drawColor: HeadlineStyleTable199.drawInk,
+                awayColor: awayColor,
+                lineWidth: 2.1
+            )
+        } else if model.points.count >= 2 {
             ForEach(model.points) { point in
                 AreaMark(
                     x: .value("Time", point.date),
@@ -540,17 +600,27 @@ struct DiscoverPictureChartPanel191AView: View {
                 .foregroundStyle(lineColor)
             }
 
-            ForEach(model.points.filter { $0.isOpening || $0.isSolidMark || $0.isEndpoint }) { point in
+            ForEach(model.markedPoints) { point in
                 pointMarks(for: point)
             }
         } else if let lone = model.points.first {
-            PointMark(
-                x: .value("Time", lone.date),
-                y: .value("Win chance", lone.probability)
-            )
-            .symbol(.circle)
-            .symbolSize(34)
-            .foregroundStyle(lineColor)
+            if model.showsEndpointDot {
+                PointMark(
+                    x: .value("Time", lone.date),
+                    y: .value("Win chance", lone.probability)
+                )
+                .symbol(.circle)
+                .symbolSize(34)
+                .foregroundStyle(lineColor)
+            } else {
+                PointMark(
+                    x: .value("Time", lone.date),
+                    y: .value("Win chance", lone.probability)
+                )
+                .symbol(.circle.strokeBorder(lineWidth: 1.6))
+                .symbolSize(34)
+                .foregroundStyle(lineColor)
+            }
         }
     }
 
@@ -640,75 +710,5 @@ struct DiscoverPictureChartPanel191AView: View {
             .foregroundStyle(emphasized ? Color.primary.opacity(0.68) : DS.textSecondaryReadable.opacity(0.75))
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
-    }
-
-    // MARK: - Labelled Ends Row (Pregame X% TEAM · Now Y% TEAM (+Z pts) / Final · TEAM won A–B)
-
-    @ViewBuilder
-    private var labelledEndsRow: some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: 3) {
-                leftEndText
-                rightEndText(font: .footnote.weight(.bold).monospacedDigit())
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        } else {
-            let labelSize = min(endLabelFontSize, 13.0)
-            let leftFont = Font.system(size: labelSize, weight: .medium).monospacedDigit()
-            let rightFont = Font.system(size: labelSize, weight: .bold).monospacedDigit()
-
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(model.leftEndLabel)
-                        .font(leftFont)
-                        .foregroundStyle(DS.textSecondaryReadable)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-
-                    Spacer(minLength: 8)
-
-                    rightEndText(font: rightFont)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(model.leftEndLabel)
-                        .font(leftFont)
-                        .foregroundStyle(DS.textSecondaryReadable)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-
-                    Spacer(minLength: 6)
-
-                    rightEndText(font: rightFont)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.86)
-                }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(model.leftEndLabel)
-                        .font(leftFont)
-                        .foregroundStyle(DS.textSecondaryReadable)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    rightEndText(font: rightFont)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    private var leftEndText: some View {
-        Text(model.leftEndLabel)
-            .font(.footnote.weight(.medium).monospacedDigit())
-            .foregroundStyle(DS.textSecondaryReadable)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func rightEndText(font: Font) -> some View {
-        Text(model.rightEndLabel)
-            .font(font)
-            .foregroundStyle(model.rightEndUsesTeamAccent ? lineColor : DS.textSecondaryReadable)
     }
 }

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Verified non-stock entity and landmark artwork for Discover cards (#12659). A person, team, film, or song never gets a stock photo.",
+  "description": "Verified non-stock entity, series, and landmark artwork for Discover cards (#12659). A person, team, film, series, or song never gets a stock photo.",
   "allowed_hosts": [
     "upload.wikimedia.org",
     "thumb.wikimedia.org",
@@ -1100,6 +1100,511 @@
       "author": "Jacek Stanislawek",
       "license": "CC BY-SA 4.0",
       "source_page": "https://commons.wikimedia.org/wiki/File:Erling_Haaland_2023_(cropped).jpg"
+    },
+    {
+      "entity_key": "the-grammy-awards",
+      "aliases": [
+        "Grammys",
+        "The Grammys",
+        "Grammy Awards",
+        "story:grammys",
+        "domain-fallback-music"
+      ],
+      "kind": "song",
+      "presentation": "photo",
+      "verified_subject": "The Grammy Awards golden gramophone trophy stage backdrop",
+      "url": "https://image.tmdb.org/t/p/w780/11QwqK3hUCWkLJclPUPzd6tgtxL.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "the-oscars-ceremony",
+      "aliases": [
+        "Oscars",
+        "The Oscars",
+        "Academy Awards",
+        "story:oscars",
+        "domain-fallback-entertainment"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "The Oscars Academy Award golden statuette backdrop",
+      "url": "https://image.tmdb.org/t/p/w780/AvydGD3Y03ad7QLxQ3tAZ3VVkng.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "the-emmy-awards",
+      "aliases": [
+        "Emmys",
+        "The Emmy Awards",
+        "Primetime Emmy Awards",
+        "story:emmys"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "Primetime Emmy Awards statuette on stage",
+      "url": "https://image.tmdb.org/t/p/w780/nyGJjd9ALDpGFHEaGoZ1DLB0zUE.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "golden-globe-awards",
+      "aliases": [
+        "Golden Globes",
+        "Golden Globe Awards",
+        "story:golden_globes"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "Golden Globe Awards trophy backdrop",
+      "url": "https://image.tmdb.org/t/p/w780/jiSlSDL0PZsd3DeW9832lk7eBsE.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "spider-man-brand-new-day",
+      "aliases": [
+        "Spider-Man: Brand New Day",
+        "Spider Man Brand New Day"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "Spider-Man: Brand New Day official poster",
+      "url": "https://image.tmdb.org/t/p/w342/bjiS5ipwxb9JFy3XRRN4OAilSeX.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "werwulf",
+      "aliases": [
+        "Werwulf"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "Werwulf official film poster",
+      "url": "https://image.tmdb.org/t/p/w342/imnkSt4PSQpxIuyiRpJCiLk3SZz.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "karol-g",
+      "aliases": [
+        "KAROL G",
+        "Karol G"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Karol G, Colombian singer-songwriter",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cb/Karol_G_en_2018.jpg/500px-Karol_G_en_2018.jpg",
+      "credit": "Programas Telemedellín (CC BY 3.0, Wikimedia Commons)",
+      "author": "Programas Telemedellín",
+      "license": "CC BY 3.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Karol_G_en_2018.jpg"
+    },
+    {
+      "entity_key": "cardi-b",
+      "aliases": [
+        "Cardi B"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Cardi B, American rapper",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/35/Cardi_B_December_2018.jpg/500px-Cardi_B_December_2018.jpg",
+      "credit": "Chrisallmeid (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Chrisallmeid",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Cardi_B_December_2018.jpg"
+    },
+    {
+      "entity_key": "young-miko",
+      "aliases": [
+        "Young Miko"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Young Miko performing live in 2023",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/15/Young_Miko_en_2023.jpg/500px-Young_Miko_en_2023.jpg",
+      "credit": "La Prensa Gráfica Noticias de El Salvador (CC BY 3.0, Wikimedia Commons)",
+      "author": "La Prensa Gráfica Noticias de El Salvador",
+      "license": "CC BY 3.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Young_Miko_en_2023.jpg"
+    },
+    {
+      "entity_key": "sean-strickland",
+      "aliases": [
+        "Sean Strickland"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Sean Strickland, American UFC middleweight fighter",
+      "url": "https://a.espncdn.com/i/headshots/mma/players/full/3093653.png"
+    },
+    {
+      "entity_key": "israel-adesanya",
+      "aliases": [
+        "Israel Adesanya",
+        "domain-fallback-mma"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Israel Adesanya, UFC middleweight fighter",
+      "url": "https://a.espncdn.com/i/headshots/mma/players/full/4285679.png"
+    },
+    {
+      "entity_key": "jeeno-thitikul",
+      "aliases": [
+        "Jeeno Thitikul",
+        "Atthaya Thitikul"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Jeeno Thitikul, LPGA golfer",
+      "url": "https://a.espncdn.com/i/headshots/golf/players/full/11119.png"
+    },
+    {
+      "entity_key": "sofi-stadium-super-bowl",
+      "aliases": [
+        "Super Bowl LXI",
+        "advertise during the Big Game",
+        "run an Ad during Super Bowl",
+        "Big Game ad",
+        "domain-fallback-football"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "SoFi Stadium football field in Inglewood, California (host of Super Bowl LXI)",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bd/SoFi_Stadium_%2851126606022%29.jpg/500px-SoFi_Stadium_%2851126606022%29.jpg",
+      "credit": "Prayitno Photography (CC BY 2.0, Wikimedia Commons)",
+      "author": "Prayitno Photography",
+      "license": "CC BY 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:SoFi_Stadium_(51126606022).jpg"
+    },
+    {
+      "entity_key": "nyse-ipo-exchange",
+      "aliases": [
+        "IPOs",
+        "story:ipo_markets",
+        "Anthropic IPO",
+        "Kimi (Moonshot AI) IPO",
+        "Moonshot AI IPO",
+        "New York Stock Exchange",
+        "domain-fallback-economics"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "New York Stock Exchange facade on Wall Street",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/92/New_York_Stock_Exchange_August_2017_02.jpg/500px-New_York_Stock_Exchange_August_2017_02.jpg",
+      "credit": "Arild Vågen (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Arild Vågen",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:New_York_Stock_Exchange_August_2017_02.jpg"
+    },
+    {
+      "entity_key": "nvidia-headquarters",
+      "aliases": [
+        "NVIDIA (NVDA)",
+        "NVIDIA Headquarters",
+        "NVDA"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "NVIDIA corporate headquarters in Santa Clara, California",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0f/NVIDIA_Headquarters.jpg/500px-NVIDIA_Headquarters.jpg",
+      "credit": "Coolcaesar (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Coolcaesar",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:NVIDIA_Headquarters.jpg"
+    },
+    {
+      "entity_key": "wti-crude-oil-pumpjack",
+      "aliases": [
+        "WTI Crude Oil",
+        "WTI Crude Oil (WTI)",
+        "Brent Crude Oil"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Oil pumpjack operating in the Permian Basin",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5c/Oil_pumpjack_in_the_Permian_Basin.jpg/500px-Oil_pumpjack_in_the_Permian_Basin.jpg",
+      "credit": "Quintin Soloviev (CC BY 4.0, Wikimedia Commons)",
+      "author": "Quintin Soloviev",
+      "license": "CC BY 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Oil_pumpjack_in_the_Permian_Basin.jpg"
+    },
+    {
+      "entity_key": "fda-white-oak-campus",
+      "aliases": [
+        "FDA Commissioner",
+        "Food and Drug Administration",
+        "domain-fallback-health"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "U.S. Food and Drug Administration Building 62 at White Oak Campus",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/85/FDA_Bldg_62_-_Exterior_%285161375340%29.jpg/500px-FDA_Bldg_62_-_Exterior_%285161375340%29.jpg",
+      "credit": "The U.S. Food and Drug Administration (Public domain, Wikimedia Commons)",
+      "author": "The U.S. Food and Drug Administration",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:FDA_Bldg_62_-_Exterior_(5161375340).jpg"
+    },
+    {
+      "entity_key": "ocean-container-shipping",
+      "aliases": [
+        "Bab el-Mandeb Strait",
+        "Red Sea shipping",
+        "Suez Canal",
+        "Strait of Hormuz",
+        "domain-fallback-geopolitics"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Ocean Network Express container ship at sea",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e2/Ocean_Network_Express_container_ship_entering_Tokyo_harbor.jpg/500px-Ocean_Network_Express_container_ship_entering_Tokyo_harbor.jpg",
+      "credit": "Syced (CC0, Wikimedia Commons)",
+      "author": "Syced",
+      "license": "CC0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Ocean_Network_Express_container_ship_entering_Tokyo_harbor.jpg"
+    },
+    {
+      "entity_key": "us-capitol-building",
+      "aliases": [
+        "U.S. Capitol",
+        "United States Capitol",
+        "domain-fallback-politics"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "United States Capitol west front in Washington, D.C.",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a3/United_States_Capitol_west_front_edit2.jpg/500px-United_States_Capitol_west_front_edit2.jpg",
+      "credit": "Architect of the Capitol / O.J. (Public domain, Wikimedia Commons)",
+      "author": "Architect of the Capitol / O.J.",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:United_States_Capitol_west_front_edit2.jpg"
+    },
+    {
+      "entity_key": "nersc-data-center",
+      "aliases": [
+        "By November 30",
+        "roundup:by-november-30",
+        "domain-fallback-tech"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "High-performance computing server rack at NERSC data center",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/ff/Rear_of_rack_at_NERSC_data_center_-_closeup.jpg/500px-Rear_of_rack_at_NERSC_data_center_-_closeup.jpg",
+      "credit": "Derrick Coetzee (CC0, Wikimedia Commons)",
+      "author": "Derrick Coetzee",
+      "license": "CC0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Rear_of_rack_at_NERSC_data_center_-_closeup.jpg"
+    },
+    {
+      "entity_key": "royal-canberra-golf-green",
+      "aliases": [
+        "Two tournaments",
+        "roundup:golf-this-week",
+        "The RSM Classic Winner",
+        "domain-fallback-golf"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Aerial view of putting green and bunker on championship golf course",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/af/Putting_green_at_the_Royal_Canberra_Golf_Club_4.JPG/500px-Putting_green_at_the_Royal_Canberra_Golf_Club_4.JPG",
+      "credit": "Neuroxic (CC BY 4.0, Wikimedia Commons)",
+      "author": "Neuroxic",
+      "license": "CC BY 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Putting_green_at_the_Royal_Canberra_Golf_Club_4.JPG"
+    },
+    {
+      "entity_key": "noaa-lightning-storm",
+      "aliases": [
+        "7.0+ earthquake",
+        "domain-fallback-weather"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Cloud-to-ground lightning storm photographed by NOAA",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/83/Lightning_in_Dallas_2015.jpg/500px-Lightning_in_Dallas_2015.jpg",
+      "credit": "NOAA Photo Library (Public domain, Wikimedia Commons)",
+      "author": "NOAA Photo Library",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Lightning_in_Dallas_2015.jpg"
+    },
+    {
+      "entity_key": "jpj-basketball-arena",
+      "aliases": [
+        "domain-fallback-basketball"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "John Paul Jones basketball arena exterior",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6d/John_Paul_Jones_Arena_HDR.jpg/500px-John_Paul_Jones_Arena_HDR.jpg",
+      "credit": "Bob Mical (CC BY 2.0, Wikimedia Commons)",
+      "author": "Bob Mical",
+      "license": "CC BY 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:John_Paul_Jones_Arena_HDR.jpg"
+    },
+    {
+      "entity_key": "hanbat-baseball-stadium",
+      "aliases": [
+        "domain-fallback-baseball"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Baseball stadium diamond and outfield in summer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/25/Daejeon_Hanbat_Baseball_Stadium_Summer_2023.jpg/500px-Daejeon_Hanbat_Baseball_Stadium_Summer_2023.jpg",
+      "credit": "Pmlydon (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Pmlydon",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Daejeon_Hanbat_Baseball_Stadium_Summer_2023.jpg"
+    },
+    {
+      "entity_key": "armstrong-hockey-rink",
+      "aliases": [
+        "domain-fallback-hockey"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Ice hockey arena rink surface and boards",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/ff/Earl_Armstrong_Arena_Rink_01.jpg/500px-Earl_Armstrong_Arena_Rink_01.jpg",
+      "credit": "Ross Dunn (CC BY-SA 2.0, Wikimedia Commons)",
+      "author": "Ross Dunn",
+      "license": "CC BY-SA 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Earl_Armstrong_Arena_Rink_01.jpg"
+    },
+    {
+      "entity_key": "championship-soccer-stadium",
+      "aliases": [
+        "domain-fallback-soccer"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Championship Soccer Stadium pitch and stands",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5a/Championship-Soccer-Stadium-SE-Field-View-2024-08-03.jpg/500px-Championship-Soccer-Stadium-SE-Field-View-2024-08-03.jpg",
+      "credit": "Haruhi8 (CC0, Wikimedia Commons)",
+      "author": "Haruhi8",
+      "license": "CC0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Championship-Soccer-Stadium-SE-Field-View-2024-08-03.jpg"
+    },
+    {
+      "entity_key": "black-doves-tv",
+      "aliases": [
+        "Black Doves"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "Black Doves espionage drama television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/642/1607270.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/68407/black-doves"
+    },
+    {
+      "entity_key": "nobody-wants-this-tv",
+      "aliases": [
+        "Nobody Wants This"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "Nobody Wants This comedy television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/646/1615448.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/77060/nobody-wants-this"
+    },
+    {
+      "entity_key": "squid-game-tv",
+      "aliases": [
+        "Squid Game"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "Squid Game television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/576/1440521.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/43687/squid-game"
+    },
+    {
+      "entity_key": "wednesday-tv",
+      "aliases": [
+        "Wednesday"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "Wednesday television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/586/1466410.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/53647/wednesday"
+    },
+    {
+      "entity_key": "the-night-agent-tv",
+      "aliases": [
+        "The Night Agent"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "The Night Agent thriller television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/614/1536331.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/56512/the-night-agent"
+    },
+    {
+      "entity_key": "bridgerton-tv",
+      "aliases": [
+        "Bridgerton"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "Bridgerton drama television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/614/1535959.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/42966/bridgerton"
+    },
+    {
+      "entity_key": "survivor-tv",
+      "aliases": [
+        "Survivor"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "Survivor competition television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/641/1603530.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/114/survivor"
+    },
+    {
+      "entity_key": "the-white-lotus-tv",
+      "aliases": [
+        "The White Lotus"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "The White Lotus anthology television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/557/1393876.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/51394/the-white-lotus"
+    },
+    {
+      "entity_key": "severance-tv",
+      "aliases": [
+        "Severance"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "Severance science-fiction drama television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/548/1371406.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/44933/severance"
     }
   ]
 }

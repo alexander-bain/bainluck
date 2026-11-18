@@ -42,7 +42,8 @@ from sqlalchemy import text
 #: its handler so the destructive-handler census can see it delete; a test pins
 #: the two equal, so they cannot drift apart.
 #:
-#: A row with a source id is a duplicate only of an older row with the SAME id.
+#: A row with a source id is a duplicate only of an older row with the SAME id
+#: in the SAME sport (the resolver's key and the unique index include the sport).
 #: A row with NO source id is a duplicate only of an older exact repeat: same
 #: source, same name, same sport key. A distinct name is never deleted. The old
 #: form compared ``source_id IS NOT DISTINCT FROM``, under which two NULL ids are
@@ -53,7 +54,8 @@ MAPPING_DEDUP_SQL = (
     "DELETE FROM team_identity_mapping a USING team_identity_mapping b "
     "WHERE a.id > b.id AND a.team_id = b.team_id AND a.source = b.source "
     "AND a.team_id = :tid "
-    "AND ((a.source_id IS NOT NULL AND a.source_id = b.source_id) "
+    "AND ((a.source_id IS NOT NULL AND a.source_id = b.source_id "
+    "AND a.sport_key IS NOT DISTINCT FROM b.sport_key) "
     "OR (a.source_id IS NULL AND b.source_id IS NULL "
     "AND a.source_name IS NOT DISTINCT FROM b.source_name "
     "AND a.sport_key IS NOT DISTINCT FROM b.sport_key))"

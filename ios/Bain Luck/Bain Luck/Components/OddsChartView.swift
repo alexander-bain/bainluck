@@ -1174,9 +1174,10 @@ struct OddsChartView: View {
                 // plot's window read the same answer.
                 let axis = axisPlan9483(dataPoints: dataPoints, checkpoints: checkpoints,
                                         sourcesOpen: inlineSourcesOpen)
+                let soccerThreeLine = soccerThreeLineSeries(from: history)
                 // #3278 — "drawable", not "non-empty". See `hasDrawableLine`: one
                 // snapshot in the window rendered the whole frame around no line.
-                if !Self.chartIsDrawable(dataPoints, mount: checkpoints) {
+                if soccerThreeLine == nil && !Self.chartIsDrawable(dataPoints, mount: checkpoints) {
                     Text(Self.emptyChartMessage(
                         range: drawnRange,
                         hasAnyPointInRange: !dataPoints.isEmpty,
@@ -1218,6 +1219,7 @@ struct OddsChartView: View {
                                                              color: teamColors?.home ?? .blue)
                                 }
                             }
+                            .opacity(soccerThreeLine == nil ? 1 : 0)
                             .accessibilityElement(children: .ignore)
                             .accessibilityLabel(axis.homePoleSentence(homeName: homeShort, awayName: awayShort))
                             Spacer()
@@ -1255,7 +1257,8 @@ struct OddsChartView: View {
                                     page: readout, homeTeam: homeTeamName, awayTeam: awayTeamName,
                                     colors: teamColors, homeLogo: homeTeamLogo, awayLogo: awayTeamLogo,
                                     finished: EventState.isFinished(status)),
-                                  tennis: tennis)
+                                  tennis: tennis,
+                                  soccerThreeLine: soccerThreeLine)
                     }
                     .frame(height: chartHeight)
                     // #10876 — the explore-the-chart tip, inline chart only.
@@ -1269,7 +1272,8 @@ struct OddsChartView: View {
                     // it labels; the 2pt lifts it off the x-axis tick labels, which
                     // sit flush against the bottom of the chart's own frame.
                     legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
-                               sourcesOpen: $inlineSourcesOpen, rail: false)
+                               sourcesOpen: $inlineSourcesOpen, rail: false,
+                               soccerThreeLine: soccerThreeLine)
 
                     // Indented onto the SAME left margin as the plot area and the
                     // legend, for the reason UX-P090 gives above: three rows that
@@ -1318,12 +1322,13 @@ struct OddsChartView: View {
                     // gutter and plot as inline.
                     let axis = axisPlan9483(dataPoints: dataPoints, checkpoints: checkpoints,
                                             sourcesOpen: fullscreenSourcesOpen)
+                    let soccerThreeLine = soccerThreeLineSeries(from: history)
                     // #3278 — the same drawability test the inline chart uses. This
                     // branch used to render literally nothing (a blank sheet under a
                     // nav bar) when there were no points, and the full frame around
                     // no line when there was one. Both now say what is true, and the
                     // picker stays so "All" is reachable from here too.
-                    if !Self.chartIsDrawable(dataPoints, mount: checkpoints) {
+                    if soccerThreeLine == nil && !Self.chartIsDrawable(dataPoints, mount: checkpoints) {
                         VStack(spacing: 12) {
                             if showPicker {
                                 HStack {
@@ -1413,6 +1418,7 @@ struct OddsChartView: View {
                                                                          color: teamColors?.home ?? .blue)
                                             }
                                         }
+                                        .opacity(soccerThreeLine == nil ? 1 : 0)
                                         .accessibilityElement(children: .ignore)
                                         .accessibilityLabel(axis.homePoleSentence(homeName: homeShort, awayName: awayShort))
                                         Spacer()
@@ -1443,12 +1449,14 @@ struct OddsChartView: View {
                                           periodMarkers: periodMarkers, moments: moments,
                                           checkpoints: checkpoints, axis: axis,
                                           plotWidth: $fullscreenPlotWidth, sharesPageAxis: false,
-                                          pageGaveCard: readout != nil, tennis: tennis)
+                                          pageGaveCard: readout != nil, tennis: tennis,
+                                          soccerThreeLine: soccerThreeLine)
                             }
                             // #10796 — nil leaves the row as flexible as it was.
                             .frame(height: enlargedPlotFloor)
                             legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
-                                       sourcesOpen: $fullscreenSourcesOpen, rail: true)
+                                       sourcesOpen: $fullscreenSourcesOpen, rail: true,
+                                       soccerThreeLine: soccerThreeLine)
                             momentCaption(moments)
                             if enlargedPlotFloor != nil, let tennis {
                                 TennisScrubbedReadingPanel9483(selection: selection,
@@ -2103,6 +2111,25 @@ struct OddsChartView: View {
 
     // MARK: - Chart Content Builder (extracted to reduce type-checker load)
 
+    private func soccerThreeLineSeries(from history: EventHistoryResponse) -> SoccerThreeLineChart211A.Series? {
+        let shortPair = TeamShortName.shortPair(
+            away: awayTeamName ?? awayShort,
+            home: homeTeamName ?? homeShort,
+            sportKey: sportKey
+        )
+        return SoccerThreeLineChart211A.build(
+            history: history,
+            sportKey: sportKey,
+            status: status,
+            commenceTime: commenceTime,
+            selectedRange: drawnRange,
+            homeLabel: shortPair.home,
+            awayLabel: shortPair.away,
+            homeCode: homeShort,
+            awayCode: awayShort
+        )
+    }
+
     @ChartContentBuilder
     private func chartContent(
         dataPoints: [ChartDataPoint],
@@ -2111,7 +2138,8 @@ struct OddsChartView: View {
         moments: [ChartMoment],
         liveSplit: LiveEdgeSplit? = nil,
         checkpoints: PublicationCheckpointMount4974? = nil,
-        axis: AxisPlan9483
+        axis: AxisPlan9483,
+        soccerThreeLine: SoccerThreeLineChart211A.Series? = nil
     ) -> some ChartContent {
         let _ = vm.onPlotBuild?()
         // 50% reference line (single 0–100 axis: even is 0.5) — only where the
@@ -2127,30 +2155,23 @@ struct OddsChartView: View {
         // them: open adds context, it never buries the line being followed.
         // Empty while Sources is closed, and always empty without a blend
         // (every line is then already drawn, see `revealableSources9483`).
-        ForEach(axis.revealed, id: \.self) { source in
-            sourceLines(source, points: dataPoints.filter { $0.source == source },
-                        sources: sources, liveSplit: nil)
+        if soccerThreeLine == nil {
+            ForEach(axis.revealed, id: \.self) { source in
+                sourceLines(source, points: dataPoints.filter { $0.source == source },
+                            sources: sources, liveSplit: nil)
+            }
         }
 
-        // Data lines. When the backend blend exists it is the ONLY default line
-        // ("the blend is the product" — one number per question); source detail
-        // never competes with it unless the reader opens Sources. Absent a
-        // blend we fail closed to the full set with the sportsbook consensus as
-        // primary (L2-216).
-        //
-        // #11356 — ONE LINE, ONE IDENTITY. The primary line keeps its own
-        // colour, weight and orientation on both sides of 50%, closed or open.
-        // #10456's balance ink (the line re-coloured home above 50%, away
-        // below) and #9483's paired lines (a second, complementary copy in the
-        // away colour, NFL, final MLB and tennis) are retired with it: the
-        // team colours now name the two DIRECTIONS outside the plot (the
-        // gutter's poles and the axis ticks), never the line.
-        //
-        // #4974 — a mount exists only over a blend, and a blend is the ONLY
-        // default line, so the accepted checkpoint layer replaces exactly that
-        // series: its dots, and the blend's own runs with the recorded window
-        // cut out. No live split runs beside it (`chartView`).
-        if let checkpoints {
+        // Ruling 211-A — soccer charts draw all three lines (Home, Draw in lighter grey,
+        // Away) on 0 to 100 whenever genuine 3-way probabilities exist.
+        if let soccerThreeLine {
+            SoccerThreeLineChart211A.chartMarks(
+                segments: soccerThreeLine.segments,
+                homeColor: teamColors?.home ?? .blue,
+                drawColor: HeadlineStyleTable199.drawInk,
+                awayColor: teamColors?.away ?? .red
+            )
+        } else if let checkpoints {
             PublicationCheckpointLayer4974(
                 plan: checkpoints.plan,
                 color: colorForSource(PublicationCheckpointMount4974.blendSource, sources: sources),
@@ -2169,27 +2190,22 @@ struct OddsChartView: View {
                 .foregroundStyle(.secondary.opacity(0.25))
         }
 
-        // Moments (#3196) — drawn LAST so they sit on top of the line they annotate.
-        //
-        // In the PRIMARY LINE'S OWN COLOUR, ringed. A marker is a point on this curve
-        // that matters, not a second data series, and colouring it by actor team
-        // would put a third and fourth colour on a chart whose whole rule is that
-        // the blend is one number ("the blend is the product"). The ring is what
-        // separates it from the line without a new hue.
-        ForEach(moments) { moment in
-            PointMark(
-                x: .value("Moment", moment.date),
-                y: .value("Win probability", moment.probability)
-            )
-            .symbolSize(momentSymbolArea)
-            .foregroundStyle(colorForSource(Self.primarySource(in: dataPoints), sources: sources))
-            .annotation(position: .overlay, spacing: 0) {
-                Circle()
-                    .stroke(Color.systemBackground, lineWidth: 1.5)
-                    .frame(width: MomentMarkerGeometry.markerDiameterPoints,
-                           height: MomentMarkerGeometry.markerDiameterPoints)
+        if soccerThreeLine == nil {
+            ForEach(moments) { moment in
+                PointMark(
+                    x: .value("Moment", moment.date),
+                    y: .value("Win probability", moment.probability)
+                )
+                .symbolSize(momentSymbolArea)
+                .foregroundStyle(colorForSource(Self.primarySource(in: dataPoints), sources: sources))
+                .annotation(position: .overlay, spacing: 0) {
+                    Circle()
+                        .stroke(Color.systemBackground, lineWidth: 1.5)
+                        .frame(width: MomentMarkerGeometry.markerDiameterPoints,
+                               height: MomentMarkerGeometry.markerDiameterPoints)
+                }
+                .accessibilityLabel(Text(moment.label))
             }
-            .accessibilityLabel(Text(moment.label))
         }
     }
 
@@ -2267,11 +2283,13 @@ struct OddsChartView: View {
                            axis: AxisPlan9483,
                            plotWidth: Binding<CGFloat>, sharesPageAxis: Bool,
                            pageGaveCard: Bool, floatingCard: GamePlayCardView? = nil,
-                           tennis: TennisChartReading9483.Series? = nil) -> some View {
+                           tennis: TennisChartReading9483.Series? = nil,
+                           soccerThreeLine: SoccerThreeLineChart211A.Series? = nil) -> some View {
         // Filter period markers to visible data range
         let visibleMarkers: [PeriodMarker]
-        if let minDate = dataPoints.map(\.date).min(),
-           let maxDate = dataPoints.map(\.date).max() {
+        let markerReferenceDates = soccerThreeLine?.points.map(\.date) ?? dataPoints.map(\.date)
+        if let minDate = markerReferenceDates.min(),
+           let maxDate = markerReferenceDates.max() {
             visibleMarkers = periodMarkers.filter { $0.date >= minDate && $0.date <= maxDate }
         } else {
             visibleMarkers = periodMarkers
@@ -2290,7 +2308,8 @@ struct OddsChartView: View {
         // One plan and one set of tick instants, read by the gridlines AND the
         // labels drawn in the overlay (#8481), so the two cannot disagree.
         // #4974 — drawn checkpoints widen the natural domain; a forced one wins.
-        let domain = xAxisDomain(for: dataPoints, checkpointDates: checkpoints?.drawn.map(\.date) ?? [])
+        let extraDomainDates = soccerThreeLine?.points.map(\.date) ?? (checkpoints?.drawn.map(\.date) ?? [])
+        let domain = xAxisDomain(for: dataPoints, checkpointDates: extraDomainDates)
         let plan = Self.xAxisPlan(
             for: domain,
             plotWidth: Self.axisPlanWidth(
@@ -2306,13 +2325,15 @@ struct OddsChartView: View {
         // draw the blend a second time, uncut, and color a crossing of 50% that
         // nothing recorded; the live split is a live page's, and a mount is a
         // finished page's.
-        let liveSplit = checkpoints == nil ? liveEdgeSplit(dataPoints: dataPoints, domain: domain) : nil
+        let liveSplit = (checkpoints == nil && soccerThreeLine == nil)
+            ? liveEdgeSplit(dataPoints: dataPoints, domain: domain)
+            : nil
         // #11356 — the end of a finished game's line, labelled once the game is
         // over: the resting checkpoint endpoint, else the primary line's last
         // reading. A live page keeps its edge marker's label; a page that is
         // neither prints no number at the end (its newest price is the hero's,
         // with its own currentness).
-        let finishedEnd = liveSplit == nil
+        let finishedEnd = (liveSplit == nil && soccerThreeLine == nil)
             ? Self.finishedEnd9483(dataPoints: dataPoints, checkpoints: checkpoints,
                                    finished: EventState.isFinished(status))
             : nil
@@ -2324,7 +2345,8 @@ struct OddsChartView: View {
                          visibleMarkers: visibleMarkers, moments: moments,
                          liveSplit: liveSplit,
                          checkpoints: checkpoints,
-                         axis: axis)
+                         axis: axis,
+                         soccerThreeLine: soccerThreeLine)
         }
         .chartYScale(domain: axis.window.domain)
         .chartXScale(domain: domain)
@@ -2376,7 +2398,7 @@ struct OddsChartView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .position(x: plotFrame.minX + placement.centerX, y: 10)
                 }
-                let atlasSettledResult: EventAtlasSettledResult11666? = ReleaseSurfaces.isEventPageAtlasEnabled()
+                let atlasSettledResult: EventAtlasSettledResult11666? = (soccerThreeLine == nil && ReleaseSurfaces.isEventPageAtlasEnabled())
                     ? EventAtlasChartMarks11666.settledResult(
                         dataPoints: dataPoints,
                         checkpoints: checkpoints,
@@ -2388,125 +2410,105 @@ struct OddsChartView: View {
                         servedSettledResult: servedSettledResult
                     )
                     : nil
-                if ReleaseSurfaces.isEventPageAtlasEnabled() {
-                    EventAtlasChartOverlay11666(
+                if let soccerThreeLine {
+                    SoccerThreeLineScrubOverlay211A(
                         selection: selection,
+                        series: soccerThreeLine,
                         proxy: proxy,
                         plotFrame: plotFrame,
-                        dataPoints: dataPoints,
-                        checkpoints: checkpoints,
-                        history: vm.history,
-                        status: status,
-                        sides: axis.sides,
-                        includesOpening: drawnRange == .all,
-                        primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: sources),
-                        homeScore: homeScore,
-                        awayScore: awayScore,
-                        servedSettledResult: servedSettledResult,
-                        gameStart: kickoffDate,
-                        settledResult: atlasSettledResult
+                        homeColor: teamColors?.home ?? .blue,
+                        awayColor: teamColors?.away ?? .red
                     )
-                }
-                if let liveSplit, let liveEdge {
-                    // #11356 — the tail, and the arrival halo at its end, wear
-                    // the primary line's own colour: one line, one identity, on
-                    // both sides of 50%.
-                    LiveChartEdgeMarker(
-                        selection: selection, proxy: proxy, plotFrame: plotFrame,
-                        tail: liveSplit.tail, segments: liveSplit.segments,
-                        label: "\(homeShort) \(liveEdge.homeLabel)",
-                        rising: Self.liveEdgeRising(priceActivity, showsPreview: liveEdgeShowsPreview),
-                        lineColor: colorForSource(liveSplit.source, sources: sources),
-                        lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
-                        activity: priceActivity, pulseColor: colorForSource(liveSplit.source, sources: sources))
-                        .accessibilityHidden(true)
-                } else if let checkpoints {
-                    // #4974 — the line's end is the resting endpoint the readout
-                    // names: a drawn checkpoint at its own time and value, or the
-                    // last surviving line point. Never a suppressed point, and
-                    // never animated — a finished page has no live price.
-                    if let end = checkpoints.resting, let date = end.date, let probability = end.probability,
-                       let x = proxy.position(forX: date),
-                       let y = proxy.position(forY: probability),
-                       x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
-                        LiveChartEndpointFeedback(selection: selection, activity: nil,
-                                                  probability: probability, isLive: false,
-                                                  color: colorForSource(PublicationCheckpointMount4974.blendSource,
-                                                                        sources: sources))
+                } else {
+                    if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                        EventAtlasChartOverlay11666(
+                            selection: selection,
+                            proxy: proxy,
+                            plotFrame: plotFrame,
+                            dataPoints: dataPoints,
+                            checkpoints: checkpoints,
+                            history: vm.history,
+                            status: status,
+                            sides: axis.sides,
+                            includesOpening: drawnRange == .all,
+                            primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: sources),
+                            homeScore: homeScore,
+                            awayScore: awayScore,
+                            servedSettledResult: servedSettledResult,
+                            gameStart: kickoffDate,
+                            settledResult: atlasSettledResult,
+                            liveTailVertex: liveEdge != nil ? liveSplit?.tail.to : nil
+                        )
+                    }
+                    if let liveSplit, let liveEdge {
+                        LiveChartEdgeMarker(
+                            selection: selection, proxy: proxy, plotFrame: plotFrame,
+                            tail: liveSplit.tail, segments: liveSplit.segments,
+                            label: "\(homeShort) \(liveEdge.homeLabel)",
+                            rising: Self.liveEdgeRising(priceActivity, showsPreview: liveEdgeShowsPreview),
+                            lineColor: colorForSource(liveSplit.source, sources: sources),
+                            lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
+                            activity: priceActivity, pulseColor: colorForSource(liveSplit.source, sources: sources))
+                            .accessibilityHidden(true)
+                    } else if let checkpoints {
+                        if let end = checkpoints.resting, let date = end.date, let probability = end.probability,
+                           let x = proxy.position(forX: date),
+                           let y = proxy.position(forY: probability),
+                           x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
+                            LiveChartEndpointFeedback(selection: selection, activity: nil,
+                                                      probability: probability, isLive: false,
+                                                      color: colorForSource(PublicationCheckpointMount4974.blendSource,
+                                                                            sources: sources))
+                                .position(x: plotFrame.minX + x, y: plotFrame.minY + y)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        }
+                    } else if let latest = Self.latestPrimaryPoint(in: dataPoints),
+                              let x = proxy.position(forX: latest.date),
+                              let y = proxy.position(forY: latest.probability),
+                              x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
+                        LiveChartEndpointFeedback(selection: selection, activity: priceActivity,
+                                                  probability: latest.probability,
+                                                  isLive: EventPriceStreaming.isEligible(status) && liveUpdateStatus != .interrupted
+                                                    && quoteIsCurrent,
+                                                  color: colorForSource(Self.primarySource(in: dataPoints), sources: sources))
                             .position(x: plotFrame.minX + x, y: plotFrame.minY + y)
                             .allowsHitTesting(false)
                             .accessibilityHidden(true)
                     }
-                } else if let latest = Self.latestPrimaryPoint(in: dataPoints),
-                          let x = proxy.position(forX: latest.date),
-                          let y = proxy.position(forY: latest.probability),
-                          x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
-                    // No line proven to carry the hero's number: the unlabelled
-                    // one-shot ring the chart had before #9436, unchanged — in
-                    // the colour of the primary line it sits on (#11356).
-                    LiveChartEndpointFeedback(selection: selection, activity: priceActivity,
-                                              probability: latest.probability,
-                                              isLive: EventPriceStreaming.isEligible(status) && liveUpdateStatus != .interrupted
-                                                && quoteIsCurrent,
-                                              color: colorForSource(Self.primarySource(in: dataPoints), sources: sources))
-                        .position(x: plotFrame.minX + x, y: plotFrame.minY + y)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
-                // #11356 — a finished game's end, named once beside its dot and
-                // stepped off the line it ends: above it when the line climbed
-                // in, below it when it fell. Static (no finger state is read),
-                // so a scrub never rebuilds it; VoiceOver reads the resting
-                // readout instead.
-                // #11666 Step E2 — when the Atlas settled result word (`✓ Won` / `✗ Lost`)
-                // is drawn at the terminal point, suppress the percentage label so the two
-                // do not collide as `"✓ Won 100%"`.
-                if let finishedEnd {
-                    if atlasSettledResult == nil {
-                        finishedEndLabel9483(finishedEnd, line: endLine,
-                                             ink: Self.primaryInk9483(dataPoints: dataPoints, checkpoints: checkpoints,
-                                                                      gameStart: gameStartDate),
-                                             sides: axis.sides, proxy: proxy, plotFrame: plotFrame,
-                                             color: colorForSource(Self.primarySource(in: dataPoints), sources: sources),
-                                             halfStroke: strokeStyleForSource(Self.primarySource(in: dataPoints),
-                                                                              sources: sources).lineWidth / 2)
+                    if let finishedEnd {
+                        if atlasSettledResult == nil {
+                            finishedEndLabel9483(finishedEnd, line: endLine,
+                                                 ink: Self.primaryInk9483(dataPoints: dataPoints, checkpoints: checkpoints,
+                                                                          gameStart: gameStartDate),
+                                                 sides: axis.sides, proxy: proxy, plotFrame: plotFrame,
+                                                 color: colorForSource(Self.primarySource(in: dataPoints), sources: sources),
+                                                 halfStroke: strokeStyleForSource(Self.primarySource(in: dataPoints),
+                                                                                  sources: sources).lineWidth / 2)
+                        }
                     }
+                    if let tennis {
+                        TennisHeldReadingMarker9483(pin: tennisPin, selection: selection, series: tennis,
+                                                    proxy: proxy, plotFrame: plotFrame,
+                                                    color: colorForSource(tennis.source, sources: sources),
+                                                    awayColor: nil)
+                    }
+                    OddsChartSelectionOverlay(selection: selection, proxy: proxy, plotFrame: plotFrame,
+                                              dataPoints: dataPoints, homeShort: homeShort,
+                                              awayShort: awayShort, moments: moments,
+                                              pageGaveCard: pageGaveCard,
+                                              gameFinished: EventState.isFinished(status),
+                                              checkpoints: checkpoints,
+                                              sportKey: sportKey, floatingCard: floatingCard)
+                        .readingPhases(readoutContext(dataPoints: dataPoints, checkpoints: checkpoints,
+                                                      pageGaveCard: pageGaveCard))
                 }
-                // #11356 (Design R2) — the held reading's dot sits on the line
-                // the readings are taken from, so it wears that line's colour:
-                // the primary line, or the one line drawn when that is the
-                // series (`readoutSource`).
-                if let tennis {
-                    TennisHeldReadingMarker9483(pin: tennisPin, selection: selection, series: tennis,
-                                                proxy: proxy, plotFrame: plotFrame,
-                                                color: colorForSource(tennis.source, sources: sources),
-                                                awayColor: nil)
-                }
-                OddsChartSelectionOverlay(selection: selection, proxy: proxy, plotFrame: plotFrame,
-                                          dataPoints: dataPoints, homeShort: homeShort,
-                                          awayShort: awayShort, moments: moments,
-                                          pageGaveCard: pageGaveCard,
-                                          gameFinished: EventState.isFinished(status),
-                                          checkpoints: checkpoints,
-                                          sportKey: sportKey, floatingCard: floatingCard)
-                    .readingPhases(readoutContext(dataPoints: dataPoints, checkpoints: checkpoints,
-                                                  pageGaveCard: pageGaveCard))
-                // #925 — the scrub. `chartXSelection` lost the touch to the
-                // page's scroll the moment a thumb drifted vertically (Alex's
-                // build-20 recording, 14781697). The futures chart solved the
-                // same contention with a UIKit pan that shares the touch
-                // (#6705, `ChartScrubSurface`); this chart adds the two things
-                // a whole-row readout needs on top: a HELD press owns the touch
-                // in any direction, and while a scrub owns it the page holds
-                // still under the thumb.
                 #if os(iOS)
                 if scrubSurfaces {
                 ChartScrubSurface(
                     holdToScrub: ChartScrubSurface.gameChartHold,
                     onChange: { location, translation in
-                        // #4974 — over a checkpoint mount the finger lands on a
-                        // stored checkpoint, a surviving line moment, or nothing.
-                        if let checkpoints {
+                        if soccerThreeLine == nil, let checkpoints {
                             let picked = checkpoints.selection(atChartX: location.x, plotFrame: plotFrame, proxy: proxy)
                             selection.change(date: picked.date, translation: translation, checkpoint: picked.scrub)
                         } else {
@@ -2516,7 +2518,7 @@ struct OddsChartView: View {
                         }
                     },
                     onHold: { location in
-                        if let checkpoints {
+                        if soccerThreeLine == nil, let checkpoints {
                             let picked = checkpoints.selection(atChartX: location.x, plotFrame: plotFrame, proxy: proxy)
                             selection.hold(date: picked.date, checkpoint: picked.scrub)
                         } else {
@@ -2584,7 +2586,15 @@ struct OddsChartView: View {
         .chartXSelection(value: Binding(get: { selection.date }, set: { selection.select($0) }))
         #endif
         .overlay(alignment: .topLeading) {
-            if sharesPageAxis, let history = vm.history, ReleaseSurfaces.isEventPageAtlasEnabled() {
+            if let soccerThreeLine {
+                SoccerThreeLineHeaderView211A(
+                    selection: selection,
+                    series: soccerThreeLine,
+                    homeColor: teamColors?.home ?? .blue,
+                    awayColor: teamColors?.away ?? .red
+                )
+                .padding(.top, 2)
+            } else if sharesPageAxis, let history = vm.history, ReleaseSurfaces.isEventPageAtlasEnabled() {
                 EventAtlasChartHeaderView11666(
                     selection: selection,
                     dataPoints: dataPoints,
@@ -2700,7 +2710,17 @@ struct OddsChartView: View {
     /// `railRow9483`.)
     @ViewBuilder
     private func legendView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo],
-                            sourcesOpen: Binding<Bool>, rail: Bool) -> some View {
+                            sourcesOpen: Binding<Bool>, rail: Bool,
+                            soccerThreeLine: SoccerThreeLineChart211A.Series? = nil) -> some View {
+        if let soccerThreeLine {
+            SoccerThreeLineLegendView211A(
+                homeLabel: soccerThreeLine.homeLabel,
+                awayLabel: soccerThreeLine.awayLabel,
+                homeColor: teamColors?.home ?? .blue,
+                awayColor: teamColors?.away ?? .red,
+                rail: rail
+            )
+        } else {
         let hasBlend = dataPoints.contains { $0.source == "aggregate" }
         let revealable = Self.revealableSources9483(in: dataPoints, withheld: withheldSources9483)
         // #11356 — a finished line's last recorded chance, named, on its own
@@ -2763,6 +2783,7 @@ struct OddsChartView: View {
                 .padding(.top, rail ? 0 : 2)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
         }
     }
 
@@ -5003,18 +5024,9 @@ extension OddsChartView {
         }
     }
 
-    /// Ruling 201: use 0 to 100 (`ChartProbabilityAxis9483.full`) only for soccer and
-    /// anything with a draw; for two teams or two players with no draw, keep the fitted
-    /// vertical scale the live page uses today (`probabilityWindow9483`).
+    /// Ruling 201 (#12750): delegates to the single shared scale rule (`ChartScaleRule201`).
     nonisolated static func usesZeroToHundredVerticalScale201(sportKey: String?) -> Bool {
-        if DrawPricedWinner.sportPricesADraw(sportKey) { return true }
-        guard let key = sportKey?.lowercased(), !key.isEmpty else { return false }
-        for prefix in ["soccer", "cricket", "boxing", "rugby", "rugbyunion", "rugbyleague", "chess"] {
-            if key == prefix || key.hasPrefix("\(prefix)_") {
-                return true
-            }
-        }
-        return false
+        ChartScaleRule201.usesZeroToHundredVerticalScale(sportKey: sportKey)
     }
 
     /// This chart's axis plan for one Sources state, from the points it draws
@@ -5023,9 +5035,10 @@ extension OddsChartView {
                               sourcesOpen: Bool) -> AxisPlan9483 {
         let revealed = sourcesOpen ? Self.revealableSources9483(in: dataPoints, withheld: withheldSources9483) : []
         let window: ChartProbabilityAxis9483.Window
-        if Self.usesZeroToHundredVerticalScale201(sportKey: sportKey) {
+        switch ChartScaleRule201.gameMode(sportKey: sportKey) {
+        case .fullZeroToHundred:
             window = ChartProbabilityAxis9483.full
-        } else {
+        case .fittedTwoWay, .zeroToTopValue:
             window = Self.probabilityWindow9483(
                 points: dataPoints,
                 defaultSources: Self.defaultVisibleSources(in: dataPoints),

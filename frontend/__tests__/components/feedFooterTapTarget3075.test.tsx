@@ -121,6 +121,18 @@ function plainParagraph(html: string): string | null {
   return m ? m[1] : null;
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#3075 — the footer's context text stays out of the thumb buttons", () => {
   // ARM 5 FIRST, because arms 1-4 are worthless if it fails: prove the fixture really
   // reaches the styled branch. A reason that takes the `<p>` branch would satisfy "no

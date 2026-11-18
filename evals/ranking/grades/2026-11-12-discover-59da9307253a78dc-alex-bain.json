@@ -1,0 +1,221 @@
+{
+ "slate_id": "59da9307253a78dc",
+ "surface": "discover",
+ "grader": "Alex Bain",
+ "expert": true,
+ "source": "grade-page",
+ "date": "2026-11-12",
+ "graded_on": "6506ee40",
+ "items": [
+  {
+   "position": 1,
+   "item_key": "event:15346029",
+   "grade": "neither",
+   "note": "",
+   "graded_at": "2026-11-12T15:59:12.948739+00:00"
+  },
+  {
+   "position": 2,
+   "item_key": "bundle:theme:story:ai:109596-61329163-60607595-60635344-70106582-70170820",
+   "grade": "interesting",
+   "note": "Would be better if it was slightly more visual",
+   "graded_at": "2026-11-12T15:59:39.391954+00:00"
+  },
+  {
+   "position": 3,
+   "item_key": "bundle:theme:story:major_entertainment_events:6173044-58492238-58492234-58492236",
+   "grade": "interesting",
+   "note": "Could we use TMDB to make this more visual? This is such a random selection as to be confusing; are we choosing these based on their proximity to 50%?",
+   "graded_at": "2026-11-12T16:00:24.670501+00:00"
+  },
+  {
+   "position": 4,
+   "item_key": "futures:58492245",
+   "grade": "shareable",
+   "note": "Use TMDB to make this visual!",
+   "graded_at": "2026-11-12T16:00:38.401385+00:00"
+  },
+  {
+   "position": 5,
+   "item_key": "futures:70032013",
+   "grade": "neither",
+   "note": "",
+   "graded_at": "2026-11-12T16:00:43.384599+00:00"
+  },
+  {
+   "position": 6,
+   "item_key": "futures:5455924",
+   "grade": "interesting",
+   "note": "",
+   "graded_at": "2026-11-12T16:00:46.983486+00:00"
+  },
+  {
+   "position": 7,
+   "item_key": "bundle:theme:story:macro_rates:57574250-56995847",
+   "grade": "interesting",
+   "note": "",
+   "graded_at": "2026-11-12T16:00:52.290170+00:00"
+  },
+  {
+   "position": 8,
+   "item_key": "futures:13792423",
+   "grade": "shareable",
+   "note": "",
+   "graded_at": "2026-11-12T16:00:55.701522+00:00"
+  },
+  {
+   "position": 9,
+   "item_key": "futures:63135157",
+   "grade": "neither",
+   "note": "",
+   "graded_at": "2026-11-12T16:00:58.220077+00:00"
+  },
+  {
+   "position": 10,
+   "item_key": "futures:20569380",
+   "grade": "interesting",
+   "note": "",
+   "graded_at": "2026-11-12T16:01:03.180925+00:00"
+  },
+  {
+   "position": 11,
+   "item_key": "bundle:roundup:cfp-picture",
+   "grade": "neither",
+   "note": "How were these teams chosen? Need to be clear",
+   "graded_at": "2026-11-12T16:01:19.739581+00:00"
+  },
+  {
+   "position": 12,
+   "item_key": "futures:113232",
+   "grade": "interesting",
+   "note": "",
+   "graded_at": "2026-11-12T16:01:24.899591+00:00"
+  },
+  {
+   "position": 13,
+   "item_key": "bundle:roundup:by-november-30",
+   "grade": "interesting",
+   "note": "It's terrifying to me that our probability for anything would ever be 12 days old!!!",
+   "graded_at": "2026-11-12T16:01:53.781577+00:00"
+  },
+  {
+   "position": 14,
+   "item_key": "futures:60600192",
+   "grade": "neither",
+   "note": "",
+   "graded_at": "2026-11-12T16:01:57.681160+00:00"
+  },
+  {
+   "position": 15,
+   "item_key": "bundle:roundup:liga-profesional-relegation-2026",
+   "grade": "neither",
+   "note": "How did we pick these five?!?!",
+   "graded_at": "2026-11-12T16:02:10.036114+00:00"
+  },
+  {
+   "position": 16,
+   "item_key": "event:15345987",
+   "grade": "neither",
+   "note": "Single game. Low stakes. No context. Already completed.",
+   "graded_at": "2026-11-12T16:02:24.798591+00:00"
+  },
+  {
+   "position": 17,
+   "item_key": "bundle:roundup:by-december-31",
+   "grade": "shareable",
+   "note": "Fun chance for AI commentary",
+   "graded_at": "2026-11-12T16:02:49.888912+00:00"
+  },
+  {
+   "position": 18,
+   "item_key": "event:15345865",
+   "grade": "neither",
+   "note": "",
+   "graded_at": "2026-11-12T16:02:51.621032+00:00"
+  },
+  {
+   "position": 19,
+   "item_key": "bundle:roundup:nhl-playoffs-2026-27",
+   "grade": "interesting",
+   "note": "",
+   "graded_at": "2026-11-12T16:02:55.375163+00:00"
+  },
+  {
+   "position": 20,
+   "item_key": "futures:69978131",
+   "grade": "interesting",
+   "note": "",
+   "graded_at": "2026-11-12T16:03:02.251013+00:00"
+  },
+  {
+   "position": 21,
+   "item_key": "bundle:roundup:golf-this-week",
+   "grade": "neither",
+   "note": "Confusing. I LOVE golf, but what is being shown here?",
+   "graded_at": "2026-11-12T16:03:24.601406+00:00"
+  },
+  {
+   "position": 39,
+   "item_key": "futures:109435",
+   "grade": "shareable",
+   "note": "",
+   "graded_at": "2026-11-12T16:03:31.966977+00:00"
+  },
+  {
+   "position": 56,
+   "item_key": "futures:60629711",
+   "grade": "neither",
+   "note": "",
+   "graded_at": "2026-11-12T16:03:35.612138+00:00"
+  },
+  {
+   "position": 74,
+   "item_key": "concept:event:ufc:26nov14",
+   "grade": "interesting",
+   "note": "The numbers are weirdly small on this card. Would be cool to show the fighters, and even cooler to show the other fights on this card in a group",
+   "graded_at": "2026-11-12T16:04:09.052746+00:00"
+  },
+  {
+   "position": 91,
+   "item_key": "futures:60473146",
+   "grade": "neither",
+   "note": "I actually really like the look of this card, but don't care about Japan's budget",
+   "graded_at": "2026-11-12T16:04:33.347233+00:00"
+  },
+  {
+   "position": 109,
+   "item_key": "futures:60527938",
+   "grade": "neither",
+   "note": "",
+   "graded_at": "2026-11-12T16:04:35.729935+00:00"
+  },
+  {
+   "position": 126,
+   "item_key": "futures:70044833",
+   "grade": "neither",
+   "note": "",
+   "graded_at": "2026-11-12T16:04:39.762753+00:00"
+  },
+  {
+   "position": 144,
+   "item_key": "concept:event:ufc:27feb06",
+   "grade": "neither",
+   "note": "",
+   "graded_at": "2026-11-12T16:04:43.649835+00:00"
+  },
+  {
+   "position": 161,
+   "item_key": "futures:114171",
+   "grade": "interesting",
+   "note": "",
+   "graded_at": "2026-11-12T16:04:51.343652+00:00"
+  },
+  {
+   "position": 179,
+   "item_key": "futures:69538547",
+   "grade": "interesting",
+   "note": "",
+   "graded_at": "2026-11-12T16:04:56.341763+00:00"
+  }
+ ]
+}

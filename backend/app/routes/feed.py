@@ -333,6 +333,11 @@ from app.utils.outcome_display import (
     drop_incoherent_ladder_outcomes,
     ladder_treatment_collapsed,
 )
+from app.utils.discover_game_reason import (
+    annotate_game_signals,
+    apply_game_reasons,
+    game_reason_enabled,
+)
 from app.utils.personalization import (
     PersonalizationContext,
     canonical_discover_category,
@@ -2560,8 +2565,22 @@ def apply_discover_display_chain(
         # D118 — and handed to a THIRD consumer, the browser. Stamped before the
         # noise filter runs so the flag rides the same dicts the filter keeps.
         _stamp_marquee_finals(items, kept_final_ids)
-        _demote_non_exceptional_discover_events(items, kept_final_ids, kept_kickoff_ids)
-        items = _filter_discover_event_noise(items, kept_final_ids, kept_kickoff_ids)
+        if game_reason_enabled():
+            # Ruling 190 (#11937): a single game takes a Discover seat only with a
+            # reason we can state from values we hold (stakes before, a sharp
+            # move during, an upset or a team-futures move after). Being a
+            # marquee fixture is not a reason, so the marquee sets keep only the
+            # games that have one — the lead pass can never demand a removed game.
+            items = apply_game_reasons(items)
+            _surviving = {
+                (it.get("data") or {}).get("id") for it in items if it.get("type") == "event"
+            }
+            kept_final_ids &= _surviving
+            kept_kickoff_ids &= _surviving
+            required_marquee_ids &= _surviving
+        else:
+            _demote_non_exceptional_discover_events(items, kept_final_ids, kept_kickoff_ids)
+            items = _filter_discover_event_noise(items, kept_final_ids, kept_kickoff_ids)
         # Re-sort after demotion so demoted events fall below high-scoring futures
         items.sort(key=_rank_key, reverse=True)
         items = balance_discover_event_category_mix(items)
@@ -6273,6 +6292,20 @@ async def get_feed(
             reviewed_keys=reviewed_keys,
             now=now,
         )
+        # Ruling 190 (#11937): the two game-reason signals that need the
+        # database (a live game's last-15-minute move, a finished game's teams'
+        # futures moves) are read here, once each, because the display chain
+        # below is synchronous. Only when that chain will run the reason pass.
+        if (
+            event_pct is not None
+            and event_pct < 0.3
+            and not my_teams_only
+            and game_reason_enabled()
+        ):
+            try:
+                await annotate_game_signals(db, feed_items, now)
+            except Exception:  # noqa: BLE001 — a failed read keeps the pregame/upset reasons (gotcha #42)
+                logger.warning("Discover game-reason signals failed; using card values only", exc_info=True)
         # Passive: ``None`` on every HTTP request (the arm lives in the ASGI
         # scope, which no header or query parameter can reach), and a capture
         # that cannot record refuses itself rather than touching the build.
@@ -12052,7 +12085,12 @@ async def _score_events(
     # unanswered; same answer (see `feed_snapshot_fallback`).
     snapshot_fallbacks: dict[int, float] = {}
     events_needing_fallback = [] if price_refresh_events is not None else [
-        e for e in events if _compute_aggregate_probability(e) is None
+        e for e in events
+        if _compute_aggregate_probability(e) is None
+        # #12824: removing the opening rung must not enroll opening-only
+        # events in a historical fallback they never used before. Their
+        # current chance stays absent until an admitted source returns.
+        and getattr(e, "opening_home_probability", None) is None
     ]
     # #1480: both id sets below come from the candidates alone — after the twin
     # fold, before any per-reader suppression — so every reader of one candidate
@@ -12198,10 +12236,24 @@ async def _score_events(
                 if event.opening_away_probability
                 else None
             )
+            # #12824 (226: A, Fable's item 4): an ESPN-only pregame number is a
+            # model, not a market, so it is never measured against the opening
+            # line ("odds shifted N% since open", the swing bonus).
+            from app.utils.aggregation import pregame_blend_rests_on_espn_alone
+
+            if pregame_blend_rests_on_espn_alone(event):
+                opening_home_prob = opening_away_prob = None
 
             # Always compute aggregate from all available sources (ESPN, stat model,
             # Kalshi, Polymarket, sportsbook consensus). Falls back through tiers.
             current_home_prob = _compute_aggregate_probability(event)
+            if current_home_prob is None:
+                # #12824: removing an opening quote must not remove a verified
+                # final. Use the same settled result as the card, never its
+                # historical line, when ranking a finished game.
+                final_hero = resolve_hero(event)
+                if final_hero is not None and final_hero.source == "settled":
+                    current_home_prob = final_hero.home_probability
             if current_home_prob is None and event.id in snapshot_fallbacks:
                 current_home_prob = snapshot_fallbacks[event.id]
             current_away_prob = (
@@ -14178,7 +14230,7 @@ def _discover_candidate_pool_specs(
         ),
     ]
     if not category_filter:
-        from app.utils.futures_liveness import VENUE_SETTLED_KEY
+        from app.utils.futures_liveness import BOOK_REFUSED_KEY, VENUE_SETTLED_KEY
 
         base_filters.extend(
             [
@@ -14190,6 +14242,12 @@ def _discover_candidate_pool_specs(
                 # in `market_reads_settled` is for grading a market settled, not
                 # for featuring it. Category pages keep that rule.
                 FuturesMarket.market_metadata[VENUE_SETTLED_KEY].astext.is_(None),
+                # Ruling 198-B (Nov 15): a market whose current book the price
+                # writer refused on two reads in a row is not featured. It keeps
+                # its number, with "As of", on its own page and on category
+                # pages (this branch is Discover only). The writer clears the
+                # stamp on the first accepted price.
+                FuturesMarket.market_metadata[BOOK_REFUSED_KEY].astext.is_(None),
             ]
         )
 

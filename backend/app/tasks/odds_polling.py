@@ -1702,7 +1702,7 @@ async def _poll_all_odds():
                         record_odds_api_quota(
                             service.last_requests_remaining,
                             service.last_requests_used or 0,
-                            "poll_odds",
+                            "poll_odds" if tier == "live" else f"poll_odds_{tier}",
                             pre_call_used=pre_used,
                             sport_key=sport_key,
                         )
@@ -2631,10 +2631,6 @@ async def _poll_all_odds():
                                             else None
                                         ),
                                     )
-                                    if (stat_wp is not None and pregame_spread is None
-                                            and home_score == 0 and away_score == 0
-                                            and event_obj.opening_home_probability is not None):
-                                        stat_wp = float(event_obj.opening_home_probability)
                                     if stat_wp is not None:
                                         from app.utils.nonvenue_live_push import write_nonvenue_probability
                                         await write_nonvenue_probability(

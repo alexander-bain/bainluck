@@ -74,6 +74,18 @@ const marks = (html: string): string[] =>
 const render = (games: LeagueGameBrief[]) =>
   renderToStaticMarkup(<LeagueGameRail title="Upcoming Games" games={games} />);
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#8515 — a provider-vouched doubleheader reads as two games", () => {
   test("the 9/25 Cubs@Red Sox pair prints Game 1 and Game 2, one per card", () => {
     const html = render([

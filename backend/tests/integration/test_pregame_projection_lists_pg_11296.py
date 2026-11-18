@@ -212,6 +212,9 @@ async def test_the_feed_card_serves_the_same_object(pg_engine, client, no_caches
     assert cards, [((i.get("data") or {}).get("id"), i.get("type")) for i in body.get("items") or []][:20]
     assert cards[0]["pregame_projection"] == _expected(kickoff)
     assert "projected_home_score" not in (cards[0].get("current_odds") or {})
+    assert cards[0]["hero_probability_source"] == "settled"
+    assert cards[0]["hero_probability"] == 0.0
+    assert cards[0]["hero_probability_away"] == 1.0
 
 
 async def test_a_slow_read_costs_the_feed_card_this_key_and_nothing_else(

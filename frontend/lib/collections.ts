@@ -14,7 +14,46 @@ export interface CollectionMember {
   linkPresentation?: "game" | "inline" | "secondary";
   relatedMarketCount?: number;
 }
-export interface CollectionSection { key: string; cls: string; title: string; note: string | null; layout?: string; members: CollectionMember[] }
+export interface MachinerySubjectArt {
+  url: string | null;
+  kind: string;
+  detail: string;
+  accent_color: string;
+  initials: string;
+}
+
+export interface MachineryOutcomeVisual {
+  outcome_id: number;
+  name: string;
+  probability: number;
+  rendered_percent: number;
+  art: MachinerySubjectArt;
+}
+
+export interface MachineryVisualBlock {
+  form_id:
+    | "paired_stage_bars"
+    | "coin_flip_matchups"
+    | "matchup_slate"
+    | "duel_bar"
+    | "contender_spotlight"
+    | "sibling_fields_grid"
+    | "benchmark_strip"
+    | "probability_history_chart";
+  initial_visible_limit?: number;
+  paired_metric_set?: import("@/lib/discover/visualForms").PairedMetricSet;
+  items?: Record<string, unknown>[];
+}
+
+export interface CollectionSection {
+  key: string;
+  cls: string;
+  title: string;
+  note: string | null;
+  layout?: string;
+  visualBlock?: MachineryVisualBlock;
+  members: CollectionMember[];
+}
 export interface CollectionPin { slug: string; name: string; href: string; subtitle: string; pin_until: string }
 export interface CollectionCaptionFigure {
   memberId: string;
@@ -57,6 +96,7 @@ export interface CollectionHub {
   subtitle?: string | null;
   caption?: CollectionCaption | null;
   pin?: CollectionPin | null;
+  pairedMetricSet?: import("@/lib/discover/visualForms").PairedMetricSet | null;
   relatedSummary?: { count: number; unclassifiedCount: number };
 }
 export interface CollectionReadingContext {
@@ -228,8 +268,11 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
     if (section.count !== section.members.length || accepted.length !== section.members.length) partial = true;
     if (accepted.length) sections.push({ key: `${index}:${section.class}`, cls: section.class,
       title: (slug === "midterms-2026" || isRoundup) && text(section.title) ? section.title : familyTitles?.[section.class as string]?.title ?? titles[section.class] ?? "More",
-      note: familyTitles?.[section.class as string]?.note ?? null,
-      layout: slug === "midterms-2026" && text(section.layout) ? section.layout : undefined,
+      note: (isRoundup && text(section.note) ? section.note : null) ?? familyTitles?.[section.class as string]?.note ?? null,
+      layout: (slug === "midterms-2026" || isRoundup) && text(section.layout) ? section.layout : undefined,
+      visualBlock: isRoundup && object(section.visual_block) && text(object(section.visual_block)?.form_id)
+        ? (section.visual_block as unknown as MachineryVisualBlock)
+        : undefined,
       members: accepted });
   });
   const members = sections.flatMap((section) => section.members);
@@ -298,8 +341,11 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
       };
     }
   }
+  const admittedPairedSet = object(row.paired_metric_set) && Array.isArray(object(row.paired_metric_set)?.entries)
+    ? (row.paired_metric_set as unknown as CollectionHub["pairedMetricSet"])
+    : null;
   return { ...base, members, related, children, parent: admittedParent, theme, family, relatedSummary, dek: family ? familyDek[family] ?? null : null,
-    subtitle: text(row.subtitle) ? row.subtitle : null, caption: admittedCaption, pin: admittedPin,
+    subtitle: text(row.subtitle) ? row.subtitle : null, caption: admittedCaption, pin: admittedPin, pairedMetricSet: admittedPairedSet,
     sections: sections.map((section) => ({ ...section, members: section.members.filter((m) => !relatedKeys.has(m.key)) })).filter((s) => s.members.length > 0),
     note: partial ? (slug === "midterms-2026" || isRoundup ? "Some markets aren't available right now." : "Some games or markets aren't available right now.") : !members.length && !children.length ? "No markets are available right now." : null };
 }
@@ -332,6 +378,19 @@ export function relatedMarketLinks(
 }
 
 export interface CollectionPageRequest { revision: number; cursor: string }
+async function resolveMachineryAdminHeaders(slug: string): Promise<Record<string, string> | undefined> {
+  if (!slug.startsWith("machinery-") || typeof window === "undefined") return undefined;
+  try {
+    const { hasStoredAccountSession } = await import("@/lib/adminAccountSession");
+    const { BACKEND_AUTH_KEY, getIdTokenAfterAuthReady } = await import("@/lib/firebase");
+    const { SIGNED_IN_MARKER } = await import("@/hooks/useAuth");
+    if (!hasStoredAccountSession(SIGNED_IN_MARKER, BACKEND_AUTH_KEY)) return undefined;
+    const token = await getIdTokenAfterAuthReady();
+    return token ? { Authorization: `Bearer ${token}` } : undefined;
+  } catch {
+    return undefined;
+  }
+}
 export async function fetchCollection(slug: string, signal?: AbortSignal, page?: CollectionPageRequest): Promise<CollectionHub> {
   if (!safeCollectionSlug(slug)) throw new Error("This collection isn't available right now.");
   // The cursor is opaque and belongs to its revision; both travel together.
@@ -344,7 +403,13 @@ export async function fetchCollection(slug: string, signal?: AbortSignal, page?:
   const query = params.toString();
   const path = `${API_URL}/api/containers/${slug}`;
   const url = query ? `${path}?${query}` : path;
-  const response = await fetch(url, { cache: "no-store", signal });
+  const adminHeaders = slug.startsWith("machinery-")
+    ? await resolveMachineryAdminHeaders(slug)
+    : null;
+  const init: RequestInit = adminHeaders
+    ? { cache: "no-store", signal, headers: adminHeaders }
+    : { cache: "no-store", signal };
+  const response = await fetch(url, init);
   if (response.status === 404) return parseCollection({ slug, state: "unavailable" }, slug);
   if (!response.ok) throw new Error("Couldn't load this collection. Please try again.");
   return parseCollection(await response.json(), slug);

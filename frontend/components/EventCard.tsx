@@ -16,7 +16,7 @@ import EntityImage from "./EntityImage";
 import { isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { teamColorStyle } from "@/lib/teamColors";
 import TeamNameLink from "./TeamNameLink";
-import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
+import { isStoredOpeningChance, shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
@@ -284,9 +284,9 @@ export default function EventCard({
   if (isFinishedStatus(event.status) && opening) {
     homeProb = opening.home_probability;
     awayProb = opening.away_probability;
-  } else if (shouldWithholdProbability(event)) {
-    // UX-P042 (#1640) — the only evidence is an untraded Polymarket midpoint, so
-    // `current_odds` reads a confident 0.5/0.5 built from nothing. Show no number.
+  } else if (isStoredOpeningChance(event) || shouldWithholdProbability(event)) {
+    // A cached opening line and an untraded Polymarket midpoint are both
+    // withheld from the current chance.
     homeProb = null;
     awayProb = null;
   } else if (!odds) {

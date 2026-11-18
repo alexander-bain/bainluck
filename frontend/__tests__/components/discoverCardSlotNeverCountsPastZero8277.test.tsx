@@ -36,6 +36,18 @@ const NOW = Date.parse("2026-09-23T19:40:00Z");
 const TIME_OF_DAY = /^\d{1,2}:\d{2}\s?[AP]M$/;
 const MIN = 60_000;
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("pregameSlotLabel (#8277)", () => {
   it("prints the scheduled time of day once the start has passed — never a negative count", () => {
     for (const pastMin of [0, 1, 3, 45, 120, 600]) {

@@ -45,6 +45,7 @@
  */
 
 import { leaderFirst, leaderFirstSlice, printsAPercent } from "./leaderOrder";
+import { numericalScaleOrderIndices } from "@/lib/numericalScaleOrder";
 import { renderedRaceBoardPercents } from "@/lib/renderedPercent";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { FeedFuturesData } from "@/lib/types";
@@ -78,6 +79,12 @@ export type FuturesBoard = {
    * probability (`boardRowRanks`), never by index.
    */
   chronological: boolean;
+  /**
+   * Direction 228 (#12885) — the rows are values on one numerical scale
+   * (ladder, range, count, rate, signed bps move) and are listed in ascending
+   * numerical order rather than by probability; podium rank digits come off.
+   */
+  scaleOrdered?: boolean;
   /**
    * #8033 — the printed percent for each row of `rows`, or `null` at a position
    * meaning "no override, keep `formatProbabilityPercent`'s own rounding".
@@ -157,7 +164,15 @@ export function futuresDistributionBoard(data: FeedFuturesData): FuturesBoard | 
   // keep their probability order. The server keeps probability order on the wire
   // because shipped iPhone builds paint row 0 as the leader.
   const chronological = card.distribution_order === "chronological";
-  const order = leaderFirstRows.map((_, index) => index);
+  const ladderRefused = Boolean(
+    (card as { ladder_treatment_refused?: boolean }).ladder_treatment_refused,
+  );
+  const marketType = (data as { market_type?: string | null }).market_type;
+  const scaleOrdered =
+    !chronological &&
+    !ladderRefused &&
+    numericalScaleOrderIndices(priced, { marketType }) !== null;
+  let order = leaderFirstRows.map((_, index) => index);
   if (chronological) {
     order.sort((a, b) => {
       const da = boardRowDay(leaderFirstRows[a]);
@@ -167,6 +182,11 @@ export function futuresDistributionBoard(data: FeedFuturesData): FuturesBoard | 
       if (db === null) return -1;
       return da < db ? -1 : 1;
     });
+  } else if (scaleOrdered) {
+    const scaleIdx = numericalScaleOrderIndices(leaderFirstRows, { marketType });
+    if (scaleIdx) {
+      order = scaleIdx;
+    }
   }
   const rows = order.map((index) => leaderFirstRows[index]);
   return {
@@ -176,6 +196,7 @@ export function futuresDistributionBoard(data: FeedFuturesData): FuturesBoard | 
     remainingCount: card.remaining_outcome_count + Math.max(0, allRows.length - rows.length),
     fieldIsARace: card.field_is_a_race !== false,
     chronological,
+    scaleOrdered,
     // #8033 — THE TOP TWO MAY NOT OWN MORE THAN THE RACE, ON BOTH CARDS.
     //
     // Taken over the drawn rows and not `priced`, because the pair a reader can

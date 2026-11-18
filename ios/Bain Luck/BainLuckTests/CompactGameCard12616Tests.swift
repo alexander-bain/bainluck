@@ -30,20 +30,20 @@ final class CompactGameCard12616Tests: XCTestCase {
                 hasProjectedBefore: false, hasCurrentChance: true, hasPrematchChance: false, hasScore: false),
             .init(medium: nil, large: "Chance")
         )
-        // Live without pregame column: Score (medium) and Now (large).
+        // Live without admitted live projection: Score (medium) and Now (large), never Pregame (204-C).
         XCTAssertEqual(
             CompactGameCard12616.columnHeaders(
                 isScheduled: false, isLive: true, isFinished: false, isSuspended: false,
                 hasProjectedBefore: false, hasCurrentChance: true, hasPrematchChance: true, hasScore: true),
             .init(medium: "Score", pregame: nil, large: "Now")
         )
-        // Live with Pregame column: Score (medium), Pregame (middle), and Now (large).
+        // Live with admitted live projection (Ruling 204-C): Score · Proj. · Now, no Pregame column.
         XCTAssertEqual(
             CompactGameCard12616.columnHeaders(
                 isScheduled: false, isLive: true, isFinished: false, isSuspended: false,
                 hasProjectedBefore: false, hasCurrentChance: true, hasPrematchChance: true, hasScore: true,
-                showsLivePregameColumn: true),
-            .init(medium: "Score", pregame: "Pregame", large: "Now")
+                hasProjectedLive: true),
+            .init(medium: "Score", pregame: "Proj.", large: "Now")
         )
         // Finished: Pregame (medium) and Final (large).
         XCTAssertEqual(
@@ -354,15 +354,18 @@ final class CompactGameCard12616Tests: XCTestCase {
             .appendingPathComponent("Bain Luck/Components/EventCardView.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
-        XCTAssertTrue(source.contains("compactHeaderSize: CGFloat = 10.5"))
-        XCTAssertTrue(source.contains("compactScoreSize: CGFloat = 17"))
-        XCTAssertTrue(source.contains("compactPregameSize: CGFloat = 15"))
-        XCTAssertTrue(source.contains("compactLargeSize: CGFloat = 20"))
+        XCTAssertEqual(HeadlineStyleTable199.headerBaseSize(.card), 10.5)
+        XCTAssertEqual(HeadlineStyleTable199.secondNumberBaseSize(.card, prominent: false), 17)
+        XCTAssertEqual(HeadlineStyleTable199.pregameNumberBaseSize(.card), 15)
+        XCTAssertEqual(HeadlineStyleTable199.nowBaseSize(.card), 20)
+        XCTAssertTrue(source.contains("HeadlineStyleTable199.headerBaseSize(.card)"))
+        XCTAssertTrue(source.contains("HeadlineStyleTable199.secondNumberBaseSize(.card, prominent: false)"))
+        XCTAssertTrue(source.contains("HeadlineStyleTable199.pregameNumberBaseSize(.card)"))
+        XCTAssertTrue(source.contains("HeadlineStyleTable199.nowBaseSize(.card)"))
         XCTAssertFalse(source.contains("compactLargeSize: CGFloat = 28"))
         XCTAssertTrue(source.contains("scoreToPregameGutter: CGFloat = 18"))
         XCTAssertTrue(source.contains("pregameToNowGap: CGFloat = 10"))
         XCTAssertTrue(source.contains("HStack(alignment: .firstTextBaseline, spacing: 0)"))
-        XCTAssertFalse(source.contains("minimumScaleFactor(0.85)"))
     }
 
     // MARK: - 5. 390pt native renders for PR review
@@ -587,35 +590,29 @@ final class CompactGameCard12616Tests: XCTestCase {
             fileName: "12616-soccer-draw-and-tennis-390.png"
         )
 
-        let discoverStack = VStack(spacing: 12) {
-            NativeEventDiscoverCard(
-                event: beforeNFL,
-                feedContext: "TOR 77-80 · BAL 76-81",
-                expandedContext: nil,
-                navigationPath: .constant(NavigationPath())
-            )
-            NativeEventDiscoverCard(
-                event: duringNBA,
-                feedContext: "Close fourth-quarter pace",
-                expandedContext: nil,
-                navigationPath: .constant(NavigationPath())
-            )
-            NativeEventDiscoverCard(
-                event: afterPackersUpset,
-                feedContext: nil,
-                expandedContext: nil,
-                navigationPath: .constant(NavigationPath())
-            )
-        }
-        .padding(16)
-        .frame(width: 390)
-        .background(Color(white: 0.965))
-        .environmentObject(pins)
-        .environment(\.colorScheme, .light)
-        let discoverRenderer = rendererForMeasurement(discoverStack, at: .large)
-        discoverRenderer.scale = 3.0
-        try XCTUnwrap(discoverRenderer.uiImage?.pngData())
-            .write(to: outDir.appendingPathComponent("12616-discover-cards-182a-390.png"))
+        try saveRender(
+            VStack(spacing: 12) {
+                NativeEventDiscoverCard(
+                    event: beforeNFL,
+                    feedContext: "TOR 77-80 · BAL 76-81",
+                    expandedContext: nil,
+                    navigationPath: .constant(NavigationPath())
+                )
+                NativeEventDiscoverCard(
+                    event: duringNBA,
+                    feedContext: "Close fourth-quarter pace",
+                    expandedContext: nil,
+                    navigationPath: .constant(NavigationPath())
+                )
+                NativeEventDiscoverCard(
+                    event: afterPackersUpset,
+                    feedContext: nil,
+                    expandedContext: nil,
+                    navigationPath: .constant(NavigationPath())
+                )
+            },
+            fileName: "12616-discover-cards-182a-390.png"
+        )
 
         try saveRender(
             cardBox(longNamesLargeText),

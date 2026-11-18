@@ -127,6 +127,12 @@ STEP_ENV_KEYS = {
         "#10090 a lock-held KALSHI price row stamps the received quote; "
         "a restart cannot undo it (real Postgres)",
     ): {"EVENT_FRAME_REDIS_SERVER", "EVENT_FRAME_REDIS_REQUIRED"},
+    # #12612: the four start-placeholder files gate on their own variable; the
+    # step points it at the job's bl_searchtest (TEMP tables only); no secret.
+    (
+        "database-integration",
+        "#8841 start-placeholder tag rewrites (real Postgres)",
+    ): {"START_PLACEHOLDER_DATABASE_URL"},
     ("search-recall", "Every database integration group passed"): {
         "SCOPE_RESULT",
         "INTEGRATION_RESULT",

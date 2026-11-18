@@ -267,6 +267,7 @@ from app.utils.search_match_class import (
 )
 from app.utils.blank_event_cards import not_a_blank_card
 from app.utils.event_list_order import in_reader_order
+from app.utils.settled_prematch_batch import attach_settled_prematch_odds
 from app.utils.feed_market_quality import (
     FEED_MIN_REAL_PROBABILITY,
     has_no_real_price,
@@ -9504,16 +9505,30 @@ def latest_odds_per_bookmaker_query(event_ids: list[int]):
             .scalar_subquery(),
         ).where(_prev.c.bookmaker.isnot(None))
     )
+    # #12337: seek the newest clock first, then break ties only at that clock.
+    # The existing (event_id, bookmaker, captured_at) index covers this seek.
+    # Asking for captured_at DESC, id DESC together can make PostgreSQL sort
+    # a book's entire history because id is not an index key. Equality on the
+    # newest captured_at bounds that final sort to simultaneous readings.
+    latest_clock = (
+        select(OddsSnapshot.captured_at)
+        .where(
+            OddsSnapshot.event_id == bookmakers.c.event_id,
+            OddsSnapshot.bookmaker == bookmakers.c.bookmaker,
+        )
+        .order_by(OddsSnapshot.captured_at.desc())
+        .limit(1)
+        .correlate(bookmakers)
+        .scalar_subquery()
+    )
     latest_snap = (
         select(OddsSnapshot)
         .where(
             OddsSnapshot.event_id == bookmakers.c.event_id,
             OddsSnapshot.bookmaker == bookmakers.c.bookmaker,
+            OddsSnapshot.captured_at == latest_clock,
         )
-        .order_by(
-            OddsSnapshot.captured_at.desc(),
-            OddsSnapshot.id.desc(),
-        )
+        .order_by(OddsSnapshot.id.desc())
         .limit(1)
         .lateral("latest_snap")
     )
@@ -11716,10 +11731,13 @@ async def search_events(
         )
 
     _twin_duplicates_dropped = 0
+    _prematch_absorbed_ids: dict[int, list[int]] = {}
     if events:
         try:
             _fold = fold_twin_events(events)
             if _fold.dropped_ids:
+                for _loser, _survivor in _fold.survivor_of.items():
+                    _prematch_absorbed_ids.setdefault(_survivor, []).append(_loser)
                 for _survivor_id, _merged in _fold.merged_sources.items():
                     _survivor = next(e for e in _fold.events if e.id == _survivor_id)
                     set_committed_value(_survivor, "win_probability_sources", _merged)
@@ -11946,12 +11964,14 @@ async def search_events(
 
     # The page's folds (#3937), batched before the loop rather than per row in
     # it. Search returns at most `per_page` = 100, so this is one statement.
-    folded_map = await folded_probability_sources_batch(db, events)
+    folded_map = await folded_card_numbers_batch(db, events)
 
     for event in events:
+        _folded = folded_map.get(event.id)
         formatted = _format_event_with_aggregated_odds(
             event, aggregated_odds_map.get(event.id), gei_percentiles, team_lookup,
-            folded_sources=folded_map.get(event.id),
+            folded_sources=_folded.win_probability_sources if _folded is not None else None,
+            folded_opening=_folded.opening if _folded is not None else None,
         )
         # #2920 — the event page's marked in-play pair, from the rows this route
         # already read, so a search row and the page it opens agree.
@@ -12010,6 +12030,14 @@ async def search_events(
     # this mark they were billed to `futures`, so a slow futures number could not
     # say whether the futures arms or the event formatting spent it.
     _mark("event_format")
+
+    await attach_settled_prematch_odds(
+        db, events, formatted_results, folded_map,
+        absorbed_ids=_prematch_absorbed_ids,
+        timeout_ms=card_projection_read_timeout_ms(_deadline - time.monotonic()),
+        surface="search",
+    )
+    _mark("prematch_odds")
 
     # #11296: a final row's pregame projected score, the same object the event
     # page serves. One bounded statement for the page, billed to its own stage;
@@ -18997,9 +19025,12 @@ async def list_events(
             "serving the stored kick-offs"
         )
 
+    _prematch_absorbed_ids: dict[int, list[int]] = {}
     try:
         _fold = fold_twin_events(events)
         if _fold.dropped_ids:
+            for _loser, _survivor in _fold.survivor_of.items():
+                _prematch_absorbed_ids.setdefault(_survivor, []).append(_loser)
             for _survivor_id, _merged in _fold.merged_sources.items():
                 _survivor = next(e for e in _fold.events if e.id == _survivor_id)
                 set_committed_value(_survivor, "win_probability_sources", _merged)
@@ -19243,6 +19274,12 @@ async def list_events(
     # still ahead of its kickoff is refused before a statement is issued, so
     # the ordinary page pays nothing at all.
     await attach_venue_settlement(db, events, formatted, now)
+
+    await attach_settled_prematch_odds(
+        db, events, formatted, folded_map,
+        absorbed_ids=_prematch_absorbed_ids,
+        timeout_ms=card_projection_read_timeout_ms(None), surface="events list",
+    )
 
     # #11296: a final row's pregame projected score and its score's period, the
     # same object search and the event page serve. `/sports/{key}` reads this
@@ -20725,7 +20762,7 @@ async def get_event(
         hero_home_prob = current_odds_probability(
             agg_prob, agg_tier, aggregated["home_probability"], event.status
         )
-        hero_away_prob = round(1.0 - hero_home_prob, 6) if hero_home_prob is not None else aggregated["away_probability"]
+        hero_away_prob = round(1.0 - hero_home_prob, 6) if hero_home_prob is not None else None
 
         # ── #6238: AND ON A THREE-OUTCOME WINNER MARKET THAT SECOND NUMBER IS
         #    NOT THE AWAY TEAM'S PRICE ────────────────────────────────────────
@@ -37666,11 +37703,11 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         captured_at = odds_data.get("captured_at")
         snapshots = odds_data.get("snapshots", [])
 
-        _hero_home = _blend if _blend is not None else aggregated["home_probability"]
+        _hero_home = _blend
         _hero_away = (
             round(1.0 - _hero_home, 6)
             if _hero_home is not None
-            else aggregated["away_probability"]
+            else None
         )
         current_home_prob = _hero_home
         current_away_prob = _hero_away
@@ -37708,7 +37745,7 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         _served_away = (
             round(1.0 - _served_home, 6)
             if _served_home is not None
-            else aggregated["away_probability"]
+            else None
         )
 
         response["current_odds"] = {
@@ -37814,6 +37851,11 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             response["hero_settled_result"] = _hero.settled_result
 
     # Compute highlight data (Level 1 + Level 2 if time_series available)
+    # #12824 (226: A): an ESPN-only pregame number is never diffed against the
+    # opening line; see `pregame_blend_rests_on_espn_alone`.
+    from app.utils.aggregation import pregame_blend_rests_on_espn_alone
+
+    _espn_alone = pregame_blend_rests_on_espn_alone(event)
     highlight_result = compute_highlight(
         status=event.status,
         commence_time=event.commence_time,
@@ -37822,8 +37864,8 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         current_away_prob=current_away_prob,
         current_home_spread=current_spread,
         current_over_under=current_ou,
-        opening_home_prob=float(_open_home) if _open_home else None,
-        opening_away_prob=float(_open_away) if _open_away else None,
+        opening_home_prob=float(_open_home) if _open_home and not _espn_alone else None,
+        opening_away_prob=float(_open_away) if _open_away and not _espn_alone else None,
         opening_home_spread=float(event.opening_home_spread) if event.opening_home_spread else None,
         opening_over_under=float(event.opening_over_under) if event.opening_over_under else None,
         opening_favorite=event.opening_favorite,

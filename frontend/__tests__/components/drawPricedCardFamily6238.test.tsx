@@ -146,6 +146,18 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#6238 the two arms are genuinely different", () => {
   it("the draw-priced key is declared and the control key is not", () => {
     expect(sportPricesADraw(DRAW_SPORT)).toBe(true);
