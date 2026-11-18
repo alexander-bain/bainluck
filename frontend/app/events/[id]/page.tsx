@@ -235,6 +235,7 @@ import {
   computeLastChartPoint,
   defaultChartTimeRange,
 } from "@/lib/eventKeyStats";
+import { isStoredOpeningChance } from "@/lib/probabilityEvidence";
 import MatchupOutcomes from "@/components/event/MatchupOutcomes";
 import { settledPregameMark } from "@/lib/settledPregameMark";
 import { SPECIAL_MARKETS_MIN_WIRE_ROWS, specialMarketsDrawnIds } from "@/lib/gamePropsDrawnAbove";
@@ -2164,6 +2165,9 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }
 
+  const currentWinOdds = isStoredOpeningChance(event) ? undefined : event.current_odds;
+  const currentHomeWinChance = currentWinOdds?.home_probability;
+
   // Resolve display probability based on game status (see eventKeyStats.ts)
   //
   // #4015 — `isSuspended` (the page's one `hasNoReportedResult` answer, computed
@@ -3482,8 +3486,8 @@ export default function EventPage({ params }: EventPageProps) {
           awayColor={effectiveAwayPrimary}
           homeLogo={event.home_team_data?.logo_small || undefined}
           awayLogo={event.away_team_data?.logo_small || undefined}
-          homeWinProb={event.current_odds?.home_probability ?? undefined}
-          awayWinProb={event.current_odds?.away_probability ?? undefined}
+          homeWinProb={currentHomeWinChance ?? undefined}
+          awayWinProb={currentWinOdds?.away_probability ?? undefined}
           /* #5414: `current_odds.home_spread` is a key the API has never
              emitted — it serialises the same column as `spread` — so this prop
              has been null on every render since it was added, and the card's
@@ -3745,7 +3749,7 @@ export default function EventPage({ params }: EventPageProps) {
       {event.event_tags && (
         event.event_tags.includes("competitive_structure:series") ||
         event.event_tags.includes("competitive_structure:best_of_7")
-      ) && event.current_odds?.home_probability != null && (() => {
+      ) && currentHomeWinChance != null && (() => {
         // Detect series wins from ESPN data or default to 0-0
         const homeSeriesWins = (event.espn as any)?.series_home_wins ?? 0;
         const awaySeriesWins = (event.espn as any)?.series_away_wins ?? 0;
@@ -3753,7 +3757,7 @@ export default function EventPage({ params }: EventPageProps) {
         return (
           <SectionErrorBoundary label="The series picture" resetKey={event}>
           <SeriesProbability
-            homeWinProb={event.current_odds!.home_probability!}
+            homeWinProb={currentHomeWinChance}
             homeSeriesWins={homeSeriesWins}
             awaySeriesWins={awaySeriesWins}
             gamesToWin={gamesToWin}
