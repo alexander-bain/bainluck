@@ -3017,9 +3017,10 @@ export default function EventPage({ params }: EventPageProps) {
 
       <div
         data-testid="event-desktop-two-col-shell"
-        className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-[minmax(0,1.36fr)_minmax(404px,1fr)] xl:grid-cols-[minmax(0,1.52fr)_minmax(448px,1fr)] lg:gap-6 lg:items-start"
+        className="flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1.36fr)_minmax(404px,1fr)] xl:grid-cols-[minmax(0,1.52fr)_minmax(448px,1fr)] lg:gap-6 lg:items-start"
       >
-      <div className="space-y-3 min-w-0" data-testid="event-featured-column">
+      <div className="max-lg:contents lg:flex lg:flex-col lg:gap-3 lg:min-w-0" data-testid="event-featured-column">
+      <div className="empty:hidden max-lg:order-1 space-y-3 min-w-0" data-testid="event-featured-lead">
       {/* Unified Direction 199 Game Page Headline (every sport & state) */}
       <SectionErrorBoundary label="The score and probability" resetKey={event}>
       <EventPageHeadline199
@@ -3365,7 +3366,9 @@ export default function EventPage({ params }: EventPageProps) {
 
       </SectionErrorBoundary>
       )}
+      </div>
 
+      <div className="empty:hidden max-lg:order-3 space-y-3 min-w-0" data-testid="event-featured-projection">
       {/* #10539: projected final points replaces the Score Differential card when — and only when —
           the page's one decision admits it. Every refusal keeps the differential, and a projection
           that fails to load or draw hands its place back to the differential rather than leaving
@@ -3387,8 +3390,10 @@ export default function EventPage({ params }: EventPageProps) {
       <FinalGameWinnerQuote quote={servedGameMarkets?.open_winner_quote}
         eventId={event.id} finished={isFinished} closedIds={servedGameMarkets?.closed_winner_market_ids} />
       </div>
+      </div>
 
-      <div className="space-y-3 min-w-0" data-testid="event-side-column">
+      <div className="max-lg:contents lg:flex lg:flex-col lg:gap-3 lg:min-w-0" data-testid="event-side-column">
+      <div className="empty:hidden max-lg:order-2 space-y-3 min-w-0" data-testid="event-side-lead">
       {showSharedPinBanner && showConsentBanner && (
         <SharedLinkPinBanner
           inline
@@ -3444,7 +3449,9 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {/* Source Comparison removed — not useful, sources already visible in OddsChart */}
+      </div>
 
+      <div className="empty:hidden max-lg:order-4 space-y-3 min-w-0" data-testid="event-side-markets">
       {/* Market Map cards — Margin Map + Total Map */}
       {/* #3240: the mount condition is shared with `totalsMapRenders` above, so
           the note's idea of what is on the page and the page cannot diverge. */}
@@ -3858,6 +3865,7 @@ export default function EventPage({ params }: EventPageProps) {
           </SectionErrorBoundary>
         ) : null;
       })()}
+      </div>
       </div>
       </div>
 

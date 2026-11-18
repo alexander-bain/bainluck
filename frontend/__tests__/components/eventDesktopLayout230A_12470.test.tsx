@@ -83,8 +83,15 @@ describe("Ruling 230: A (#12470) — Desktop Event Page 2-Column Layout from 102
     expect(pageSrc).not.toContain("min-[820px]");
     expect(pageSrc).toContain('data-testid="event-desktop-two-col-shell"');
     expect(pageSrc).toContain(
-      "lg:grid lg:grid-cols-[minmax(0,1.36fr)_minmax(404px,1fr)] xl:grid-cols-[minmax(0,1.52fr)_minmax(448px,1fr)]",
+      "flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1.36fr)_minmax(404px,1fr)] xl:grid-cols-[minmax(0,1.52fr)_minmax(448px,1fr)]",
     );
+    // Preserves exact < 1024 px single-column order (order-1 headline/odds -> order-2 game stories -> order-3 projected final -> order-4 maps/props)
+    expect(pageSrc).toContain('className="max-lg:contents lg:flex lg:flex-col lg:gap-3 lg:min-w-0" data-testid="event-featured-column"');
+    expect(pageSrc).toContain('className="max-lg:contents lg:flex lg:flex-col lg:gap-3 lg:min-w-0" data-testid="event-side-column"');
+    expect(pageSrc).toContain('max-lg:order-1');
+    expect(pageSrc).toContain('max-lg:order-2');
+    expect(pageSrc).toContain('max-lg:order-3');
+    expect(pageSrc).toContain('max-lg:order-4');
 
     const featuredIdx = pageSrc.indexOf('data-testid="event-featured-column"');
     const sideIdx = pageSrc.indexOf('data-testid="event-side-column"');
@@ -240,8 +247,7 @@ describe("Ruling 230: A (#12470) — Desktop Event Page 2-Column Layout from 102
         ]}
       />,
     );
-    expect(browserHtml).toContain("flex-wrap");
-    expect(browserHtml).not.toContain("overflow-x-auto");
+    expect(browserHtml).toContain("overflow-x-auto pb-1 lg:basis-full lg:flex-wrap lg:gap-1.5 lg:overflow-visible lg:pb-0");
 
     const mapHtml = renderToStaticMarkup(
       <CompactMarketMap
@@ -272,7 +278,7 @@ describe("Ruling 230: A (#12470) — Desktop Event Page 2-Column Layout from 102
       "utf8",
     );
     expect(deckSrc).toContain(
-      'cards.length > 1 ? "w-[86%] sm:w-[360px] lg:w-[356px] xl:w-[368px]" : "w-full max-w-[440px]"',
+      'cards.length > 1 ? "w-[86%] sm:w-[360px] lg:w-[356px] xl:w-[368px]" : "w-full sm:w-[420px] lg:w-full lg:max-w-[420px]"',
     );
   });
 });

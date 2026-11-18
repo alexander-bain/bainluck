@@ -2279,7 +2279,7 @@ export function NFLEventCardDeck({
         {cards.map((card) => (
           <div
             key={card.id}
-            className={`snap-start shrink-0 flex flex-col gap-1 ${cards.length > 1 ? "w-[86%] sm:w-[360px] lg:w-[356px] xl:w-[368px]" : "w-full max-w-[440px]"}`}
+            className={`snap-start shrink-0 flex flex-col gap-1 ${cards.length > 1 ? "w-[86%] sm:w-[360px] lg:w-[356px] xl:w-[368px]" : "w-full sm:w-[420px] lg:w-full lg:max-w-[420px]"}`}
             data-card-id={card.id}
           >
             <div className="bg-surface-card rounded-card shadow-card border border-surface-border p-4 flex-1">
