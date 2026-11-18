@@ -52,6 +52,7 @@ overwritten, because readmitting these cards is exactly the change that would
 make a live-tense reason reachable if one ever appeared.
 """
 
+import pytest
 from datetime import datetime, timedelta, timezone
 
 from app.routes.feed import (
@@ -67,6 +68,16 @@ from app.utils.sports_first_page_rails import (
     CLIENT_COMPLETED_MAX_AGE_HOURS,
     CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS,
 )
+
+
+@pytest.fixture(autouse=True)
+def _pre_190_game_admission(monkeypatch):
+    """These cases pin the pre-190 admission: a marquee or finished game held a
+    Discover seat by selection. Ruling 190 (#11937) requires a stated reason
+    instead, and keeps this rule only behind `DISCOVER_GAME_NEEDS_REASON=false`,
+    which is what these cases now guard. The 190 rule is guarded in
+    `test_discover_game_reason_190.py`."""
+    monkeypatch.setenv("DISCOVER_GAME_NEEDS_REASON", "false")
 
 # Fixed anchor, and no branch on the clock anywhere below (gotcha #44): every
 # fixture offsets from this and the chain is handed it explicitly.
