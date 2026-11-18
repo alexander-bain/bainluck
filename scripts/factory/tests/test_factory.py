@@ -3,9 +3,13 @@
 from copy import deepcopy
 from datetime import timedelta
 import json
+import re
 from pathlib import Path
 import sys
 import unittest
+import io
+import tempfile
+from contextlib import redirect_stdout
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts/factory"))
@@ -22,13 +26,14 @@ from model import (
 from collect import (
     is_review_bot,
     safe_comment,
-    needs_refresh,
+    floor_changed,
     authorize_publication,
     read_published,
     publish_asset,
     GitHub,
+    main,
 )
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -279,21 +284,26 @@ class FactoryRules(unittest.TestCase):
             "Ask the founder [account removed] about [email removed]",
         )
 
-    def test_event_only_release_publication_cannot_push_code(self):
+    def test_timer_publication_has_one_master_only_job(self):
         workflow = (ROOT / ".github/workflows/factory.yml").read_text()
         for event in (
-            "workflow_run:",
+            "schedule:",
             "push:",
-            "status:",
-            "issue_comment:",
             "workflow_dispatch:",
         ):
             self.assertIn(event, workflow)
-        self.assertNotIn("cron:", workflow)
-        self.assertNotRegex(workflow, r"(?m)^  pull_request(?:_review)?:")
+        self.assertIn('cron: "*/5 * * * *"', workflow)
+        self.assertIn("cancel-in-progress: false", workflow)
+        self.assertNotRegex(
+            workflow,
+            r"(?m)^  (pull_request(?:_review)?|workflow_run|issue_comment|status):",
+        )
+        self.assertEqual(
+            re.findall(r"^  ([\w-]+):", workflow.split("jobs:\n")[1], re.M),
+            ["snapshot"],
+        )
+        self.assertNotIn("needs:", workflow)
         self.assertNotIn("pull_request.head", workflow)
-        self.assertIn("github.event.issue.number == 12779", workflow)
-        self.assertIn("github.event.context == 'Vercel'", workflow)
         self.assertIn("github.ref == 'refs/heads/master'", workflow)
         self.assertIn("ref: master", workflow)
         test_workflow = (ROOT / ".github/workflows/factory-tests.yml").read_text()
@@ -357,21 +367,43 @@ class FactoryRules(unittest.TestCase):
             any(c["merge_to_live_seconds"] is not None for c in later["changes"])
         )
 
-    def test_recent_copy_defers_updates_but_not_opened_or_closed_changes(self):
-        previous = {
-            "generated_at": iso(self.now),
-            "changes": [{"number": 1, "merged_at": None}],
-        }
-        self.assertFalse(
-            needs_refresh(previous, [{"number": 1}], self.now + timedelta(seconds=179))
-        )
-        self.assertTrue(
-            needs_refresh(previous, [{"number": 1}], self.now + timedelta(seconds=180))
-        )
-        self.assertTrue(
-            needs_refresh(previous, [{"number": 1}, {"number": 2}], self.now)
-        )
-        self.assertTrue(needs_refresh(previous, [], self.now))
+    def test_comparison_ignores_read_time_and_incidental_api_order(self):
+        previous = build(self.snapshot)
+        current = deepcopy(previous)
+        current["generated_at"] = iso(self.now + timedelta(minutes=5))
+        current["changes"].reverse()
+        current["jams"].reverse()
+        self.assertFalse(floor_changed(previous, current))
+        current["changes"][0]["station"] = "Review"
+        current["changes"][0]["title"] += " changed"
+        self.assertTrue(floor_changed(previous, current))
+        self.assertTrue(floor_changed({}, current))
+
+    def test_unchanged_floor_skips_both_uploads_and_still_prints_metrics(self):
+        previous = {"generated_at": "2026-11-18T01:00:00Z", "changes": [], "jams": []}
+        current = {**previous, "generated_at": "2026-11-18T01:05:00Z"}
+        api = MagicMock()
+        api.pages.return_value = []
+        api.metrics.return_value = {"github_api_calls": 3}
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(output), patch(
+            "sys.argv",
+            ["collect.py", "--publish", "--output", f"{directory}/factory.json"],
+        ), patch("collect.authorize_publication"), patch(
+            "collect.GitHub", return_value=api
+        ), patch(
+            "collect.read_published", return_value=({"id": 1}, previous, {})
+        ), patch(
+            "collect.collect", return_value={"pulls": []}
+        ), patch(
+            "collect.build", return_value=current
+        ), patch(
+            "collect.publish_asset"
+        ) as publish:
+            main()
+            publish.assert_not_called()
+        self.assertIn('"published": false', output.getvalue())
+        self.assertIn("FACTORY_METRICS", output.getvalue())
 
     def test_branch_or_pull_request_publication_is_refused(self):
         with patch.dict(

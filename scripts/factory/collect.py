@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""One event, one snapshot. Standard library only. No scheduler or polling loop."""
+"""Read the floor once and publish only changed content. Standard library only."""
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -20,7 +20,6 @@ from model import build, instant, iso, public_title, PACIFIC, TRUSTED
 
 REPO = "alexander-bain/bainluck"
 RELEASE = "factory-data"
-ASSET_URL = f"https://github.com/{REPO}/releases/download/{RELEASE}/factory.json"
 
 
 class GitHub:
@@ -104,6 +103,7 @@ class GitHub:
             self.rates.setdefault("core", limits["core"]["remaining"])
             self.rates.setdefault("graphql", limits["graphql"]["remaining"])
         except (urllib.error.URLError, ValueError, KeyError):
+            # Keep the last response-header budgets if the final meter read fails.
             pass
         return {
             "phase": "collector",
@@ -393,8 +393,8 @@ def history_signals(api, midnight):
     return receipts, latest
 
 
-def collect(api, previous=None, cache=None, event=None, open_summaries=None):
-    previous, cache, event = previous or {}, cache or {}, event or {}
+def collect(api, previous=None, cache=None, open_summaries=None):
+    previous, cache = previous or {}, cache or {}
     now = datetime.now(timezone.utc)
     midnight = now.astimezone(PACIFIC).replace(
         hour=0, minute=0, second=0, microsecond=0
@@ -543,13 +543,22 @@ def collect(api, previous=None, cache=None, event=None, open_summaries=None):
     }
 
 
-def needs_refresh(previous, open_summaries, now):
-    if not previous:
-        return True
-    before = {c["number"] for c in previous["changes"] if not c.get("merged_at")}
-    after = {p["number"] for p in open_summaries}
-    age = (now - instant(previous["generated_at"])).total_seconds()
-    return before != after or age < 0 or age >= 180
+def floor_changed(previous, current):
+    def content(snapshot):
+        visible = {
+            key: value
+            for key, value in snapshot.items()
+            if key not in {"generated_at", "_collector"}
+        }
+        visible["changes"] = sorted(
+            visible.get("changes", []), key=lambda change: change["number"]
+        )
+        visible["jams"] = sorted(
+            visible.get("jams", []), key=lambda jam: (jam["key"], jam["started_at"])
+        )
+        return visible
+
+    return not previous or content(previous) != content(current)
 
 
 def authorize_publication():
@@ -639,20 +648,9 @@ def main():
         if args.publish:
             release, previous, cache = read_published(api)
             summaries = api.pages("pulls?state=open&sort=updated&direction=desc")
-            if not needs_refresh(previous, summaries, datetime.now(timezone.utc)):
-                print(
-                    json.dumps(
-                        {
-                            "skipped": True,
-                            "reason": "published copy is under three minutes old",
-                        }
-                    )
-                )
-                return
-        event_path = os.environ.get("GITHUB_EVENT_PATH")
-        event = json.loads(Path(event_path).read_text()) if event_path else None
-        snapshot = collect(api, previous, cache, event, summaries)
+        snapshot = collect(api, previous, cache, summaries)
         result = build(snapshot, previous)
+        changed = floor_changed(previous, result)
         cache_payload = {
             "schema_version": 1,
             "generated_at": result["generated_at"],
@@ -667,7 +665,7 @@ def main():
             args.cache_output.write_text(
                 json.dumps(cache_payload, separators=(",", ":")) + "\n"
             )
-        if args.publish:
+        if args.publish and changed:
             if release is None:
                 release = api.request(
                     f"repos/{REPO}/releases",
@@ -688,7 +686,8 @@ def main():
                 {
                     "changes": len(result["changes"]),
                     "captured_at": result["generated_at"],
-                    "published": args.publish,
+                    "floor_changed": changed,
+                    "published": args.publish and changed,
                 }
             )
         )

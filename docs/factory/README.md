@@ -4,13 +4,13 @@ Pillar — FORMATTING. Ship — `/factory` lets a reader follow a change from it
 
 ## Master-only publication
 
-`factory.yml` listens to requested/completed CI, review and TestFlight workflows, master pushes, NOW #12779 comments, comments beginning `**Fable`, completed Vercel/TestFlight statuses, and manual dispatch. Every job requires `refs/heads/master`. It has no pull request trigger or schedule.
+`factory.yml` runs on a five-minute timer, a push to master, or manual dispatch. Its single job requires `refs/heads/master`, checks out master and reads the commit graph without historical file blobs. It collects once, compares the visible floor with the published snapshot, and uploads only when that floor changes. Publication is serialized with `cancel-in-progress: false`.
 
-The preflight job has read permissions and checks out only the current `scripts/factory` folder. It reads the public snapshot and the complete open-change membership. If that membership matches and the snapshot is under three minutes old, publication is skipped. An opened, merged or closed change bypasses that delay. Its paginated GraphQL read includes the remaining GraphQL budget in the same response.
+Comparison ignores the collection timestamp and incidental API ordering. Changes to stations, crates, live evidence, side tracks, diagnostics or jam intervals produce a new publication. The collector also checks the runtime ref, event and checked-out commit before publishing. `factory-tests.yml` remains a separate read-only workflow with the sole pull request path filter `scripts/factory/**`.
 
-The publisher receives write permission only after preflight admits a refresh. It checks out master, reads the commit graph without historical file blobs, and runs the master collector. The collector also checks the runtime ref, event and checked-out commit before publishing. `factory-tests.yml` is a separate read-only workflow with the sole pull request path filter `scripts/factory/**`.
+Every run prints `FACTORY_METRICS` with API calls by resource, public reads, remaining budget and elapsed time, including a run whose floor is unchanged. Upload, rename, deletion and metering requests are counted.
 
-Every preflight and collection prints `FACTORY_METRICS` with API calls, public reads and rate limit remaining. The collector also reports calls by resource and elapsed time. API upload, rename, deletion and metering requests are included. The busy-hour verification records its replay window and distinguishes replay traffic from production traffic.
+The expected rate is about 12 timer runs per hour plus one per master push, with manual dispatches added separately. The preceding busy-hour measurement gives a warm collection median of 19 API requests. Reading the published release adds one, and replacing both assets adds eight. That is approximately 20 requests for an unchanged floor or 28 for a changed floor, or 240–336 requests per timer-only hour. Each master push adds approximately 20–28 requests. New heads, pagination, initial cache population and recovery can add calls. These are estimates from measured reads and the publisher's request paths, rather than a production-hour measurement of this unmerged revision.
 
 ## Public assets
 
@@ -34,7 +34,6 @@ Bays size to their contents. Only a bay holding at least ten waiting changes get
 
 ```sh
 python3 -m unittest discover -s scripts/factory/tests -v
-node --test scripts/factory/tests/preflight.test.cjs
 cd frontend
 npx jest --runInBand --testPathPatterns='factoryData|factoryUnavailable'
 npm run build

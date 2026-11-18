@@ -630,7 +630,7 @@ export default function FactoryFloor({
       </section>
       <footer className={styles.notes}>
         <p>
-          Changes move when GitHub sends an update. This page refreshes once a
+          The floor is re-read every five minutes. This page refreshes once a
           minute while open. All times are Pacific.
         </p>
         {data.coverage.map((note) => (

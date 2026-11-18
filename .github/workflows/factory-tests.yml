@@ -17,4 +17,3 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest discover -s scripts/factory/tests -v
-      - run: node --test scripts/factory/tests/preflight.test.cjs

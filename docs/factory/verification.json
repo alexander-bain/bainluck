@@ -1,13 +1,10 @@
 {
-  "revision": "Fable review of 6a8b641451, comment 6966219274",
+  "revision": "Timer revision after Fable comment 6967579689",
   "render_data_captured_at": "2026-11-18T02:17:52.530830Z",
   "render_data_sha256": "7a01c9756aca67eb974551a6a7c2e53dd01cf42c53547edcad0ee47dc4fbafe1",
   "python_rules": {
-    "passed": 24,
+    "passed": 25,
     "real_change_fixtures": 18
-  },
-  "node_preflight": {
-    "passed": 4
   },
   "frontend_failure_tests": {
     "passed": 4
@@ -41,5 +38,20 @@
       "max_empty_bay_height": 129
     }
   },
-  "publisher_verification": "Master-only publication is source- and unit-verified. Traffic replay is read-only."
+  "publisher_verification": "Master-only timer publication, comparison and upload suppression verified by unit tests. API estimates use the prior read-only warm-cache measurements.",
+  "analytics_guard": {
+    "passed": 3,
+    "delegated_hooks": "FactoryFloor.tsx"
+  },
+  "timer": {
+    "cron": "*/5 * * * *",
+    "runs_per_hour": 12,
+    "additional_runs": "one per master push and manual dispatch",
+    "warm_api_calls_per_unchanged_run": 20,
+    "warm_api_calls_per_changed_run": 28,
+    "timer_hour_api_range": [
+      240,
+      336
+    ]
+  }
 }
