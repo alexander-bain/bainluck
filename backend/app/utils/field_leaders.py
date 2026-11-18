@@ -50,6 +50,7 @@ from app.utils.outcome_display import (
     display_probability_divisor,
     normalize_display_probs,
 )
+from app.utils.source_mark import quote_source_mark
 from app.utils.tonights_games import _parse_dt
 
 
@@ -281,6 +282,7 @@ class _NormalizedBucket:
     outcome_id: int
     label: str
     probability: float
+    raw_probability: float
     rendered_percent: int
     observed_at: Optional[str]
 
@@ -297,6 +299,7 @@ class _CoherentFieldMember:
     resolution_date: Optional[str]
     leader: _NormalizedBucket
     buckets: tuple[_NormalizedBucket, ...]
+    prices_scaled: bool
     raw_market: Mapping[str, Any]
 
 
@@ -386,6 +389,15 @@ def _expected_box_office_millions(buckets: Sequence[_NormalizedBucket]) -> float
     return expected / matched_prob
 
 
+def _field_source_mark(member: _CoherentFieldMember, bucket: _NormalizedBucket) -> dict[str, Any]:
+    # The display clock can fall back to a row or market update. It cannot date
+    # the contributing quote in the source sheet.
+    mark = quote_source_mark([{"key": member.source, "probability": bucket.raw_probability}])
+    if mark["state"] == "single" and member.prices_scaled:
+        mark["method"] = "Bain Luck field · scaled with the other outcomes to total 100%"
+    return mark
+
+
 def _build_field_leader_card(member: _CoherentFieldMember) -> dict[str, Any]:
     base = member.raw_market
     top_outcomes = [
@@ -399,6 +411,7 @@ def _build_field_leader_card(member: _CoherentFieldMember) -> dict[str, Any]:
             "movement": None,
             "is_winner": False,
             "resolution_source": None,
+            "source_mark": _field_source_mark(member, b),
         }
         for idx, b in enumerate(member.buckets)
     ]
@@ -621,10 +634,12 @@ def select_field_leaders(
                 "id": oid,
                 "name": label,
                 "probability": p_val,
+                "raw_probability": p_val,
                 "observed_at": obs,
             }
             for oid, label, p_val, obs in raw_buckets
         ]
+        prices_scaled = False
         if require_guard_11995:
             divisor = display_probability_divisor(
                 outcome_dicts,
@@ -635,7 +650,7 @@ def select_field_leaders(
             if divisor is None:
                 dropped_reasons.append(("field_leaders", f"guard_failed:{mid}"))
                 continue
-            normalize_display_probs(
+            prices_scaled = normalize_display_probs(
                 outcome_dicts,
                 mutually_exclusive=True,
                 field_complete=True,
@@ -647,6 +662,7 @@ def select_field_leaders(
                 outcome_id=int(od["id"]),
                 label=str(od["name"]),
                 probability=float(od["probability"]),
+                raw_probability=float(od["raw_probability"]),
                 rendered_percent=(
                     int(od["rendered_percent"])
                     if isinstance(od.get("rendered_percent"), int)
@@ -711,6 +727,7 @@ def select_field_leaders(
                 resolution_date=_iso_utc(m.get("resolution_date")),
                 leader=leader,
                 buckets=tuple(norm_buckets),
+                prices_scaled=prices_scaled,
                 raw_market=m,
             )
         )
@@ -775,6 +792,7 @@ def select_field_leaders(
                 "probability": c.leader.probability,
                 "rendered_percent": c.leader.rendered_percent,
                 "observed_at": c.leader.observed_at,
+                "source_mark": _field_source_mark(c, c.leader),
             }
         )
         card = _build_field_leader_card(c)
