@@ -1,14 +1,22 @@
 """The default NFL week never hydrates thousands of boards to show its games."""
 
+import asyncio
+import json
+from builtins import ExceptionGroup
 from collections import Counter
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.routes import containers as route
+from app.utils import request_cache
 from app.utils.container_week_preview import (
     MarketSummary,
     decode_cursor,
@@ -142,6 +150,221 @@ async def test_real_default_http_keeps_all_14_games_but_hydrates_only_12_boards(
         for member in section["members"]:
             if member["card"].get("name") == "1st Quarter Winner":
                 assert section["class"] == "side_question"
+
+
+class AuxiliaryWeekSession(WeekSession):
+    def __init__(self, count=4984):
+        super().__init__(count)
+        self.closed = asyncio.Event()
+
+    async def connection(self):
+        return object()
+
+    async def close(self):
+        self.closed.set()
+
+
+def bind_week_pool(session, monkeypatch, *, checked_out=1):
+    # A real engine type for the selection guard; its sessions are faked.
+    engine = create_async_engine("postgresql+asyncpg://localhost/week_fixture")
+    monkeypatch.setattr(engine.pool, "checkedout", lambda: checked_out)
+    monkeypatch.setattr(engine.pool, "size", lambda: 2)
+    session.bind = engine
+
+
+def use_auxiliary_session(session, market_db, monkeypatch):
+    opened = []
+
+    def maker(engine, *, expire_on_commit):
+        assert engine is session.bind
+        assert not expire_on_commit
+        opened.append(market_db)
+        return lambda: market_db
+
+    monkeypatch.setattr(route, "async_sessionmaker", maker)
+    return opened
+
+
+async def test_response_cache_miss_builds_game_and_market_cards_together(monkeypatch):
+    expected = json.loads(route._render(await get(WeekSession())))
+    game_started = asyncio.Event()
+    market_started = asyncio.Event()
+
+    class GameSession(WeekSession):
+        async def execute(self, sql, params=None):
+            if str(sql).startswith("SELECT events.") and "WHERE events.id IN" in str(sql):
+                game_started.set()
+                await asyncio.wait_for(market_started.wait(), timeout=5)
+            return await super().execute(sql, params)
+
+    class MarketSession(AuxiliaryWeekSession):
+        async def execute(self, sql, params=None):
+            statement = str(sql)
+            if statement.startswith(("SELECT id, event_id, name", "SELECT futures_markets.")):
+                await asyncio.wait_for(game_started.wait(), timeout=5)
+                market_started.set()
+            return await super().execute(sql, params)
+
+    market_db = MarketSession()
+    game_db = GameSession()
+    bind_week_pool(game_db, monkeypatch)
+    opened = use_auxiliary_session(game_db, market_db, monkeypatch)
+    async def get_redis():
+        return {}
+
+    async def bounded_read(read):
+        return SimpleNamespace(is_ok=True, value=read())
+
+    monkeypatch.setattr(request_cache, "get_shared_async_redis", get_redis)
+    monkeypatch.setattr(request_cache, "bounded_redis_call", bounded_read)
+    monkeypatch.setattr(route, "_store_entry", lambda *args: None)
+    monkeypatch.setattr(route, "_local_entries", {})
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+
+    response = await get(game_db, debug_timing=True)
+
+    assert response.headers["X-Feed-Cache"] == "miss"
+    assert json.loads(response.body) == expected
+    assert opened == [market_db] and market_db.closed.is_set()
+    assert [len(ids) for ids in market_db.descriptors] == [4984]
+    assert len(market_db.hydrated[0]) == 12
+    assert not game_db.descriptors and not game_db.hydrated
+
+
+@pytest.mark.parametrize("side_connection", [False, True])
+async def test_old_finals_skip_unused_books_with_either_pool_path(monkeypatch, side_connection):
+    now = datetime.now(timezone.utc)
+
+    class SettledWeek(WeekSession):
+        async def execute(self, sql, params=None):
+            if "odds_bookmakers" in str(sql):
+                pytest.fail("Old finals with a complete opening pair do not need the latest books")
+            return await super().execute(sql, params)
+
+    session = SettledWeek(count=45)
+    for event in session.events:
+        event.status = "completed"
+        event.commence_time = now - timedelta(days=3)
+        event.completed_at = now - timedelta(days=2)
+        event.home_score, event.away_score = 18, 21
+        event.opening_home_probability = 0.54
+        event.opening_away_probability = 0.46
+
+    @asynccontextmanager
+    async def unexpected_reference_session():
+        pytest.fail("The first page does not open another connection for references")
+        yield
+
+    monkeypatch.setattr("app.services.database.async_session_maker", unexpected_reference_session)
+    bind_week_pool(session, monkeypatch, checked_out=0 if side_connection else 2)
+    side = AuxiliaryWeekSession(count=45)
+    opened = use_auxiliary_session(session, side, monkeypatch)
+
+    members = all_members(await get(session))
+    cards = [m["card"] for m in members if m["type"] == "event"]
+    assert len(cards) == 14
+    assert len([m for m in members if m["type"] == "market"]) == 12
+    assert all(card["hero_settled_result"] == "away" for card in cards)
+    assert all(card["prematch_odds"]["home_probability"] == 0.54 for card in cards)
+    assert opened == ([side] if side_connection else [])
+
+
+async def test_a_busy_pool_keeps_the_first_page_on_one_connection(monkeypatch):
+    expected = await get(WeekSession(count=45))
+    def unexpected_session(*args, **kwargs):
+        pytest.fail("a busy pool may not open an auxiliary week session")
+
+    monkeypatch.setattr(route, "async_sessionmaker", unexpected_session)
+    session = WeekSession(count=45)
+    bind_week_pool(session, monkeypatch, checked_out=2)
+
+    assert await get(session) == expected
+    assert len(session.descriptors) == len(session.hydrated) == 1
+
+
+@pytest.mark.parametrize("checkout_error", [None, ConnectionRefusedError, PoolTimeoutError])
+async def test_unavailable_auxiliary_checkout_falls_back_to_one_connection(
+    monkeypatch, checkout_error
+):
+    expected = await get(WeekSession(count=45))
+    main = WeekSession(count=45)
+    bind_week_pool(main, monkeypatch)
+
+    class WaitingConnection(AuxiliaryWeekSession):
+        async def connection(self):
+            if checkout_error is not None:
+                raise checkout_error("no auxiliary connection")
+            await asyncio.Event().wait()
+
+    side = WaitingConnection(count=45)
+    opened = use_auxiliary_session(main, side, monkeypatch)
+    monkeypatch.setattr(route, "_WEEK_MARKET_CHECKOUT_SECONDS", 0.01)
+
+    assert await asyncio.wait_for(get(main), timeout=5) == expected
+    assert opened == [side] and side.closed.is_set()
+    assert not side.descriptors and not route._week_market_read_slot.locked()
+    assert len(main.hydrated) == 1
+
+
+async def test_a_failed_game_read_cancels_the_market_read_and_releases_its_slot(monkeypatch):
+    market_started = asyncio.Event()
+
+    class FailedGameSession(WeekSession):
+        async def execute(self, sql, params=None):
+            if str(sql).startswith("SELECT events.") and "WHERE events.id IN" in str(sql):
+                await asyncio.wait_for(market_started.wait(), timeout=5)
+                raise RuntimeError("game rows unavailable")
+            return await super().execute(sql, params)
+
+    class HeldMarketSession(AuxiliaryWeekSession):
+        async def execute(self, sql, params=None):
+            if str(sql).startswith("SELECT id, event_id, name"):
+                market_started.set()
+                await asyncio.Event().wait()
+            return await super().execute(sql, params)
+
+    main = FailedGameSession(count=45)
+    side = HeldMarketSession(count=45)
+    bind_week_pool(main, monkeypatch)
+    use_auxiliary_session(main, side, monkeypatch)
+
+    with pytest.raises(ExceptionGroup) as error:
+        await asyncio.wait_for(get(main), timeout=5)
+
+    assert str(error.value.exceptions[0]) == "game rows unavailable"
+    assert side.closed.is_set()
+    assert not route._week_market_read_slot.locked()
+
+
+async def test_cancelling_while_the_side_connection_closes_holds_the_slot(monkeypatch):
+    closing = asyncio.Event()
+    finish_close = asyncio.Event()
+    main = WeekSession(count=45)
+    bind_week_pool(main, monkeypatch)
+
+    class SlowClose(AuxiliaryWeekSession):
+        async def close(self):
+            closing.set()
+            await finish_close.wait()
+            await super().close()
+
+    side = SlowClose(count=45)
+    use_auxiliary_session(main, side, monkeypatch)
+    request = asyncio.create_task(get(main))
+    await asyncio.wait_for(closing.wait(), timeout=5)
+    try:
+        request.cancel()
+        await asyncio.sleep(0)
+        request.cancel()
+        await asyncio.sleep(0)
+        assert not request.done()
+        assert route._week_market_read_slot.locked()
+    finally:
+        finish_close.set()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+    assert side.closed.is_set()
+    assert not route._week_market_read_slot.locked()
 
 
 async def test_every_remaining_market_is_reachable_once_even_if_activity_changes():

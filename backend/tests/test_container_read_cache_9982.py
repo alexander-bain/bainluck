@@ -251,7 +251,8 @@ async def test_stale_is_served_at_once_and_rebuilt_once_in_the_background(
     assert (await _get(_session(), compact=compact)).headers["X-Feed-Cache"] == "stale_hit"
     gate.set()
     await _drain_background()
-    assert len(rebuilds) == (2 if compact else 1)
+    # This test session exposes no spare pool capacity.
+    assert len(rebuilds) == 1
     assert _cards_hydrated(rebuilds[0])
     assert sum(bool(_cards_hydrated(session)) for session in rebuilds) == 1
 
