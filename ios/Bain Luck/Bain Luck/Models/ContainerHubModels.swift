@@ -11,6 +11,7 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
     let slug: String
     let revision: Int?
     let reason: String?
+    let subtitle: String?
     let edition: ContainerHubEdition?
     let container: ContainerHubHeader?
     let children: [ContainerHubChild]
@@ -34,6 +35,7 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
             throw DecodingError.dataCorruptedError(forKey: .revision, in: c, debugDescription: "Published membership requires its revision")
         }
         reason = try c.decodeIfPresent(String.self, forKey: .reason)
+        subtitle = try c.decodeIfPresent(String.self, forKey: .subtitle)
         edition = try c.decodeIfPresent(ContainerHubEdition.self, forKey: .edition)
         container = try c.decodeIfPresent(ContainerHubHeader.self, forKey: .container)
         // Fail closed even if a future server accidentally includes members in a
@@ -50,7 +52,7 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
         revisionMoved = try c.decodeIfPresent(Bool.self, forKey: .revisionMoved) ?? false
         pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet)) ?? nil
         if state == .published {
-            let isRoundupMemberHub = edition == nil && slug.hasPrefix("roundup-") && container?.kind == "roundup"
+            let isRoundupMemberHub = edition == nil && container?.kind == "roundup"
             guard revision.map({ $0 > 0 }) == true,
                   edition?.matches(slug: slug) == true || isRoundupMemberHub,
                   container?.slug == slug, memberCount >= 0, withheldCount >= 0 else {
@@ -67,7 +69,7 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case state, slug, revision, reason, edition, container, children, sections
+        case state, slug, revision, reason, subtitle, edition, container, children, sections
         case memberCount, withheld, withheldCount, assembled, knownClasses, counts, page, revisionMoved
         case pairedMetricSet
     }
@@ -75,6 +77,7 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
     /// Preserve the accepted page inventory while replacing its fresh envelope.
     init(envelope: ContainerHubResponse, sections: [ContainerHubSection], memberCount: Int, page: ContainerHubPage?, withheld: [ContainerHubWithheld], withheldCount: Int) {
         state = envelope.state; slug = envelope.slug; revision = envelope.revision; reason = envelope.reason
+        subtitle = envelope.subtitle
         edition = envelope.edition; container = envelope.container; children = envelope.children
         self.sections = sections; self.memberCount = memberCount; self.page = page
         self.withheld = withheld; self.withheldCount = withheldCount; assembled = envelope.assembled
@@ -190,23 +193,48 @@ nonisolated struct ContainerHubChild: Decodable, Identifiable, Sendable {
 
 nonisolated struct ContainerHubSection: Decodable, Sendable {
     let sectionClass: String
+    let title: String?
+    let note: String?
+    let layout: String?
     let count: Int
     let slots: [ContainerHubMemberSlot]
+    let visualBlock: MachineryVisualBlock?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         sectionClass = try c.decode(String.self, forKey: .sectionClass)
-        count = try c.decode(Int.self, forKey: .count)
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        note = try c.decodeIfPresent(String.self, forKey: .note)
+        layout = try c.decodeIfPresent(String.self, forKey: .layout)
         slots = try c.decode([ContainerHubMemberSlot].self, forKey: .members)
+        count = try c.decodeIfPresent(Int.self, forKey: .count) ?? slots.count
+        visualBlock = (try? c.decodeIfPresent(MachineryVisualBlock.self, forKey: .visualBlock))
+            ?? (try? c.decodeIfPresent(MachineryVisualBlock.self, forKey: .visualBlockSnake))
     }
 
     private enum CodingKeys: String, CodingKey {
         case sectionClass = "class"
-        case count, members
+        case title, note, layout, count, members
+        case visualBlock
+        case visualBlockSnake = "visual_block"
     }
 
-    init(sectionClass: String, count: Int, slots: [ContainerHubMemberSlot]) {
-        self.sectionClass = sectionClass; self.count = count; self.slots = slots
+    init(
+        sectionClass: String,
+        title: String? = nil,
+        note: String? = nil,
+        layout: String? = nil,
+        count: Int,
+        slots: [ContainerHubMemberSlot],
+        visualBlock: MachineryVisualBlock? = nil
+    ) {
+        self.sectionClass = sectionClass
+        self.title = title
+        self.note = note
+        self.layout = layout
+        self.count = count
+        self.slots = slots
+        self.visualBlock = visualBlock
     }
 
     var members: [ContainerHubMember] { slots.compactMap(\.member).filter(\.canOpen) }

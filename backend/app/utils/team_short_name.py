@@ -26,6 +26,8 @@ and only the designator set is what the parity guard compares.
 
 import re
 
+from app.config.college_mascots import ESPN_COLLEGE_MASCOTS
+
 #: Trailing words that name a club TYPE rather than a club.
 #:
 #: Byte-for-byte the web's `CLUB_TYPE_SUFFIXES`, and the parity guard asserts
@@ -100,7 +102,63 @@ def is_non_distinctive_trailing_word(token: str | None) -> bool:
     return False
 
 
-def compact_team_label(name: str | None, abbreviation: str | None = None) -> str | None:
+#: Ruling 194-A (Alex, Nov 14): a college team's short name is the SCHOOL, never
+#: the mascot — "Duke", "Alabama", "Gonzaga", "Ole Miss"; not "Blue Devils",
+#: "Crimson Tide", "Bulldogs" ("Bulldogs" could be five schools). Professional
+#: teams are unchanged.
+#:
+#: The mascots below are the fallback for a team whose ESPN `location` we do not
+#: hold or cannot trust. Longest first, so "Blue Devils" is tried before "Devils".
+COLLEGE_MASCOTS: tuple[str, ...] = tuple(sorted({
+    "Blue Devils", "Crimson Tide", "Tar Heels", "Fighting Irish", "Golden Eagles",
+    "Red Raiders", "Nittany Lions", "Horned Frogs", "Yellow Jackets", "Sun Devils",
+    "Demon Deacons", "Scarlet Knights", "Bulldogs", "Rebels", "Wildcats", "Tigers",
+    "Eagles", "Bears", "Cougars", "Huskies", "Spartans", "Wolverines", "Buckeyes",
+    "Hoosiers", "Boilermakers", "Illini", "Hawkeyes", "Badgers", "Gators",
+    "Volunteers", "Commodores", "Razorbacks", "Aggies", "Longhorns", "Sooners",
+    "Jayhawks", "Cyclones", "Mountaineers", "Bruins", "Trojans", "Ducks", "Beavers",
+    "Cardinals", "Cardinal", "Cavaliers", "Hokies", "Seminoles", "Hurricanes",
+    "Orangemen", "Orange",
+} | ESPN_COLLEGE_MASCOTS, key=lambda m: (-len(m), m)))
+_COLLEGE_MASCOT_RE = re.compile(
+    r"\s+(?:" + "|".join(re.escape(m).replace(r"\ ", r"\s+") for m in COLLEGE_MASCOTS) + r")\Z",
+    re.IGNORECASE,
+)
+
+
+def is_college_sport(sport_key: str | None) -> bool:
+    """`basketball_ncaab`, `basketball_wncaab`, `americanfootball_ncaaf`, ..."""
+    key = (sport_key or "").lower()
+    return "ncaa" in key or "college" in key
+
+
+def school_label(name: str | None, location: str | None = None) -> str | None:
+    """A college team's school (194-A), failing safe to the full name.
+
+    ESPN's `location` IS the school ("Duke", "Ole Miss", "Texas A&M"), but it is
+    trusted only when the team's own name starts with it: on 2026-11-15 the
+    `stanford-cardinal` row served `location: "Arkansas"`, and a school name
+    borrowed from another row is worse than the mascot it replaces. Otherwise a
+    known mascot is cut off the end; otherwise the full name is served. It never
+    emits a word the team is not called.
+    """
+    if not name:
+        return None
+    cleaned = " ".join(name.split())
+    loc = " ".join((location or "").split())
+    if loc and (cleaned.lower() == loc.lower() or cleaned.lower().startswith(loc.lower() + " ")):
+        return loc
+    stripped = _COLLEGE_MASCOT_RE.sub("", cleaned).strip()
+    return stripped or cleaned
+
+
+def compact_team_label(
+    name: str | None,
+    abbreviation: str | None = None,
+    *,
+    sport_key: str | None = None,
+    location: str | None = None,
+) -> str | None:
     """The label a grid row should carry, or ``None`` when we know neither.
 
     FAILS SAFE BY CONSTRUCTION, which is the property worth keeping: every
@@ -139,6 +197,9 @@ def compact_team_label(name: str | None, abbreviation: str | None = None) -> str
         return abbreviation
     if not name:
         return None
+    if is_college_sport(sport_key):
+        # 194-A: never the last word for a college team; that word is the mascot.
+        return school_label(name, location)
     words = name.split()
     if len(words) < 2:
         return name

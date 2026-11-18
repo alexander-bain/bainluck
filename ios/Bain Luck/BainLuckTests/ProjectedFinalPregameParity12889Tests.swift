@@ -143,7 +143,8 @@ final class ProjectedFinalPregameParity12889Tests: XCTestCase {
         XCTAssertEqual(series.latest.away, 111.0)
 
         // 3. The page's own whole-number pair is (111, 114), matching the headline.
-        let view = EventDetailView(eventId: detail.id).withLoadedEventForTest12278(detail)
+        let view = EventDetailView(eventId: detail.id, displayAsOf: Self.asOf)
+            .withLoadedEventForTest12278(detail)
         let pair = try XCTUnwrap(view.pageProjectedPointsPair(detail))
         XCTAssertEqual(pair.away, 111)
         XCTAssertEqual(pair.home, 114)
@@ -259,7 +260,8 @@ final class ProjectedFinalPregameParity12889Tests: XCTestCase {
             finalAway: nil,
             asOf: Self.asOf
         ))
-        let pageView = EventDetailView(eventId: detail.id).withLoadedEventForTest12278(detail)
+        let pageView = EventDetailView(eventId: detail.id, displayAsOf: Self.asOf)
+            .withLoadedEventForTest12278(detail)
         let pagePair = try XCTUnwrap(pageView.pageProjectedPointsPair(detail))
         let pairColors = TeamTextContrast.surfaceColors(
             awayHex: detail.awayTeamData?.primaryColor,
