@@ -47,19 +47,39 @@ def line_for(pull):
     return "Server", False
 
 
+def latest_checks(pull):
+    # Last attempt wins, including a re-run which is still in progress.
+    latest = {}
+    for check in sorted(
+        pull.get("checks", []), key=lambda c: c.get("started_at") or ""
+    ):
+        latest[(check.get("app"), check["name"])] = check
+    return latest.values()
+
+
 def checks_green(pull):
     if not pull.get("checks_complete") or not pull.get("checks"):
         return False, True
-    # Last attempt wins, including a re-run which is still in progress.
-    latest = {}
-    for check in sorted(pull["checks"], key=lambda c: c.get("started_at") or ""):
-        latest[(check.get("app"), check["name"])] = check
     green = all(
         check["state"] == "completed"
         and check.get("conclusion") in {"success", "neutral", "skipped"}
-        for check in latest.values()
+        for check in latest_checks(pull)
     )
     return green, False
+
+
+def review_ready_at(pull):
+    # Called once the current head has passed its checks. A draft may finish
+    # checks before being marked ready, or a branch may pass before it is opened.
+    completions = [
+        check.get("finished_at")
+        or (check.get("started_at") if check.get("app") == "commit-status" else None)
+        for check in latest_checks(pull)
+    ]
+    if not completions or not all(completions):
+        return None
+    intake = pull.get("review_resumed_at") or pull.get("created_at")
+    return max(completions + ([intake] if intake else []), key=instant)
 
 
 def unchanged_after(pull, commit_id):
@@ -82,6 +102,8 @@ def classify(pull, deployments, now):
         "Other",
     )
     activity = [pull["updated_at"]]
+    if pull.get("review_resumed_at"):
+        activity.append(pull["review_resumed_at"])
     activity += [
         review["submitted_at"]
         for review in pull.get("reviews", [])
@@ -184,6 +206,10 @@ def classify(pull, deployments, now):
 
 
 def advance_jams(changes, master, previous, now, stops=()):
+    # Earlier review jams used the old wait rule and cannot be carried forward.
+    previous = [
+        jam for jam in previous if jam["key"] != f"review-waiting:{jam['line']}"
+    ]
     conditions = {}
     starts = {}
     previous_keys = {j["key"] for j in previous if j.get("ended_at") is None}
@@ -208,7 +234,9 @@ def advance_jams(changes, master, previous, now, stops=()):
         if waiting and not ready:
             conditions[f"empty:{line}"] = ("empty", "Merge line", line, 900, None)
     for stop in stops:
-        key = "master" if stop["kind"] == "master" else f"{stop['kind']}:{stop['line']}"
+        kind = stop["kind"]
+        prefix = "review-ready" if kind == "review-waiting" else kind
+        key = "master" if kind == "master" else f"{prefix}:{stop['line']}"
         threshold = {
             "line-stalled": 1800,
             "announced": 900,
@@ -280,11 +308,10 @@ def build(snapshot, previous=None):
         )
         change["revision_at"] = revision
         arrivals = [revision]
-        if change["station"] in {"Review", "Merge line"}:
+        if change["station"] == "Merge line":
             arrivals += [
                 c["finished_at"] for c in pull.get("checks", []) if c.get("finished_at")
             ]
-        if change["station"] == "Merge line":
             arrivals += [
                 r["submitted_at"]
                 for r in pull.get("reviews", [])
@@ -305,11 +332,17 @@ def build(snapshot, previous=None):
             old.get("station") == change["station"]
             and old.get("line") == change["line"]
         )
-        change["station_since"] = (
-            old.get("station_since", arrived)
-            if same_station and old.get("revision_at", revision) == revision
-            else arrived
-        )
+        if change["station"] == "Review":
+            ready_at = review_ready_at(pull)
+            if ready_at:
+                change["station_since"] = ready_at
+            arrived = ready_at or snapshot["captured_at"]
+        else:
+            change["station_since"] = (
+                old.get("station_since", arrived)
+                if same_station and old.get("revision_at", revision) == revision
+                else arrived
+            )
         if old and not same_station:
             transitions.append(
                 {

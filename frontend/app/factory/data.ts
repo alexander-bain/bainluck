@@ -2,6 +2,7 @@ import type { FactoryData } from "./types";
 
 export const FACTORY_DATA_URL =
   "https://github.com/alexander-bain/bainluck/releases/download/factory-data/factory.json";
+const MAX_CACHE_AGE_MS = 2 * 60_000;
 
 export interface FactoryRead {
   data: FactoryData | null;
@@ -141,8 +142,7 @@ export function createFactoryReader(
     }
   }
 
-  // A rejected refresh leaves the previous verified entry in Next's Data Cache.
-  const load = cacheVerifiedRead(() => {
+  function refresh(): Promise<VerifiedRead> {
     pending ??= fetchWithRetry()
       .then(
         (data) => {
@@ -159,15 +159,24 @@ export function createFactoryReader(
         pending = null;
       });
     return pending;
-  });
+  }
+
+  // A rejected refresh leaves the previous verified entry in Next's Data Cache.
+  const load = cacheVerifiedRead(refresh);
 
   return async (): Promise<FactoryRead> => {
     let readFailed: boolean;
     try {
       const read = await load();
       if (!lastGood || read.checkedAt >= lastGood.checkedAt) lastGood = read;
+      // Next can return its old entry while refreshing. Wait for that same
+      // refresh before rendering after a quiet spell.
+      const verified =
+        Date.now() - lastGood.checkedAt > MAX_CACHE_AGE_MS
+          ? await refresh()
+          : lastGood;
       readFailed =
-        lastFailureAt !== null && lastFailureAt >= lastGood.checkedAt;
+        lastFailureAt !== null && lastFailureAt >= verified.checkedAt;
     } catch {
       readFailed = true;
     }

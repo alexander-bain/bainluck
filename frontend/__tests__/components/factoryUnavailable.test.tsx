@@ -71,6 +71,43 @@ it("keeps the earlier floor and shows its age after a timeout", async () => {
   );
 });
 
+it("draws the fresh floor on the first visit after the cache ages out", async () => {
+  const visitAt = "2026-11-18T21:38:00Z";
+  const clock = jest.spyOn(Date, "now").mockReturnValue(Date.parse(visitAt));
+  const cached = {
+    data: { ...snapshot, generated_at: "2026-11-18T21:03:00Z" },
+    checkedAt: Date.parse("2026-11-18T21:08:00Z"),
+  };
+  const fresh = { ...snapshot, generated_at: "2026-11-18T21:37:00Z" };
+  let finishRead!: () => void;
+  const responseInFlight = new Promise((resolve) => {
+    finishRead = () => resolve({ ...response, json: async () => fresh });
+  });
+  const fetcher = jest.fn().mockReturnValue(responseInFlight);
+  const read = createFactoryReader(fetcher, (refresh) => async () => {
+    // Next returns this old cache entry while it revalidates in the background.
+    void refresh();
+    return cached;
+  });
+
+  try {
+    const firstVisit = read();
+    await Promise.resolve();
+    finishRead();
+    const html = renderToStaticMarkup(
+      <FactoryFloor {...await firstVisit} renderedAt={visitAt} />,
+    );
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(html).toContain("Read from GitHub");
+    expect(html).toContain("1:37 PM");
+    expect(html).not.toContain("1:03 PM");
+    expect(html).not.toContain("Not updating");
+    expect(html).not.toContain("Updates have stopped.");
+  } finally {
+    clock.mockRestore();
+  }
+});
+
 it("shows the unreadable state when no read has succeeded", async () => {
   const fetcher = jest.fn().mockRejectedValue(timeout);
   const read = createFactoryReader(fetcher);

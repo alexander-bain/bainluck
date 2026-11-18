@@ -80,10 +80,102 @@ class FactoryStops(unittest.TestCase):
             **self.waiting,
             "station": "Review",
             "station_since": "2026-11-18T15:59:59Z",
+            "last_activity": "2026-11-16T18:00:00Z",
         }
         self.assertEqual(self.stops(changes=[review])[0]["level"], "amber")
         review["station_since"] = "2026-11-18T16:00:00Z"
         self.assertEqual(self.stops(changes=[review]), [])
+
+    def test_review_wait_uses_readiness_and_excludes_parked_changes(self):
+        opened = "2026-11-03T17:00:00Z"
+        ready = "2026-11-18T15:00:00Z"
+        parked = {
+            "number": 12001,
+            "title": "Older change",
+            "branch": "codex/older-change",
+            "state": "open",
+            "draft": False,
+            "created_at": opened,
+            "updated_at": opened,
+            "files": ["backend/app/main.py"],
+            "files_complete": True,
+            "checks_complete": True,
+            "reviews_complete": True,
+            "checks": [
+                {
+                    "name": "CI",
+                    "app": "github-actions",
+                    "state": "completed",
+                    "conclusion": "success",
+                    "finished_at": opened,
+                }
+            ],
+        }
+        active = {
+            **parked,
+            "number": 12002,
+            "title": "Recently ready change",
+            "review_resumed_at": ready,
+            "updated_at": "2026-11-18T16:30:00Z",
+        }
+        just_green = {
+            **active,
+            "number": 12003,
+            "checks": [{**parked["checks"][0], "finished_at": "2026-11-18T17:00:00Z"}],
+        }
+        snapshot = {
+            "captured_at": "2026-11-18T18:00:00Z",
+            "pulls": [parked, active, just_green],
+            "deployments": [],
+            "master": {},
+        }
+        legacy_jam = {
+            "kind": "review-waiting",
+            "station": "Review",
+            "started_at": opened,
+            "qualifies_at": "2026-11-03T19:00:00Z",
+            "ended_at": None,
+            "count": 3,
+        }
+        legacy = {
+            "changes": [
+                {
+                    "number": 12002,
+                    "line": "Server",
+                    "station": "Review",
+                    "station_since": opened,
+                }
+            ],
+            "jams": [
+                {
+                    **legacy_jam,
+                    "key": "review-waiting:Server",
+                    "line": "Server",
+                },
+                {
+                    **legacy_jam,
+                    "key": "review-waiting:Website",
+                    "line": "Website",
+                },
+            ],
+        }
+        floor = build(snapshot, legacy)
+        stops = [stop for stop in floor["stops"] if stop["kind"] == "review-waiting"]
+        self.assertEqual(
+            stops,
+            [
+                {
+                    "kind": "review-waiting",
+                    "line": "Server",
+                    "station": "Review",
+                    "since": ready,
+                    "count": 1,
+                    "level": "amber",
+                }
+            ],
+        )
+        jams = [j for j in floor["jams"] if j["kind"] == "review-waiting"]
+        self.assertEqual([(j["started_at"], j["count"]) for j in jams], [(ready, 1)])
 
     def test_f_reader_behind_after_fifteen_minutes(self):
         self.assertTrue(reader_behind("2026-11-18T17:44:59Z", self.now))

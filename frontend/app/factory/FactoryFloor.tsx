@@ -113,9 +113,7 @@ export default function FactoryFloor({
   const [reducedMotion, setReducedMotion] = useState(false);
   const [shippingLines, setShippingLines] = useState<Line[]>([]);
   const lastRefresh = useRef(Date.parse(renderedAt));
-  const behind =
-    data !== null &&
-    (readFailed || data !== snapshot || readerBehind(data, now));
+  const behind = data !== null && (readFailed || readerBehind(data, now));
   const motion = !behind && tabVisible && !reducedMotion;
 
   useEffect(() => {
