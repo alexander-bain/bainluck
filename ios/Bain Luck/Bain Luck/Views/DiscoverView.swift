@@ -106,6 +106,22 @@ enum NativeDiscoverDebugState {
     }
 }
 
+nonisolated protocol MachineryPreviewLoading12288: Sendable {
+    nonisolated func loadPreview(user: AuthUser?) async throws -> [MachineryPreviewEntry]
+}
+
+nonisolated struct APIMachineryPreviewLoader12288: MachineryPreviewLoading12288 {
+    let client: APIClient
+    init(client: APIClient = .shared) { self.client = client }
+
+    func loadPreview(user: AuthUser?) async throws -> [MachineryPreviewEntry] {
+        guard GroupingMachineryGate12288.canAccessMachinery(user: user) else {
+            return []
+        }
+        return try await client.fetchMachineryPreview(user: user)
+    }
+}
+
 struct DiscoverView: View {
     @StateObject private var vm: DiscoverViewModel
 
@@ -113,9 +129,14 @@ struct DiscoverView: View {
     /// model), the open detail, how many cards were revealed and the scroll
     /// offset. `nil` everywhere else, which is today's behaviour.
     private let macPlace: MacReadingPlace<DiscoverViewModel>?
+    private let machineryPreviewLoader: any MachineryPreviewLoading12288
 
-    init(macPlace: MacReadingPlace<DiscoverViewModel>? = nil) {
+    init(
+        macPlace: MacReadingPlace<DiscoverViewModel>? = nil,
+        machineryPreviewLoader: any MachineryPreviewLoading12288 = APIMachineryPreviewLoader12288()
+    ) {
         self.macPlace = macPlace
+        self.machineryPreviewLoader = machineryPreviewLoader
         _vm = StateObject(wrappedValue: macPlace?.models(orMake: { DiscoverView.makeViewModel() }) ?? DiscoverView.makeViewModel())
         _visibleCount = State(initialValue: macPlace?.revealedCount ?? 20)
         _navigationPath = State(initialValue: macPlace?.path ?? NavigationPath())
@@ -140,6 +161,8 @@ struct DiscoverView: View {
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @State private var visibleCount: Int
+    @State private var machineryPreviewItems: [MachineryPreviewEntry] = []
+    @State private var machineryGateRevision: Int = 0
 
     /// Width available to the card area, in points. 0 until the first
     /// geometry pass resolves, which `DiscoverMasonry.columnCount` reads as one
@@ -1121,6 +1144,30 @@ struct DiscoverView: View {
                                     recordInteraction(for: primary, action: .detailOpen, source: "card")
                                 }
                                 navigationPath.append(Route.containerHub(slug: slug, name: name))
+                            }
+                        )
+                    } else if kind == "roundup",
+                              let roundupBundle = Self.resolveRoundupBundle(
+                                  title: title,
+                                  collectionRef: collectionRef,
+                                  groupItems: items,
+                                  feedItems: vm.items
+                              ),
+                              let machineryCard = roundupBundle.roundupContract?.machineryCard {
+                        MachineryDiscoverEntryCardView(
+                            card: machineryCard,
+                            pairedMetricSet: roundupBundle.roundupContract?.pairedMetricSet ?? roundupBundle.pairedMetricSet,
+                            onOpenContainer: { slug, name in
+                                if let primary = items.first {
+                                    recordInteraction(for: primary, action: .detailOpen, source: "card")
+                                }
+                                navigationPath.append(Route.containerHub(slug: slug, name: name))
+                            },
+                            onOpenMarket: { marketId in
+                                if let primary = items.first {
+                                    recordInteraction(for: primary, action: .detailOpen, source: "card")
+                                }
+                                navigationPath.append(Route.futuresDetail(id: marketId))
                             }
                         )
                     } else if kind == "roundup",
@@ -2439,6 +2486,31 @@ struct DiscoverView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
+                // #12288: Owner-only machinery groupings preview (Alex + Preferences switch ON).
+                // Strictly absent for public, signed-out, and switched-off accounts.
+                if GroupingMachineryGate12288.canAccessMachinery(user: authManager.user),
+                   !machineryPreviewItems.isEmpty {
+                    VStack(spacing: DiscoverMasonry.spacing) {
+                        ForEach(machineryPreviewItems) { entry in
+                            if let card = entry.machineryCard {
+                                MachineryDiscoverEntryCardView(
+                                    card: card,
+                                    pairedMetricSet: entry.pairedMetricSet,
+                                    onOpenContainer: { slug, _ in
+                                        navigationPath.append(Route.containerHub(slug: slug, name: entry.displayName))
+                                    },
+                                    onOpenMarket: { marketId in
+                                        navigationPath.append(Route.futuresDetail(id: marketId))
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.bottom, DiscoverMasonry.spacing)
+                    .accessibilityIdentifier("discover.ownerMachineryPreview")
+                }
+
                 // Cards (paginated — show `visibleCount` at a time)
                 let pageGrouped = Array(grouped.prefix(visibleCount))
                 // #3651 — this was a `LazyVGrid` over
@@ -2521,6 +2593,12 @@ struct DiscoverView: View {
                     ) {
                         await vm.loadMoreIfNeeded()
                     }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .groupingMachineryGateDidChange12288)) { _ in
+                    machineryGateRevision &+= 1
+                }
+                .task(id: "machinery-\(authManager.user?.id ?? -1)-\(machineryGateRevision)") {
+                    await reloadMachineryPreviewIfAuthorized()
                 }
                 .padding(.horizontal)
                 .padding(.bottom)
@@ -2996,6 +3074,17 @@ struct DiscoverView: View {
     /// Pull-to-refresh does not need this: that reader is already at the top,
     /// and scrolling them there would be a no-op at best.
     @MainActor
+    private func reloadMachineryPreviewIfAuthorized() async {
+        guard GroupingMachineryGate12288.canAccessMachinery(user: authManager.user) else {
+            if !machineryPreviewItems.isEmpty {
+                machineryPreviewItems = []
+            }
+            return
+        }
+        machineryPreviewItems = (try? await machineryPreviewLoader.loadPreview(user: authManager.user)) ?? []
+    }
+
+    @MainActor
     private func refreshFeed(returningToTopWith proxy: ScrollViewProxy? = nil) async {
         // First statement on purpose: the counter answers "did the reader's pull
         // reach this closure", which must not depend on anything below it
@@ -3023,6 +3112,7 @@ struct DiscoverView: View {
         // A refresh AGES the dismiss store; it does not empty it (#5951).
         dismissedAt = Self.dismissStoreAfterRefresh(dismissedAt)
         dismissVersion &+= 1
+        await reloadMachineryPreviewIfAuthorized()
         seenImpressions.removeAll()
         // 🔴 #7170 — THE LOAD IS UNSTRUCTURED ON PURPOSE, AND THIS IS THE LINE THAT
         // MAKES A PULL PUBLISH.

@@ -233,7 +233,7 @@ async def _hydrate_event_cards(
     if not event_ids:
         return {}, {}
     from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
+    from sqlalchemy.orm import joinedload
 
     from app.models import Event
 
@@ -241,7 +241,7 @@ async def _hydrate_event_cards(
         events = (
             await db.execute(
                 select(Event)
-                .options(selectinload(Event.sport))
+                .options(joinedload(Event.sport))
                 .where(Event.id.in_(event_ids))
                 .order_by(Event.id)
             )
@@ -414,7 +414,7 @@ async def _hydrate_market_cards(
     if not market_ids:
         return {}, {}, {}
     from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
+    from sqlalchemy.orm import joinedload, selectinload
 
     from app.models import FuturesMarket
     from app.routes.events import _format_futures_for_search
@@ -425,7 +425,9 @@ async def _hydrate_market_cards(
         markets = (
             await db.execute(
                 select(FuturesMarket)
-                .options(selectinload(FuturesMarket.sport), selectinload(FuturesMarket.outcomes))
+                # The scalar sport can join the market row. Keep outcomes in
+                # one separate batch so a long ladder does not repeat that row.
+                .options(joinedload(FuturesMarket.sport), selectinload(FuturesMarket.outcomes))
                 .where(FuturesMarket.id.in_(market_ids))
                 .order_by(FuturesMarket.id)
             )

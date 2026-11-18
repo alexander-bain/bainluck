@@ -54,7 +54,8 @@ nonisolated enum PairedMetricPresentation {
     static let allowedVisualArtHosts: Set<String> = [
         "image.tmdb.org",
         "a.espncdn.com",
-        "images.pexels.com"
+        "images.pexels.com",
+        "upload.wikimedia.org"
     ]
 
     // Mirrors `frontend/lib/play/kidSafe.ts` (#7461).
@@ -267,12 +268,14 @@ nonisolated enum PairedMetricPresentation {
     static func expanderCopy(
         sortedEntries: [PairedSubjectEntry],
         set: PairedMetricSet,
-        expanded: Bool
+        expanded: Bool,
+        collapsedCount: Int = 5
     ) -> (primary: String, unpricedNotice: String?)? {
-        let hiddenCount = sortedEntries.count - 5
+        let safeLimit = max(1, collapsedCount)
+        let hiddenCount = sortedEntries.count - safeLimit
         guard hiddenCount > 0 else { return nil }
         if expanded {
-            return (primary: "Show top 5 by \(set.stage2Label) % only", unpricedNotice: nil)
+            return (primary: "Show top \(safeLimit) by \(set.stage2Label) % only", unpricedNotice: nil)
         }
         let primary: String
         if set.stage1Label.lowercased().contains("nominat") {
@@ -280,7 +283,7 @@ nonisolated enum PairedMetricPresentation {
         } else {
             primary = "Show all \(sortedEntries.count) contenders (+\(hiddenCount) more)"
         }
-        let hiddenSlice = sortedEntries.dropFirst(5)
+        let hiddenSlice = sortedEntries.dropFirst(safeLimit)
         guard let unpriced = hiddenSlice.first(where: { $0.stage2Probability == nil }) else {
             return (primary: primary, unpricedNotice: nil)
         }
