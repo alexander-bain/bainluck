@@ -36,6 +36,10 @@ enum DiscoverPictureChart191A {
         let rightEndLabel: String
         let isFinished: Bool
         let rightEndUsesTeamAccent: Bool
+
+        var accessibilityLabel: String {
+            "Win chance chart for \(plottedTeamShortName): \(leftEndLabel), \(rightEndLabel)"
+        }
     }
 
     /// Resolves which side the single win-chance trajectory line represents:
@@ -108,13 +112,20 @@ enum DiscoverPictureChart191A {
 
         let currentSideProb: Double? = {
             guard isLive else { return nil }
-            if pricesADraw {
-                return CompactGameCard12616.usableProbability(event.currentOdds?.homeProbability)
-            }
             let raw = perspective == .home
                 ? event.currentOdds?.homeProbability
                 : event.currentOdds?.awayProbability
-            return CompactGameCard12616.usableProbability(raw)
+            if let served = CompactGameCard12616.usableProbability(raw) {
+                return served
+            }
+            // A retained chart endpoint can be pregame. Only the server's
+            // explicit live pin can serve as a current fallback.
+            guard let history, history.eventId == event.id, history.blendEdgePinned == true,
+                  let pin = history.aggregateLine?.last, pin.timestamp.asDate != nil,
+                  let home = CompactGameCard12616.usableProbability(pin.homeProbability) else {
+                return nil
+            }
+            return perspective == .home ? home : 1 - home
         }()
 
         let extractedPoints = extractPoints(
@@ -163,10 +174,9 @@ enum DiscoverPictureChart191A {
                 return ("Final", false)
             }
 
-            let effectiveCurrent = currentSideProb ?? extractedPoints.last?.probability
-            guard let curP = effectiveCurrent,
+            guard let curP = currentSideProb,
                   let tenthsText = CompactGameCard12616.formatSingleLiveTenths(curP) else {
-                return ("Now \(plottedTeamCode)", true)
+                return ("Current win chance unavailable", false)
             }
 
             if let preP = pregameSideProb {
@@ -451,9 +461,7 @@ struct DiscoverPictureChartPanel191AView: View {
                         .stroke(Color.primary.opacity(0.07), lineWidth: 0.5)
                 )
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel(
-                    "Win chance chart for \(model.plottedTeamShortName): \(model.leftEndLabel), \(model.rightEndLabel)"
-                )
+                .accessibilityLabel(model.accessibilityLabel)
                 .accessibilityIdentifier("discover-card-191a-chart-panel")
             }
         }
