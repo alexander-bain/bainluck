@@ -17,8 +17,23 @@ enum TestSuiteDisposition12982 {
         case pregameForecast9496 = "APregameForecastFinalReadsTheLadders9496Tests"
     }
 
+    static func isGitHubHostedRunnerEnvironment(
+        filePath: String = #filePath,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        if environment["GITHUB_ACTIONS"] == "true"
+            || environment["SIMCTL_CHILD_GITHUB_ACTIONS"] == "true" {
+            return true
+        }
+        // `xcodebuild test` spawns `Bain Luck.app` inside `simctl` without forwarding
+        // host `GITHUB_ACTIONS=true` into the simulator process environment, whereas
+        // `#filePath` is compiled on the GitHub-hosted runner (`/Users/runner/work/...`,
+        // distinct from Xcode Cloud `/Volumes/workspace/...` and local `/Users/<dev>/...`).
+        return filePath.hasPrefix("/Users/runner/work/")
+    }
+
     static var isGitHubHostedRunner: Bool {
-        ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true"
+        isGitHubHostedRunnerEnvironment()
     }
 
     @MainActor
@@ -56,5 +71,32 @@ final class TestSuiteDisposition12982SelfTests: XCTestCase {
                 ?? NSClassFromString(suite.rawValue)
             XCTAssertNotNil(cls, "Missing replacement test suite class \(suite.rawValue)")
         }
+    }
+
+    func testGitHubHostedRunnerDetectionSurvivesSimulatorEnvStrippingWithoutMatchingXcodeCloud() {
+        XCTAssertTrue(
+            TestSuiteDisposition12982.isGitHubHostedRunnerEnvironment(
+                filePath: "/Users/runner/work/bainluck/bainluck/ios/Bain Luck/BainLuckTests/TestSuiteDisposition12982.swift",
+                environment: [:]
+            )
+        )
+        XCTAssertTrue(
+            TestSuiteDisposition12982.isGitHubHostedRunnerEnvironment(
+                filePath: "/tmp/TestSuiteDisposition12982.swift",
+                environment: ["GITHUB_ACTIONS": "true"]
+            )
+        )
+        XCTAssertFalse(
+            TestSuiteDisposition12982.isGitHubHostedRunnerEnvironment(
+                filePath: "/Volumes/workspace/repository/ios/Bain Luck/BainLuckTests/TestSuiteDisposition12982.swift",
+                environment: [:]
+            )
+        )
+        XCTAssertFalse(
+            TestSuiteDisposition12982.isGitHubHostedRunnerEnvironment(
+                filePath: "/Users/bain/bainluck/ios/Bain Luck/BainLuckTests/TestSuiteDisposition12982.swift",
+                environment: [:]
+            )
+        )
     }
 }

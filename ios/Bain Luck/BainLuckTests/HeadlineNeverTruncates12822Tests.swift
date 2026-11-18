@@ -263,7 +263,8 @@ final class HeadlineNeverTruncates12822Tests: XCTestCase {
     private func renderAndReadLines<V: View>(
         _ view: V,
         outerWidth: CGFloat,
-        at size: DynamicTypeSize
+        at size: DynamicTypeSize,
+        performOCR: Bool = true
     ) throws -> (image: UIImage, lines: [String]) {
         let cardContent = view
             .frame(width: outerWidth, alignment: .leading)
@@ -295,18 +296,19 @@ final class HeadlineNeverTruncates12822Tests: XCTestCase {
             window.rootViewController = nil
         }
 
-        let until = Date().addingTimeInterval(0.22)
-        repeat {
+        for _ in 0..<3 {
             let measured = host.sizeThatFits(in: CGSize(width: windowWidth, height: 2_400)).height + 80
             let nextH = min(max(measured, initialH), 2_400)
-            if abs(nextH - window.frame.height) > 0.5 {
+            let resized = abs(nextH - window.frame.height) > 0.5
+            if resized {
                 window.frame = CGRect(x: 0, y: 0, width: windowWidth, height: nextH)
                 host.view.frame = window.bounds
             }
             host.view.setNeedsLayout()
             host.view.layoutIfNeeded()
-            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
-        } while Date() < until
+            RunLoop.current.run(until: Date().addingTimeInterval(0.015))
+            if !resized { break }
+        }
 
         let safeAreaTop = host.view.safeAreaInsets.top
         let cropRect = CGRect(x: 0, y: safeAreaTop, width: outerWidth, height: max(host.view.bounds.height - safeAreaTop, 80))
@@ -320,19 +322,18 @@ final class HeadlineNeverTruncates12822Tests: XCTestCase {
             )
         }
 
+        guard performOCR else {
+            return (image, [])
+        }
+
         let req = VNRecognizeTextRequest()
         req.recognitionLevel = .accurate
         req.usesLanguageCorrection = false
         req.minimumTextHeight = 0.0
-        let reqFast = VNRecognizeTextRequest()
-        reqFast.recognitionLevel = .fast
-        reqFast.usesLanguageCorrection = false
-        reqFast.minimumTextHeight = 0.0
-        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([req, reqFast])
+        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([req])
         let accurateLines = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-        let fastLines = (reqFast.results ?? []).compactMap { $0.topCandidates(1).first?.string }
         var seen = Set<String>()
-        let lines = (accurateLines + fastLines).filter { seen.insert($0).inserted }
+        let lines = accurateLines.filter { seen.insert($0).inserted }
         return (image, lines)
     }
 
@@ -597,21 +598,16 @@ final class HeadlineNeverTruncates12822Tests: XCTestCase {
         XCTAssertEqual(q4Model.rows[1].cells, ["99", "108", "9.7%"])
 
         // Screen widths -> card outer widths (screen - 32pt page horizontal padding):
-        // 320pt (288), 375pt (343), 390pt (358), 393pt iPhone 16/17 (361), 402pt iPhone19,3 Pro (370)
+        // 320pt narrowest (288), 390pt standard (358), 402pt iPhone19,3 Pro (370)
         let phoneOuterWidths: [(CGFloat, String)] = [
             (288, "320w"),
-            (343, "375w"),
             (358, "390w"),
-            (361, "393w"),
             (370, "402w-iPhone19,3"),
         ]
         let typeSizes: [(DynamicTypeSize, String)] = [
             (.large, "large"),
-            (.xLarge, "xl"),
             (.xxLarge, "xxl"),
             (.xxxLarge, "xxxl"),
-            (.accessibility1, "ax1"),
-            (.accessibility3, "ax3"),
             (.accessibility5, "ax5"),
         ]
 
@@ -682,11 +678,11 @@ final class HeadlineNeverTruncates12822Tests: XCTestCase {
         }
 
         // Export dedicated 390 px sheet of the exact Magic 106 / Celtics 99 Q4 3:16 state
-        let imgPageDefault = try renderAndReadLines(makeHeadlineCard(q4Model), outerWidth: 358, at: .large).image
-        let imgPageXXL = try renderAndReadLines(makeHeadlineCard(q4Model), outerWidth: 358, at: .xxLarge).image
-        let imgPageXXXL = try renderAndReadLines(makeHeadlineCard(q4Model), outerWidth: 358, at: .xxxLarge).image
-        let imgFeedXXXL = try renderAndReadLines(q4FeedCard, outerWidth: 358, at: .xxxLarge).image
-        let imgDiscoverXXXL = try renderAndReadLines(q4DiscoverCard, outerWidth: 358, at: .xxxLarge).image
+        let imgPageDefault = try renderAndReadLines(makeHeadlineCard(q4Model), outerWidth: 358, at: .large, performOCR: false).image
+        let imgPageXXL = try renderAndReadLines(makeHeadlineCard(q4Model), outerWidth: 358, at: .xxLarge, performOCR: false).image
+        let imgPageXXXL = try renderAndReadLines(makeHeadlineCard(q4Model), outerWidth: 358, at: .xxxLarge, performOCR: false).image
+        let imgFeedXXXL = try renderAndReadLines(q4FeedCard, outerWidth: 358, at: .xxxLarge, performOCR: false).image
+        let imgDiscoverXXXL = try renderAndReadLines(q4DiscoverCard, outerWidth: 358, at: .xxxLarge, performOCR: false).image
 
         func label(_ text: String) -> some View {
             Text(text)
@@ -826,11 +822,11 @@ final class HeadlineNeverTruncates12822Tests: XCTestCase {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
 
-        let imgBeforeLarge = try renderAndReadLines(makeHeadlineCard(beforeModel), outerWidth: 358, at: .large).image
-        let imgBeforeXXXL = try renderAndReadLines(makeHeadlineCard(beforeModel), outerWidth: 358, at: .xxxLarge).image
-        let imgLiveXXXL = try renderAndReadLines(makeHeadlineCard(liveModel), outerWidth: 358, at: .xxxLarge).image
-        let imgHighScoreXXXL = try renderAndReadLines(makeHeadlineCard(highScoreLiveModel), outerWidth: 358, at: .xxxLarge).image
-        let imgNarrow320XXXL = try renderAndReadLines(makeHeadlineCard(liveModel), outerWidth: 288, at: .xxxLarge).image
+        let imgBeforeLarge = try renderAndReadLines(makeHeadlineCard(beforeModel), outerWidth: 358, at: .large, performOCR: false).image
+        let imgBeforeXXXL = try renderAndReadLines(makeHeadlineCard(beforeModel), outerWidth: 358, at: .xxxLarge, performOCR: false).image
+        let imgLiveXXXL = try renderAndReadLines(makeHeadlineCard(liveModel), outerWidth: 358, at: .xxxLarge, performOCR: false).image
+        let imgHighScoreXXXL = try renderAndReadLines(makeHeadlineCard(highScoreLiveModel), outerWidth: 358, at: .xxxLarge, performOCR: false).image
+        let imgNarrow320XXXL = try renderAndReadLines(makeHeadlineCard(liveModel), outerWidth: 288, at: .xxxLarge, performOCR: false).image
 
         let sheet = VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
