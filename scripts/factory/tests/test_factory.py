@@ -171,7 +171,7 @@ class FactoryRules(unittest.TestCase):
             fable_needed=True,
             commits=[
                 {"parents": 1, "at": "2026-11-17T10:00:00Z"},
-                {"parents": 2, "at": "2026-11-17T12:00:00Z"},
+                {"parents": 2, "merge_from_master": True, "at": "2026-11-17T12:00:00Z"},
             ],
         )
         pull["comments"] = [
@@ -290,13 +290,14 @@ class FactoryRules(unittest.TestCase):
             "schedule:",
             "push:",
             "workflow_dispatch:",
+            "workflow_run:",
         ):
             self.assertIn(event, workflow)
         self.assertIn('cron: "*/5 * * * *"', workflow)
         self.assertIn("cancel-in-progress: false", workflow)
         self.assertNotRegex(
             workflow,
-            r"(?m)^  (pull_request(?:_review)?|workflow_run|issue_comment|status):",
+            r"(?m)^  (pull_request(?:_review)?|issue_comment|status):",
         )
         self.assertEqual(
             re.findall(r"^  ([\w-]+):", workflow.split("jobs:\n")[1], re.M),
@@ -306,10 +307,10 @@ class FactoryRules(unittest.TestCase):
         self.assertNotIn("pull_request.head", workflow)
         self.assertIn("github.ref == 'refs/heads/master'", workflow)
         self.assertIn("ref: master", workflow)
-        test_workflow = (ROOT / ".github/workflows/factory-tests.yml").read_text()
-        self.assertIn("scripts/factory/**", test_workflow)
-        self.assertNotIn("write", test_workflow)
-        self.assertNotIn("--publish", test_workflow)
+        self.assertIn("workflows: [CI]", workflow)
+        self.assertIn("types: [completed]", workflow)
+        self.assertIn("timeout-minutes: 5", workflow)
+        self.assertFalse((ROOT / ".github/workflows/factory-tests.yml").exists())
         collector = (ROOT / "scripts/factory/collect.py").read_text()
         for verb in ('"push"', '"commit"', '"update-ref"'):
             self.assertNotIn('["git", ' + verb, collector)
@@ -328,6 +329,36 @@ class FactoryRules(unittest.TestCase):
             commits_complete=False,
         )
         self.assertEqual(self.place(pull)["station"], "Merge line")
+
+    def test_accepted_change_stays_cleared_after_tests_and_master_sync(self):
+        pull = self.ready()
+        reviewed = pull["head_sha"]
+        pull.update(head_sha="new-head", fable_needed=True)
+        pull["commits"] = [
+            {"sha": reviewed, "parents": 1, "at": "2026-11-17T10:00:00Z"},
+            {
+                "sha": "tests",
+                "parents": 1,
+                "test_only": True,
+                "at": "2026-11-17T12:00:00Z",
+            },
+            {
+                "sha": "new-head",
+                "parents": 2,
+                "merge_from_master": True,
+                "at": "2026-11-17T13:00:00Z",
+            },
+        ]
+        pull["comments"] = [
+            {
+                "fable_accept": True,
+                "association": "OWNER",
+                "created_at": "2026-11-17T11:00:00Z",
+            }
+        ]
+        self.assertEqual(self.place(pull)["station"], "Merge line")
+        pull["commits"][1]["test_only"] = False
+        self.assertEqual(self.place(pull)["station"], "Review")
 
     def test_trusted_no_look_comment_is_bound_to_the_last_non_merge_commit(self):
         pull = self.ready()
