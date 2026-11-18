@@ -110,8 +110,17 @@ def _stamp(grid, club_ids=(BRAVES,), season="2026", path=None, futures=None):
 
 class TestTheBravesPageReadsOut:
     def test_the_title_step_carries_the_grids_eliminated(self):
-        path, _ = _stamp(_grid(BREWERS_ROW, BRAVES_ROW))
+        quoted = _path()
+        quoted[0]["source_mark"] = {
+            "state": "single", "sources": [{"key": "kalshi", "probability": 0.001}],
+        }
+        path, _ = _stamp(_grid(BREWERS_ROW, BRAVES_ROW), path=quoted)
         assert path[0]["state"] == "eliminated"
+        assert path[0]["source_mark"] == {
+            "state": "settled",
+            "sources": [],
+            "settled": {"source": None, "result": "Eliminated", "at": None},
+        }
 
     def test_the_title_futures_row_carries_it_too(self):
         # web's `teamHeadline` falls back to `pickJourneyFuture(futures)` — that
@@ -133,8 +142,7 @@ class TestTheBravesPageReadsOut:
             assert got["probability"] == want["probability"]
         for got, want in zip(futures, before_futures):
             assert got["probability"] == want["probability"]
-        # ...and nothing but `state` was added.
-        assert {k: v for k, v in path[0].items() if k != "state"} == before_path[0]
+        assert {k: v for k, v in path[0].items() if k not in {"state", "source_mark"}} == before_path[0]
 
     def test_a_club_still_playing_gets_no_state(self):
         path, futures = _stamp(_grid(BREWERS_ROW, BRAVES_ROW), club_ids=(10735,))

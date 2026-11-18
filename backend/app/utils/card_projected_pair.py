@@ -87,11 +87,12 @@ import logging
 import math
 import re
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
 from sqlalchemy import text
 
+from app.utils.live_line_clock import stored_state_clock
 from app.utils.odds_filtering import _effective_time, filter_stale_bookmaker_snapshots
 from app.utils.odds_math import aggregate_bookmaker_odds, detect_reversed_bookmakers
 from app.utils.pregame_projection import (
@@ -204,6 +205,11 @@ def card_projection_card(
         "sport_key": sport_key,
         "live_boundary_at": boundary_at,
         "period": _loaded(event, "period"),
+        # #12938: the live clock the odds job stored; already-loaded state only.
+        "state_changed_at": (
+            stored_state_clock(_loaded(event, "win_probability_sources"))
+            if event.status == "live" else None
+        ),
     }
 
 
@@ -241,6 +247,7 @@ def card_projected_pair(
     sport_key: Optional[str],
     live_boundary_at: Optional[datetime] = None,
     period: Optional[str] = None,
+    state_changed_at: Optional[datetime] = None,
 ) -> Optional[dict]:
     """The card's projected pair from one event's latest row per sportsbook, or None.
 
@@ -249,6 +256,9 @@ def card_projected_pair(
     ``served_status`` is the status the card prints and decides admission.
     ``live_boundary_at`` and ``period`` (`card_projection_card`) decide the
     marked in-play object on a live card; without them it is not served.
+    ``state_changed_at`` (#12938, the clock the odds job stored; `live_line_clock`) is a live
+    game's clock: given, only current lines project, and none current means no
+    pair. Absent, the pair is built as before.
     """
     if not snapshots or not card_projection_wanted(served_status, sport_key):
         return None
@@ -256,6 +266,12 @@ def card_projected_pair(
     filtered = filter_stale_bookmaker_snapshots(
         snapshots, event_status=stored_status, commence_time=commence_time
     )
+    if filtered and stored_status == "live" and state_changed_at is not None:
+        from app.utils.live_line_clock import current_lines
+
+        filtered = current_lines(
+            filtered, now=datetime.now(timezone.utc), state_changed_at=state_changed_at
+        )
     if not filtered:
         return None
 
@@ -377,6 +393,7 @@ def event_live_projection(
         sport_key=sport_key,
         live_boundary_at=card["live_boundary_at"],
         period=card["period"],
+        state_changed_at=card["state_changed_at"],
     )
     return pair.get(LIVE_PROJECTION_KEY) if pair else None
 
@@ -503,6 +520,8 @@ async def read_card_projected_pairs(db: Any, cards: Iterable[dict]) -> dict[int,
                 sport_key=card.get("sport_key"),
                 live_boundary_at=card.get("live_boundary_at"),
                 period=card.get("period"),
+                # #12938: live cards project from current lines only.
+                state_changed_at=card.get("state_changed_at"),
             )
         except Exception:  # noqa: BLE001 — gotcha #42: one event, not the page
             logger.exception("card projected pair failed for event %s", event_id)

@@ -30,6 +30,7 @@ from app.utils.market_team_sport import (
     sport_key_llm_category as _sport_key_llm_category,
 )
 from app.utils.name_normalization import names_match as _names_match
+from app.utils.team_linking import given_name_before_city
 
 logger = logging.getLogger(__name__)
 
@@ -1780,6 +1781,21 @@ async def _query_team_futures(
         market_sport_cat: str | None = market.llm_sport_category
         if not market_sport_cat and market_sport_key:
             market_sport_cat = _sport_key_llm_category(market_sport_key)
+        outcome_name = outcome.name or ""
+        market_name = (market.name or "").casefold()
+
+        def _coach_surname_matches_city(team: Team) -> bool:
+            # A stored Blues link can put Canadiens coach Martin St. Louis
+            # on the Blues rail. A full roster match can still bind.
+            if "coach of the year" not in market_name and "jack adams award" not in market_name:
+                return False
+            if player_to_team_id.get(outcome_name.lower()) == team.id:
+                return False
+            aliases = getattr(team, "alternate_names", None)
+            return isinstance(aliases, list) and any(
+                given_name_before_city(outcome_name, alias, team.name, ignore_city_periods=True)
+                for alias in aliases if isinstance(alias, str)
+            )
 
         # Direct team_id match. Resolve dup ids onto the canonical row so a
         # market linked to a bare-location dupe still matches the followed
@@ -1834,15 +1850,15 @@ async def _query_team_futures(
             canonical_id = None
         if canonical_id and canonical_id in teams:
             t = teams[canonical_id]
-            return {
-                "id": t.id,
-                "name": t.name,
-                "logo_small": t.logo_url_small or t.logo_url,
-                "primary_color": t.primary_color,
-            }
+            if not _coach_surname_matches_city(t):
+                return {
+                    "id": t.id,
+                    "name": t.name,
+                    "logo_small": t.logo_url_small or t.logo_url,
+                    "primary_color": t.primary_color,
+                }
         # Name matching — use strict suffix-word logic to prevent
         # "Bears" (from "Brown Bears") matching "Chicago Bears".
-        outcome_name = outcome.name or ""
         for t in teams.values():
             if any(
                 _strict_team_name_matches(nm, outcome_name)
@@ -1853,8 +1869,8 @@ async def _query_team_futures(
                     team_cat = team_sport_categories.get(t.id)
                     if team_cat and team_cat != market_sport_cat:
                         continue  # sport mismatch — try next team
-                if _crosses_side(t.id):
-                    continue  # the other side's market (#9593)
+                if _crosses_side(t.id) or _coach_surname_matches_city(t):
+                    continue
                 return {
                     "id": t.id,
                     "name": t.name,

@@ -86,6 +86,8 @@ struct MachinerySubjectArtView: View {
     let art: MachinerySubjectArt?
     var width: CGFloat = 34
     var height: CGFloat = 34
+    var reservesWidthWhenEmpty: Bool = false
+    var emptySlotIsPoster: Bool = false
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.machineryPreloadedImages12288) private var preloadedImages
 
@@ -126,6 +128,11 @@ struct MachinerySubjectArtView: View {
                 }
             )
             .accessibilityHidden(true)
+        } else if reservesWidthWhenEmpty {
+            let w = emptySlotIsPoster ? width : max(width, height)
+            Color.clear
+                .frame(width: w, height: 1)
+                .accessibilityHidden(true)
         }
     }
 
@@ -223,6 +230,114 @@ struct MachineryShowAllButton: View {
     }
 }
 
+/// Assigns mutually distinct, readable line colours across up to 3 chart series even when
+/// the server sends identical or same-family hexes (`#12924` follow-up).
+enum MachineryChartSeriesPalette12288 {
+    private static let lightFallback: [String] = [
+        "#059669", // Emerald (160°)
+        "#2563EB", // Royal blue (221°)
+        "#D97706", // Warm amber (32°)
+        "#DC2626", // Crimson red (0°)
+        "#7C3AED"  // Deep violet (263°)
+    ]
+
+    private static let darkFallback: [String] = [
+        "#34D399", // Bright emerald (158°)
+        "#60A5FA", // Sky blue (217°)
+        "#FBBF24", // Amber gold (43°)
+        "#F87171", // Coral red (0°)
+        "#A78BFA"  // Soft violet (255°)
+    ]
+
+    struct RGBMetrics {
+        let r: Double
+        let g: Double
+        let b: Double
+        let hueDeg: Double
+        let chroma: Double
+        let luma: Double
+    }
+
+    static func parseMetrics(_ rawHex: String) -> RGBMetrics? {
+        let cleaned = rawHex.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        guard cleaned.count == 6, let val = UInt32(cleaned, radix: 16) else { return nil }
+        let r = Double((val >> 16) & 0xFF)
+        let g = Double((val >> 8) & 0xFF)
+        let b = Double(val & 0xFF)
+        let maxC = max(r, g, b)
+        let minC = min(r, g, b)
+        let delta = maxC - minC
+        var hue: Double = 0
+        if delta > 0.001 {
+            if maxC == r {
+                hue = 60.0 * (((g - b) / delta).truncatingRemainder(dividingBy: 6.0))
+            } else if maxC == g {
+                hue = 60.0 * (((b - r) / delta) + 2.0)
+            } else {
+                hue = 60.0 * (((r - g) / delta) + 4.0)
+            }
+            if hue < 0 { hue += 360.0 }
+        }
+        let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        return RGBMetrics(r: r, g: g, b: b, hueDeg: hue, chroma: delta, luma: luma)
+    }
+
+    static func areDistinct(_ a: RGBMetrics, _ b: RGBMetrics) -> Bool {
+        let dr = a.r - b.r
+        let dg = a.g - b.g
+        let db = a.b - b.b
+        let rgbDist = (dr * dr + dg * dg + db * db).squareRoot()
+        if rgbDist < 85.0 { return false }
+        if a.chroma >= 24.0 && b.chroma >= 24.0 {
+            let diff = abs(a.hueDeg - b.hueDeg)
+            let hueDist = min(diff, 360.0 - diff)
+            if hueDist < 45.0 { return false }
+        }
+        return true
+    }
+
+    static func resolvedHexes(for series: [MachineryHistorySeries], isDark: Bool) -> [String] {
+        let palette = isDark ? darkFallback : lightFallback
+        var chosenHexes: [String] = []
+        var chosenMetrics: [RGBMetrics] = []
+
+        for (idx, s) in series.enumerated() {
+            let candidate = s.color.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let m = parseMetrics(candidate),
+               (series.count == 1 || m.chroma >= 24.0),
+               (isDark ? m.luma >= 80.0 : m.luma <= 195.0),
+               chosenMetrics.allSatisfy({ areDistinct($0, m) }) {
+                let normalized = candidate.hasPrefix("#") ? candidate.uppercased() : "#\(candidate.uppercased())"
+                chosenHexes.append(normalized)
+                chosenMetrics.append(m)
+                continue
+            }
+
+            // Pick the first fallback colour distinct from every already-chosen series colour.
+            var picked: (String, RGBMetrics)? = nil
+            for fallbackHex in palette {
+                if let fm = parseMetrics(fallbackHex),
+                   chosenMetrics.allSatisfy({ areDistinct($0, fm) }) {
+                    picked = (fallbackHex, fm)
+                    break
+                }
+            }
+            if let (hex, fm) = picked {
+                chosenHexes.append(hex)
+                chosenMetrics.append(fm)
+            } else {
+                let fallbackHex = palette[idx % palette.count]
+                chosenHexes.append(fallbackHex)
+                if let fm = parseMetrics(fallbackHex) {
+                    chosenMetrics.append(fm)
+                }
+            }
+        }
+        return chosenHexes
+    }
+}
+
 /// Connected straight-line probability trend card (`probability_history_chart` + `mini_chart`).
 struct MachineryHistoryChartCardView: View {
     let chart: MachineryHistoryChartItem
@@ -259,6 +374,11 @@ struct MachineryHistoryChartCardView: View {
 
     var body: some View {
         let spanText = MachineryDateFormatting12288.shortSpan(chart.startIso, chart.endIso)
+        let shownSeries = Array(chart.series.prefix(3))
+        let seriesHexes = MachineryChartSeriesPalette12288.resolvedHexes(
+            for: shownSeries,
+            isDark: colorScheme == .dark
+        )
         let content = VStack(alignment: .leading, spacing: 8) {
             if dynamicTypeSize >= .xxxLarge {
                 VStack(alignment: .leading, spacing: 2) {
@@ -289,12 +409,13 @@ struct MachineryHistoryChartCardView: View {
                 }
             }
 
-            // Legend items (up to 3 series)
+            // Legend items (up to 3 series, each guaranteed a distinct colour)
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(chart.series.prefix(3))) { s in
+                ForEach(Array(shownSeries.enumerated()), id: \.element.id) { idx, s in
+                    let seriesColor = Color(hex: seriesHexes[idx])
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Circle()
-                            .fill(Color(hex: s.color))
+                            .fill(seriesColor)
                             .frame(width: 8, height: 8)
                         Text(s.name)
                             .font(.system(size: min(metaSize, 18), weight: .medium))
@@ -344,17 +465,17 @@ struct MachineryHistoryChartCardView: View {
                             .stroke(borderColor, lineWidth: 1)
                         }
 
-                        ForEach(Array(chart.series.prefix(3))) { s in
+                        ForEach(Array(shownSeries.enumerated()), id: \.element.id) { idx, s in
                             let pts = s.points
                             if !pts.isEmpty {
-                                let strokeColor = Color(hex: s.color)
+                                let strokeColor = Color(hex: seriesHexes[idx])
                                 Path { p in
-                                    for (idx, pt) in pts.enumerated() {
+                                    for (ptIdx, pt) in pts.enumerated() {
                                         let x = pts.count == 1
                                             ? w * 0.5
-                                            : (CGFloat(idx) / CGFloat(pts.count - 1)) * (w - 4)
+                                            : (CGFloat(ptIdx) / CGFloat(pts.count - 1)) * (w - 4)
                                         let y = yOf(pt.pct)
-                                        if idx == 0 {
+                                        if ptIdx == 0 {
                                             p.move(to: CGPoint(x: x, y: y))
                                         } else {
                                             p.addLine(to: CGPoint(x: x, y: y))
@@ -432,6 +553,7 @@ struct MachinerySectionBlockView: View {
                     form: .pairedBarsTop5Expandable,
                     collapsedCount: limit,
                     showsPlaceholderMonogram: false,
+                    showsCardHeader: false,
                     allowsRouteLinks: true,
                     isOscarsCollectionSurface: true,
                     preloadedImages: preloadedImages
@@ -912,12 +1034,21 @@ private struct MachineryContenderSpotlightSectionView: View {
     private func podiumBody(lead: MachineryMarketVisualItem) -> some View {
         let topThree = Array(lead.outcomes.prefix(3))
         let chasers = Array(lead.outcomes.dropFirst(3))
+        let topHasArt = topThree.contains { $0.art?.verifiedURL != nil }
+        let topUsesPoster = topThree.contains { $0.art?.verifiedURL != nil && $0.art?.isPoster == true }
+        let chasersHaveArt = chasers.contains { $0.art?.verifiedURL != nil }
+        let chasersUsePoster = chasers.contains { $0.art?.verifiedURL != nil && $0.art?.isPoster == true }
         VStack(alignment: .leading, spacing: 10) {
             if dynamicTypeSize >= .xxxLarge {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(topThree.enumerated()), id: \.element.id) { idx, o in
                         NavigationLink(value: Route.futuresDetail(id: lead.marketId)) {
-                            stackedSpotlightTile(rank: idx + 1, outcome: o)
+                            stackedSpotlightTile(
+                                rank: idx + 1,
+                                outcome: o,
+                                reservesArtSlot: topHasArt,
+                                listUsesPoster: topUsesPoster
+                            )
                         }
                         .buttonStyle(.plain)
                     }
@@ -938,11 +1069,14 @@ private struct MachineryContenderSpotlightSectionView: View {
                 NavigationLink(value: Route.futuresDetail(id: lead.marketId)) {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(chasers.enumerated()), id: \.element.id) { idx, o in
+                            let rowIsPoster = o.art?.isPoster ?? chasersUsePoster
                             HStack(spacing: 10) {
                                 MachinerySubjectArtView(
                                     art: o.art,
-                                    width: o.art?.isPoster == true ? 28 : 32,
-                                    height: o.art?.isPoster == true ? 40 : 32
+                                    width: chasersUsePoster ? 28 : 32,
+                                    height: rowIsPoster ? 40 : 32,
+                                    reservesWidthWhenEmpty: chasersHaveArt,
+                                    emptySlotIsPoster: chasersUsePoster
                                 )
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(o.name)
@@ -1040,12 +1174,20 @@ private struct MachineryContenderSpotlightSectionView: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(borderColor, lineWidth: 1))
     }
 
-    private func stackedSpotlightTile(rank: Int, outcome: MachineryOutcomeVisual) -> some View {
-        HStack(spacing: 12) {
+    private func stackedSpotlightTile(
+        rank: Int,
+        outcome: MachineryOutcomeVisual,
+        reservesArtSlot: Bool,
+        listUsesPoster: Bool
+    ) -> some View {
+        let rowIsPoster = outcome.art?.isPoster ?? listUsesPoster
+        return HStack(spacing: 12) {
             MachinerySubjectArtView(
                 art: outcome.art,
-                width: outcome.art?.isPoster == true ? 44 : 48,
-                height: outcome.art?.isPoster == true ? 64 : 48
+                width: listUsesPoster ? 44 : 48,
+                height: rowIsPoster ? 64 : 48,
+                reservesWidthWhenEmpty: reservesArtSlot,
+                emptySlotIsPoster: listUsesPoster
             )
             VStack(alignment: .leading, spacing: 3) {
                 Text("#\(rank) · \(outcome.name)")
@@ -1106,6 +1248,8 @@ private struct MachinerySiblingFieldsSectionView: View {
                 let scaleOrd = market.effectiveScaleOrdered
                 let shownOutcomes = Array(market.outcomes.prefix(4))
                 let maxPct = shownOutcomes.map(\.renderedPercent).max() ?? 0
+                let listHasArt = !scaleOrd && shownOutcomes.contains { $0.art?.verifiedURL != nil }
+                let listUsesPoster = shownOutcomes.contains { $0.art?.verifiedURL != nil && $0.art?.isPoster == true }
 
                 NavigationLink(value: Route.futuresDetail(id: market.marketId)) {
                     VStack(alignment: .leading, spacing: 10) {
@@ -1137,10 +1281,13 @@ private struct MachinerySiblingFieldsSectionView: View {
 
                                 HStack(alignment: .center, spacing: 10) {
                                     if !scaleOrd {
+                                        let rowIsPoster = o.art?.isPoster ?? listUsesPoster
                                         MachinerySubjectArtView(
                                             art: o.art,
-                                            width: o.art?.isPoster == true ? 28 : 28,
-                                            height: o.art?.isPoster == true ? 38 : 28
+                                            width: 28,
+                                            height: rowIsPoster ? 38 : 28,
+                                            reservesWidthWhenEmpty: listHasArt,
+                                            emptySlotIsPoster: true
                                         )
                                     }
                                     VStack(alignment: .leading, spacing: 4) {
@@ -1214,13 +1361,19 @@ private struct MachineryBenchmarkStripSectionView: View {
 
     var body: some View {
         let shown = expanded ? items : Array(items.prefix(limit))
+        let listHasArt = shown.contains { $0.outcomes.first?.art?.verifiedURL != nil }
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(shown.enumerated()), id: \.element.id) { idx, market in
                     if let yes = market.outcomes.first {
                         NavigationLink(value: Route.futuresDetail(id: market.marketId)) {
                             HStack(alignment: .center, spacing: 10) {
-                                MachinerySubjectArtView(art: yes.art, width: 28, height: 28)
+                                MachinerySubjectArtView(
+                                    art: yes.art,
+                                    width: 28,
+                                    height: 28,
+                                    reservesWidthWhenEmpty: listHasArt
+                                )
                                 Text(market.title)
                                     .font(.system(size: min(rowSize, 21), weight: .medium))
                                     .foregroundStyle(primaryInk)
@@ -1490,6 +1643,8 @@ struct MachineryDiscoverCardView: View {
     private var outcomeRowsBody: some View {
         let rows = Array(card.outcomeRows.prefix(3))
         let maxPct = rows.map(\.renderedPercent).max() ?? 0
+        let listHasArt = !card.scaleOrdered && rows.contains { $0.art?.verifiedURL != nil }
+        let listUsesPoster = rows.contains { $0.art?.verifiedURL != nil && $0.art?.isPoster == true }
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { idx, o in
                 let isFav = !card.scaleOrdered || o.renderedPercent == maxPct
@@ -1505,10 +1660,13 @@ struct MachineryDiscoverCardView: View {
 
                 HStack(alignment: .center, spacing: 10) {
                     if !card.scaleOrdered {
+                        let rowIsPoster = o.art?.isPoster ?? listUsesPoster
                         MachinerySubjectArtView(
                             art: o.art,
-                            width: o.art?.isPoster == true ? 28 : 32,
-                            height: o.art?.isPoster == true ? 40 : 32
+                            width: listUsesPoster ? 28 : 32,
+                            height: rowIsPoster ? 40 : 32,
+                            reservesWidthWhenEmpty: listHasArt,
+                            emptySlotIsPoster: listUsesPoster
                         )
                     }
                     VStack(alignment: .leading, spacing: 5) {
