@@ -987,7 +987,10 @@ def _build_movers_query(limit: int, *, pooled: bool):
     `pooled=False` is the legacy full-scan arm, kept as rollback and as the
     equivalence oracle the gate drives both paths through.
     """
-    conditions = [FuturesOutcome.probability_change_24h.isnot(None)]
+    conditions = [
+        FuturesOutcome.probability_change_24h.isnot(None),
+        FuturesOutcome.current_probability.isnot(None),
+    ]
 
     if pooled:
         # LAT-P151: the pool SHAPE moved to `app/utils/movement_pool.py` so the
@@ -1096,10 +1099,15 @@ def _movers_payload(outcomes, hours: int) -> dict:
     # basis must support the move before it may appear in the public list.
     outcomes = [
         o for o in outcomes
-        if getattr(o.market, "source", None) != "polymarket"
-        or reader_change_24h(
-            o.market, o.id, o.current_probability, o.probability_change_24h
-        ) not in (None, 0)
+        # #12658: a retained delta cannot advertise a move after its current
+        # price was withdrawn. This applies to every venue, including Kalshi.
+        if o.current_probability is not None
+        and (
+            getattr(o.market, "source", None) != "polymarket"
+            or reader_change_24h(
+                o.market, o.id, o.current_probability, o.probability_change_24h
+            ) not in (None, 0)
+        )
     ]
     return {
         "movers": [
@@ -1167,7 +1175,12 @@ async def get_futures_movers(
         redis = get_redis_client()
         cached = redis.get(movers_cache_key(hours, limit))
         if cached:
-            return _json.loads(cached)
+            payload = _json.loads(cached)
+            # A worker on the previous release can still warm this shared key.
+            payload["movers"] = [
+                row for row in payload["movers"] if row.get("current_probability") is not None
+            ]
+            return payload
     except Exception:
         pass
 
