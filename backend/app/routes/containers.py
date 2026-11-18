@@ -742,11 +742,11 @@ def _week_market_read_engine(db: AsyncSession) -> AsyncEngine | None:
     if _week_market_read_slot.locked() or not isinstance(engine, AsyncEngine):
         return None
     try:
-        if engine.pool.checkedout() < engine.pool.size():
-            return engine
+        has_capacity = engine.pool.checkedout() < engine.pool.size()
     except (AttributeError, NotImplementedError):
-        pass
-    return None
+        # Some pool implementations do not report available capacity.
+        return None
+    return engine if has_capacity else None
 
 
 @_timed_read("market_descriptors")
