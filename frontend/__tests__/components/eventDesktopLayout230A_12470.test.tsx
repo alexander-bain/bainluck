@@ -22,6 +22,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import EventPageHeadline199 from "@/components/event/EventPageHeadline199";
 import MarketBrowser from "@/components/event/MarketBrowser";
 import CompactMarketMap from "@/components/event/CompactMarketMap";
+import ProjectedFinalPointsChart from "@/components/event/ProjectedFinalPointsChart";
 import { resolveEventPageHeadline199 } from "@/lib/eventPageHeadline199";
 import type { EventDetailResponse } from "@/lib/types";
 
@@ -277,8 +278,32 @@ describe("Ruling 230: A (#12470) — Desktop Event Page 2-Column Layout from 102
       path.join(process.cwd(), "components/event/NFLEventCards.tsx"),
       "utf8",
     );
-    expect(deckSrc).toContain(
-      'cards.length > 1 ? "w-[86%] sm:w-[360px] lg:w-[356px] xl:w-[368px]" : "w-full sm:w-[420px] lg:w-full lg:max-w-[420px]"',
+    expect(deckSrc).toContain('data-testid="nfl-game-stories-desktop-pager"');
+    expect(deckSrc).toContain("{desktopIdx + 1} of {cards.length}");
+    expect(deckSrc).toContain('index === desktopIdx ? "lg:w-full lg:shrink" : "lg:hidden"');
+
+    const projHtml = renderToStaticMarkup(
+      <ProjectedFinalPointsChart
+        input={{
+          sportKey: "basketball_nba",
+          sourceKey: "draftkings",
+          basis: "same_book_same_capture_full_game_spread_and_total",
+          pairs: [
+            { timestamp: "2026-11-17T22:00:00Z", home: 115, away: 112, homeProbability: 0.55 },
+            { timestamp: "2026-11-18T00:10:00Z", home: 115, away: 112.5, homeProbability: 0.55 },
+          ],
+          actuals: [],
+          kickoffAt: "2026-11-18T01:00:00Z",
+          finalAt: null,
+          asOf: "2026-11-18T00:12:00Z",
+        }}
+        homeTeam="Minnesota Timberwolves"
+        awayTeam="Portland Trail Blazers"
+        projectedFinal={{ home: 115, away: 112 }}
+      />,
     );
+    expect(projHtml).toContain(">Timberwolves<");
+    expect(projHtml).toContain(">Trail Blazers<");
+    expect(projHtml).not.toContain(">Minnesota Timberwolves<");
   });
 });

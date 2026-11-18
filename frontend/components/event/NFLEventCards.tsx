@@ -2255,11 +2255,15 @@ export function NFLEventCardDeck({
   rows?: Record<string, NflPropRow>;
 }) {
   const { rowRef, touchProps } = useDeckLeadInView(cards[0]?.id ?? null);
+  const [desktopCardId, setDesktopCardId] = useState<string | null>(null);
   const [atlasSheetTarget, setAtlasSheetTarget] = useState<{
     card: NflEventCard;
     rowId: string;
   } | null>(null);
   if (cards.length === 0) return null;
+  const foundDesktopIdx =
+    desktopCardId !== null ? cards.findIndex((c) => c.id === desktopCardId) : 0;
+  const desktopIdx = foundDesktopIdx >= 0 ? foundDesktopIdx : 0;
   const sheetProps =
     atlasMode && atlasSheetTarget
       ? buildStoryCardDetailsSheetProps({
@@ -2271,15 +2275,53 @@ export function NFLEventCardDeck({
       : null;
   return (
     <section aria-labelledby="nfl-game-stories-heading" className="flex flex-col gap-2" data-testid="nfl-game-stories">
-      <div className="flex items-baseline justify-between px-1">
+      <div className="flex items-center justify-between px-1">
         <DeckHeading ref={headingRef} />
-        <span className="text-xs text-text-secondary">{cards.length === 1 ? "1 card" : `${cards.length} cards`}</span>
+        <span className={cards.length > 1 ? "text-xs text-text-secondary lg:hidden" : "text-xs text-text-secondary"}>
+          {cards.length === 1 ? "1 card" : `${cards.length} cards`}
+        </span>
+        {cards.length > 1 && (
+          <div
+            className="hidden lg:inline-flex items-center gap-1.5"
+            data-testid="nfl-game-stories-desktop-pager"
+          >
+            <button
+              type="button"
+              aria-label="Previous game story"
+              disabled={desktopIdx <= 0}
+              onClick={() => setDesktopCardId(cards[Math.max(0, desktopIdx - 1)]?.id ?? null)}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-surface-border bg-surface-card text-sm font-semibold text-text-primary transition-colors hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand"
+            >
+              ‹
+            </button>
+            <span className="text-xs font-medium tabular-nums text-text-secondary px-1">
+              {desktopIdx + 1} of {cards.length}
+            </span>
+            <button
+              type="button"
+              aria-label="Next game story"
+              disabled={desktopIdx >= cards.length - 1}
+              onClick={() => setDesktopCardId(cards[Math.min(cards.length - 1, desktopIdx + 1)]?.id ?? null)}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-surface-border bg-surface-card text-sm font-semibold text-text-primary transition-colors hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand"
+            >
+              ›
+            </button>
+          </div>
+        )}
       </div>
-      <div ref={rowRef} {...touchProps} className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-1 -mx-1 px-1">
-        {cards.map((card) => (
+      <div
+        ref={rowRef}
+        {...touchProps}
+        className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-1 -mx-1 px-1 lg:overflow-visible lg:snap-none lg:pb-0 lg:mx-0 lg:px-0"
+      >
+        {cards.map((card, index) => (
           <div
             key={card.id}
-            className={`snap-start shrink-0 flex flex-col gap-1 ${cards.length > 1 ? "w-[86%] sm:w-[360px] lg:w-[356px] xl:w-[368px]" : "w-full sm:w-[420px] lg:w-full lg:max-w-[420px]"}`}
+            className={`snap-start shrink-0 flex flex-col gap-1 ${
+              cards.length > 1
+                ? `w-[86%] sm:w-[360px] ${index === desktopIdx ? "lg:w-full lg:shrink" : "lg:hidden"}`
+                : "w-full sm:w-[420px] lg:w-full lg:max-w-none"
+            }`}
             data-card-id={card.id}
           >
             <div className="bg-surface-card rounded-card shadow-card border border-surface-border p-4 flex-1">
