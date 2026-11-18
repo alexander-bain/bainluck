@@ -1,5 +1,6 @@
 """The awards and linked-match cards retain the inputs to their served rows."""
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -28,7 +29,7 @@ def _outcome(outcome_id, price, *, winner=None, authority=None):
         team_id=None,
         is_winner=winner,
         resolution_source=authority,
-        last_updated="2026-11-17T20:00:00Z",
+        last_updated=datetime(2020, 1, 1, 20, tzinfo=timezone.utc),
     )
 
 

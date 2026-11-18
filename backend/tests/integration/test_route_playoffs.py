@@ -926,6 +926,18 @@ class TestLeagueFuturesEndpoint:
                         # has looked", which is NOT "lost".
                         "settled": False,
                         "is_winner": None,
+                        "source_mark": {
+                            "state": "single",
+                            "sources": [
+                                {
+                                    "key": "kalshi",
+                                    "name": "Kalshi",
+                                    "probability": 0.42,
+                                    "observed_at": None,
+                                    "reason": "observation_unknown",
+                                },
+                            ],
+                        },
                     },
                     {
                         "id": 402,
@@ -937,6 +949,18 @@ class TestLeagueFuturesEndpoint:
                         "team_id": 25,
                         "settled": False,
                         "is_winner": None,
+                        "source_mark": {
+                            "state": "single",
+                            "sources": [
+                                {
+                                    "key": "kalshi",
+                                    "name": "Kalshi",
+                                    "probability": 0.26,
+                                    "observed_at": None,
+                                    "reason": "observation_unknown",
+                                },
+                            ],
+                        },
                     },
                 ],
                 "canonical_market_key": "basketball_nba_mvp_2026",
