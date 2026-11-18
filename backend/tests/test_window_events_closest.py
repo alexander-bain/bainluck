@@ -11,6 +11,7 @@ Covers Alex's rulings B, C, D on NOW #11852:
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Sequence
 from unittest.mock import AsyncMock, patch
@@ -35,15 +36,19 @@ def _array_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
 
 from app.models.models import Base, Event, OddsSnapshot, Sport, Team  # noqa: E402
 from app.routes.containers import _hydrate_event_cards, get_container  # noqa: E402
+from app.utils.aggregation import stamp_source_reading  # noqa: E402
+from app.utils.feed_cache import dumps_feed_cache  # noqa: E402
 from app.utils.hero_probability import resolve_hero  # noqa: E402
 from app.utils.roundup_containers import (  # noqa: E402
     ROUNDUP_PRODUCERS,
     RoundupRefusal,
+    compose_roundup_feed_item,
     reset_roundup_cache_for_tests,
     roundup_container_id,
     roundup_feed_items,
     roundup_revision,
 )
+from app.utils.source_mark import quote_source_mark  # noqa: E402
 from app.utils.window_events_closest import (  # noqa: E402
     CLOSEST_GAMES_TONIGHT_DEFINITION,
     CLOSEST_GAMES_TONIGHT_PRODUCER,
@@ -273,9 +278,9 @@ async def test_reusable_producer_serves_container_and_second_definition_without_
     members and revision.
     """
     monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
-    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "false")
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
     monkeypatch.setenv("NFL_DIVISION_ROUNDUP_ENABLED", "false")
-    reset_roundup_cache_for_tests()
+    monkeypatch.setattr("app.utils.roundup_containers._roundup_local_cache", {})
 
     now = datetime(2026, 11, 3, 22, 0, tzinfo=timezone.utc)
     five_games = [
@@ -285,12 +290,24 @@ async def test_reusable_producer_serves_container_and_second_definition_without_
         _game_card(304, home="Nuggets", away="Warriors", sport="basketball_nba", home_prob=0.64, away_prob=0.36),
         _game_card(305, home="Rangers", away="Devils", sport="icehockey_nhl", home_prob=0.51, away_prob=0.49),
     ]
+    celtics = five_games[0]
+    observed_at = celtics["hero_probability_observed_at"]
+    celtics["source_mark"] = quote_source_mark(
+        [{"key": "kalshi", "probability": 0.52, "observed_at": observed_at}]
+    )
+    celtics["away_source_mark"] = quote_source_mark(
+        [{"key": "kalshi", "probability": 0.48, "observed_at": observed_at}]
+    )
+    five_games[1]["away_source_mark"] = quote_source_mark(
+        [{"key": "kalshi", "probability": 0.44, "observed_at": None}]
+    )
+    load_tonight = AsyncMock(return_value=five_games)
 
     pinned_tonight = build_window_events_closest_producer(
         CLOSEST_GAMES_TONIGHT_DEFINITION,
         enabled=lambda: True,
         now_fn=lambda: now,
-        load_cards=_card_loader_for(five_games),
+        load_cards=load_tonight,
     )
     monkeypatch.setitem(ROUNDUP_PRODUCERS, CLOSEST_GAMES_TONIGHT_SLUG, pinned_tonight)
 
@@ -331,6 +348,9 @@ async def test_reusable_producer_serves_container_and_second_definition_without_
     assert served_tonight["container"]["kind"] == "roundup"
     assert [m["id"] for m in served_tonight["sections"][0]["members"]] == [303, 302, 301, 305]
     assert served_tonight["revision"] == roundup_revision([303, 302, 301, 305])
+    served_celtics = served_tonight["sections"][0]["members"][2]["card"]
+    assert served_celtics["source_mark"] == celtics["source_mark"]
+    assert served_celtics["away_source_mark"] == celtics["away_source_mark"]
 
     # 2. NBA-only definition excludes NHL game 305 and picks [304 (0.64), 303 (0.60), 302 (0.56), 301 (0.52)] of 4 NBA games.
     served_nba = await get_container(slug=second_def["slug"], db=None)
@@ -348,6 +368,14 @@ async def test_reusable_producer_serves_container_and_second_definition_without_
     assert tonight_card["data"]["roundup"]["footer"] == served_tonight["subtitle"]
     assert [it["type"] for it in tonight_card["data"]["items"]] == ["event"] * 4
     assert [it["data"]["id"] for it in tonight_card["data"]["items"]] == [303, 302, 301, 305]
+    load_tonight.assert_awaited_once()
+    rows = {r["event_id"]: r for r in tonight_card["data"]["roundup"]["rows"]}
+    assert rows[301]["source_mark"] == celtics["source_mark"]
+    assert rows[302]["source_mark"] == {
+        "state": "none",
+        "sources": [],
+        "reason": "source_evidence_incomplete",
+    }
 
 
 @pytest.mark.asyncio
@@ -366,7 +394,14 @@ async def test_row_probability_equals_event_page_hero_through_hydrate_event_card
     """
     now = datetime.now(timezone.utc)
     tipoff = now + timedelta(hours=2)
-    hero_stamp = (now - timedelta(minutes=3)).isoformat()
+    hero_read_at = now - timedelta(minutes=3)
+    hero_stamp = hero_read_at.isoformat()
+    polymarket_read_at = now - timedelta(minutes=4)
+    actual_reads = {
+        "betting": None,
+        "kalshi": hero_read_at,
+        "polymarket": polymarket_read_at,
+    }
     odds_captured_dt = now - timedelta(minutes=10)
 
     eng = create_engine("sqlite://")
@@ -432,15 +467,12 @@ async def test_row_probability_equals_event_page_hero_through_hydrate_event_card
                     )
                 )
                 next_team_id += 1
-            sources = (
-                {
-                    "betting": {"value": blend_home, "updated_at": hero_stamp},
-                    "kalshi": {"value": blend_home, "updated_at": hero_stamp},
-                    "polymarket": {"value": blend_home, "updated_at": hero_stamp},
-                }
-                if blend_home is not None
-                else {}
-            )
+            sources = {}
+            if blend_home is not None:
+                for key, read_at in actual_reads.items():
+                    sources = stamp_source_reading(
+                        sources, key, blend_home, now=hero_read_at, price_read_at=read_at
+                    )
             s.add(
                 Event(
                     id=eid,
@@ -506,10 +538,28 @@ async def test_row_probability_equals_event_page_hero_through_hydrate_event_card
             assert row["probability"] == pytest.approx(card_leader)
             assert row["observed_at"] == member["card"]["hero_probability_observed_at"] == hero_stamp
             assert row["observed_at"] != hydrated_cards[eid]["current_odds"]["captured_at"]
+            key = (
+                "source_mark"
+                if hero.home_probability > hero.away_probability
+                else "away_source_mark"
+            )
+            assert row["source_mark"] == member["card"][key] == hydrated_cards[eid][key]
         # Specifically for 403 (home=0.43, away=0.57 in blend vs 0.65 home in books):
         row_403 = next(r for r in outcome.rows if r["event_id"] == 403)
         assert row_403["probability"] == pytest.approx(0.57)
         assert row_403["label"] == "Miami Heat at Milwaukee Bucks: Miami Heat"
+        mark = row_403["source_mark"]
+        assert mark["state"] == "blend"
+        assert [
+            (s["key"], s["probability"], s["observed_at"]) for s in mark["sources"]
+        ] == [
+            ("kalshi", 0.57, hero_stamp.replace("+00:00", "Z")),
+            ("polymarket", 0.57, polymarket_read_at.isoformat().replace("+00:00", "Z")),
+            ("betting", 0.57, None),
+        ]
+        card = compose_roundup_feed_item(CLOSEST_GAMES_TONIGHT_PRODUCER, outcome)
+        feed_wire = json.loads(dumps_feed_cache({"items": [card]}))
+        assert row_403 in feed_wire["items"][0]["data"]["roundup"]["rows"]
 
         # If any candidate event fails card hydration, produce_window_events_closest
         # refuses all-or-nothing rather than silently omitting the failed game:
@@ -575,39 +625,43 @@ def test_opening_and_final_unresolved_refused_while_blended_sibling_survives():
         assert row["observed_at"] == hero_stamp
         assert row["observed_at"] != odds_stamp
 
+
+@pytest.mark.parametrize(
+    ("home_prob", "away_prob", "mark_key"),
+    [
+        (0.5, 0.5, "source_mark"),
+        (0.502, 0.498, "source_mark"),
+        (0.498, 0.502, "away_source_mark"),
+    ],
+)
+def test_tied_display_keeps_the_mark_for_the_exact_leader(home_prob, away_prob, mark_key):
     # Exact 50/50 tie and whole-number-rounded 50/50 tie refuse to name a single
     # leader on the row (#11941):
-    tie_card = _game_card(
+    card = _game_card(
         599,
         home="Celtics",
         away="Knicks",
-        home_prob=0.5,
-        away_prob=0.5,
-        hero_source="blend",
-        hero_observed_at=hero_stamp,
-        captured_at=odds_stamp,
+        home_prob=home_prob,
+        away_prob=away_prob,
     )
-    assert _extract_blended_leader(tie_card) == (
-        0.5,
+    card["source_mark"] = quote_source_mark(
+        [
+            {"key": "kalshi", "probability": home_prob + 0.01},
+            {"key": "polymarket", "probability": home_prob - 0.01},
+        ]
+    )
+    card["away_source_mark"] = quote_source_mark(
+        [
+            {"key": "kalshi", "probability": away_prob - 0.01},
+            {"key": "polymarket", "probability": away_prob + 0.01},
+        ]
+    )
+    assert _extract_blended_leader(card) == (
+        max(home_prob, away_prob),
         "Knicks and Celtics",
         "Knicks at Celtics",
-        hero_stamp,
-    )
-    rounded_tie_card = _game_card(
-        600,
-        home="Celtics",
-        away="Knicks",
-        home_prob=0.502,
-        away_prob=0.498,
-        hero_source="blend",
-        hero_observed_at=hero_stamp,
-        captured_at=odds_stamp,
-    )
-    assert _extract_blended_leader(rounded_tie_card) == (
-        0.502,
-        "Knicks and Celtics",
-        "Knicks at Celtics",
-        hero_stamp,
+        card["hero_probability_observed_at"],
+        card[mark_key],
     )
 
 
@@ -615,8 +669,6 @@ def test_window_events_closest_validates_narrative_copy_against_blend(tmp_path):
     """#12148: window_events_closest loader, producer builder, and selector run
     _validate_narrative_copy and refuse 'Bain Luck blend' or any banned narrative term.
     """
-    import json
-
     bad_def = {
         **CLOSEST_GAMES_TONIGHT_DEFINITION,
         "footer": "Bain Luck blend · the 4 closest of {n} games tonight",
