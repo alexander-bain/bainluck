@@ -5,40 +5,64 @@
   "relations": [
     "same_event",
     "same_measure",
-    "sibling"
+    "sibling",
+    "movement"
   ],
   "level": "member",
   "kicker": "ECONOMICS · FEDERAL RESERVE",
-  "name": "Fed & U.S. Macro: rate path and recession watch",
+  "name": "Fed & U.S. Macro",
   "category": "economics",
   "tag": "ECONOMICS",
   "section_title": "January FOMC Decision",
-  "footer": "Each market settles from official Federal Reserve and national statistics releases.",
+  "footer": "",
   "rule": {
     "producer": "container_machinery",
     "refusal": "all-or-nothing",
     "materialize": "read-time",
-    "card_rows": 4,
+    "card_rows": 3,
     "card_section_key": "jan_fomc",
     "sections": [
       {
         "key": "jan_fomc",
         "title": "January 2027 FOMC Rate Decision",
-        "note": "Priced probabilities for the Federal Open Market Committee's January policy move.",
+        "note": "Priced probabilities along the policy-move scale from cut to hike.",
         "atom_query": {
           "kind": "markets",
-          "title_all_tokens": ["fed", "decision", "jan", "2027"],
+          "title_all_tokens": ["fed", "decision", "jan"],
+          "exclude_tokens": ["decisions", "oct-jan"],
           "shape": "field",
           "order_by": "lead_prob_desc",
           "min_items": 1,
           "max_items": 1,
-          "max_outcomes": 5
+          "max_outcomes": 4
+        }
+      },
+      {
+        "key": "rate_history",
+        "title": "Implied Rate Path Over Time",
+        "note": "Recent market probability trajectories across upcoming FOMC meetings and rate-cut timing.",
+        "atom_query": {
+          "kind": "market_history",
+          "any_tokens": [
+            "fed decision in",
+            "fed rate cut",
+            "predicted fed rate under each fed chair",
+            "fed rate hit",
+            "who will trump nominate as fed chair"
+          ],
+          "exclude_tokens": ["minutes", "jan 2027"],
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 4,
+          "max_outcomes": 3,
+          "hours": 168
         }
       },
       {
         "key": "rate_path",
         "title": "Year-End Rate & Hike Count",
-        "note": "Mutually exclusive year-end target rate and 2026 rate-hike count fields.",
+        "note": "Mutually exclusive year-end target rate and 2026 rate-hike count scales.",
         "atom_query": {
           "kind": "markets",
           "any_tokens": ["fed rate be at the end of 2026", "fed rate hikes in 2026"],
@@ -52,8 +76,8 @@
       },
       {
         "key": "recession_benchmarks",
-        "title": "G7 & U.S. Recession Benchmarks",
-        "note": "Yes-or-no markets on official recession calls across major economies.",
+        "title": "Recession Benchmark",
+        "note": "Yes-or-no market on official U.S. and G7 recession calls.",
         "atom_query": {
           "kind": "markets",
           "title_all_tokens": ["recession"],
@@ -61,8 +85,8 @@
           "exclude_tokens": ["sweep", "which countries"],
           "shape": "binary",
           "order_by": "lead_prob_desc",
-          "min_items": 2,
-          "max_items": 3,
+          "min_items": 1,
+          "max_items": 1,
           "max_outcomes": 1
         }
       }

@@ -38,7 +38,9 @@ export interface MachineryVisualBlock {
     | "duel_bar"
     | "contender_spotlight"
     | "sibling_fields_grid"
-    | "benchmark_strip";
+    | "benchmark_strip"
+    | "probability_history_chart";
+  initial_visible_limit?: number;
   paired_metric_set?: import("@/lib/discover/visualForms").PairedMetricSet;
   items?: Record<string, unknown>[];
 }
