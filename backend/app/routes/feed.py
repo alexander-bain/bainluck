@@ -12704,6 +12704,11 @@ async def _score_events(
                 if event.status in ("completed", "closed")
                 else None
             )
+            hero_inputs: list[tuple[str, float]] = []
+            hero_method: list[str] = []
+            card_hero = resolve_hero(
+                event, source_inputs=hero_inputs, source_method=hero_method,
+            )
             event_data = format_event_data(
                 event_id=event.id,
                 external_id=event.external_id,
@@ -12747,7 +12752,28 @@ async def _score_events(
                 # as `current_home_prob` did, and the settled and opening arms are
                 # fold-invariant by construction (they read status/scores/openings,
                 # which the fold does not touch).
-                hero=resolve_hero(event),
+                hero=card_hero,
+            )
+            # #12581: the feed carries the exact headline trace, including
+            # the folded inputs and their original price-read clocks. The
+            # fresh price-card route uses this same projection.
+            from app.utils.draw_priced_winner import printable_away
+            from app.utils.source_mark import headline_source_marks
+
+            away_available = (
+                card_hero is not None
+                and (
+                    card_hero.source == "settled"
+                    or printable_away(
+                        card_hero.away_probability, card_hero.home_probability,
+                        sport_key,
+                    ) is not None
+                )
+            )
+            event_data["source_mark"], event_data["away_source_mark"] = headline_source_marks(
+                event, card_hero, hero_inputs,
+                method=hero_method[0] if hero_method else None,
+                away_available=away_available,
             )
             # #10582: score provenance belongs to the scoreboard, not the blend.
             # The same projection serves cached feed and fresh price-card reads.
