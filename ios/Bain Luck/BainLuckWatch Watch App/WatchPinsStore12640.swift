@@ -374,8 +374,8 @@ final class WatchPinsStore12640: ObservableObject {
             wireItems = decoded
         }
         if let rawEvents = defaults.data(forKey: Self.eventsCacheKey), rawEvents.count <= 256 * 1024,
-           let decoded = try? JSONDecoder().decode([Int: WatchSelectedGame].self, from: rawEvents) {
-            eventsByID = decoded
+           let decoded = try? JSONDecoder().decode([Int: WatchSelectedGame.CachedReading].self, from: rawEvents) {
+            eventsByID = decoded.mapValues(\.game)
         }
         if let rawFutures = defaults.data(forKey: Self.futuresCacheKey), rawFutures.count <= 512 * 1024,
            let decoded = try? JSONDecoder().decode([Int: WatchFutureDetail12640].self, from: rawFutures) {
