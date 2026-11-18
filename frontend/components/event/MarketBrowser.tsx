@@ -56,11 +56,11 @@ export default function MarketBrowser({
               setQuery(e.target.value);
               setLimit(pageSize);
             }}
-            className="w-full sm:w-64 min-h-11 rounded-lg border border-surface-border bg-surface-card px-3 text-sm text-text-primary placeholder:text-text-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand"
+            className="w-full sm:w-64 lg:w-full min-h-11 rounded-lg border border-surface-border bg-surface-card px-3 text-sm text-text-primary placeholder:text-text-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand"
           />
         )}
         <div
-          className="flex-1 min-w-0 flex gap-1 overflow-x-auto pb-1"
+          className="flex-1 min-w-0 lg:basis-full flex flex-wrap gap-1.5"
           aria-label={`${label} categories`}
         >
           {groups.map((group) => (
