@@ -13,6 +13,11 @@ import subprocess
 import sys
 import tarfile
 
+# Run 44219658774: on a slow hosted runner `codesign --verify --strict` of the
+# companion's main binary took longer than 30 s and failed the whole products
+# stage. Each inspection tool still has a bound; it is just one a slow disk can meet.
+TOOL_SECONDS = 180
+
 GROUP = "group.com.bainluck.watch"
 XCTEST = "BainLuckWatchUITests"
 WATCH = "BainLuckWatch Watch App"
@@ -495,7 +500,7 @@ def classify_carrier_stubs(payload, environment):
     links = {}
     for binary in binaries:
         raw = subprocess.check_output(
-            ["otool", "-l", str(binary)], text=True, timeout=30
+            ["otool", "-l", str(binary)], text=True, timeout=TOOL_SECONDS
         )
         links[binary.relative_to(payload).as_posix()] = load_references(raw)
     result = {}
@@ -512,14 +517,14 @@ def classify_carrier_stubs(payload, environment):
                     "Future-minimum carrier framework is a loaded dependency"
                 )
         arches = subprocess.check_output(
-            ["lipo", "-archs", str(binary)], text=True, timeout=30
+            ["lipo", "-archs", str(binary)], text=True, timeout=TOOL_SECONDS
         ).split()
         slices = []
         for architecture in arches:
             build = subprocess.check_output(
                 ["xcrun", "vtool", "-show-build", "-arch", architecture, str(binary)],
                 text=True,
-                timeout=30,
+                timeout=TOOL_SECONDS,
             )
             if (
                 not re.search(r"platform IOSSIMULATOR\s", build)
@@ -535,7 +540,7 @@ def classify_carrier_stubs(payload, environment):
                 ["nm", "-arch", architecture, "-gU", str(binary)],
                 text=True,
                 stderr=subprocess.PIPE,
-                timeout=30,
+                timeout=TOOL_SECONDS,
             )
             if exports.strip():
                 raise ValueError(
@@ -567,7 +572,7 @@ def verify_binaries(payload, architecture):
         raise ValueError("No Mach-O products in simulator package")
     for binary in sorted(binaries):
         arches = subprocess.check_output(
-            ["lipo", "-archs", str(binary)], text=True, timeout=30
+            ["lipo", "-archs", str(binary)], text=True, timeout=TOOL_SECONDS
         ).split()
         if architecture not in arches or not set(arches) <= {
             "arm64",
@@ -579,7 +584,7 @@ def verify_binaries(payload, architecture):
             ["codesign", "--verify", "--strict", str(binary)],
             check=True,
             capture_output=True,
-            timeout=30,
+            timeout=TOOL_SECONDS,
         )
     for info_path in payload.rglob("Info.plist"):
         info = plistlib.loads(info_path.read_bytes())
@@ -594,7 +599,7 @@ def verify_binaries(payload, architecture):
             ["codesign", "--verify", "--strict", str(info_path.parent)],
             check=True,
             capture_output=True,
-            timeout=30,
+            timeout=TOOL_SECONDS,
         )
 
 
