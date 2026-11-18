@@ -43,6 +43,22 @@
       "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4036378.png"
     },
     {
+      "key": "bryce-young",
+      "aliases": ["Bryce Young"],
+      "kind": "person",
+      "detail": "QB · Carolina",
+      "accent_color": "#0085CA",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4685720.png"
+    },
+    {
+      "key": "zendaya",
+      "aliases": ["Zendaya"],
+      "kind": "person",
+      "detail": "Best Actress Contender",
+      "accent_color": "#0F172A",
+      "url": "https://image.tmdb.org/t/p/w185/3WdOloHpjtjL96uVOhFRRCcYSwq.jpg"
+    },
+    {
       "key": "lamar-jackson",
       "aliases": ["Lamar Jackson"],
       "kind": "person",
@@ -243,6 +259,17 @@
       "source_page": "https://commons.wikimedia.org/wiki/File:Mark_Kelly_Official_Portrait_119th.jpg"
     },
     {
+      "key": "andy-beshear",
+      "aliases": ["Andy Beshear"],
+      "kind": "person",
+      "detail": "Governor · Kentucky",
+      "accent_color": "#2563EB",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d9/Andy_Beshear_in_April_2026_%28cropped_3%29.jpg/500px-Andy_Beshear_in_April_2026_%28cropped_3%29.jpg",
+      "author": "Governor Andy Beshear",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Andy_Beshear_in_April_2026_(cropped_3).jpg"
+    },
+    {
       "key": "democratic-party",
       "aliases": ["Democratic party", "Democratic Party", "Democrats"],
       "kind": "monogram",
@@ -252,6 +279,92 @@
       "author": "",
       "license": "",
       "source_page": ""
+    },
+    {
+      "key": "jaxon-smith-njigba",
+      "aliases": ["Jaxon Smith-Njigba"],
+      "kind": "person",
+      "detail": "WR · Seattle",
+      "accent_color": "#002244",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4430878.png"
+    },
+    {
+      "key": "jahmyr-gibbs",
+      "aliases": ["Jahmyr Gibbs"],
+      "kind": "person",
+      "detail": "RB · Detroit",
+      "accent_color": "#0076B6",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4429795.png"
+    },
+    {
+      "key": "jamarr-chase",
+      "aliases": ["Ja'Marr Chase", "JaMarr Chase"],
+      "kind": "person",
+      "detail": "WR · Cincinnati",
+      "accent_color": "#FB4F14",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4362628.png"
+    },
+    {
+      "key": "ceedee-lamb",
+      "aliases": ["CeeDee Lamb"],
+      "kind": "person",
+      "detail": "WR · Dallas",
+      "accent_color": "#003594",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4241389.png"
+    },
+    {
+      "key": "dak-prescott",
+      "aliases": ["Dak Prescott"],
+      "kind": "person",
+      "detail": "QB · Dallas",
+      "accent_color": "#003594",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/2577417.png"
+    },
+    {
+      "key": "amon-ra-st-brown",
+      "aliases": ["Amon-Ra St. Brown"],
+      "kind": "person",
+      "detail": "WR · Detroit",
+      "accent_color": "#0076B6",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4374302.png"
+    },
+    {
+      "key": "christian-mccaffrey",
+      "aliases": ["Christian McCaffrey"],
+      "kind": "person",
+      "detail": "RB · San Francisco",
+      "accent_color": "#AA0000",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/3117251.png"
+    },
+    {
+      "key": "james-cook",
+      "aliases": ["James Cook III", "James Cook"],
+      "kind": "person",
+      "detail": "RB · Buffalo",
+      "accent_color": "#00338D",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4379399.png"
+    },
+    {
+      "key": "jerome-powell",
+      "aliases": ["Jerome Powell", "Jerome H. Powell"],
+      "kind": "person",
+      "detail": "Federal Reserve Chair",
+      "accent_color": "#0F766E",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f0/Jerome_H._Powell%2C_Federal_Reserve_Chair_%28cropped%29.jpg/500px-Jerome_H._Powell%2C_Federal_Reserve_Chair_%28cropped%29.jpg",
+      "author": "Federal Reserve",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Jerome_H._Powell,_Federal_Reserve_Chair_(cropped).jpg"
+    },
+    {
+      "key": "kevin-warsh",
+      "aliases": ["Kevin Warsh", "Kevin M. Warsh"],
+      "kind": "person",
+      "detail": "Former Fed Governor",
+      "accent_color": "#1D4ED8",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/77/Official_portrait_of_Kevin_M._Warsh_%28cropped%29.jpg/500px-Official_portrait_of_Kevin_M._Warsh_%28cropped%29.jpg",
+      "author": "Federal Reserve",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Official_portrait_of_Kevin_M._Warsh_(cropped).jpg"
     },
     {
       "key": "republican-party",

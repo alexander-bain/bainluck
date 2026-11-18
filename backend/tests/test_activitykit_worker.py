@@ -10,7 +10,7 @@ from app.services.activitykit_worker import (
     reserve_state,
     rebind_token,
 )
-from app.utils.activitykit_delivery_state import RetryPolicy
+from app.utils.activitykit_delivery_state import QUIET_REFRESH_SECONDS, RetryPolicy
 from app.utils.activitykit_push_record import activity_ref, push_record
 from tests.test_activitykit_delivery_state import NOW, snapshot, state
 
@@ -175,6 +175,18 @@ def test_true_token_replacement_resets_exhaustion_but_not_configuration_halt():
     assert rebind_token(configuration, token_changed=True) == configuration
 
 
+def test_a_new_token_gets_the_current_reading_at_once_not_after_the_quiet_wait():
+    """#10542 step 3: the phone re-registered, so it has shown nothing; its first
+    update goes now at priority 10, not held as a same-screen refresh."""
+    sent, attempt = state().observe(snapshot(), revision=1).dispatch(now=NOW)
+    done = sent.complete(attempt.attempt_id, now=NOW)
+    t30 = NOW + timedelta(seconds=30)
+    again = done.observe(snapshot(score_observed_at=t30, probability_observed_at=t30), revision=2)
+    assert again.dispatch(now=t30)[1] is None  # same token: held for the refresh
+    _, fresh = rebind_token(again, token_changed=True).dispatch(now=t30)
+    assert fresh.push.headers["apns-priority"] == "10"
+
+
 # #10542 step 1: the per-push age record.
 
 
@@ -220,7 +232,8 @@ def test_push_record_marks_a_refresh_of_the_same_screen_at_priority_5():
     first = state().observe(snapshot(), revision=1)
     sent, attempt = first.dispatch(now=NOW)
     done = sent.complete(attempt.attempt_id, now=NOW)
-    later = NOW + timedelta(seconds=30)
+    # #10542 step 3 holds a same-screen refresh for QUIET_REFRESH_SECONDS; send it after the wait.
+    later = NOW + timedelta(seconds=QUIET_REFRESH_SECONDS + 30)
     _, refresh = done.observe(
         snapshot(score_observed_at=later, probability_observed_at=later), revision=2
     ).dispatch(now=later)

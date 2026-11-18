@@ -55,6 +55,17 @@ from app.routes.feed import (
 )
 from app.utils.discover_final_seating import DISCOVER_FINAL_SEAT_FLOOR
 from app.utils.tonights_games import MARQUEE_PIN_KEY
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _pre_190_game_admission(monkeypatch):
+    """These cases pin the pre-190 admission: a marquee or finished game held a
+    Discover seat by selection. Ruling 190 (#11937) requires a stated reason
+    instead, and keeps this rule only behind `DISCOVER_GAME_NEEDS_REASON=false`,
+    which is what these cases now guard. The 190 rule is guarded in
+    `test_discover_game_reason_190.py`."""
+    monkeypatch.setenv("DISCOVER_GAME_NEEDS_REASON", "false")
 
 NOW = datetime(2026, 9, 11, 10, 26, tzinfo=timezone.utc)
 

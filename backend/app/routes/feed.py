@@ -333,6 +333,11 @@ from app.utils.outcome_display import (
     drop_incoherent_ladder_outcomes,
     ladder_treatment_collapsed,
 )
+from app.utils.discover_game_reason import (
+    annotate_game_signals,
+    apply_game_reasons,
+    game_reason_enabled,
+)
 from app.utils.personalization import (
     PersonalizationContext,
     canonical_discover_category,
@@ -2560,8 +2565,22 @@ def apply_discover_display_chain(
         # D118 — and handed to a THIRD consumer, the browser. Stamped before the
         # noise filter runs so the flag rides the same dicts the filter keeps.
         _stamp_marquee_finals(items, kept_final_ids)
-        _demote_non_exceptional_discover_events(items, kept_final_ids, kept_kickoff_ids)
-        items = _filter_discover_event_noise(items, kept_final_ids, kept_kickoff_ids)
+        if game_reason_enabled():
+            # Ruling 190 (#11937): a single game takes a Discover seat only with a
+            # reason we can state from values we hold (stakes before, a sharp
+            # move during, an upset or a team-futures move after). Being a
+            # marquee fixture is not a reason, so the marquee sets keep only the
+            # games that have one — the lead pass can never demand a removed game.
+            items = apply_game_reasons(items)
+            _surviving = {
+                (it.get("data") or {}).get("id") for it in items if it.get("type") == "event"
+            }
+            kept_final_ids &= _surviving
+            kept_kickoff_ids &= _surviving
+            required_marquee_ids &= _surviving
+        else:
+            _demote_non_exceptional_discover_events(items, kept_final_ids, kept_kickoff_ids)
+            items = _filter_discover_event_noise(items, kept_final_ids, kept_kickoff_ids)
         # Re-sort after demotion so demoted events fall below high-scoring futures
         items.sort(key=_rank_key, reverse=True)
         items = balance_discover_event_category_mix(items)
@@ -6273,6 +6292,20 @@ async def get_feed(
             reviewed_keys=reviewed_keys,
             now=now,
         )
+        # Ruling 190 (#11937): the two game-reason signals that need the
+        # database (a live game's last-15-minute move, a finished game's teams'
+        # futures moves) are read here, once each, because the display chain
+        # below is synchronous. Only when that chain will run the reason pass.
+        if (
+            event_pct is not None
+            and event_pct < 0.3
+            and not my_teams_only
+            and game_reason_enabled()
+        ):
+            try:
+                await annotate_game_signals(db, feed_items, now)
+            except Exception:  # noqa: BLE001 — a failed read keeps the pregame/upset reasons (gotcha #42)
+                logger.warning("Discover game-reason signals failed; using card values only", exc_info=True)
         # Passive: ``None`` on every HTTP request (the arm lives in the ASGI
         # scope, which no header or query parameter can reach), and a capture
         # that cannot record refuses itself rather than touching the build.

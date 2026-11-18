@@ -267,15 +267,15 @@ MUTANTS: list[tuple[str, str, Path, str, str]] = [
         """  const [awayPct, homePct] = servedDuelPercents(
     displayAwayProb,
     displayHomeProb,
-    data.current_odds?.away_rendered_percent,
-    data.current_odds?.home_rendered_percent,
+    forecastOdds?.away_rendered_percent,
+    forecastOdds?.home_rendered_percent,
   );""",
         """  const [fallbackAwayPct, fallbackHomePct] = renderedDuelPercents(
     displayAwayProb,
     displayHomeProb,
   );
-  const awayPct = data.current_odds?.away_rendered_percent ?? fallbackAwayPct;
-  const homePct = data.current_odds?.home_rendered_percent ?? fallbackHomePct;""",
+  const awayPct = forecastOdds?.away_rendered_percent ?? fallbackAwayPct;
+  const homePct = forecastOdds?.home_rendered_percent ?? fallbackHomePct;""",
     ),
     (
         "M15",

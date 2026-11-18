@@ -38,6 +38,34 @@ struct NativeEventDiscoverCard: View {
     /// Optional preloaded `/history` response for deterministic snapshot/unit tests.
     var chartHistory: EventHistoryResponse? = nil
 
+    init(
+        event: FeedEventData,
+        feedContext: String?,
+        expandedContext: String?,
+        navigationPath: Binding<NavigationPath>,
+        onOpen: (() -> Void)? = nil,
+        onContextExpand: (() -> Void)? = nil,
+        onContextCollapse: (() -> Void)? = nil,
+        onShare: (() -> Void)? = nil,
+        pictureVariant191Adopted: Bool = DiscoverSingleGameCard190C.defaultPictureVariant191Adopted,
+        chartHistory: EventHistoryResponse? = nil
+    ) {
+        var reading = event
+        reading.currentOdds = OpeningLineHero.currentOddsForCard(
+            event.currentOdds, heroSource: event.heroProbabilitySource
+        )
+        self.event = reading
+        self.feedContext = feedContext
+        self.expandedContext = expandedContext
+        self._navigationPath = navigationPath
+        self.onOpen = onOpen
+        self.onContextExpand = onContextExpand
+        self.onContextCollapse = onContextCollapse
+        self.onShare = onShare
+        self.pictureVariant191Adopted = pictureVariant191Adopted
+        self.chartHistory = chartHistory
+    }
+
     /// #8144 — the status column between the crests is sized against the strings
     /// THIS card draws at THIS text size, so both of these are inputs to a layout
     /// decision rather than decoration. See `GameCardStatusColumn`.

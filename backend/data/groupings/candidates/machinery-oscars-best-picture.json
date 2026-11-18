@@ -5,22 +5,23 @@
   "relations": [
     "same_event",
     "implies",
-    "sibling"
+    "sibling",
+    "movement"
   ],
   "level": "member",
   "parent_slug": "oscars-2027",
   "parent_name": "Oscars 2027",
   "kicker": "THE OSCARS · BEST PICTURE",
-  "name": "Best Picture: who gets nominated, who wins",
+  "name": "Oscars Best Picture",
   "category": "entertainment",
   "tag": "ENTERTAINMENT",
   "section_title": "Best Picture: Nominated & Wins",
-  "footer": "Several films are nominated; one wins.",
+  "footer": "",
   "rule": {
     "producer": "container_machinery",
     "refusal": "all-or-nothing",
     "materialize": "read-time",
-    "card_rows": 5,
+    "card_rows": 3,
     "sections": [
       {
         "key": "best_picture_paired",
@@ -32,6 +33,34 @@
           "category_name": "Best Picture",
           "min_items": 3,
           "max_items": 8
+        }
+      },
+      {
+        "key": "best_picture_history",
+        "title": "Companion Category Moves This Week",
+        "fallback_title": "Companion Category Odds",
+        "note": "7-day odds movement across companion Academy Award categories.",
+        "atom_query": {
+          "kind": "market_history",
+          "title_all_tokens": ["oscar"],
+          "any_tokens": [
+            "best actress",
+            "supporting actor",
+            "supporting actress",
+            "animated feature",
+            "international feature",
+            "adapted screenplay",
+            "original screenplay",
+            "original score",
+            "documentary feature"
+          ],
+          "exclude_tokens": ["nomin", "odds hit"],
+          "shape": "field",
+          "order_by": "movement_desc",
+          "min_items": 1,
+          "max_items": 4,
+          "max_outcomes": 3,
+          "hours": 168
         }
       },
       {
@@ -51,18 +80,19 @@
       },
       {
         "key": "acting_categories",
-        "title": "Acting & Animated Feature Races",
-        "note": "Companion ceremony fields sharing the same Best Picture contenders.",
+        "title": "Acting Races",
+        "note": "Companion acting fields sharing the same Best Picture contenders.",
+        "dynamic_item_note": true,
         "atom_query": {
           "kind": "markets",
           "title_all_tokens": ["oscar"],
-          "any_tokens": ["best actor", "best actress", "supporting actor"],
-          "exclude_tokens": ["nomin"],
+          "any_tokens": ["best actor", "best actress"],
+          "exclude_tokens": ["nomin", "supporting"],
           "shape": "field",
           "order_by": "closeness_to_50",
           "min_items": 2,
-          "max_items": 3,
-          "max_outcomes": 4
+          "max_items": 2,
+          "max_outcomes": 3
         }
       }
     ]

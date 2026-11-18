@@ -160,6 +160,8 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
     let order: String?
     let presentation: String?
     let rows: [FeedRoundupRow]
+    let machineryCard: MachineryCardContract?
+    let pairedMetricSet: PairedMetricSet?
 
     private enum CodingKeys: String, CodingKey {
         case kicker, tag, subtitle, footer, order, presentation, rows
@@ -169,6 +171,10 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         case completeGroupSnake = "complete_group"
         case countLine
         case countLineSnake = "count_line"
+        case machineryCard
+        case machineryCardSnake = "machinery_card"
+        case pairedMetricSet
+        case pairedMetricSetSnake = "paired_metric_set"
     }
 
     init(
@@ -180,7 +186,9 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         countLine: String? = nil,
         order: String? = nil,
         presentation: String? = nil,
-        rows: [FeedRoundupRow]
+        rows: [FeedRoundupRow],
+        machineryCard: MachineryCardContract? = nil,
+        pairedMetricSet: PairedMetricSet? = nil
     ) {
         self.kicker = kicker
         self.tag = tag
@@ -191,6 +199,8 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         self.order = order
         self.presentation = presentation
         self.rows = rows
+        self.machineryCard = machineryCard
+        self.pairedMetricSet = pairedMetricSet
     }
 
     init(from decoder: Decoder) throws {
@@ -209,6 +219,10 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         order = try? c.decodeIfPresent(String.self, forKey: .order)
         presentation = try? c.decodeIfPresent(String.self, forKey: .presentation)
         rows = (try? c.decodeIfPresent([FeedRoundupRow].self, forKey: .rows)) ?? []
+        machineryCard = (try? c.decodeIfPresent(MachineryCardContract.self, forKey: .machineryCard))
+            ?? (try? c.decodeIfPresent(MachineryCardContract.self, forKey: .machineryCardSnake))
+        pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet))
+            ?? (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSetSnake))
     }
 
     private static func nonEmpty(_ text: String?) -> String? {
