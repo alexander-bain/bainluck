@@ -1,0 +1,56 @@
+{
+  "testedAt": "2026-11-18T01:10:30.595Z",
+  "url": "http://localhost:3128/factory",
+  "mode": "production Next.js server, real saved GitHub data",
+  "normalMotionAnimations": 3,
+  "viewports": [
+    {
+      "documentWidth": 1280,
+      "viewport": 1280,
+      "floorWidth": 1206,
+      "floorClient": 1206,
+      "firstContentfulPaintMs": 112,
+      "responseStartMs": 10.5,
+      "headingFont": "__Space_Grotesk_c219ed, __Space_Grotesk_Fallback_c219ed, sans-serif",
+      "headings": [
+        "The Factory",
+        "The floor",
+        "Where it jammed today",
+        "Who is on the floor",
+        "How long the last step takes"
+      ],
+      "ellipses": 0,
+      "reducedMotionAnimations": 0,
+      "snapshot": "Nov 17 at 5:05 PM PT",
+      "status": 200,
+      "dialogLink": true,
+      "escapeCloses": true,
+      "horizontalEndReachable": true,
+      "pageErrors": []
+    },
+    {
+      "documentWidth": 390,
+      "viewport": 390,
+      "floorWidth": 1034,
+      "floorClient": 356,
+      "firstContentfulPaintMs": 28,
+      "responseStartMs": 6,
+      "headingFont": "__Space_Grotesk_c219ed, __Space_Grotesk_Fallback_c219ed, sans-serif",
+      "headings": [
+        "The Factory",
+        "The floor",
+        "Where it jammed today",
+        "Who is on the floor",
+        "How long the last step takes"
+      ],
+      "ellipses": 0,
+      "reducedMotionAnimations": 0,
+      "snapshot": "Nov 17 at 5:05 PM PT",
+      "status": 200,
+      "dialogLink": true,
+      "escapeCloses": true,
+      "horizontalEndReachable": true,
+      "pageErrors": []
+    }
+  ]
+}

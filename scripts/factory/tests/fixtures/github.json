@@ -1,0 +1,4870 @@
+{
+  "captured_at": "2026-11-18T01:05:44.423692Z",
+  "pulls": [
+    {
+      "number": 12899,
+      "title": "feat(groupings): #12288 slice 4 \u2014 card charts own headline, flat-line filter & natural prose titles",
+      "draft": false,
+      "state": "open",
+      "updated_at": "2026-11-18T01:00:49Z",
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "branch": "atlas/tue-nov17-12288-container-machinery-slice4",
+      "head_sha": "8c6d16c364dd21abcf4fc64b08619d1dbd5f45ef",
+      "fable_needed": false,
+      "files_complete": false,
+      "checks_complete": false,
+      "reviews_complete": false,
+      "comments_complete": true,
+      "commits_complete": true,
+      "files": [
+        "backend/app/routes/containers.py",
+        "backend/app/utils/container_machinery.py",
+        "backend/app/utils/roundup_containers.py",
+        "backend/data/groupings/candidates/machinery-2028-presidential.json",
+        "backend/data/groupings/candidates/machinery-fed-and-macro.json",
+        "backend/data/groupings/candidates/machinery-nfl-week.json",
+        "backend/data/groupings/candidates/machinery-oscars-best-picture.json",
+        "backend/data/groupings/machinery_subject_art.json",
+        "backend/tests/test_container_machinery_slice1_12288.py",
+        "docs/design/grouping-primitives.md",
+        "frontend/__tests__/collections/machinerySlice3_12288.test.tsx",
+        "frontend/__tests__/containerMachinerySlice1_12288.test.tsx",
+        "frontend/app/admin/groupings-preview/page.tsx",
+        "frontend/components/collections/CollectionHub.tsx",
+        "frontend/components/collections/MachinerySectionRenderer.tsx",
+        "frontend/components/discover/forms/AwardCategoryPairedCard.tsx",
+        "frontend/components/discover/roundup/RoundupCard.tsx",
+        "frontend/lib/collections.ts",
+        "frontend/lib/types.ts"
+      ],
+      "commits": [
+        {
+          "sha": "5c7142c729502f4d17d5e19f21342d38e7c28a0d",
+          "parents": 1,
+          "at": "2026-11-17T17:16:20Z"
+        },
+        {
+          "sha": "2fbc89d8cd39329c3b21b1557747caba49a36808",
+          "parents": 2,
+          "at": "2026-11-17T17:16:21Z"
+        },
+        {
+          "sha": "faee56a11ed6b9b9588e41ed37b4f18f217cdfc2",
+          "parents": 1,
+          "at": "2026-11-17T17:33:21Z"
+        },
+        {
+          "sha": "7da00739bc2c314e074e83d39ce0aec1df6b5c42",
+          "parents": 1,
+          "at": "2026-11-17T18:03:38Z"
+        },
+        {
+          "sha": "ea6fd511ee4b67b10b942fcd83f3e65f4e6f785f",
+          "parents": 1,
+          "at": "2026-11-17T19:07:30Z"
+        },
+        {
+          "sha": "25bf6253fd05fb556845dd27be96e2af30c74750",
+          "parents": 2,
+          "at": "2026-11-17T19:54:17Z"
+        },
+        {
+          "sha": "b93fb5e555265bc1d281bf5a658fc269e6106e20",
+          "parents": 1,
+          "at": "2026-11-17T19:55:23Z"
+        },
+        {
+          "sha": "7ff3ac12f224891bd9b7e2b11d13718e02fed716",
+          "parents": 1,
+          "at": "2026-11-17T21:18:42Z"
+        },
+        {
+          "sha": "ce1291c0b18f7b7d662bd5b28621d78e032f7820",
+          "parents": 1,
+          "at": "2026-11-18T00:21:16Z"
+        },
+        {
+          "sha": "963fa06bb460bb0cff30a837efefaf65aa6f9fb4",
+          "parents": 1,
+          "at": "2026-11-18T00:21:26Z"
+        },
+        {
+          "sha": "c3da4a711f31ac731d78dfc09254d1fe30873c88",
+          "parents": 1,
+          "at": "2026-11-18T00:21:26Z"
+        },
+        {
+          "sha": "8c6d16c364dd21abcf4fc64b08619d1dbd5f45ef",
+          "parents": 1,
+          "at": "2026-11-18T00:32:24Z"
+        }
+      ],
+      "reviews": [],
+      "comments": [],
+      "checks": [
+        {
+          "name": "claude",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:42:41Z",
+          "finished_at": "2026-11-18T00:42:41Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "claude",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:59Z",
+          "finished_at": "2026-11-18T01:00:53Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "change-scope",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:34:36Z",
+          "finished_at": "2026-11-18T00:34:53Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (python)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:34:24Z",
+          "finished_at": "2026-11-18T00:42:38Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:34:25Z",
+          "finished_at": "2026-11-18T00:34:34Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:35:08Z",
+          "finished_at": "2026-11-18T00:35:16Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:34:55Z",
+          "finished_at": "2026-11-18T00:35:09Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:34:24Z",
+          "finished_at": "2026-11-18T00:35:01Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:32:37Z",
+          "finished_at": "2026-11-18T00:33:18Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (javascript-typescript)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:34:26Z",
+          "finished_at": "2026-11-18T00:39:33Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "release-required",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:34:22Z",
+          "finished_at": "2026-11-18T00:34:21Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "fast-gate",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:35:03Z",
+          "finished_at": "2026-11-18T00:35:06Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "shard-completeness",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:35:12Z",
+          "finished_at": "2026-11-18T00:38:39Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "golden-baseline-floor",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:35:38Z",
+          "finished_at": "2026-11-18T00:35:58Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:36:34Z",
+          "finished_at": "2026-11-18T00:49:54Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-middle)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:36:00Z",
+          "finished_at": "2026-11-18T00:49:31Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-tail)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:36:54Z",
+          "finished_at": "2026-11-18T00:57:57Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (isolated)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:36:32Z",
+          "finished_at": "2026-11-18T00:46:03Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-suffix)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:35:25Z",
+          "finished_at": "2026-11-18T00:40:59Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "flaky-canary",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:36:28Z",
+          "finished_at": "2026-11-18T00:38:02Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Browser-audit contract fixtures",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:36:09Z",
+          "finished_at": "2026-11-18T00:36:32Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native-backend-readers",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:35:06Z",
+          "finished_at": "2026-11-18T00:35:06Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "frontend-build",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:37:30Z",
+          "finished_at": "2026-11-18T00:46:02Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "search-recall",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:57:59Z",
+          "finished_at": "2026-11-18T00:58:02Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (1)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:38:42Z",
+          "finished_at": "2026-11-18T00:52:47Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (2)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:38:03Z",
+          "finished_at": "2026-11-18T00:53:11Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (3)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:39:35Z",
+          "finished_at": "2026-11-18T00:56:27Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (4)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:39:26Z",
+          "finished_at": "2026-11-18T00:53:20Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (5)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:40:10Z",
+          "finished_at": "2026-11-18T00:56:43Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (6)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:38:47Z",
+          "finished_at": "2026-11-18T00:53:42Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (7)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:38:22Z",
+          "finished_at": "2026-11-18T00:51:54Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (8)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:38:04Z",
+          "finished_at": "2026-11-18T00:51:07Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "deploy",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:58:03Z",
+          "finished_at": "2026-11-18T00:58:02Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "CodeQL",
+          "app": "github-advanced-security",
+          "started_at": "2026-11-18T00:39:25Z",
+          "finished_at": "2026-11-18T00:39:32Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Vercel",
+          "app": "commit-status",
+          "started_at": "2026-11-18T00:32:49Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:57Z",
+          "finished_at": "2026-11-18T01:00:57Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "number": 12901,
+      "title": "Prepare NFL week market selection before card hydration",
+      "draft": true,
+      "state": "open",
+      "updated_at": "2026-11-18T01:00:36Z",
+      "merged_at": null,
+      "merge_commit_sha": "218a6adffb8757cef131082b763ac94c5d0ac81f",
+      "branch": "codex/12337-week-market-descriptors",
+      "head_sha": "31f49e246d6c1e7cec9c7646d8ded6ebb9a444b4",
+      "fable_needed": true,
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "comments_complete": true,
+      "commits_complete": true,
+      "files": [
+        "backend/app/routes/containers.py",
+        "backend/app/tasks/container_hub_warmer.py",
+        "backend/app/utils/container_week_preview.py",
+        "backend/tests/test_container_hub_warmer_9982.py",
+        "backend/tests/test_container_week_preview_12337.py"
+      ],
+      "commits": [
+        {
+          "sha": "31f49e246d6c1e7cec9c7646d8ded6ebb9a444b4",
+          "parents": 1,
+          "at": "2026-11-18T00:59:06Z"
+        }
+      ],
+      "reviews": [],
+      "comments": [],
+      "checks": [
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:24Z",
+          "finished_at": "2026-11-18T01:00:23Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:46Z",
+          "finished_at": "2026-11-18T01:00:39Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "change-scope",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:26Z",
+          "finished_at": "2026-11-18T01:00:43Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (python)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:26Z",
+          "finished_at": "2026-11-18T01:05:08Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:27Z",
+          "finished_at": "2026-11-18T01:00:44Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:26Z",
+          "finished_at": "2026-11-18T01:01:08Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:59:23Z",
+          "finished_at": "2026-11-18T00:59:57Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (javascript-typescript)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:26Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "release-required",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:24Z",
+          "finished_at": "2026-11-18T01:00:23Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "fast-gate",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:45Z",
+          "finished_at": "2026-11-18T01:00:48Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "shard-completeness",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:45Z",
+          "finished_at": "2026-11-18T01:03:31Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "golden-baseline-floor",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:46Z",
+          "finished_at": "2026-11-18T01:01:19Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:45Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "database-integration (shared-middle)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:46Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "database-integration (shared-tail)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:47Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "database-integration (isolated)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:45Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "database-integration (shared-suffix)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:46Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "flaky-canary",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:46Z",
+          "finished_at": "2026-11-18T01:02:36Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Browser-audit contract fixtures",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:45Z",
+          "finished_at": "2026-11-18T01:01:11Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native-backend-readers",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:49Z",
+          "finished_at": "2026-11-18T01:00:48Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "frontend-build",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:01:04Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "backend-tests (1)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:01:10Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "backend-tests (2)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:03:20Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "backend-tests (3)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:01:22Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "backend-tests (4)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:02:54Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "backend-tests (5)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:01:08Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "backend-tests (6)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:01:14Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "backend-tests (7)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:02:53Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "backend-tests (8)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:01:34Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "started_at": "2026-11-18T01:00:41Z",
+          "finished_at": "2026-11-18T01:00:41Z",
+          "state": "completed",
+          "conclusion": "failure"
+        },
+        {
+          "name": "CodeQL",
+          "app": "github-advanced-security",
+          "started_at": "2026-11-18T01:04:58Z",
+          "finished_at": "2026-11-18T01:05:02Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Vercel",
+          "app": "commit-status",
+          "started_at": "2026-11-18T00:59:35Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "number": 12900,
+      "title": "Prepare the compact page for recent NFL weeks",
+      "draft": false,
+      "state": "open",
+      "updated_at": "2026-11-18T00:50:16Z",
+      "merged_at": null,
+      "merge_commit_sha": "819a67bc39f8ea0804b8bfc30536e8768843a4e3",
+      "branch": "codex/12337-week-warmer",
+      "head_sha": "40191033002696edf0fb700e2856c4173b4d1529",
+      "fable_needed": true,
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "comments_complete": true,
+      "commits_complete": true,
+      "files": [
+        "backend/app/tasks/container_hub_warmer.py",
+        "backend/tests/test_container_hub_warmer_9982.py"
+      ],
+      "commits": [
+        {
+          "sha": "40191033002696edf0fb700e2856c4173b4d1529",
+          "parents": 1,
+          "at": "2026-11-18T00:48:47Z"
+        }
+      ],
+      "reviews": [],
+      "comments": [],
+      "checks": [
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:05Z",
+          "finished_at": "2026-11-18T00:50:05Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "change-scope",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:07Z",
+          "finished_at": "2026-11-18T00:50:27Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (python)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:07Z",
+          "finished_at": "2026-11-18T00:55:59Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:22Z",
+          "finished_at": "2026-11-18T00:50:30Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:07Z",
+          "finished_at": "2026-11-18T00:50:22Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:25Z",
+          "finished_at": "2026-11-18T00:50:39Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:07Z",
+          "finished_at": "2026-11-18T00:50:44Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:49:05Z",
+          "finished_at": "2026-11-18T00:49:41Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (javascript-typescript)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:08Z",
+          "finished_at": "2026-11-18T00:54:05Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "release-required",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:05Z",
+          "finished_at": "2026-11-18T00:50:05Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "fast-gate",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:29Z",
+          "finished_at": "2026-11-18T00:50:33Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "shard-completeness",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:29Z",
+          "finished_at": "2026-11-18T00:54:16Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "golden-baseline-floor",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:29Z",
+          "finished_at": "2026-11-18T00:50:50Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:29Z",
+          "finished_at": "2026-11-18T01:02:51Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-middle)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:29Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "database-integration (shared-tail)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:30Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "database-integration (isolated)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:30Z",
+          "finished_at": "2026-11-18T00:57:53Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-suffix)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:30Z",
+          "finished_at": "2026-11-18T00:56:16Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "flaky-canary",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:29Z",
+          "finished_at": "2026-11-18T00:52:07Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Browser-audit contract fixtures",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:29Z",
+          "finished_at": "2026-11-18T00:50:53Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native-backend-readers",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:34Z",
+          "finished_at": "2026-11-18T00:50:34Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "frontend-build",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:36Z",
+          "finished_at": "2026-11-18T01:00:38Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (1)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:37Z",
+          "finished_at": "2026-11-18T01:04:06Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (2)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:36Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "backend-tests (3)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:36Z",
+          "finished_at": "2026-11-18T01:02:51Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (4)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:37Z",
+          "finished_at": "2026-11-18T01:04:12Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (5)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:36Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "backend-tests (6)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:36Z",
+          "finished_at": "2026-11-18T01:03:50Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (7)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:37Z",
+          "finished_at": null,
+          "state": "in_progress",
+          "conclusion": ""
+        },
+        {
+          "name": "backend-tests (8)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:36Z",
+          "finished_at": "2026-11-18T01:05:00Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:50:20Z",
+          "finished_at": "2026-11-18T00:50:20Z",
+          "state": "completed",
+          "conclusion": "failure"
+        },
+        {
+          "name": "CodeQL",
+          "app": "github-advanced-security",
+          "started_at": "2026-11-18T00:53:54Z",
+          "finished_at": "2026-11-18T00:53:57Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Vercel",
+          "app": "commit-status",
+          "started_at": "2026-11-18T00:49:18Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "number": 12898,
+      "title": "fix(ios): fit pregame projected-final Y-axis, uncut X-axis labels, and page whole-number pair (#12889)",
+      "draft": false,
+      "state": "open",
+      "updated_at": "2026-11-18T00:36:28Z",
+      "merged_at": null,
+      "merge_commit_sha": "f4eba8d35e9010af579008dbc39885e97205abe9",
+      "branch": "ios/projected-final-chart-pregame-12889",
+      "head_sha": "f65cf73428b0eff99b9ccb48267131494a30ebb8",
+      "fable_needed": true,
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "comments_complete": true,
+      "commits_complete": true,
+      "files": [
+        "ios/Bain Luck/Bain Luck/Components/ProjectedFinalPointsChartView.swift",
+        "ios/Bain Luck/Bain Luck/Utilities/ProjectedFinalPointsSeries.swift",
+        "ios/Bain Luck/Bain Luck/Views/EventDetailView.swift",
+        "ios/Bain Luck/BainLuckTests/ProjectedFinalPointsLeagues10549Tests.swift",
+        "ios/Bain Luck/BainLuckTests/ProjectedFinalPregameParity12889Tests.swift"
+      ],
+      "commits": [
+        {
+          "sha": "f65cf73428b0eff99b9ccb48267131494a30ebb8",
+          "parents": 1,
+          "at": "2026-11-18T00:12:04Z"
+        }
+      ],
+      "reviews": [
+        {
+          "login": "claude[bot]",
+          "commit_id": "f65cf73428b0eff99b9ccb48267131494a30ebb8",
+          "state": "APPROVED",
+          "submitted_at": "2026-11-18T00:20:38Z"
+        }
+      ],
+      "comments": [
+        {
+          "created_at": "2026-11-18T00:36:28Z",
+          "updated_at": "2026-11-18T00:36:28Z",
+          "association": "OWNER",
+          "fable_accept": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "claude",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:20:43Z",
+          "finished_at": "2026-11-18T00:20:43Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "change-scope",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:12:50Z",
+          "finished_at": "2026-11-18T00:13:05Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (python)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:12:50Z",
+          "finished_at": "2026-11-18T00:18:44Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:12:50Z",
+          "finished_at": "2026-11-18T00:12:59Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:13:03Z",
+          "finished_at": "2026-11-18T00:13:10Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:12:52Z",
+          "finished_at": "2026-11-18T00:13:17Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:12:50Z",
+          "finished_at": "2026-11-18T00:13:28Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:12:16Z",
+          "finished_at": "2026-11-18T00:13:06Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (javascript-typescript)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:12:50Z",
+          "finished_at": "2026-11-18T00:16:41Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "release-required",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:12:48Z",
+          "finished_at": "2026-11-18T00:12:47Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "fast-gate",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:13:07Z",
+          "finished_at": "2026-11-18T00:13:10Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "shard-completeness",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:13:05Z",
+          "finished_at": "2026-11-18T00:13:05Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "golden-baseline-floor",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:13:05Z",
+          "finished_at": "2026-11-18T00:13:05Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "database-integration",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:13:05Z",
+          "finished_at": "2026-11-18T00:13:05Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "flaky-canary",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:13:07Z",
+          "finished_at": "2026-11-18T00:14:48Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Browser-audit contract fixtures",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:13:07Z",
+          "finished_at": "2026-11-18T00:13:33Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native-backend-readers",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:13:12Z",
+          "finished_at": "2026-11-18T00:18:37Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "frontend-build",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:13:10Z",
+          "finished_at": "2026-11-18T00:13:10Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "search-recall",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:13:05Z",
+          "finished_at": "2026-11-18T00:13:05Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "backend-tests (1)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:18:40Z",
+          "finished_at": "2026-11-18T00:18:48Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (2)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:18:41Z",
+          "finished_at": "2026-11-18T00:18:47Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (3)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:18:40Z",
+          "finished_at": "2026-11-18T00:18:42Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (4)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:18:40Z",
+          "finished_at": "2026-11-18T00:18:43Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (5)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:18:40Z",
+          "finished_at": "2026-11-18T00:18:42Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (6)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:18:40Z",
+          "finished_at": "2026-11-18T00:18:43Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (7)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:18:40Z",
+          "finished_at": "2026-11-18T00:18:45Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (8)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:18:40Z",
+          "finished_at": "2026-11-18T00:18:47Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "deploy",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:18:48Z",
+          "finished_at": "2026-11-18T00:18:48Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "CodeQL",
+          "app": "github-advanced-security",
+          "started_at": "2026-11-18T00:16:33Z",
+          "finished_at": "2026-11-18T00:16:37Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Vercel",
+          "app": "commit-status",
+          "started_at": "2026-11-18T00:12:29Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:20:45Z",
+          "finished_at": "2026-11-18T00:20:45Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "number": 12894,
+      "title": "Watch Matchup slot: the tick before the winner's score, both scores on one right edge",
+      "draft": false,
+      "state": "open",
+      "updated_at": "2026-11-18T00:02:05Z",
+      "merged_at": null,
+      "merge_commit_sha": "81ba1e0026f718062a2a26f54a6d6cd20a7f4f65",
+      "branch": "apple/217-tick-before-score",
+      "head_sha": "3008d8aa3b911e1805ee813a0af9c0ae7897634c",
+      "fable_needed": false,
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "comments_complete": true,
+      "commits_complete": true,
+      "files": [
+        "ios/Bain Luck/BainLuckWatch Watch App/WatchMatchupComplication217.swift"
+      ],
+      "commits": [
+        {
+          "sha": "3008d8aa3b911e1805ee813a0af9c0ae7897634c",
+          "parents": 1,
+          "at": "2026-11-17T23:16:17Z"
+        }
+      ],
+      "reviews": [],
+      "comments": [
+        {
+          "created_at": "2026-11-18T00:02:05Z",
+          "updated_at": "2026-11-18T00:02:05Z",
+          "association": "OWNER",
+          "fable_accept": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:16:43Z",
+          "finished_at": "2026-11-17T23:16:35Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "live-journey",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:16:35Z",
+          "finished_at": "2026-11-17T23:16:35Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "change-scope",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:16:38Z",
+          "finished_at": "2026-11-17T23:17:01Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (python)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:16:38Z",
+          "finished_at": "2026-11-17T23:21:41Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:16:39Z",
+          "finished_at": "2026-11-17T23:16:56Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Watch behavior and unsigned builds",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:17:26Z",
+          "finished_at": "2026-11-17T23:24:52Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:16:38Z",
+          "finished_at": "2026-11-17T23:17:22Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:16:26Z",
+          "finished_at": "2026-11-17T23:17:12Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (javascript-typescript)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:16:38Z",
+          "finished_at": "2026-11-17T23:20:34Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Watch change iPhone compatibility",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:27:04Z",
+          "finished_at": "2026-11-18T00:27:08Z",
+          "state": "completed",
+          "conclusion": "cancelled"
+        },
+        {
+          "name": "release-required",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:16:35Z",
+          "finished_at": "2026-11-17T23:16:35Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Build exact simulator products once for five fresh pairs",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:24:55Z",
+          "finished_at": "2026-11-17T23:27:01Z",
+          "state": "completed",
+          "conclusion": "failure"
+        },
+        {
+          "name": "fast-gate",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:17:03Z",
+          "finished_at": "2026-11-17T23:17:07Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "shard-completeness",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:17:01Z",
+          "finished_at": "2026-11-17T23:17:01Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Watch inside unsigned iPhone archive",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:24:56Z",
+          "finished_at": "2026-11-17T23:42:46Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "golden-baseline-floor",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:17:01Z",
+          "finished_at": "2026-11-17T23:17:01Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Watch picker interaction journey (${{ matrix.shard }})",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:27:01Z",
+          "finished_at": "2026-11-17T23:27:01Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Watch full UI coverage from isolated pairs",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:27:03Z",
+          "finished_at": "2026-11-17T23:27:18Z",
+          "state": "completed",
+          "conclusion": "failure"
+        },
+        {
+          "name": "database-integration",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:17:01Z",
+          "finished_at": "2026-11-17T23:17:01Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "flaky-canary",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:17:03Z",
+          "finished_at": "2026-11-17T23:18:51Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Browser-audit contract fixtures",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:17:03Z",
+          "finished_at": "2026-11-17T23:17:27Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native-backend-readers",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:17:10Z",
+          "finished_at": "2026-11-17T23:22:39Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "frontend-build",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:17:07Z",
+          "finished_at": "2026-11-17T23:17:07Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "search-recall",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:17:01Z",
+          "finished_at": "2026-11-17T23:17:01Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "backend-tests (1)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:22:42Z",
+          "finished_at": "2026-11-17T23:22:45Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (2)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:22:42Z",
+          "finished_at": "2026-11-17T23:22:46Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (3)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:22:42Z",
+          "finished_at": "2026-11-17T23:22:44Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (4)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:22:42Z",
+          "finished_at": "2026-11-17T23:22:46Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (5)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:22:42Z",
+          "finished_at": "2026-11-17T23:22:47Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (6)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:22:42Z",
+          "finished_at": "2026-11-17T23:22:49Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (7)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:22:42Z",
+          "finished_at": "2026-11-17T23:22:44Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (8)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:22:42Z",
+          "finished_at": "2026-11-17T23:22:44Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "deploy",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:22:50Z",
+          "finished_at": "2026-11-17T23:22:49Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "CodeQL",
+          "app": "github-advanced-security",
+          "started_at": "2026-11-17T23:20:23Z",
+          "finished_at": "2026-11-17T23:20:32Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Vercel",
+          "app": "commit-status",
+          "started_at": "2026-11-17T23:16:38Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:16:53Z",
+          "finished_at": "2026-11-17T23:16:53Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "number": 12895,
+      "title": "Carry source marks through the Sports grouped feed",
+      "draft": true,
+      "state": "open",
+      "updated_at": "2026-11-17T23:25:54Z",
+      "merged_at": null,
+      "merge_commit_sha": "65a8daf1b71711cba764b76c968373ef436005c8",
+      "branch": "codex/12581-grouped-feed-marks",
+      "head_sha": "c2ff630205f1adfdc9844fa7009669a6fdac4ee8",
+      "fable_needed": true,
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "comments_complete": true,
+      "commits_complete": true,
+      "files": [
+        "backend/app/routes/futures.py",
+        "backend/app/utils/futures_source_mark.py",
+        "backend/app/utils/grouped_feed_cache.py",
+        "backend/app/utils/market_grouping.py",
+        "backend/tests/test_grouped_feed_container_fold_route_4153.py",
+        "backend/tests/test_grouped_feed_source_marks_12581.py"
+      ],
+      "commits": [
+        {
+          "sha": "c2ff630205f1adfdc9844fa7009669a6fdac4ee8",
+          "parents": 1,
+          "at": "2026-11-17T23:25:09Z"
+        }
+      ],
+      "reviews": [],
+      "comments": [],
+      "checks": [
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:25:58Z",
+          "finished_at": "2026-11-17T23:25:57Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:25:58Z",
+          "finished_at": "2026-11-17T23:25:58Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "change-scope",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:00Z",
+          "finished_at": "2026-11-17T23:26:17Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (python)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:00Z",
+          "finished_at": "2026-11-17T23:32:09Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:01Z",
+          "finished_at": "2026-11-17T23:26:19Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:00Z",
+          "finished_at": "2026-11-17T23:27:00Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:25:25Z",
+          "finished_at": "2026-11-17T23:26:03Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (javascript-typescript)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:00Z",
+          "finished_at": "2026-11-17T23:30:44Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "release-required",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:25:58Z",
+          "finished_at": "2026-11-17T23:25:57Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "fast-gate",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:21Z",
+          "finished_at": "2026-11-17T23:26:28Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "shard-completeness",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:19Z",
+          "finished_at": "2026-11-17T23:29:11Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "golden-baseline-floor",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:19Z",
+          "finished_at": "2026-11-17T23:26:43Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:20Z",
+          "finished_at": "2026-11-17T23:38:00Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-middle)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:20Z",
+          "finished_at": "2026-11-17T23:37:41Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-tail)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:19Z",
+          "finished_at": "2026-11-17T23:44:53Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (isolated)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:20Z",
+          "finished_at": "2026-11-17T23:36:21Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-suffix)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:20Z",
+          "finished_at": "2026-11-17T23:31:59Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "flaky-canary",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:20Z",
+          "finished_at": "2026-11-17T23:28:03Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Browser-audit contract fixtures",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:19Z",
+          "finished_at": "2026-11-17T23:26:41Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native-backend-readers",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:29Z",
+          "finished_at": "2026-11-17T23:26:28Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "frontend-build",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:31Z",
+          "finished_at": "2026-11-17T23:32:22Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "search-recall",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:45:12Z",
+          "finished_at": "2026-11-17T23:45:16Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (1)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:31Z",
+          "finished_at": "2026-11-17T23:42:44Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (2)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:32Z",
+          "finished_at": "2026-11-17T23:39:55Z",
+          "state": "completed",
+          "conclusion": "failure"
+        },
+        {
+          "name": "backend-tests (3)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:31Z",
+          "finished_at": "2026-11-17T23:41:50Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (4)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:31Z",
+          "finished_at": "2026-11-17T23:41:16Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (5)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:31Z",
+          "finished_at": "2026-11-17T23:43:25Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (6)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:31Z",
+          "finished_at": "2026-11-17T23:40:26Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (7)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:31Z",
+          "finished_at": "2026-11-17T23:41:25Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (8)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:31Z",
+          "finished_at": "2026-11-17T23:40:30Z",
+          "state": "completed",
+          "conclusion": "failure"
+        },
+        {
+          "name": "deploy",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:45:17Z",
+          "finished_at": "2026-11-17T23:45:16Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:26:15Z",
+          "finished_at": "2026-11-17T23:26:15Z",
+          "state": "completed",
+          "conclusion": "failure"
+        },
+        {
+          "name": "CodeQL",
+          "app": "github-advanced-security",
+          "started_at": "2026-11-17T23:30:34Z",
+          "finished_at": "2026-11-17T23:30:37Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Vercel",
+          "app": "commit-status",
+          "started_at": "2026-11-17T23:25:38Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "number": 12860,
+      "title": "#10542 steps 3-4: push only when the screen changes; stale only after 6 minutes without a confirmed score",
+      "draft": false,
+      "state": "open",
+      "updated_at": "2026-11-17T23:20:17Z",
+      "merged_at": null,
+      "merge_commit_sha": "42a9a23e8455e875aea91573b6fb0e2ac3195cdc",
+      "branch": "builder-e/10542-quiet-refresh-stale-date",
+      "head_sha": "2f45fbc1e55f828c66d1f6f1d9f60634c63a5d9f",
+      "fable_needed": false,
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "comments_complete": true,
+      "commits_complete": true,
+      "files": [
+        "backend/app/services/activitykit_worker.py",
+        "backend/app/utils/activitykit_delivery_state.py",
+        "backend/app/utils/activitykit_payload.py",
+        "backend/tests/test_activitykit_delivery_state.py",
+        "backend/tests/test_activitykit_payload.py",
+        "backend/tests/test_activitykit_worker.py"
+      ],
+      "commits": [
+        {
+          "sha": "dcdcfffac97c49b7f2725e36085132cb6cec84ca",
+          "parents": 1,
+          "at": "2026-11-17T14:18:50Z"
+        },
+        {
+          "sha": "2f45fbc1e55f828c66d1f6f1d9f60634c63a5d9f",
+          "parents": 2,
+          "at": "2026-11-17T22:58:29Z"
+        }
+      ],
+      "reviews": [
+        {
+          "login": "claude[bot]",
+          "commit_id": "dcdcfffac97c49b7f2725e36085132cb6cec84ca",
+          "state": "DISMISSED",
+          "submitted_at": "2026-11-17T14:46:33Z"
+        },
+        {
+          "login": "claude[bot]",
+          "commit_id": "2f45fbc1e55f828c66d1f6f1d9f60634c63a5d9f",
+          "state": "APPROVED",
+          "submitted_at": "2026-11-17T23:20:17Z"
+        }
+      ],
+      "comments": [
+        {
+          "created_at": "2026-11-17T17:43:29Z",
+          "updated_at": "2026-11-17T17:43:29Z",
+          "association": "OWNER",
+          "fable_accept": true
+        },
+        {
+          "created_at": "2026-11-17T19:15:49Z",
+          "updated_at": "2026-11-17T19:16:07Z",
+          "association": "OWNER",
+          "fable_accept": false
+        },
+        {
+          "created_at": "2026-11-17T23:14:53Z",
+          "updated_at": "2026-11-17T23:14:53Z",
+          "association": "OWNER",
+          "fable_accept": false
+        }
+      ],
+      "checks": [
+        {
+          "name": "claude",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:20:22Z",
+          "finished_at": "2026-11-17T23:20:21Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "change-scope",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:58:46Z",
+          "finished_at": "2026-11-17T22:59:03Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (python)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:58:46Z",
+          "finished_at": "2026-11-17T23:04:48Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:58:46Z",
+          "finished_at": "2026-11-17T22:58:52Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:58:45Z",
+          "finished_at": "2026-11-17T22:59:01Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:58:46Z",
+          "finished_at": "2026-11-17T22:59:36Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:58:41Z",
+          "finished_at": "2026-11-17T22:59:19Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (javascript-typescript)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:58:45Z",
+          "finished_at": "2026-11-17T23:02:39Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "release-required",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:58:44Z",
+          "finished_at": "2026-11-17T22:58:43Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "fast-gate",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:05Z",
+          "finished_at": "2026-11-17T22:59:08Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "shard-completeness",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:06Z",
+          "finished_at": "2026-11-17T23:02:46Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "golden-baseline-floor",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:06Z",
+          "finished_at": "2026-11-17T22:59:31Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:05Z",
+          "finished_at": "2026-11-17T23:10:52Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-middle)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:06Z",
+          "finished_at": "2026-11-17T23:14:52Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-tail)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:06Z",
+          "finished_at": "2026-11-17T23:18:15Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (isolated)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:05Z",
+          "finished_at": "2026-11-17T23:08:25Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-suffix)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:05Z",
+          "finished_at": "2026-11-17T23:04:45Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "flaky-canary",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:05Z",
+          "finished_at": "2026-11-17T23:00:51Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Browser-audit contract fixtures",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:06Z",
+          "finished_at": "2026-11-17T22:59:32Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native-backend-readers",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:09Z",
+          "finished_at": "2026-11-17T22:59:08Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "frontend-build",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:11Z",
+          "finished_at": "2026-11-17T23:05:17Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "search-recall",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:18:18Z",
+          "finished_at": "2026-11-17T23:18:23Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (1)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:11Z",
+          "finished_at": "2026-11-17T23:13:24Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (2)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:11Z",
+          "finished_at": "2026-11-17T23:12:27Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (3)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:11Z",
+          "finished_at": "2026-11-17T23:13:13Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (4)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:26Z",
+          "finished_at": "2026-11-17T23:13:19Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (5)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:21Z",
+          "finished_at": "2026-11-17T23:13:24Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (6)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:21Z",
+          "finished_at": "2026-11-17T23:15:24Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (7)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:11Z",
+          "finished_at": "2026-11-17T23:11:29Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (8)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:59:11Z",
+          "finished_at": "2026-11-17T23:13:17Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "deploy",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:18:24Z",
+          "finished_at": "2026-11-17T23:18:23Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "CodeQL",
+          "app": "github-advanced-security",
+          "started_at": "2026-11-17T23:02:30Z",
+          "finished_at": "2026-11-17T23:02:34Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Vercel",
+          "app": "commit-status",
+          "started_at": "2026-11-17T22:58:54Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:20:26Z",
+          "finished_at": "2026-11-17T23:20:25Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "number": 12781,
+      "title": "docs: NOW status lines move to #12779 (#11852 is full)",
+      "draft": false,
+      "state": "open",
+      "updated_at": "2026-11-17T21:38:39Z",
+      "merged_at": null,
+      "merge_commit_sha": "a357c6521275bdd8cda855d80d0523aea1f72955",
+      "branch": "builder-e/now-lines-12779",
+      "head_sha": "9b7bcb2602055416c7ee3179d95e105d77c0f766",
+      "fable_needed": false,
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "comments_complete": true,
+      "commits_complete": true,
+      "files": [
+        "CLAUDE.md",
+        "backend/tests/test_claude_md_size.py"
+      ],
+      "commits": [
+        {
+          "sha": "9b7bcb2602055416c7ee3179d95e105d77c0f766",
+          "parents": 1,
+          "at": "2026-11-16T05:43:56Z"
+        }
+      ],
+      "reviews": [
+        {
+          "login": "claude[bot]",
+          "commit_id": "9b7bcb2602055416c7ee3179d95e105d77c0f766",
+          "state": "APPROVED",
+          "submitted_at": "2026-11-16T06:15:56Z"
+        }
+      ],
+      "comments": [
+        {
+          "created_at": "2026-11-17T21:38:39Z",
+          "updated_at": "2026-11-17T21:38:39Z",
+          "association": "OWNER",
+          "fable_accept": false
+        }
+      ],
+      "checks": [
+        {
+          "name": "claude",
+          "app": "github-actions",
+          "started_at": "2026-11-16T06:16:06Z",
+          "finished_at": "2026-11-16T06:16:00Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "change-scope",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:45:01Z",
+          "finished_at": "2026-11-16T05:45:27Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (python)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:45:39Z",
+          "finished_at": "2026-11-16T05:50:27Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:44:55Z",
+          "finished_at": "2026-11-16T05:45:01Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:48:40Z",
+          "finished_at": "2026-11-16T05:48:46Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:46:03Z",
+          "finished_at": "2026-11-16T05:46:20Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:44:24Z",
+          "finished_at": "2026-11-16T05:44:53Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:44:22Z",
+          "finished_at": "2026-11-16T05:44:58Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (javascript-typescript)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:45:30Z",
+          "finished_at": "2026-11-16T05:48:37Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "release-required",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:44:10Z",
+          "finished_at": "2026-11-16T05:44:10Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "fast-gate",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:49:05Z",
+          "finished_at": "2026-11-16T05:49:07Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "shard-completeness",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:50:15Z",
+          "finished_at": "2026-11-16T05:53:53Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "golden-baseline-floor",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:49:10Z",
+          "finished_at": "2026-11-16T05:49:30Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:48:07Z",
+          "finished_at": "2026-11-16T06:00:48Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-middle)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:50:00Z",
+          "finished_at": "2026-11-16T06:06:53Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-tail)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:47:33Z",
+          "finished_at": "2026-11-16T06:03:16Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (isolated)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:49:43Z",
+          "finished_at": "2026-11-16T05:58:32Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-suffix)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:49:25Z",
+          "finished_at": "2026-11-16T05:53:13Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "flaky-canary",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:50:30Z",
+          "finished_at": "2026-11-16T05:52:22Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Browser-audit contract fixtures",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:45:34Z",
+          "finished_at": "2026-11-16T05:46:01Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native-backend-readers",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:49:08Z",
+          "finished_at": "2026-11-16T05:49:07Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "frontend-build",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:52:29Z",
+          "finished_at": "2026-11-16T06:02:24Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "search-recall",
+          "app": "github-actions",
+          "started_at": "2026-11-16T06:07:08Z",
+          "finished_at": "2026-11-16T06:07:12Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (1)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:57:31Z",
+          "finished_at": "2026-11-16T06:11:59Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (2)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:53:22Z",
+          "finished_at": "2026-11-16T06:06:00Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (3)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:53:15Z",
+          "finished_at": "2026-11-16T06:08:10Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (4)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:57:29Z",
+          "finished_at": "2026-11-16T06:11:11Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (5)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:56:10Z",
+          "finished_at": "2026-11-16T06:10:11Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (6)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:55:14Z",
+          "finished_at": "2026-11-16T06:10:14Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (7)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:57:24Z",
+          "finished_at": "2026-11-16T06:14:09Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (8)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T05:54:19Z",
+          "finished_at": "2026-11-16T06:07:12Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "deploy",
+          "app": "github-actions",
+          "started_at": "2026-11-16T06:14:09Z",
+          "finished_at": "2026-11-16T06:14:09Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "CodeQL",
+          "app": "github-advanced-security",
+          "started_at": "2026-11-16T05:48:28Z",
+          "finished_at": "2026-11-16T05:48:32Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Vercel",
+          "app": "commit-status",
+          "started_at": "2026-11-16T05:44:20Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "started_at": "2026-11-16T06:16:04Z",
+          "finished_at": "2026-11-16T06:16:03Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "number": 12461,
+      "title": "[HOLD until the founder hears Siri answer] #12315: My Stuff shows a one-time \"Ask Siri\" hint",
+      "draft": true,
+      "state": "open",
+      "updated_at": "2026-11-16T19:45:21Z",
+      "merged_at": null,
+      "merge_commit_sha": "a49f41981ffe2c76d199edcba4887b8745543c19",
+      "branch": "apple/12315-siri-tip-and-spotlight",
+      "head_sha": "02ce86f47c3602b79a2373b560b43ea6a8c0eda6",
+      "fable_needed": true,
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "comments_complete": true,
+      "commits_complete": true,
+      "files": [
+        "ios/Bain Luck/Bain Luck/Intents/BainLuckIntents10873.swift",
+        "ios/Bain Luck/Bain Luck/Tips/SiriProbabilityTip12315.swift",
+        "ios/Bain Luck/Bain Luck/Views/MyStuffView.swift",
+        "ios/Bain Luck/BainLuckTests/SiriTip12315Tests.swift",
+        "ios/Bain Luck/BainLuckTests/SpotlightIndex10874Tests.swift",
+        "ios/Bain Luck/BainLuckUITests/ASiriTipInMyStuffStaysDismissed12315Tests.swift"
+      ],
+      "commits": [
+        {
+          "sha": "c878cf1470f594ed6eaf82d12861a1111737cc0d",
+          "parents": 1,
+          "at": "2026-11-16T14:51:36Z"
+        },
+        {
+          "sha": "02ce86f47c3602b79a2373b560b43ea6a8c0eda6",
+          "parents": 1,
+          "at": "2026-11-16T14:52:10Z"
+        }
+      ],
+      "reviews": [
+        {
+          "login": "claude[bot]",
+          "commit_id": "5964c69cfb4cecbdb0af22a7de81d38a6d425776",
+          "state": "DISMISSED",
+          "submitted_at": "2026-11-09T17:31:49Z"
+        }
+      ],
+      "comments": [
+        {
+          "created_at": "2026-11-09T17:24:21Z",
+          "updated_at": "2026-11-09T17:24:21Z",
+          "association": "OWNER",
+          "fable_accept": false
+        },
+        {
+          "created_at": "2026-11-09T17:25:18Z",
+          "updated_at": "2026-11-09T17:25:18Z",
+          "association": "OWNER",
+          "fable_accept": false
+        },
+        {
+          "created_at": "2026-11-09T17:48:43Z",
+          "updated_at": "2026-11-09T17:48:43Z",
+          "association": "OWNER",
+          "fable_accept": false
+        },
+        {
+          "created_at": "2026-11-09T19:50:27Z",
+          "updated_at": "2026-11-09T19:50:45Z",
+          "association": "OWNER",
+          "fable_accept": false
+        },
+        {
+          "created_at": "2026-11-09T20:27:11Z",
+          "updated_at": "2026-11-09T20:27:11Z",
+          "association": "OWNER",
+          "fable_accept": false
+        },
+        {
+          "created_at": "2026-11-15T23:43:24Z",
+          "updated_at": "2026-11-15T23:43:33Z",
+          "association": "OWNER",
+          "fable_accept": false
+        },
+        {
+          "created_at": "2026-11-16T00:06:52Z",
+          "updated_at": "2026-11-16T00:06:52Z",
+          "association": "OWNER",
+          "fable_accept": false
+        },
+        {
+          "created_at": "2026-11-16T14:56:34Z",
+          "updated_at": "2026-11-16T14:56:34Z",
+          "association": "OWNER",
+          "fable_accept": false
+        },
+        {
+          "created_at": "2026-11-16T17:15:54Z",
+          "updated_at": "2026-11-16T17:15:54Z",
+          "association": "OWNER",
+          "fable_accept": false
+        },
+        {
+          "created_at": "2026-11-16T19:45:21Z",
+          "updated_at": "2026-11-16T19:45:21Z",
+          "association": "OWNER",
+          "fable_accept": false
+        }
+      ],
+      "checks": [
+        {
+          "name": "change-scope",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:56:39Z",
+          "finished_at": "2026-11-16T14:56:57Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (python)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:56:42Z",
+          "finished_at": "2026-11-16T15:04:30Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:56:39Z",
+          "finished_at": "2026-11-16T14:56:44Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:56:40Z",
+          "finished_at": "2026-11-16T14:57:03Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:56:39Z",
+          "finished_at": "2026-11-16T14:57:11Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:56:36Z",
+          "finished_at": "2026-11-16T14:57:13Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (javascript-typescript)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:56:47Z",
+          "finished_at": "2026-11-16T14:59:55Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "release-required",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:56:37Z",
+          "finished_at": "2026-11-16T14:56:36Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "fast-gate",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:57:09Z",
+          "finished_at": "2026-11-16T14:57:12Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "shard-completeness",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:56:57Z",
+          "finished_at": "2026-11-16T14:56:57Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "golden-baseline-floor",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:56:57Z",
+          "finished_at": "2026-11-16T14:56:57Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "database-integration",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:56:57Z",
+          "finished_at": "2026-11-16T14:56:57Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "flaky-canary",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:57:12Z",
+          "finished_at": "2026-11-16T14:59:00Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Browser-audit contract fixtures",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:57:13Z",
+          "finished_at": "2026-11-16T14:57:38Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native-backend-readers",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:57:14Z",
+          "finished_at": "2026-11-16T15:02:32Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "frontend-build",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:57:12Z",
+          "finished_at": "2026-11-16T14:57:12Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "search-recall",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:56:57Z",
+          "finished_at": "2026-11-16T14:56:57Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "backend-tests (1)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T15:02:35Z",
+          "finished_at": "2026-11-16T15:02:39Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (2)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T15:02:34Z",
+          "finished_at": "2026-11-16T15:02:37Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (3)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T15:02:35Z",
+          "finished_at": "2026-11-16T15:02:42Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (4)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T15:02:39Z",
+          "finished_at": "2026-11-16T15:02:42Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (5)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T15:02:34Z",
+          "finished_at": "2026-11-16T15:02:36Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (6)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T15:02:35Z",
+          "finished_at": "2026-11-16T15:02:40Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (7)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T15:02:39Z",
+          "finished_at": "2026-11-16T15:02:43Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (8)",
+          "app": "github-actions",
+          "started_at": "2026-11-16T15:02:39Z",
+          "finished_at": "2026-11-16T15:02:43Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "deploy",
+          "app": "github-actions",
+          "started_at": "2026-11-16T15:02:44Z",
+          "finished_at": "2026-11-16T15:02:43Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "started_at": "2026-11-16T14:56:59Z",
+          "finished_at": "2026-11-16T14:56:59Z",
+          "state": "completed",
+          "conclusion": "failure"
+        },
+        {
+          "name": "CodeQL",
+          "app": "github-advanced-security",
+          "started_at": "2026-11-16T14:59:46Z",
+          "finished_at": "2026-11-16T14:59:50Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Vercel",
+          "app": "commit-status",
+          "started_at": "2026-11-16T14:56:49Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "number": 12215,
+      "title": "feat(event): Tennis story cards & details sheet behind ?atlas=1 (Step E6d, #11974)",
+      "draft": true,
+      "state": "open",
+      "updated_at": "2026-11-07T16:30:02Z",
+      "merged_at": null,
+      "merge_commit_sha": "7ffe29dbc927c67e6949d9e5948163a55a555d10",
+      "branch": "feat/event-atlas-e6d-tennis-cards-11974",
+      "head_sha": "c58e9bfad927edd60be432844ddf481398e47ba7",
+      "fable_needed": false,
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "comments_complete": true,
+      "commits_complete": true,
+      "files": [
+        "frontend/__tests__/eventAtlasTennisCardsE6d_11974.test.tsx",
+        "frontend/app/events/[id]/page.tsx",
+        "frontend/components/event/NFLEventCards.tsx",
+        "frontend/lib/nbaEventCards.ts",
+        "frontend/lib/nflEventCardDeck.ts",
+        "frontend/lib/tennisEventCards.ts"
+      ],
+      "commits": [
+        {
+          "sha": "4f5720417a91ebef9aa39a5117d2f487c0ae9cad",
+          "parents": 1,
+          "at": "2026-11-06T06:48:30Z"
+        },
+        {
+          "sha": "7fbb8271e7c11458468d57b156d5d32ae70293ca",
+          "parents": 2,
+          "at": "2026-11-06T08:36:18Z"
+        },
+        {
+          "sha": "0023626f8627841732a0e926cf2b621266b23491",
+          "parents": 2,
+          "at": "2026-11-06T08:57:31Z"
+        },
+        {
+          "sha": "b22fcfb63969bed17e5e6236e8071df7593c1c99",
+          "parents": 2,
+          "at": "2026-11-06T09:33:23Z"
+        },
+        {
+          "sha": "dd54d10c459f5e025d91d7725f35202af9e8ecef",
+          "parents": 2,
+          "at": "2026-11-06T09:34:52Z"
+        },
+        {
+          "sha": "fa5ccd8816d73f9cf4b68a4c5cf3c951440bbb57",
+          "parents": 2,
+          "at": "2026-11-06T09:58:25Z"
+        },
+        {
+          "sha": "62f3da213a8e6b7a99e826eb1321c92a4da793b7",
+          "parents": 2,
+          "at": "2026-11-06T10:35:04Z"
+        },
+        {
+          "sha": "dbe8599590e80b74de7c3a6ad8f66a7f732fbee5",
+          "parents": 2,
+          "at": "2026-11-06T10:51:48Z"
+        },
+        {
+          "sha": "007c953669e111e749336f44fe59eeb6907fdc86",
+          "parents": 2,
+          "at": "2026-11-06T11:23:53Z"
+        },
+        {
+          "sha": "8fe8c66ab7c0791167389c0637dcc7cd376f4bd9",
+          "parents": 2,
+          "at": "2026-11-06T11:42:45Z"
+        },
+        {
+          "sha": "2196bc7ed5e927b6a174f13090b8d1daf18f32a4",
+          "parents": 2,
+          "at": "2026-11-06T11:44:47Z"
+        },
+        {
+          "sha": "eff8ca7e383907863323b1a2319482dd164bbe72",
+          "parents": 2,
+          "at": "2026-11-06T12:04:48Z"
+        },
+        {
+          "sha": "a505a77a770ebf4829325c5048b4cc3d27c2f2d7",
+          "parents": 2,
+          "at": "2026-11-06T12:35:47Z"
+        },
+        {
+          "sha": "e51122f191d0fb3c7774dd1d264353d7781f817f",
+          "parents": 2,
+          "at": "2026-11-06T12:57:32Z"
+        },
+        {
+          "sha": "362f4f838500172c5ae0561f3a7f8f9cbc6571b3",
+          "parents": 2,
+          "at": "2026-11-06T13:09:07Z"
+        },
+        {
+          "sha": "33f16faa570df40d7110fab84a356386dffc6b7b",
+          "parents": 2,
+          "at": "2026-11-06T16:24:01Z"
+        },
+        {
+          "sha": "e6740d9b37ef743bc4d75573bf98712822fa5fa3",
+          "parents": 1,
+          "at": "2026-11-06T16:30:17Z"
+        },
+        {
+          "sha": "b68657dab57365e82fdae13d97a35bbe30071eb7",
+          "parents": 1,
+          "at": "2026-11-06T17:29:12Z"
+        },
+        {
+          "sha": "85a60ebbb89f631f6fb67147205d4eeb35325303",
+          "parents": 2,
+          "at": "2026-11-06T18:40:36Z"
+        },
+        {
+          "sha": "d78eca0a4e632044deab00d71b4ac33b94442948",
+          "parents": 1,
+          "at": "2026-11-06T18:47:15Z"
+        },
+        {
+          "sha": "a384c4b59f193790f7faf8424ab044934dedcd6a",
+          "parents": 2,
+          "at": "2026-11-07T16:14:57Z"
+        },
+        {
+          "sha": "c58e9bfad927edd60be432844ddf481398e47ba7",
+          "parents": 1,
+          "at": "2026-11-07T16:29:39Z"
+        }
+      ],
+      "reviews": [
+        {
+          "login": "claude[bot]",
+          "commit_id": "d78eca0a4e632044deab00d71b4ac33b94442948",
+          "state": "CHANGES_REQUESTED",
+          "submitted_at": "2026-11-06T19:19:57Z"
+        }
+      ],
+      "comments": [
+        {
+          "created_at": "2026-11-06T19:18:04Z",
+          "updated_at": "2026-11-06T19:18:04Z",
+          "association": "OWNER",
+          "fable_accept": false
+        }
+      ],
+      "checks": [
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:08Z",
+          "finished_at": "2026-11-07T16:30:08Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "change-scope",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:13Z",
+          "finished_at": "2026-11-07T16:30:30Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (python)",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:10Z",
+          "finished_at": "2026-11-07T16:37:30Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:08Z",
+          "finished_at": "2026-11-07T16:30:22Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:11Z",
+          "finished_at": "2026-11-07T16:30:46Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:07Z",
+          "finished_at": "2026-11-07T16:30:29Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (javascript-typescript)",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:13Z",
+          "finished_at": "2026-11-07T16:33:23Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "release-required",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:08Z",
+          "finished_at": "2026-11-07T16:30:08Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "fast-gate",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:32Z",
+          "finished_at": "2026-11-07T16:30:35Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "shard-completeness",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:30Z",
+          "finished_at": "2026-11-07T16:30:30Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "golden-baseline-floor",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:33Z",
+          "finished_at": "2026-11-07T16:30:53Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:30Z",
+          "finished_at": "2026-11-07T16:30:30Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Browser-audit contract fixtures",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:33Z",
+          "finished_at": "2026-11-07T16:30:56Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native-backend-readers",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:35Z",
+          "finished_at": "2026-11-07T16:30:35Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "frontend-build",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:37Z",
+          "finished_at": "2026-11-07T16:38:04Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "search-recall",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:30Z",
+          "finished_at": "2026-11-07T16:30:30Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "backend-tests (1)",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:55Z",
+          "finished_at": "2026-11-07T16:31:00Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (2)",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:58Z",
+          "finished_at": "2026-11-07T16:31:02Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (3)",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:49Z",
+          "finished_at": "2026-11-07T16:30:53Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (4)",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:47Z",
+          "finished_at": "2026-11-07T16:30:52Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (5)",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:48Z",
+          "finished_at": "2026-11-07T16:30:50Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (6)",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:42Z",
+          "finished_at": "2026-11-07T16:30:45Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (7)",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:51Z",
+          "finished_at": "2026-11-07T16:30:56Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (8)",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:30:55Z",
+          "finished_at": "2026-11-07T16:30:59Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "deploy",
+          "app": "github-actions",
+          "started_at": "2026-11-07T16:38:04Z",
+          "finished_at": "2026-11-07T16:38:04Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "started_at": "2026-11-10T23:50:52Z",
+          "finished_at": "2026-11-10T23:50:51Z",
+          "state": "completed",
+          "conclusion": "failure"
+        },
+        {
+          "name": "CodeQL",
+          "app": "github-advanced-security",
+          "started_at": "2026-11-07T16:33:14Z",
+          "finished_at": "2026-11-07T16:33:16Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Vercel",
+          "app": "commit-status",
+          "started_at": "2026-11-07T16:30:18Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "number": 12213,
+      "title": "chore(deps): bump date-fns from 3.6.0 to 4.4.0 in /frontend",
+      "draft": false,
+      "state": "open",
+      "updated_at": "2026-11-06T17:30:01Z",
+      "merged_at": null,
+      "merge_commit_sha": "42e7d6c3cdeab3fe2c727d79f3713cd16e4fd534",
+      "branch": "dependabot/npm_and_yarn/frontend/date-fns-4.4.0",
+      "head_sha": "d6b859e42e47a6b13414d8495206d5049c3986ca",
+      "fable_needed": false,
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "comments_complete": true,
+      "commits_complete": true,
+      "files": [
+        "frontend/package-lock.json",
+        "frontend/package.json"
+      ],
+      "commits": [
+        {
+          "sha": "d6b859e42e47a6b13414d8495206d5049c3986ca",
+          "parents": 1,
+          "at": "2026-11-06T17:29:55Z"
+        }
+      ],
+      "reviews": [],
+      "comments": [],
+      "checks": [
+        {
+          "name": "change-scope",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:30:03Z",
+          "finished_at": "2026-11-06T17:30:04Z",
+          "state": "completed",
+          "conclusion": "cancelled"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:30:04Z",
+          "finished_at": "2026-11-06T17:30:03Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:30:12Z",
+          "finished_at": "2026-11-06T17:30:03Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:30:04Z",
+          "finished_at": "2026-11-06T17:30:04Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "change-scope",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:32:49Z",
+          "finished_at": "2026-11-06T17:33:06Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (python)",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:34:28Z",
+          "finished_at": "2026-11-06T17:41:39Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:42:35Z",
+          "finished_at": "2026-11-06T17:42:49Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:32:44Z",
+          "finished_at": "2026-11-06T17:33:15Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:33:54Z",
+          "finished_at": "2026-11-06T17:34:17Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (javascript-typescript)",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:32:26Z",
+          "finished_at": "2026-11-06T17:36:27Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "release-required",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:30:04Z",
+          "finished_at": "2026-11-06T17:30:03Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "release-required",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:30:05Z",
+          "finished_at": "2026-11-06T17:30:05Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "fast-gate",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:30:05Z",
+          "finished_at": "2026-11-06T17:30:04Z",
+          "state": "completed",
+          "conclusion": "cancelled"
+        },
+        {
+          "name": "fast-gate",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:40:11Z",
+          "finished_at": "2026-11-06T17:40:15Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "shard-completeness",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:30:05Z",
+          "finished_at": "2026-11-06T17:30:04Z",
+          "state": "completed",
+          "conclusion": "cancelled"
+        },
+        {
+          "name": "shard-completeness",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:33:07Z",
+          "finished_at": "2026-11-06T17:33:06Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "golden-baseline-floor",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:30:05Z",
+          "finished_at": "2026-11-06T17:30:04Z",
+          "state": "completed",
+          "conclusion": "cancelled"
+        },
+        {
+          "name": "golden-baseline-floor",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:42:51Z",
+          "finished_at": "2026-11-06T17:43:09Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:30:04Z",
+          "finished_at": "2026-11-06T17:30:04Z",
+          "state": "completed",
+          "conclusion": "cancelled"
+        },
+        {
+          "name": "database-integration",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:33:07Z",
+          "finished_at": "2026-11-06T17:33:06Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Browser-audit contract fixtures",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:30:05Z",
+          "finished_at": "2026-11-06T17:30:04Z",
+          "state": "completed",
+          "conclusion": "cancelled"
+        },
+        {
+          "name": "Browser-audit contract fixtures",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:37:46Z",
+          "finished_at": "2026-11-06T17:38:10Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:30:05Z",
+          "finished_at": "2026-11-06T17:30:04Z",
+          "state": "completed",
+          "conclusion": "cancelled"
+        },
+        {
+          "name": "backend-tests (1)",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:46:28Z",
+          "finished_at": "2026-11-06T17:46:32Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (2)",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:48:59Z",
+          "finished_at": "2026-11-06T17:49:03Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (3)",
+          "app": "github-actions",
+          "started_at": "2026-11-06T18:02:17Z",
+          "finished_at": "2026-11-06T18:02:22Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (4)",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:50:26Z",
+          "finished_at": "2026-11-06T17:50:30Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (5)",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:49:21Z",
+          "finished_at": "2026-11-06T17:49:25Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (6)",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:48:19Z",
+          "finished_at": "2026-11-06T17:48:24Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (7)",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:46:51Z",
+          "finished_at": "2026-11-06T17:46:55Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (8)",
+          "app": "github-actions",
+          "started_at": "2026-11-06T18:00:06Z",
+          "finished_at": "2026-11-06T18:00:09Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "frontend-build",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:30:05Z",
+          "finished_at": "2026-11-06T17:30:04Z",
+          "state": "completed",
+          "conclusion": "cancelled"
+        },
+        {
+          "name": "frontend-build",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:46:28Z",
+          "finished_at": "2026-11-06T17:55:16Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "search-recall",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:30:05Z",
+          "finished_at": "2026-11-06T17:30:04Z",
+          "state": "completed",
+          "conclusion": "cancelled"
+        },
+        {
+          "name": "search-recall",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:33:07Z",
+          "finished_at": "2026-11-06T17:33:06Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "deploy",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:30:05Z",
+          "finished_at": "2026-11-06T17:30:04Z",
+          "state": "completed",
+          "conclusion": "cancelled"
+        },
+        {
+          "name": "deploy",
+          "app": "github-actions",
+          "started_at": "2026-11-06T18:02:22Z",
+          "finished_at": "2026-11-06T18:02:22Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "CodeQL",
+          "app": "github-advanced-security",
+          "started_at": "2026-11-06T17:36:16Z",
+          "finished_at": "2026-11-06T17:36:19Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Vercel",
+          "app": "commit-status",
+          "started_at": "2026-11-06T17:30:14Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "started_at": "2026-11-06T17:42:46Z",
+          "finished_at": "2026-11-06T17:42:45Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "number": 12871,
+      "title": "feat(containers): add switched-off topic-free container machinery slice 1 (#12288)",
+      "draft": false,
+      "state": "closed",
+      "updated_at": "2026-11-18T01:02:26Z",
+      "merged_at": "2026-11-18T01:02:26Z",
+      "merge_commit_sha": "074c9230ef7ba1f1208743a81c93d4d18a4041cd",
+      "branch": "atlas/tue-nov17-12288-container-machinery-slice1",
+      "head_sha": "7da00739bc2c314e074e83d39ce0aec1df6b5c42",
+      "fable_needed": true,
+      "files_complete": true,
+      "checks_complete": false,
+      "reviews_complete": false,
+      "comments_complete": false,
+      "commits_complete": false,
+      "files": [
+        "backend/app/routes/containers.py",
+        "backend/app/utils/container_machinery.py",
+        "backend/app/utils/roundup_containers.py",
+        "backend/data/groupings/candidates/machinery-2028-presidential.json",
+        "backend/data/groupings/candidates/machinery-nfl-week.json",
+        "backend/data/groupings/candidates/machinery-oscars-best-picture.json",
+        "backend/data/groupings/machinery_subject_art.json",
+        "backend/tests/test_container_machinery_slice1_12288.py",
+        "frontend/__tests__/containerMachinerySlice1_12288.test.tsx",
+        "frontend/components/collections/CollectionHub.tsx",
+        "frontend/components/collections/MachinerySectionRenderer.tsx",
+        "frontend/components/discover/roundup/RoundupCard.tsx",
+        "frontend/lib/collections.ts",
+        "frontend/lib/types.ts"
+      ]
+    },
+    {
+      "number": 12861,
+      "title": "Hide movers and alerts whose current chance is absent (#12658)",
+      "draft": false,
+      "state": "closed",
+      "updated_at": "2026-11-18T00:54:15Z",
+      "merged_at": "2026-11-18T00:54:15Z",
+      "merge_commit_sha": "f0fd5e26faf4ab37d6ce23af9b556d7feff891b3",
+      "branch": "codex/12658-priced-movers",
+      "head_sha": "a74f359f7e5d5ccf0d11bdeebbbf9912b77b18f2",
+      "fable_needed": true,
+      "files_complete": true,
+      "checks_complete": false,
+      "reviews_complete": false,
+      "comments_complete": false,
+      "commits_complete": false,
+      "files": [
+        "backend/app/routes/futures.py",
+        "backend/app/tasks/push_notifications.py",
+        "backend/tests/test_polymarket_movement_readers_12658.py"
+      ]
+    },
+    {
+      "number": 12891,
+      "title": "fix(ios): list ladder, range, rate, and count outcomes in ascending numerical order (Direction 228, #12885)",
+      "draft": false,
+      "state": "closed",
+      "updated_at": "2026-11-18T00:15:46Z",
+      "merged_at": "2026-11-18T00:15:46Z",
+      "merge_commit_sha": "669f64ab3f3d05f85bb9b811f702bb75608b7690",
+      "branch": "ios/numerical-scale-order-12885",
+      "head_sha": "688325a4c35686f6d6e305aa85432562a141fbdb",
+      "fable_needed": true,
+      "files_complete": true,
+      "checks_complete": false,
+      "reviews_complete": false,
+      "comments_complete": false,
+      "commits_complete": false,
+      "files": [
+        "ios/Bain Luck/Bain Luck/Components/ComparisonCardView.swift",
+        "ios/Bain Luck/Bain Luck/Components/DiscoverFuturesCard.swift",
+        "ios/Bain Luck/Bain Luck/Components/DistributionCardView.swift",
+        "ios/Bain Luck/Bain Luck/Components/FuturesAtlasPresentation11666.swift",
+        "ios/Bain Luck/Bain Luck/Components/FuturesBrowseComponents.swift",
+        "ios/Bain Luck/Bain Luck/Components/FuturesCardView.swift",
+        "ios/Bain Luck/Bain Luck/Models/FeedModels.swift",
+        "ios/Bain Luck/Bain Luck/Models/FuturesModels.swift",
+        "ios/Bain Luck/Bain Luck/Models/SearchModels.swift",
+        "ios/Bain Luck/Bain Luck/Utilities/DiscoverRoundupModels.swift",
+        "ios/Bain Luck/Bain Luck/Utilities/DistributionBoardOrder.swift",
+        "ios/Bain Luck/Bain Luck/Utilities/NumericalMarketScaleOrder228.swift",
+        "ios/Bain Luck/Bain Luck/Views/ContainerHubView.swift",
+        "ios/Bain Luck/Bain Luck/Views/EconomicsView.swift",
+        "ios/Bain Luck/Bain Luck/Views/EntertainmentView.swift",
+        "ios/Bain Luck/Bain Luck/Views/FuturesDetailView.swift",
+        "ios/Bain Luck/Bain Luck/Views/LeagueGridView.swift",
+        "ios/Bain Luck/Bain Luck/Views/PoliticsView.swift",
+        "ios/Bain Luck/Bain Luck/Views/SearchView.swift",
+        "ios/Bain Luck/Bain Luck/Views/SportCategoryView.swift",
+        "ios/Bain Luck/Bain Luck/Views/WeatherView.swift",
+        "ios/Bain Luck/BainLuckTests/NumericalMarketScaleOrder228Tests.swift"
+      ]
+    },
+    {
+      "number": 12851,
+      "title": "feat(discover): #9937 exam receipt, scorer, bubble_50 selector & stat-leader selection guards",
+      "draft": false,
+      "state": "closed",
+      "updated_at": "2026-11-18T00:13:12Z",
+      "merged_at": "2026-11-18T00:13:12Z",
+      "merge_commit_sha": "e6834e50606fd4fdf744abe509874af694b26128",
+      "branch": "atlas/mon-nov16-9937-new-kinds-selection-guards",
+      "head_sha": "c0c86679830bd03c0db4827c060eb4b57dc558d1",
+      "fable_needed": true,
+      "files_complete": true,
+      "checks_complete": false,
+      "reviews_complete": false,
+      "comments_complete": false,
+      "commits_complete": false,
+      "files": [
+        ".github/ci-cross-tier-paths.txt",
+        "backend/app/utils/grouping_kind_proposer.py",
+        "backend/tests/test_grouping_kind_proposer_9937.py",
+        "docs/discover/new-kinds-exam-2026-11.md",
+        "frontend/lib/evals/data/new-kinds-exam-2026-11.json"
+      ]
+    },
+    {
+      "number": 12892,
+      "title": "feat(web): order numerical-scale ladders chronologically/numerically (#12885)",
+      "draft": false,
+      "state": "closed",
+      "updated_at": "2026-11-17T23:24:29Z",
+      "merged_at": "2026-11-17T23:24:29Z",
+      "merge_commit_sha": "b0938343cf43d54c55bf6e08cabc50a8a84a6146",
+      "branch": "atlas/tue-nov17-12885-web-numerical-ladder-order",
+      "head_sha": "f04d18b0d99fb88097c4276021a0746515571873",
+      "fable_needed": true,
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "comments_complete": true,
+      "commits_complete": true,
+      "files": [
+        "frontend/__tests__/lib/numericalScaleOrder12885.test.ts",
+        "frontend/app/economics/page.tsx",
+        "frontend/app/futures/[id]/page.tsx",
+        "frontend/components/FeedCard.tsx",
+        "frontend/components/FuturesCard.tsx",
+        "frontend/components/discover/FuturesCard.tsx",
+        "frontend/components/economics/atoms.tsx",
+        "frontend/lib/discover/futuresBoard.ts",
+        "frontend/lib/futuresLadder.ts",
+        "frontend/lib/numericalScaleOrder.ts"
+      ],
+      "reviews": [
+        {
+          "login": "claude[bot]",
+          "commit_id": "f04d18b0d99fb88097c4276021a0746515571873",
+          "state": "APPROVED",
+          "submitted_at": "2026-11-17T22:52:12Z"
+        }
+      ],
+      "comments": [
+        {
+          "created_at": "2026-11-17T22:53:40Z",
+          "updated_at": "2026-11-17T22:53:40Z",
+          "association": "OWNER",
+          "fable_accept": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "claude",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:52:17Z",
+          "finished_at": "2026-11-17T22:52:16Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "change-scope",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:08Z",
+          "finished_at": "2026-11-17T22:31:25Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (python)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:30:51Z",
+          "finished_at": "2026-11-17T22:38:23Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:30:51Z",
+          "finished_at": "2026-11-17T22:31:00Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:30:49Z",
+          "finished_at": "2026-11-17T22:31:13Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:30:51Z",
+          "finished_at": "2026-11-17T22:31:39Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:30:46Z",
+          "finished_at": "2026-11-17T22:31:24Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (javascript-typescript)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:30:51Z",
+          "finished_at": "2026-11-17T22:35:43Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "release-required",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:05Z",
+          "finished_at": "2026-11-17T22:31:05Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "fast-gate",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:28Z",
+          "finished_at": "2026-11-17T22:31:34Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "shard-completeness",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:28Z",
+          "finished_at": "2026-11-17T22:34:55Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "golden-baseline-floor",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:28Z",
+          "finished_at": "2026-11-17T22:35:56Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:28Z",
+          "finished_at": "2026-11-17T22:40:20Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-middle)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:28Z",
+          "finished_at": "2026-11-17T22:47:35Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-tail)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:28Z",
+          "finished_at": "2026-11-17T22:49:48Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (isolated)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:29Z",
+          "finished_at": "2026-11-17T22:41:22Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-suffix)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:28Z",
+          "finished_at": "2026-11-17T22:37:22Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "flaky-canary",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:28Z",
+          "finished_at": "2026-11-17T22:33:11Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Browser-audit contract fixtures",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:28Z",
+          "finished_at": "2026-11-17T22:31:57Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native-backend-readers",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:34Z",
+          "finished_at": "2026-11-17T22:31:34Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "frontend-build",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:36Z",
+          "finished_at": "2026-11-17T22:39:22Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "search-recall",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:49:51Z",
+          "finished_at": "2026-11-17T22:49:54Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (1)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:37Z",
+          "finished_at": "2026-11-17T22:45:37Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (2)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:37Z",
+          "finished_at": "2026-11-17T22:48:44Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (3)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:37Z",
+          "finished_at": "2026-11-17T22:45:32Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (4)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:37Z",
+          "finished_at": "2026-11-17T22:45:20Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (5)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:37Z",
+          "finished_at": "2026-11-17T22:44:32Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (6)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:37Z",
+          "finished_at": "2026-11-17T22:45:57Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (7)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:37Z",
+          "finished_at": "2026-11-17T22:48:20Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (8)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:31:37Z",
+          "finished_at": "2026-11-17T22:46:05Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "deploy",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:49:54Z",
+          "finished_at": "2026-11-17T22:49:54Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "CodeQL",
+          "app": "github-advanced-security",
+          "started_at": "2026-11-17T22:35:32Z",
+          "finished_at": "2026-11-17T22:35:35Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Vercel",
+          "app": "commit-status",
+          "started_at": "2026-11-17T22:30:58Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:52:19Z",
+          "finished_at": "2026-11-17T22:52:19Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "commits": [
+        {
+          "sha": "6c450fd3b93b53bd43b0097c7ad2d22879bb5367",
+          "parents": 1,
+          "at": "2026-11-17T22:06:48Z"
+        },
+        {
+          "sha": "f04d18b0d99fb88097c4276021a0746515571873",
+          "parents": 1,
+          "at": "2026-11-17T22:30:35Z"
+        }
+      ]
+    },
+    {
+      "number": 12896,
+      "title": "Keep stored pregame odds out of the Mac menu bar",
+      "draft": false,
+      "state": "open",
+      "updated_at": "2026-11-18T00:43:09Z",
+      "merged_at": null,
+      "merge_commit_sha": "2be277fde79092ceeafc9abd8da0d9a490d5bee1",
+      "branch": "codex/12824-menu-bar-current",
+      "head_sha": "9a2d60c874e4ec803f5a86845e39a80ccb0c9cfc",
+      "fable_needed": true,
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "comments_complete": true,
+      "commits_complete": true,
+      "files": [
+        "backend/scripts/evals/ios_duel_percent_served_pair_mutations.py",
+        "frontend/__tests__/ios/aDrawIsNotTheAwayTeam5271.test.ts",
+        "frontend/__tests__/ios/duelPercentServedPair.test.ts",
+        "ios/Bain Luck/Bain Luck/Views/MenuBarView.swift"
+      ],
+      "commits": [
+        {
+          "sha": "d30e743ca85f5c4dbd07fbef4c61d2283d86f1cf",
+          "parents": 1,
+          "at": "2026-11-17T23:34:14Z"
+        },
+        {
+          "sha": "ea22990de5090a702948d1cab8f4716f6588f43b",
+          "parents": 1,
+          "at": "2026-11-17T23:49:11Z"
+        },
+        {
+          "sha": "9a2d60c874e4ec803f5a86845e39a80ccb0c9cfc",
+          "parents": 1,
+          "at": "2026-11-18T00:16:27Z"
+        }
+      ],
+      "reviews": [
+        {
+          "login": "claude[bot]",
+          "commit_id": "9a2d60c874e4ec803f5a86845e39a80ccb0c9cfc",
+          "state": "APPROVED",
+          "submitted_at": "2026-11-18T00:43:09Z"
+        }
+      ],
+      "comments": [
+        {
+          "created_at": "2026-11-17T23:49:28Z",
+          "updated_at": "2026-11-17T23:49:28Z",
+          "association": "OWNER",
+          "fable_accept": false
+        },
+        {
+          "created_at": "2026-11-18T00:02:05Z",
+          "updated_at": "2026-11-18T00:02:05Z",
+          "association": "OWNER",
+          "fable_accept": true
+        },
+        {
+          "created_at": "2026-11-18T00:16:43Z",
+          "updated_at": "2026-11-18T00:16:43Z",
+          "association": "OWNER",
+          "fable_accept": false
+        }
+      ],
+      "checks": [
+        {
+          "name": "claude",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:43:13Z",
+          "finished_at": "2026-11-18T00:43:13Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "change-scope",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:16:45Z",
+          "finished_at": "2026-11-18T00:17:14Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (python)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:16:44Z",
+          "finished_at": "2026-11-18T00:24:48Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:16:45Z",
+          "finished_at": "2026-11-18T00:16:51Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:16:43Z",
+          "finished_at": "2026-11-18T00:17:06Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:16:44Z",
+          "finished_at": "2026-11-18T00:17:18Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:16:41Z",
+          "finished_at": "2026-11-18T00:17:18Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (javascript-typescript)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:16:44Z",
+          "finished_at": "2026-11-18T00:21:38Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "release-required",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:16:42Z",
+          "finished_at": "2026-11-18T00:16:42Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "fast-gate",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:18Z",
+          "finished_at": "2026-11-18T00:17:21Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "shard-completeness",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:17Z",
+          "finished_at": "2026-11-18T00:20:47Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "golden-baseline-floor",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:17Z",
+          "finished_at": "2026-11-18T00:17:38Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:17Z",
+          "finished_at": "2026-11-18T00:29:04Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-middle)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:17Z",
+          "finished_at": "2026-11-18T00:30:16Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-tail)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:17Z",
+          "finished_at": "2026-11-18T00:39:19Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (isolated)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:17Z",
+          "finished_at": "2026-11-18T00:27:10Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-suffix)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:17Z",
+          "finished_at": "2026-11-18T00:21:11Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "flaky-canary",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:18Z",
+          "finished_at": "2026-11-18T00:19:12Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Browser-audit contract fixtures",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:17Z",
+          "finished_at": "2026-11-18T00:17:40Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native-backend-readers",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:22Z",
+          "finished_at": "2026-11-18T00:17:21Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "frontend-build",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:25Z",
+          "finished_at": "2026-11-18T00:27:44Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "search-recall",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:40:48Z",
+          "finished_at": "2026-11-18T00:40:51Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (1)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:24Z",
+          "finished_at": "2026-11-18T00:34:00Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (2)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:24Z",
+          "finished_at": "2026-11-18T00:33:37Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (3)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:24Z",
+          "finished_at": "2026-11-18T00:33:17Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (4)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:24Z",
+          "finished_at": "2026-11-18T00:32:46Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (5)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:25Z",
+          "finished_at": "2026-11-18T00:31:56Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (6)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:24Z",
+          "finished_at": "2026-11-18T00:30:46Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (7)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:24Z",
+          "finished_at": "2026-11-18T00:32:22Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (8)",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:17:25Z",
+          "finished_at": "2026-11-18T00:34:24Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "deploy",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:40:52Z",
+          "finished_at": "2026-11-18T00:40:51Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "CodeQL",
+          "app": "github-advanced-security",
+          "started_at": "2026-11-18T00:21:29Z",
+          "finished_at": "2026-11-18T00:21:33Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Vercel",
+          "app": "commit-status",
+          "started_at": "2026-11-18T00:16:54Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "started_at": "2026-11-18T00:43:16Z",
+          "finished_at": "2026-11-18T00:43:15Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "number": 12893,
+      "title": "Explain which sources priced each golfer on tournament cards",
+      "draft": false,
+      "state": "open",
+      "updated_at": "2026-11-17T23:02:42Z",
+      "merged_at": null,
+      "merge_commit_sha": "54aa9cd7eb87ccb107e2a55336ec8d198771019b",
+      "branch": "codex/12581-golf-card-marks",
+      "head_sha": "0c76e0cf1c448cd55dd36a4bf435eea6b93834f0",
+      "fable_needed": true,
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "comments_complete": true,
+      "commits_complete": true,
+      "files": [
+        "backend/app/routes/feed.py",
+        "backend/app/routes/golf.py",
+        "backend/app/utils/golf_source_mark.py",
+        "backend/tests/test_golf_future_live_ranking_5105.py",
+        "backend/tests/test_golf_scoring_to_opening_5105.py",
+        "backend/tests/test_golf_source_marks_12581.py"
+      ],
+      "commits": [
+        {
+          "sha": "0c76e0cf1c448cd55dd36a4bf435eea6b93834f0",
+          "parents": 1,
+          "at": "2026-11-17T22:36:03Z"
+        }
+      ],
+      "reviews": [
+        {
+          "login": "claude[bot]",
+          "commit_id": "0c76e0cf1c448cd55dd36a4bf435eea6b93834f0",
+          "state": "APPROVED",
+          "submitted_at": "2026-11-17T23:02:42Z"
+        }
+      ],
+      "comments": [
+        {
+          "created_at": "2026-11-17T22:38:27Z",
+          "updated_at": "2026-11-17T22:38:27Z",
+          "association": "OWNER",
+          "fable_accept": false
+        }
+      ],
+      "checks": [
+        {
+          "name": "claude",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:02:47Z",
+          "finished_at": "2026-11-17T23:02:46Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "change-scope",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:37:48Z",
+          "finished_at": "2026-11-17T22:38:12Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (python)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:37:48Z",
+          "finished_at": "2026-11-17T22:46:06Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:37:47Z",
+          "finished_at": "2026-11-17T22:37:54Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "review",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:37:57Z",
+          "finished_at": "2026-11-17T22:38:04Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:37:48Z",
+          "finished_at": "2026-11-17T22:38:05Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:37:48Z",
+          "finished_at": "2026-11-17T22:38:27Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gitleaks secret scan",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:37:06Z",
+          "finished_at": "2026-11-17T22:37:43Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Analyze (javascript-typescript)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:37:47Z",
+          "finished_at": "2026-11-17T22:40:59Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "release-required",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:37:46Z",
+          "finished_at": "2026-11-17T22:37:45Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "fast-gate",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:16Z",
+          "finished_at": "2026-11-17T22:38:20Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "shard-completeness",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:16Z",
+          "finished_at": "2026-11-17T22:42:03Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "golden-baseline-floor",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:16Z",
+          "finished_at": "2026-11-17T22:38:41Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:16Z",
+          "finished_at": "2026-11-17T22:51:33Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-middle)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:16Z",
+          "finished_at": "2026-11-17T22:54:31Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-tail)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:16Z",
+          "finished_at": "2026-11-17T23:00:32Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (isolated)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:16Z",
+          "finished_at": "2026-11-17T22:47:24Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "database-integration (shared-suffix)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:16Z",
+          "finished_at": "2026-11-17T22:43:03Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "flaky-canary",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:16Z",
+          "finished_at": "2026-11-17T22:39:53Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Browser-audit contract fixtures",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:16Z",
+          "finished_at": "2026-11-17T22:38:40Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native-backend-readers",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:21Z",
+          "finished_at": "2026-11-17T22:38:21Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "frontend-build",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:23Z",
+          "finished_at": "2026-11-17T22:46:15Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "search-recall",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:00:36Z",
+          "finished_at": "2026-11-17T23:00:41Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (1)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:23Z",
+          "finished_at": "2026-11-17T22:54:27Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (2)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:23Z",
+          "finished_at": "2026-11-17T22:54:42Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (3)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:23Z",
+          "finished_at": "2026-11-17T22:54:01Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (4)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:23Z",
+          "finished_at": "2026-11-17T22:51:49Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (5)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:24Z",
+          "finished_at": "2026-11-17T22:51:50Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (6)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:24Z",
+          "finished_at": "2026-11-17T22:54:38Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (7)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:24Z",
+          "finished_at": "2026-11-17T22:53:15Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "backend-tests (8)",
+          "app": "github-actions",
+          "started_at": "2026-11-17T22:38:24Z",
+          "finished_at": "2026-11-17T22:52:37Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "deploy",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:00:41Z",
+          "finished_at": "2026-11-17T23:00:41Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "CodeQL",
+          "app": "github-advanced-security",
+          "started_at": "2026-11-17T22:40:49Z",
+          "finished_at": "2026-11-17T22:40:53Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Vercel",
+          "app": "commit-status",
+          "started_at": "2026-11-17T22:37:19Z",
+          "state": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "started_at": "2026-11-17T23:02:50Z",
+          "finished_at": "2026-11-17T23:02:50Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ],
+  "deployments": [
+    {
+      "line": "Website",
+      "commit": "f0fd5e26faf4ab37d6ce23af9b556d7feff891b3",
+      "at": "2026-11-18T00:54:33Z",
+      "kind": "reported",
+      "state": "success",
+      "committed_at": "2026-11-18T00:54:14Z",
+      "contains": [
+        "f0fd5e26faf4ab37d6ce23af9b556d7feff891b3",
+        "669f64ab3f3d05f85bb9b811f702bb75608b7690",
+        "e6834e50606fd4fdf744abe509874af694b26128",
+        "b0938343cf43d54c55bf6e08cabc50a8a84a6146"
+      ]
+    },
+    {
+      "line": "Apps",
+      "commit": "669f64ab3f3d05f85bb9b811f702bb75608b7690",
+      "at": "2026-11-18T00:27:50Z",
+      "kind": "reported",
+      "state": "success",
+      "committed_at": "2026-11-18T00:15:45Z",
+      "contains": [
+        "669f64ab3f3d05f85bb9b811f702bb75608b7690",
+        "e6834e50606fd4fdf744abe509874af694b26128",
+        "b0938343cf43d54c55bf6e08cabc50a8a84a6146"
+      ]
+    },
+    {
+      "line": "Website",
+      "commit": "669f64ab3f3d05f85bb9b811f702bb75608b7690",
+      "at": "2026-11-18T00:16:06Z",
+      "kind": "reported",
+      "state": "success",
+      "committed_at": "2026-11-18T00:15:45Z",
+      "contains": [
+        "669f64ab3f3d05f85bb9b811f702bb75608b7690",
+        "e6834e50606fd4fdf744abe509874af694b26128",
+        "b0938343cf43d54c55bf6e08cabc50a8a84a6146"
+      ]
+    },
+    {
+      "line": "Website",
+      "commit": "e6834e50606fd4fdf744abe509874af694b26128",
+      "at": "2026-11-18T00:15:36Z",
+      "kind": "reported",
+      "state": "success",
+      "committed_at": "2026-11-18T00:13:11Z",
+      "contains": [
+        "e6834e50606fd4fdf744abe509874af694b26128",
+        "b0938343cf43d54c55bf6e08cabc50a8a84a6146"
+      ]
+    },
+    {
+      "line": "Website",
+      "commit": "968d76fab271ecf8eec6f8360ba2a771be068451",
+      "at": "2026-11-18T00:13:45Z",
+      "kind": "reported",
+      "state": "success",
+      "committed_at": "2026-11-18T00:11:23Z",
+      "contains": [
+        "b0938343cf43d54c55bf6e08cabc50a8a84a6146"
+      ]
+    },
+    {
+      "line": "Website",
+      "commit": "b43f32f4583d36bfd70d2963cb1f07f2f1079802",
+      "at": "2026-11-18T00:03:07Z",
+      "kind": "reported",
+      "state": "success",
+      "committed_at": "2026-11-18T00:02:48Z",
+      "contains": [
+        "b0938343cf43d54c55bf6e08cabc50a8a84a6146"
+      ]
+    },
+    {
+      "line": "Website",
+      "commit": "b0938343cf43d54c55bf6e08cabc50a8a84a6146",
+      "at": "2026-11-17T23:27:56Z",
+      "kind": "reported",
+      "state": "success",
+      "committed_at": "2026-11-17T23:24:28Z",
+      "contains": [
+        "b0938343cf43d54c55bf6e08cabc50a8a84a6146"
+      ]
+    },
+    {
+      "line": "Server",
+      "commit": "669f64ab3f3d05f85bb9b811f702bb75608b7690",
+      "at": "2026-11-18T01:03:22.839524Z",
+      "kind": "observed",
+      "contains": [
+        "669f64ab3f3d05f85bb9b811f702bb75608b7690",
+        "e6834e50606fd4fdf744abe509874af694b26128",
+        "b0938343cf43d54c55bf6e08cabc50a8a84a6146"
+      ]
+    }
+  ],
+  "master": {
+    "tests": "running",
+    "testflight": "success"
+  },
+  "coverage": []
+}

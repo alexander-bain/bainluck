@@ -1,0 +1,33 @@
+{
+  "base_commit": "f0fd5e26faf4ab37d6ce23af9b556d7feff891b3",
+  "snapshot_generated_at": "2026-11-18T01:05:44.423692Z",
+  "saved_real_change_fixtures": 18,
+  "unit_tests": {
+    "command": "python3 -m unittest discover -s scripts/factory/tests -v",
+    "exit_code": 0,
+    "passed": 16
+  },
+  "build": {
+    "command": "cd frontend && npm run build",
+    "exit_code": 0,
+    "route": "/factory",
+    "prerendered": true
+  },
+  "typecheck": {
+    "command": "cd frontend && npm run typecheck",
+    "exit_code": 0,
+    "existing_errors": 65,
+    "baseline": 65
+  },
+  "startup": {
+    "command": "cd backend && python3 -m pytest tests/test_startup.py -q",
+    "exit_code": 0,
+    "passed": 4
+  },
+  "browser_receipt": "renders/browser-checks.json",
+  "sha256": {
+    "frontend/app/factory/initial.json": "56523bd6e37ab6dd397009f6617dd73af232405542f8540ae91c796ec6513147",
+    "docs/factory/renders/factory-390.png": "7c4109732729576fe74f39b4cc497a9fa15656d36dd6068f0ed3c9f56ffccbcc",
+    "docs/factory/renders/factory-1280.png": "6d5ac6184cf834dfd4082538039930f778bf4dc721255fed55e1655fea22e680"
+  }
+}

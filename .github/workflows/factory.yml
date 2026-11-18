@@ -1,0 +1,74 @@
+name: The Factory
+
+on:
+  pull_request:
+    types:
+      [
+        opened,
+        edited,
+        reopened,
+        synchronize,
+        closed,
+        ready_for_review,
+        converted_to_draft,
+      ]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  workflow_run:
+    # Explicit producer names prevent our own completion from starting another
+    # workflow run. A skipped job would itself still complete a workflow.
+    workflows:
+      - CI
+      - CodeQL
+      - gitleaks
+      - Claude Code
+      - Tier-B review
+      - Tier-B review policy
+      - LOOK rail guard
+      - Watch MVP
+      - Watch live journey (opt-in)
+      - TestFlight release
+    types: [completed]
+  status:
+  issue_comment:
+    types: [created, edited, deleted]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: read
+  issues: read
+  checks: read
+  statuses: read
+  actions: read
+
+# One publisher owns the previous snapshot and its jam clock. A pending event
+# may be coalesced because every run reconciles the complete open-pull list.
+concurrency:
+  group: factory-public-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    name: Update the factory
+    if: >-
+      (github.event_name != 'workflow_run' || github.event.workflow_run.name != 'The Factory') &&
+      (github.event_name != 'issue_comment' || github.event.issue.number == 12779 || github.event.issue.pull_request) &&
+      (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Same-repository pull events exercise this workflow before merge. Forks
+      # cannot enter this write-enabled job. All other events run master.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || 'master' }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the factory rules
+        run: python3 -m unittest discover -s scripts/factory/tests -v
+      - name: Reconcile and publish the public snapshot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/factory/collect.py --output /tmp/factory.json --publish
