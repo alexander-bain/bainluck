@@ -16,6 +16,15 @@ struct RelatedByTagView: View {
         self.limit = limit
     }
 
+    init(preloadedItems: [FeedItem], excludeEventId: Int? = nil, title: String = "More Like This", limit: Int = 4) {
+        self.tags = []
+        self.excludeEventId = excludeEventId
+        self.title = title
+        self.limit = limit
+        self._items = State(initialValue: preloadedItems)
+        self._loaded = State(initialValue: true)
+    }
+
     var body: some View {
         Group {
             if !filteredItems.isEmpty {
@@ -93,20 +102,13 @@ struct RelatedByTagView: View {
             // price for that side. The surfaces that NAME their survivor
             // instead are the ones where the pair collapses out of a layout the
             // reader was reading positionally.
-            if let odds = data.currentOdds,
+            if Self.admitsTrailingProbability(data),
+               let odds = data.currentOdds,
                let printable = DrawPricedWinner.printablePair(
                    away: odds.awayProbability,
                    home: odds.homeProbability,
                    sport: data.sport) {
                 let homeProbability = printable.home
-                // UX-P114 — this row prints BOTH sides of one question separated by
-                // a slash, so it is the same 101 as the Discover card's strip.
-                //
-                // #2279 — BOTH SERVED OR NEITHER. This row coalesced per side, so
-                // a payload with one field and not the other printed a served
-                // value beside a derived one — the same 101 from the other
-                // direction. Both probabilities come from `odds`, so the served
-                // pair describes the pair being drawn.
                 let duel = duelPercents(
                     away: printable.away ?? (1 - homeProbability),
                     home: homeProbability,
@@ -115,8 +117,6 @@ struct RelatedByTagView: View {
                 )
                 let awayPct = duel[0]
                 let homePct = duel[1]
-                // The home half keeps its served percent; the away half is
-                // `formatProbabilityOrDash` on a nil, which is the em-dash.
                 Text("\(formatProbabilityOrDash(printable.away, renderedPercent: awayPct)) / \(formatProbability(homeProbability, renderedPercent: homePct))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -126,5 +126,9 @@ struct RelatedByTagView: View {
         .padding(.vertical, 8)
         .background(Color.secondary.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    static func admitsTrailingProbability(_ data: FeedEventData) -> Bool {
+        data.heroProbabilitySource != OpeningLineHero.openingSource
     }
 }
