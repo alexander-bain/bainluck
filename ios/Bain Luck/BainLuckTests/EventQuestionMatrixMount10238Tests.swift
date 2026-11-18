@@ -79,6 +79,73 @@ final class EventQuestionMatrixMount10238Tests: XCTestCase {
                       "the model-only series view is a different thing and stays")
     }
 
+    func testSeriesProbabilityRefusesCachedOpeningAndKeepsCurrentChanceAt390Points() throws {
+        let fixture: [String: Any] = [
+            "id": 12824,
+            "sport": "basketball_nba",
+            "status": "live",
+            "home_team": "Boston Celtics",
+            "away_team": "Toronto Raptors",
+            "home_score": 68,
+            "away_score": 72,
+            "event_tags": ["competitive_structure:best_of_7"],
+            "hero_probability_source": "opening",
+            "hero_probability": 0.58,
+            "hero_probability_away": 0.42,
+            "opening_odds": ["home_probability": 0.58, "away_probability": 0.42],
+            "current_odds": ["home_probability": 0.58, "away_probability": 0.42]
+        ]
+        let opening = try decode(EventDetail.self, fixture)
+        let observed = try decode(EventDetail.self, fixture.merging([
+            "hero_probability_source": "blend",
+            "hero_probability": 0.36,
+            "hero_probability_away": 0.64,
+            "hero_probability_observed_at": "2026-11-17T03:13:00Z",
+            "current_odds": ["home_probability": 0.36, "away_probability": 0.64]
+        ]) { _, new in new })
+        let openingWithoutOdds = try decode(EventDetail.self, fixture.filter { $0.key != "current_odds" })
+        var observedWithoutOdds = observed
+        observedWithoutOdds.currentOdds = nil
+        var untagged = observed
+        untagged.heroProbabilitySource = nil
+
+        func series(_ event: EventDetail) -> SeriesProbabilityView? {
+            SeriesProbabilityView(event: event, homeTeamColor: .green, awayTeamColor: .red)
+        }
+
+        XCTAssertEqual(opening.currentOdds?.homeProbability, 0.58)
+        XCTAssertNil(series(opening))
+        XCTAssertNil(series(openingWithoutOdds))
+        XCTAssertNil(series(observedWithoutOdds))
+        XCTAssertEqual(try XCTUnwrap(series(observed)).homeWinProb, 0.36)
+        XCTAssertEqual(try XCTUnwrap(series(untagged)).homeWinProb, 0.36)
+
+        func fixtureView(_ event: EventDetail, label: String) -> some View {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(label).font(.caption).foregroundStyle(.secondary)
+                Text("\(event.awayTeam) \(event.awayScore ?? 0) · \(event.homeTeam) \(event.homeScore ?? 0)")
+                    .font(.subheadline.weight(.semibold))
+                if let card = series(event) { card }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+        }
+
+        let renderer = ImageRenderer(content: VStack(spacing: 0) {
+            fixtureView(opening, label: "Cached opening line")
+            Divider()
+            fixtureView(observed, label: "Current reading")
+        }
+        .frame(width: 390)
+        .background(Color(uiColor: .systemGroupedBackground))
+        .environment(\.colorScheme, .light))
+        renderer.scale = 3
+        let attachment = XCTAttachment(image: try XCTUnwrap(renderer.uiImage))
+        attachment.name = "Native Series Probability opening and current at 390 pt"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     // MARK: 2 — the empty note
 
     func testADrawnGameQuestionSilencesTheEmptyNote() throws {

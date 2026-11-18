@@ -10,6 +10,18 @@ struct SeriesProbabilityView: View {
     let homeTeamColor: Color
     let awayTeamColor: Color
 
+    init?(event: EventDetail, homeTeamColor: Color, awayTeamColor: Color) {
+        guard event.heroProbabilitySource != OpeningLineHero.openingSource,
+              let homeWinProb = event.currentOdds?.homeProbability else { return nil }
+        self.homeWinProb = homeWinProb
+        self.homeSeriesWins = event.espn?.seriesHomeWins ?? 0
+        self.awaySeriesWins = event.espn?.seriesAwayWins ?? 0
+        self.homeTeam = event.homeTeam
+        self.awayTeam = event.awayTeam
+        self.homeTeamColor = homeTeamColor
+        self.awayTeamColor = awayTeamColor
+    }
+
     private var homeSeriesProb: Double {
         Self.computeSeriesWinProb(
             teamWinProb: homeWinProb,

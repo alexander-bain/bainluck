@@ -965,17 +965,12 @@ struct EventDetailView: View {
                 // Series Probability (playoff series context)
                 if let tags = event.eventTags,
                    (tags.contains("competitive_structure:series") || tags.contains("competitive_structure:best_of_7")),
-                   let homeProb = event.currentOdds?.homeProbability {
-                    SeriesProbabilityView(
-                        homeWinProb: homeProb,
-                        homeSeriesWins: event.espn?.seriesHomeWins ?? 0,
-                        awaySeriesWins: event.espn?.seriesAwayWins ?? 0,
-                        gamesToWin: tags.contains("competitive_structure:best_of_7") ? 4 : 4,
-                        homeTeam: event.homeTeam,
-                        awayTeam: event.awayTeam,
-                        homeTeamColor: teamColors(event).home,
-                        awayTeamColor: teamColors(event).away
-                    )
+                   let series = SeriesProbabilityView(
+                       event: event,
+                       homeTeamColor: teamColors(event).home,
+                       awayTeamColor: teamColors(event).away
+                   ) {
+                    series
                 }
                 if let prog = vm.teamProgression {
                     ChampionshipPathView(
