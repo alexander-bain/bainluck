@@ -10,14 +10,9 @@ import {
   CheckCheck,
   ChevronRight,
   CircleCheck,
-  ClipboardCheck,
   Clock3,
-  Code2,
-  FlaskConical,
-  GitMerge,
   PackageCheck,
   Pause,
-  Rocket,
   Server,
   Smartphone,
   X,
@@ -26,18 +21,21 @@ import {
 import { usePageTracking } from "@/hooks/usePageTracking";
 import { useScrollDepth } from "@/hooks/useScrollDepth";
 import { useEngagementTime } from "@/hooks/useEngagementTime";
-import type { Builder, Change, FactoryData, Jam, Line, Station } from "./types";
+import type { Builder, Change, FactoryData, Jam, Line } from "./types";
 import styles from "./factory.module.css";
+import Worker from "./Worker";
+import {
+  stations,
+  time,
+  duration,
+  readerBehind,
+  stopText,
+  bayActivity,
+  beltFlowing,
+  recentTransfers,
+} from "./activity";
 
 const lines: Line[] = ["Server", "Website", "Apps"];
-const stations: Station[] = [
-  "Write",
-  "Test",
-  "Review",
-  "Merge line",
-  "Ship",
-  "Live",
-];
 const builders: { key: Builder; name: string }[] = [
   { key: "S", name: "Speed" },
   { key: "B", name: "Builder B" },
@@ -46,14 +44,6 @@ const builders: { key: Builder; name: string }[] = [
   { key: "E", name: "Builder E" },
   { key: "F", name: "Builder F" },
   { key: "Other", name: "Earlier work" },
-];
-const machineIcons = [
-  Code2,
-  FlaskConical,
-  ClipboardCheck,
-  GitMerge,
-  Rocket,
-  PackageCheck,
 ];
 const lineIcons = { Server, Website: Monitor, Apps: Smartphone };
 const descriptions = [
@@ -74,27 +64,17 @@ function pacificDay(value: string) {
   }).format(new Date(value));
 }
 
-function time(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-
-function duration(seconds: number) {
-  if (seconds < 60) return "under a minute";
-  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
-  if (seconds < 86400)
-    return `${Math.floor(seconds / 3600)} hr ${Math.round((seconds % 3600) / 60)} min`;
-  return `${Math.floor(seconds / 86400)} days`;
-}
-
 function jamTitle(jam: Jam) {
   if (jam.kind === "crowd") return `${jam.station} held ten or more changes`;
   if (jam.kind === "master") return "Tests failed on the shared version";
   if (jam.kind === "testflight")
     return "An Apps build stopped before TestFlight";
+  if (jam.kind === "line-stalled") return `${jam.line} waited for a merge`;
+  if (jam.kind === "announced")
+    return `${jam.line} announced a turn without merging`;
+  if (jam.kind === "hold") return `${jam.line} was put on hold`;
+  if (jam.kind === "review-waiting")
+    return `${jam.line} waited over two hours for review`;
   return `${jam.line} had an empty merge line with changes waiting`;
 }
 
@@ -119,6 +99,12 @@ export default function FactoryFloor({
     new Map<string, { rect: DOMRect; station: string }>(),
   );
   const detail = useRef<HTMLDialogElement>(null);
+  const [tabVisible, setTabVisible] = useState(true);
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const [shippingLines, setShippingLines] = useState<Line[]>([]);
+  const lastRefresh = useRef(Date.parse(renderedAt));
+  const behind = data ? readerBehind(data, now) : false;
+  const motion = !behind && tabVisible && !reducedMotion;
 
   useEffect(() => {
     try {
@@ -141,23 +127,35 @@ export default function FactoryFloor({
     }
   }, [selectedNumber]);
 
-  // Publication is event-only. An open, visible page asks Next for its cached
-  // server render at most once per minute, with no direct GitHub requests.
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
+    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const preferenceChanged = () => setReducedMotion(preference.matches);
+    const refresh = () => {
+      const visible = document.visibilityState === "visible";
+      setTabVisible(visible);
+      if (visible) {
         setNow(new Date().toISOString());
-        router.refresh();
+        if (Date.now() - lastRefresh.current >= 60_000) {
+          lastRefresh.current = Date.now();
+          router.refresh();
+        }
       }
-    }, 60_000);
-    return () => window.clearInterval(interval);
+    };
+    preferenceChanged();
+    refresh();
+    preference.addEventListener("change", preferenceChanged);
+    document.addEventListener("visibilitychange", refresh);
+    const interval = window.setInterval(refresh, 60_000);
+    return () => {
+      preference.removeEventListener("change", preferenceChanged);
+      document.removeEventListener("visibilitychange", refresh);
+      window.clearInterval(interval);
+    };
   }, [router]);
 
   useLayoutEffect(() => {
     const nextPositions = new Map<string, { rect: DOMRect; station: string }>();
-    const reduced = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
+    const shipments = new Set<Line>();
     floor.current
       ?.querySelectorAll<HTMLButtonElement>("[data-crate]")
       .forEach((button) => {
@@ -165,25 +163,65 @@ export default function FactoryFloor({
         const rect = button.getBoundingClientRect();
         const station = button.dataset.station!;
         const previous = oldPositions.current.get(id);
-        if (previous && previous.station !== station && !reduced) {
-          button.animate(
-            [
-              {
-                transform: `translate(${previous.rect.left - rect.left}px, ${previous.rect.top - rect.top}px)`,
-              },
-              { transform: "translate(0, 0)" },
-            ],
-            { duration: 450, easing: "ease-in-out" },
+        button.classList.remove(styles.travelling);
+        if (
+          previous &&
+          previous.station !== station &&
+          motion &&
+          data &&
+          recentTransfers(data, now).some((t) => t.number === Number(id))
+        ) {
+          const line = button.dataset.line as Line;
+          const from = stations.indexOf(
+            previous.station.split("/")[1] as (typeof stations)[number],
           );
+          const to = stations.indexOf(
+            station.split("/")[1] as (typeof stations)[number],
+          );
+          const stopped = (data?.stops ?? []).some(
+            (stop) =>
+              stop.level === "red" &&
+              (stop.line === null || stop.line === line) &&
+              stations.indexOf(stop.station) >= Math.min(from, to) &&
+              stations.indexOf(stop.station) <= Math.max(from, to),
+          );
+          if (!stopped) {
+            const row = button.closest("[data-factory-row]");
+            const belt = row
+              ?.querySelector("[data-belts]")
+              ?.getBoundingClientRect();
+            button.style.setProperty(
+              "--travel-x",
+              `${previous.rect.left - rect.left}px`,
+            );
+            button.style.setProperty(
+              "--travel-y",
+              `${previous.rect.top - rect.top}px`,
+            );
+            button.style.setProperty(
+              "--belt-y",
+              `${(belt?.top ?? rect.bottom) - rect.top}px`,
+            );
+            void button.offsetWidth;
+            button.classList.add(styles.travelling);
+            if (to === stations.length - 1) shipments.add(line);
+          }
         }
         nextPositions.set(id, { rect, station });
       });
     oldPositions.current = nextPositions;
-  }, [data?.generated_at]);
+    if (shipments.size) setShippingLines([...shipments]);
+    const timer = window.setTimeout(() => setShippingLines([]), 3000);
+    return () => window.clearTimeout(timer);
+  }, [data, motion, now]);
 
   if (!data) {
     return (
-      <article className={styles.factory} data-factory="true">
+      <article
+        className={styles.factory}
+        data-factory="true"
+        data-motion="paused"
+      >
         <header className={styles.heading}>
           <div>
             <p className={styles.eyebrow}>Bain Luck, in the making</p>
@@ -239,7 +277,8 @@ export default function FactoryFloor({
         type="button"
         className={`${styles.crate} ${styles[`builder${change.builder}`]}`}
         data-crate={change.number}
-        data-station={`${change.line}-${change.station}`}
+        data-station={`${change.line}/${change.station}`}
+        data-line={change.line}
         aria-label={`${builders.find((b) => b.key === change.builder)?.name}, change ${change.number}, ${change.title}${change.unsure ? ", unsure" : ""}`}
         aria-pressed={selectedNumber === change.number}
         onClick={() => choose(change)}
@@ -258,7 +297,12 @@ export default function FactoryFloor({
   }
 
   return (
-    <article className={styles.factory} data-factory="true">
+    <article
+      className={styles.factory}
+      data-factory="true"
+      data-reader={behind ? "behind" : "current"}
+      data-motion={motion ? "running" : "paused"}
+    >
       <header className={styles.heading}>
         <div>
           <p className={styles.eyebrow}>
@@ -272,7 +316,9 @@ export default function FactoryFloor({
         <div className={styles.updated}>
           <span className={styles.statusDot} aria-hidden="true" />
           <div>
-            <strong>Updated from GitHub</strong>
+            <strong>
+              {behind ? "The reader is behind" : "Read from GitHub"}
+            </strong>
             <span>
               {new Intl.DateTimeFormat("en-US", {
                 timeZone: "America/Los_Angeles",
@@ -285,12 +331,28 @@ export default function FactoryFloor({
         </div>
       </header>
 
+      {behind && (
+        <div className={styles.readerWarning} role="status">
+          <Pause size={20} aria-hidden="true" />
+          <p>
+            Last read {time(data.generated_at)} PT,{" "}
+            {duration((Date.parse(now) - Date.parse(data.generated_at)) / 1000)}{" "}
+            ago. The reader is behind.
+          </p>
+        </div>
+      )}
+
       <section className={styles.numbers} aria-label="The factory at a glance">
         <div>
           <span className={styles.numberLabel}>
             <PackageCheck size={17} /> Shipped today
           </span>
-          <strong className={styles.shippedNumber}>{shipped.length}</strong>
+          <strong
+            key={shipped.length}
+            className={`${styles.shippedNumber} ${shippingLines.length ? styles.numberTick : ""}`}
+          >
+            {shipped.length}
+          </strong>
           <span>Changes in your hands</span>
         </div>
         <div>
@@ -325,6 +387,18 @@ export default function FactoryFloor({
             Tap a crate to see the change <ArrowDown size={14} />
           </span>
         </div>
+        {!!data.stops?.length && (
+          <div className={styles.stopNotices} role="status">
+            {data.stops.map((stop) => (
+              <p key={`${stop.kind}-${stop.line}`} data-level={stop.level}>
+                <span aria-hidden="true">
+                  {stop.level === "red" ? "■" : "▲"}
+                </span>{" "}
+                {stopText(stop, now)}
+              </p>
+            ))}
+          </div>
+        )}
         <div className={styles.scrollHint}>
           <ArrowRight size={14} /> Scroll across to follow the line
         </div>
@@ -354,17 +428,32 @@ export default function FactoryFloor({
                 null,
               );
               return (
-                <div key={line} className={styles.lineRow}>
+                <div
+                  key={line}
+                  className={styles.lineRow}
+                  data-factory-row={line}
+                >
                   <div className={styles.lineName}>
                     <LineIcon size={20} strokeWidth={1.6} />
                     <strong>{line}</strong>
                     <span>{lineShipped.length} shipped</span>
                   </div>
                   <div className={styles.machines}>
-                    {stations.map((station, index) => {
-                      const MachineIcon = machineIcons[index];
+                    {stations.map((station) => {
                       const changes = visible.filter(
                         (c) => c.line === line && c.station === station,
+                      );
+                      changes.sort((a, b) =>
+                        (b.live_at ?? "").localeCompare(a.live_at ?? ""),
+                      );
+                      const crates =
+                        station === "Live" ? changes.slice(0, 8) : changes;
+                      const activity = bayActivity(
+                        data,
+                        line,
+                        station,
+                        now,
+                        changes.length,
                       );
                       const backup = station !== "Live" && changes.length >= 10;
                       const jammed = activeJams.some(
@@ -379,15 +468,29 @@ export default function FactoryFloor({
                           data-line={line}
                           data-bay={station}
                           data-waiting={changes.length}
+                          data-worker-state={activity.worker}
                         >
                           <div className={styles.machineTop}>
-                            <MachineIcon size={22} strokeWidth={1.6} />
-                            <span
-                              className={`${styles.lamp} ${jammed ? styles.pulse : ""}`}
-                            />
+                            <Worker station={station} state={activity.worker} />
+                            <span className={styles.baySignals}>
+                              <span
+                                className={styles.lamp}
+                                data-state={
+                                  activity.stop?.level === "red"
+                                    ? "stopped"
+                                    : activity.flowing
+                                      ? "flowing"
+                                      : backup
+                                        ? "crowded"
+                                        : "idle"
+                                }
+                                aria-hidden="true"
+                              />
+                              <span>{behind ? "Paused" : activity.label}</span>
+                            </span>
                           </div>
                           <div className={styles.crates}>
-                            {changes.map(crate)}
+                            {crates.map(crate)}
                             {!changes.length && (
                               <span className={styles.emptySlot}>
                                 {station === "Live" ? (
@@ -398,6 +501,29 @@ export default function FactoryFloor({
                               </span>
                             )}
                           </div>
+                          {station === "Live" && changes.length > 8 && (
+                            <span className={styles.earlierToday}>
+                              +{changes.length - 8} earlier today
+                            </span>
+                          )}
+                          {station === "Live" &&
+                            shippingLines.includes(line) && (
+                              <svg
+                                className={styles.dispatch}
+                                viewBox="0 0 48 30"
+                                role="img"
+                                aria-label="A change just shipped"
+                              >
+                                <path d="M3 5h26v16H3zM29 12h10l6 6v3H29z" />
+                                <circle cx="12" cy="23" r="4" />
+                                <circle cx="36" cy="23" r="4" />
+                              </svg>
+                            )}
+                          {activity.stop && (
+                            <span className={styles.bayReason}>
+                              {stopText(activity.stop, now)}
+                            </span>
+                          )}
                           <div className={styles.machineCaption}>
                             {station === "Live" ? (
                               <>
@@ -413,11 +539,21 @@ export default function FactoryFloor({
                         </div>
                       );
                     })}
-                    <div className={styles.belt} aria-hidden="true">
-                      <span />
-                      <ChevronRight size={15} />
-                      <ChevronRight size={15} />
-                      <ChevronRight size={15} />
+                    <div
+                      className={styles.belts}
+                      data-belts="true"
+                      aria-hidden="true"
+                    >
+                      {stations.slice(0, -1).map((station, segment) => (
+                        <span
+                          key={station}
+                          className={styles.beltSegment}
+                          data-flowing={beltFlowing(data, line, segment, now)}
+                        >
+                          <i />
+                          <ChevronRight size={14} />
+                        </span>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -630,8 +766,9 @@ export default function FactoryFloor({
       </section>
       <footer className={styles.notes}>
         <p>
-          The floor is re-read every five minutes. This page refreshes once a
-          minute while open. All times are Pacific.
+          The floor is re-read after CI finishes and when master changes, with a
+          five-minute timer as a backstop. This page refreshes once a minute
+          while visible. All times are Pacific.
         </p>
         {data.coverage.map((note) => (
           <p key={note}>{note}</p>

@@ -1,18 +1,24 @@
 {
-  "revision": "Timer revision after Fable comment 6967579689",
-  "render_data_captured_at": "2026-11-18T02:17:52.530830Z",
-  "render_data_sha256": "7a01c9756aca67eb974551a6a7c2e53dd01cf42c53547edcad0ee47dc4fbafe1",
+  "revision": "Factory alive, November 18",
   "python_rules": {
-    "passed": 25,
+    "passed": 37,
     "real_change_fixtures": 18
   },
-  "frontend_failure_tests": {
-    "passed": 4
+  "stopped_rules": [
+    "line-stalled",
+    "announced",
+    "hold",
+    "master",
+    "review-waiting",
+    "reader-behind"
+  ],
+  "frontend_tests": {
+    "passed": 11
   },
   "build": {
     "exit_code": 0,
     "route": "/factory",
-    "rendering": "server-rendered, data cached for 60 seconds"
+    "rendering": "server-rendered, cached for 60 seconds"
   },
   "typecheck": {
     "exit_code": 0,
@@ -22,36 +28,43 @@
   "startup": {
     "passed": 4
   },
-  "images_branch": "factory/images-nov17-review",
-  "images_commit": "d388ad7cd9f485097e743a99aefffead6ceb6aad",
-  "renders": {
-    "1280": {
-      "first_contentful_paint_ms": 148,
-      "page_errors": [],
-      "document_width": 1280,
-      "max_empty_bay_height": 129
-    },
-    "390": {
-      "first_contentful_paint_ms": 44,
-      "page_errors": [],
-      "document_width": 390,
-      "max_empty_bay_height": 129
-    }
+  "collection": {
+    "legacy_cache_api_calls": 101,
+    "legacy_cache_seconds": 61.6,
+    "legacy_cache_budget_left": 3644,
+    "warm_api_calls": 29,
+    "warm_seconds": 34.56,
+    "warm_budget_left": 3932
   },
-  "publisher_verification": "Master-only timer publication, comparison and upload suppression verified by unit tests. API estimates use the prior read-only warm-cache measurements.",
-  "analytics_guard": {
-    "passed": 3,
-    "delegated_hooks": "FactoryFloor.tsx"
-  },
-  "timer": {
-    "cron": "*/5 * * * *",
-    "runs_per_hour": 12,
-    "additional_runs": "one per master push and manual dispatch",
-    "warm_api_calls_per_unchanged_run": 20,
-    "warm_api_calls_per_changed_run": 28,
-    "timer_hour_api_range": [
-      240,
-      336
+  "estimated_publication_api_calls": [
+    30,
+    38
+  ],
+  "recorded_hour": {
+    "pacific": "November 18, 7 to 8 AM",
+    "ci_completions": 6,
+    "master_pushes": 0,
+    "expected_collector_runs": 18,
+    "expected_api_calls": [
+      540,
+      684
     ]
+  },
+  "capture_provenance": "Built page with read-only GitHub snapshots. Scenario clocks and stops are controlled to show each state. The shipment recording adds a test-only live receipt.",
+  "images_branch": "factory/alive-renders",
+  "images_commit": "895f688fd98a33af5271bc01c54f83d468c4b9a8",
+  "videos": {
+    "crateTravel": true,
+    "flowing": {
+      "elapsed_ms": 6696,
+      "file": "flowing.webm",
+      "duration_seconds": 7.4
+    },
+    "stoppedBelts": 0,
+    "stopped": {
+      "elapsed_ms": 6738,
+      "file": "stopped.webm",
+      "duration_seconds": 7.4
+    }
   }
 }
