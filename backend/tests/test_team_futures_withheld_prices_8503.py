@@ -18,6 +18,8 @@ to prove the fixture carries the defect and the failure direction.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -184,6 +186,69 @@ async def test_a_priced_leg_of_the_same_market_still_takes_the_slot():
     ])
     data, _db = await _run(_DB([board]))
     assert _served(data) == {(77, "Philadelphia Eagles (over 10.5)"): 0.3}
+    assert data["items"][0]["source_mark"]["sources"][0]["probability"] == 0.3
+
+
+@pytest.mark.parametrize(
+    ("source", "key", "name", "probability"),
+    [
+        ("kalshi", "kalshi", "Kalshi", Decimal("0.37")),
+        ("polymarket", "polymarket", "Polymarket", Decimal("0.37")),
+        ("odds_api", "betting", "Sportsbooks", Decimal("0")),
+    ],
+)
+async def test_source_mark_uses_the_selected_team_futures_quote(source, key, name, probability):
+    outcome = _outcome(1, "Philadelphia Eagles", probability, 0.36, 0.38, team_id=EAGLES)
+    outcome.last_updated = datetime(2026, 11, 17, tzinfo=timezone.utc)
+    outcome.price_changed_at = outcome.last_updated
+    if source == "kalshi":
+        outcome.resolution_source = "ungradeable_result"
+    board = _market(77, "Pro Football: Eagles Season Wins", [outcome], source=source)
+
+    data, db = await _run(_DB([board]))
+
+    assert _served(data) == {(77, "Philadelphia Eagles"): float(probability)}
+    assert data["items"][0]["source_mark"] == {
+        "state": "single",
+        "sources": [{
+            "key": key,
+            "name": name,
+            "probability": float(probability),
+            "observed_at": None,
+            "reason": "observation_unknown",
+        }],
+    }
+    assert len(db.market_loads) == 1
+
+
+@pytest.mark.parametrize(("is_winner", "result"), [(True, "Won"), (False, "Lost")])
+async def test_source_mark_keeps_official_results_on_a_partly_settled_board(is_winner, result):
+    outcome = _outcome(1, "Philadelphia Eagles", int(is_winner), None, None, team_id=EAGLES)
+    outcome.is_winner = is_winner
+    outcome.resolution_source = "api_settlement"
+    board = _market(77, "Pro Football: Eagles Season Wins", [outcome], source="kalshi")
+
+    data, _db = await _run(_DB([board]))
+
+    assert data["items"][0]["source_mark"] == {
+        "state": "settled",
+        "sources": [],
+        "settled": {"source": "api_settlement", "result": result, "at": None},
+    }
+
+
+async def test_missing_team_futures_price_has_a_reason():
+    outcome = _outcome(1, "Philadelphia Eagles", None, None, None, team_id=EAGLES)
+    board = _market(77, "Pro Football: Eagles Season Wins", [outcome], source="kalshi")
+
+    data, _db = await _run(_DB([board]))
+
+    assert _served(data) == {(77, "Philadelphia Eagles"): None}
+    assert data["items"][0]["source_mark"] == {
+        "state": "none",
+        "sources": [],
+        "reason": "no_probability",
+    }
 
 
 async def test_a_failed_screen_fails_open_inside_its_savepoint():

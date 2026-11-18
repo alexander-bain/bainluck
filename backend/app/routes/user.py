@@ -21,6 +21,7 @@ from app.models.models import (
     FuturesMarket, FuturesOutcome, TeamIdentityMapping,
 )
 from app.services.database import get_db, get_db_rw
+from app.utils.futures_source_mark import futures_outcome_source_mark
 from app.utils.series_card_labels import market_threshold_label, reader_outcome_name
 from app.utils.market_team_sport import (
     link_crosses_gender as _link_crosses_gender,
@@ -2021,6 +2022,7 @@ async def _query_team_futures(
             "category": market.llm_sport_category,
             "source": market.source,
             "probability": prob,
+            "source_mark": futures_outcome_source_mark(market, outcome, {"probability": prob}),
             "probability_change_24h": change,
             "rank": outcome.rank,
             "total_outcomes": outcome_total,
