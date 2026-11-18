@@ -40,6 +40,7 @@ import { isTournamentDecided, isTournamentLive } from "@/lib/tournamentLive";
 import { feedItemHasRenderableContent } from "@/components/discover/utils";
 import EntityImage from "@/components/EntityImage";
 import { eventSectionKey, hasNoReportedResult, liveSectionTitle } from "@/lib/eventState";
+import { isStoredOpeningChance } from "@/lib/probabilityEvidence";
 
 export default function MyStuffPage() {
   // Analytics hooks must be called before conditional returns
@@ -236,7 +237,8 @@ function MyTeamsFeed({ principal }: { principal: string }) {
             status: d.status,
             home_score: d.home_score,
             away_score: d.away_score,
-            current_odds: d.current_odds ? {
+            // #12824: older feeds can store an opening chance in current_odds.
+            current_odds: d.current_odds && !isStoredOpeningChance(d) ? {
               home_probability: d.current_odds.home_probability,
               away_probability: d.current_odds.away_probability,
               bookmaker_count: d.current_odds.bookmaker_count,

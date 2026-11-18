@@ -15,6 +15,7 @@ import type {
   ActiveChartPoint,
   CurrentOdds,
   ScoringPlay,
+  WinProbHistoryPoint,
 } from "@/lib/types";
 import {
   categoryLabelFormat,
@@ -712,6 +713,24 @@ export function latestBlendPoint(
   return null;
 }
 
+/** A sportsbook chart bucket can carry an earlier price forward to this minute. */
+function isRecordedInPlayBookBucket(
+  stamp: string,
+  commenceTime: string,
+  history: EventHistoryResponse,
+): boolean {
+  if (history.commence_time_is_kickoff === false) return false;
+  const kickoff = Date.parse(commenceTime);
+  const bucket = Date.parse(stamp);
+  if (!Number.isFinite(kickoff) || !Number.isFinite(bucket)) return false;
+  const points = Object.values(history.bookmaker_history ?? {}).flatMap((series) =>
+    series.filter((point) => Date.parse(point.timestamp) === bucket),
+  );
+  return points.length > 0 && points.every((point) =>
+    point.kind === "recorded" && Date.parse(point.observed_at ?? "") >= kickoff,
+  );
+}
+
 /**
  * The ONE conversion between a 0–1 home win-probability — the scale of every
  * payload field (current_odds, opening_odds, history[], win_prob_history,
@@ -945,6 +964,7 @@ export function railSourceStanding(
 export function livingRailReading(
   historyData: EventHistoryResponse | null | undefined,
   living: string[],
+  acceptsPoint?: (point: WinProbHistoryPoint) => boolean,
 ): { homeProb: number; source: string; timestamp: string } | null {
   const wpHistory = historyData?.win_prob_history;
   if (!wpHistory) return null;
@@ -953,9 +973,10 @@ export function livingRailReading(
     const points = wpHistory[source];
     if (!points?.length) continue;
     for (let i = points.length - 1; i >= 0; i--) {
-      const home = points[i].home_probability;
-      if (home === null || home === undefined) continue;
-      const timestamp = points[i].timestamp;
+      const point = points[i];
+      const home = point.home_probability;
+      if (home == null || (acceptsPoint && !acceptsPoint(point))) continue;
+      const timestamp = point.timestamp;
       if (!best || timestamp > best.timestamp) {
         best = { homeProb: home, source, timestamp };
       }
@@ -1079,9 +1100,8 @@ export function resolveProbability(
     // the same backend call the card uses — so binding here makes card == hero
     // by construction rather than by two paths happening to agree. The backend
     // now also pins the live edge of `aggregate_line` to that same value
-    // (`_pin_live_blend_edge`), which brings the chart to the same number; the
-    // aggregate_line read stays as the fallback for a cached/older payload that
-    // predates the `hero_probability` field.
+    // (`_pin_live_blend_edge`), which brings the chart to the same number. The
+    // pinned edge can also answer when the detail response has no hero blend.
     // Gate on the source: `hero_probability` degrades to the OPENING line when
     // no blend exists, and an opening line is not a live blend — labelling it
     // "Bain Luck blend" would be a lie and would pre-empt the sportsbook
@@ -1091,8 +1111,13 @@ export function resolveProbability(
       typeof event.hero_probability === "number"
         ? event.hero_probability
         : null;
-    const blendPoint =
-      heroBlend ?? latestBlendPoint(historyData?.aggregate_line);
+    // Only the server's pinned chart edge supplies a current chance. An
+    // unpinned line may stop at an opening reading.
+    const blendPoint = heroBlend ?? (
+      historyData?.blend_edge_pinned === true
+        ? latestBlendPoint(historyData.aggregate_line)
+        : null
+    );
     if (blendPoint !== null) {
       homeProb = blendPoint;
       awayProb =
@@ -1147,21 +1172,16 @@ export function resolveProbability(
           break;
         }
       }
-      if (latestValidHistory) {
-        const historyHome = latestValidHistory.home_probability!;
+      if (!withheld && latestValidHistory &&
+          (homeProb === null || Math.abs(latestValidHistory.home_probability! - homeProb) > 0.05) &&
+          isRecordedInPlayBookBucket(latestValidHistory.timestamp, event.commence_time, historyData)) {
+        homeProb = latestValidHistory.home_probability!;
+        awayProb = latestValidHistory.away_probability ?? 1 - homeProb;
+        // The history reading owns this pair and needs its own display rounding.
+        fromCurrentOdds = false;
         const historyBookmakers = latestValidHistory.bookmaker_count ?? 0;
-        if (homeProb === null || Math.abs(historyHome - homeProb) > 0.05) {
-          homeProb = historyHome;
-          awayProb =
-            latestValidHistory.away_probability ?? 1 - historyHome;
-          // #2085 — the pair has been REPLACED by a history row. The served
-          // percents describe the `current_odds` pair this branch just
-          // overrode, and the override only fires when the two differ by more
-          // than 5 points, so keeping them would print a number off by five.
-          fromCurrentOdds = false;
-          if (historyBookmakers > 0) {
-            probSourceLabel = `Live · ${historyBookmakers} sportsbook${historyBookmakers !== 1 ? "s" : ""}`;
-          }
+        if (historyBookmakers > 0) {
+          probSourceLabel = `Live · ${historyBookmakers} sportsbook${historyBookmakers !== 1 ? "s" : ""}`;
         }
       }
     }
@@ -1335,13 +1355,20 @@ export function resolveProbability(
   // truth about the source.
   const standing = railSourceStanding(historyData, event.win_probability_sources);
   const contaminated = standing.withdrawn.length > 0;
-  const livingReading = contaminated
-    ? livingRailReading(historyData, standing.living)
+  const needsNamedReading = contaminated || isLive;
+  const kickoff = Date.parse(event.commence_time);
+  const livingReading = homeProb === null && !withheld && needsNamedReading
+    ? livingRailReading(historyData, standing.living, isLive ? (point) =>
+      historyData?.commence_time_is_kickoff !== false &&
+      !point.live_edge &&
+      (point.evidence == null || point.evidence.kind === "observed") &&
+      Date.parse(point.timestamp) >= kickoff
+      : undefined)
     : null;
-  const fallbackHome = contaminated
+  const fallbackHome = needsNamedReading
     ? (livingReading?.homeProb ?? null)
     : (lastChartPoint?.homeProb ?? null);
-  const fallbackAway = contaminated
+  const fallbackAway = needsNamedReading
     ? livingReading
       ? 1 - livingReading.homeProb
       : null
@@ -1349,6 +1376,7 @@ export function resolveProbability(
 
   if (
     !withheld &&
+    (isLive || isFinished || noReportedResult) &&
     homeProb === null &&
     hasProbabilitySourceReading(event.win_probability_sources) &&
     lastChartPoint &&
@@ -1364,9 +1392,9 @@ export function resolveProbability(
     fromCurrentOdds = false;
     // #6563 — the caption names who is still speaking. On an uncontaminated
     // event that is the rail list verbatim, which is what it has always been.
-    const captionSources = contaminated
-      ? standing.living
-      : Object.keys(historyData?.win_prob_sources ?? {});
+    const captionSources = isLive && livingReading
+      ? [livingReading.source]
+      : contaminated ? standing.living : Object.keys(historyData?.win_prob_sources ?? {});
     if (captionSources.length > 0) {
       const sourceNames = captionSources.map((s) =>
         s === "stat_model"

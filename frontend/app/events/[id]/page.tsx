@@ -2255,6 +2255,16 @@ export default function EventPage({ params }: EventPageProps) {
   // where the number still IS the complement.
   const awaySlotWithheld = sportPricesADraw(event.sport);
   const awayProb = printableAway(servedAwayProb, event.sport);
+  // At rest this card shows the same in-play chance as the headline.
+  // Explicit chart scrubs still show the reading from that point in time.
+  const restingChartPoint = isLive && lastChartPoint
+    ? {
+        ...lastChartPoint,
+        homeProb: homeProb ?? lastChartPoint.homeProb,
+        awayProb: servedAwayProb ?? lastChartPoint.awayProb,
+        probKnown: homeProb !== null && (awaySlotWithheld || servedAwayProb !== null),
+      }
+    : lastChartPoint;
   const awayPct = printableAway(servedAwayPct, event.sport);
 
   // #10090 decision J under a preview (native #11816's rule, web half).
@@ -3015,6 +3025,12 @@ export default function EventPage({ params }: EventPageProps) {
         )}
       </div>
 
+      <div
+        data-testid="event-desktop-two-col-shell"
+        className="flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1.36fr)_minmax(404px,1fr)] xl:grid-cols-[minmax(0,1.52fr)_minmax(448px,1fr)] lg:gap-6 lg:items-start"
+      >
+      <div className="max-lg:contents lg:flex lg:flex-col lg:gap-3 lg:min-w-0" data-testid="event-featured-column">
+      <div className="empty:hidden max-lg:order-1 space-y-3 min-w-0" data-testid="event-featured-lead">
       {/* Unified Direction 199 Game Page Headline (every sport & state) */}
       <SectionErrorBoundary label="The score and probability" resetKey={event}>
       <EventPageHeadline199
@@ -3266,7 +3282,7 @@ export default function EventPage({ params }: EventPageProps) {
               awayTeamSecondaryColor={resolvedAwaySecondary || event.away_team_data?.secondary_color || undefined}
               homeTeamLogo={event.home_team_data?.logo_small || undefined}
               awayTeamLogo={event.away_team_data?.logo_small || undefined}
-              lastPoint={lastChartPoint}
+              lastPoint={restingChartPoint}
               /* #6238 — the same single derivation the hero reads, handed to
                  the readout below the chart. On `/events/15305024` (2–2 final)
                  this card printed `Citizen 1% — Steelers 99%` two cards above
@@ -3360,7 +3376,34 @@ export default function EventPage({ params }: EventPageProps) {
 
       </SectionErrorBoundary>
       )}
+      </div>
 
+      <div className="empty:hidden max-lg:order-3 space-y-3 min-w-0" data-testid="event-featured-projection">
+      {/* #10539: projected final points replaces the Score Differential card when — and only when —
+          the page's one decision admits it. Every refusal keeps the differential, and a projection
+          that fails to load or draw hands its place back to the differential rather than leaving
+          the game's score story empty. */}
+      {projectedFinalPoints.mount ? (
+        scoreDiffCard ? (
+          <ErrorBoundary resetKey={projectedFinalPoints} fallback={scoreDiffCard}>
+            {projectedFinalPointsModule}
+          </ErrorBoundary>
+        ) : (
+          <SectionErrorBoundary label="The projected final points" resetKey={projectedFinalPoints}>
+            {projectedFinalPointsModule}
+          </SectionErrorBoundary>
+        )
+      ) : (
+        scoreDiffCard
+      )}
+
+      <FinalGameWinnerQuote quote={servedGameMarkets?.open_winner_quote}
+        eventId={event.id} finished={isFinished} closedIds={servedGameMarkets?.closed_winner_market_ids} />
+      </div>
+      </div>
+
+      <div className="max-lg:contents lg:flex lg:flex-col lg:gap-3 lg:min-w-0" data-testid="event-side-column">
+      <div className="empty:hidden max-lg:order-2 space-y-3 min-w-0" data-testid="event-side-lead">
       {showSharedPinBanner && showConsentBanner && (
         <SharedLinkPinBanner
           inline
@@ -3416,28 +3459,9 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {/* Source Comparison removed — not useful, sources already visible in OddsChart */}
+      </div>
 
-      {/* #10539: projected final points replaces the Score Differential card when — and only when —
-          the page's one decision admits it. Every refusal keeps the differential, and a projection
-          that fails to load or draw hands its place back to the differential rather than leaving
-          the game's score story empty. */}
-      {projectedFinalPoints.mount ? (
-        scoreDiffCard ? (
-          <ErrorBoundary resetKey={projectedFinalPoints} fallback={scoreDiffCard}>
-            {projectedFinalPointsModule}
-          </ErrorBoundary>
-        ) : (
-          <SectionErrorBoundary label="The projected final points" resetKey={projectedFinalPoints}>
-            {projectedFinalPointsModule}
-          </SectionErrorBoundary>
-        )
-      ) : (
-        scoreDiffCard
-      )}
-
-      <FinalGameWinnerQuote quote={servedGameMarkets?.open_winner_quote}
-        eventId={event.id} finished={isFinished} closedIds={servedGameMarkets?.closed_winner_market_ids} />
-
+      <div className="empty:hidden max-lg:order-4 space-y-3 min-w-0" data-testid="event-side-markets">
       {/* Market Map cards — Margin Map + Total Map */}
       {/* #3240: the mount condition is shared with `totalsMapRenders` above, so
           the note's idea of what is on the page and the page cannot diverge. */}
@@ -3851,6 +3875,9 @@ export default function EventPage({ params }: EventPageProps) {
           </SectionErrorBoundary>
         ) : null;
       })()}
+      </div>
+      </div>
+      </div>
 
       {/* Fullscreen Chart Modal — #10250: a dialog above the phone bottom nav. */}
       {chartFullscreen && (
