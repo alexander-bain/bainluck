@@ -415,6 +415,7 @@ def test_a_scoreboard_row_carries_the_price_resolved_for_its_own_pairing():
     row = _by_key(slate)[f"espn:{LIVE_COMP}"]
     assert row["priced"] is True
     assert [side["probability"] for side in row["sides"]] == [0.82, 0.18]
+    assert all("source_mark" not in side for side in row["sides"])
     assert row["coherent"] is True
     assert slate["scoreboard_priced"] == 1
 

@@ -42,6 +42,7 @@ from app.utils.proven_duplicates import (
     FoldedBlendView,
     folded_probability_sources_batch,
 )
+from app.utils.source_mark import headline_source_marks
 from app.utils.tournament_advancement import build_advancement
 from app.utils.tournament_board import (
     TREND_DAYS,
@@ -1030,9 +1031,17 @@ async def _load_blends(
         view = FoldedBlendView(
             row, folded_sources.get(int(row.id), row.win_probability_sources)
         )
-        hero = resolve_hero(view)
+        source_inputs: list[tuple[str, float]] = []
+        source_method: list[str] = []
+        hero = resolve_hero(
+            view, source_inputs=source_inputs, source_method=source_method,
+        )
         if hero is None:
             continue
+        home_mark, away_mark = headline_source_marks(
+            view, hero, source_inputs,
+            method=source_method[0] if source_method else None,
+        )
         # `blend_provenance` reads the SAME view, never the bare row: the source
         # count drives the confidence bars and the age stamp drives the freshness
         # line, and lighting two bars under a three-venue number is the same
@@ -1059,6 +1068,8 @@ async def _load_blends(
             "away_name": row.away_team_name,
             "home_probability": hero.home_probability,
             "away_probability": hero.away_probability,
+            "home_source_mark": home_mark,
+            "away_source_mark": away_mark,
             "source": hero.source,
             "source_count": source_count,
             # THE EVENT'S OWN OPEN, travelling beside the event's own current

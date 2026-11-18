@@ -77,15 +77,20 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.utils.aggregation import make_price_read
 from app.utils.hero_probability import blend_provenance, resolve_hero
+from app.utils.proven_duplicates import FoldedBlendView, duplicate_tag
 from app.utils.tournament_slate import (
     PRICE_BASIS_BLEND,
     PRICE_BASIS_VENUE,
+    apply_event_blend_to_linked_rows,
     build_slate,
     orient_event_blend,
 )
 
-from tests.test_tournament_slate import NOW, _matchup, _prices, _register
+from tests.test_tournament_slate import (
+    NOW, _drawn_matchup, _listed, _matchup, _prices, _register,
+)
 
 #: The production fixture, verbatim. `events` row 15306225 is the Tiafoe /
 #: Michelsen quarter-final; the four probabilities are the ones the two APIs
@@ -504,3 +509,58 @@ def test_the_loader_maps_the_real_names_through_to_a_priced_hub_row():
     assert row["sides"][0]["probability"] != pytest.approx(
         VENUE_NOW / (VENUE_NOW + 0.415)
     )
+
+
+@pytest.mark.parametrize("swap", [False, True])
+def test_live_registered_overlay_keeps_folded_inputs_on_the_correct_side(swap):
+    home, away = ("Yexin Ma", "Clara Burel") if swap else ("Clara Burel", "Yexin Ma")
+    books = {"value": BETTING, "updated_at": NOW.isoformat()}
+    poly = {
+        "value": POLYMARKET,
+        "updated_at": NOW.isoformat(),
+        "price_read": make_price_read(0.1, NOW),
+    }
+    kalshi = {
+        "value": KALSHI,
+        "updated_at": NOW.isoformat(),
+        "price_read": make_price_read(KALSHI, NOW),
+    }
+    sources = {"betting": books, "polymarket": poly, "betting_book_count": 5}
+    event = _event_row(home_team=home, away_team=away, win_probability_sources=sources)
+    twin = (
+        EVENT_ID + 1, home, away, {"kalshi": kalshi}, [duplicate_tag(EVENT_ID)], None, None,
+    )
+    session = _CapturingSession([event], [twin])
+    blends = asyncio.run(_load_blends(session, [EVENT_ID]))
+    assert len(session.statements) == 2
+    expected_hero = resolve_hero(FoldedBlendView(event, {**sources, "kalshi": kalshi}))
+    assert expected_hero is not None
+
+    register = _register(matchups=[_drawn_matchup(event_id=EVENT_ID)])
+    slate_args = {
+        "prices": _venue_prices(),
+        "now": NOW,
+        "order_of_play": _listed(state="in_progress", start_at=NOW.isoformat()),
+    }
+    inline, = build_slate(register, blends=blends, **slate_args)["matches"]
+    late_slate = build_slate(register, **slate_args)
+    assert apply_event_blend_to_linked_rows(late_slate, blends) == 1
+    late, = late_slate["matches"]
+    for row in (inline, late):
+        assert row["price_basis"] == PRICE_BASIS_BLEND
+        for side in row["sides"]:
+            home_side = side["display_name"] == home
+            mark = side["source_mark"]
+            assert side["probability"] == (
+                expected_hero.home_probability if home_side else expected_hero.away_probability
+            )
+            assert mark["state"] == "blend"
+            assert mark["method"] == "Bain Luck blend · the weighted middle of these sources"
+            assert {
+                source["key"]: (source["probability"], source["observed_at"])
+                for source in mark["sources"]
+            } == {
+                "kalshi": (KALSHI if home_side else round(1 - KALSHI, 6), "2026-08-25T21:30:00Z"),
+                "polymarket": (POLYMARKET if home_side else round(1 - POLYMARKET, 6), None),
+                "betting": (BETTING if home_side else round(1 - BETTING, 6), None),
+            }

@@ -296,13 +296,31 @@ PRICE_BASIS_VENUE = "venue"
 PRICE_BASIS_BLEND = "blend"
 
 
+def _is_registered_live_row(row: dict[str, Any]) -> bool:
+    # Authority and scoreboard replacements explicitly set pairing_source.
+    return row.get("live_state") == "in_progress" and row.get("pairing_source") is None
+
+
+def _event_axis_source_marks(blend: dict[str, Any]) -> tuple[dict, dict]:
+    from app.utils.source_mark import no_source_mark
+
+    return (
+        blend.get("home_source_mark") or no_source_mark("source_evidence_incomplete"),
+        blend.get("away_source_mark") or no_source_mark("source_evidence_incomplete"),
+    )
+
+
 def orient_event_blend(
-    blend: Optional[dict[str, Any]], side_names: list[Optional[str]]
+    blend: Optional[dict[str, Any]],
+    side_names: list[Optional[str]],
+    *,
+    source_marks: Optional[list[dict]] = None,
 ) -> tuple[Optional[list[float]], Optional[list[float]], Optional[str]]:
     """The linked event's hero pair, turned to face THIS row's side order (#3903).
 
     Returns ``(current_pair, opening_pair, refusal)`` — the first two index-aligned
     with ``side_names``, the third naming what could not be supplied.
+    If requested, the current pair's source marks follow that same orientation.
 
     ═══ NO MIXED BASIS — AND THE UNIT IS THE ARROW, NOT THE ROW (CERT-2251) ═══
 
@@ -389,6 +407,11 @@ def orient_event_blend(
     open_away = _as_probability(blend.get("opening_away_probability"))
     if home_prob is None or away_prob is None:
         return None, None, "BLEND_UNPRICED"
+    if source_marks is not None:
+        home_mark, away_mark = _event_axis_source_marks(blend)
+        source_marks.extend(
+            (home_mark, away_mark) if straight else (away_mark, home_mark)
+        )
     if open_home is None or open_away is None:
         # THE ARROW IS REFUSED, THE NUMBER IS NOT (CERT-2251).
         #
@@ -873,14 +896,18 @@ def build_match_row(
     # different blast radius and wants its own measurement. A row with no linked
     # event is untouched by construction.
     if event_id is not None and coherent and open_coherent:
+        marks: Optional[list[dict]] = [] if live_state == "in_progress" else None
         blend_pair, blend_open, blend_refusal = orient_event_blend(
             (blends or {}).get(int(event_id)),
             [v["display_name"] for v in views],
+            source_marks=marks,
         )
         if blend_pair is not None:
             price_basis = PRICE_BASIS_BLEND
             for index, view in enumerate(views):
                 view["probability"] = blend_pair[index]
+                if marks is not None:
+                    view["source_mark"] = marks[index]
                 if blend_open is None:
                     # NO OPEN MEANS NO ARROW, AND NO ARROW MEANS CLEARING THE ONE
                     # THAT IS THERE (CERT-2251). The venue's opening belongs to
@@ -894,6 +921,29 @@ def build_match_row(
                     view["move"] = round(blend_pair[index] - blend_open[index], 6)
             count = ((blends or {}).get(int(event_id)) or {}).get("source_count")
             blend_source_count = count if isinstance(count, int) and count > 0 else None
+
+    if (
+        live_state == "in_progress"
+        and coherent
+        and block is not None
+        and price_basis == PRICE_BASIS_VENUE
+    ):
+        # Keep the specimen producer importable without SQLAlchemy.
+        from app.utils.source_mark import quote_source_mark
+
+        scaled = any(
+            round(view["raw_probability"], 6) != view["probability"] for view in views
+        )
+        source = block.get("source")
+        source_key = source if isinstance(source, str) else None
+        for view in views:
+            # The loader's freshness clock is not bound to this exact quote.
+            mark = quote_source_mark(
+                [{"key": source_key, "probability": view["raw_probability"]}]
+            )
+            if scaled and mark["state"] == "single":
+                mark["method"] = "Bain Luck field · scaled with the other outcomes to total 100%"
+            view["source_mark"] = mark
 
     # THE AND (UX-P135): the pair is as old as its older side.
     age = governing_age_hours(side_times, now)
@@ -1915,9 +1965,11 @@ def apply_event_blend_to_linked_rows(
         if not (coherent and open_coherent):
             continue
 
+        marks: Optional[list[dict]] = [] if _is_registered_live_row(row) else None
         blend_pair, blend_open, refusal = orient_event_blend(
             (blends or {}).get(event_id),
             [str(side.get("display_name") or "") for side in sides],
+            source_marks=marks,
         )
         # THE REFUSAL IS RECORDED EVEN WHEN NOTHING CHANGES. A row that now has an
         # event and still shows a venue price must say why — that silent
@@ -1930,6 +1982,10 @@ def apply_event_blend_to_linked_rows(
 
         for index, side in enumerate(sides):
             side["probability"] = blend_pair[index]
+            if marks is not None:
+                side["source_mark"] = marks[index]
+            else:
+                side.pop("source_mark", None)
             if blend_open is None:
                 # THE LEVEL TRAVELS, THE ARROW DOES NOT (CERT-2251). An event
                 # with a hero and no opening used to leave this row on the venue
@@ -2150,10 +2206,11 @@ def event_blend_view(event: Any) -> dict[str, Any]:
     database — the same contract `compute_aggregate_probability` itself keeps.
     """
     from app.utils.aggregation import (
-        compute_aggregate_probability,
+        compute_aggregate_probability_tiered,
         effective_source_weights,
         parse_source_entry,
     )
+    from app.utils.source_mark import event_quote_source_marks
 
     status = getattr(event, "status", None)
     keys, _values, _weights = effective_source_weights(event, status)
@@ -2164,14 +2221,25 @@ def event_blend_view(event: Any) -> dict[str, Any]:
         for _value, stamp in [parse_source_entry(sources.get(key))]
         if stamp is not None
     ]
+    source_inputs: list[tuple[str, float]] = []
+    source_method: list[str] = []
+    # Keep the existing fallback gate and price, and trace that price's inputs.
+    probability, _tier = compute_aggregate_probability_tiered(
+        event, status, source_inputs=source_inputs, source_method=source_method,
+    )
+    home_mark, away_mark = event_quote_source_marks(
+        event, source_inputs, method=source_method[0] if source_method else None,
+    )
     return {
         "home_team_name": getattr(event, "home_team_name", None),
         "away_team_name": getattr(event, "away_team_name", None),
         "opening_home_probability": getattr(event, "opening_home_probability", None),
         "opening_away_probability": getattr(event, "opening_away_probability", None),
-        "blend_home_probability": compute_aggregate_probability(event, status),
+        "blend_home_probability": probability,
         "blend_sources": list(keys),
         "observed_at": max(stamps) if stamps else None,
+        "home_source_mark": home_mark,
+        "away_source_mark": away_mark,
     }
 
 
@@ -2230,9 +2298,14 @@ def _fill_blend_row(
 
     age = (now - observed).total_seconds() / 3600.0 if observed else None
     state = price_state(age)
+    marks = _event_axis_source_marks(event_row) if _is_registered_live_row(row) else None
     for side in sides:
         probability = probabilities[id(side)]
         side["probability"] = probability
+        if marks is not None:
+            side["source_mark"] = marks[0 if side is home[0] else 1]
+        else:
+            side.pop("source_mark", None)
         side["raw_probability"] = probability
         side["observed_at"] = observed
         side["age_hours"] = round(age, 2) if age is not None else None
