@@ -1,7 +1,7 @@
 {
   "revision": "Factory alive, November 18",
   "python_rules": {
-    "passed": 37,
+    "passed": 38,
     "real_change_fixtures": 18
   },
   "stopped_rules": [

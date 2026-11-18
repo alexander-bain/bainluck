@@ -25,20 +25,25 @@ def commands_from(comments):
         if comment.get("author_association") not in TRUSTED:
             continue
         for line in comment.get("body", "").splitlines():
-            merging = re.search(
-                r"\bmerging\s+(#[\d]+(?:\s*,?\s*#\d+)*)\s*\((server|website|apps)\)",
-                line,
-                re.I,
-            )
+            merging = re.search(r"\bmerging\b", line, re.I)
             if merging:
-                commands.append(
-                    {
-                        "kind": "merging",
-                        "line": merging[2].title(),
-                        "numbers": [int(n) for n in re.findall(r"#(\d+)", merging[1])],
-                        "at": comment["created_at"],
-                    }
-                )
+                numbers, separator, target = line[merging.end() :].partition("(")
+                tokens = numbers.replace(",", " ").split()
+                delivery = re.match(r"(server|website|apps)\)", target, re.I)
+                if (
+                    separator
+                    and delivery
+                    and tokens
+                    and all(re.fullmatch(r"#[0-9]{1,10}", token) for token in tokens)
+                ):
+                    commands.append(
+                        {
+                            "kind": "merging",
+                            "line": delivery[1].title(),
+                            "numbers": [int(token[1:]) for token in tokens],
+                            "at": comment["created_at"],
+                        }
+                    )
             for name in LINES:
                 if re.search(r"\bHOLD\b", line) and re.search(
                     rf"\b{name}\b", line, re.I

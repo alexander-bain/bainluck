@@ -123,6 +123,14 @@ class FactoryStops(unittest.TestCase):
         self.assertNotIn("body", commands_from([comment])[0])
         self.assertEqual(commands_from([{**comment, "author_association": "NONE"}]), [])
 
+    def test_announcement_rejects_repeated_tokens_with_a_bad_suffix(self):
+        comment = {
+            "body": "merging" + "\t#0" * 5000 + " (serverx)",
+            "created_at": "2026-11-18T16:47:17Z",
+            "author_association": "OWNER",
+        }
+        self.assertEqual(commands_from([comment]), [])
+
     def test_reviews_survive_test_only_commits_and_master_merges(self):
         pull = {
             "head_sha": "latest",
