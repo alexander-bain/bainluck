@@ -182,7 +182,10 @@ test("a missing event renders no observation counter", () => {
 
 test("unchanged history selection never borrows advancing source clocks or counts them as observations", () => {
   eventPayload.hero_probability_source = "opening";
-  historyPayload = { aggregate_line: [{ timestamp: COMMITTED, home_probability: .6 }] };
+  historyPayload = {
+    blend_edge_pinned: true,
+    aggregate_line: [{ timestamp: COMMITTED, home_probability: .6 }],
+  };
   for (const clock of [COMMITTED, OBSERVED, new Date(NOW).toISOString()]) {
     eventPayload.hero_probability_observed_at = clock;
     eventPayload.win_probability_sources.kalshi.updated_at = clock;
@@ -279,8 +282,12 @@ test("an admitted equal-valued v3 preview is named by its authority, session and
 
 test("a fallback headline has no adopted blend identity", () => {
   eventPayload.hero_probability_source = "opening";
-  historyPayload = { aggregate_line: [{ timestamp: COMMITTED, home_probability: .6 }] };
+  historyPayload = {
+    blend_edge_pinned: true,
+    aggregate_line: [{ timestamp: COMMITTED, home_probability: .6 }],
+  };
   const html = hero(draw());
+  expect(attr(html, "data-probability")).toBe("0.6");
   expect(attr(html, "data-display-basis")).toBe("unavailable");
   expect(attr(html, "data-display-state")).toBe("");
 });

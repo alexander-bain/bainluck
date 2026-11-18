@@ -60,6 +60,7 @@ import { cardProjectedFinal, liveCardProjectedFinal, projectedFinalLabel } from 
 import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastComparison";
 import EventCard183A, { buildUnifiedCardFromFeed } from "./EventCard183A";
 import { isWebGameCard183AEnabled } from "@/lib/gameCard183AFlag";
+import { isStoredOpeningChance } from "@/lib/probabilityEvidence";
 
 interface FeedCardProps {
   item: FeedItem;
@@ -474,8 +475,9 @@ function EventFeedCard({
   const rawHighlightLabel = data.highlight?.label?.trim() || "";
   const highlightLabel =
     isLive && rawHighlightLabel.toLowerCase() === "live" ? "" : rawHighlightLabel;
-  const homeProb = data.current_odds?.home_probability ?? null;
-  const awayProb = data.current_odds?.away_probability ?? null;
+  const forecastOdds = isStoredOpeningChance(data) ? undefined : data.current_odds;
+  const homeProb = forecastOdds?.home_probability ?? null;
+  const awayProb = forecastOdds?.away_probability ?? null;
   const hasScore = (isLive || isFinished) && data.home_score !== null && data.away_score !== null;
 
   // Determine winner for finished events
@@ -533,8 +535,8 @@ function EventFeedCard({
   const [awayPct, homePct] = servedDuelPercents(
     displayAwayProb,
     displayHomeProb,
-    data.current_odds?.away_rendered_percent,
-    data.current_odds?.home_rendered_percent,
+    forecastOdds?.away_rendered_percent,
+    forecastOdds?.home_rendered_percent,
   );
 
   // Team colors for the probability bar and missing-logo badges. Decided as a
