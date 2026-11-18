@@ -152,13 +152,20 @@ struct EventSportHeadlineCard12472: View {
         )
     }
 
+    private var resolvedHeadlineSourceMark: SourceMarkButton? {
+        guard let mark = model.sourceMark, mark.state != .settled else { return nil }
+        return SourceMarkButton(
+            mark,
+            number: model.home.rawProbability,
+            subject: model.home.shortName,
+            isPregame: EventState.isFinished(model.eventStatus),
+            numberSize: 20
+        )
+    }
+
     private var hasTrailingControls: Bool {
         if showsActiveEkgControl { return true }
-        return SourceMarkButton(
-            model.sourceMark,
-            number: model.home.rawProbability,
-            numberSize: 20
-        ) != nil
+        return resolvedHeadlineSourceMark != nil
     }
 
     private static func livePregameMetaText(
@@ -326,11 +333,7 @@ struct EventSportHeadlineCard12472: View {
                     .buttonStyle(.plain)
                 }
             }
-            if let markButton = SourceMarkButton(
-                model.sourceMark,
-                number: model.home.rawProbability,
-                numberSize: 20
-            ) {
+            if let markButton = resolvedHeadlineSourceMark {
                 markButton
                     .padding(.vertical, -10)
             }

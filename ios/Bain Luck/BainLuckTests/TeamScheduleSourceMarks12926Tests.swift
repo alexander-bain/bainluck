@@ -84,6 +84,12 @@ final class TeamScheduleSourceMarks12926Tests: XCTestCase {
         )
         XCTAssertEqual(resolvedAway.mark.state, .blend)
         XCTAssertEqual(resolvedAway.mark.sources.map(\.key), ["betting", "kalshi", "polymarket"])
+        XCTAssertEqual(resolvedAway.subject, "Celtics")
+        XCTAssertFalse(resolvedAway.isPregame)
+        XCTAssertEqual(
+            SourceMarkSheet.contextLine(subject: resolvedAway.subject, isPregame: resolvedAway.isPregame),
+            "Celtics"
+        )
         let awayProb = try XCTUnwrap(resolvedAway.number)
         XCTAssertEqual(awayProb, 0.382, accuracy: 0.0001)
         XCTAssertEqual(SourceMarkSheet.headline(resolvedAway.number), "38%")
@@ -172,10 +178,55 @@ final class TeamScheduleSourceMarks12926Tests: XCTestCase {
         )
         XCTAssertEqual(resolved.mark.state, .single)
         XCTAssertEqual(resolved.mark.sources.map(\.key), ["betting"])
+        XCTAssertEqual(resolved.subject, "Celtics")
+        XCTAssertTrue(resolved.isPregame)
+        XCTAssertEqual(
+            SourceMarkSheet.contextLine(subject: resolved.subject, isPregame: resolved.isPregame),
+            "Celtics · Pregame"
+        )
         let preProb = try XCTUnwrap(resolved.number)
         XCTAssertEqual(preProb, 0.63, accuracy: 0.0001)
         XCTAssertEqual(SourceMarkSheet.headline(resolved.number), "63%")
         XCTAssertEqual(SourceMarkSheet.method(resolved.mark), "Sportsbooks' price")
+        XCTAssertEqual(
+            SourceMarkSheet.singleUnscaledAttribution(resolved.mark, headline: "63%"),
+            "From Sportsbooks"
+        )
+
+        // Scaled single-source marks keep the full row + scaling sentence (`nil` singleUnscaledAttribution).
+        let scaled = SourceMark(
+            state: .single,
+            sources: [.init(key: "betting", name: "Sportsbooks", probability: 0.16, observedAt: nil, count: 6)],
+            method: "Scaled across 32 outcomes so the field totals 100%"
+        )
+        XCTAssertNil(SourceMarkSheet.singleUnscaledAttribution(scaled, headline: "14%"))
+    }
+
+    func testEventCardDarkModeResolvesThroughRuling221Floor() throws {
+        let futureISO = Date().addingTimeInterval(3 * 3600).ISO8601Format()
+        let json = """
+        {
+          "id": 9905,
+          "sport": "basketball_nba",
+          "home_team": "Indiana Pacers",
+          "away_team": "Houston Rockets",
+          "commence_time": "\(futureISO)",
+          "status": "scheduled",
+          "current_odds": {"home_probability": 0.26, "away_probability": 0.74},
+          "away_team_data": {"primary_color": "#CE1141", "secondary_color": "#000000"},
+          "home_team_data": {"primary_color": "#002D62", "secondary_color": "#FDBB30"}
+        }
+        """
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        let event = try d.decode(FeedEventData.self, from: Data(json.utf8))
+        let card = EventCardView(event: event, reason: nil)
+        let darkHexes = card.barColorHexes(for: .dark)
+        XCTAssertTrue(
+            TeamTextContrast.readableOnSurface(darkHexes.home, surfaceLuminance: TeamTextContrast.darkSurfaceLuminance),
+            "Pacers #002D62 must resolve to readable secondary #FDBB30 (or lightened >= 3:1) in Dark mode, got \(darkHexes.home)"
+        )
+        XCTAssertEqual(darkHexes.home.uppercased(), "#FDBB30")
     }
 
     func testThreeWaySoccerAwayUnavailableDrawsNoMark() throws {
@@ -379,18 +430,77 @@ final class TeamScheduleSourceMarks12926Tests: XCTestCase {
                 to: URL(fileURLWithPath: "\(outDir)/team-schedule-cards-\(tag)-390.png")
             )
 
-            let upcomingSheet = SourceMarkSheet(mark: upcomingResolved.mark, number: upcomingResolved.number)
+            let upcomingSheet = SourceMarkSheet(
+                mark: upcomingResolved.mark,
+                number: upcomingResolved.number,
+                subject: upcomingResolved.subject,
+                isPregame: upcomingResolved.isPregame
+            )
                 .environment(\.colorScheme, scheme)
-            let upSheetImg = try await captureWindowSnapshot(upcomingSheet, scheme: scheme, width: 390, fixedHeight: 420)
+            let upSheetImg = try await captureWindowSnapshot(upcomingSheet, scheme: scheme, width: 390, fixedHeight: 430)
             try XCTUnwrap(upSheetImg.pngData()).write(
                 to: URL(fileURLWithPath: "\(outDir)/team-schedule-upcoming-sheet-\(tag)-390.png")
             )
 
-            let recentSheet = SourceMarkSheet(mark: recentResolved.mark, number: recentResolved.number)
+            let recentSheet = SourceMarkSheet(
+                mark: recentResolved.mark,
+                number: recentResolved.number,
+                subject: recentResolved.subject,
+                isPregame: recentResolved.isPregame
+            )
                 .environment(\.colorScheme, scheme)
-            let recSheetImg = try await captureWindowSnapshot(recentSheet, scheme: scheme, width: 390, fixedHeight: 330)
+            let recSheetImg = try await captureWindowSnapshot(recentSheet, scheme: scheme, width: 390, fixedHeight: 280)
             try XCTUnwrap(recSheetImg.pngData()).write(
                 to: URL(fileURLWithPath: "\(outDir)/team-schedule-recent-sheet-\(tag)-390.png")
+            )
+
+            let futureISO = Date().addingTimeInterval(4 * 3600).ISO8601Format()
+            let pacersEvent = try decoder.decode(FeedEventData.self, from: Data("""
+            {
+              "id": 9910,
+              "sport": "basketball_nba",
+              "sport_name": "NBA",
+              "home_team": "Indiana Pacers",
+              "away_team": "Houston Rockets",
+              "commence_time": "\(futureISO)",
+              "status": "scheduled",
+              "current_odds": {"home_probability": 0.26, "away_probability": 0.74, "projected_home_score": 109, "projected_away_score": 117},
+              "away_team_data": {"primary_color": "#CE1141", "secondary_color": "#000000", "logo_small": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/hou.png"},
+              "home_team_data": {"primary_color": "#002D62", "secondary_color": "#FDBB30", "logo_small": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/ind.png"}
+            }
+            """.utf8))
+            let bucksEvent = try decoder.decode(FeedEventData.self, from: Data("""
+            {
+              "id": 9911,
+              "sport": "basketball_nba",
+              "sport_name": "NBA",
+              "home_team": "Miami Heat",
+              "away_team": "Milwaukee Bucks",
+              "commence_time": "\(futureISO)",
+              "status": "scheduled",
+              "current_odds": {"home_probability": 0.85, "away_probability": 0.15, "projected_home_score": 124, "projected_away_score": 112},
+              "away_team_data": {"primary_color": "#00471B", "secondary_color": "#EEE1C6", "logo_small": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/mil.png"},
+              "home_team_data": {"primary_color": "#98002E", "secondary_color": "#F9A01B", "logo_small": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/mia.png"}
+            }
+            """.utf8))
+            let darkContrastStack = VStack(alignment: .leading, spacing: 12) {
+                EventCardView(event: pacersEvent, reason: nil)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(cardBg))
+                EventCardView(event: bucksEvent, reason: nil)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(cardBg))
+            }
+            .padding(16)
+            .frame(width: 390)
+            .background(pageBg)
+            .environmentObject(pinManager)
+            .environment(\.colorScheme, scheme)
+            let contrastImg = try await captureWindowSnapshot(darkContrastStack, scheme: scheme, width: 390)
+            try XCTUnwrap(contrastImg.pngData()).write(
+                to: URL(fileURLWithPath: "\(outDir)/dark-contrast-cards-\(tag)-390.png")
             )
         }
     }
