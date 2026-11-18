@@ -587,8 +587,15 @@ extension WidgetTapJourneyTests {
         try freshFaceRequire(XCTWaiter.wait(for: [activated], timeout: 15) == .completed,
                              "Configured Exactograph did not become active", host: host)
         let reading = host.descendants(matching: .any)["watch.complication.corner.fallback"].firstMatch
-        try freshFaceRequire(reading.waitForExistence(timeout: 15) && reading.isHittable && host.frame.contains(reading.frame),
-                             "Actual configured Exactograph has no fitting explicit launcher", host: host)
+        // Run 44397980828 (corner): the launcher appeared after 13 s still drawn as
+        // WidgetKit's placeholder (private-use glyphs, no letters). Wait for the real
+        // entry to replace it; the caller still requires the exact label.
+        let drawn = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            reading.exists && reading.label.unicodeScalars.contains { $0.properties.isAlphabetic }
+        }, object: host)
+        let arrivedDrawn = XCTWaiter.wait(for: [drawn], timeout: 45) == .completed
+        try freshFaceRequire(arrivedDrawn && reading.isHittable && host.frame.contains(reading.frame),
+                             "Actual configured Exactograph has no fitting, drawn explicit launcher", host: host)
         return reading
     }
 

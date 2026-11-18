@@ -1067,7 +1067,7 @@ XCODE_27_2_CURRENT_SHA256 = {
     "PickerReturnJourneyTests.swift": "8e23abbce48fc2c47f382fdde2985f414236026caa03987535b91b8524e361bc",
     "PickerSelectedStateJourneyTests.swift": "129ad9836cfe7eee86f8aa024fd09b00e0a8ad2f8c145c19be1d3e7e851073b5",
     "WatchDiagnosticsJourneyTests.swift": "9f6fd014300264b8a817e8b8c42caebc91e15457c1d305ca06018c67c62fdb68",
-    "WidgetTapJourneyTests.swift": "da1d661eabbffb8b0dfbfc8ddae969dd6bf2b368912e6e83296a9624b620212a",
+    "WidgetTapJourneyTests.swift": "3e18c8c592e322aba981b2ee1dee42d0efc880fa70e6b1dd988458a511bc63dc",
 }
 XCODE_27_2_PREVIOUS_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "3b01a4864451d948c659a8236b85f8548138ca646a259739414a72ff3df7658a",
@@ -1326,6 +1326,7 @@ XCODE_27_2_LATER_TRANSFORMS = {
     ],
     'WidgetTapJourneyTests.swift': [
         ('        for overlay in dismissedOverlays {\n            try widgetWarmWait(NSPredicate(format: "exists == false"), on: overlay, timeout: 15,\n                               message: "Real host tap did not dismiss the previously observed overlay", app: app)\n', '        for overlay in dismissedOverlays {\n            // 45 s, not 15: right after the tap brings the app forward, one hosted\n            // accessibility snapshot can take 14 s (run 43963455417, widgets: the\n            // first check of the picker\'s Cancel took 14.4 s, the picker was gone\n            // in the failure capture, and the 15 s wait had expired).\n            try widgetWarmWait(NSPredicate(format: "exists == false"), on: overlay, timeout: 45,\n                               message: "Real host tap did not dismiss the previously observed overlay", app: app)\n', 1),
+        ('        let reading = host.descendants(matching: .any)["watch.complication.corner.fallback"].firstMatch\n        try freshFaceRequire(reading.waitForExistence(timeout: 15) && reading.isHittable && host.frame.contains(reading.frame),\n                             "Actual configured Exactograph has no fitting explicit launcher", host: host)\n        return reading\n', '        let reading = host.descendants(matching: .any)["watch.complication.corner.fallback"].firstMatch\n        // Run 44397980828 (corner): the launcher appeared after 13 s still drawn as\n        // WidgetKit\'s placeholder (private-use glyphs, no letters). Wait for the real\n        // entry to replace it; the caller still requires the exact label.\n        let drawn = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n            reading.exists && reading.label.unicodeScalars.contains { $0.properties.isAlphabetic }\n        }, object: host)\n        let arrivedDrawn = XCTWaiter.wait(for: [drawn], timeout: 45) == .completed\n        try freshFaceRequire(arrivedDrawn && reading.isHittable && host.frame.contains(reading.frame),\n                             "Actual configured Exactograph has no fitting, drawn explicit launcher", host: host)\n        return reading\n', 1),
     ],
 }
 for _name, _blocks in XCODE_27_2_LATER_TRANSFORMS.items():
