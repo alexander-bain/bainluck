@@ -55,14 +55,20 @@ final class GameActivityEventProjectionTests: XCTestCase {
         XCTAssertNotNil(matched.probabilityObservedAt)
         XCTAssertNil(matched.scoreObservedAt, "Price receipt does not date the score")
         let moved = try XCTUnwrap(GameActivitySnapshot.liveActivityReading(for: event(current: 0.78)))
-        XCTAssertEqual(moved.homeRenderedPercent, 78)
+        XCTAssertEqual(moved.homeScore, 4)
+        XCTAssertEqual(moved.awayScore, 2)
+        XCTAssertNil(moved.homeRenderedPercent)
+        XCTAssertNil(moved.awayRenderedPercent)
         XCTAssertNil(moved.probabilityObservedAt, "Old hero clock cannot date a different phone number")
     }
 
     func testChangedAwayPairDoesNotBorrowHeroClock() throws {
         let reading = try XCTUnwrap(GameActivitySnapshot.liveActivityReading(
             for: event(hero: 0.455, current: 0.455, away: 0.60)))
-        XCTAssertEqual(reading.homeRenderedPercent, 46)
+        XCTAssertEqual(reading.homeScore, 4)
+        XCTAssertEqual(reading.awayScore, 2)
+        XCTAssertNil(reading.homeRenderedPercent)
+        XCTAssertNil(reading.awayRenderedPercent)
         XCTAssertNil(reading.probabilityObservedAt)
     }
 
@@ -86,18 +92,23 @@ final class GameActivityEventProjectionTests: XCTestCase {
         """.utf8))
     }
 
-    func testALiveOpeningSourceWithholdsBothPriceInputsAndKeepsTheScore() throws {
-        for hasOdds in [false, true] {
-            let event = try liveChanceEvent(source: "opening", hasCurrentOdds: hasOdds)
-            let reading = try XCTUnwrap(GameActivitySnapshot.liveActivityReading(for: event))
-            XCTAssertEqual(reading.lifecycle, .live)
-            XCTAssertEqual(reading.homeScore, 7)
-            XCTAssertEqual(reading.awayScore, 6)
-            XCTAssertEqual(reading.scoreObservedAt, "2026-10-05T12:59:55Z".asDate)
-            XCTAssertNil(reading.homeRenderedPercent)
-            XCTAssertNil(reading.awayRenderedPercent)
-            XCTAssertNil(reading.probabilityObservedAt)
-            XCTAssertNil(reading.headlineNowText(home: true))
+    func testOpeningOrUndatedBlendWithholdsBothPriceInputsAndKeepsTheScore() throws {
+        let cases: [(source: String, clock: String?)] = [
+            ("opening", nil), ("opening", "2026-10-05T12:59:45Z"), ("blend", nil)
+        ]
+        for (source, clock) in cases {
+            for hasOdds in [false, true] {
+                let event = try liveChanceEvent(source: source, hasCurrentOdds: hasOdds, probabilityClock: clock)
+                let reading = try XCTUnwrap(GameActivitySnapshot.liveActivityReading(for: event))
+                XCTAssertEqual(reading.lifecycle, .live)
+                XCTAssertEqual(reading.homeScore, 7)
+                XCTAssertEqual(reading.awayScore, 6)
+                XCTAssertEqual(reading.scoreObservedAt, "2026-10-05T12:59:55Z".asDate)
+                XCTAssertNil(reading.homeRenderedPercent)
+                XCTAssertNil(reading.awayRenderedPercent)
+                XCTAssertNil(reading.probabilityObservedAt)
+                XCTAssertNil(reading.headlineNowText(home: true))
+            }
         }
     }
 
