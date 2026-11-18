@@ -56,8 +56,13 @@ final class SavedItemWidgetParity10875Tests: XCTestCase {
                     let app = try decoder().decode(EventDetail.self, from: json)
                     let widget = try decoder().decode(SavedWidgetEventDetail10875.self, from: json)
                     let expected = OpeningLineHero.resolve(try XCTUnwrap(app.currentOdds), for: app)
-                    let got = try XCTUnwrap(SavedWidgetReadingRules10875.heroPair(widget))
                     let label = "\(status ?? "nil")/\(source)/\(String(describing: heroHome))"
+                    if source == "opening", !expected.isOpeningLine {
+                        // An old opening-tagged body cannot supply a live or fallback price.
+                        XCTAssertNil(SavedWidgetReadingRules10875.heroPair(widget), label)
+                        continue
+                    }
+                    let got = try XCTUnwrap(SavedWidgetReadingRules10875.heroPair(widget), label)
                     XCTAssertEqual(got.isOpeningLine, expected.isOpeningLine, "opening arm differs: \(label)")
                     XCTAssertEqual(got.home, expected.homeProbability, "home differs: \(label)")
                     XCTAssertEqual(got.away, expected.awayProbability, "away differs: \(label)")

@@ -217,7 +217,10 @@ enum SavedClock10875 {
     static func caption(_ reading: SavedWidgetReading10875, entry: SavedItemWidgetEntry10875) -> String? {
         // R3: a reading with no clock (a settled game) says only "Offline",
         // never a stand-in phrase for a time it does not have.
-        if entry.isOffline { return text(reading.observedAt, relativeTo: entry.date).map { "Offline · \($0)" } ?? "Offline" }
+        if entry.isOffline {
+            if reading.phase == .openingLine { return "Opening line · Offline" }
+            return text(reading.observedAt, relativeTo: entry.date).map { "Offline · \($0)" } ?? "Offline"
+        }
         switch reading.phase {
         case .current:
             return text(reading.observedAt, relativeTo: entry.date).map { "As of \($0)" }
@@ -336,7 +339,8 @@ struct SavedMedium10875: View {
                 .padding(.trailing, clearsRefresh ? 24 : 0)
             }
             if let caption {
-                Text(reading.priceCaption.map { "\($0) · \(caption)" } ?? caption)
+                let prefix = reading.phase == .openingLine ? nil : reading.priceCaption
+                Text(prefix.map { "\($0) · \(caption)" } ?? caption)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -448,7 +452,7 @@ struct SavedCircular10875: View {
             VStack(spacing: 0) {
                 // The name the number belongs to, shortest form, so the
                 // percentage is never shown without its subject.
-                Text(reading.headline?.shortLabel ?? reading.shortSubject)
+                Text(SavedLockScreenFit10875.ringHeadline(reading)?.shortLabel ?? reading.shortSubject)
                     .font(.system(size: 9, weight: .semibold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)

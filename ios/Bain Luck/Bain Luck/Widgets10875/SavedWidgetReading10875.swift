@@ -288,9 +288,8 @@ enum SavedWidgetReadingRules10875 {
                        spoken: "\(subject). \(caption): \(said).\(when) \(status).", shares: shares)
     }
 
-    /// The pair the hero prints — `OpeningLineHero.resolve`'s rule on this
-    /// decode. `nil` when the event carries no `current_odds` at all, which is
-    /// the hero's unavailable branch.
+    /// The pair the hero prints. Older detail bodies can still declare an
+    /// opening line. Only its explicitly historical pregame figure is usable.
     struct HeroPair: Equatable {
         let away: Double?
         let home: Double?
@@ -300,13 +299,13 @@ enum SavedWidgetReadingRules10875 {
     }
 
     static func heroPair(_ event: SavedWidgetEventDetail10875) -> HeroPair? {
-        guard let odds = event.currentOdds else { return nil }
-        if event.heroProbabilitySource == "opening",
-           event.status != "live", !EventState.isFinished(event.status),
-           let home = event.heroProbability, home.isFinite, home > 0, home < 1 {
+        if event.heroProbabilitySource == "opening" {
+            guard event.status != "live", !EventState.isFinished(event.status),
+                  let home = event.heroProbability, home.isFinite, home > 0, home < 1 else { return nil }
             return HeroPair(away: event.heroProbabilityAway.flatMap { $0.isFinite ? $0 : nil }, home: home,
                             awayRenderedPercent: nil, homeRenderedPercent: nil, isOpeningLine: true)
         }
+        guard let odds = event.currentOdds else { return nil }
         return HeroPair(away: odds.awayProbability, home: odds.homeProbability,
                         awayRenderedPercent: odds.awayRenderedPercent, homeRenderedPercent: odds.homeRenderedPercent,
                         isOpeningLine: false)
@@ -534,10 +533,15 @@ nonisolated enum SavedLockScreenFit10875 {
     /// The longest word the circular widget's value line holds whole ("Unknown").
     static let ringLimit = 7
 
+    /// The ring has space for a bare value. Opening lines need their caption.
+    static func ringHeadline(_ reading: SavedWidgetReading10875) -> SavedWidgetReading10875.Row? {
+        reading.phase == .openingLine ? nil : reading.headline
+    }
+
     /// The circular widget's value: a figure, a verdict that fits, or a word
     /// standing for one that does not.
     static func ringValue(_ reading: SavedWidgetReading10875) -> String {
-        guard let headline = reading.headline else { return reading.phase == .noResult ? "Final" : "—" }
+        guard let headline = ringHeadline(reading) else { return reading.phase == .noResult ? "Final" : "—" }
         // Nothing to show for the choice (its label says why, e.g. "Not
         // listed"): a dash, never a sentence squeezed into the circle.
         if reading.phase == .unavailable { return "—" }
