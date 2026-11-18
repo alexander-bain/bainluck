@@ -30,9 +30,8 @@ final class SmallNumberCardGuardTests: XCTestCase {
             .padding(.vertical, 8)
             .background(Color.white)
             .environment(\.colorScheme, .light)
-            .environment(\.dynamicTypeSize, typeSize)
 
-        let renderer = ImageRenderer(content: content)
+        let renderer = rendererForMeasurement(content, at: typeSize)
         renderer.scale = 3.0
         if let image = renderer.uiImage {
             return image
