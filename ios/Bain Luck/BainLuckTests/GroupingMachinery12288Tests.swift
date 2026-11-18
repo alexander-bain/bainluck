@@ -273,12 +273,192 @@ final class GroupingMachinery12288Tests: XCTestCase {
         XCTAssertFalse(strings.contains("GC"), "Must never render placeholder monogram letters 'GC': \(joined)")
     }
 
+    // MARK: - 2b. Follow-Up Polish (#12924): Shared Left Edge, Distinct Chart Series Colours & No Duplicate Page Headline
+
+    func testFollowUpPolishSharedNameLeftEdgeDistinctChartSeriesColorsAndNoDuplicatePageHeadline() throws {
+        // (1) Distinct chart series colours even when the server sends 3 identical purple or blue hexes.
+        let threePurple: [MachineryHistorySeries] = [
+            .init(outcomeId: 1, name: "Kevin Warsh", currentPct: 42, color: "#7C3AED", points: [.init(t: "2026-11-10T00:00:00Z", pct: 35), .init(t: "2026-11-17T00:00:00Z", pct: 42)]),
+            .init(outcomeId: 2, name: "Scott Bessent", currentPct: 31, color: "#7C3AED", points: [.init(t: "2026-11-10T00:00:00Z", pct: 34), .init(t: "2026-11-17T00:00:00Z", pct: 31)]),
+            .init(outcomeId: 3, name: "Christopher Waller", currentPct: 19, color: "#7C3AED", points: [.init(t: "2026-11-10T00:00:00Z", pct: 22), .init(t: "2026-11-17T00:00:00Z", pct: 19)])
+        ]
+        let threeBlue: [MachineryHistorySeries] = [
+            .init(outcomeId: 1, name: "No change", currentPct: 54, color: "#2563EB", points: [.init(t: "2026-11-10T00:00:00Z", pct: 48), .init(t: "2026-11-17T00:00:00Z", pct: 54)]),
+            .init(outcomeId: 2, name: "25 bps cut", currentPct: 36, color: "#2563EB", points: [.init(t: "2026-11-10T00:00:00Z", pct: 41), .init(t: "2026-11-17T00:00:00Z", pct: 36)]),
+            .init(outcomeId: 3, name: "50+ bps cut", currentPct: 10, color: "#2563EB", points: [.init(t: "2026-11-10T00:00:00Z", pct: 11), .init(t: "2026-11-17T00:00:00Z", pct: 10)])
+        ]
+        for isDark in [false, true] {
+            let resolvedPurple = MachineryChartSeriesPalette12288.resolvedHexes(for: threePurple, isDark: isDark)
+            let resolvedBlue = MachineryChartSeriesPalette12288.resolvedHexes(for: threeBlue, isDark: isDark)
+            XCTAssertEqual(Set(resolvedPurple).count, 3, "Expected 3 distinct colours for 3 purple series (isDark=\(isDark)): \(resolvedPurple)")
+            XCTAssertEqual(Set(resolvedBlue).count, 3, "Expected 3 distinct colours for 3 blue series (isDark=\(isDark)): \(resolvedBlue)")
+            for group in [resolvedPurple, resolvedBlue] {
+                let metrics = try group.map { try XCTUnwrap(MachineryChartSeriesPalette12288.parseMetrics($0)) }
+                XCTAssertTrue(MachineryChartSeriesPalette12288.areDistinct(metrics[0], metrics[1]))
+                XCTAssertTrue(MachineryChartSeriesPalette12288.areDistinct(metrics[0], metrics[2]))
+                XCTAssertTrue(MachineryChartSeriesPalette12288.areDistinct(metrics[1], metrics[2]))
+            }
+        }
+        // Served distinct colours (Blue vs Red) stay intact in light mode.
+        let twoDistinct: [MachineryHistorySeries] = [
+            .init(outcomeId: 1, name: "Democratic", currentPct: 52, color: "#2563EB", points: []),
+            .init(outcomeId: 2, name: "Republican", currentPct: 48, color: "#DC2626", points: [])
+        ]
+        XCTAssertEqual(
+            MachineryChartSeriesPalette12288.resolvedHexes(for: twoDistinct, isDark: false),
+            ["#2563EB", "#DC2626"]
+        )
+
+        // (2) Shared left edge: an outcome without art aligns with its illustrated neighbour's name left edge.
+        let samplePosterURL = "https://image.tmdb.org/t/p/w342/sample_poster_12288.jpg"
+        let solidPoster = UIGraphicsImageRenderer(size: CGSize(width: 56, height: 80)).image { ctx in
+            UIColor(red: 0.14, green: 0.42, blue: 0.34, alpha: 1.0).setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 56, height: 80))
+        }
+        let siblingMarket = MachineryMarketVisualItem(
+            marketId: 99101,
+            title: "Animated Feature",
+            outcomes: [
+                MachineryOutcomeVisual(
+                    outcomeId: 1,
+                    name: "Wildwood",
+                    probability: 0.46,
+                    renderedPercent: 46,
+                    art: .init(url: samplePosterURL, kind: "tmdb_poster")
+                ),
+                MachineryOutcomeVisual(
+                    outcomeId: 2,
+                    name: "Hoppers",
+                    probability: 0.34,
+                    renderedPercent: 34,
+                    art: nil
+                )
+            ]
+        )
+        let siblingBlock = MachineryVisualBlock(
+            formId: .siblingFieldsGrid,
+            initialVisibleLimit: 3,
+            marketItems: [siblingMarket]
+        )
+        let siblingImg = renderSurface(
+            MachinerySectionBlockView(visualBlock: siblingBlock, members: []).padding(16),
+            preloadedImages: [samplePosterURL: solidPoster],
+            style: .light,
+            dynamicType: .large,
+            maxHeight: 600
+        )
+        let siblingBoxes = try recognizeObservationBoxes(in: XCTUnwrap(siblingImg.cgImage))
+        let wildwoodX = try XCTUnwrap(siblingBoxes.first(where: { $0.text.contains("Wildwood") })?.minXPx)
+        let hoppersX = try XCTUnwrap(siblingBoxes.first(where: { $0.text.contains("Hoppers") })?.minXPx)
+        XCTAssertLessThanOrEqual(
+            abs(wildwoodX - hoppersX),
+            12.0,
+            "Artless sibling 'Hoppers' (\(hoppersX) px) must share 'Wildwood' left edge (\(wildwoodX) px)"
+        )
+
+        // (3) Embedded paired card inside a page section drops its own eyebrow and duplicate headline,
+        // while the Discover card keeps both.
+        let oscarsSetJSON = """
+        {
+          "set_id": "oscars-best-picture",
+          "category": "entertainment",
+          "kicker": "Awards · Oscars",
+          "title": "Oscars Best Picture",
+          "subtitle": "99th Academy Awards",
+          "stage1_label": "Nominated",
+          "stage2_label": "Winner",
+          "stage1_settled": false,
+          "primary_stage1_market_id": 501,
+          "primary_stage2_market_id": 502,
+          "entries": [
+            {
+              "subject_key": "odyssey",
+              "subject": "The Odyssey",
+              "detail": "",
+              "stage1_market_id": 501,
+              "stage2_market_id": 502,
+              "stage1_probability": 0.88,
+              "stage2_probability": 0.29,
+              "art": {
+                "kind": "tmdb_poster",
+                "url": "\(samplePosterURL)",
+                "verified_subject_match": true
+              }
+            },
+            {
+              "subject_key": "hoppers",
+              "subject": "Hoppers",
+              "detail": "",
+              "stage1_market_id": 501,
+              "stage2_market_id": 502,
+              "stage1_probability": 0.54,
+              "stage2_probability": 0.11
+            }
+          ]
+        }
+        """
+        let oscarsSet = try JSONDecoder().decode(PairedMetricSet.self, from: Data(oscarsSetJSON.utf8))
+        let pagePairedBlock = MachineryVisualBlock(
+            formId: .pairedStageBars,
+            initialVisibleLimit: 3,
+            pairedMetricSet: oscarsSet
+        )
+        let pageSectionImg = renderSurface(
+            MachinerySectionBlockView(visualBlock: pagePairedBlock, members: []).padding(16),
+            preloadedImages: [samplePosterURL: solidPoster],
+            style: .light,
+            dynamicType: .large,
+            maxHeight: 800
+        )
+        let pageSectionBoxes = try recognizeObservationBoxes(in: XCTUnwrap(pageSectionImg.cgImage))
+        let pageSectionJoined = pageSectionBoxes.map { $0.text }.joined(separator: " | ")
+        XCTAssertFalse(
+            pageSectionJoined.localizedCaseInsensitiveContains("Oscars Best Picture"),
+            "Embedded page section card must drop its own duplicate headline: \(pageSectionJoined)"
+        )
+        XCTAssertFalse(
+            pageSectionJoined.localizedCaseInsensitiveContains("AWARDS"),
+            "Embedded page section card must drop its own eyebrow: \(pageSectionJoined)"
+        )
+        let odysseyX = try XCTUnwrap(pageSectionBoxes.first(where: { $0.text.contains("The Odyssey") })?.minXPx)
+        let pairedHoppersX = try XCTUnwrap(pageSectionBoxes.first(where: { $0.text.contains("Hoppers") })?.minXPx)
+        XCTAssertLessThanOrEqual(
+            abs(odysseyX - pairedHoppersX),
+            12.0,
+            "Artless paired row 'Hoppers' (\(pairedHoppersX) px) must share 'The Odyssey' left edge (\(odysseyX) px)"
+        )
+
+        // Meanwhile, the Discover card still renders its eyebrow and headline.
+        let oscarsCardJSON = """
+        {
+          "slug": "machinery-oscars-best-picture",
+          "form_id": "paired_stage_bars",
+          "kicker": "Awards · Oscars",
+          "title": "Oscars Best Picture",
+          "subtitle": "99th Academy Awards",
+          "section_count": 4,
+          "footer": ""
+        }
+        """
+        let oscarsCard = try JSONDecoder().decode(MachineryCardContract.self, from: Data(oscarsCardJSON.utf8))
+        let discoverCardImg = renderSurface(
+            MachineryDiscoverEntryCardView(card: oscarsCard, pairedMetricSet: oscarsSet).padding(16),
+            preloadedImages: [samplePosterURL: solidPoster],
+            style: .light,
+            dynamicType: .large,
+            maxHeight: 900
+        )
+        let discoverJoined = try recognizeStrings(in: XCTUnwrap(discoverCardImg.cgImage)).joined(separator: " | ")
+        XCTAssertTrue(discoverJoined.localizedCaseInsensitiveContains("Oscars Best Picture"))
+    }
+
     // MARK: - 3. Live 4 Groupings: Decode, 227: A Screen Counts, Largest Dynamic Type & 390 px Renders
 
     func testLiveFourGroupingsCardsPagesDiversityCountsAnd390PxRenders() throws {
-        let renderDir = URL(fileURLWithPath: "/Users/bain/.gemini/antigravity/brain/4c590449-f20c-4ff4-921d-f7e1343a4327/renders-12288")
-        let liveJSONPath = renderDir.appendingPathComponent("live_machinery_preview_12288.json")
-        let manifestPath = renderDir.appendingPathComponent("art_manifest.json")
+        let inputDir = URL(fileURLWithPath: "/Users/bain/.gemini/antigravity/brain/4c590449-f20c-4ff4-921d-f7e1343a4327/renders-12288")
+        let renderDir = URL(fileURLWithPath: "/Users/bain/.gemini/antigravity/brain/4c590449-f20c-4ff4-921d-f7e1343a4327/renders-12288-polish")
+        let liveJSONPath = inputDir.appendingPathComponent("live_machinery_preview_12288.json")
+        let manifestPath = inputDir.appendingPathComponent("art_manifest.json")
 
         let payloadData: Data
         if let diskData = try? Data(contentsOf: liveJSONPath) {
@@ -829,6 +1009,24 @@ final class GroupingMachinery12288Tests: XCTestCase {
         let request = VNRecognizeTextRequest { req, _ in
             let observations = (req.results as? [VNRecognizedTextObservation]) ?? []
             output = observations.compactMap { $0.topCandidates(1).first?.string }
+        }
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        try handler.perform([request])
+        return output
+    }
+
+    private func recognizeObservationBoxes(in cgImage: CGImage) throws -> [(text: String, minXPx: CGFloat)] {
+        var output: [(String, CGFloat)] = []
+        let w = CGFloat(cgImage.width)
+        let request = VNRecognizeTextRequest { req, _ in
+            let observations = (req.results as? [VNRecognizedTextObservation]) ?? []
+            for obs in observations {
+                if let s = obs.topCandidates(1).first?.string {
+                    output.append((s, obs.boundingBox.minX * w))
+                }
+            }
         }
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
