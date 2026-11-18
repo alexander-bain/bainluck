@@ -32692,6 +32692,23 @@ def _withhold_undrawable_source_series(
     return withheld
 
 
+_LIVE_EDGE_MIN_AGE_SECONDS = 30.0
+
+
+def _stale_live_edge_timestamp(
+    points: list, live_now: datetime, min_stale_seconds: float = _LIVE_EDGE_MIN_AGE_SECONDS,
+) -> datetime | None:
+    if not points:
+        return None
+    try:
+        last_ts = datetime.fromisoformat(points[-1]["timestamp"])
+    except (TypeError, ValueError, KeyError):
+        return None
+    if last_ts.tzinfo is None:
+        last_ts = last_ts.replace(tzinfo=timezone.utc)
+    return last_ts if (live_now - last_ts).total_seconds() >= min_stale_seconds else None
+
+
 def _extend_win_prob_history_to_live_edge(
     win_prob_history: dict,
     win_prob_sources_meta: dict,
@@ -32699,7 +32716,7 @@ def _extend_win_prob_history_to_live_edge(
     is_live: bool,
     now: datetime,
     speaking_sources: Optional[Sequence[str]],
-    min_stale_seconds: float = 30.0,
+    min_stale_seconds: float = _LIVE_EDGE_MIN_AGE_SECONDS,
 ) -> int:
     """Carry each win-prob series forward to ``now`` on a live game (#920).
 
@@ -32733,14 +32750,9 @@ def _extend_win_prob_history_to_live_edge(
     surface that never asked it. A source absent from it is one the page will not
     price, so its line does not get carried to now.
 
-    ``None`` means *cannot say*, and fails OPEN (every series extends, the
-    pre-#6863 behaviour). The caller passes it for a FOLDED event, whose hero may
-    rest on a reading stored on a sibling row: proving silence there needs a
-    query this endpoint does not buy, and a gate that cannot see the sibling
-    would withhold a line that is perfectly correct. Measured on the live
-    population 2026-09-23 07:33Z — 59 live events with snapshots, 55 unaffected
-    by the gate, 4 withheld and all 4 serving no hero price at all; 1 folded, and
-    its canonical's own bag already carried the chart's source.
+    ``None`` means *cannot say*, and fails open. For a folded source with only
+    pregame history, the route checks for a new observation of that price in
+    the folded sources before it carries the value to now.
     """
     if not is_live:
         return 0
@@ -32750,17 +32762,9 @@ def _extend_win_prob_history_to_live_edge(
     for source_key, pts in win_prob_history.items():
         if speaking is not None and source_key not in speaking:
             continue
-        if not pts:
+        if _stale_live_edge_timestamp(pts, live_now, min_stale_seconds) is None:
             continue
         last = pts[-1]
-        try:
-            last_ts = datetime.fromisoformat(last["timestamp"])
-        except (TypeError, ValueError, KeyError):
-            continue
-        if last_ts.tzinfo is None:
-            last_ts = last_ts.replace(tzinfo=timezone.utc)
-        if (live_now - last_ts).total_seconds() < min_stale_seconds:
-            continue
         pts.append({
             "timestamp": live_now.isoformat(),
             "home_probability": last.get("home_probability"),
@@ -33727,6 +33731,7 @@ async def get_event_odds_history(
     # 🔴 Outside any try/except, for the reason the win-prob block states: a
     # fold that failed inside one would take the whole chart down silently.
     from app.utils.proven_duplicates import (
+        folded_probability_sources_with_revision,
         folded_series_event_ids,
         series_row_for_each_source,
     )
@@ -34939,26 +34944,53 @@ async def get_event_odds_history(
     # change (the snapshot dedup only emits a row on a probability change). Placed
     # before aggregate_line (computed from win_prob_history) so it propagates there.
     #
-    # #6863: and only for a source the HERO still counts, asked of the hero's own
-    # function rather than re-derived here — a second opinion about which readings
-    # are live is the drift `_tier1_readings` was extracted to prevent. A folded
-    # event passes None (fail open): its hero can rest on a sibling row's reading,
-    # which `event` alone cannot see, and withholding on a blind spot would delete
-    # a correct line. `series_event_ids` is the canonical alone when untagged.
-    from app.utils.aggregation import effective_source_weights
+    # #6863 / #12824: a folded venue's pregame tail needs an admitted live
+    # observation of that exact price before it can be carried to now.
+    from app.utils.aggregation import effective_source_weights, source_price_read_time
 
+    # Keep the sportsbook history's existing folded coverage policy separate
+    # from admission of the synthetic venue edge below.
     if len(series_event_ids) > 1:
         _hero_sources = None
     else:
         _hero_sources, _, _ = effective_source_weights(
             event, getattr(event, "status", None)
         )
+    speaking_sources = _hero_sources
+    folded_blend_view = None
+    folded_blend_revision = None
+    kickoff = event.commence_time
+    if (
+        _is_live_now and _hero_sources is None and kickoff is not None
+        and kickoff <= now and not _commence_time_is_venue_expiration(event)
+    ):
+        live_now = now.replace(microsecond=0)
+        pregame_tails = {
+            source: points[-1]["home_probability"]
+            for source, points in win_prob_history.items()
+            if (tail := _stale_live_edge_timestamp(points, live_now)) is not None
+            and tail < kickoff and points[-1]["home_probability"] is not None
+        }
+        if pregame_tails:
+            folded_sources, folded_blend_revision = (
+                await folded_probability_sources_with_revision(db, event, absorbed)
+            )
+            folded_blend_view = FoldedBlendView(event, folded_sources)
+            selected_inputs: list[tuple[str, float]] = []
+            resolve_hero(folded_blend_view, source_inputs=selected_inputs)
+            speaking_sources = [source for source in win_prob_history if source not in pregame_tails]
+            for source, value in selected_inputs:
+                if pregame_tails.get(source) != value:
+                    continue
+                observed_at = source_price_read_time(folded_sources, source, value, now=now)
+                if observed_at is not None and observed_at >= kickoff:
+                    speaking_sources.append(source)
     _extend_win_prob_history_to_live_edge(
         win_prob_history,
         win_prob_sources_meta,
         is_live=_is_live_now,
         now=now,
-        speaking_sources=_hero_sources,
+        speaking_sources=speaking_sources,
     )
 
     # #4976/#1999: pre-game buckets do not decay — the hero's own gate, asked
@@ -35168,15 +35200,13 @@ async def get_event_odds_history(
             # orientation-checked folded view `get_event` will compute it from
             # on its next miss, which is what keeps the two in step across the
             # boundary rather than only inside it.
-            from app.utils.proven_duplicates import (
-                FoldedBlendView,
-                folded_probability_sources_with_revision,
-            )
-
-            _pin_sources, blend_edge_fold_revision = (
-                await folded_probability_sources_with_revision(db, event, absorbed)
-            )
-            pin_event = FoldedBlendView(event, _pin_sources)
+            if folded_blend_view is None:
+                folded_sources, folded_blend_revision = (
+                    await folded_probability_sources_with_revision(db, event, absorbed)
+                )
+                folded_blend_view = FoldedBlendView(event, folded_sources)
+            pin_event = folded_blend_view
+            blend_edge_fold_revision = folded_blend_revision
             from app.utils.aggregation import newest_source_reading_time
 
             observed_at = newest_source_reading_time(

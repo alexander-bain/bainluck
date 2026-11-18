@@ -34,11 +34,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from app.routes import events
 from app.routes.events import get_event_odds_history
+from app.utils.aggregation import make_price_read
 
 # The harness is the one the other executed-route chart tests already drive, so
 # a change to the route's query shape breaks one place rather than two.
-from tests.test_history_end_cap_hides_every_point import _DispatchingSession
+from tests.test_history_end_cap_hides_every_point import _DispatchingSession, _Result
+from tests.test_series_fold_3810 import (
+    blend_fold_row,
+    fold_row,
+    is_blend_fold,
+    is_series_fold,
+)
 
 UTC = timezone.utc
 
@@ -251,3 +259,155 @@ async def test_the_withholding_does_not_empty_the_chart(sources):
     payload = await _serve(_live_event(sources), _stale_series(now))
 
     assert len(_points(payload)) == 3
+
+
+class _FoldedHistorySession(_DispatchingSession):
+    def __init__(self, event, twin, rows):
+        super().__init__(event, rows)
+        self.events = [event, twin] if twin is not None else [event]
+        self.blend_reads = 0
+
+    async def execute(self, statement, *args, **kwargs):
+        sql = str(statement)
+        if is_blend_fold(sql):
+            self.blend_reads += 1
+            return _Result(
+                [
+                    (*blend_fold_row(row), revision, row is not self.event)
+                    for row, revision in zip(self.events, (5, 8))
+                ]
+            )
+        if is_series_fold(sql):
+            return _Result([fold_row(row) for row in self.events])
+        return await super().execute(statement, *args, **kwargs)
+
+
+def _opening_snapshot(now):
+    return _snapshot(now - timedelta(hours=3), 0.495)
+
+
+def _fresh_opening_chance(now):
+    observed_at = now - timedelta(seconds=70)
+    reading = _snapshot(observed_at, 0.495)
+    return reading, {"polymarket": {
+        "value": 0.495,
+        "updated_at": observed_at.isoformat(),
+        "price_read": make_price_read(0.495, observed_at),
+    }}
+
+
+async def _serve_opening_history(now, rows, *, sources=None, folded=True, chart_range="all"):
+    event = _live_event({} if folded else sources or {})
+    event.commence_time = now - timedelta(minutes=15)
+    event.opening_home_probability = 0.495
+    twin = SimpleNamespace(
+        id=event.id + 1,
+        home_team_name=event.home_team_name,
+        away_team_name=event.away_team_name,
+        win_probability_sources=sources or {},
+    )
+    for snapshot in rows:
+        snapshot.event_id = twin.id if folded else event.id
+    session = _FoldedHistorySession(event, twin if folded else None, rows)
+    payload = await get_event_odds_history(
+        event_id=event.id,
+        hours=48,
+        chart_range=chart_range,
+        response=MagicMock(headers={}),
+        db=session,
+    )
+    return payload, session.blend_reads
+
+
+async def test_a_folded_live_game_never_promotes_its_only_stored_pregame_quote():
+    now = datetime.now(UTC)
+    opening = _opening_snapshot(now)
+    payload, reads = await _serve_opening_history(now, [opening])
+    assert payload["status"] == "live"
+    assert not payload["blend_edge_pinned"]
+    assert not any(p.get("live_edge") for p in _points(payload)), _points(payload)
+    # The source may be omitted as undrawable with one point. If it draws,
+    # its only permissible timestamp is the original historical quote.
+    assert all(p["timestamp"] == opening.captured_at.isoformat() for p in _points(payload))
+    assert reads == 1
+
+
+async def test_silent_fold_keeps_both_real_pregame_points_on_all():
+    now = datetime.now(UTC)
+    rows = [_opening_snapshot(now), _snapshot(now - timedelta(hours=2), 0.51)]
+    payload, _ = await _serve_opening_history(now, rows)
+    assert [(p["timestamp"], p["home_probability"]) for p in _points(payload)] == [
+        (row.captured_at.isoformat(), row.home_win_probability) for row in rows
+    ]
+
+
+@pytest.mark.parametrize("new_chart_row", [False, True])
+async def test_a_fresh_folded_twin_can_keep_the_same_numeric_chance_at_the_live_edge(new_chart_row):
+    now = datetime.now(UTC)
+    current, sources = _fresh_opening_chance(now)
+    rows = [_opening_snapshot(now)]
+    if new_chart_row:
+        rows.append(current)
+    payload, reads = await _serve_opening_history(now, rows, sources=sources)
+    points = _points(payload)
+    stored = [p for p in points if not p.get("live_edge")]
+    assert [p["timestamp"] for p in stored] == [r.captured_at.isoformat() for r in rows]
+    assert [p["home_probability"] for p in stored] == [0.495] * len(rows)
+    edges = [p for p in points if p.get("live_edge")]
+    assert len(edges) == 1
+    assert edges[0]["home_probability"] == 0.495
+    assert edges[0]["evidence"] == {"kind": "live_edge"}
+    assert abs(datetime.fromisoformat(edges[0]["timestamp"]) - now) < timedelta(seconds=5)
+    assert reads == (0 if new_chart_row else 1)
+
+
+@pytest.mark.parametrize("old_or_missing_read", [False, True], ids=["undated", "pregame-only"])
+async def test_a_recent_write_cannot_promote_a_pregame_tail_without_a_live_price_read(old_or_missing_read):
+    now = datetime.now(UTC)
+    opening = _opening_snapshot(now)
+    _, sources = _fresh_opening_chance(now)
+    sources["polymarket"]["price_read"] = (
+        make_price_read(0.495, opening.captured_at) if old_or_missing_read else None
+    )
+    payload, reads = await _serve_opening_history(now, [opening], sources=sources)
+    assert not any(point.get("live_edge") for point in _points(payload))
+    assert reads == 1
+
+
+@pytest.mark.parametrize("cached_hero", [False, True])
+async def test_folded_venue_admission_and_the_blend_pin_share_one_fold_read(monkeypatch, cached_hero):
+    now = datetime.now(UTC)
+    current, sources = _fresh_opening_chance(now)
+    observed_at = current.captured_at.isoformat()
+    cached = {
+        "hero_probability_source": "blend",
+        "hero_probability": 0.495,
+        "hero_probability_observed_at": observed_at,
+        "blend_fold_revision": {str(_SPECIMEN_ID): 3, str(_SPECIMEN_ID + 1): 4},
+    }
+    monkeypatch.setattr(events, "_cached_detail_payload", lambda *_: cached if cached_hero else None)
+    rows = [
+        _opening_snapshot(now),
+        _snapshot(now - timedelta(hours=3), 0.56, source="kalshi"),
+        _snapshot(now - timedelta(hours=2), 0.59, source="kalshi"),
+        current,
+    ]
+    payload, reads = await _serve_opening_history(now, rows, sources=sources)
+
+    assert reads == 1
+    assert payload["blend_edge_pinned"]
+    assert payload["blend_edge_observed_at"] == observed_at
+    assert payload["blend_edge_fold_revision"] == (
+        cached["blend_fold_revision"] if cached_hero else {str(_SPECIMEN_ID): 5, str(_SPECIMEN_ID + 1): 8}
+    )
+    assert _points(payload, "polymarket")[-1]["live_edge"]
+    assert not any(p.get("live_edge") for p in _points(payload, "kalshi"))
+
+
+@pytest.mark.parametrize("folded, include_snapshots", [(False, True), (True, False)])
+async def test_no_new_fold_read_without_a_live_folded_source_series(folded, include_snapshots):
+    now = datetime.now(UTC)
+    rows = [_opening_snapshot(now), _snapshot(now - timedelta(hours=2), 0.51)] if include_snapshots else []
+    payload, reads = await _serve_opening_history(now, rows, folded=folded)
+    assert reads == 0
+    assert [p["timestamp"] for p in _points(payload)] == [r.captured_at.isoformat() for r in rows]
