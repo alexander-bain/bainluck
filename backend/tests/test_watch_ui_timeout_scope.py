@@ -178,7 +178,10 @@ APPROVED_TIMEOUT_OVERRIDES = sorted(
 def test_retained_watch_cases_have_no_timeout_override():
     harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
     assert "-test-timeouts-enabled YES" in harness
-    assert "-default-test-execution-time-allowance 180" in harness
+    # b8e27ec342 (#12513): the measured suite gives every case 300 s on the hosted
+    # Watch, not 180 s; the 540 s ceiling and the approved overrides are unchanged.
+    assert "-default-test-execution-time-allowance 300" in harness
+    assert "-default-test-execution-time-allowance 180" not in harness
     assert "-maximum-test-execution-time-allowance 540" in harness
     overrides = []
     for path in (ROOT / "ios/Bain Luck/BainLuckWatchUITests").glob("*.swift"):

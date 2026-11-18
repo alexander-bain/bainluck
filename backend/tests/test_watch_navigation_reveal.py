@@ -683,6 +683,8 @@ def restore_cost_reads(name, text):
 def test_cost_reduction_reconstructs_every_original_assertion_capture_and_loop(name):
     raw = (SWIFT / name).read_text()
     restored = restore_cost_reads(name, raw)
+    # The later 45 s waits are registered on their own; compare the cost change alone.
+    raw = before_later_watch_fixes(name, raw)
     # Raw Swift assertion/capture call lines are not normalized away by the packet.
     for token in (
         "XCTAssert",
@@ -898,6 +900,39 @@ CONTROLS_TRAVERSAL = [
 ]
 FLAT_CLEANUP = '        defer {\n            // Let the selected-game foreground task cancel through its normal\n            // scene transition before asking XCTest to terminate this process.\n            // A failed transition or termination still fails this case.\n            XCUIDevice.shared.press(.home)\n            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n                let state = app.state\n                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning\n            }, object: app)\n            XCTAssertEqual(XCTWaiter.wait(for: [backgrounded], timeout: 5), .completed,\n                           "Layout fixture must leave foreground before cleanup")\n            if app.state != .notRunning { app.terminate() }\n            XCTAssertEqual(app.state, .notRunning, "Layout fixture cleanup must stop the app")\n        }\n'
 FLAT_ORIGINAL_CLEANUP = "        defer { app.terminate() }\n"
+# Runs 44131976001 and 44333150411 (controls): the same cleanup, now allowed 20 s to
+# leave the foreground, then one more Home press and 25 s, still failing if it stays.
+FLAT_CLEANUP_NOW = FLAT_CLEANUP.replace(
+    """            XCUIDevice.shared.press(.home)
+            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                let state = app.state
+                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning
+            }, object: app)
+            XCTAssertEqual(XCTWaiter.wait(for: [backgrounded], timeout: 5), .completed,
+                           "Layout fixture must leave foreground before cleanup")
+""",
+    """            XCUIDevice.shared.press(.home)
+            func leftForeground(within seconds: TimeInterval) -> XCTWaiter.Result {
+                let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    let state = app.state
+                    return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning
+                }, object: app)
+                return XCTWaiter.wait(for: [backgrounded], timeout: seconds)
+            }
+            // Run 44131976001 (controls): Home took 2.4 s on a loaded simulator and the
+            // state reads ~1 s each, so 5 s ran out after every check had passed.
+            // Run 44333150411 (controls): the app then stayed in the foreground for all
+            // 45 s after Home, so the press itself was lost. Press Home once more.
+            var left = leftForeground(within: 20)
+            if left != .completed {
+                XCUIDevice.shared.press(.home)
+                left = leftForeground(within: 25)
+            }
+            XCTAssertEqual(left, .completed, "Layout fixture must leave foreground before cleanup")
+""",
+    1,
+)
+assert FLAT_CLEANUP_NOW != FLAT_CLEANUP
 FLAT_ORIGINAL_SHA256 = (
     "81714894e7b460b17173ff0db17b7a158ef315d884e48d4c9e5b745f83bb062b"
 )
@@ -949,7 +984,9 @@ def test_flat_cleanup_preserves_whole_original_file_and_fails_closed():
     [
         "XCUIDevice.shared.press(.home)",
         "state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning",
-        "XCTWaiter.wait(for: [backgrounded], timeout: 5)",
+        "left = leftForeground(within: 20)",
+        "left = leftForeground(within: 25)",
+        'XCTAssertEqual(left, .completed, "Layout fixture must leave foreground before cleanup")',
         "if app.state != .notRunning { app.terminate() }",
         'XCTAssertEqual(app.state, .notRunning, "Layout fixture cleanup must stop the app")',
         'XCTAssertEqual(probability.label, "Association Sportive de Saint-Étienne Full Canonical Name win probability, 64%")',
@@ -964,8 +1001,9 @@ def test_cleanup_or_retained_content_cannot_be_dropped(required):
 
 def test_original_foreground_only_cleanup_is_rejected():
     raw = (SWIFT / "PickerCurrentGameJourneyTests.swift").read_text()
+    assert raw.count(FLAT_CLEANUP_NOW) == 1
     with pytest.raises(AssertionError):
-        require_flat_cleanup(raw.replace(FLAT_CLEANUP, FLAT_ORIGINAL_CLEANUP))
+        require_flat_cleanup(raw.replace(FLAT_CLEANUP_NOW, FLAT_ORIGINAL_CLEANUP))
 
 
 def test_distant_controls_use_existing_bounded_reveal_without_bypassing_content():
@@ -1020,13 +1058,13 @@ def test_large_and_small_drag_endpoints_stay_inside_measured_viewport():
 
 # #12513: exact Xcode 27.2 Watch UI test fixes.
 XCODE_27_2_CURRENT_SHA256 = {
-    "LargeTextRecoveryJourneyTests.swift": "81fbbaf5f8db988e57e84cbd34bb5e4dcb851930c634d189c80df598216b8637",
-    "PickerAliasJourneyTests.swift": "96d056ae6d20bcd7cd5d78a021cba55078c6fdecba51c4eec9b034b8f09e27a9",
-    "PickerCurrentGameJourneyTests.swift": "eb87c7d8cc26d132c4f3bfb44c2d60f4e7724c975d03652747add1e5eeefd349",
+    "LargeTextRecoveryJourneyTests.swift": "267753ce4fd805a4592f9c7f05794a6866d55616919170c64fb13ea82f12a03c",
+    "PickerAliasJourneyTests.swift": "3f1f1d4491a5c75a3de6df301190e41b38d81051c639b8039fd6404770b0e230",
+    "PickerCurrentGameJourneyTests.swift": "e8f02ad69bc6c8584ea29001d86a9dd763e89a17ae8b94eea5a070a9506696e2",
     "PickerReturnJourneyTests.swift": "8e23abbce48fc2c47f382fdde2985f414236026caa03987535b91b8524e361bc",
-    "PickerSelectedStateJourneyTests.swift": "c9c3bc3dee81b7cdd67b111f011756e096b3e085b1a00e19a111270c77dc323d",
+    "PickerSelectedStateJourneyTests.swift": "129ad9836cfe7eee86f8aa024fd09b00e0a8ad2f8c145c19be1d3e7e851073b5",
     "WatchDiagnosticsJourneyTests.swift": "9f6fd014300264b8a817e8b8c42caebc91e15457c1d305ca06018c67c62fdb68",
-    "WidgetTapJourneyTests.swift": "f3ce342ee7b6e8822be8c78869555123b95fbb675ea1a7dc8f6a0642da124535",
+    "WidgetTapJourneyTests.swift": "da1d661eabbffb8b0dfbfc8ddae969dd6bf2b368912e6e83296a9624b620212a",
 }
 XCODE_27_2_PREVIOUS_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "3b01a4864451d948c659a8236b85f8548138ca646a259739414a72ff3df7658a",
@@ -1250,6 +1288,53 @@ XCODE_27_2_WATCH_TRANSFORMS = {
         ),
     ],
 }
+
+
+# #12513 (Nov 17-18): hosted-run fixes made after the blocks above were registered.
+# State waits allow 45 s (a stalled accessibility service takes ~7 s per query), the
+# layout fixture gets 45 s to leave the foreground, the widget overlay-gone wait is
+# 45 s, and a large-text element under the navigation chrome scrolls down. Each is
+# one block, reverted before the blocks above, so the prior obligations still hold.
+XCODE_27_2_LATER_TRANSFORMS = {
+    'LargeTextRecoveryJourneyTests.swift': [
+        ('            if element.isHittable && appFrame.contains(frame) { return }\n            let earlier = frame.minY < appFrame.minY\n', '            if element.isHittable && appFrame.contains(frame) { return }\n            // Inside the window but not hittable means the blurred navigation\n            // chrome covers it (run 44013241432: the sheet heading sat at y 9,\n            // under "Your game", and a drag up hid it further each turn). An\n            // element in the top half is scrolled down, below the chrome.\n            let earlier = frame.minY < appFrame.minY\n', 1),
+        ('            let earlier = frame.minY < appFrame.minY\n            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))\n', '            let earlier = frame.minY < appFrame.minY\n                || (appFrame.contains(frame) && frame.midY < appFrame.midY)\n            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))\n', 1),
+    ],
+    'PickerAliasJourneyTests.swift': [
+        ('        let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label CONTAINS %@", "Offline."), object: state)\n        XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)\n        XCTAssertEqual(state.label.contains("Saved reading. Refresh to confirm."), saved)\n', '        let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label CONTAINS %@", "Offline."), object: state)\n        // A state wait passes the moment its predicate holds, so a long ceiling costs\n        // nothing on a healthy run. When the simulator\'s accessibility service stalls,\n        // each query takes about 7 s and 15 s allowed only two looks (run 44042203928).\n        XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 45), .completed)\n        XCTAssertEqual(state.label.contains("Saved reading. Refresh to confirm."), saved)\n', 1),
+    ],
+    'PickerCurrentGameJourneyTests.swift': [
+        ('            XCUIDevice.shared.press(.home)\n            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n                let state = app.state\n                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning\n            }, object: app)\n            XCTAssertEqual(XCTWaiter.wait(for: [backgrounded], timeout: 5), .completed,\n                           "Layout fixture must leave foreground before cleanup")\n            if app.state != .notRunning { app.terminate() }\n', '            XCUIDevice.shared.press(.home)\n            func leftForeground(within seconds: TimeInterval) -> XCTWaiter.Result {\n                let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n                    let state = app.state\n                    return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning\n                }, object: app)\n                return XCTWaiter.wait(for: [backgrounded], timeout: seconds)\n            }\n            // Run 44131976001 (controls): Home took 2.4 s on a loaded simulator and the\n            // state reads ~1 s each, so 5 s ran out after every check had passed.\n            // Run 44333150411 (controls): the app then stayed in the foreground for all\n            // 45 s after Home, so the press itself was lost. Press Home once more.\n            var left = leftForeground(within: 20)\n            if left != .completed {\n                XCUIDevice.shared.press(.home)\n                left = leftForeground(within: 25)\n            }\n            XCTAssertEqual(left, .completed, "Layout fixture must leave foreground before cleanup")\n            if app.state != .notRunning { app.terminate() }\n', 1),
+        ('            "Saved reading. Refresh to confirm.", "Offline."), object: state)\n        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 15), .completed)\n        let size = large ? "accessibility5" : "standard"\n', '            "Saved reading. Refresh to confirm.", "Offline."), object: state)\n        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 45), .completed)\n        let size = large ? "accessibility5" : "standard"\n', 1),
+        ('            "exists == true AND label BEGINSWITH %@", "Offline."), object: error)\n        XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)\n        let suppliedStart = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-09T02:00:00Z"))\n', '            "exists == true AND label BEGINSWITH %@", "Offline."), object: error)\n        XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 45), .completed)\n        let suppliedStart = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-09T02:00:00Z"))\n', 1),
+        ('            let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format:\n                "exists == true AND label BEGINSWITH %@", "Offline."), object: error)\n            XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)\n        }\n        XCTAssertEqual(state.label, expectedHeader)\n', '            let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format:\n                "exists == true AND label BEGINSWITH %@", "Offline."), object: error)\n            XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 45), .completed)\n        }\n        XCTAssertEqual(state.label, expectedHeader)\n', 1),
+        ('            let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format:\n                "exists == true AND label BEGINSWITH %@", "Offline."), object: error)\n            XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)\n        }\n        XCTAssertEqual(state.label, closed ? "Result not confirmed" : "Live")\n', '            let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format:\n                "exists == true AND label BEGINSWITH %@", "Offline."), object: error)\n            XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 45), .completed)\n        }\n        XCTAssertEqual(state.label, closed ? "Result not confirmed" : "Live")\n', 1),
+        ('        let newIdentity = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label CONTAINS %@", "Buffalo Bills"), object: context)\n        XCTAssertEqual(XCTWaiter.wait(for: [newIdentity], timeout: 15), .completed)\n        XCTAssertTrue(context.label.contains("Kansas City Chiefs"))\n', '        let newIdentity = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label CONTAINS %@", "Buffalo Bills"), object: context)\n        XCTAssertEqual(XCTWaiter.wait(for: [newIdentity], timeout: 45), .completed)\n        XCTAssertTrue(context.label.contains("Kansas City Chiefs"))\n', 1),
+        ('            "Buffalo Bills win probability, 55%"), object: probability)\n        XCTAssertEqual(XCTWaiter.wait(for: [bills], timeout: 15), .completed)\n        try captureMainScoreNames(in: app, away: "Kansas City Chiefs", home: "Buffalo Bills", awayScore: 0, homeScore: 0, specimen: "exact202-valid-colors-" + size)\n', '            "Buffalo Bills win probability, 55%"), object: probability)\n        XCTAssertEqual(XCTWaiter.wait(for: [bills], timeout: 45), .completed)\n        try captureMainScoreNames(in: app, away: "Kansas City Chiefs", home: "Buffalo Bills", awayScore: 0, homeScore: 0, specimen: "exact202-valid-colors-" + size)\n', 1),
+        ('                home + " win probability, 55%"), object: probability)\n            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 15), .completed)\n            try captureMainScoreNames(in: app, away: away, home: home, awayScore: 0, homeScore: 0,\n', '                home + " win probability, 55%"), object: probability)\n            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 45), .completed)\n            try captureMainScoreNames(in: app, away: away, home: home, awayScore: 0, homeScore: 0,\n', 1),
+        ('            "Buffalo Bills win probability, 55%"), object: probability)\n        XCTAssertEqual(XCTWaiter.wait(for: [bills], timeout: 15), .completed)\n        try openPicker(app)\n', '            "Buffalo Bills win probability, 55%"), object: probability)\n        XCTAssertEqual(XCTWaiter.wait(for: [bills], timeout: 45), .completed)\n        try openPicker(app)\n', 1),
+        ('            "Buffalo Bills win probability, 55%"), object: probability)\n        XCTAssertEqual(XCTWaiter.wait(for: [bills], timeout: 15), .completed)\n        capture(app, "Selected scheduled game at natural top - accessibility5")\n', '            "Buffalo Bills win probability, 55%"), object: probability)\n        XCTAssertEqual(XCTWaiter.wait(for: [bills], timeout: 45), .completed)\n        capture(app, "Selected scheduled game at natural top - accessibility5")\n', 1),
+        ('            "Buffalo Bills win probability, 55%"), object: probability)\n        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 15), .completed)\n        try captureComplete(probability, in: app, name: "Other choice loads its own Bills55 reading")\n', '            "Buffalo Bills win probability, 55%"), object: probability)\n        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 45), .completed)\n        try captureComplete(probability, in: app, name: "Other choice loads its own Bills55 reading")\n', 1),
+        ('            "Saved reading. Refresh to confirm.", "Offline."), object: state)\n        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 15), .completed)\n        try openPicker(app)\n', '            "Saved reading. Refresh to confirm.", "Offline."), object: state)\n        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 45), .completed)\n        try openPicker(app)\n', 1),
+        ('        let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label == %@", expected), object: status)\n        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 15), .completed)\n    }\n', '        let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label == %@", expected), object: status)\n        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 45), .completed)\n    }\n', 1),
+    ],
+    'PickerSelectedStateJourneyTests.swift': [
+        ('        let named = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label CONTAINS %@", team), object: probability)\n        XCTAssertEqual(XCTWaiter.wait(for: [named], timeout: 15), .completed)\n    }\n', '        let named = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label CONTAINS %@", team), object: probability)\n        XCTAssertEqual(XCTWaiter.wait(for: [named], timeout: 45), .completed)\n    }\n', 1),
+    ],
+    'WidgetTapJourneyTests.swift': [
+        ('        for overlay in dismissedOverlays {\n            try widgetWarmWait(NSPredicate(format: "exists == false"), on: overlay, timeout: 15,\n                               message: "Real host tap did not dismiss the previously observed overlay", app: app)\n', '        for overlay in dismissedOverlays {\n            // 45 s, not 15: right after the tap brings the app forward, one hosted\n            // accessibility snapshot can take 14 s (run 43963455417, widgets: the\n            // first check of the picker\'s Cancel took 14.4 s, the picker was gone\n            // in the failure capture, and the 15 s wait had expired).\n            try widgetWarmWait(NSPredicate(format: "exists == false"), on: overlay, timeout: 45,\n                               message: "Real host tap did not dismiss the previously observed overlay", app: app)\n', 1),
+    ],
+}
+for _name, _blocks in XCODE_27_2_LATER_TRANSFORMS.items():
+    XCODE_27_2_WATCH_TRANSFORMS[_name] = XCODE_27_2_WATCH_TRANSFORMS[_name] + _blocks
+
+
+def before_later_watch_fixes(name, text):
+    """The file as registered before XCODE_27_2_LATER_TRANSFORMS (the 45 s waits)."""
+    for previous, current, count in reversed(XCODE_27_2_LATER_TRANSFORMS.get(name, [])):
+        assert text.count(current) == count, f"Missing later #12513 block in {name}"
+        text = text.replace(current, previous, 1)
+    return text
 
 
 def restore_xcode27_2_watch_fixes(name, text):

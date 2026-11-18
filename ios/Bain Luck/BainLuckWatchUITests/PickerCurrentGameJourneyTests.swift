@@ -181,14 +181,23 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
             // scene transition before asking XCTest to terminate this process.
             // A failed transition or termination still fails this case.
             XCUIDevice.shared.press(.home)
-            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                let state = app.state
-                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning
-            }, object: app)
+            func leftForeground(within seconds: TimeInterval) -> XCTWaiter.Result {
+                let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    let state = app.state
+                    return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning
+                }, object: app)
+                return XCTWaiter.wait(for: [backgrounded], timeout: seconds)
+            }
             // Run 44131976001 (controls): Home took 2.4 s on a loaded simulator and the
             // state reads ~1 s each, so 5 s ran out after every check had passed.
-            XCTAssertEqual(XCTWaiter.wait(for: [backgrounded], timeout: 45), .completed,
-                           "Layout fixture must leave foreground before cleanup")
+            // Run 44333150411 (controls): the app then stayed in the foreground for all
+            // 45 s after Home, so the press itself was lost. Press Home once more.
+            var left = leftForeground(within: 20)
+            if left != .completed {
+                XCUIDevice.shared.press(.home)
+                left = leftForeground(within: 25)
+            }
+            XCTAssertEqual(left, .completed, "Layout fixture must leave foreground before cleanup")
             if app.state != .notRunning { app.terminate() }
             XCTAssertEqual(app.state, .notRunning, "Layout fixture cleanup must stop the app")
         }
