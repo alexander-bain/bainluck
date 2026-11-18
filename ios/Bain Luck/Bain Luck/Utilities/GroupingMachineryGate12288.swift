@@ -7,16 +7,12 @@ extension Notification.Name {
 /// Double-gate authority for `#12288` grouping machinery preview on iPhone:
 /// 1. Server gate: `/api/containers/preview/machinery` and `/api/containers/machinery-*`
 ///    require authenticated admin credentials (`_check_admin_auth`).
-/// 2. Client owner-only gate: only Alex's owner account (`id == 364` or `alex.bain@...`)
+/// 2. Client owner-only gate: only the owner account (`id == 364`)
 ///    can see the Preferences switch, which defaults strictly to `false` (`off`).
 ///    Public, signed-out, and non-owner accounts never see the switch, see nothing on
 ///    Discover or container routes, and issue zero machinery network requests.
 enum GroupingMachineryGate12288 {
     static let ownerUserId: Int = 364
-    static let ownerEmails: Set<String> = [
-        "alex.bain@gmail.com",
-        "alex.bain@bainluck.com"
-    ]
 
     private static let keyPrefix = "bainluck_owner_grouping_machinery_preview_"
     private static let lock = NSLock()
@@ -51,17 +47,10 @@ enum GroupingMachineryGate12288 {
         return _overrideDefaults ?? .standard
     }
 
-    /// True ONLY for Alex's owner account (`id == 364` or `alex.bain@gmail.com` / `alex.bain@bainluck.com`).
+    /// True ONLY for the owner account (`id == 364`).
     nonisolated static func isOwnerUser(_ user: AuthUser?) -> Bool {
         guard let user else { return false }
-        if user.id == ownerUserId {
-            return true
-        }
-        if let email = user.email?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-           ownerEmails.contains(email) {
-            return true
-        }
-        return false
+        return user.id == ownerUserId
     }
 
     nonisolated static func storageKey(for user: AuthUser) -> String {

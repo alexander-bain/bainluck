@@ -5,7 +5,7 @@ import XCTest
 @testable import Bain_Luck
 
 /// `#12288` — Grouping machinery on iPhone (Ruling 227: A · Direction 228):
-/// 1. Double gate: server admin-only read + owner-only Preferences switch (Alex `id == 364` / `alex.bain@...` only,
+/// 1. Double gate: server admin-only read + owner-only Preferences switch (owner account `id == 364` only,
 ///    default `off`). Public, signed-out, non-owner, and switched-off accounts see nothing and issue zero machinery requests.
 /// 2. Topic-free native rendering of the Discover card and all 8 section visual forms.
 /// 3. Three rows then `"Show all"`; Direction 228 ascending numerical order on ladder/range/rate/count markets;
@@ -67,7 +67,7 @@ final class GroupingMachinery12288Tests: XCTestCase {
         )
         let nonOwnerFamilyUser = AuthUser(
             id: 500,
-            email: "olivercbain@gmail.com",
+            email: "member@example.com",
             displayName: "Family Member",
             photoUrl: nil,
             onboardingCompleted: true,
@@ -75,14 +75,14 @@ final class GroupingMachinery12288Tests: XCTestCase {
         )
         let ownerAlex = AuthUser(
             id: 364,
-            email: "alex.bain@gmail.com",
-            displayName: "Alex Bain",
+            email: "owner@example.com",
+            displayName: "Owner Account",
             photoUrl: nil,
             onboardingCompleted: true,
             createdAt: nil
         )
 
-        // Identity checks: ONLY Alex (`id == 364` / `alex.bain@...`) is owner.
+        // Identity checks: ONLY the owner account (`id == 364`) is owner.
         XCTAssertFalse(GroupingMachineryGate12288.isOwnerUser(nil))
         XCTAssertFalse(GroupingMachineryGate12288.isOwnerUser(publicUser))
         XCTAssertFalse(GroupingMachineryGate12288.isOwnerUser(nonOwnerFamilyUser))
@@ -324,8 +324,8 @@ final class GroupingMachinery12288Tests: XCTestCase {
         GroupingMachineryGate12288.setOverrideDefaultsForTesting(isolatedDefaults)
         let ownerAlex = AuthUser(
             id: 364,
-            email: "alex.bain@gmail.com",
-            displayName: "Alex Bain",
+            email: "owner@example.com",
+            displayName: "Owner Account",
             photoUrl: nil,
             onboardingCompleted: true,
             createdAt: nil

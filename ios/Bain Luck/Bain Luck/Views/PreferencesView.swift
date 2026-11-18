@@ -934,7 +934,7 @@ struct PreferencesView: View {
 
     // MARK: - Owner-Only Grouping Machinery Preview (#12288)
 
-    /// Shown ONLY to Alex's owner account (`id == 364` / `alex.bain@...`), default `off`.
+    /// Shown ONLY to the owner account (`id == 364`), default `off`.
     /// Non-owner and signed-out accounts never see this section or toggle.
     @ViewBuilder
     private var ownerGroupingMachinerySection: some View {
