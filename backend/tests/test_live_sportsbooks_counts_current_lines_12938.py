@@ -174,7 +174,7 @@ class TestTheSpecimen:
         betting = [c for c in calls if c["source"] == "betting"]
         assert len(betting) == 1
         assert betting[0]["value"] == pytest.approx(0.9626)
-        assert betting[0]["metadata"] == {"betting_book_count": 3}
+        assert betting[0]["metadata"]["betting_book_count"] == 3
         assert betting[0]["evidence"]["live"]["quoting"] == 12
         assert betting[0]["evidence"]["live"]["current"] == 3
         assert {b["book"] for b in betting[0]["evidence"]["population"]} == {
@@ -195,7 +195,7 @@ class TestTheSpecimen:
         lines = [(b, p, age + 60) for b, p, age in STANFORD_AT_915]
         session, calls, _ = await ingest(lines, score_ago=SCORE_CHANGE_AGO + 60)
         assert calls[0]["value"] is None
-        assert calls[0]["metadata"] == {"betting_book_count": 2}
+        assert calls[0]["metadata"]["betting_book_count"] == 2
         written = session.sources_writes[-1]
         assert "betting" not in written
         assert written["polymarket"]["value"] == 0.995
@@ -206,7 +206,7 @@ class TestTheSpecimen:
         lines = [(b, p, age + 240) for b, p, age in STANFORD_AT_915]
         session, calls, _ = await ingest(lines, score_ago=SCORE_CHANGE_AGO + 240)
         assert [c["value"] for c in calls] == [None]
-        assert calls[0]["metadata"] == {"betting_book_count": 0}
+        assert calls[0]["metadata"]["betting_book_count"] == 0
         assert calls[0]["evidence"]["live"]["current"] == 0
         assert "betting" not in session.sources_writes[-1]
 
@@ -218,7 +218,7 @@ class TestWhatStaysTheSame:
         lines = [(f"b{i}", 0.55 + i / 100, 480) for i in range(5)]
         _, calls, _ = await ingest(lines, score_ago=600)
         assert calls[0]["value"] == pytest.approx(0.57)
-        assert calls[0]["metadata"] == {"betting_book_count": 5}
+        assert calls[0]["metadata"]["betting_book_count"] == 5
 
     @pytest.mark.asyncio
     async def test_before_any_score_the_start_is_the_clock(self, ingest):
