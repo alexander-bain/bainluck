@@ -230,6 +230,7 @@ final class EventPropsMatrixMounted10236Tests: XCTestCase {
     }
 
     func testTheActualPageDrawsTheHeroAndTheHitsMatrixAtPhoneAndAccessibilitySizes() async throws {
+        try TestSuiteDisposition12982.skipIfHostedRunner(#function, reason: "full-page 390pt AX5 Vision OCR splits multi-column hero glyphs on hosted software renderer")
         let markets = try Self.decode(specimen())
         for (name, size) in [("page-390", DynamicTypeSize.large),
                              ("page-390-ax3", .accessibility3),

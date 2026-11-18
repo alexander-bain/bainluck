@@ -158,6 +158,7 @@ final class TheEkgReplacesTheInfoMark10090Tests: XCTestCase {
     }
 
     func testTheControlAndTheEkgReadOneAnswerAndTheEkgCarriesTheControlsHint() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 unified EventSportHeadlineCard12472 showsActiveEkgControl")
         let text = try page()
         let ekg = try span(text, from: "privatefuncheroEkg(_event:EventDetail,isOpeningLine:Bool)->someView{",
                            to: "privatefuncprobabilityDetails(")

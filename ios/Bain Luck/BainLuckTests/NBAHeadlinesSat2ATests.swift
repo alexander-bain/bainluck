@@ -204,6 +204,7 @@ final class NBAHeadlinesSat2ATests: XCTestCase {
     }
 
     func testNBABeforeGameUsesWholePercentProjChanceColumnsAndPlainTimeWithoutCountdownCapsule() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "#12898 whole-integer pregame Proj. pair & Direction 199 — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let event = try nbaBeforeFixture()
         XCTAssertEqual(EventSportHeadlines12472.kind(for: event, now: fixedNow), .nbaBeforeGame)
 
@@ -276,6 +277,7 @@ final class NBAHeadlinesSat2ATests: XCTestCase {
     }
 
     func testNBAAfterGameUsesAlignedPregameFinalColumnsWinnerCheckAndQualifiedProjOnce() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 NBA settled Pregame · Final columns — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let event = try nbaAfterFixture()
         XCTAssertEqual(EventSportHeadlines12472.kind(for: event, now: fixedNow), .nbaAfterGame)
 

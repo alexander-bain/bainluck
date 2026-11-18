@@ -794,7 +794,7 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
         let scheduledFeedEvent = try decodeEvent("""
         {"id": 14969886, "sport": "americanfootball_nfl", "sport_name": "NFL",
          "away_team": "Minnesota Vikings", "home_team": "Green Bay Packers",
-         "commence_time": "2026-11-15T18:00:00Z", "status": "scheduled",
+         "commence_time": "2099-11-15T18:00:00Z", "status": "scheduled",
          "prematch_odds": {"away_probability": 0.45, "home_probability": 0.55, "source": "kalshi"},
          "current_odds": {"away_probability": 0.41, "home_probability": 0.59,
                           "projected_away_score": 19.6, "projected_home_score": 22.6}}

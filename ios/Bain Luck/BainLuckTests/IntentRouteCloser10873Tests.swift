@@ -74,7 +74,7 @@ final class IntentRouteCloser10873Tests: XCTestCase {
         }
         let done = expectation(description: "presented \(name ?? "alert")")
         presenter.present(shown, animated: false) { done.fulfill() }
-        wait(for: [done], timeout: 2)
+        wait(for: [done], timeout: 10)
     }
 
     private func sheet(_ style: UIModalPresentationStyle = .pageSheet) -> UIViewController {

@@ -272,6 +272,7 @@ final class HeroSaysTheCountdownOnce6544Tests: XCTestCase {
     /// status too, but that status is not the kickoff countdown and cannot
     /// replace its minute clock.
     func testTheChipStillTicks() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 plain pregame start time on EventSportHeadlineCard12472 — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let code = try heroCode()
         XCTAssertTrue(
             code.contains("TimelineView(.periodic(from:.now,by:60)){_in"

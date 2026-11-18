@@ -442,6 +442,7 @@ final class FinalForecastComparison11296Tests: XCTestCase {
     }
 
     func testBothCardsDrawTheLineOnceThroughTheHelper() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Ruling 204-C / #12878 finished card layout — covered by CompactGameCard12616Tests")
         let sports = try source("Components/EventCardView.swift")
         let discover = try source("Components/DiscoverEventCard.swift")
         XCTAssertTrue(sports.contains("structEventCardView:View{"), "anti-vacuity")

@@ -224,6 +224,7 @@ final class TennisFinalHeadlineProbabilityFirst9483Tests: XCTestCase {
     /// The hero tries the point-sport pair first, then the tennis final, then
     /// today's hero — whose finished caption (#8622) stays for every other sport.
     func testTheHeroMountsTheTennisFinalBetweenThePairAndTheLegacyHero() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 / #12777 unified tennis headline — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let hero = try span(pageCode(), from: "private func heroSection(", to: "static func heroBackdrop(")
         let paired = try XCTUnwrap(hero.range(of: "if let paired = nflPairedHeadline(event, hasScore: hasScore) {"))
         let tennis = try XCTUnwrap(hero.range(of: "} else if let tennis = tennisFinalHeadline(event, hasScore: hasScore) {"))

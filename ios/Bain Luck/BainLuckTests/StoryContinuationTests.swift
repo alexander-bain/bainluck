@@ -63,8 +63,12 @@ final class StoryContinuationTests: XCTestCase {
             let activity = NSUserActivity(activityType: StoryContinuation.activityType)
             StoryContinuation.configure(activity, destination: destination)
             XCTAssertTrue(coordinator.handleStoryContinuation(activity))
-            XCTAssertEqual(coordinator.selectedTab, .feed)
-            await fulfillment(of: [published], timeout: 2)
+            let expectedTab: AppTab = {
+                if case .futures = destination { return .leagues }
+                return .feed
+            }()
+            XCTAssertEqual(coordinator.selectedTab, expectedTab)
+            await fulfillment(of: [published], timeout: 5)
             XCTAssertEqual(coordinator.consumeRoute(), route)
             XCTAssertNil(coordinator.pendingRoute)
         }

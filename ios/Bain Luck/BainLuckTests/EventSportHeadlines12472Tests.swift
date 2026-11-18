@@ -221,6 +221,7 @@ final class EventSportHeadlines12472Tests: XCTestCase {
     // MARK: - Scope & Eligibility
 
     func testScopeAdoptsOnlyNFLBeforeGameAndNBADuringGame() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 all-sport unified headline (never nil) — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let nflBefore = try nflPregameFixture()
         XCTAssertEqual(EventSportHeadlines12472.kind(for: nflBefore, now: fixedNow), .nflBeforeGame)
         XCTAssertTrue(EventSportHeadlines12472.applies(to: nflBefore, now: fixedNow))
@@ -277,6 +278,7 @@ final class EventSportHeadlines12472Tests: XCTestCase {
     // MARK: - NFL Before a Game Rules
 
     func testNFLBeforeGameShowsWholePercentUnlessNumberStreams() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 / #12898 whole-integer Proj. column — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let event = try nflPregameFixture(homeProb: 0.658, homeRendered: 66, awayRendered: 34)
 
         let nonStreaming = try XCTUnwrap(
@@ -323,6 +325,7 @@ final class EventSportHeadlines12472Tests: XCTestCase {
     // MARK: - NBA During a Game Rules
 
     func testNBADuringGameShowsProjectedOncePregameNeverOpenedAndNoRelativeAge() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Ruling 200-B Score · Proj. · Now columns + single grey Pregame line — covered by UnifiedHeadlineContactSheetGuard199Tests")
         // Even when prematch_odds is absent and PrematchReading falls back to opening_odds,
         // the headline uses a single "Pregame" column header ("Score · Pregame · Now")
         // with bare grey percentages ("49%", "51%"), NEVER repeating "pregame" twice and NEVER "opened".
@@ -353,6 +356,7 @@ final class EventSportHeadlines12472Tests: XCTestCase {
     }
 
     func testNBADuringGameClampsExtremeOpenProbabilitiesAndWithholdsUnscoredProjection() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Ruling 200-B Score · Proj. · Now columns (no live Pregame column) — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let extreme = try nbaLiveFixture(homeProb: 0.999, includeLiveProjection: true)
         let modelNoScore = try XCTUnwrap(
             resolveHeadline(extreme, hasScore: false, numberStreams: true)
@@ -396,6 +400,7 @@ final class EventSportHeadlines12472Tests: XCTestCase {
     // MARK: - 390x852 First-Screen Fold & Accessibility Layout Proofs
 
     func testFirstScreenFitsHeadlineAndWinProbabilityChartAt390x852AndExportsRenders() async throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 / Ruling 200-B 203pt live card with Pregame line — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let nflEvent = try nflPregameFixture()
         let nflHistory = try decodeHistory("""
         {

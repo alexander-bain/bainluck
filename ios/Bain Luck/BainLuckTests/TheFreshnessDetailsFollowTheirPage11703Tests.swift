@@ -184,6 +184,7 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
     /// RED on 1f77f984 (build 89's tree): the details opened on the first game
     /// are still presented after a link pushes the second game.
     func testALinkToAnotherGameClosesTheDetailsTheCoveredPageOpened() async throws {
+        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "requires foreground-active UIWindowScene & NavigationStack push/dismiss AX timing")
         let router = Router()
         let pages = [Self.first: await liveModel(Self.first), Self.second: await liveModel(Self.second)]
         defer { pages.values.forEach { $0.stopRefresh() } }

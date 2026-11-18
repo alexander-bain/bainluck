@@ -419,6 +419,7 @@ final class FineAndTennisHeadlinesOvernight5Tests: XCTestCase {
     // MARK: - Unit Tests
 
     func testNFLAfterHeadlineAlignsPregameChancesAndFinalScoresInTwoRows() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 settled headline omits Proj. subline under name — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let event = try nflAfterFixture()
         XCTAssertEqual(EventSportHeadlines12472.kind(for: event, now: fixedNow), .nflAfterGame)
 
@@ -451,6 +452,7 @@ final class FineAndTennisHeadlinesOvernight5Tests: XCTestCase {
     }
 
     func testMLBAfterHeadlineUsesInningsCountAndPregameFinalColumns() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 settled headline omits team record subline — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let event = try mlbAfterFixture()
         XCTAssertEqual(EventSportHeadlines12472.kind(for: event, now: fixedNow), .mlbAfterGame)
 

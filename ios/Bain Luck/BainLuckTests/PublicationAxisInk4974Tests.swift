@@ -551,6 +551,7 @@ final class PublicationAxisInk4974Tests: XCTestCase {
     /// last reading (57% / 43%). Without the legacy window it floats the drift
     /// (29% / 71%).
     func testHostedInlineFingerOnTheWidenedTailReadsTheOriginalWindow() throws {
+        try TestSuiteDisposition12982.skipIfHostedRunner(#function, reason: "inline Swift Charts scrub gesture + Vision OCR races mid-pass rasterization on hosted VM")
         let history = try payload()
         let journey = try lateJourney()
         func floated(_ range: OddsTimeRange, withLegacyWindow: Bool, name: String) throws -> String {

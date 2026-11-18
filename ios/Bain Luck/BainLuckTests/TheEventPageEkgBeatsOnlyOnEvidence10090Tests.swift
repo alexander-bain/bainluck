@@ -398,6 +398,7 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
     }
 
     func testALiveGameShowsTheHeartbeatByDefaultAndATapOpensTheDetails() async throws {
+        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "requires foreground-active UIWindowScene & private AX automation popover settle")
         let vm = await model(status: "live")
         defer { vm.stopRefresh() }
         let (host, window, previous) = try await mount(EventDetailView(eventId: Self.event, viewModel: vm))
@@ -420,6 +421,7 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
     }
 
     func testAFinishedGameShowsNoHeartbeat() async throws {
+        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "requires foreground-active UIWindowScene & private AX automation settle")
         let vm = await model(status: "final")
         defer { vm.stopRefresh() }
         let (host, window, previous) = try await mount(EventDetailView(eventId: Self.event, viewModel: vm))

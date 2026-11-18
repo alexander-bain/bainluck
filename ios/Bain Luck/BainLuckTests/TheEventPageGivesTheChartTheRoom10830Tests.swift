@@ -72,6 +72,7 @@ final class TheEventPageGivesTheChartTheRoom10830Tests: XCTestCase {
     // MARK: - The headline card fits its content
 
     func testStackedTheCaptionRidesThePaddingAndOtherwiseKeepsItsSlot() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 / Ruling 200-B unified EventSportHeadlineCard12472")
         let page = try code("Views", "EventDetailView.swift")
         XCTAssertTrue(page.contains(
             "letcaptionRidesPadding=stacked&&!dynamicTypeSize.isAccessibilitySize"),
@@ -138,6 +139,7 @@ final class TheEventPageGivesTheChartTheRoom10830Tests: XCTestCase {
     }
 
     func testTheHeroStillComputesItsTierFromSourcesAndMovementOnly() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 EventSportHeadlineCard12472 served sourceMark / confidenceTier")
         let page = try code("Views", "EventDetailView.swift")
         XCTAssertTrue(page.contains(
             "letconfidenceTier=Confidence.fromSources(sourceCount:event.winProbabilitySources?.count,"

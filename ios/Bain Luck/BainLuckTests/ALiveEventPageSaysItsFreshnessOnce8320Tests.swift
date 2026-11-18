@@ -150,6 +150,7 @@ final class ALiveEventPageSaysItsFreshnessOnce8320Tests: XCTestCase {
     /// row); the hero's chip, mounted on every finished page, is the one that
     /// stays.
     func testTheFinalChipSurvives() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 unified EventSportHeadlineCard12472 final header — covered by UnifiedHeadlineContactSheetGuard199Tests")
         XCTAssertFalse(try chartCode().contains("Text(\"Final\")"), "the heading repeats FINAL again (#9483)")
         XCTAssertTrue(try code("Components", "StatusBadge.swift")
             .contains("}elseifEventState.isFinished(status){Text(\"FINAL\")"), "the chip itself")

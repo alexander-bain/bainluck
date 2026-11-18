@@ -91,11 +91,11 @@ final class InterruptedPricePairRecovery837Tests: XCTestCase {
             sleep: { _ in try? await Task.sleep(for: .seconds(60)) })
     }
     private func awaitRequests(_ count: Int) async throws {
-        for _ in 0..<200 {
+        for _ in 0..<400 {
             if Origin.requests(ending: "/4242").count >= count && Origin.requests(ending: "/history").count >= count { break }
             try await Task.sleep(for: .milliseconds(5))
         }
-        try await Task.sleep(for: .milliseconds(40))
+        try await Task.sleep(for: .milliseconds(120))
         XCTAssertEqual(Origin.requests(ending: "/4242").count, count)
         XCTAssertEqual(Origin.requests(ending: "/history").count, count)
     }

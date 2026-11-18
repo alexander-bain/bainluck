@@ -291,6 +291,7 @@ final class NCAABHeadlinesSat2CTests: XCTestCase {
     }
 
     func testNCAABAndWNCAABBeforeDuringAndAfterAdoptCompactHeadlineRules() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 / Ruling 200-B / #12898 whole-integer Proj. columns — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let before = try ncaabBeforeFixture()
         XCTAssertEqual(EventSportHeadlines12472.kind(for: before, now: fixedNow), .ncaabBeforeGame)
 

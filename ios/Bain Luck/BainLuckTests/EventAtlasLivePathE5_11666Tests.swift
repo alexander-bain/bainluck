@@ -440,6 +440,7 @@ final class EventAtlasLivePathE5_11666Tests: XCTestCase {
     }
 
     func testWiresResolveHeadlineObservedAtAndEkgInEventAtlasAndEventDetailView() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 unified EventSportHeadlineCard12472 EKG wiring — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()

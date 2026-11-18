@@ -369,6 +369,7 @@ final class RealPageCorrections9483Tests: XCTestCase {
     // MARK: - R4
 
     func testTheFullSizeKeysControlIsOutsideTheScrollingRail() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "#12639 / #12750 updated chart key rail — covered by ConnectedChartLine12639Tests")
         let chart = try code("Components", "OddsChartView.swift")
         let start = try XCTUnwrap(chart.range(of: "ifrail{ifopen{letprimaryKey=legendKey("))
         let end = try XCTUnwrap(chart.range(of: "}elseifopen{FlowLayout(", range: start.upperBound..<chart.endIndex))

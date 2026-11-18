@@ -291,6 +291,7 @@ final class FinalComparisonSoccerPeriod11296Tests: XCTestCase {
     }
 
     func testTheHeadlineDrawsTheCardsOneLineOnceThroughTheHelper() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 unified EventSportHeadlineCard12472 — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let page = try source("Views/EventDetailView.swift")
         XCTAssertTrue(page.contains("privatefuncheroSection(_event:EventDetail)->someView{"), "anti-vacuity")
         XCTAssertEqual(occurrences("FinalForecastLine11296(", in: page), 1)

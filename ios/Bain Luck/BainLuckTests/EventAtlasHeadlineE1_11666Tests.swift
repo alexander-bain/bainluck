@@ -412,6 +412,7 @@ final class EventAtlasHeadlineE1_11666Tests: XCTestCase {
     // MARK: - Page & phase label gating
 
     func testHeadlineWiringIsGatedByReleaseSurfaces() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 unconditional unified EventSportHeadlineCard12472 — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()

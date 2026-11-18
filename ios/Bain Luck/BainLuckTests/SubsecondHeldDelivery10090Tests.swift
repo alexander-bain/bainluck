@@ -443,6 +443,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     /// expired one hands both surfaces back to committed truth. View marks
     /// are SwiftUI evaluations of what the hero and chart print, not paint.
     func testHostedPageMarksEachV3PreviewReceivedAdoptedAndPrintedUnderItsOwnIdentity() async throws {
+        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "real-time v3 preview frame cadence & foreground-active UIWindowScene")
         PacedStream.reset(quarter: false, base: Self.recentBase())
         let session = V3PageWire.nextSession(), other = V3PageWire.nextSession()
         func preview(_ seq: Int, _ p: Double, at: TimeInterval, base: Int = 20, ttl: Int = 60_000,
@@ -511,6 +512,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     /// probability frame's. View marks between frames closer than a display
     /// refresh may coalesce, so only the last is required.
     func testHostedPageReplaysTheLabsRecordedFramesInTheirRecordedOrderAndSpacing() async throws {
+        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "recorded subsecond frame spacing & foreground-active UIWindowScene")
         let path = ProcessInfo.processInfo.environment["BL_10090_LAB_ROWS"]
         let text = try path.map { try String(contentsOfFile: $0, encoding: .utf8) } ?? Self.labExcerpt
         let parsed = Self.labRows(text, lead: 500)
@@ -979,10 +981,12 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     }
 
     func testHostedPageHandsEveryWholeSecondQuoteToTheHeroAndChartInOrder() async throws {
+        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "real-time frame cadence & foreground-active UIWindowScene")
         try await hostedCase(quarter: false)
     }
 
     func testHostedPageHandsEveryQuarterSecondQuoteToTheHeroAndChartInOrder() async throws {
+        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "250ms real-time frame cadence & foreground-active UIWindowScene")
         try await hostedCase(quarter: true)
     }
 
@@ -1005,6 +1009,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     /// display; the companion below proves a visibly different last frame is
     /// drawn.
     func testHostedPageDrainsThePhonesNineFrameBurstToTheLatestHeadlineAndChart() async throws {
+        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "subsecond <1000ms wall-clock burst & foreground-active UIWindowScene")
         try await burstCase(final: nil) { image, event in
             let drawn = try Self.readDrawn(image, expected: Self.burstWindow, final: 0.995)
             let labels = try XCTUnwrap(event.map(LivePriceActivity.displayedLabels(in:)))
@@ -1130,6 +1135,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     /// chunk and before the poll (`burstCase`). The view marks are the hook this
     /// control checks, so they are printed, not required.
     func testHostedPageDrawsTheBurstsChangedLastFrameInTheHeroAndAtTheChartEnd() async throws {
+        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "subsecond <1000ms wall-clock burst & foreground-active UIWindowScene")
         try await burstCase(final: "0.6") { image, _ in
             let drawn = try Self.readDrawn(image, expected: Self.burstWindow, final: 0.6)
             print("SUBSECOND-10090 drawn=burst-final-0.6 \(drawn.ends) hero=\(drawn.hero.joined(separator: "|")) \(drawn.detail)")

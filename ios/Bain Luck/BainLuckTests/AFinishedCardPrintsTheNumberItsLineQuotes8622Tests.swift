@@ -144,6 +144,7 @@ final class AFinishedCardPrintsTheNumberItsLineQuotes8622Tests: XCTestCase {
     }
 
     func testTheSettledHeroCaptionReadsTheResolvedReading() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 / Ruling 200-B settled Pregame · Final columns — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let page = try Self.source("Bain Luck/Views/EventDetailView.swift")
         let hero = try Self.body(of: "private func heroSection(", in: page)
         let wiring = hero.filter { !$0.isWhitespace }

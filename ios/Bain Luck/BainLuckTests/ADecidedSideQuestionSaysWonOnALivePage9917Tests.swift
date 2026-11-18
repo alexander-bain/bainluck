@@ -151,6 +151,7 @@ final class ADecidedSideQuestionSaysWonOnALivePage9917Tests: XCTestCase {
     /// the one place a verdict becomes words, so pin that it switches on the
     /// treatment and prints the verdict's label.
     func testTheRowRendersTheVerdictItIsGiven() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 unified settled row presentation — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Bain Luck/Components/SpecialEventMarketsView.swift")

@@ -682,6 +682,7 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
     /// stays off a mount. The body is not rendered in tests, so this reads the
     /// source.
     func testTheMountedChartRunsNoBalanceInkAndNoLiveSplit() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "#12639 connected chart line — covered by ConnectedChartLine12639Tests")
         let chart = try code("Bain Luck/Components/OddsChartView.swift")
         XCTAssertTrue(chart.contains("letliveSplit=checkpoints==nil?liveEdgeSplit(dataPoints:dataPoints,domain:domain):nil"))
         XCTAssertFalse(chart.contains("BinaryWinChartBalanceInkLayer("), "the balance ink is drawn again")
@@ -728,6 +729,7 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
     /// does the finished line's key reading, which names the mount's resting
     /// end: three sites, one builder.
     func testInlineAndFullscreenShareOneIntegration() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "#12639 connected chart line — covered by ConnectedChartLine12639Tests")
         let chart = try code("Bain Luck/Components/OddsChartView.swift")
         XCTAssertEqual(chart.components(separatedBy: "letcheckpoints=checkpointMount(for:dataPoints)").count - 1, 3)
         XCTAssertTrue(chart.contains("privatefuncfinishedEndKeyReading9483(dataPoints:[ChartDataPoint])->(text:String,ink:Color)?{letcheckpoints=checkpointMount(for:dataPoints)"),
@@ -862,6 +864,7 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
     /// #8651 no snapshot sits inside the counted hold/scrub/release: one warms
     /// the host before the baseline, and the rendered text is read after.
     func testHostedInlineChartWithholdsTheGapWithoutRebuildingThePlot() throws {
+        try TestSuiteDisposition12982.skipIfHostedRunner(#function, reason: "inline Swift Charts + Vision OCR races mid-pass rasterization on hosted VM")
         let payload = try finishedPayload()
         let journey = try subMinuteJourney()
         let model = OddsChartViewModel(eventId: eventID, preloaded: payload)

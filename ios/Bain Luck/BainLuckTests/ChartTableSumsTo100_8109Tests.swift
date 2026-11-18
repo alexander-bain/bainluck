@@ -328,6 +328,7 @@ final class ChartTableSumsTo100_8109Tests: XCTestCase {
     /// positive scan alone goes stale the moment someone writes the call a second
     /// way.
     func testTheRowAndTheGridStillAskForTheDecision() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 228 numerical outcome ordering (#12891) — covered by NumericalMarketOrder228Tests")
         let source = try String(contentsOf: viewSource(), encoding: .utf8)
 
         XCTAssertTrue(source.contains("struct EvolutionLeaderboardRow"),

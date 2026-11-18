@@ -49,6 +49,7 @@ final class AFinishedHeroVerdictLeavesTheCrestsTheirNames8419Tests: XCTestCase {
     }
 
     func testTheWinnerVerdictIsBoundedToTheSlot() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 / Ruling 200-B winner tick after name — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let verdict = try chain(after: #"Text("\(winnerName)Win")"#)
         XCTAssertTrue(verdict.contains(".frame(maxWidth:Self.heroVerdictWidth(at:dynamicTypeSize))"),
                       "the finished verdict is unbounded again — a long winner name squeezes the crest names")
@@ -58,6 +59,7 @@ final class AFinishedHeroVerdictLeavesTheCrestsTheirNames8419Tests: XCTestCase {
     }
 
     func testTheNamedPregameCaptionIsBoundedToTheSlot() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 / Ruling 200-B unified EventSportHeadlineCard12472 — covered by UnifiedHeadlineContactSheetGuard199Tests")
         let caption = try chain(
             after: #"Text("\(pregameWord)\(named.home)\(formatProbability(opened.home))")"#)
         XCTAssertTrue(caption.contains(".frame(maxWidth:Self.heroVerdictWidth(at:dynamicTypeSize))"),

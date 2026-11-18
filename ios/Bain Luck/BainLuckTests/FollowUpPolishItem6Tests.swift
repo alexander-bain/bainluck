@@ -266,6 +266,7 @@ final class FollowUpPolishItem6Tests: XCTestCase {
     }
 
     func testHeadlineDrawsNoFlatGreyPulseLineWhenNotStreamingAndDrawsPulseWhenStreaming() throws {
+        try TestSuiteDisposition12982.skipSuperseded(#function, by: "Direction 199 EkgHeartbeat.present beating gate on EventSportHeadlineCard12472")
         let beforeEvent = try makeNBAEvent(
             id: 601,
             status: "scheduled",
