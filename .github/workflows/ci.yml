@@ -4881,7 +4881,7 @@ jobs:
         # guard removed: CE1 red; WS guard removed: CE3/CE4/CE5 red; WS guard
         # moved to a read before the UPDATE: CE5 red.
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-        run: "set -o pipefail\npython -m pytest tests/integration/test_live_writers_observation_order_8910_pg.py \\\n  -v -rs 2>&1 | tee /tmp/writers8910.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/writers8910.txt; then\n  echo \"::error::#8910 other-writers gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\ngrep -qE \"[^0-9]18 passed[,[:space:]]\" /tmp/writers8910.txt || {\n  echo \"::error::#8910 other-writers gate did not run all eighteen cases\"\n  exit 1\n}\n"
+        run: "set -o pipefail\npython -m pytest tests/integration/test_live_writers_observation_order_8910_pg.py \\\n  -v -rs 2>&1 | tee /tmp/writers8910.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/writers8910.txt; then\n  echo \"::error::#8910 other-writers gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\ngrep -qE \"[^0-9]19 passed[,[:space:]]\" /tmp/writers8910.txt || {\n  echo \"::error::#8910 other-writers gate did not run all nineteen cases\"\n  exit 1\n}\n"
       - name: "#837 every benchmark price reaches the number at the default floor (real Postgres)"
         id: db_295_837_every_benchmark_price_reaches_the_nu
         # Alex's 2026-09-28 live benchmark (Kalshi 77 -> 80 -> 85 -> 84, 2s apart,
