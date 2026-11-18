@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from app.utils.team_short_name import is_college_sport, school_label
 from app.utils.container_presentation import MEMBER_EVENT, event_destination
 from app.utils.field_band import _validate_narrative_copy
 from app.utils.tonights_games import _is_eligible, _parse_dt
@@ -172,13 +173,21 @@ def is_event_eligible_for_window(
     )
 
 
-def _team_short_label(team_data: Any, fallback_name: Any) -> str:
+def _team_short_label(team_data: Any, fallback_name: Any, sport: Any = None) -> str:
+    label = ""
     if isinstance(team_data, Mapping):
         for key in ("short_name", "display_name", "name"):
             val = team_data.get(key)
             if isinstance(val, str) and val.strip():
-                return val.strip()
-    return str(fallback_name or "").strip()
+                label = val.strip()
+                break
+    label = label or str(fallback_name or "").strip()
+    if label and is_college_sport(str(sport or "")):
+        # 194-A: a college row prints the school ("Iona at UMBC"), never the
+        # mascot. Pro rows are unchanged.
+        location = team_data.get("location") if isinstance(team_data, Mapping) else None
+        return school_label(label, location if isinstance(location, str) else None) or label
+    return label
 
 
 def _extract_blended_leader(
@@ -217,8 +226,9 @@ def _extract_blended_leader(
 
     from app.utils.graded_card import rendered_percent
 
-    home_label = _team_short_label(card.get("home_team_data"), home_name)
-    away_label = _team_short_label(card.get("away_team_data"), away_name)
+    sport = card.get("sport")
+    home_label = _team_short_label(card.get("home_team_data"), home_name, sport)
+    away_label = _team_short_label(card.get("away_team_data"), away_name, sport)
     home_pct = rendered_percent(hp)
     away_pct = rendered_percent(ap)
     tied = home_pct is not None and away_pct is not None and home_pct == away_pct

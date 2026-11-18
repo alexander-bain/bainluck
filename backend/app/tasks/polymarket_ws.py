@@ -36,6 +36,7 @@ from app.tasks.polymarket import _poly_book_is_untradeable
 from app.tasks.ws_consumer_sessions import owns_consumer_sessions  # #2471
 from app.utils.market_quote_push import queue_market_change
 from app.utils.market_settlement import settled_values
+from app.utils.polymarket_quote import current_polymarket_quote
 from app.utils.repair_lock_budget import (
     LOCK_NOT_AVAILABLE_SQLSTATE,
     SET_LOCK_TIMEOUT_SQL,
@@ -1347,6 +1348,29 @@ def trade_is_bid_ask_bounce(prob: float, books: tuple) -> bool:
     if bid is None or ask is None or _poly_book_is_untradeable(bid, ask):
         return False
     return prob == bid or prob == ask
+
+
+def _venue_message_ms(value: object) -> int | None:
+    """The venue's Unix millisecond clock, without guessing units."""
+    if type(value) not in (str, int):
+        return None
+    try:
+        timestamp = int(value)
+    except ValueError:
+        return None
+    return timestamp if 10**12 <= timestamp < 10**13 else None
+
+
+def _trade_precedes_tight_book(
+    trade_timestamp: object, books: tuple, book_ms: int | None,
+) -> bool:
+    if book_ms is None:
+        return False
+    trade_ms = _venue_message_ms(trade_timestamp)
+    if trade_ms is None or trade_ms >= book_ms:
+        return False
+    midpoint = current_polymarket_quote(*books[0])
+    return midpoint is not None and 0 < midpoint < 1
 
 
 def with_complements(
@@ -3644,7 +3668,8 @@ def _log_stats_line(
         "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
         "%d msgs | coverage shards=%d/%d served=%d/%d wire=%d by_shard=%s "
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
-        "unobserved=%d stale=%d | trades refused below_min=%d outside_wide_book=%d "
+        "unobserved=%d stale=%d | older_than_tight_book=%d "
+        "| trades refused below_min=%d outside_wide_book=%d "
         "| %s | %s | held withdrawn=%d lock_probes_refused=%d fenced=%d stamp_wait_s=%.1f "
         "lock_timeouts=%d history_points=%d history_keepalive=%d "
         "history_keepalive_errors=%d history_capped=%d history_skipped=%d "
@@ -3665,6 +3690,8 @@ def _log_stats_line(
         blend.get("unobserved_skipped", 0),
         # #8910: readings refused as older than the stored observation.
         blend.get("stale_readings_refused", 0),
+        # #12658: delayed executions with a demonstrably newer tight book.
+        stats.get("trades_older_than_tight_book", 0),
         # #9733 / #9913: trades that were not a price. Counted in the consumer
         # and, until this line, never emitted.
         stats.get("trades_below_min_order", 0),
@@ -4625,7 +4652,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # #9913: token → (latest, previous) distinct top of book, wide or not, so
     # a trade can be read against the book it hit. One entry per subscribed
     # token; rebuilt from the subscribe snapshot on every recycle.
-    books_by_asset: dict[str, tuple] = {}
+    # Last two distinct BBOs, and the venue time of the latest received BBO.
+    books_by_asset: dict[str, tuple[tuple, int | None]] = {}
     # #9934: leg → (bid, ask) of the latest wide book that speaks for it. The
     # flush asks whether the held price survives it; a tight book for the leg
     # clears the entry, since its midpoint is about to replace the price.
@@ -7022,20 +7050,32 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
         best_bid = msg.get("best_bid")
         best_ask = msg.get("best_ask")
-        if best_bid is None or best_ask is None:
-            return
-
+        books, book_ms = books_by_asset.get(asset_id, ((), None))
         try:
             bid_f = float(best_bid)
             ask_f = float(best_ask)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
+            if book_ms is not None:
+                books_by_asset[asset_id] = (books, None)
             return
 
         # #9913: kept before the width test below, because a wide book is the
         # one `handle_trade` needs to see.
-        latest = books_by_asset.get(asset_id, (None,))[0]
-        if latest != (bid_f, ask_f):
-            books_by_asset[asset_id] = ((bid_f, ask_f), latest)
+        latest = books[0] if books else None
+        pair = (bid_f, ask_f)
+        observed_ms = (
+            None if isinstance(best_bid, bool) or isinstance(best_ask, bool)
+            else _venue_message_ms(msg.get("timestamp"))
+        )
+        if latest != pair:
+            books_by_asset[asset_id] = ((pair, latest), observed_ms)
+        elif observed_ms != book_ms and (
+            observed_ms is None or book_ms is None or observed_ms > book_ms
+        ):
+            # A timely repeat can advance the witness without buffering a price.
+            # A reconnected socket can repeat the same book with an older stamp.
+            # An untimed frame still carries no ordering evidence.
+            books_by_asset[asset_id] = (books, observed_ms)
 
         # #10090: below the raw count, nothing awaited since the generation
         # was read, so the check and the state it reads are one instant.
@@ -7342,16 +7382,25 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
         # #9913: nor is a trade that swept past the edge of a wide book. The
         # leg keeps the last price a book supported.
-        if trade_prints_outside_wide_book(prob, books_by_asset.get(asset_id, ())):
+        books, _ = books_by_asset.get(asset_id, ((), None))
+        if trade_prints_outside_wide_book(prob, books):
             stats["trades_outside_wide_book"] += 1
             return
 
-        if trade_is_bid_ask_bounce(prob, books_by_asset.get(asset_id, ())):
+        if trade_is_bid_ask_bounce(prob, books):
             stats["trades_at_book_edge"] = stats.get("trades_at_book_edge", 0) + 1
             return
 
         async with buffer_lock:
             if input_generation != routing_generation:
+                return
+            # #12658: a delayed execution cannot overwrite a newer usable book
+            # from this token. Compare venue clocks, never receipt or row age.
+            books, book_ms = books_by_asset.get(asset_id, ((), None))
+            if _trade_precedes_tight_book(msg.get("timestamp"), books, book_ms):
+                stats["trades_older_than_tight_book"] = (
+                    stats.get("trades_older_than_tight_book", 0) + 1
+                )
                 return
             priced = with_complements(targets, prob, open_complement_of)
             preview = getattr(blend_refresher, "market_preview", None)

@@ -230,6 +230,8 @@ def callbacks():
         trade_sets_a_price=pm.trade_sets_a_price,
         trade_prints_outside_wide_book=pm.trade_prints_outside_wide_book,
         trade_is_bid_ask_bounce=pm.trade_is_bid_ask_bounce,
+        _trade_precedes_tight_book=pm._trade_precedes_tight_book,
+        _venue_message_ms=pm._venue_message_ms,
         _poly_book_is_untradeable=pm._poly_book_is_untradeable,
         repeat_skip_s=0.0,  # #10090: today's path (`PM_WS_REPEAT_SKIP_MS=0`)
         tail_receipts=SimpleNamespace(

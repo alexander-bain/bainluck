@@ -5,6 +5,7 @@ import json
 from builtins import ExceptionGroup
 from collections import Counter
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
@@ -81,7 +82,8 @@ class WeekSession(_Session):
             statement.startswith("SELECT futures_markets.")
             and "WHERE futures_markets.id IN" in statement
         ):
-            ids = list(sql.compile().params["id_1"])
+            (market_ids,) = sql.compile().params.values()
+            ids = list(market_ids)
             self.hydrated.append(ids)
             return _Result(
                 _market(
@@ -227,6 +229,44 @@ async def test_response_cache_miss_builds_game_and_market_cards_together(monkeyp
     assert [len(ids) for ids in market_db.descriptors] == [4984]
     assert len(market_db.hydrated[0]) == 12
     assert not game_db.descriptors and not game_db.hydrated
+
+
+@pytest.mark.parametrize("side_connection", [False, True])
+async def test_old_finals_skip_unused_books_with_either_pool_path(monkeypatch, side_connection):
+    now = datetime.now(timezone.utc)
+
+    class SettledWeek(WeekSession):
+        async def execute(self, sql, params=None):
+            if "odds_bookmakers" in str(sql):
+                pytest.fail("Old finals with a complete opening pair do not need the latest books")
+            return await super().execute(sql, params)
+
+    session = SettledWeek(count=45)
+    for event in session.events:
+        event.status = "completed"
+        event.commence_time = now - timedelta(days=3)
+        event.completed_at = now - timedelta(days=2)
+        event.home_score, event.away_score = 18, 21
+        event.opening_home_probability = 0.54
+        event.opening_away_probability = 0.46
+
+    @asynccontextmanager
+    async def unexpected_reference_session():
+        pytest.fail("The first page does not open another connection for references")
+        yield
+
+    monkeypatch.setattr("app.services.database.async_session_maker", unexpected_reference_session)
+    bind_week_pool(session, monkeypatch, checked_out=0 if side_connection else 2)
+    side = AuxiliaryWeekSession(count=45)
+    opened = use_auxiliary_session(session, side, monkeypatch)
+
+    members = all_members(await get(session))
+    cards = [m["card"] for m in members if m["type"] == "event"]
+    assert len(cards) == 14
+    assert len([m for m in members if m["type"] == "market"]) == 12
+    assert all(card["hero_settled_result"] == "away" for card in cards)
+    assert all(card["prematch_odds"]["home_probability"] == 0.54 for card in cards)
+    assert opened == ([side] if side_connection else [])
 
 
 async def test_a_busy_pool_keeps_the_first_page_on_one_connection(monkeypatch):
