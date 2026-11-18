@@ -858,3 +858,85 @@ async def test_slice3_all_four_groupings_pass_227a_and_direction_228() -> None:
     )
     assert bad_rep["overall_passes"] is False
     assert "direction_228_numerical_scale_order" in bad_rep["page"]["failing_points"]
+
+
+@pytest.mark.asyncio
+async def test_slice4_card_charts_own_headline_flat_line_is_not_picture_and_natural_prose_titles() -> None:
+    import copy
+    from app.utils.container_machinery import (
+        CANDIDATE_FED_AND_MACRO_PATH,
+        compute_visual_diversity_report,
+        evaluate_machinery_candidates_preview,
+    )
+
+    snap = _sample_snapshot()
+    items = await evaluate_machinery_candidates_preview(snap, now=FIXED_NOW)
+    by_slug = {it["slug"]: it for it in items}
+
+    # 1. Card's mini_chart shows the card's OWN headline market (57574217 "Fed Decision in January"),
+    #    never a different market from another section ("Predicted Fed rate under each Fed Chair").
+    fed_card = by_slug["machinery-fed-and-macro"]["feed_item"]["data"]["roundup"]["machinery_card"]
+    assert "mini_chart" in fed_card
+    assert fed_card["mini_chart"]["market_id"] == 57574217
+    assert "January" in fed_card["mini_chart"]["title"]
+
+    # 2. Natural prose market phrases in dynamic titles (no Title-Case market title dropped in capitals).
+    pol_title = by_slug["machinery-2028-presidential"]["container"]["container"]["name"]
+    assert "Presidential Election Winner" not in pol_title
+    assert "presidential race" in pol_title
+    assert "Democrats" in pol_title or "Republicans" in pol_title
+
+    fed_title = by_slug["machinery-fed-and-macro"]["container"]["container"]["name"]
+    assert "End-of-2026 Fed Rate" not in fed_title
+    assert "The January Fed decision prices" in fed_title
+    assert "end-of-2026 Fed rate" in fed_title
+
+    # 3. A flat line is not a picture:
+    #    (a) When all matched history markets are flat (opening_probability == probability),
+    #        the section switches to a native market form instead of probability_history_chart.
+    snap_flat = copy.deepcopy(snap)
+    for m in snap_flat["markets"]:
+        for o in m.get("top_outcomes") or ():
+            o["opening_probability"] = o["probability"]
+    snap_flat["market_histories"] = {}
+    flat_fed = await evaluate_machinery_candidates_preview(
+        snap_flat, slugs=["machinery-fed-and-macro"], now=FIXED_NOW
+    )
+    assert len(flat_fed) == 1
+    # Card's mini_chart is omitted when the headline market did not move
+    assert "mini_chart" not in flat_fed[0]["feed_item"]["data"]["roundup"]["machinery_card"]
+    # And rate_history switched off probability_history_chart to a native shape form
+    flat_forms = [s["visual_block"]["form_id"] for s in flat_fed[0]["container"]["sections"]]
+    assert "probability_history_chart" not in flat_forms
+
+    #    (b) Directly feeding a flat probability_history_chart into compute_visual_diversity_report
+    #        counts 0 pictures toward Point 1 ("a picture on every screen").
+    fed_def = load_machinery_definition(CANDIDATE_FED_AND_MACRO_PATH)
+    flat_chart_page = {
+        "member_count": 6,
+        "container": {"name": "Fed"},
+        "sections": [
+            {
+                "class": "rate_history",
+                "layout": "probability_history_chart",
+                "members": [{"type": "market", "id": 1, "card": {"content_kind": "history"}}],
+                "visual_block": {
+                    "form_id": "probability_history_chart",
+                    "initial_visible_limit": 3,
+                    "items": [
+                        {
+                            "market_id": 1,
+                            "title": "Flat Market",
+                            "moved": False,
+                            "series": [{"outcome_id": 11, "points": [{"t": "t0", "pct": 84}, {"t": "t1", "pct": 84}]}],
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+    rep_flat = compute_visual_diversity_report(
+        fed_def, flat_fed[0]["feed_item"], flat_chart_page
+    )
+    assert rep_flat["page"]["point_1_pictures_per_screen_390px"]["screens"] == [0]
+    assert rep_flat["page"]["point_1_pictures_per_screen_390px"]["passes"] is False
