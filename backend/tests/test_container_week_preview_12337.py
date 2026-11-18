@@ -3,6 +3,7 @@
 import json
 from collections import Counter
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
@@ -12,7 +13,10 @@ from fastapi import FastAPI, HTTPException
 
 from app.routes import containers as route
 from app.utils import request_cache
-from app.utils.container_read_cache import container_read_cache_key
+from app.utils.container_read_cache import (
+    CONTAINER_READ_FRESH_TTL_LIVE_SECONDS,
+    container_read_cache_key,
+)
 from app.utils.container_week_preview import (
     MarketSummary,
     PreparedWeekMarketPreview,
@@ -149,16 +153,30 @@ async def test_real_default_http_keeps_all_14_games_but_hydrates_only_12_boards(
                 assert section["class"] == "side_question"
 
 
-@pytest.mark.parametrize("copy", ["current", "other_revision", "expired"])
+@pytest.mark.parametrize("copy", ["current", "other_revision", "expired", "expired_live"])
 async def test_response_cache_miss_can_share_a_prepared_preview(monkeypatch, copy):
     worker = WeekSession()
     published = await route.read_published(worker, worker.hub.slug)
     prepared = await route._prepare_week_market_preview(worker, published)
     assert prepared is not None and len(worker.descriptors[0]) == 4984
-    expected = json.loads(route._render(await get(WeekSession())))
+    expected_session = WeekSession()
+    reader = WeekSession()
     revision = published.revision - 1 if copy == "other_revision" else published.revision
     if copy == "expired":
         prepared = PreparedWeekMarketPreview(prepared.observed_at - 600, prepared.plan)
+    if copy == "expired_live":
+        prepared = replace(
+            prepared, observed_at=prepared.observed_at - CONTAINER_READ_FRESH_TTL_LIVE_SECONDS
+        )
+        promoted = 3001
+        assert promoted not in prepared.plan.selected
+        for session in (expected_session, reader):
+            session.summaries[promoted] = replace(
+                session.summaries[promoted], event_id=None, volume_24h=100_000
+            )
+    expected = json.loads(route._render(await get(expected_session)))
+    if copy == "expired_live":
+        assert promoted in {m["id"] for m in all_members(expected) if m["type"] == "market"}
     key = prepared_week_preview_key(container_read_cache_key(worker.hub.slug, revision, True, True))
     store = {key: prepared.encode()}
 
@@ -173,8 +191,6 @@ async def test_response_cache_miss_can_share_a_prepared_preview(monkeypatch, cop
     monkeypatch.setattr(route, "_store_entry", lambda *args: None)
     monkeypatch.setattr(route, "_local_entries", {})
     monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
-    reader = WeekSession()
-
     response = await get(reader, debug_timing=True)
 
     assert response.headers["X-Feed-Cache"] == "miss"

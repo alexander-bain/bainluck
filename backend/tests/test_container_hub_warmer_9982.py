@@ -31,6 +31,7 @@ from app.tasks import celery_app
 from app.tasks import container_hub_warmer as warmer
 from app.utils import container_corrections as corrections
 from app.utils.container_read_cache import (
+    CONTAINER_READ_FRESH_TTL_LIVE_SECONDS,
     CONTAINER_READ_STALE_TTL_SECONDS,
     CachedRead,
     container_read_cache_key,
@@ -273,7 +274,7 @@ async def test_week_preview_is_available_while_the_response_is_still_building(ri
 
     assert summary["built"] == [slug]
     assert response_key in rig["redis"].store
-    assert 0 < rig["redis"].ttls[preview_key] <= 60
+    assert 0 < rig["redis"].ttls[preview_key] <= CONTAINER_READ_FRESH_TTL_LIVE_SECONDS
 
 
 async def test_a_hub_a_reader_just_built_is_skipped(rig):

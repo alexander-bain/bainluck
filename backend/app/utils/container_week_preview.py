@@ -15,7 +15,7 @@ import math
 from collections import Counter
 from dataclasses import asdict, dataclass
 
-from app.utils.container_read_cache import CONTAINER_READ_FRESH_TTL_SECONDS
+from app.utils.container_read_cache import CONTAINER_READ_FRESH_TTL_LIVE_SECONDS
 from app.utils.game_market_class import classify_game_market_class
 
 PREVIEW_LIMIT = 12
@@ -112,7 +112,8 @@ def decode_prepared_week_preview(
         return None
     if (
         type(clock) not in (int, float) or not math.isfinite(clock)
-        or not 0 <= now - clock < CONTAINER_READ_FRESH_TTL_SECONDS
+        # A cached plan does not know whether any game has since gone live.
+        or not 0 <= now - clock < CONTAINER_READ_FRESH_TTL_LIVE_SECONDS
         or not isinstance(selected, list) or len(selected) > PREVIEW_LIMIT
         or any(type(mid) is not int or mid <= 0 for mid in selected)
         or len(set(selected)) != len(selected)

@@ -143,7 +143,7 @@ async def _warm_container_hubs() -> dict:
     from app.services.database import async_session_maker
     from app.utils.container_corrections import READ_EMPTY, READ_PUBLISHED, read_published
     from app.utils.container_read_cache import (
-        CONTAINER_READ_FRESH_TTL_SECONDS,
+        CONTAINER_READ_FRESH_TTL_LIVE_SECONDS,
         container_read_cache_enabled,
         container_read_cache_key,
     )
@@ -183,7 +183,7 @@ async def _warm_container_hubs() -> dict:
                 else:
                     # Publish the few IDs and counts before card hydration. A
                     # concurrent reader missing the body can reuse this work.
-                    ttl = int(CONTAINER_READ_FRESH_TTL_SECONDS - (time.time() - preview.observed_at))
+                    ttl = int(CONTAINER_READ_FRESH_TTL_LIVE_SECONDS - (time.time() - preview.observed_at))
                     if ttl > 0:
                         try:
                             client.set(prepared_week_preview_key(key), preview.encode(), ex=ttl)
