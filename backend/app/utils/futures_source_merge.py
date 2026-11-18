@@ -40,7 +40,6 @@ from typing import Any, Optional
 
 from app.utils.aggregation import SOURCE_WEIGHTS, _weighted_median
 from app.utils.source_divergence import SourceDivergence, assess_divergence
-from app.utils.source_mark import no_source_mark, quote_source_mark
 from app.utils.team_identity_resolution import (
     TeamAliasIndex,
     resolve_row_team_id,
@@ -195,6 +194,9 @@ def blend_probabilities(rows: list[dict]) -> Optional[float]:
 
 
 def _blend_source_mark(rows: list[dict], rule: str) -> dict:
+    # The comparison specimen imports the blend without the backend runtime.
+    from app.utils.source_mark import no_source_mark, quote_source_mark
+
     if not rows:
         return no_source_mark("no_probability")
     marks = [row.get("source_mark") for row in rows]
