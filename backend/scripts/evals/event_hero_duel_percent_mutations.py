@@ -131,11 +131,8 @@ RESOLVER_MUTATIONS: list[dict] = [
     },
     {
         "id": "M4-keep-served-pair-after-history-override",
-        "needle": """          // #2085 — the pair has been REPLACED by a history row. The served
-          // percents describe the `current_odds` pair this branch just
-          // overrode, and the override only fires when the two differ by more
-          // than 5 points, so keeping them would print a number off by five.
-          fromCurrentOdds = false;""",
+        "needle": """        // The history reading owns this pair and needs its own display rounding.
+        fromCurrentOdds = false;""",
         "replacement": "",
         "why": "The history branch only fires when the pair moved by MORE than 5 "
         "points, so the stale served percents are wrong by at least five — "
