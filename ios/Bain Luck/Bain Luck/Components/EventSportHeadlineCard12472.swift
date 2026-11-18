@@ -152,13 +152,37 @@ struct EventSportHeadlineCard12472: View {
         )
     }
 
+    static func resolvedHeadlineSourceMark(
+        model: EventSportHeadlines12472.Model
+    ) -> (mark: SourceMark, number: Double?, subject: String?, isPregame: Bool)? {
+        guard let mark = model.sourceMark, mark.draws else { return nil }
+        let subject = model.home.shortName
+        if mark.state == .settled {
+            return (mark, nil, subject, false)
+        }
+        let homeProb = model.rows.first(where: { $0.role == .home })?.rawProbability
+        let isAfter = model.kind.phase == .after || EventState.isFinished(model.eventStatus)
+        if isAfter {
+            guard let pregameProb = homeProb else { return nil }
+            return (mark, pregameProb, subject, true)
+        }
+        return (mark, homeProb, subject, false)
+    }
+
+    private var resolvedHeadlineSourceMark: SourceMarkButton? {
+        guard let resolved = Self.resolvedHeadlineSourceMark(model: model) else { return nil }
+        return SourceMarkButton(
+            resolved.mark,
+            number: resolved.number,
+            subject: resolved.subject,
+            isPregame: resolved.isPregame,
+            numberSize: 20
+        )
+    }
+
     private var hasTrailingControls: Bool {
         if showsActiveEkgControl { return true }
-        return SourceMarkButton(
-            model.sourceMark,
-            number: model.home.rawProbability,
-            numberSize: 20
-        ) != nil
+        return resolvedHeadlineSourceMark != nil
     }
 
     private static func livePregameMetaText(
@@ -326,11 +350,7 @@ struct EventSportHeadlineCard12472: View {
                     .buttonStyle(.plain)
                 }
             }
-            if let markButton = SourceMarkButton(
-                model.sourceMark,
-                number: model.home.rawProbability,
-                numberSize: 20
-            ) {
+            if let markButton = resolvedHeadlineSourceMark {
                 markButton
                     .padding(.vertical, -10)
             }
