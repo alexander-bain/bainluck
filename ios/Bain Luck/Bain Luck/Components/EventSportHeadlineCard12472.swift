@@ -425,15 +425,18 @@ struct EventSportHeadlineCard12472: View {
         HStack(alignment: .firstTextBaseline, spacing: columnSpacing) {
             Spacer(minLength: 4)
             ForEach(Array(model.columns.enumerated()), id: \.offset) { idx, col in
-                Text(col.header)
-                    .font(HeadlineStyleTable199.headers(.page, scaledSize: effectiveHeaderSize))
-                    .foregroundStyle(HeadlineStyleTable199.quietInk)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: resolvedColumnWidth(for: col, at: idx), alignment: .trailing)
-                    .padding(.leading, extraLeadingGap(at: idx))
+                let colWidth = resolvedColumnWidth(for: col, at: idx)
+                if colWidth > 0 {
+                    Text(col.header)
+                        .font(HeadlineStyleTable199.headers(.page, scaledSize: effectiveHeaderSize))
+                        .foregroundStyle(HeadlineStyleTable199.quietInk)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.45)
+                        .allowsTightening(true)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: colWidth, alignment: .trailing)
+                        .padding(.leading, extraLeadingGap(at: idx))
+                }
             }
         }
         .accessibilityHidden(true)
@@ -541,16 +544,19 @@ struct EventSportHeadlineCard12472: View {
         tint: Color
     ) -> some View {
         ForEach(Array(model.columns.enumerated()), id: \.offset) { idx, col in
-            let cellText = idx < row.cells.count ? row.cells[idx] : ""
-            cellView(
-                text: cellText,
-                column: col,
-                columnIndex: idx,
-                row: row,
-                tint: tint
-            )
-            .frame(width: resolvedColumnWidth(for: col, at: idx), alignment: .trailing)
-            .padding(.leading, extraLeadingGap(at: idx))
+            let colWidth = resolvedColumnWidth(for: col, at: idx)
+            if colWidth > 0 {
+                let cellText = idx < row.cells.count ? row.cells[idx] : ""
+                cellView(
+                    text: cellText,
+                    column: col,
+                    columnIndex: idx,
+                    row: row,
+                    tint: tint
+                )
+                .frame(width: colWidth, alignment: .trailing)
+                .padding(.leading, extraLeadingGap(at: idx))
+            }
         }
     }
 
