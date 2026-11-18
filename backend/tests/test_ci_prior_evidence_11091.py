@@ -425,7 +425,7 @@ def test_uncertain_partial_or_refused_evidence_never_reuses(mutation):
         decide(api)
 
 
-def test_projection_matches_yaml_all_eight_shards_and_five_db_groups():
+def test_projection_matches_yaml_all_eight_shards_and_six_db_groups():
     projection = evidence.membership(TEXT)
     assert {v[1] for v in projection.values() if v[0] == "backend-tests"} == {
         str(i) for i in JOBS["backend-tests"]["strategy"]["matrix"]["shard"]
@@ -435,7 +435,7 @@ def test_projection_matches_yaml_all_eight_shards_and_five_db_groups():
     )
     for name, (_, _, _, block) in projection.items():
         assert block
-    assert len(projection) == 21  # #10708: + native-backend-readers
+    assert len(projection) == 22  # #10708: + native-backend-readers; Nov 18: + shared-tail-2
 
 
 @pytest.mark.parametrize("mutation", ["short", "changed_total", "duplicate"])

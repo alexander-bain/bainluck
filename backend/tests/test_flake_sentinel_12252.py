@@ -7,6 +7,9 @@ required jobs do not fail on it and the non-required `flaky-canary` job runs it.
 
 from __future__ import annotations
 
+import zipfile
+import re
+import io
 import importlib.util
 import sys
 import urllib.request
@@ -235,6 +238,46 @@ def test_the_shared_tail_uploads_its_retries_for_the_sentinel():
     assert up["with"]["name"] == "flaky-retries-${{ github.run_attempt }}"
     assert "shared-tail" in up["if"] and up["with"]["if-no-files-found"] == "ignore"
     assert fs.RETRY_ARTIFACT.format(attempt="${{ github.run_attempt }}") == up["with"]["name"]
+
+
+def test_every_retrying_runner_uploads_a_name_the_sentinel_reads():
+    """Fable, Nov 18: shared-tail split into two runners. Each one that retries (55-A) uploads
+    its own artifact name, and the sentinel lists every one of them under its own job name."""
+    job = _ci()["jobs"]["database-integration"]
+    retrying = sorted(g for g in job["strategy"]["matrix"]["group"] if g.startswith("shared-tail"))
+    assert retrying == ["shared-tail", "shared-tail-2"]
+    uploads = {}
+    for s in job["steps"]:
+        if str(s.get("uses", "")).startswith("actions/upload-artifact") and "flaky-retries" in s["with"]["name"]:
+            group = re.search(r"matrix\.group == '([a-z0-9-]+)'", s["if"]).group(1)
+            uploads[group] = s["with"]["name"]
+    assert sorted(uploads) == retrying
+    read = {a.format(attempt="${{ github.run_attempt }}"): n for a, n in fs.RETRY_ARTIFACTS}
+    for group, name in uploads.items():
+        assert read.get(name) == f"database-integration ({group})", (group, name)
+
+
+def test_the_second_tail_runners_retries_are_read_and_labelled(monkeypatch):
+    seen = []
+
+    class FakeApi:
+        def get(self, path):
+            seen.append(path)
+            if "name=flaky-retries-shared-tail-2-1&" in path:
+                return {"artifacts": [{"created_at": "2099-01-01T00:00:00Z", "archive_download_url": "u",
+                                       "workflow_run": {"id": 9, "head_sha": "abc"}}]}
+            return {"artifacts": []}
+
+        def raw(self, url):
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as z:
+                z.writestr("flaky-retries.txt", "tests/integration/test_x_pg.py::test_y\n")
+            return buf.getvalue()
+
+    events = fs.retry_events(FakeApi(), "2000-01-01T00:00:00Z")
+    assert [(e.test, e.job) for e in events] == [
+        ("tests/integration/test_x_pg.py::test_y", "database-integration (shared-tail-2)")]
+    assert any("name=flaky-retries-1&" in p for p in seen)
 
 
 def test_the_sentinel_runs_daily_and_may_write_issues():

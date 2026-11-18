@@ -72,7 +72,9 @@ python -m pytest $FILES -q --durations=0
 # Decide 55-A: the ONE reviewed PYTEST_ADDOPTS — the shared tail re-runs a failed
 # test once and every other group gets nothing. Any other value (e.g. `-k`, which
 # would deselect tests) is still an unreviewed environment.
-RETRY_ONCE_ADDOPTS = "${{ matrix.group == 'shared-tail' && '--reruns 1 -rR' || '' }}"
+# Fable, Nov 18: the shared tail runs on two runners (split at #4586's full reset); both
+# halves are "the shared tail" and keep the one retry.
+RETRY_ONCE_ADDOPTS = "${{ (matrix.group == 'shared-tail' || matrix.group == 'shared-tail-2') && '--reruns 1 -rR' || '' }}"
 
 # #12252 item 2: the quarantine list and the retry file are admitted ONLY at these exact
 # reviewed values (data from change-scope, a fixed path); any other value is unreviewed.
@@ -287,10 +289,13 @@ def _validate_current_composed_promotion(
                 # sentinel only; nothing downloads it as evidence for a commit.
                 name == "database-integration"
                 and step.get("uses") == "actions/upload-artifact@v4"
-                and step.get("id") == "db_flaky_retries_upload"
-                and step.get("with") == {"name": "flaky-retries-${{ github.run_attempt }}",
-                                         "path": "/tmp/flaky-retries.txt",
-                                         "if-no-files-found": "ignore", "retention-days": 8}
+                # Nov 18: the second tail runner uploads its own list under its own name.
+                and (step.get("id"), step.get("with", {}).get("name")) in (
+                    ("db_flaky_retries_upload", "flaky-retries-${{ github.run_attempt }}"),
+                    ("db_flaky_retries_upload_2", "flaky-retries-shared-tail-2-${{ github.run_attempt }}"),
+                )
+                and {k: v for k, v in step.get("with", {}).items() if k != "name"}
+                == {"path": "/tmp/flaky-retries.txt", "if-no-files-found": "ignore", "retention-days": 8}
             ), "only explicit compose test-provenance upload; no build artifact credit"
     for name in ("backend-tests", "shard-completeness", "database-integration"):
         job = jobs[name]
