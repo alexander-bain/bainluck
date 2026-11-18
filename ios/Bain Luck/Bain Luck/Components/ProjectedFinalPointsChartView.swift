@@ -13,6 +13,8 @@ import Charts
 /// of an unexplained name under the heading, and the game's OBSERVED period
 /// boundaries are marked where they were observed.
 struct ProjectedFinalPointsChartView: View {
+    @ScaledMetric(relativeTo: .caption2) private var scaledAxisFontSize: CGFloat = 12
+    private var axisFontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledAxisFontSize) }
     let input: ProjectedFinalPointsSeries.Input
     let homeTeam: String
     let awayTeam: String
@@ -22,16 +24,22 @@ struct ProjectedFinalPointsChartView: View {
     /// (`gameStateMarkers`).
     var periodMarkers: [PeriodMarkerPayload]? = nil
     var sportKey: String? = nil
+    /// #12889 / #10573 — the page's own whole-number projected pair (`111` and
+    /// `114`), printed above the chart before and during the game so the card
+    /// never disagrees with the headline while the lines show one book's movement.
+    var pageProjectedPair: (away: Int, home: Int)? = nil
 
     @State private var expanded = false
     // The card and the full-screen sheet open their details apart, so Done
     // never returns to a card that grew behind the sheet.
     @State private var detailsShown = false
     @State private var expandedDetailsShown = false
+    @State private var plotWidth: CGFloat = 0
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     static let inlinePlotHeight: CGFloat = 300
     static let expandedPlotHeight: CGFloat = 400
+    static let defaultInlinePlotWidth: CGFloat = 295
     /// The strip above the plot that holds the period chips, so a chip never
     /// sits on a line near the top of the scale.
     static let markerStripHeight: CGFloat = 16
@@ -105,6 +113,9 @@ struct ProjectedFinalPointsChartView: View {
                     if full.kickoffProjection != nil {
                         Text("The open dot at kickoff is the projection when the game began.")
                     }
+                    if full.phase != .after, pageProjectedPair != nil {
+                        Text("The numbers above are this page's projected final, the same as at the top of the page. The lines show how one sportsbook's projection moved.")
+                    }
                     Text(Self.sourceExplanation(for: full))
                     if !markers.isEmpty {
                         Text(Self.markerExplanation(sportKey: input.sportKey))
@@ -146,17 +157,15 @@ struct ProjectedFinalPointsChartView: View {
     }
 
     private func readout(_ series: ProjectedFinalPointsSeries) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let pair = series.phase == .after ? nil : pageProjectedPair
+        return VStack(alignment: .leading, spacing: 6) {
             let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .top, spacing: 20))
             layout {
-                // #12578 — away first, the page title's order ("NE vs DET").
-                teamReadout(awayTeam, forecast: series.latest.away, actual: series.latestActual?.away, color: awayColor)
-                teamReadout(homeTeam, forecast: series.latest.home, actual: series.latestActual?.home, color: homeColor)
-                // #12578 (Alex: "isn't it actually obvious from the x-axis when the
-                // projection is from?") — an age only when the projection has gone
-                // quiet, as the app's one age mark; a fresh one says nothing.
-                // Aged on the clock the history arrived on, the chart's own right edge.
-                if let mark = Self.ageMark(for: series, now: input.asOf) {
+                // #12578 — away first, matching the page title.
+                teamReadout(awayTeam, pagePoints: pair?.away, forecast: series.latest.away, actual: series.latestActual?.away, color: awayColor, phase: series.phase)
+                teamReadout(homeTeam, pagePoints: pair?.home, forecast: series.latest.home, actual: series.latestActual?.home, color: homeColor, phase: series.phase)
+                // #12578 — show an age mark only when the book's own projection is stale.
+                if pair == nil, let mark = Self.ageMark(for: series, now: input.asOf) {
                     mark.padding(.top, 3)
                 }
             }
@@ -225,10 +234,28 @@ struct ProjectedFinalPointsChartView: View {
         series.phase == .after ? "Last projection" : "Latest projection"
     }
 
-    private func teamReadout(_ team: String, forecast: Double, actual: Double?, color: Color) -> some View {
+    static func projectedReadoutText(
+        pagePoints: Int?,
+        forecast: Double,
+        phase: ProjectedFinalPointsSeries.Phase
+    ) -> String {
+        if phase != .after, let pagePoints {
+            return "\(pagePoints) projected"
+        }
+        return "\(forecast.formatted(.number.precision(.fractionLength(0...1)))) projected"
+    }
+
+    private func teamReadout(
+        _ team: String,
+        pagePoints: Int?,
+        forecast: Double,
+        actual: Double?,
+        color: Color,
+        phase: ProjectedFinalPointsSeries.Phase
+    ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(team).font(.subheadline.bold()).foregroundStyle(color)
-            Text("\(forecast.formatted(.number.precision(.fractionLength(0...1)))) projected")
+            Text(Self.projectedReadoutText(pagePoints: pagePoints, forecast: forecast, phase: phase))
                 .font(.subheadline.monospacedDigit())
             if let actual {
                 Text("\(actual.formatted(.number.precision(.fractionLength(0...1)))) scored")
@@ -237,6 +264,34 @@ struct ProjectedFinalPointsChartView: View {
         }
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .combine)
+    }
+
+    /// #12889 — keeps X-axis time labels inset inside the plot (`ChartTimeAxisLabels`)
+    /// and drops any tick whose edge-clamped label would crowd its neighbour, so no
+    /// time label is ever truncated (`"1…"`) or overprinted.
+    static func nonCollidingTicks(
+        _ candidates: [Date],
+        positions: [CGFloat],
+        plotWidth: CGFloat,
+        labelWidth: CGFloat
+    ) -> [Date] {
+        let count = min(candidates.count, positions.count)
+        guard count > 0 else { return [] }
+        let centers = OddsChartView.xAxisLabelCenters(
+            tickPositions: Array(positions.prefix(count)),
+            plotWidth: plotWidth,
+            labelWidth: labelWidth
+        )
+        let minStep = labelWidth + OddsChartView.xAxisLabelMinGap
+        var kept: [Date] = [candidates[0]]
+        var lastCenter = centers[0]
+        for idx in 1..<count {
+            if centers[idx] - lastCenter >= minStep {
+                kept.append(candidates[idx])
+                lastCenter = centers[idx]
+            }
+        }
+        return kept
     }
 
     // MARK: - Game-state markers
@@ -295,7 +350,23 @@ struct ProjectedFinalPointsChartView: View {
     // MARK: - Plot
 
     private func plot(_ series: ProjectedFinalPointsSeries, markers: [GameStateMarker]) -> some View {
-        Chart {
+        let xStart = Self.windowStart(series)
+        let xEnd = max(series.end, xStart.addingTimeInterval(1))
+        let xDomain = xStart...xEnd
+        let effectiveWidth = plotWidth > 0 ? plotWidth : Self.defaultInlinePlotWidth
+        let labelScale = axisFontSize / 9
+        let plan = OddsChartView.xAxisPlan(
+            for: xDomain,
+            plotWidth: effectiveWidth,
+            labelScale: labelScale
+        )
+        let ticks = OddsChartView.xAxisContextTicks(
+            for: xDomain,
+            plan: plan,
+            plotWidth: effectiveWidth,
+            labelScale: labelScale
+        )
+        return Chart {
             ForEach(Array(markers.enumerated()), id: \.offset) { _, marker in
                 RuleMark(x: .value("Period", marker.at))
                     .lineStyle(StrokeStyle(lineWidth: 0.75, dash: [4, 4]))
@@ -357,7 +428,14 @@ struct ProjectedFinalPointsChartView: View {
         // #12578 — once a game has started the chart opens at kickoff, so
         // in-game movement isn't squeezed by the hour before it.
         .chartXScale(domain: Self.windowStart(series)...max(series.end, Self.windowStart(series).addingTimeInterval(1)))
-        .chartYScale(domain: 0...series.yMax)
+        .chartYScale(domain: series.yMin...series.yMax)
+        .chartXAxis {
+            AxisMarks(values: ticks) { _ in
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
+                    .foregroundStyle(.secondary.opacity(0.3))
+                ChartTimeAxisLabels.reservedRow(format: plan.format, fontSize: axisFontSize)
+            }
+        }
         .chartYAxis { AxisMarks(values: series.yTicks) }
         .chartLegend(.hidden)
         // The chips ride the shared placement (#3237 / #3817): measured widths,
@@ -366,6 +444,16 @@ struct ProjectedFinalPointsChartView: View {
         .chartOverlay { proxy in
             GeometryReader { geo in
                 let plotFrame = geo[proxy.plotAreaFrame]
+                let labelWidth = OddsChartView.xAxisLabelWidth(for: plan.labelStyle) * axisFontSize / 9
+                let placedTicks = ticks.compactMap { tick in
+                    proxy.position(forX: tick).map { (tick, $0) }
+                }
+                let visibleTicks = Self.nonCollidingTicks(
+                    placedTicks.map(\.0),
+                    positions: placedTicks.map(\.1),
+                    plotWidth: plotFrame.width,
+                    labelWidth: labelWidth
+                )
                 let placements = PeriodChipGeometry.place(
                     markers.enumerated().compactMap { index, marker in
                         proxy.position(forX: marker.at).map {
@@ -374,6 +462,18 @@ struct ProjectedFinalPointsChartView: View {
                     },
                     plotWidth: plotFrame.width,
                     metrics: .score)
+                Color.clear
+                    .onAppear {
+                        if plotFrame.width > 0 && abs(plotFrame.width - plotWidth) > 1 {
+                            plotWidth = plotFrame.width
+                        }
+                    }
+                    .onChange(of: plotFrame.width) { _, w in
+                        if w > 0 && abs(w - plotWidth) > 1 {
+                            plotWidth = w
+                        }
+                    }
+                ChartTimeAxisLabels(ticks: visibleTicks, plan: plan, proxy: proxy, plotFrame: plotFrame)
                 ForEach(placements, id: \.key) { placement in
                     Text(markers[placement.key].label)
                         .font(.system(size: 8, weight: .semibold))
