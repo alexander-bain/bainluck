@@ -418,4 +418,65 @@ describe("#12288 Slice 6 — Website parity, error states, and non-repeating fir
     expect(strokes).toHaveLength(3);
     expect(new Set(strokes).size).toBe(3);
   });
+
+  it("wraps contender_spotlight podium subtitles without line-clamp-1 truncation", () => {
+    const spotlightBlock: MachineryVisualBlock = {
+      form_id: "contender_spotlight",
+      initial_visible_limit: 3,
+      items: [
+        {
+          market_id: 8103,
+          title: "MVP",
+          href: "/futures/8103",
+          outcomes: [
+            {
+              outcome_id: 1,
+              name: "Victor Wembanyama",
+              probability: 0.43,
+              rendered_percent: 43,
+              art: {
+                url: "https://a.espncdn.com/i/headshots/nba/players/full/5104157.png",
+                kind: "person",
+                detail: "Center · San Antonio",
+                accent_color: "#111827",
+                initials: "VW",
+              },
+            },
+            {
+              outcome_id: 2,
+              name: "Luka Dončić",
+              probability: 0.38,
+              rendered_percent: 38,
+              art: {
+                url: "https://a.espncdn.com/i/headshots/nba/players/full/3945274.png",
+                kind: "person",
+                detail: "Guard · LA Lakers",
+                accent_color: "#552583",
+                initials: "LD",
+              },
+            },
+            {
+              outcome_id: 3,
+              name: "Shai Gilgeous-Alexander",
+              probability: 0.19,
+              rendered_percent: 19,
+              art: {
+                url: "https://a.espncdn.com/i/headshots/nba/players/full/4278073.png",
+                kind: "person",
+                detail: "Guard · Oklahoma City",
+                accent_color: "#007AC1",
+                initials: "SG",
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <MachinerySectionRenderer visualBlock={spotlightBlock} members={[]} />,
+    );
+    expect(html).toContain("Center · San Antonio");
+    expect(html).toContain("Guard · Oklahoma City");
+    expect(html).not.toContain("line-clamp-1");
+  });
 });

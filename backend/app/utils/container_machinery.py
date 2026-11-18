@@ -21,6 +21,7 @@ import logging
 import math
 import os
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from functools import lru_cache
@@ -493,6 +494,51 @@ def _norm_key(text: str | None) -> str:
     return _NON_ALNUM_RE.sub(" ", text.lower()).strip()
 
 
+_DOTTED_INITIALS_RE = re.compile(r"\b(?:[A-Za-z]\.\s*){2,}(?=\s|$)")
+
+
+def _ascii_fold_key(text: str | None) -> str:
+    """NFKD ASCII-folded + dotted-initial key so equivalent spellings
+    ('Luka Dončić' / 'Luka Doncic', 'JD Vance' / 'J.D. Vance') share one identity key.
+    """
+    if not text:
+        return ""
+    decomposed = unicodedata.normalize("NFKD", str(text))
+    ascii_only = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    collapsed = _DOTTED_INITIALS_RE.sub(lambda m: re.sub(r"[\.\s]+", "", m.group(0)), ascii_only)
+    return _NON_ALNUM_RE.sub(" ", collapsed.lower()).strip()
+
+
+def _diacritic_letter_count(text: str) -> int:
+    return sum(1 for ch in text if ord(ch) > 127 and ch.isalpha())
+
+
+def _pick_preferred_subject_spelling(
+    variants: Sequence[str],
+    *,
+    primary_display: Optional[str] = None,
+) -> Optional[str]:
+    """When variants share the exact same ``_ascii_fold_key``:
+    1. Prefer properly accented orthography ('Luka Dončić' over 'Luka Doncic').
+    2. Otherwise prefer the registered primary display alias ('JD Vance') or cleaner undotted form
+       ('JD Vance' over 'J.D. Vance') so one person never prints two ways in one grouping.
+    """
+    cleaned = [re.sub(r"\s+", " ", str(v).strip()) for v in variants if str(v).strip()]
+    if not cleaned:
+        return None
+    best_diacritic = max(cleaned, key=lambda s: (_diacritic_letter_count(s), -len(s)))
+    if _diacritic_letter_count(best_diacritic) > 0:
+        return best_diacritic
+    if primary_display:
+        prim = re.sub(r"\s+", " ", str(primary_display).strip())
+        if prim and any(c.isupper() for c in prim):
+            return prim
+    titled = [s for s in cleaned if any(c.isupper() for c in s)]
+    if len(set(titled)) > 1:
+        return min(titled, key=lambda s: (s.count("."), len(s), s))
+    return None
+
+
 def _initials(label: str) -> str:
     words = [w for w in re.split(r"\s+", label.strip()) if w]
     if not words:
@@ -519,11 +565,35 @@ class SubjectArtResolver:
         self._by_norm: dict[str, dict[str, Any]] = {}
         self._load_catalogs()
 
-    def _register(self, aliases: Sequence[str], record: dict[str, Any]) -> None:
+    def _register(
+        self,
+        aliases: Sequence[str],
+        record: dict[str, Any],
+        *,
+        display_aliases: Optional[Sequence[str]] = None,
+    ) -> None:
+        disp_list = [str(a) for a in (display_aliases if display_aliases is not None else aliases) if str(a).strip()]
+        primary_disp = disp_list[0] if disp_list else None
+        by_fold: dict[str, list[str]] = {}
+        for raw in disp_list:
+            fk = _ascii_fold_key(raw)
+            if fk:
+                by_fold.setdefault(fk, []).append(str(raw))
         for raw in aliases:
-            nk = _norm_key(raw)
-            if nk and nk not in self._by_norm:
-                self._by_norm[nk] = record
+            fk = _ascii_fold_key(raw)
+            rec_for_alias = record
+            if fk and len(by_fold.get(fk, ())) > 1 and "canonical_name" not in record:
+                prim_for_fold = (
+                    primary_disp
+                    if primary_disp and _ascii_fold_key(primary_disp) == fk
+                    else None
+                )
+                pref = _pick_preferred_subject_spelling(by_fold[fk], primary_display=prim_for_fold)
+                if pref:
+                    rec_for_alias = {**record, "canonical_name": pref}
+            for nk in (_norm_key(raw), fk):
+                if nk and nk not in self._by_norm:
+                    self._by_norm[nk] = rec_for_alias
 
     def _load_catalogs(self) -> None:
         # 1. Dedicated machinery subject art (ESPN headshots, NFL crests, verified Commons portraits)
@@ -541,7 +611,12 @@ class SubjectArtResolver:
                     "license": item.get("license"),
                     "source_page": item.get("source_page"),
                 }
-                self._register(list(item.get("aliases") or ()) + [str(item.get("key") or "")], rec)
+                disp_aliases = [str(a) for a in (item.get("aliases") or ()) if a]
+                self._register(
+                    disp_aliases + [str(item.get("key") or "")],
+                    rec,
+                    display_aliases=disp_aliases,
+                )
             for team_name, meta in (raw.get("nfl_teams") or {}).items():
                 if not isinstance(meta, Mapping):
                     continue
@@ -601,10 +676,11 @@ class SubjectArtResolver:
                 if not isinstance(entry, Mapping) or not entry.get("url"):
                     continue
                 aliases = [str(a) for a in (entry.get("aliases") or ()) if a]
+                all_aliases = list(aliases)
                 if entry.get("entity_key"):
-                    aliases.append(str(entry["entity_key"]))
+                    all_aliases.append(str(entry["entity_key"]))
                 self._register(
-                    aliases,
+                    all_aliases,
                     {
                         "url": str(entry["url"]),
                         "kind": str(entry.get("kind") or "person"),
@@ -614,6 +690,7 @@ class SubjectArtResolver:
                         "license": entry.get("license"),
                         "source_page": entry.get("source_page"),
                     },
+                    display_aliases=aliases,
                 )
 
     def resolve(
@@ -625,16 +702,20 @@ class SubjectArtResolver:
     ) -> dict[str, Any]:
         clean_subj = _OUTCOME_PROP_SUFFIX_RE.sub("", subject.strip())
         nk = _norm_key(clean_subj) or _norm_key(subject)
-        hit = self._by_norm.get(nk)
+        fk = _ascii_fold_key(clean_subj) or _ascii_fold_key(subject)
+        hit = self._by_norm.get(nk) or (self._by_norm.get(fk) if fk else None)
         url = explicit_url or (hit["url"] if hit else None)
         color = explicit_color or (hit.get("accent_color") if hit else None) or _fallback_color(clean_subj or subject)
-        return {
+        out: dict[str, Any] = {
             "url": url,
             "kind": (hit.get("kind") if hit else ("explicit" if url else "monogram")),
             "detail": (hit.get("detail") if hit else "") or "",
             "accent_color": color,
             "initials": _initials(clean_subj or subject),
         }
+        if hit and hit.get("canonical_name"):
+            out["canonical_name"] = str(hit["canonical_name"])
+        return out
 
 
 @lru_cache(maxsize=1)
@@ -852,7 +933,14 @@ def _clean_section_market_label(name: str) -> str:
     # ── Sports / Awards / General cleanup ────────────────────────────────
     is_oscar_nom = bool(re.match(r"^oscar\s+nominees?:", cleaned, re.IGNORECASE))
     cleaned = re.sub(
-        r"^(?:NFL:\s*|Pro\s+Football:?\s*|NFL\s+(?=(?:Passing|Rushing|Receiving)\b)|Oscar\s+Winners?:\s*|Oscar\s+nominees?:\s*|Oscars?\s+\d{4}:\s*|2028\s+U\.S\.\s*|2028\s+)",
+        r"^(?:(?:NFL|NBA|MLB|NHL|WNBA|MLS|PGA|NCAA|CFB):\s*|Pro\s+(?:Football|Basketball|Baseball|Hockey|Soccer|Golf|Tennis|MMA|Boxing):?\s*|(?:NFL|NBA|MLB|NHL|WNBA|MLS|PGA)\s+(?=(?:Passing|Rushing|Receiving|Points|Rebounds|Assists|Steals|Blocks|Three-Pointers|Home\s+Runs|Strikeouts|Batting|Hits|Runs|RBIs?|Goals|Saves|MVP|Most\s+Valuable|Defensive\s+Player|Offensive\s+Player|Rookie|Sixth\s+Man|Most\s+Improved|Clutch\s+Player|Coach|Comeback\s+Player|Cy\s+Young|Hart|Norris|Vezina|Selke|Calder|Heisman)\b)|Oscar\s+Winners?:\s*|Oscar\s+nominees?:\s*|Oscars?\s+\d{4}:\s*|2028\s+U\.S\.\s*|2028\s+)",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    # Strip redundant parenthetical stat abbreviations after spelled-out stat names ('Points Per Game (PPG) Leader' -> 'Points Per Game Leader')
+    cleaned = re.sub(
+        r"\s*\((?:PPG|RPG|APG|SPG|BPG|TDs?|YPG|ERA|HR|RBIs?|3PM)\)",
         "",
         cleaned,
         flags=re.IGNORECASE,
@@ -870,6 +958,13 @@ def _clean_section_market_label(name: str) -> str:
         cleaned = re.sub(r"\s+film\s+winner$", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\s+film(?=\s+nominations$|$)", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\s+winner$", "", cleaned, flags=re.IGNORECASE)
+    # Strip redundant trailing 'Winner' on individual awards ('Defensive Player of the Year Winner' -> 'Defensive Player of the Year')
+    cleaned = re.sub(
+        r"((?:MVP|Most\s+Valuable\s+Player|Player\s+of\s+the\s+Year|Rookie\s+of\s+the\s+Year|Sixth\s+Man\s+of\s+the\s+Year|Coach\s+of\s+the\s+Year|Most\s+Improved\s+Player|Comeback\s+Player\s+of\s+the\s+Year|Clutch\s+Player\s+of\s+the\s+Year|Cy\s+Young(?:\s+Award)?|Heisman(?:\s+Trophy)?))\s+winner\??$",
+        r"\1",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
 
     # Strip venue trailing '? (2028)', '(2028)', '?', and conversational prefixes
     cleaned = re.sub(r"\?\s*\(\d{4}\)\s*$", "", cleaned)
@@ -907,6 +1002,14 @@ def _market_matches_query(market: Mapping[str, Any], query: Mapping[str, Any]) -
         return False
 
     excl_tokens = [str(t).lower() for t in (query.get("exclude_tokens") or ()) if str(t).strip()]
+    explicitly_womens = any("women" in tok for tok in req_tokens + any_tokens)
+    if not explicitly_womens:
+        if "wnba" in excl_tokens:
+            excl_tokens.extend(["women's pro basketball", "womens pro basketball", "women\u2019s pro basketball"])
+        if "lpga" in excl_tokens:
+            excl_tokens.extend(["women's pro golf", "womens pro golf", "women\u2019s pro golf"])
+        if "nwsl" in excl_tokens:
+            excl_tokens.extend(["women's pro soccer", "womens pro soccer", "women\u2019s pro soccer"])
     if any(tok in title_low for tok in excl_tokens):
         return False
 
@@ -1088,7 +1191,13 @@ def _hydrate_market_visual_item(
                 o_name,
                 explicit_url=(str(o["image_url"]) if o.get("image_url") else None),
             )
+            canon_subj = art.get("canonical_name")
+            if canon_subj and _ascii_fold_key(canon_subj) == _ascii_fold_key(o_name):
+                o_name = str(canon_subj)
             pct_val = int(o.get("rendered_percent") or _half_up_pct(p))
+            for fk_alias in (_norm_key(o_name), _ascii_fold_key(o_name)):
+                if fk_alias and fk_alias not in canon_by_key:
+                    canon_by_key[fk_alias] = pct_val
             outcomes_out.append(
                 {
                     "outcome_id": oid,
@@ -1709,7 +1818,12 @@ async def _load_snapshot_from_db(
                     pct_int = max(1, min(99, int(rp))) if 0.0 < p_f < 1.0 else int(rp)
                     by_oid[oid] = pct_int
                     r_name = str(row.get("name") or "")
-                    for nk in (_norm_key(_clean_outcome_label(r_name)), _norm_key(r_name)):
+                    for nk in (
+                        _norm_key(_clean_outcome_label(r_name)),
+                        _norm_key(r_name),
+                        _ascii_fold_key(_clean_outcome_label(r_name)),
+                        _ascii_fold_key(r_name),
+                    ):
                         if nk and nk not in by_key:
                             by_key[nk] = pct_int
                     fk = fold_outcome_key(r_name)
@@ -2241,6 +2355,65 @@ def _build_dynamic_title_from_set(
     return str(definition.get("name") or definition.get("slug") or "Round-Up")
 
 
+def _unify_grouping_diacritic_names(sections: Sequence[Mapping[str, Any]]) -> None:
+    """Ensure a subject never appears under two diacritic/ASCII spellings within one grouping
+    (e.g. 'Luka Dončić' in stat leaders vs 'Luka Doncic' in MVP tiles).
+    """
+    variants_by_fold: dict[str, list[str]] = {}
+    for sec in sections:
+        vb = sec.get("visual_block") if isinstance(sec, Mapping) else None
+        if not isinstance(vb, Mapping):
+            continue
+        for item in vb.get("items") or ():
+            if not isinstance(item, Mapping):
+                continue
+            if "subject" in item and isinstance(item.get("subject"), str):
+                fk = _ascii_fold_key(item["subject"])
+                if fk:
+                    variants_by_fold.setdefault(fk, []).append(item["subject"])
+            for o in item.get("outcomes") or ():
+                if isinstance(o, Mapping) and isinstance(o.get("name"), str):
+                    fk = _ascii_fold_key(o["name"])
+                    if fk:
+                        variants_by_fold.setdefault(fk, []).append(o["name"])
+            for s in item.get("series") or ():
+                if isinstance(s, Mapping) and isinstance(s.get("name"), str):
+                    fk = _ascii_fold_key(s["name"])
+                    if fk:
+                        variants_by_fold.setdefault(fk, []).append(s["name"])
+
+    preferred_by_fold: dict[str, str] = {}
+    for fk, names in variants_by_fold.items():
+        if len(set(names)) > 1:
+            pref = _pick_preferred_subject_spelling(names)
+            if pref:
+                preferred_by_fold[fk] = pref
+    if not preferred_by_fold:
+        return
+
+    for sec in sections:
+        vb = sec.get("visual_block") if isinstance(sec, Mapping) else None
+        if not isinstance(vb, Mapping):
+            continue
+        for item in vb.get("items") or ():
+            if not isinstance(item, dict):
+                continue
+            if isinstance(item.get("subject"), str):
+                fk = _ascii_fold_key(item["subject"])
+                if fk in preferred_by_fold:
+                    item["subject"] = preferred_by_fold[fk]
+            for o in item.get("outcomes") or ():
+                if isinstance(o, dict) and isinstance(o.get("name"), str):
+                    fk = _ascii_fold_key(o["name"])
+                    if fk in preferred_by_fold:
+                        o["name"] = preferred_by_fold[fk]
+            for s in item.get("series") or ():
+                if isinstance(s, dict) and isinstance(s.get("name"), str):
+                    fk = _ascii_fold_key(s["name"])
+                    if fk in preferred_by_fold:
+                        s["name"] = preferred_by_fold[fk]
+
+
 async def produce_container_machinery(
     db: Any,
     definition: Mapping[str, Any],
@@ -2638,6 +2811,7 @@ async def produce_container_machinery(
         }
 
     built_sections = [built_by_idx[idx] for idx in sorted(built_by_idx)]
+    _unify_grouping_diacritic_names(built_sections)
 
     # Slice 6 Item 2c: all-or-nothing across configured sections — never emit an empty or shorter grouping.
     if (
@@ -3083,7 +3257,7 @@ def _lookup_market_member_pct(
         if str(outcome_id) in by_oid:
             return int(by_oid[str(outcome_id)])
     by_key = mpn.get("by_outcome_key") or {}
-    for nk in (_norm_key(_clean_outcome_label(label)), _norm_key(label)):
+    for nk in (_norm_key(_clean_outcome_label(label)), _norm_key(label), _ascii_fold_key(label)):
         if nk and nk in by_key:
             return int(by_key[nk])
     by_fold = mpn.get("by_fold_key") or {}

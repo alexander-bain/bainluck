@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
+
 import pytest
 from fastapi import HTTPException
 
@@ -62,7 +64,9 @@ async def test_slice6_2a_oscars_and_section0_never_repeat_page_headline() -> Non
 
 
 @pytest.mark.asyncio
-async def test_slice6_2b_member_page_number_parity_passes_all_four_and_fails_on_drift() -> None:
+async def test_slice6_2b_member_page_number_parity_passes_all_four_and_fails_on_drift() -> (
+    None
+):
     snap = _sample_snapshot()
     # Inject aKalshi-style vig pair (0.675 + 0.335 = 1.01) on 2028 Party Control (#108327):
     # /futures/108327 normalizes 0.675/1.01 -> 67% and 0.335/1.01 -> 33% (NOT 68% / 32%).
@@ -84,7 +88,10 @@ async def test_slice6_2b_member_page_number_parity_passes_all_four_and_fails_on_
         "visual_block"
     ]["items"][0]["outcomes"]
     assert [o["rendered_percent"] for o in pol_sec0_outs] == [67, 33]
-    assert "67%" in by_slug["machinery-2028-presidential"]["container"]["container"]["name"]
+    assert (
+        "67%"
+        in by_slug["machinery-2028-presidential"]["container"]["container"]["name"]
+    )
 
     # Every grouping passes member_number_parity with 0 mismatches across card & page
     for it in items:
@@ -114,7 +121,9 @@ async def test_slice6_2b_member_page_number_parity_passes_all_four_and_fails_on_
     # 2. Drift on a Discover card row fails card & overall report
     nfl_entry = copy.deepcopy(by_slug["machinery-nfl-week"])
     nfl_defn = load_machinery_definition(CANDIDATE_NFL_WEEK_PATH)
-    nfl_entry["feed_item"]["data"]["roundup"]["machinery_card"]["rows"][0]["away_pct"] += 1
+    nfl_entry["feed_item"]["data"]["roundup"]["machinery_card"]["rows"][0][
+        "away_pct"
+    ] += 1
     bad_nfl_report = compute_visual_diversity_report(
         nfl_defn, nfl_entry["feed_item"], nfl_entry["container"]
     )
@@ -125,9 +134,9 @@ async def test_slice6_2b_member_page_number_parity_passes_all_four_and_fails_on_
     # 3. Drift on Oscars paired_stage_bars Nominated % vs /futures/5165726 fails the grouping
     osc_entry = copy.deepcopy(by_slug["machinery-oscars-best-picture"])
     osc_defn = load_machinery_definition(CANDIDATE_OSCARS_BEST_PICTURE_PATH)
-    osc_entry["container"]["sections"][0]["visual_block"]["paired_metric_set"]["entries"][0][
-        "stage_1_rendered_percent"
-    ] = 81
+    osc_entry["container"]["sections"][0]["visual_block"]["paired_metric_set"][
+        "entries"
+    ][0]["stage_1_rendered_percent"] = 81
     bad_osc_report = compute_visual_diversity_report(
         osc_defn, osc_entry["feed_item"], osc_entry["container"]
     )
@@ -137,7 +146,9 @@ async def test_slice6_2b_member_page_number_parity_passes_all_four_and_fails_on_
 
 
 @pytest.mark.asyncio
-async def test_slice6_2c_failed_read_returns_error_state_never_empty_or_shorter_grouping() -> None:
+async def test_slice6_2c_failed_read_returns_error_state_never_empty_or_shorter_grouping() -> (
+    None
+):
     snap = _sample_snapshot()
 
     # Break ONLY Oscars' paired_sets read; the other 3 groupings remain healthy
@@ -176,7 +187,8 @@ async def test_slice6_2c_failed_read_returns_error_state_never_empty_or_shorter_
     shorter_nfl_snap["markets"] = [
         m
         for m in shorter_nfl_snap["markets"]
-        if "division" not in m["name"].lower() and "north champion" not in m["name"].lower()
+        if "division" not in m["name"].lower()
+        and "north champion" not in m["name"].lower()
     ]
     with pytest.raises(HTTPException) as exc_nfl:
         await serve_machinery_candidate_preview(
@@ -194,3 +206,288 @@ async def test_slice6_2c_failed_read_returns_error_state_never_empty_or_shorter_
     )
     assert len(exploded) == len(discover_machinery_candidate_paths())
     assert all(it["status"] == "error" and it["container"] is None for it in exploded)
+
+
+@pytest.mark.asyncio
+async def test_general_sport_titles_and_single_diacritic_spelling_across_sections() -> (
+    None
+):
+    from datetime import datetime, timezone
+
+    from app.utils.container_machinery import (
+        SubjectArtResolver,
+        _clean_section_market_label,
+        _default_art_resolver,
+    )
+
+    _default_art_resolver.cache_clear()
+    # 1. General sport/stat/award title cleaning across sports (no per-grouping rewrite)
+    assert (
+        _clean_section_market_label("Pro Basketball Points Per Game (PPG) Leader")
+        == "Points Per Game Leader"
+    )
+    assert (
+        _clean_section_market_label("Pro Basketball Rebounds Per Game (RPG) Leader")
+        == "Rebounds Per Game Leader"
+    )
+    assert (
+        _clean_section_market_label(
+            "Pro Basketball Defensive Player of the Year Winner"
+        )
+        == "Defensive Player of the Year"
+    )
+    assert (
+        _clean_section_market_label("Pro Basketball Sixth Man of the Year Winner")
+        == "Sixth Man of the Year"
+    )
+    assert (
+        _clean_section_market_label("Pro Baseball Home Runs (HR) Leader")
+        == "Home Runs Leader"
+    )
+
+    # 2. SubjectArtResolver canonicalizes ASCII 'Luka Doncic' to accented 'Luka Dončić'
+    resolver = SubjectArtResolver()
+    luka_art = resolver.resolve("Luka Doncic")
+    assert luka_art.get("canonical_name") == "Luka Dončić"
+    assert luka_art["url"].startswith("https://a.espncdn.com/")
+
+    # 3. Full NBA Slate grouping serves 'Luka Dončić' identically in both stat leaders and MVP tiles
+    nba_snap = {
+        "events": [
+            {
+                "id": 9001,
+                "sport": "basketball_nba",
+                "home_team": "Atlanta Hawks",
+                "away_team": "Detroit Pistons",
+                "commence_time": "2026-06-16T00:00:00+00:00",
+                "status": "scheduled",
+                "hero_probability": 0.50,
+                "hero_probability_away": 0.50,
+            },
+            {
+                "id": 9002,
+                "sport": "basketball_nba",
+                "home_team": "Orlando Magic",
+                "away_team": "Philadelphia 76ers",
+                "commence_time": "2026-06-16T00:30:00+00:00",
+                "status": "scheduled",
+                "hero_probability": 0.51,
+                "hero_probability_away": 0.49,
+            },
+            {
+                "id": 9003,
+                "sport": "basketball_nba",
+                "home_team": "Boston Celtics",
+                "away_team": "Chicago Bulls",
+                "commence_time": "2026-06-16T01:00:00+00:00",
+                "status": "scheduled",
+                "hero_probability": 0.74,
+                "hero_probability_away": 0.26,
+            },
+            {
+                "id": 9004,
+                "sport": "basketball_nba",
+                "home_team": "Cleveland Cavaliers",
+                "away_team": "Memphis Grizzlies",
+                "commence_time": "2026-06-16T01:30:00+00:00",
+                "status": "scheduled",
+                "hero_probability": 0.71,
+                "hero_probability_away": 0.29,
+            },
+        ],
+        "markets": [
+            {
+                "id": 8101,
+                "name": "Pro Basketball Points Per Game (PPG) Leader",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 81011, "name": "Luka Dončić", "probability": 0.58},
+                    {
+                        "id": 81012,
+                        "name": "Shai Gilgeous-Alexander",
+                        "probability": 0.27,
+                    },
+                    {"id": 81013, "name": "Giannis Antetokounmpo", "probability": 0.15},
+                ],
+            },
+            {
+                "id": 8102,
+                "name": "Pro Basketball Assists Per Game (APG) Leader",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 81021, "name": "Trae Young", "probability": 0.46},
+                    {"id": 81022, "name": "Nikola Jokić", "probability": 0.34},
+                    {"id": 81023, "name": "Cade Cunningham", "probability": 0.20},
+                ],
+            },
+            {
+                "id": 8103,
+                "name": "Pro Basketball MVP Winner",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 81031, "name": "Victor Wembanyama", "probability": 0.43},
+                    {"id": 81032, "name": "Luka Doncic", "probability": 0.38},
+                    {"id": 81033, "name": "Nikola Jokic", "probability": 0.19},
+                ],
+            },
+            {
+                "id": 8104,
+                "name": "Pro Basketball Defensive Player of the Year Winner",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 81041, "name": "Victor Wembanyama", "probability": 0.52},
+                    {"id": 81042, "name": "Chet Holmgren", "probability": 0.28},
+                    {"id": 81043, "name": "Evan Mobley", "probability": 0.20},
+                ],
+            },
+            {
+                "id": 8105,
+                "name": "Pro Basketball Sixth Man of the Year Winner",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 81051, "name": "Payton Pritchard", "probability": 0.44},
+                    {"id": 81052, "name": "Malik Monk", "probability": 0.31},
+                    {"id": 81053, "name": "Naz Reid", "probability": 0.25},
+                ],
+            },
+            {
+                "id": 8106,
+                "name": "Women's Pro Basketball Defensive Player of the Year Winner",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 81061, "name": "A'ja Wilson", "probability": 0.49},
+                    {"id": 81062, "name": "Angel Reese", "probability": 0.28},
+                    {"id": 81063, "name": "Gabby Williams", "probability": 0.23},
+                ],
+            },
+        ],
+        "paired_sets": {},
+        "market_histories": {},
+    }
+    res = await serve_machinery_candidate_preview(
+        "machinery-nba-night",
+        nba_snap,
+        now=datetime(2026, 6, 15, 18, 0, tzinfo=timezone.utc),
+    )
+    assert res is not None and res["status"] == "ok"
+    assert res["diversity_report"]["member_number_parity"]["passes"] is True
+    secs = {s["class"]: s for s in res["container"]["sections"]}
+    prop_titles = [it["title"] for it in secs["prop_leaders"]["visual_block"]["items"]]
+    assert prop_titles == ["Points Per Game Leader", "Assists Per Game Leader"]
+    award_titles = [it["title"] for it in secs["award_races"]["visual_block"]["items"]]
+    assert award_titles == ["Defensive Player of the Year", "Sixth Man of the Year"]
+    mvp_names = [
+        o["name"] for o in secs["mvp_race"]["visual_block"]["items"][0]["outcomes"]
+    ]
+    assert "Luka Dončić" in mvp_names and "Luka Doncic" not in mvp_names
+    assert "Nikola Jokić" in mvp_names and "Nikola Jokic" not in mvp_names
+
+
+@pytest.mark.asyncio
+async def test_dotted_initial_spellings_unify_across_sections_and_charts() -> None:
+    """'JD Vance' and 'J.D. Vance' unify to one spelling across spotlight, sparklines, and sibling rows."""
+    pol_snap = {
+        "events": [],
+        "markets": [
+            {
+                "id": 9101,
+                "name": "2028 U.S. Presidential Election Party Winner",
+                "status": "open",
+                "source": "polymarket",
+                "top_outcomes": [
+                    {"id": 91011, "name": "Democratic Party", "probability": 0.67},
+                    {"id": 91012, "name": "Republican Party", "probability": 0.33},
+                ],
+            },
+            {
+                "id": 9102,
+                "name": "Presidential Election Winner 2028",
+                "status": "open",
+                "source": "polymarket",
+                "top_outcomes": [
+                    {"id": 91021, "name": "Jon Ossoff", "probability": 0.22},
+                    {"id": 91022, "name": "JD Vance", "probability": 0.18},
+                    {
+                        "id": 91023,
+                        "name": "Alexandria Ocasio-Cortez",
+                        "probability": 0.12,
+                    },
+                ],
+            },
+            {
+                "id": 9103,
+                "name": "2028 Iowa Republican Presidential Caucus Winner",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 91031, "name": "J.D. Vance", "probability": 0.31},
+                    {"id": 91032, "name": "Marco Rubio", "probability": 0.18},
+                    {"id": 91033, "name": "Ron DeSantis", "probability": 0.14},
+                ],
+            },
+            {
+                "id": 9104,
+                "name": "2028 Republican Presidential Nominee",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 91041, "name": "J.D. Vance", "probability": 0.35},
+                    {"id": 91042, "name": "Marco Rubio", "probability": 0.19},
+                    {"id": 91043, "name": "Ron DeSantis", "probability": 0.15},
+                ],
+            },
+            {
+                "id": 9105,
+                "name": "2028 Democratic Presidential Nominee",
+                "status": "open",
+                "source": "kalshi",
+                "top_outcomes": [
+                    {"id": 91051, "name": "Jon Ossoff", "probability": 0.28},
+                    {
+                        "id": 91052,
+                        "name": "Alexandria Ocasio-Cortez",
+                        "probability": 0.16,
+                    },
+                    {"id": 91053, "name": "Gavin Newsom", "probability": 0.12},
+                ],
+            },
+        ],
+        "paired_sets": {},
+        "market_histories": {
+            91031: [
+                {"timestamp": "2026-06-10T00:00:00+00:00", "probability": 0.24},
+                {"timestamp": "2026-06-15T12:00:00+00:00", "probability": 0.31},
+            ],
+            91032: [
+                {"timestamp": "2026-06-10T00:00:00+00:00", "probability": 0.21},
+                {"timestamp": "2026-06-15T12:00:00+00:00", "probability": 0.18},
+            ],
+            91033: [
+                {"timestamp": "2026-06-10T00:00:00+00:00", "probability": 0.14},
+                {"timestamp": "2026-06-15T12:00:00+00:00", "probability": 0.14},
+            ],
+        },
+    }
+    res = await serve_machinery_candidate_preview(
+        "machinery-2028-presidential",
+        pol_snap,
+        now=datetime(2026, 6, 15, 18, 0, tzinfo=timezone.utc),
+    )
+    assert res is not None and res["status"] == "ok"
+    assert res["diversity_report"]["member_number_parity"]["passes"] is True
+    secs = {s["class"]: s for s in res["container"]["sections"]}
+    iowa_series = [
+        s["name"] for s in secs["race_history"]["visual_block"]["items"][0]["series"]
+    ]
+    assert "JD Vance" in iowa_series and "J.D. Vance" not in iowa_series
+    gop_nom_names = [
+        o["name"]
+        for o in secs["party_nominations"]["visual_block"]["items"][0]["outcomes"]
+    ]
+    assert "JD Vance" in gop_nom_names and "J.D. Vance" not in gop_nom_names

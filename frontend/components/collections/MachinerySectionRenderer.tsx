@@ -479,7 +479,7 @@ function ContenderSpotlightBlock({
                 {o.name}
               </div>
               {o.art?.detail && (
-                <div className="mt-0.5 line-clamp-1 text-[10px] text-text-muted">{o.art.detail}</div>
+                <div className="mt-0.5 text-[10px] leading-tight text-text-muted">{o.art.detail}</div>
               )}
               <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">
                 <div
