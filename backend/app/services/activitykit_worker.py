@@ -67,6 +67,9 @@ def rebind_token(state: DeliveryState, *, token_changed: bool) -> DeliveryState:
         attempt=None,
         halted=None,
         pending="terminal" if state.terminal_latched else "update",
+        # A new token has shown nothing yet: its first update goes now, at 10,
+        # never held for the quiet refresh (#10542 step 3).
+        sent_view=None,
     )
 
 

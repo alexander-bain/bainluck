@@ -76,7 +76,7 @@ from time import perf_counter
 from typing import Annotated, Awaitable, Callable, Iterator, Literal, Optional, ParamSpec, TypeVar
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -234,7 +234,7 @@ async def _hydrate_event_cards(
     if not event_ids:
         return {}, {}
     from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
+    from sqlalchemy.orm import joinedload
 
     from app.models import Event
 
@@ -242,7 +242,7 @@ async def _hydrate_event_cards(
         events = (
             await db.execute(
                 select(Event)
-                .options(selectinload(Event.sport))
+                .options(joinedload(Event.sport))
                 .where(Event.id.in_(event_ids))
                 .order_by(Event.id)
             )
@@ -415,7 +415,7 @@ async def _hydrate_market_cards(
     if not market_ids:
         return {}, {}, {}
     from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
+    from sqlalchemy.orm import joinedload, selectinload
 
     from app.models import FuturesMarket
     from app.routes.events import _format_futures_for_search
@@ -426,7 +426,9 @@ async def _hydrate_market_cards(
         markets = (
             await db.execute(
                 select(FuturesMarket)
-                .options(selectinload(FuturesMarket.sport), selectinload(FuturesMarket.outcomes))
+                # The scalar sport can join the market row. Keep outcomes in
+                # one separate batch so a long ladder does not repeat that row.
+                .options(joinedload(FuturesMarket.sport), selectinload(FuturesMarket.outcomes))
                 .where(FuturesMarket.id.in_(market_ids))
                 .order_by(FuturesMarket.id)
             )
@@ -531,6 +533,43 @@ async def get_week_navigation(
         return {"slug": slug, "state": "unavailable", "previous": None, "next": None}
 
 
+@router.get("/preview/machinery")
+async def get_machinery_preview(
+    request: Request,
+    slugs: Annotated[
+        Optional[str],
+        Query(description="Optional comma-separated candidate slugs to preview."),
+    ] = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Admin-only preview of switched-off #12288 grouping & container machinery
+    candidates (NFL Week, Oscars Best Picture, 2028 Presidential Race, Fed & Economy),
+    with Ruling 227-A report-only diversity counts.
+
+    Public readers and non-admin sessions receive 403 while
+    CONTAINER_MACHINERY_SLICE1_ENABLED remains false.
+    """
+    from app.routes.admin_utils import _check_admin_auth
+    from app.utils.container_machinery import (
+        container_machinery_enabled,
+        evaluate_machinery_candidates_preview,
+    )
+
+    if not await _check_admin_auth(None, request, db):
+        raise HTTPException(status_code=403, detail="Admin authentication required")
+    wanted = (
+        [s.strip() for s in slugs.split(",") if s.strip()]
+        if slugs is not None
+        else None
+    )
+    items = await evaluate_machinery_candidates_preview(db, slugs=wanted)
+    return {
+        "public_switch_enabled": container_machinery_enabled(),
+        "count": len(items),
+        "items": items,
+    }
+
+
 @router.get("/{slug}")
 async def get_container(
     slug: str = Path(..., min_length=1, max_length=200),
@@ -547,6 +586,7 @@ async def get_container(
     compact: bool = True,
     debug_timing: bool = False,
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ) -> dict:
     """One published collection: header, nested collections, and its members as
     familiar cards grouped by class.
@@ -567,6 +607,34 @@ async def get_container(
     token = _stage_timings.set(timings)
     try:
         with _time_stage("total"):
+            if (
+                request is not None
+                and isinstance(slug, str)
+                and containers_read_enabled()
+            ):
+                from app.utils.container_machinery import (
+                    container_machinery_enabled,
+                    is_machinery_candidate_slug,
+                    serve_machinery_candidate_preview,
+                )
+
+                if not container_machinery_enabled() and is_machinery_candidate_slug(slug):
+                    from app.routes.admin_utils import _check_admin_auth
+
+                    if await _check_admin_auth(None, request, db):
+                        preview = await serve_machinery_candidate_preview(
+                            slug, db, include_children=include_children
+                        )
+                        if preview is not None:
+                            result = preview["container"]
+                            if timings is not None and not isinstance(result, Response):
+                                result = Response(content=_render(result), media_type="application/json")
+                            if timings is not None:
+                                result.headers["X-Container-Timing"] = ";".join(
+                                    f"{name}={elapsed:.1f}" for name, elapsed in sorted(timings.items())
+                                ) + ";basis=overlapping_wall_ms"
+                            return result
+
             result = await _get_container(
                 slug, include_children, revision, cursor, limit,
                 market_revision, market_cursor, market_limit, compact, db,
@@ -592,7 +660,13 @@ async def _get_container(
     if not containers_read_enabled() or (slug == MIDTERMS_SLUG and not midterms_enabled()):
         raise HTTPException(status_code=404, detail="Not found")
 
-    from app.utils.roundup_containers import ROUNDUP_PRODUCERS, serve_roundup
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        ensure_optional_roundup_candidates,
+        serve_roundup,
+    )
+
+    ensure_optional_roundup_candidates()
 
     if slug in ROUNDUP_PRODUCERS:
         return await serve_roundup(slug, db, include_children=include_children)

@@ -84,7 +84,8 @@ class WeekSession(_Session):
             statement.startswith("SELECT futures_markets.")
             and "WHERE futures_markets.id IN" in statement
         ):
-            ids = list(sql.compile().params["id_1"])
+            (market_ids,) = sql.compile().params.values()
+            ids = list(market_ids)
             self.hydrated.append(ids)
             return _Result(
                 _market(

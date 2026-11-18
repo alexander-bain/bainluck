@@ -8,6 +8,9 @@ import PartyControlRow from "@/components/politics/PartyControlRow";
 import { MidtermsAtlasChamberControl, MidtermsAtlasMemberCard } from "./MidtermsAtlasSection";
 import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
 import AwardCategoryPairedCard from "@/components/discover/forms/AwardCategoryPairedCard";
+import MachinerySectionRenderer, {
+  isMachinerySlice1Enabled,
+} from "./MachinerySectionRenderer";
 import { fetchPairedMetricsByCeremony } from "@/lib/api";
 import type { PairedMetricSet } from "@/lib/discover/visualForms";
 import type { FeedFuturesData, FeedItem } from "@/lib/types";
@@ -119,11 +122,16 @@ export default function CollectionHub({ slug }: { slug: string }) {
     return () => ctrl.abort();
   }, [isOscarsHub]);
 
+  const allowMachineryBlocks = isMachinerySlice1Enabled() || slug.startsWith("machinery-");
+  const machinerySectionsActive =
+    allowMachineryBlocks && Boolean(shown?.sections.some((s) => s.visualBlock));
+
   const activePairedSets: PairedMetricSet[] = useMemo(() => {
+    if (machinerySectionsActive) return [];
     if (isOscarsHub && oscarsPairedSets.length > 0) return oscarsPairedSets;
     if (shown?.pairedMetricSet) return [shown.pairedMetricSet];
     return [];
-  }, [isOscarsHub, oscarsPairedSets, shown?.pairedMetricSet]);
+  }, [machinerySectionsActive, isOscarsHub, oscarsPairedSets, shown?.pairedMetricSet]);
 
   const pairedCoveredMarketIds = useMemo(() => {
     const ids = new Set<number>();
@@ -379,7 +387,9 @@ export default function CollectionHub({ slug }: { slug: string }) {
         {/* #11040: one plain sentence saying how this section's markets settle. */}
         {section.note && <p data-section-note={section.cls} className="text-sm text-text-secondary">{section.note}</p>}
       </div>}
-      {section.layout === "party" && control(108620) && control(108621) ? (
+      {allowMachineryBlocks && section.visualBlock ? (
+        <MachinerySectionRenderer visualBlock={section.visualBlock} members={visibleSectionMembers} />
+      ) : section.layout === "party" && control(108620) && control(108621) ? (
         midterms && atlasEnabled ? (
           <MidtermsAtlasChamberControl senate={control(108620)} house={control(108621)} />
         ) : (

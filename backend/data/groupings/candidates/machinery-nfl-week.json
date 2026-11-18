@@ -1,0 +1,109 @@
+{
+  "slug": "machinery-nfl-week",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "same_window",
+    "same_subject"
+  ],
+  "level": "member",
+  "kicker": "NFL · THIS SLATE",
+  "name": "NFL Slate",
+  "category": "football",
+  "tag": "NFL",
+  "section_title": "Closest Toss-Ups",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "sections": [
+      {
+        "key": "closest_games",
+        "title": "Coin-Flip Matchups",
+        "note": "Games on this slate priced closest to a 50–50 toss-up.",
+        "atom_query": {
+          "kind": "events",
+          "sport_key": "americanfootball_nfl",
+          "window_days_ahead": 8,
+          "probability_band": [0.34, 0.66],
+          "order_by": "closeness_to_50",
+          "min_items": 2,
+          "max_items": 3
+        }
+      },
+      {
+        "key": "prop_leaders",
+        "title": "Touchdown & Yardage Prop Leaders",
+        "note": "Players priced highest in passing, rushing, and receiving leader markets.",
+        "atom_query": {
+          "kind": "markets",
+          "content_kind": "props",
+          "title_all_tokens": ["leader"],
+          "any_tokens": [
+            "nfl passing touchdowns leader",
+            "nfl rushing touchdowns leader",
+            "nfl receiving touchdowns leader",
+            "nfl passing yards leader",
+            "pro football passing touchdowns leader",
+            "pro football rushing touchdowns leader",
+            "pro football receiving touchdowns leader",
+            "pro football passing yards leader"
+          ],
+          "exclude_tokens": ["ncaa", "college", "division", "conference"],
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 2,
+          "max_items": 3,
+          "max_outcomes": 3
+        }
+      },
+      {
+        "key": "week_slate",
+        "title": "Upcoming Matchups",
+        "note": "Projected scores and win chances in kickoff order.",
+        "atom_query": {
+          "kind": "events",
+          "sport_key": "americanfootball_nfl",
+          "window_days_ahead": 8,
+          "order_by": "kickoff_asc",
+          "min_items": 2,
+          "max_items": 4
+        }
+      },
+      {
+        "key": "mvp_race",
+        "title": "MVP Contenders",
+        "note": "Leading quarterback and skill-player contenders across open markets.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["mvp", "winner"],
+          "exclude_tokens": ["age", "conference", "division", "finalists", "nba", "mlb", "nhl", "wnba", "super bowl"],
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 6
+        }
+      },
+      {
+        "key": "division_races",
+        "title": "Tightest Division Races",
+        "note": "Open NFL division title fields priced closest at the top.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["champion"],
+          "any_tokens": ["nfc north", "afc north", "nfc east", "afc west", "nfc south", "afc east", "afc south", "nfc west"],
+          "exclude_tokens": ["exact order", "total wins", "conference", "ncaa", "college"],
+          "shape": "field",
+          "order_by": "closeness_to_50",
+          "min_items": 2,
+          "max_items": 2,
+          "max_outcomes": 3
+        }
+      }
+    ]
+  }
+}

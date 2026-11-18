@@ -9,7 +9,7 @@ import WidgetKit
 //
 //   before: crests + names, the favourite's chance, the kickoff
 //   during: crests + score, the leader's chance Now, the clock
-//   after:  crests + final score (winner ticked), the winner's pregame chance
+//   after:  crests + final score (tick before the winner's score), the winner's pregame chance
 //           (direction 209); 3 hours after the final the slot gives way to the
 //           launcher until the app publishes the next game
 //
@@ -53,7 +53,7 @@ struct WatchMatchupComplication217: View {
         GeometryReader { geo in
             let m = WatchMatchupMetrics217(slotHeight: geo.size.height)
             HStack(alignment: .center, spacing: 4) {
-                VStack(alignment: .leading, spacing: m.rowGap) {
+                Grid(alignment: .leading, horizontalSpacing: 4, verticalSpacing: m.rowGap) {
                     sideRow(reading.away, m)
                     sideRow(reading.home, m)
                 }
@@ -80,21 +80,28 @@ struct WatchMatchupComplication217: View {
         .accessibilityIdentifier("watch.complication.matchup.\(reading.stage.rawValue)")
     }
 
+    /// Alex, Nov 17 (via Fable, 9:54 AM): after the final the tick comes BEFORE the
+    /// winner's score ("✓ 35"), both scores end on one right edge, and the tick's
+    /// width is kept on the loser's row too, so the two numbers line up.
+    private var showsScores: Bool { reading.away.score != nil || reading.home.score != nil }
+
     private func sideRow(_ side: WatchMatchupReading217.Side, _ m: WatchMatchupMetrics217) -> some View {
-        HStack(spacing: 4) {
+        GridRow {
             crestDisc(side, size: m.crest)
+            if reading.stage == .after {
+                Image(systemName: "checkmark")
+                    .font(.system(size: m.name * 0.5, weight: .heavy))
+                    .foregroundStyle(fullColor ? Color.green : .primary)
+                    .opacity(side.isWinner ? 1 : 0)
+                    .accessibilityHidden(true)
+            }
             Text(side.score.map(String.init) ?? side.abbreviation)
                 .font(.system(size: m.name, weight: side.isWinner || reading.stage != .after ? .heavy : .semibold,
                               design: .rounded).monospacedDigit())
                 .foregroundStyle(reading.stage == .after && !side.isWinner ? .secondary : .primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
-            if side.isWinner {
-                Image(systemName: "checkmark")
-                    .font(.system(size: m.name * 0.5, weight: .heavy))
-                    .foregroundStyle(fullColor ? Color.green : .primary)
-                    .accessibilityHidden(true)
-            }
+                .gridColumnAlignment(showsScores ? .trailing : .leading)
         }
     }
 
