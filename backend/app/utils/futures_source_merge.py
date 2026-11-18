@@ -40,6 +40,7 @@ from typing import Any, Optional
 
 from app.utils.aggregation import SOURCE_WEIGHTS, _weighted_median
 from app.utils.source_divergence import SourceDivergence, assess_divergence
+from app.utils.source_mark import no_source_mark, quote_source_mark
 from app.utils.team_identity_resolution import (
     TeamAliasIndex,
     resolve_row_team_id,
@@ -119,7 +120,7 @@ def rows_name_same_entity(
 
 
 def blend_with_verdict(
-    rows: list[dict],
+    rows: list[dict], *, source_rows: Optional[list[dict]] = None,
 ) -> tuple[Optional[float], Optional[SourceDivergence], str]:
     """One number for one question — and WHICH RULE produced it.
 
@@ -152,16 +153,15 @@ def blend_with_verdict(
     weighted median untouched, including its heavier-source tiebreak, which the
     ruling explicitly preserved as designed behaviour.
 
-    Returns ``(value, divergence_or_None, rule_name)``.
+    Returns ``(value, divergence_or_None, rule_name)``. Optionally records the
+    rows that supplied that value.
     """
     vals: list[float] = []
     wts: list[float] = []
     srcs: list[str] = []
-    for r in rows:
-        p = r.get("probability")
-        if p is None:
-            continue
-        vals.append(float(p))
+    priced = [row for row in rows if row.get("probability") is not None]
+    for r in priced:
+        vals.append(float(r["probability"]))
         srcs.append((r.get("source") or "").lower())
         wts.append(SOURCE_WEIGHTS.get((r.get("source") or "").lower(), 0.8))
     if not vals:
@@ -171,14 +171,20 @@ def blend_with_verdict(
     # govern. Same-source rows are sibling outcomes, not a disagreement, and
     # `merge_relabel_collisions` already refuses to merge them — but this
     # function is public, so it re-checks rather than trusting its caller.
-    if len(vals) == 2 and srcs[0] != srcs[1]:
+    is_cross_source_pair = len(vals) == 2 and srcs[0] != srcs[1]
+    if is_cross_source_pair:
         divergence = assess_divergence(
             dict(zip(srcs, vals)), dict(zip(srcs, wts)), order=srcs
         )
         if divergence is not None:
+            if source_rows is not None:
+                source_rows.append(priced[srcs.index(divergence.primary_source)])
             return round(divergence.primary_value, 6), divergence, "divergence_gate"
-        if wts[0] == wts[1]:
-            return round((vals[0] + vals[1]) / 2.0, 6), None, "equal_weight_midpoint"
+
+    if source_rows is not None:
+        source_rows.extend(priced)
+    if is_cross_source_pair and wts[0] == wts[1]:
+        return round((vals[0] + vals[1]) / 2.0, 6), None, "equal_weight_midpoint"
 
     return round(_weighted_median(vals, wts), 6), None, "weighted_median"
 
@@ -186,6 +192,26 @@ def blend_with_verdict(
 def blend_probabilities(rows: list[dict]) -> Optional[float]:
     """The value alone. See `blend_with_verdict` for which rule produced it."""
     return blend_with_verdict(rows)[0]
+
+
+def _blend_source_mark(rows: list[dict], rule: str) -> dict:
+    if not rows:
+        return no_source_mark("no_probability")
+    marks = [row.get("source_mark") for row in rows]
+    if len(marks) == 1:
+        return marks[0] or no_source_mark("source_evidence_incomplete")
+    if any(not mark or mark.get("state") != "single" for mark in marks):
+        return no_source_mark("source_evidence_incomplete")
+    inputs = [mark["sources"][0] for mark in marks]
+    # The weighted middle used each quote. Combining different quotes from
+    # one venue into a mean would describe a calculation that never ran.
+    if len({source["key"] for source in inputs}) != len(inputs):
+        return no_source_mark("source_evidence_incomplete")
+    method = {
+        "equal_weight_midpoint": "Bain Luck blend · the average of these sources",
+        "weighted_median": "Bain Luck blend · the weighted middle of these sources",
+    }.get(rule)
+    return quote_source_mark(inputs, method=method)
 
 
 def merge_relabel_collisions(
@@ -247,9 +273,14 @@ def merge_relabel_collisions(
         if i in merged_into:
             contributors = [rows[i]] + [rows[j] for j in merged_into[i]]
             new = dict(r)
-            blended, divergence, rule = blend_with_verdict(contributors)
+            source_rows = [] if "source_mark" in new else None
+            blended, divergence, rule = blend_with_verdict(
+                contributors, source_rows=source_rows,
+            )
             if blended is not None:
                 new["probability"] = blended
+            if source_rows is not None:
+                new["source_mark"] = _blend_source_mark(source_rows, rule)
             new["blend_rule"] = rule
             if divergence is not None:
                 # The flag rides ON THE ROW rather than going only to a log,
