@@ -72,17 +72,22 @@ struct WatchHomeView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
 
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(story.bigLabel)
-                    .font(.system(size: 17, weight: .bold))
-                    .minimumScaleFactor(0.6)
-                    .lineLimit(1)
-                Spacer(minLength: 2)
-                Text("\(story.bigNumber)%")
-                    .font(.system(size: 40, weight: .heavy, design: .rounded))
-                    .foregroundStyle(story.accentColor)
-                    .minimumScaleFactor(0.7)
-                    .lineLimit(1)
+            if let label = story.bigLabel, let percent = story.bigNumber {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(label)
+                        .font(.system(size: 17, weight: .bold))
+                        .minimumScaleFactor(0.6)
+                        .lineLimit(1)
+                    Spacer(minLength: 2)
+                    Text("\(percent)%")
+                        .font(.system(size: 40, weight: .heavy, design: .rounded))
+                        .foregroundStyle(story.accentColor)
+                        .minimumScaleFactor(0.7)
+                        .lineLimit(1)
+                }
+            } else if let scoreline = story.scoreline {
+                Text(scoreline)
+                    .font(.system(size: 24, weight: .heavy, design: .rounded))
             }
 
             if let split = story.split {
@@ -242,6 +247,9 @@ struct WatchHomeView: View {
                 Text(resultText)
                     .font(.system(size: 10, weight: .semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
+            } else if let scoreline = game.scoreline {
+                Text(scoreline)
+                    .font(.system(size: 12, weight: .semibold))
             }
         }
         .padding(8)

@@ -30,8 +30,9 @@ struct WatchTopStory: Identifiable {
     let clock: String?
     let categoryLabel: String?
     let title: String
-    let bigLabel: String
-    let bigNumber: Int
+    let bigLabel: String?
+    let bigNumber: Int?
+    let scoreline: String?
     let headline: String?
     let split: WatchProbSplit?
 
@@ -49,6 +50,7 @@ struct WatchTeamGame: Identifiable {
     let matchup: String
     let split: WatchProbSplit?
     let resultText: String?
+    let scoreline: String?
     let live: Bool
     let clock: String?
     let startText: String?
@@ -88,12 +90,9 @@ enum WatchMarquee {
     /// missing its probability). Pure so `marquee(from:)` can scan for the first
     /// item that qualifies.
     static func story(from item: WatchFeedItem, now: Date = Date()) -> WatchTopStory? {
-        // Finished and opening-only games carry no current chance to headline.
-        if let e = item.event,
-           !e.isSettled,
-           e.heroProbabilitySource != "opening",
-           let home = e.currentOdds?.homeProbability {
-            return eventStory(item, e, homeProb: home)
+        // A cached opening quote keeps the matchup eligible without supplying a chance.
+        if let e = item.event, !e.isSettled, e.currentOdds?.homeProbability != nil {
+            return eventStory(item, e)
         }
         // L2-225: a settled market carries a normal-looking price and no badge, so
         // without this it could become the wrist's TOP STORY — the single biggest
@@ -111,6 +110,7 @@ enum WatchMarquee {
                 title: f.name,
                 bigLabel: shortName(leader.name),
                 bigNumber: pct,
+                scoreline: nil,
                 headline: item.headline,
                 split: nil
             )
@@ -118,12 +118,10 @@ enum WatchMarquee {
         return nil
     }
 
-    private static func eventStory(_ item: WatchFeedItem, _ e: WatchFeedEvent, homeProb: Double) -> WatchTopStory {
-        let homePct = pct(homeProb)
-        let awayPct = 100 - homePct
+    private static func eventStory(_ item: WatchFeedItem, _ e: WatchFeedEvent) -> WatchTopStory {
         let homeAbbr = e.homeAbbrev()
         let awayAbbr = e.awayAbbrev()
-        let homeLeads = homePct >= awayPct
+        let split = eventSplit(e, awayAbbr: awayAbbr, homeAbbr: homeAbbr)
         let badge: WatchStoryBadge = e.isLive ? .live : (e.isSettled ? .final : .soon)
 
         return WatchTopStory(
@@ -132,13 +130,20 @@ enum WatchMarquee {
             clock: e.clockText,
             categoryLabel: e.sportName ?? e.sport,
             title: "\(awayAbbr) @ \(homeAbbr)",
-            bigLabel: homeLeads ? homeAbbr : awayAbbr,
-            bigNumber: max(homePct, awayPct),
-            headline: item.headline,
-            split: WatchProbSplit(
-                leftAbbr: awayAbbr, leftPct: awayPct, leftColor: e.awayTeamData?.primaryColor,
-                rightAbbr: homeAbbr, rightPct: homePct, rightColor: e.homeTeamData?.primaryColor
-            )
+            bigLabel: split.map { $0.rightPct >= $0.leftPct ? homeAbbr : awayAbbr },
+            bigNumber: split.map { max($0.rightPct, $0.leftPct) },
+            scoreline: split == nil ? e.scoreline : nil,
+            headline: split == nil ? nil : item.headline,
+            split: split
+        )
+    }
+
+    private static func eventSplit(_ e: WatchFeedEvent, awayAbbr: String, homeAbbr: String) -> WatchProbSplit? {
+        guard let home = e.currentHomeProbability else { return nil }
+        let homePct = pct(home)
+        return WatchProbSplit(
+            leftAbbr: awayAbbr, leftPct: 100 - homePct, leftColor: e.awayTeamData?.primaryColor,
+            rightAbbr: homeAbbr, rightPct: homePct, rightColor: e.homeTeamData?.primaryColor
         )
     }
 
@@ -150,34 +155,25 @@ enum WatchMarquee {
             let homeAbbr = e.homeAbbrev()
             let awayAbbr = e.awayAbbrev()
             if e.isSettled {
-                let result: String
-                if let awayScore = e.awayScore, let homeScore = e.homeScore {
-                    result = "FINAL · \(awayScore)–\(homeScore)"
-                } else {
-                    result = "FINAL"
-                }
                 return WatchTeamGame(
                     id: e.id,
                     matchup: "\(awayAbbr) @ \(homeAbbr)",
                     split: nil,
-                    resultText: result,
+                    resultText: e.scoreline.map { "FINAL · \($0)" } ?? "FINAL",
+                    scoreline: nil,
                     live: false,
                     clock: nil,
                     startText: nil
                 )
             }
-            guard e.heroProbabilitySource != "opening",
-                  let home = e.currentOdds?.homeProbability else { return nil }
-            let homePct = pct(home)
-            let awayPct = 100 - homePct
+            guard e.currentOdds?.homeProbability != nil else { return nil }
+            let split = eventSplit(e, awayAbbr: awayAbbr, homeAbbr: homeAbbr)
             return WatchTeamGame(
                 id: e.id,
                 matchup: "\(awayAbbr) @ \(homeAbbr)",
-                split: WatchProbSplit(
-                    leftAbbr: awayAbbr, leftPct: awayPct, leftColor: e.awayTeamData?.primaryColor,
-                    rightAbbr: homeAbbr, rightPct: homePct, rightColor: e.homeTeamData?.primaryColor
-                ),
+                split: split,
                 resultText: nil,
+                scoreline: split == nil ? e.scoreline : nil,
                 live: e.isLive,
                 clock: e.clockText,
                 startText: e.isLive ? nil : startText(e.commenceTime)
