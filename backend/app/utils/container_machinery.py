@@ -15,7 +15,9 @@ and ``container_machinery_enabled()`` defaults to ``False`` until turned on by F
 from __future__ import annotations
 
 import copy
+import inspect
 import json
+import logging
 import math
 import os
 import re
@@ -58,6 +60,8 @@ __all__ = [
 ]
 
 PRODUCER_KIND_CONTAINER_MACHINERY = "container_machinery"
+
+logger = logging.getLogger(__name__)
 
 MACHINERY_FORM_IDS: frozenset[str] = frozenset(
     {
@@ -943,6 +947,76 @@ def _market_matches_query(market: Mapping[str, Any], query: Mapping[str, Any]) -
     return True
 
 
+def _canonical_market_outcome_map(
+    raw_outcomes: Sequence[Mapping[str, Any]],
+    *,
+    mutually_exclusive: bool = True,
+    question: str | None = None,
+) -> tuple[list[dict[str, Any]], dict[int, int], dict[str, int]]:
+    """Compute canonical member-page probabilities and whole percents for a market's outcomes
+    using the same ``normalize_display_probs`` + ``rendered_card_percents`` rules as ``/futures/{id}``.
+    """
+    from app.utils.outcome_display import is_placeholder_outcome_name, normalize_display_probs
+
+    rows: list[dict[str, Any]] = []
+    already_has_rendered = False
+    for idx, o in enumerate(raw_outcomes):
+        if not isinstance(o, Mapping):
+            continue
+        name = str(o.get("name") or o.get("outcome_name") or "").strip()
+        if not name or is_placeholder_outcome_name(name) or _PLACEHOLDER_OUTCOME_RE.match(name):
+            continue
+        prob = o.get("probability")
+        if not isinstance(prob, (int, float)) or not math.isfinite(float(prob)):
+            continue
+        p = float(prob)
+        if p <= 0.0 or p >= 1.0:
+            continue
+        oid = int(o.get("id") or o.get("outcome_id") or (idx + 1))
+        rp = o.get("rendered_percent")
+        if isinstance(rp, int) and not isinstance(rp, bool):
+            already_has_rendered = True
+        rows.append(
+            {
+                **dict(o),
+                "id": oid,
+                "name": name,
+                "probability": p,
+                "rendered_percent": int(rp) if isinstance(rp, int) and not isinstance(rp, bool) else None,
+            }
+        )
+
+    raw_sum = sum(float(r["probability"]) for r in rows)
+    if rows and not already_has_rendered and mutually_exclusive and raw_sum > 1.005:
+        normalize_display_probs(
+            rows,
+            key="probability",
+            mutually_exclusive=True,
+            field_complete=True,
+            question=question,
+        )
+
+    card_pcts = rendered_card_percents([r.get("probability") for r in rows])
+    by_oid: dict[int, int] = {}
+    by_key: dict[str, int] = {}
+    for idx, r in enumerate(rows):
+        rp = r.get("rendered_percent")
+        if rp is None and idx < len(card_pcts) and card_pcts[idx] is not None:
+            rp = int(card_pcts[idx])
+        if rp is None:
+            rp = _half_up_pct(float(r["probability"]))
+        pct_int = max(1, min(99, int(rp))) if 0.0 < float(r["probability"]) < 1.0 else int(rp)
+        r["rendered_percent"] = pct_int
+        by_oid[int(r["id"])] = pct_int
+        nk = _norm_key(_clean_outcome_label(str(r["name"])))
+        if nk and nk not in by_key:
+            by_key[nk] = pct_int
+        raw_nk = _norm_key(str(r["name"]))
+        if raw_nk and raw_nk not in by_key:
+            by_key[raw_nk] = pct_int
+    return rows, by_oid, by_key
+
+
 def _hydrate_market_visual_item(
     market: Mapping[str, Any],
     *,
@@ -952,14 +1026,19 @@ def _hydrate_market_visual_item(
 ) -> dict[str, Any]:
     mid = int(market["id"])
     raw_outcomes = market.get("top_outcomes") or market.get("outcomes") or ()
-    valid = [
-        o
-        for o in raw_outcomes
-        if isinstance(o, Mapping)
-        and isinstance(o.get("probability"), (int, float))
-        and 0.0 < float(o["probability"]) < 1.0
-        and not _PLACEHOLDER_OUTCOME_RE.match(str(o.get("name") or "").strip())
+    mut_excl = bool(market.get("mutually_exclusive", True))
+    canonical_rows, canon_by_oid, canon_by_key = _canonical_market_outcome_map(
+        raw_outcomes,
+        mutually_exclusive=mut_excl,
+        question=str(market.get("name") or ""),
+    )
+    # Drop sub-0.5% / >99.5% floor-tick noise when tradeable rows exist so web/iPhone
+    # integer % never disagrees with '<1%' / '>99%' boundary formatting on /futures/{id}.
+    non_floor = [
+        o for o in canonical_rows if 0.005 <= float(o["probability"]) <= 0.995
     ]
+    min_needed = 2 if len(canonical_rows) == 2 else 1
+    valid = non_floor if len(non_floor) >= min_needed else list(canonical_rows)
     valid.sort(key=lambda o: (-float(o["probability"]), str(o.get("name") or "").casefold()))
 
     shape_is_yes = (
@@ -977,6 +1056,7 @@ def _hydrate_market_visual_item(
         )
         p = float(yes_row["probability"])
         oid = int(yes_row.get("id") or (mid * 10 + 1))
+        yes_pct = int(yes_row.get("rendered_percent") or _half_up_pct(p))
         leader_outcome_id = oid
         lead_prob = p
         outcomes_out = [
@@ -984,7 +1064,7 @@ def _hydrate_market_visual_item(
                 "outcome_id": oid,
                 "name": "Yes",
                 "probability": p,
-                "rendered_percent": _half_up_pct(p),
+                "rendered_percent": yes_pct,
                 "art": {
                     "url": None,
                     "kind": "none",
@@ -996,12 +1076,6 @@ def _hydrate_market_visual_item(
         ]
     else:
         kept = valid[:max_outcomes]
-        # Slice 5 Note 1: two-outcome complement pairs go through rendered_card_percents so they sum to 100.
-        pair_pcts: Optional[list[Optional[int]]] = (
-            rendered_card_percents([float(o["probability"]) for o in kept])
-            if len(valid) == 2 and len(kept) == 2
-            else None
-        )
         outcomes_out = []
         for idx, o in enumerate(kept):
             o_name = _clean_outcome_label(str(o.get("name") or "").strip())
@@ -1014,11 +1088,7 @@ def _hydrate_market_visual_item(
                 o_name,
                 explicit_url=(str(o["image_url"]) if o.get("image_url") else None),
             )
-            pct_val = (
-                int(pair_pcts[idx])
-                if pair_pcts is not None and pair_pcts[idx] is not None
-                else _half_up_pct(p)
-            )
+            pct_val = int(o.get("rendered_percent") or _half_up_pct(p))
             outcomes_out.append(
                 {
                     "outcome_id": oid,
@@ -1038,8 +1108,20 @@ def _hydrate_market_visual_item(
     effective_kind = content_kind or (
         "props" if _PROP_MARKET_TITLE_RE.search(str(market.get("name") or "")) else "futures"
     )
+    explicit_mpn = market.get("member_page_numbers")
+    if isinstance(explicit_mpn, Mapping):
+        mpn = {
+            "by_outcome_id": {int(k): int(v) for k, v in (explicit_mpn.get("by_outcome_id") or {}).items()},
+            "by_outcome_key": {str(k): int(v) for k, v in (explicit_mpn.get("by_outcome_key") or {}).items()},
+        }
+    else:
+        mpn = {
+            "by_outcome_id": canon_by_oid,
+            "by_outcome_key": canon_by_key,
+        }
     card_copy = dict(market)
     card_copy["content_kind"] = effective_kind
+    card_copy["member_page_numbers"] = mpn
 
     return {
         "market_id": mid,
@@ -1053,6 +1135,7 @@ def _hydrate_market_visual_item(
         "content_kind": effective_kind,
         "closeness_to_50": abs(lead_prob - 0.5),
         "outcomes": outcomes_out,
+        "member_page_numbers": mpn,
         "card": card_copy,
     }
 
@@ -1107,9 +1190,31 @@ def _hydrate_event_visual_item(
     away_pct = int(away_pct_raw) if away_pct_raw is not None else _half_up_pct(ap)
     home_pct = int(home_pct_raw) if home_pct_raw is not None else _half_up_pct(hp)
 
+    explicit_mpn = event.get("member_page_numbers")
+    if isinstance(explicit_mpn, Mapping):
+        ev_mpn = {
+            "away_pct": int(explicit_mpn.get("away_pct", away_pct)),
+            "home_pct": int(explicit_mpn.get("home_pct", home_pct)),
+        }
+    else:
+        ev_mpn = {"away_pct": away_pct, "home_pct": home_pct}
+
     card_ev = dict(event)
+    card_ev["hero_probability"] = hp
+    card_ev["hero_probability_away"] = ap
+    if not isinstance(card_ev.get("home_team_data"), Mapping) and (home_art.get("url") or home_art.get("accent_color")):
+        card_ev["home_team_data"] = {
+            "logo_small": home_art.get("url"),
+            "primary_color": home_art.get("accent_color") or None,
+        }
+    if not isinstance(card_ev.get("away_team_data"), Mapping) and (away_art.get("url") or away_art.get("accent_color")):
+        card_ev["away_team_data"] = {
+            "logo_small": away_art.get("url"),
+            "primary_color": away_art.get("accent_color") or None,
+        }
     card_ev["rendered_away_percent"] = away_pct
     card_ev["rendered_home_percent"] = home_pct
+    card_ev["member_page_numbers"] = ev_mpn
 
     fav_prob = max(hp, ap)
     return {
@@ -1132,6 +1237,7 @@ def _hydrate_event_visual_item(
         "away_art": away_art,
         "fav_prob": fav_prob,
         "closeness_to_50": abs(hp - 0.5),
+        "member_page_numbers": ev_mpn,
         "card": card_ev,
     }
 
@@ -1297,10 +1403,22 @@ async def _load_snapshot_from_db(
         }
 
     from sqlalchemy import and_, func, or_, select
-    from sqlalchemy.orm import selectinload
+    from sqlalchemy.orm import joinedload, selectinload
 
-    from app.models.models import Event, FuturesMarket, FuturesOddsSnapshot
-    from app.services.paired_metric_register import load_live_paired_metric_sets
+    from app.models.models import Event, FuturesMarket, FuturesOddsSnapshot, Sport
+    from app.routes.futures import (
+        _apply_verified_title_to_detail,
+        _fleet_newest_observation,
+        _format_market_detail,
+        _game_container_lead_leg,
+        _game_container_leg_sides,
+        _resolve_verified_title,
+        _verified_title_market_stmt,
+        _withheld_price_outcome_ids,
+        out_legs_by_market,
+    )
+    from app.services.paired_metric_register import fold_outcome_key, load_live_paired_metric_sets
+    from app.utils.hero_probability import resolve_hero
 
     sections_cfg = (definition.get("rule") or {}).get("sections") or ()
     events_out: list[dict[str, Any]] = []
@@ -1321,8 +1439,14 @@ async def _load_snapshot_from_db(
         recent_floor = now_dt - timedelta(hours=6)
         stmt = (
             select(Event)
+            .join(Sport, Event.sport_id == Sport.id)
+            .options(
+                joinedload(Event.sport),
+                joinedload(Event.home_team),
+                joinedload(Event.away_team),
+            )
             .where(
-                Event.sport.in_(sorted(sport_keys)),
+                Sport.key.in_(sorted(sport_keys)),
                 Event.commence_time >= recent_floor,
                 Event.commence_time <= horizon,
             )
@@ -1331,25 +1455,81 @@ async def _load_snapshot_from_db(
         )
         rows = (await db.execute(stmt)).scalars().all()
         for ev in rows:
-            wps = ev.win_probability_sources if isinstance(ev.win_probability_sources, Mapping) else {}
-            agg = wps.get("_aggregate") if isinstance(wps.get("_aggregate"), Mapping) else {}
-            events_out.append(
-                {
-                    "id": ev.id,
-                    "sport": ev.sport,
-                    "sport_name": ev.sport.upper(),
-                    "home_team": ev.home_team,
-                    "away_team": ev.away_team,
-                    "commence_time": ev.commence_time.isoformat() if ev.commence_time else "",
-                    "status": ev.status or "scheduled",
-                    "home_score": ev.home_score,
-                    "away_score": ev.away_score,
-                    "current_odds": {
-                        "home_probability": agg.get("home_win_prob"),
-                        "away_probability": agg.get("away_win_prob"),
-                    },
-                }
+            # Slice 6 Item 2b: use resolve_hero (same authority as GET /api/events/{id})
+            hero = resolve_hero(ev)
+            if hero is None:
+                continue
+            hp = float(hero.home_probability)
+            ap = float(hero.away_probability)
+            away_pct_raw, home_pct_raw = rendered_duel_percents(ap, hp)
+            away_pct = int(away_pct_raw) if away_pct_raw is not None else _half_up_pct(ap)
+            home_pct = int(home_pct_raw) if home_pct_raw is not None else _half_up_pct(hp)
+            sport_obj = getattr(ev, "sport", None)
+            if isinstance(sport_obj, str):
+                sport_key_val = sport_obj
+                sport_name_val = sport_obj.upper()
+            elif sport_obj is not None:
+                sport_key_val = str(getattr(sport_obj, "key", "") or "")
+                sport_name_val = str(getattr(sport_obj, "name", "") or sport_key_val.upper())
+            else:
+                sport_key_val = ""
+                sport_name_val = ""
+            home_team_obj = getattr(ev, "home_team", None)
+            away_team_obj = getattr(ev, "away_team", None)
+            home_team_str = str(
+                getattr(ev, "home_team_name", None)
+                or (
+                    home_team_obj
+                    if isinstance(home_team_obj, str)
+                    else getattr(home_team_obj, "name", "")
+                )
+                or ""
             )
+            away_team_str = str(
+                getattr(ev, "away_team_name", None)
+                or (
+                    away_team_obj
+                    if isinstance(away_team_obj, str)
+                    else getattr(away_team_obj, "name", "")
+                )
+                or ""
+            )
+            ev_dict: dict[str, Any] = {
+                "id": ev.id,
+                "sport": sport_key_val,
+                "sport_name": sport_name_val,
+                "home_team": home_team_str,
+                "away_team": away_team_str,
+                "commence_time": ev.commence_time.isoformat() if ev.commence_time else "",
+                "status": ev.status or "scheduled",
+                "home_score": ev.home_score,
+                "away_score": ev.away_score,
+                "hero_probability": hp,
+                "hero_probability_away": ap,
+                "hero_source": hero.source,
+                "current_odds": {
+                    "home_probability": hp,
+                    "away_probability": ap,
+                },
+                "member_page_numbers": {
+                    "away_pct": away_pct,
+                    "home_pct": home_pct,
+                },
+            }
+            for td_key, team_obj in (("home_team_data", home_team_obj), ("away_team_data", away_team_obj)):
+                if team_obj is not None and not isinstance(team_obj, str):
+                    logo_sm = getattr(team_obj, "logo_url_small", None) or getattr(team_obj, "logo_url", None)
+                    logo_lg = getattr(team_obj, "logo_url_large", None) or getattr(team_obj, "logo_url", None)
+                    p_col = getattr(team_obj, "primary_color", None)
+                    s_col = getattr(team_obj, "secondary_color", None)
+                    if any((logo_sm, logo_lg, p_col, s_col)):
+                        ev_dict[td_key] = {
+                            "logo_small": logo_sm,
+                            "logo_large": logo_lg,
+                            "primary_color": p_col,
+                            "secondary_color": s_col,
+                        }
+            events_out.append(ev_dict)
 
     ceremonies = {
         str(sec["atom_query"].get("ceremony") or "").lower()
@@ -1359,9 +1539,21 @@ async def _load_snapshot_from_db(
         and sec["atom_query"].get("kind") == "paired_stage"
         and sec["atom_query"].get("ceremony")
     }
+    paired_stage_mids: set[int] = set()
     if ceremonies:
         all_paired = await load_live_paired_metric_sets(db)
         paired_out.update(all_paired)
+        for sec in sections_cfg:
+            if not isinstance(sec, Mapping) or not isinstance(sec.get("atom_query"), Mapping):
+                continue
+            aq = sec["atom_query"]
+            if aq.get("kind") == "paired_stage":
+                matched_ps = _match_paired_set(paired_out, aq)
+                if matched_ps is not None:
+                    for skey in ("stage_1_market", "stage_2_market"):
+                        sm = matched_ps.get(skey)
+                        if isinstance(sm, Mapping) and isinstance(sm.get("id"), int) and sm["id"] > 0:
+                            paired_stage_mids.add(int(sm["id"]))
 
     needs_markets = any(
         isinstance(sec, Mapping)
@@ -1376,45 +1568,50 @@ async def _load_snapshot_from_db(
         and isinstance(sec.get("atom_query"), Mapping)
         and sec["atom_query"].get("kind") == "market_history"
     ]
-    if needs_markets:
-        m_stmt = (
-            select(FuturesMarket)
-            .options(selectinload(FuturesMarket.outcomes))
-            .where(FuturesMarket.status == "open")
-            .order_by(FuturesMarket.volume.desc().nullslast())
-            .limit(800)
-        )
-        m_rows = list((await db.execute(m_stmt)).scalars().all())
-        seen_mids = {fm.id for fm in m_rows}
-        extra_clauses = []
-        for sec in sections_cfg:
-            if not isinstance(sec, Mapping) or not isinstance(sec.get("atom_query"), Mapping):
-                continue
-            aq = sec["atom_query"]
-            if aq.get("kind") not in {"markets", "market_history"}:
-                continue
-            all_toks = [str(t).strip() for t in (aq.get("title_all_tokens") or ()) if str(t).strip()]
-            any_toks = [str(t).strip() for t in (aq.get("any_tokens") or ()) if str(t).strip()]
-            excl_toks = [str(t).strip() for t in (aq.get("exclude_tokens") or ()) if str(t).strip()]
-            parts = [FuturesMarket.name.ilike(f"%{t}%") for t in all_toks]
-            if any_toks:
-                parts.append(or_(*(FuturesMarket.name.ilike(f"%{t}%") for t in any_toks)))
-            for ex in excl_toks:
-                parts.append(~FuturesMarket.name.ilike(f"%{ex}%"))
-            if parts:
-                extra_clauses.append(and_(*parts))
-        if extra_clauses:
-            targeted_stmt = (
+    if needs_markets or paired_stage_mids:
+        m_rows: list[Any] = []
+        seen_mids: set[int] = set()
+        if needs_markets:
+            m_stmt = (
                 select(FuturesMarket)
                 .options(selectinload(FuturesMarket.outcomes))
-                .where(FuturesMarket.status == "open", or_(*extra_clauses))
-                .order_by(FuturesMarket.volume.desc().nullslast(), FuturesMarket.id.asc())
-                .limit(200)
+                .where(FuturesMarket.status == "open")
+                .order_by(FuturesMarket.volume.desc().nullslast())
+                .limit(800)
             )
-            for fm in (await db.execute(targeted_stmt)).scalars().all():
-                if fm.id not in seen_mids:
-                    seen_mids.add(fm.id)
-                    m_rows.append(fm)
+            m_rows = list((await db.execute(m_stmt)).scalars().all())
+            seen_mids = {fm.id for fm in m_rows}
+            extra_clauses = []
+            for sec in sections_cfg:
+                if not isinstance(sec, Mapping) or not isinstance(sec.get("atom_query"), Mapping):
+                    continue
+                aq = sec["atom_query"]
+                if aq.get("kind") not in {"markets", "market_history"}:
+                    continue
+                all_toks = [str(t).strip() for t in (aq.get("title_all_tokens") or ()) if str(t).strip()]
+                any_toks = [str(t).strip() for t in (aq.get("any_tokens") or ()) if str(t).strip()]
+                excl_toks = [str(t).strip() for t in (aq.get("exclude_tokens") or ()) if str(t).strip()]
+                parts = [FuturesMarket.name.ilike(f"%{t}%") for t in all_toks]
+                if any_toks:
+                    parts.append(or_(*(FuturesMarket.name.ilike(f"%{t}%") for t in any_toks)))
+                for ex in excl_toks:
+                    parts.append(~FuturesMarket.name.ilike(f"%{ex}%"))
+                if parts:
+                    extra_clauses.append(and_(*parts))
+            if extra_clauses:
+                targeted_stmt = (
+                    select(FuturesMarket)
+                    .options(selectinload(FuturesMarket.outcomes))
+                    .where(FuturesMarket.status == "open", or_(*extra_clauses))
+                    .order_by(FuturesMarket.volume.desc().nullslast(), FuturesMarket.id.asc())
+                    .limit(200)
+                )
+                for fm in (await db.execute(targeted_stmt)).scalars().all():
+                    if fm.id not in seen_mids:
+                        seen_mids.add(fm.id)
+                        m_rows.append(fm)
+
+        prelim_markets: list[dict[str, Any]] = []
         for fm in m_rows:
             top_outs: list[dict[str, Any]] = []
             for o in fm.outcomes or ():
@@ -1434,18 +1631,172 @@ async def _load_snapshot_from_db(
                         "image_url": getattr(o, "image_url", None),
                     }
                 )
-            markets_out.append(
+            prelim_markets.append(
                 {
                     "id": fm.id,
                     "name": fm.name,
                     "status": fm.status,
                     "source": fm.source,
+                    "mutually_exclusive": bool(getattr(fm, "mutually_exclusive", True)),
                     "market_type": getattr(fm, "market_type", None),
                     "volume": float(fm.volume or 0.0),
                     "image_url": fm.image_url,
                     "llm_sport_category": fm.llm_sport_category,
                     "top_outcomes": top_outs,
                 }
+            )
+
+        # Slice 6 Item 2b: format every candidate member market through the exact same
+        # verified_title detail pipeline as GET /api/futures/{id}?representation=verified_title
+        # so every number on a card or page equals the member's own page at the same moment.
+        candidate_mids: set[int] = set(paired_stage_mids)
+        for sec in sections_cfg:
+            if not isinstance(sec, Mapping) or not isinstance(sec.get("atom_query"), Mapping):
+                continue
+            aq = sec["atom_query"]
+            if aq.get("kind") in {"markets", "market_history"}:
+                cap_n = max(int(aq.get("max_items", 6)) + 4, 8)
+                matched_sec = [pm for pm in prelim_markets if _market_matches_query(pm, aq)]
+                for pm in matched_sec[:cap_n]:
+                    candidate_mids.add(int(pm["id"]))
+
+        detail_by_mid: dict[int, dict[str, Any]] = {}
+        mpn_by_mid: dict[int, dict[str, Any]] = {}
+        if candidate_mids:
+            vt_rows = (
+                await db.execute(
+                    _verified_title_market_stmt().where(
+                        FuturesMarket.id.in_(sorted(candidate_mids))
+                    )
+                )
+            ).unique().scalars().all()
+            out_map = await out_legs_by_market(list(vt_rows))
+            for fm in vt_rows:
+                unsupported_ids = await _withheld_price_outcome_ids(db, fm)
+                leg_sides = await _game_container_leg_sides(db, fm)
+                lead_leg = await _game_container_lead_leg(db, fm, leg_sides)
+                detail = _format_market_detail(
+                    fm,
+                    None,
+                    unsupported_ids,
+                    fleet_newest_observation=await _fleet_newest_observation(db, fm),
+                    leg_sides=leg_sides,
+                    lead_leg=lead_leg,
+                    out_division_labels=out_map.get(fm.id),
+                    normalize_numbers=False,
+                )
+                _apply_verified_title_to_detail(
+                    detail, await _resolve_verified_title(db, fm), fm
+                )
+                d_outs = list(detail.get("outcomes") or ())
+                card_pcts = rendered_card_percents([row.get("probability") for row in d_outs])
+                by_oid: dict[int, int] = {}
+                by_key: dict[str, int] = {}
+                by_fold: dict[str, tuple[float, int]] = {}
+                formatted_outs: list[dict[str, Any]] = []
+                img_by_oid = {o.id: getattr(o, "image_url", None) for o in (fm.outcomes or ())}
+                for idx, row in enumerate(d_outs):
+                    prob = row.get("probability")
+                    if prob is None or not isinstance(prob, (int, float)) or not math.isfinite(float(prob)):
+                        continue
+                    p_f = float(prob)
+                    oid = int(row["id"])
+                    rp = row.get("rendered_percent")
+                    if rp is None and idx < len(card_pcts) and card_pcts[idx] is not None:
+                        rp = int(card_pcts[idx])
+                    if rp is None:
+                        rp = _half_up_pct(p_f)
+                    pct_int = max(1, min(99, int(rp))) if 0.0 < p_f < 1.0 else int(rp)
+                    by_oid[oid] = pct_int
+                    r_name = str(row.get("name") or "")
+                    for nk in (_norm_key(_clean_outcome_label(r_name)), _norm_key(r_name)):
+                        if nk and nk not in by_key:
+                            by_key[nk] = pct_int
+                    fk = fold_outcome_key(r_name)
+                    if fk and fk not in by_fold:
+                        by_fold[fk] = (p_f, pct_int)
+                    formatted_outs.append(
+                        {
+                            "id": oid,
+                            "name": r_name,
+                            "probability": p_f,
+                            "rendered_percent": pct_int,
+                            "opening_probability": row.get("opening_probability"),
+                            "image_url": img_by_oid.get(oid),
+                        }
+                    )
+                mpn = {
+                    "by_outcome_id": by_oid,
+                    "by_outcome_key": by_key,
+                    "by_fold_key": {k: v[1] for k, v in by_fold.items()},
+                }
+                mpn_by_mid[fm.id] = mpn
+                detail_by_mid[fm.id] = {
+                    "top_outcomes": formatted_outs,
+                    "by_oid_prob_pct": {int(o["id"]): (float(o["probability"]), int(o["rendered_percent"])) for o in formatted_outs},
+                    "by_fold_prob_pct": by_fold,
+                }
+
+        for pm in prelim_markets:
+            mid = int(pm["id"])
+            if mid in detail_by_mid:
+                pm["top_outcomes"] = detail_by_mid[mid]["top_outcomes"]
+                pm["member_page_numbers"] = mpn_by_mid[mid]
+            markets_out.append(pm)
+
+        # Sync paired_stage entries to their linked stage_1_market.id & stage_2_market.id member pages
+        for set_id, pset in paired_out.items():
+            if not isinstance(pset, dict):
+                continue
+            s1_mid = int((pset.get("stage_1_market") or {}).get("id") or 0)
+            s2_mid = int((pset.get("stage_2_market") or {}).get("id") or 0)
+            s1_det = detail_by_mid.get(s1_mid)
+            s2_det = detail_by_mid.get(s2_mid)
+            if not s1_det and not s2_det:
+                continue
+            pset["member_page_numbers_by_market"] = {
+                k: mpn_by_mid[k] for k in (s1_mid, s2_mid) if k in mpn_by_mid
+            }
+            for entry in pset.get("entries") or ():
+                if not isinstance(entry, dict):
+                    continue
+                fk = fold_outcome_key(str(entry.get("subject") or ""))
+                if s1_det and not entry.get("stage_1_settled_state"):
+                    s1_oid = entry.get("stage_1_outcome_id")
+                    match_s1 = (
+                        s1_det["by_oid_prob_pct"].get(int(s1_oid))
+                        if isinstance(s1_oid, int) and s1_oid in s1_det["by_oid_prob_pct"]
+                        else s1_det["by_fold_prob_pct"].get(fk)
+                    )
+                    if match_s1 is not None:
+                        p_s1, pct_s1 = match_s1
+                        # Ensure client renderedPercent(stage_1_probability) equals pct_s1 exactly
+                        entry["stage_1_probability"] = (
+                            p_s1 if _half_up_pct(p_s1) == pct_s1 else round(pct_s1 / 100.0, 4)
+                        )
+                        entry["stage_1_rendered_percent"] = pct_s1
+                if s2_det:
+                    s2_oid = entry.get("stage_2_outcome_id")
+                    match_s2 = (
+                        s2_det["by_oid_prob_pct"].get(int(s2_oid))
+                        if isinstance(s2_oid, int) and s2_oid in s2_det["by_oid_prob_pct"]
+                        else s2_det["by_fold_prob_pct"].get(fk)
+                    )
+                    if match_s2 is not None:
+                        p_s2, pct_s2 = match_s2
+                        entry["stage_2_probability"] = (
+                            p_s2 if _half_up_pct(p_s2) == pct_s2 else round(pct_s2 / 100.0, 4)
+                        )
+                        entry["stage_2_rendered_percent"] = pct_s2
+            # Re-sort entries by stage_2_probability desc, stage_1_probability desc, subject asc
+            pset["entries"] = sorted(
+                [e for e in (pset.get("entries") or ()) if isinstance(e, dict)],
+                key=lambda e: (
+                    0 if isinstance(e.get("stage_2_probability"), (int, float)) else 1,
+                    -float(e.get("stage_2_probability") or -1.0),
+                    -float(e.get("stage_1_probability") or -1.0),
+                    str(e.get("subject") or "").casefold(),
+                ),
             )
 
         card_sec_key = str((definition.get("rule") or {}).get("card_section_key") or "").strip()
@@ -1799,14 +2150,24 @@ def _build_dynamic_title_from_set(
             if entries:
                 top = entries[0]
                 leader_name = str(top.get("subject") or "").strip()
-                win_pct = _half_up_pct(float(top.get("stage_2_probability") or 0.0))
+                win_pct = int(
+                    top.get("stage_2_rendered_percent")
+                    or _half_up_pct(float(top.get("stage_2_probability") or 0.0))
+                )
                 strong_nom = sum(
                     1
                     for e in entries
                     if isinstance(e.get("stage_1_probability"), (int, float))
                     and float(e["stage_1_probability"]) >= 0.75
                 )
-                cat_label = re.sub(r":.*$", "", str(sec.get("title") or "Best Picture")).strip()
+                raw_sec_title = str(sec.get("title") or "Best Picture")
+                if leader_name and raw_sec_title.lower().startswith(leader_name.lower()):
+                    cat_label = str(
+                        (pset.get("stage_2_market") or {}).get("category_name")
+                        or "Best Picture"
+                    )
+                else:
+                    cat_label = re.sub(r":.*$", "", raw_sec_title).strip()
                 if strong_nom >= 2:
                     return f"{leader_name} leads {cat_label} at {win_pct}%, with {strong_nom} contenders at 75%+ to be nominated"
                 return f"{leader_name} leads {cat_label} at {win_pct}%"
@@ -1937,6 +2298,8 @@ async def produce_container_machinery(
         initial_visible = min(3, int(aq.get("initial_visible_limit", 3)))
 
         if aq_kind == "paired_stage":
+            from app.services.paired_metric_register import fold_outcome_key
+
             pset = _match_paired_set(paired_sets, aq)
             if pset is None:
                 return RoundupRefusal((("container_machinery", f"missing_paired_stage:{sec_key}"),))
@@ -1953,23 +2316,59 @@ async def produce_container_machinery(
             form_id = choose_section_form("paired_stage", pset["entries"])
             s2_meta = pset.get("stage_2_market") if isinstance(pset.get("stage_2_market"), Mapping) else {}
             s1_meta = pset.get("stage_1_market") if isinstance(pset.get("stage_1_market"), Mapping) else {}
+            explicit_mpn_map = (
+                pset.get("member_page_numbers_by_market")
+                if isinstance(pset.get("member_page_numbers_by_market"), Mapping)
+                else {}
+            )
             sec_members: list[dict[str, Any]] = []
-            for m_meta in (s2_meta, s1_meta):
+            for stage_idx, m_meta in ((2, s2_meta), (1, s1_meta)):
                 mid = int(m_meta.get("id") or 0)
                 if mid <= 0:
                     continue
+                prob_field = f"stage_{stage_idx}_probability"
+                oid_field = f"stage_{stage_idx}_outcome_id"
+                rp_field = f"stage_{stage_idx}_rendered_percent"
+                if mid in explicit_mpn_map:
+                    stage_mpn = copy.deepcopy(dict(explicit_mpn_map[mid]))
+                else:
+                    by_oid: dict[int, int] = {}
+                    by_key: dict[str, int] = {}
+                    by_fold: dict[str, int] = {}
+                    for e in pset["entries"]:
+                        p_val = e.get(prob_field)
+                        if not isinstance(p_val, (int, float)) or not math.isfinite(float(p_val)):
+                            continue
+                        pct_val = int(e.get(rp_field) or _half_up_pct(float(p_val)))
+                        oid_val = e.get(oid_field)
+                        if isinstance(oid_val, int):
+                            by_oid[int(oid_val)] = pct_val
+                        subj = str(e.get("subject") or "")
+                        nk = _norm_key(subj)
+                        if nk and nk not in by_key:
+                            by_key[nk] = pct_val
+                        fk = fold_outcome_key(subj)
+                        if fk and fk not in by_fold:
+                            by_fold[fk] = pct_val
+                    stage_mpn = {
+                        "by_outcome_id": by_oid,
+                        "by_outcome_key": by_key,
+                        "by_fold_key": by_fold,
+                    }
                 synthetic_card = {
                     "id": mid,
                     "name": str(m_meta.get("name") or sec_title),
                     "status": "open",
                     "source": str(m_meta.get("source") or "kalshi"),
                     "content_kind": "futures",
+                    "member_page_numbers": stage_mpn,
                     "top_outcomes": [
                         {
                             "name": str(e.get("subject") or ""),
-                            "probability": float(e.get("stage_2_probability") or 0.0),
+                            "probability": float(e.get(prob_field) or 0.0),
                         }
                         for e in pset["entries"][:5]
+                        if isinstance(e.get(prob_field), (int, float))
                     ],
                 }
                 env = {
@@ -1984,6 +2383,10 @@ async def produce_container_machinery(
                     all_member_envelopes.append(env)
             if lead_paired_set is None:
                 lead_paired_set = copy.deepcopy(pset)
+                lead_paired_set["suppress_card_header_in_section"] = False
+            section_pset = copy.deepcopy(pset)
+            # Slice 6 Item 2a: embedded paired card inside a container section never repeats the headline.
+            section_pset["suppress_card_header_in_section"] = True
             built_by_idx[sec_idx] = {
                 "class": sec_key,
                 "title": sec_title,
@@ -1993,7 +2396,7 @@ async def produce_container_machinery(
                 "visual_block": {
                     "form_id": form_id,
                     "initial_visible_limit": initial_visible,
-                    "paired_metric_set": pset,
+                    "paired_metric_set": section_pset,
                     "items": [],
                 },
             }
@@ -2236,8 +2639,13 @@ async def produce_container_machinery(
 
     built_sections = [built_by_idx[idx] for idx in sorted(built_by_idx)]
 
-    if not built_sections or not all_member_envelopes:
-        return RoundupRefusal((("container_machinery", "no_sections_built"),))
+    # Slice 6 Item 2c: all-or-nothing across configured sections — never emit an empty or shorter grouping.
+    if (
+        not built_sections
+        or len(built_sections) != len(indexed_cfg)
+        or not all_member_envelopes
+    ):
+        return RoundupRefusal((("container_machinery", "incomplete_sections_built"),))
 
     # Build the compact Discover card from the designated card section (or section 0), capped at <=3 rows
     card_rows_limit = min(3, max(1, int(rule.get("card_rows", 3))))
@@ -2258,17 +2666,20 @@ async def produce_container_machinery(
         w_mid = int((pset.get("stage_2_market") or {}).get("id") or 1)
         for idx, e in enumerate((pset.get("entries") or ())[:card_rows_limit]):
             win_p = float(e.get("stage_2_probability") or 0.0)
+            win_pct = int(e.get("stage_2_rendered_percent") or _half_up_pct(win_p))
             nom_p = e.get("stage_1_probability")
             row_d: dict[str, Any] = {
                 "market_id": w_mid,
                 "outcome_id": int(e.get("stage_2_outcome_id") or (w_mid * 100 + idx + 1)),
                 "label": str(e.get("subject") or ""),
                 "probability": win_p,
-                "rendered_percent": _half_up_pct(win_p),
+                "rendered_percent": win_pct,
             }
             if isinstance(nom_p, (int, float)):
                 row_d["secondary_probability"] = float(nom_p)
-                row_d["secondary_rendered_percent"] = _half_up_pct(float(nom_p))
+                row_d["secondary_rendered_percent"] = int(
+                    e.get("stage_1_rendered_percent") or _half_up_pct(float(nom_p))
+                )
             rows_out.append(row_d)
     elif vb_form in {"coin_flip_matchups", "matchup_slate"}:
         for it in (vb.get("items") or ())[:card_rows_limit]:
@@ -2320,6 +2731,19 @@ async def produce_container_machinery(
     dest_href = f"/collections/{slug}"
     dynamic_title = _build_dynamic_title_from_set(definition, built_sections)
 
+    # Slice 6 Item 2a: a page's first section never repeats the page headline.
+    first_sec = built_sections[0]
+    if _norm_key(str(first_sec.get("title") or "")) == _norm_key(dynamic_title):
+        alt_title = str(
+            indexed_cfg[0][1].get("fallback_title")
+            or definition.get("section_title")
+            or "Lead Markets"
+        ).strip()
+        if _norm_key(alt_title) != _norm_key(dynamic_title):
+            first_sec["title"] = alt_title
+        else:
+            first_sec["suppress_heading"] = True
+
     # Slice 3 Item 5: drop settlement boilerplate from card faces and page subtitles.
     raw_footer = str(definition.get("footer") or "").strip()
     clean_footer = "" if _SETTLEMENT_FILLER_RE.search(raw_footer) else raw_footer
@@ -2365,6 +2789,7 @@ async def produce_container_machinery(
     card_paired_set: Optional[dict[str, Any]] = None
     if vb_form == "paired_stage_bars" and lead_paired_set is not None:
         card_paired_set = copy.deepcopy(lead_paired_set)
+        card_paired_set["title"] = dynamic_title
         card_paired_set["entries"] = list(card_paired_set.get("entries") or ())[:card_rows_limit]
 
     return RoundupMembers(
@@ -2643,6 +3068,271 @@ def _check_scale_order_violations(rows: Sequence[Mapping[str, Any]], label: str)
     return 1, []
 
 
+def _lookup_market_member_pct(
+    mpn: Optional[Mapping[str, Any]],
+    outcome_id: Optional[int],
+    label: str,
+) -> Optional[int]:
+    """Look up a member market's own-page integer percent by outcome_id or normalized outcome name."""
+    if not isinstance(mpn, Mapping):
+        return None
+    by_oid = mpn.get("by_outcome_id") or {}
+    if outcome_id is not None:
+        if outcome_id in by_oid:
+            return int(by_oid[outcome_id])
+        if str(outcome_id) in by_oid:
+            return int(by_oid[str(outcome_id)])
+    by_key = mpn.get("by_outcome_key") or {}
+    for nk in (_norm_key(_clean_outcome_label(label)), _norm_key(label)):
+        if nk and nk in by_key:
+            return int(by_key[nk])
+    by_fold = mpn.get("by_fold_key") or {}
+    if by_fold:
+        from app.services.paired_metric_register import fold_outcome_key
+
+        fk = fold_outcome_key(label)
+        if fk and fk in by_fold:
+            return int(by_fold[fk])
+    return None
+
+
+def _compute_member_number_parity(
+    feed_item: Optional[Mapping[str, Any]],
+    container_payload: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Compare every percentage on a grouping's Discover card and container page
+    against the number served on that member's own page at the same moment (Slice 6 Item 2b).
+    """
+    sections = [
+        s for s in (container_payload.get("sections") or ()) if isinstance(s, Mapping)
+    ]
+    event_truth: dict[int, dict[str, int]] = {}
+    market_truth: dict[int, dict[str, Any]] = {}
+
+    for sec in sections:
+        for m in sec.get("members") or ():
+            if not isinstance(m, Mapping):
+                continue
+            m_type = str(m.get("type") or "")
+            mid = int(m.get("id") or 0)
+            card_obj = m.get("card") if isinstance(m.get("card"), Mapping) else {}
+            mpn = card_obj.get("member_page_numbers")
+            if m_type == "event":
+                if isinstance(mpn, Mapping):
+                    event_truth[mid] = {
+                        "away_pct": int(mpn["away_pct"]),
+                        "home_pct": int(mpn["home_pct"]),
+                    }
+                elif (
+                    isinstance(card_obj.get("rendered_away_percent"), int)
+                    and isinstance(card_obj.get("rendered_home_percent"), int)
+                ):
+                    event_truth[mid] = {
+                        "away_pct": int(card_obj["rendered_away_percent"]),
+                        "home_pct": int(card_obj["rendered_home_percent"]),
+                    }
+            elif m_type == "market":
+                if isinstance(mpn, Mapping):
+                    market_truth[mid] = dict(mpn)
+                else:
+                    _, by_oid, by_key = _canonical_market_outcome_map(
+                        card_obj.get("top_outcomes") or card_obj.get("outcomes") or (),
+                        mutually_exclusive=bool(card_obj.get("mutually_exclusive", True)),
+                        question=str(card_obj.get("name") or ""),
+                    )
+                    market_truth[mid] = {"by_outcome_id": by_oid, "by_outcome_key": by_key}
+
+    # 1. Discover card numbers
+    card_checked = 0
+    card_mismatches: list[dict[str, Any]] = []
+    fi_data = (feed_item or {}).get("data") if isinstance((feed_item or {}).get("data"), Mapping) else {}
+    rc = fi_data.get("roundup") or (feed_item or {}).get("roundup_contract") or {}
+    if not isinstance(rc, Mapping):
+        rc = {}
+    mc = rc.get("machinery_card") if isinstance(rc.get("machinery_card"), Mapping) else {}
+    card_form = str(mc.get("form_id") or "roundup")
+    pms = rc.get("paired_metric_set") if isinstance(rc.get("paired_metric_set"), Mapping) else None
+
+    if card_form == "paired_stage_bars" and pms:
+        s1_mid = int((pms.get("stage_1_market") or {}).get("id") or 0)
+        s2_mid = int((pms.get("stage_2_market") or {}).get("id") or 0)
+        for e in list(pms.get("entries") or ())[:3]:
+            if not isinstance(e, Mapping):
+                continue
+            subj = str(e.get("subject") or "")
+            if isinstance(e.get("stage_1_probability"), (int, float)) and not e.get("stage_1_settled_state") and s1_mid in market_truth:
+                shown_s1 = int(e.get("stage_1_rendered_percent") or _half_up_pct(float(e["stage_1_probability"])))
+                exp_s1 = _lookup_market_member_pct(
+                    market_truth.get(s1_mid),
+                    int(e["stage_1_outcome_id"]) if isinstance(e.get("stage_1_outcome_id"), int) else None,
+                    subj,
+                )
+                card_checked += 1
+                if exp_s1 is None or shown_s1 != exp_s1:
+                    card_mismatches.append(
+                        {"location": f"card:paired_stage_1:{subj}", "market_id": s1_mid, "shown": shown_s1, "member_page": exp_s1}
+                    )
+            if isinstance(e.get("stage_2_probability"), (int, float)) and s2_mid in market_truth:
+                shown_s2 = int(e.get("stage_2_rendered_percent") or _half_up_pct(float(e["stage_2_probability"])))
+                exp_s2 = _lookup_market_member_pct(
+                    market_truth.get(s2_mid),
+                    int(e["stage_2_outcome_id"]) if isinstance(e.get("stage_2_outcome_id"), int) else None,
+                    subj,
+                )
+                card_checked += 1
+                if exp_s2 is None or shown_s2 != exp_s2:
+                    card_mismatches.append(
+                        {"location": f"card:paired_stage_2:{subj}", "market_id": s2_mid, "shown": shown_s2, "member_page": exp_s2}
+                    )
+    elif card_form in {"coin_flip_matchups", "matchup_slate"}:
+        for r in mc.get("rows") or ():
+            if not isinstance(r, Mapping):
+                continue
+            eid = int(r.get("event_id") or 0)
+            ev_t = event_truth.get(eid)
+            for side_key in ("away_pct", "home_pct"):
+                shown_v = int(r.get(side_key) or 0)
+                exp_v = ev_t.get(side_key) if ev_t else None
+                card_checked += 1
+                if exp_v is None or shown_v != exp_v:
+                    card_mismatches.append(
+                        {"location": f"card:event:{eid}:{side_key}", "event_id": eid, "shown": shown_v, "member_page": exp_v}
+                    )
+    else:
+        for r in mc.get("rows") or ():
+            if not isinstance(r, Mapping):
+                continue
+            mid = int(r.get("market_id") or 0)
+            oid = int(r["outcome_id"]) if isinstance(r.get("outcome_id"), int) else None
+            lbl = str(r.get("name") or r.get("label") or "")
+            shown_v = int(r.get("rendered_percent") or 0)
+            exp_v = _lookup_market_member_pct(market_truth.get(mid), oid, lbl)
+            card_checked += 1
+            if exp_v is None or shown_v != exp_v:
+                card_mismatches.append(
+                    {"location": f"card:market:{mid}:{lbl}", "market_id": mid, "shown": shown_v, "member_page": exp_v}
+                )
+        mini = mc.get("mini_chart")
+        if isinstance(mini, Mapping):
+            c_mid = int(mini.get("market_id") or 0)
+            for s in list(mini.get("series") or ())[:3]:
+                if not isinstance(s, Mapping):
+                    continue
+                oid = int(s["outcome_id"]) if isinstance(s.get("outcome_id"), int) else None
+                lbl = str(s.get("name") or "")
+                shown_v = int(s.get("current_pct") or 0)
+                exp_v = _lookup_market_member_pct(market_truth.get(c_mid), oid, lbl)
+                card_checked += 1
+                if exp_v is None or shown_v != exp_v:
+                    card_mismatches.append(
+                        {"location": f"card:mini_chart:{c_mid}:{lbl}", "market_id": c_mid, "shown": shown_v, "member_page": exp_v}
+                    )
+
+    # 2. Container page section numbers
+    page_checked = 0
+    page_mismatches: list[dict[str, Any]] = []
+    for sec in sections:
+        sec_cls = str(sec.get("class") or "")
+        vb = sec.get("visual_block")
+        if not isinstance(vb, Mapping):
+            continue
+        form = str(vb.get("form_id") or "")
+        if form == "paired_stage_bars":
+            pset = vb.get("paired_metric_set") if isinstance(vb.get("paired_metric_set"), Mapping) else {}
+            s1_mid = int((pset.get("stage_1_market") or {}).get("id") or 0)
+            s2_mid = int((pset.get("stage_2_market") or {}).get("id") or 0)
+            for e in pset.get("entries") or ():
+                if not isinstance(e, Mapping):
+                    continue
+                subj = str(e.get("subject") or "")
+                if isinstance(e.get("stage_1_probability"), (int, float)) and not e.get("stage_1_settled_state") and s1_mid in market_truth:
+                    shown_s1 = int(e.get("stage_1_rendered_percent") or _half_up_pct(float(e["stage_1_probability"])))
+                    exp_s1 = _lookup_market_member_pct(
+                        market_truth.get(s1_mid),
+                        int(e["stage_1_outcome_id"]) if isinstance(e.get("stage_1_outcome_id"), int) else None,
+                        subj,
+                    )
+                    page_checked += 1
+                    if exp_s1 is None or shown_s1 != exp_s1:
+                        page_mismatches.append(
+                            {"location": f"{sec_cls}:paired_stage_1:{subj}", "market_id": s1_mid, "shown": shown_s1, "member_page": exp_s1}
+                        )
+                if isinstance(e.get("stage_2_probability"), (int, float)) and s2_mid in market_truth:
+                    shown_s2 = int(e.get("stage_2_rendered_percent") or _half_up_pct(float(e["stage_2_probability"])))
+                    exp_s2 = _lookup_market_member_pct(
+                        market_truth.get(s2_mid),
+                        int(e["stage_2_outcome_id"]) if isinstance(e.get("stage_2_outcome_id"), int) else None,
+                        subj,
+                    )
+                    page_checked += 1
+                    if exp_s2 is None or shown_s2 != exp_s2:
+                        page_mismatches.append(
+                            {"location": f"{sec_cls}:paired_stage_2:{subj}", "market_id": s2_mid, "shown": shown_s2, "member_page": exp_s2}
+                        )
+        elif form in {"coin_flip_matchups", "matchup_slate"}:
+            for it in vb.get("items") or ():
+                if not isinstance(it, Mapping):
+                    continue
+                eid = int(it.get("event_id") or 0)
+                ev_t = event_truth.get(eid)
+                for side_key in ("away_pct", "home_pct"):
+                    shown_v = int(it.get(side_key) or 0)
+                    exp_v = ev_t.get(side_key) if ev_t else None
+                    page_checked += 1
+                    if exp_v is None or shown_v != exp_v:
+                        page_mismatches.append(
+                            {"location": f"{sec_cls}:event:{eid}:{side_key}", "event_id": eid, "shown": shown_v, "member_page": exp_v}
+                        )
+        elif form == "probability_history_chart":
+            for it in vb.get("items") or ():
+                if not isinstance(it, Mapping):
+                    continue
+                mid = int(it.get("market_id") or 0)
+                for s in it.get("series") or ():
+                    if not isinstance(s, Mapping):
+                        continue
+                    oid = int(s["outcome_id"]) if isinstance(s.get("outcome_id"), int) else None
+                    lbl = str(s.get("name") or "")
+                    shown_v = int(s.get("current_pct") or 0)
+                    exp_v = _lookup_market_member_pct(market_truth.get(mid), oid, lbl)
+                    page_checked += 1
+                    if exp_v is None or shown_v != exp_v:
+                        page_mismatches.append(
+                            {"location": f"{sec_cls}:chart:{mid}:{lbl}", "market_id": mid, "shown": shown_v, "member_page": exp_v}
+                        )
+        else:
+            for it in vb.get("items") or ():
+                if not isinstance(it, Mapping):
+                    continue
+                mid = int(it.get("market_id") or 0)
+                for o in it.get("outcomes") or ():
+                    if not isinstance(o, Mapping):
+                        continue
+                    oid = int(o["outcome_id"]) if isinstance(o.get("outcome_id"), int) else None
+                    lbl = str(o.get("name") or "")
+                    shown_v = int(o.get("rendered_percent") or 0)
+                    exp_v = _lookup_market_member_pct(market_truth.get(mid), oid, lbl)
+                    page_checked += 1
+                    if exp_v is None or shown_v != exp_v:
+                        page_mismatches.append(
+                            {"location": f"{sec_cls}:market:{mid}:{lbl}", "market_id": mid, "shown": shown_v, "member_page": exp_v}
+                        )
+
+    card_parity = {
+        "checked_numbers": card_checked,
+        "mismatch_count": len(card_mismatches),
+        "mismatches": card_mismatches,
+        "passes": card_checked > 0 and len(card_mismatches) == 0,
+    }
+    page_parity = {
+        "checked_numbers": page_checked,
+        "mismatch_count": len(page_mismatches),
+        "mismatches": page_mismatches,
+        "passes": page_checked > 0 and len(page_mismatches) == 0,
+    }
+    return card_parity, page_parity
+
+
 def compute_visual_diversity_report(
     definition: Mapping[str, Any],
     feed_item: Optional[Mapping[str, Any]],
@@ -2650,8 +3340,9 @@ def compute_visual_diversity_report(
     *,
     screen_picture_counts_390px: Optional[Sequence[int]] = None,
 ) -> dict[str, Any]:
-    """Compute Ruling 227-A + Direction 228 report metrics for both the Discover card
-    and the multi-section container page."""
+    """Compute Ruling 227-A + Direction 228 + Slice 6 member-page number parity report
+    metrics for both the Discover card and the multi-section container page."""
+    card_parity, page_parity = _compute_member_number_parity(feed_item, container_payload)
     fi_data = (feed_item or {}).get("data") if isinstance((feed_item or {}).get("data"), Mapping) else {}
     rc = (
         fi_data.get("roundup")
@@ -2700,6 +3391,8 @@ def compute_visual_diversity_report(
         card_failing.append("point_2_no_long_runs")
     if card_scale_violations:
         card_failing.append("direction_228_numerical_scale_order")
+    if not card_parity["passes"]:
+        card_failing.append("member_number_parity")
 
     card_report = {
         "surface": "discover_card",
@@ -2733,6 +3426,7 @@ def compute_visual_diversity_report(
             "violations": card_scale_violations,
             "passes": len(card_scale_violations) == 0,
         },
+        "member_number_parity": card_parity,
         "overall_passes": len(card_failing) == 0,
         "failing_points": card_failing,
     }
@@ -2836,6 +3530,8 @@ def compute_visual_diversity_report(
         page_failing.append("point_4_content_mix")
     if not d228_pass:
         page_failing.append("direction_228_numerical_scale_order")
+    if not page_parity["passes"]:
+        page_failing.append("member_number_parity")
 
     page_report = {
         "surface": "container_page",
@@ -2874,10 +3570,13 @@ def compute_visual_diversity_report(
             "violations": page_scale_violations,
             "passes": d228_pass,
         },
+        "member_number_parity": page_parity,
         "overall_passes": len(page_failing) == 0,
         "failing_points": page_failing,
     }
 
+    combined_mismatches = list(card_parity["mismatches"]) + list(page_parity["mismatches"])
+    combined_checked = int(card_parity["checked_numbers"]) + int(page_parity["checked_numbers"])
     return {
         "standard": "227-A",
         "report_only": True,
@@ -2886,7 +3585,63 @@ def compute_visual_diversity_report(
         "category": str(definition.get("category") or ""),
         "card": card_report,
         "page": page_report,
+        "member_number_parity": {
+            "checked_numbers": combined_checked,
+            "mismatch_count": len(combined_mismatches),
+            "mismatches": combined_mismatches,
+            "passes": bool(card_parity["passes"] and page_parity["passes"]),
+        },
         "overall_passes": bool(card_report["overall_passes"] and page_report["overall_passes"]),
+    }
+
+
+def _machinery_preview_error_response(
+    defn: Mapping[str, Any],
+    *,
+    error_code: str,
+    exc_class: str,
+    allow_error_envelope: bool,
+) -> dict[str, Any]:
+    """Slice 6 Item 2c + #12288 Ask 3: a failed read surfaces an explicit error state
+    (never an empty or shorter grouping) and logs one line naming the slug and exception class.
+    """
+    from fastapi import HTTPException
+
+    canonical_slug = str(defn.get("slug") or "unknown").replace("\r", "").replace("\n", "")
+    safe_exc = str(exc_class or "Exception").replace("\r", "").replace("\n", "")
+    safe_code = str(error_code or "read_failed").replace("\r", "").replace("\n", "")
+    logger.warning(
+        "machinery_preview_error slug=%s exception_class=%s error_code=%s",
+        canonical_slug,
+        safe_exc,
+        safe_code,
+    )
+    msg = "Couldn't load this grouping right now. Please try again."
+    if not allow_error_envelope:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "state": "unavailable",
+                "slug": canonical_slug,
+                "error_code": safe_code,
+                "message": msg,
+            },
+        )
+    return {
+        "slug": canonical_slug,
+        "status": "error",
+        "error": msg,
+        "error_code": safe_code,
+        "definition": {
+            "slug": canonical_slug,
+            "name": str(defn.get("name") or canonical_slug),
+            "category": str(defn.get("category") or ""),
+            "kicker": str(defn.get("kicker") or ""),
+            "footer": str(defn.get("footer") or ""),
+        },
+        "feed_item": None,
+        "container": None,
+        "diversity_report": None,
     }
 
 
@@ -2896,10 +3651,22 @@ async def serve_machinery_candidate_preview(
     *,
     include_children: bool = True,
     now: Optional[datetime] = None,
+    allow_error_envelope: bool = False,
 ) -> Optional[dict[str, Any]]:
     """Evaluate a single ``machinery-*.json`` candidate definition for an authenticated
-    admin preview without enabling the global ``CONTAINER_MACHINERY_SLICE1_ENABLED`` flag."""
-    from app.utils.roundup_containers import evaluate_roundup_producer
+    admin preview without enabling the global ``CONTAINER_MACHINERY_SLICE1_ENABLED`` flag.
+
+    Slice 6 Item 2c: when ``slug`` is a known candidate and its read fails or refuses,
+    never return ``None`` (which would fall through to an empty unpublished page or silently
+    drop the grouping from the preview list). Instead raise HTTP 503 for direct container
+    reads or return an explicit ``status='error'`` envelope for preview-list reads.
+    """
+    from app.utils.roundup_containers import (
+        RoundupRefusal,
+        compose_roundup_container,
+        compose_roundup_feed_item,
+        evaluate_roundup_producer,
+    )
 
     target_path = next(
         (p for p in _ordered_machinery_candidate_paths() if p.stem == slug),
@@ -2908,16 +3675,71 @@ async def serve_machinery_candidate_preview(
     if target_path is None:
         return None
     defn = load_machinery_definition(target_path)
+    expected_sections = len(
+        [
+            s
+            for s in ((defn.get("rule") or {}).get("sections") or ())
+            if isinstance(s, Mapping)
+        ]
+    )
     producer = build_container_machinery_producer(defn, enabled=lambda: True)
-    feed_item, payload = await evaluate_roundup_producer(producer, db, now=now)
-    if payload is None:
-        return None
+    try:
+        if isinstance(db, Mapping):
+            outcome = await produce_container_machinery(db, defn, now=now)
+            if outcome is None or isinstance(outcome, RoundupRefusal):
+                code = (
+                    outcome.reasons[0][1]
+                    if isinstance(outcome, RoundupRefusal) and outcome.reasons
+                    else "read_refused"
+                )
+                return _machinery_preview_error_response(
+                    defn,
+                    error_code=str(code),
+                    exc_class=type(outcome).__name__ if outcome is not None else "RoundupRefusal",
+                    allow_error_envelope=allow_error_envelope,
+                )
+            payload = compose_roundup_container(producer, outcome)
+            feed_item = compose_roundup_feed_item(producer, outcome)
+        else:
+            feed_item, payload = await evaluate_roundup_producer(producer, db, now=now)
+    except Exception as exc:
+        exc_name = type(exc).__name__
+        rollback_fn = getattr(db, "rollback", None)
+        if callable(rollback_fn):
+            try:
+                rb = rollback_fn()
+                if inspect.isawaitable(rb):
+                    await rb
+            except Exception:
+                # Best-effort rollback on an aborted DB session; return the primary read error below.
+                logger.debug("machinery preview session rollback failed", exc_info=True)
+        return _machinery_preview_error_response(
+            defn,
+            error_code="read_failed",
+            exc_class=exc_name,
+            allow_error_envelope=allow_error_envelope,
+        )
+
+    if (
+        payload is None
+        or payload.get("state") != "published"
+        or len(payload.get("sections") or ()) < max(1, expected_sections)
+        or int(payload.get("member_count") or 0) <= 0
+    ):
+        return _machinery_preview_error_response(
+            defn,
+            error_code="incomplete_read",
+            exc_class="RoundupRefusal",
+            allow_error_envelope=allow_error_envelope,
+        )
+
     out = copy.deepcopy(payload)
     if not include_children:
         out["children"] = []
     report = compute_visual_diversity_report(defn, feed_item, out)
     return {
         "slug": slug,
+        "status": "ok",
         "definition": {
             "slug": defn["slug"],
             "name": out.get("container", {}).get("name") or defn.get("name"),
@@ -2937,13 +3759,19 @@ async def evaluate_machinery_candidates_preview(
     slugs: Optional[Sequence[str]] = None,
     now: Optional[datetime] = None,
 ) -> list[dict[str, Any]]:
-    """Evaluate all (or selected) ``machinery-*.json`` candidates for Alex's private preview."""
+    """Evaluate all (or selected) ``machinery-*.json`` candidates for Alex's private preview.
+
+    Slice 6 Item 2c: every requested candidate produces either ``status='ok'`` or an explicit
+    ``status='error'`` item — never silently dropping a failed candidate to return a shorter list.
+    """
     wanted = set(slugs) if slugs is not None else None
     items: list[dict[str, Any]] = []
     for path in _ordered_machinery_candidate_paths():
         if wanted is not None and path.stem not in wanted:
             continue
-        res = await serve_machinery_candidate_preview(path.stem, db, now=now)
+        res = await serve_machinery_candidate_preview(
+            path.stem, db, now=now, allow_error_envelope=True
+        )
         if res is not None:
             items.append(res)
     return items

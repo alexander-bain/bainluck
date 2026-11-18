@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 import re
 from zoneinfo import ZoneInfo
+from signals import stopped_rules
 
 LINES = ("Server", "Website", "Apps")
 STATIONS = ("Write", "Test", "Review", "Merge line", "Ship", "Live")
@@ -59,6 +60,18 @@ def checks_green(pull):
         for check in latest.values()
     )
     return green, False
+
+
+def unchanged_after(pull, commit_id):
+    if commit_id == pull["head_sha"]:
+        return True
+    if not pull.get("commits_complete"):
+        return False
+    commits = pull.get("commits", [])
+    index = next((i for i, c in enumerate(commits) if c.get("sha") == commit_id), None)
+    return index is not None and all(
+        c.get("merge_from_master") or c.get("test_only") for c in commits[index + 1 :]
+    )
 
 
 def classify(pull, deployments, now):
@@ -133,7 +146,7 @@ def classify(pull, deployments, now):
     bot_reviews = [
         r
         for r in pull.get("reviews", [])
-        if r.get("login") == "claude[bot]" and r.get("commit_id") == pull["head_sha"]
+        if r.get("login") == "claude[bot]" and unchanged_after(pull, r.get("commit_id"))
     ]
     latest_review = max(
         bot_reviews, key=lambda r: r.get("submitted_at") or "", default={}
@@ -141,7 +154,11 @@ def classify(pull, deployments, now):
     if latest_review.get("state") != "APPROVED":
         return change
     if pull.get("fable_needed") and not pull.get("fable_not_needed"):
-        non_merge = [c for c in pull.get("commits", []) if c["parents"] == 1]
+        non_merge = [
+            c
+            for c in pull.get("commits", [])
+            if not c.get("merge_from_master") and not c.get("test_only")
+        ]
         if (
             not pull.get("commits_complete")
             or not pull.get("comments_complete")
@@ -166,8 +183,9 @@ def classify(pull, deployments, now):
     return change
 
 
-def advance_jams(changes, master, previous, now):
+def advance_jams(changes, master, previous, now, stops=()):
     conditions = {}
+    starts = {}
     previous_keys = {j["key"] for j in previous if j.get("ended_at") is None}
     active = [c for c in changes if c["station"] != "Live" and not c["side_track"]]
     for station in STATIONS[:-1]:
@@ -189,6 +207,21 @@ def advance_jams(changes, master, previous, now):
         ready = any(c["line"] == line and c["station"] == "Merge line" for c in active)
         if waiting and not ready:
             conditions[f"empty:{line}"] = ("empty", "Merge line", line, 900, None)
+    for stop in stops:
+        key = "master" if stop["kind"] == "master" else f"{stop['kind']}:{stop['line']}"
+        threshold = {
+            "line-stalled": 1800,
+            "announced": 900,
+            "review-waiting": 7200,
+        }.get(stop["kind"], 0)
+        conditions[key] = (
+            stop["kind"],
+            stop["station"],
+            stop["line"],
+            threshold,
+            stop["count"],
+        )
+        starts[key] = instant(stop["since"])
     old = {j["key"]: j for j in previous if j.get("ended_at") is None}
     jams = [j.copy() for j in previous if j.get("ended_at") is not None]
     for key, (kind, station, line, threshold, count) in conditions.items():
@@ -197,8 +230,8 @@ def advance_jams(changes, master, previous, now):
             "kind": kind,
             "station": station,
             "line": line,
-            "started_at": iso(now),
-            "qualifies_at": iso(now + timedelta(seconds=threshold)),
+            "started_at": iso(starts.get(key, now)),
+            "qualifies_at": iso(starts.get(key, now) + timedelta(seconds=threshold)),
             "ended_at": None,
         }
         jam["count"] = count
@@ -228,8 +261,65 @@ def build(snapshot, previous=None):
     # Keep the first observed receipt across updates. Refreshes do not increase
     # merge-to-live time. A source whose evidence disappears stays in Ship.
     old_changes = {c["number"]: c for c in previous.get("changes", [])}
+    pulls = {p["number"]: p for p in snapshot["pulls"]}
+    transitions = [
+        t
+        for t in previous.get("transitions", [])
+        if now - instant(t["at"]) <= timedelta(minutes=15)
+    ]
     for change in changes:
         old = old_changes.get(change["number"], {})
+        pull = pulls[change["number"]]
+        authored = [
+            c["at"]
+            for c in pull.get("commits", [])
+            if not c.get("merge_from_master") and not c.get("test_only")
+        ]
+        revision = max(
+            authored, default=pull.get("created_at", snapshot["captured_at"])
+        )
+        change["revision_at"] = revision
+        arrivals = [revision]
+        if change["station"] in {"Review", "Merge line"}:
+            arrivals += [
+                c["finished_at"] for c in pull.get("checks", []) if c.get("finished_at")
+            ]
+        if change["station"] == "Merge line":
+            arrivals += [
+                r["submitted_at"]
+                for r in pull.get("reviews", [])
+                if r.get("submitted_at")
+                and r.get("state") == "APPROVED"
+                and unchanged_after(pull, r.get("commit_id"))
+            ]
+            if pull.get("fable_needed") and not pull.get("fable_not_needed"):
+                arrivals += [
+                    c["created_at"]
+                    for c in pull.get("comments", [])
+                    if c.get("fable_accept")
+                    and c.get("association") in TRUSTED
+                    and c["created_at"] >= revision
+                ]
+        arrived = min(max(arrivals), snapshot["captured_at"])
+        same_station = (
+            old.get("station") == change["station"]
+            and old.get("line") == change["line"]
+        )
+        change["station_since"] = (
+            old.get("station_since", arrived)
+            if same_station and old.get("revision_at", revision) == revision
+            else arrived
+        )
+        if old and not same_station:
+            transitions.append(
+                {
+                    "number": change["number"],
+                    "line": change["line"],
+                    "from": old["station"],
+                    "to": change["station"],
+                    "at": change.get("live_at") or change.get("merged_at") or arrived,
+                }
+            )
         if change["station"] == "Live" and old.get("live_at"):
             change["live_at"] = min(old["live_at"], change["live_at"], key=instant)
             if old["live_at"] == change["live_at"]:
@@ -244,14 +334,33 @@ def build(snapshot, previous=None):
             change["merge_to_live_seconds"] = (
                 instant(change["live_at"]) - instant(change["merged_at"])
             ).total_seconds()
+    observed_since = previous.get("observed_since", snapshot["captured_at"])
+    last_merges = dict(previous.get("signals", {}).get("last_merged_at", {}))
+    for change in changes:
+        if change["merged_at"]:
+            line = change["line"]
+            last_merges[line] = max(
+                last_merges.get(line, change["merged_at"]), change["merged_at"]
+            )
+    commands = snapshot.get("commands", previous.get("signals", {}).get("commands", []))
+    stops = stopped_rules(
+        changes, commands, snapshot["master"], last_merges, observed_since, now
+    )
     return {
         "schema_version": 1,
         "generated_at": snapshot["captured_at"],
         "observed_since": previous.get("observed_since", snapshot["captured_at"]),
+        "read_expires_at": iso(now + timedelta(minutes=15)),
         "changes": changes,
+        "transitions": transitions,
+        "stops": stops,
         "jams": advance_jams(
-            changes, snapshot["master"], previous.get("jams", []), now
+            changes, snapshot["master"], previous.get("jams", []), now, stops
         ),
-        "signals": snapshot["master"],
+        "signals": {
+            **snapshot["master"],
+            "last_merged_at": last_merges,
+            "commands": commands,
+        },
         "coverage": snapshot.get("coverage", []),
     }

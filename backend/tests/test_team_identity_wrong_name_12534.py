@@ -1,5 +1,6 @@
 """A venue name must not turn a wrong-club fuzzy hit into a durable identity."""
 
+from collections import namedtuple
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -9,13 +10,14 @@ from app.models.models import Team
 from app.services.team_identity import TeamIdentityService, _NAME_WITNESS_LIMIT
 
 
-def team(tid, name, aliases=(), espn_id=None):
+def team(tid, name, aliases=(), espn_id=None, *, location=None):
     return Team(
         id=tid,
         name=name,
         sport_id=1,
         alternate_names=list(aliases),
         espn_id=espn_id,
+        location=location,
     )
 
 
@@ -39,7 +41,9 @@ class Session:
             self.writes.append(stmt)
             return None
         self.reads.append(stmt)
-        rows = [(t.id, t.name, t.alternate_names, t.espn_id) for t in self.witnesses]
+        keys = [column.key for column in stmt.selected_columns]
+        row = namedtuple("Row", keys)
+        rows = [row(*(getattr(t, key) for key in keys)) for t in self.witnesses]
         return SimpleNamespace(all=lambda: rows)
 
 
@@ -123,6 +127,78 @@ async def test_wrong_club_writes_nothing(
     assert admitted is False
     assert not session.writes
     assert len(session.reads) == 1
+
+
+@pytest.mark.asyncio
+async def test_womens_lacrosse_name_cannot_reuse_a_mens_mapping(monkeypatch, caplog):
+    session = Session(team(1416, "Army Knights"))
+    service = TeamIdentityService()
+    lookup = AsyncMock(return_value=session.target)
+    monkeypatch.setattr(service, "_lookup_by_source_name", lookup)
+
+    resolved = await service.resolve_team(
+        session, "polymarket", "lacrosse_ncaa", source_name="Army Black Knights (W)"
+    )
+
+    assert resolved is None
+    lookup.assert_not_awaited()
+    assert "women's team name in a men's league" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_verified_source_id_still_resolves_before_the_name_check(monkeypatch):
+    session = Session(team(1416, "Army Knights"))
+    service = TeamIdentityService()
+    lookup = AsyncMock(return_value=session.target)
+    monkeypatch.setattr(service, "_lookup_by_source_id", lookup)
+
+    resolved = await service.resolve_team(
+        session,
+        "polymarket",
+        "lacrosse_ncaa",
+        source_id="verified-team",
+        source_name="Army Black Knights (W)",
+    )
+
+    assert resolved is session.target
+    lookup.assert_awaited_once_with(session, "polymarket", "verified-team", "lacrosse_ncaa")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["kalshi", "polymarket", "futures"])
+async def test_womens_lacrosse_name_cannot_be_registered_in_the_mens_league(source):
+    session = Session(team(1416, "Army Knights"))
+
+    admitted = await TeamIdentityService().register_team_identity(
+        session, 1416, source, "lacrosse_ncaa", source_name="Army Black Knights (W)"
+    )
+
+    assert admitted is False
+    assert not session.gets
+    assert not session.reads
+    assert not session.writes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sport,name,target",
+    [
+        ("lacrosse_ncaa", "Army Black Knights", "Army Knights"),
+        ("basketball_wncaab", "Army Black Knights (W)", "Army Black Knights"),
+        ("soccer_other", "Chelsea (W)", "Chelsea"),
+    ],
+)
+async def test_unmarked_names_and_other_leagues_keep_their_existing_admission(
+    sport, name, target
+):
+    session = Session(team(1, target))
+
+    admitted = await TeamIdentityService().register_team_identity(
+        session, 1, "polymarket", sport, source_name=name
+    )
+
+    assert admitted is True
+    assert len(session.writes) == 1
 
 
 @pytest.mark.asyncio
@@ -371,3 +447,159 @@ async def test_espn_registration_cache_does_not_claim_a_refused_identity():
         session, target, None, event, "soccer_epl", cache
     )
     assert not cache and not session.writes
+
+
+async def register_school(session, name, sport="baseball_ncaa", source="kalshi"):
+    return await TeamIdentityService().register_team_identity(
+        session,
+        session.target.id,
+        source,
+        sport,
+        source_name=name,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sport, school, mascot, target_name, espn_id",
+    [
+        # Saved mislinks. The additional lacrosse row exercises the second league.
+        (
+            "baseball_ncaa",
+            "Middle Tennessee",
+            "Blue Raiders",
+            "Sam Houston Bearkats",
+            "177",
+        ),
+        (
+            "baseball_ncaa",
+            "Cal State Bakersfield",
+            "Roadrunners",
+            "UC Riverside Highlanders",
+            "327",
+        ),
+        ("lacrosse_ncaa", "Rutgers", "Scarlet Knights", "Hofstra Pride", "164"),
+        ("baseball_ncaa", "North Dakota State", "Bison", "Sam Houston Bearkats", "310"),
+    ],
+)
+async def test_exact_espn_school_location_refuses_a_foreign_team_binding(
+    sport,
+    school,
+    mascot,
+    target_name,
+    espn_id,
+):
+    target = team(1, target_name)
+    witness = team(2, f"{school} {mascot}", espn_id=espn_id, location=school)
+    session = Session(target, [target, witness])
+    assert await register_school(session, f" {school.upper()} ", sport) is False
+    assert not session.writes
+    assert session.gets == [target.id]
+    assert len(session.reads) == 1
+    assert set(session.reads[0].compile().params.values()) == {
+        sport,
+        _NAME_WITNESS_LIMIT + 1,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "location, espn_id, sport, target_in_league",
+    [
+        pytest.param(None, "177", "baseball_ncaa", True, id="location-missing"),
+        pytest.param(
+            "Middle Tennessee", "", "baseball_ncaa", True, id="espn-id-missing"
+        ),
+        pytest.param(
+            "Middle Tennessee",
+            "177",
+            "baseball_ncaa",
+            False,
+            id="target-in-another-league",
+        ),
+        pytest.param(
+            "Middle Tennessee",
+            "177",
+            "basketball_ncaab",
+            True,
+            id="out-of-scope-league",
+        ),
+    ],
+)
+async def test_school_location_requires_a_same_league_espn_record(
+    location,
+    espn_id,
+    sport,
+    target_in_league,
+):
+    target = team(1, "Sam Houston Bearkats")
+    witness = team(
+        2, "Middle Tennessee Blue Raiders", espn_id=espn_id, location=location
+    )
+    session = Session(target, [target, witness] if target_in_league else [witness])
+    assert await register_school(session, "Middle Tennessee", sport) is True
+    assert len(session.writes) == len(session.reads) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name, location, mascot",
+    [
+        ("Cleveland", "Cleveland State", "Vikings"),
+        ("North Dakota", "North Dakota State", "Bison"),
+        ("Rutgers Scarlet", "Rutgers", "Scarlet Knights"),
+        ("Cal State Bakersfield (Women)", "Cal State Bakersfield", "Roadrunners"),
+    ],
+)
+async def test_school_location_does_not_match_prefixes_or_strip_qualifiers(
+    name,
+    location,
+    mascot,
+):
+    target = team(1, "Sam Houston Bearkats")
+    witness = team(2, f"{location} {mascot}", espn_id="2", location=location)
+    session = Session(target, [target, witness])
+    assert await register_school(session, name) is True
+    assert len(session.writes) == len(session.reads) == 1
+
+
+@pytest.mark.asyncio
+async def test_recognized_school_alias_still_needs_no_witness_query():
+    target = team(1, "Middle Tennessee Blue Raiders", ["MTSU"], "177")
+    witness = team(2, "Sam Houston Bearkats", espn_id="2534", location="MTSU")
+    session = Session(target, [target, witness])
+    assert await register_school(session, "MTSU", source="futures") is True
+    assert session.gets == [target.id]
+    assert not session.reads
+    assert len(session.writes) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "target_id, extra_location_claim",
+    [
+        pytest.param("177", False, id="duplicate"),
+        pytest.param("2534", True, id="ambiguous"),
+    ],
+)
+async def test_school_location_abstains_when_duplicate_or_ambiguous(
+    target_id,
+    extra_location_claim,
+):
+    target = team(1, "Sam Houston Bearkats", espn_id=target_id)
+    witness = team(
+        2,
+        "Middle Tennessee Blue Raiders",
+        espn_id="177",
+        location="Middle Tennessee",
+    )
+    rows = [target, witness]
+    if extra_location_claim:
+        rows.append(
+            team(3, "Other University", espn_id="3", location="Middle Tennessee")
+        )
+    session = Session(target, rows)
+    assert (
+        await register_school(session, "Middle Tennessee", source="polymarket") is True
+    )
+    assert len(session.writes) == len(session.reads) == 1

@@ -85,6 +85,8 @@ The hero producer clock dates that reading only when the selected home and raw
 away pair exactly match the hero pair; sanitizing two malformed away readings
 into absence cannot establish that correspondence. Divergent current odds have
 unknown observation age; current timestamps and row writes are not substitutes.
+The Live Activity projector keeps the score and withholds the forecast when the
+reading is tagged as opening or has no probability observation time (#12824).
 
 `get_event` calls `_format_event`, which emits the displayed score tuple and
 merges `score_observation_fields(event)`. That helper emits the producer clock

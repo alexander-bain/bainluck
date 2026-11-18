@@ -375,7 +375,7 @@ struct EventSportHeadlineCard12472: View {
                     }
                 }
             )
-            .frame(idealWidth: 280, maxWidth: 300)
+            .frame(minWidth: 320, idealWidth: 340, maxWidth: 358)
             #if os(iOS)
             .presentationCompactAdaptation(.popover)
             #endif
