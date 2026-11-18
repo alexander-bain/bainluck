@@ -109,6 +109,8 @@ async def test_price_card_refresh_advances_evidence_even_when_the_price_is_uncha
     from tests.test_feed_price_cards_9515 import result
 
     row = _event(1, "live", start=NOW - timedelta(hours=1), box_reads=[])
+    # A two-sided game whose cards do not read final-score projections.
+    row.sport.key = "tennis_atp"
     row.espn_win_prob_home = None
     db = AsyncMock()
     db.execute.return_value = result([row])
