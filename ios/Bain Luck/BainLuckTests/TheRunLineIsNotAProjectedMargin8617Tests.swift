@@ -235,4 +235,139 @@ final class TheRunLineIsNotAProjectedMargin8617Tests: XCTestCase {
         XCTAssertEqual(reads, 1, "EventDetailView reads the projected pair outside projectionText")
         XCTAssertEqual(source.components(separatedBy: "projectedHomeScore").count - 1, 1)
     }
+
+    /// Real production NHL specimen `/api/events/15350374` (`Colorado Avalanche @ Utah Mammoth`,
+    /// 2026-11-19): pregame opened 50.92% / 49.08% across 17 sportsbooks with `over_under: 6.5`
+    /// and `projected_home_score: 3.8, projected_away_score: 2.7` from the ±1.5 puck line, and
+    /// live `current_odds` served `spread: -1.9, over_under: 5.4, projected_home_score: 3.6,
+    /// projected_away_score: 1.6, bookmaker_count: 12`. Also verifies `CompactGameCard12616`
+    /// and `WatchWristTile12616` withhold hockey projected pairs alongside NBA positive controls.
+    func testRealServedNhl15350374SpecimenAndCardAndWatchSurfacesWithholdPuckLine() throws {
+        let dec = JSONDecoder()
+        dec.keyDecodingStrategy = .convertFromSnakeCase
+
+        // 1. Real served `/api/events/15350374` pregame & live sportsbook pairs
+        let pregame15350374 = try dec.decode(EventDetail.self, from: Data("""
+        {
+          "id": 15350374,
+          "sport": "icehockey_nhl",
+          "sport_name": "NHL",
+          "status": "scheduled",
+          "away_team": "Colorado Avalanche",
+          "home_team": "Utah Mammoth",
+          "commence_time": "2026-11-19T02:00:00Z",
+          "current_odds": {
+            "captured_at": "2026-11-17T22:01:00+00:00",
+            "home_probability": 0.5092,
+            "away_probability": 0.4908,
+            "over_under": 6.5,
+            "projected_home_score": 3.8,
+            "projected_away_score": 2.7,
+            "bookmaker_count": 17
+          }
+        }
+        """.utf8))
+        let pregameNow = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-18T22:00:00Z"))
+        XCTAssertNil(
+            EventSportHeadlines12472.admittedPregameProjectedPair(
+                event: pregame15350374,
+                hasScore: false,
+                ladderHome: nil,
+                ladderAway: nil,
+                now: pregameNow
+            )
+        )
+        XCTAssertNil(
+            EventDetailView.projectionText(
+                sport: pregame15350374.sport,
+                status: pregame15350374.status,
+                commenceTime: pregame15350374.commenceTime?.asDate,
+                projectedHome: pregame15350374.currentOdds?.projectedHomeScore,
+                projectedAway: pregame15350374.currentOdds?.projectedAwayScore,
+                hasScore: false,
+                now: pregameNow
+            )
+        )
+
+        let live15350374Odds = try dec.decode(CurrentOdds.self, from: Data("""
+        {
+          "captured_at": "2026-11-19T06:08:08.130831+00:00",
+          "home_probability": 0.9712,
+          "away_probability": 0.0288,
+          "away_rendered_percent": 3,
+          "home_rendered_percent": 97,
+          "spread": -1.9,
+          "over_under": 5.4,
+          "projected_home_score": 3.6,
+          "projected_away_score": 1.6,
+          "bookmaker_count": 12
+        }
+        """.utf8))
+        XCTAssertNil(
+            EventDetailView.projectionText(
+                sport: "icehockey_nhl",
+                status: "live",
+                commenceTime: try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-19T02:00:00Z")),
+                projectedHome: live15350374Odds.projectedHomeScore,
+                projectedAway: live15350374Odds.projectedAwayScore,
+                hasScore: true,
+                now: try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-19T04:00:00Z"))
+            )
+        )
+
+        // 2. ScheduledCardProjectedFinal12616 & WatchWristTileModel12616 withhold hockey, keep NBA control
+        XCTAssertNil(
+            ScheduledCardProjectedFinal12616.resolve(
+                odds: pregame15350374.currentOdds,
+                sportKey: "icehockey_nhl",
+                homeChance: 0.5092,
+                awayChance: 0.4908
+            )
+        )
+        let nbaOdds = try dec.decode(CurrentOdds.self, from: Data("""
+        {
+          "home_probability": 0.62,
+          "away_probability": 0.38,
+          "projected_home_score": 114.2,
+          "projected_away_score": 108.4
+        }
+        """.utf8))
+        XCTAssertEqual(
+            ScheduledCardProjectedFinal12616.resolve(
+                odds: nbaOdds,
+                sportKey: "basketball_nba",
+                homeChance: 0.62,
+                awayChance: 0.38
+            ),
+            ScheduledCardProjectedFinal12616.Pair(away: 108, home: 114)
+        )
+
+        let watchNhl = WatchWristTileModel12616.build(
+            WatchWristTileInput12616(
+                homeTeam: "Utah Mammoth",
+                awayTeam: "Colorado Avalanche",
+                sportKey: "icehockey_nhl",
+                homeProbability: 0.5092,
+                awayProbability: 0.4908,
+                projectedHomeScore: 3.8,
+                projectedAwayScore: 2.7,
+                stateLabel: "7:00 PM"
+            )
+        )
+        XCTAssertFalse(watchNhl.supportingLine.contains("Proj."), "Watch wrist tile must withhold hockey puck-line projection: \(watchNhl.supportingLine)")
+
+        let watchNba = WatchWristTileModel12616.build(
+            WatchWristTileInput12616(
+                homeTeam: "Boston Celtics",
+                awayTeam: "New York Knicks",
+                sportKey: "basketball_nba",
+                homeProbability: 0.62,
+                awayProbability: 0.38,
+                projectedHomeScore: 114.2,
+                projectedAwayScore: 108.4,
+                stateLabel: "7:30 PM"
+            )
+        )
+        XCTAssertTrue(watchNba.supportingLine.contains("Proj. 114\u{2013}108"), "NBA control must keep Watch wrist projection: \(watchNba.supportingLine)")
+    }
 }

@@ -97,10 +97,16 @@ struct SportVocab: Equatable {
     /// priced 55% pregame) served ±1.5 / 2.5 from all nineteen sportsbooks, so
     /// the projected line read "Rangers by 1.5" for a coin flip.
     ///
-    /// `false` withholds the projected line; the played-score line is
-    /// untouched. Only baseball says `false`. Hockey's puck line has the same
-    /// shape but no page specimen yet, and web left its row `true` — this row
-    /// follows web, not a guess.
+    /// `false` withholds the sportsbooks' projected line; the played-score line
+    /// is untouched. Baseball (#8617) and hockey (#13007) say `false`: hockey's
+    /// puck line is pinned at ±1.5 goals whatever the price (`/events/15350374`
+    /// Avalanche @ Mammoth opened 50.9% / 49.1% with 17 books solving 6.5 total
+    /// + puck line to 3.8–2.7, and web's `projectedFinalPair.ts:156-158` cites
+    /// NHL `15333056` / `15332424` and AHL `15327140`). Note: web's
+    /// `marketMapUtils.ts:1799` intentionally stays `true` in 1.0.7 because
+    /// `eventPageProjectedPair` (`projectedFinalPair.ts:402`) relies on
+    /// `sportsbookProjectionDrawable && projectedFinalFormat === null` to
+    /// suppress hockey pregame ladders on web until Ruling 266: A (1.0.8).
     let sportsbookSpreadIsAMargin: Bool
     /// Can a game in this sport END level? (#8156 on web, #9496 here)
     ///
@@ -153,7 +159,7 @@ extension SportVocab {
             winnerMarketPricesADraw: false,
             sportsbookSpreadIsAMargin: false,
             canEndInATie: false)),
-        (["hockey", "nhl", "ahl", "shl", "liiga"], SportVocab(
+        (["hockey", "nhl"], SportVocab(
             marginTitle: "Goal margin map", totalTitle: "Goals map",
             unit: "goals", unitSingular: "goal", marginRange: 5,
             totalRange: 2...9,
@@ -162,8 +168,8 @@ extension SportVocab {
             // a shootout, so the winner market has two outcomes.
             winnerMarketPricesADraw: false,
             // #13007: Hockey's sportsbook puck line is pinned at ±1.5 goals
-            // regardless of price, just like baseball's run line (#8617) and
-            // `projectedFinalFormat` on the website.
+            // regardless of price (`/events/15350374`, `15333056`, `15332424`),
+            // matching baseball's run line (#8617).
             sportsbookSpreadIsAMargin: false,
             canEndInATie: false)),
         (["soccer", "mls", "epl", "uefa", "fifa"], SportVocab(
