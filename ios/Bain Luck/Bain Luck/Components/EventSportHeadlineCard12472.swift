@@ -225,6 +225,9 @@ struct EventSportHeadlineCard12472: View {
                     if let pregameSummary = model.livePregameSummary {
                         cardStackBoundary12278 { livePregameSummaryRow(pregameSummary) }
                     }
+                    if let scoreUnavailableNotice = model.scoreUnavailableNotice {
+                        cardStackBoundary12278 { scoreUnavailableNoticeRow(scoreUnavailableNotice) }
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
@@ -712,6 +715,16 @@ struct EventSportHeadlineCard12472: View {
                 Color.clear.preference(key: LivePregameSummaryHeightPreferenceKey199.self, value: geo.size.height)
             }
         )
+    }
+
+    private func scoreUnavailableNoticeRow(_ text: String) -> some View {
+        let cappedNoticeSize = min(baseQuietSize, stacksRowsVertically ? 20 : 14)
+        return Text(text)
+            .font(HeadlineStyleTable199.quietText(.page, monospacedDigits: false, scaledSize: cappedNoticeSize))
+            .foregroundStyle(HeadlineStyleTable199.quietInk)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("headline-12472-no-live-score-notice")
     }
 
     // MARK: - Segmented Bottom Bar

@@ -22,6 +22,20 @@ import SwiftUI
 ///    `"Current win chance"`, or `"Projection before"`, and never repeats a label twice.
 enum EventSportHeadlines12472 {
 
+    /// #13000 (`250: A`) — plain-English notice on the match page when no score
+    /// source carries a live match (`score_source_unavailable == true`).
+    nonisolated static let noLiveScoreTournamentLine = "No live score for this tournament."
+    nonisolated static let noLiveScoreGameLine = "No live score for this game."
+
+    nonisolated static func resolveScoreUnavailableNotice(for event: EventDetail, isLive: Bool) -> String? {
+        guard isLive, event.scoreSourceUnavailable == true else { return nil }
+        let lower = (event.sport ?? "").lowercased()
+        if isTennisSport(lower) || lower.hasPrefix("golf") {
+            return noLiveScoreTournamentLine
+        }
+        return noLiveScoreGameLine
+    }
+
     nonisolated enum Phase: String, Equatable, Sendable, CaseIterable {
         case before
         case during
@@ -292,6 +306,7 @@ enum EventSportHeadlines12472 {
         var home: TeamRowModel
         let pregameAwayMarker: Double?
         let livePregameSummary: LivePregameSummary?
+        var scoreUnavailableNotice: String? = nil
         let showsEkg: Bool
         let sourceMark: SourceMark?
         let confidenceTier: String?
@@ -318,6 +333,7 @@ enum EventSportHeadlines12472 {
             home: TeamRowModel,
             pregameAwayMarker: Double?,
             livePregameSummary: LivePregameSummary?,
+            scoreUnavailableNotice: String? = nil,
             showsEkg: Bool,
             sourceMark: SourceMark?,
             confidenceTier: String?
@@ -350,6 +366,7 @@ enum EventSportHeadlines12472 {
             self.home = home
             self.pregameAwayMarker = pregameAwayMarker
             self.livePregameSummary = livePregameSummary
+            self.scoreUnavailableNotice = scoreUnavailableNotice
             self.showsEkg = showsEkg
             self.sourceMark = sourceMark
             self.confidenceTier = confidenceTier
@@ -925,11 +942,15 @@ enum EventSportHeadlines12472 {
 
         let isTennis = isTennisSport(event.sport)
         let isScoreless = isMMASport(event.sport) || isBoxingSport(event.sport)
+        let scoreUnavailable = isLive && event.scoreSourceUnavailable == true
+        let effectiveHasScore = hasScore && !scoreUnavailable
+        let omitsScoreColumn = isScoreless || scoreUnavailable
+        let noLiveScoreNotice = resolveScoreUnavailableNotice(for: event, isLive: isLive)
         let hasProjCol = carriesProjectedScoreColumn(sport: event.sport)
 
         let liveProjNumbers = isLive ? admittedLiveProjectedNumberPair(
             event: event,
-            hasScore: hasScore,
+            hasScore: effectiveHasScore,
             ladderHome: ladderHome,
             ladderAway: ladderAway,
             now: now
@@ -937,9 +958,10 @@ enum EventSportHeadlines12472 {
         let awayProjCell = liveProjNumbers?.away ?? ""
         let homeProjCell = liveProjNumbers?.home ?? ""
 
-        // Tennis score-slot columns (`S1`, `S2`, … or `Sets` + optional `Pts` / `TB`)
-        let tennisScoreSlot: TennisScoreSlotResult? = isTennis
-            ? buildTennisScoreSlot(event: event, hasScore: hasScore, includePoints: isLive)
+        // Tennis score-slot columns (`S1`, `S2`, … or `Sets` + optional `Pts` / `TB`).
+        // Under 250: A (`scoreUnavailable == true`), omit the score slot completely.
+        let tennisScoreSlot: TennisScoreSlotResult? = (isTennis && !scoreUnavailable)
+            ? buildTennisScoreSlot(event: event, hasScore: effectiveHasScore, includePoints: isLive)
             : nil
 
         let columns: [ColumnSpec] = {
@@ -947,7 +969,7 @@ enum EventSportHeadlines12472 {
                 return tennisSlot.columns + [.init(role: .now, header: "Now")]
             }
             var cols: [ColumnSpec] = []
-            if !isScoreless {
+            if !omitsScoreColumn {
                 cols.append(.init(role: .score, header: "Score"))
             }
             if hasProjCol {
@@ -958,7 +980,9 @@ enum EventSportHeadlines12472 {
         }()
 
         let compatLiveHeaders = LiveColumnHeaders(
-            score: isTennis ? (tennisScoreSlot?.columns.first?.header ?? "Sets") : (isScoreless ? nil : "Score"),
+            score: isTennis
+                ? (scoreUnavailable ? nil : (tennisScoreSlot?.columns.first?.header ?? "Sets"))
+                : (omitsScoreColumn ? nil : "Score"),
             projected: hasProjCol ? "Proj." : nil,
             pregame: nil,
             now: "Now"
@@ -1006,8 +1030,25 @@ enum EventSportHeadlines12472 {
                         .map { abs(shares.home - $0) > 0.001 } ?? false
                 )?.rawValue
 
-                let homeScoreCell = (hasScore && event.homeScore != nil) ? "\(event.homeScore!)" : ""
-                let awayScoreCell = (hasScore && event.awayScore != nil) ? "\(event.awayScore!)" : ""
+                let homeScoreCell = (!omitsScoreColumn && effectiveHasScore && event.homeScore != nil) ? "\(event.homeScore!)" : ""
+                let awayScoreCell = (!omitsScoreColumn && effectiveHasScore && event.awayScore != nil) ? "\(event.awayScore!)" : ""
+
+                var homeSoccerCells: [String] = []
+                var awaySoccerCells: [String] = []
+                var drawSoccerCells: [String] = []
+                if !omitsScoreColumn {
+                    homeSoccerCells.append(homeScoreCell)
+                    awaySoccerCells.append(awayScoreCell)
+                    drawSoccerCells.append("")
+                }
+                if hasProjCol {
+                    homeSoccerCells.append(homeProjCell)
+                    awaySoccerCells.append(awayProjCell)
+                    drawSoccerCells.append("")
+                }
+                homeSoccerCells.append(formatted.home)
+                awaySoccerCells.append(formatted.away)
+                drawSoccerCells.append(formatted.draw)
 
                 let homeRow = CompetitorRow(
                     role: .home,
@@ -1016,7 +1057,7 @@ enum EventSportHeadlines12472 {
                     shortName: shortNames.home,
                     logoURL: homeLogo,
                     record: nil,
-                    cells: [homeScoreCell, homeProjCell, formatted.home],
+                    cells: homeSoccerCells,
                     rawProbability: shares.home,
                     won: nil
                 )
@@ -1027,7 +1068,7 @@ enum EventSportHeadlines12472 {
                     shortName: shortNames.away,
                     logoURL: awayLogo,
                     record: nil,
-                    cells: [awayScoreCell, awayProjCell, formatted.away],
+                    cells: awaySoccerCells,
                     rawProbability: shares.away,
                     won: nil
                 )
@@ -1038,7 +1079,7 @@ enum EventSportHeadlines12472 {
                     shortName: "Draw",
                     logoURL: nil,
                     record: nil,
-                    cells: ["", "", formatted.draw],
+                    cells: drawSoccerCells,
                     rawProbability: shares.draw,
                     won: nil
                 )
@@ -1060,10 +1101,11 @@ enum EventSportHeadlines12472 {
                     pregameColumnHeaders: nil,
                     liveColumnHeaders: compatLiveHeaders,
                     finalColumnHeaders: nil,
-                    away: makeCompatTeamRow(awayRow, projNumber: nil, liveProjNumber: liveProjNumbers?.away, liveScore: hasScore ? event.awayScore : nil, pregameChance: nil, chance: formatted.away, finalText: nil),
-                    home: makeCompatTeamRow(homeRow, projNumber: nil, liveProjNumber: liveProjNumbers?.home, liveScore: hasScore ? event.homeScore : nil, pregameChance: nil, chance: formatted.home, finalText: nil),
+                    away: makeCompatTeamRow(awayRow, projNumber: nil, liveProjNumber: liveProjNumbers?.away, liveScore: effectiveHasScore ? event.awayScore : nil, pregameChance: nil, chance: formatted.away, finalText: nil),
+                    home: makeCompatTeamRow(homeRow, projNumber: nil, liveProjNumber: liveProjNumbers?.home, liveScore: effectiveHasScore ? event.homeScore : nil, pregameChance: nil, chance: formatted.home, finalText: nil),
                     pregameAwayMarker: nil,
                     livePregameSummary: summary,
+                    scoreUnavailableNotice: noLiveScoreNotice,
                     showsEkg: true,
                     sourceMark: event.sourceMark,
                     confidenceTier: confidenceTier
@@ -1112,8 +1154,8 @@ enum EventSportHeadlines12472 {
 
         let summary = isLive ? resolveLivePregameSummary(event: event, shortNames: shortNames) : nil
 
-        let awayScoreCell = (!isScoreless && hasScore && event.awayScore != nil) ? "\(event.awayScore!)" : ""
-        let homeScoreCell = (!isScoreless && hasScore && event.homeScore != nil) ? "\(event.homeScore!)" : ""
+        let awayScoreCell = (!omitsScoreColumn && effectiveHasScore && event.awayScore != nil) ? "\(event.awayScore!)" : ""
+        let homeScoreCell = (!omitsScoreColumn && effectiveHasScore && event.homeScore != nil) ? "\(event.homeScore!)" : ""
 
         let awayCells: [String]
         let homeCells: [String]
@@ -1132,7 +1174,7 @@ enum EventSportHeadlines12472 {
         } else {
             var a: [String] = []
             var h: [String] = []
-            if !isScoreless {
+            if !omitsScoreColumn {
                 a.append(awayScoreCell)
                 h.append(homeScoreCell)
             }
@@ -1195,10 +1237,11 @@ enum EventSportHeadlines12472 {
             liveColumnHeaders: compatLiveHeaders,
             finalColumnHeaders: nil,
             tennisScoreFirst: tennisScoreSlot?.scoreFirstModel,
-            away: makeCompatTeamRow(awayRow, projNumber: nil, liveProjNumber: liveProjNumbers?.away, liveScore: hasScore ? event.awayScore : nil, pregameChance: nil, chance: awayNow, finalText: nil),
-            home: makeCompatTeamRow(homeRow, projNumber: nil, liveProjNumber: liveProjNumbers?.home, liveScore: hasScore ? event.homeScore : nil, pregameChance: nil, chance: homeNow, finalText: nil),
+            away: makeCompatTeamRow(awayRow, projNumber: nil, liveProjNumber: liveProjNumbers?.away, liveScore: effectiveHasScore ? event.awayScore : nil, pregameChance: nil, chance: awayNow, finalText: nil),
+            home: makeCompatTeamRow(homeRow, projNumber: nil, liveProjNumber: liveProjNumbers?.home, liveScore: effectiveHasScore ? event.homeScore : nil, pregameChance: nil, chance: homeNow, finalText: nil),
             pregameAwayMarker: pregameMarker,
             livePregameSummary: summary,
+            scoreUnavailableNotice: noLiveScoreNotice,
             showsEkg: isLive && !homeNow.isEmpty,
             sourceMark: (awayNow.isEmpty && homeNow.isEmpty) ? nil : event.sourceMark,
             confidenceTier: confidenceTier

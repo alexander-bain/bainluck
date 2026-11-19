@@ -34,6 +34,9 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     /// Missing on older servers/caches; never replace with receipt or price time.
     var scoreSource: String?
     var scoreObservedAt: String?
+    /// #13000 (`250: A`) — `score_source_unavailable: bool` when no score source
+    /// carries this match (distinguished from `"no score yet"` before kickoff).
+    var scoreSourceUnavailable: Bool? = nil
     let homeTeamData: TeamData?
     let awayTeamData: TeamData?
     let metadata: EventMetadata?

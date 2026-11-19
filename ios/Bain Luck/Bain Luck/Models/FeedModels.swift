@@ -880,6 +880,9 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     /// Score observations order independently of probability folds (#10582).
     var scoreSource: String? = nil
     var scoreObservedAt: String? = nil
+    /// #13000 (`250: A`) — `score_source_unavailable: bool` when no score source
+    /// carries this match (distinguished from `"no score yet"` before kickoff).
+    var scoreSourceUnavailable: Bool? = nil
     let blendFoldRevision: ServedFoldRevision?
     let heroProbabilitySource: String?
     let heroProbabilityObservedAt: String?

@@ -551,13 +551,21 @@ struct EventCardView: View {
         )
     }
 
+    private var hasDrawableScore250A: Bool {
+        event.scoreSourceUnavailable != true && (event.awayScore != nil || event.homeScore != nil)
+    }
+
+    var compactHeadersForTest250A: CompactGameCard12616.ColumnHeaders {
+        compactHeaders12616
+    }
+
     private var compactHeaders12616: CompactGameCard12616.ColumnHeaders {
         let hasCurrent = event.currentOdds?.homeProbability != nil
             || (!currentAwayIsWithheld && event.currentOdds?.awayProbability != nil)
         let reading = prematch
         let hasPrematch = reading?.homeProbability != nil
             || (!prematchAwayIsWithheld && reading?.awayProbability != nil)
-        let hasScore = event.awayScore != nil || event.homeScore != nil
+        let hasScore = hasDrawableScore250A
         return CompactGameCard12616.columnHeaders(
             isScheduled: isScheduled,
             isLive: isLive,
@@ -593,7 +601,7 @@ struct EventCardView: View {
                     avatar: event.avatar(home: false),
                     color: awayColor,
                     record: event.awayTeamData?.record,
-                    score: (isLive || isFinished || isSuspended) ? event.awayScore : nil,
+                    score: (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.awayScore : nil,
                     won: awayWon,
                     side: .away
                 )
@@ -607,7 +615,7 @@ struct EventCardView: View {
                     avatar: event.avatar(home: true),
                     color: homeColor,
                     record: event.homeTeamData?.record,
-                    score: (isLive || isFinished || isSuspended) ? event.homeScore : nil,
+                    score: (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.homeScore : nil,
                     won: homeWon,
                     side: .home
                 )
@@ -674,7 +682,7 @@ struct EventCardView: View {
                 avatar: event.avatar(home: false),
                 color: awayColor,
                 record: event.awayTeamData?.record,
-                score: (isLive || isFinished || isSuspended) ? event.awayScore : nil,
+                score: (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.awayScore : nil,
                 won: awayWon,
                 side: .away,
                 nameFontSize: fontSize,
@@ -688,7 +696,7 @@ struct EventCardView: View {
                 avatar: event.avatar(home: true),
                 color: homeColor,
                 record: event.homeTeamData?.record,
-                score: (isLive || isFinished || isSuspended) ? event.homeScore : nil,
+                score: (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.homeScore : nil,
                 won: homeWon,
                 side: .home,
                 nameFontSize: fontSize,
@@ -723,7 +731,7 @@ struct EventCardView: View {
 
     private var showsMediumColumn12616: Bool {
         if isSuspended {
-            return event.awayScore != nil || event.homeScore != nil
+            return hasDrawableScore250A
         }
         return compactHeaders12616.medium != nil
     }
