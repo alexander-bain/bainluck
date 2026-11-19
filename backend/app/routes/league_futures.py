@@ -36,7 +36,8 @@ from app.routes.futures import (
 from app.services import get_db
 from app.services.anchor_channel import market_born_duplicates_on_page
 from app.services.same_instant_refutation import same_instant_refuted_on_page
-from app.utils.aggregation import compute_aggregate_probability
+from app.utils.aggregation import compute_aggregate_probability_tiered
+from app.utils.draw_priced_winner import sport_prices_a_draw
 from app.utils.outcome_display import normalize_display_probs
 from app.utils.futures_market_snapshot import (
     normalized_field_comparisons,
@@ -81,6 +82,7 @@ from app.utils.proven_duplicates import (
     not_a_proven_duplicate,
 )
 from app.utils.rail_competition_share import equal_share_by_competition
+from app.utils.source_mark import blended_source_marks
 from app.utils.sport_keys import (
     SPORT_HIERARCHY,
     TOUR_LEAGUES_INCLUDING_TOURNAMENTS,
@@ -105,6 +107,9 @@ LEAGUE_PRIMARY_TTL = 300
 #: shortening it would have traded a 24-hour lie for a shorter one while leaving
 #: the missing revalidation — the actual defect — in place.
 LEAGUE_STALE_TTL = 86400
+
+# Cache-only stamp for game rails built after #12824 removed the opening fallback.
+_GAME_PRICE_POLICY = "no_opening_as_current"
 
 #: How old a mirror carrying GAME ROWS may be and still be served (#3389).
 #:
@@ -1557,7 +1562,12 @@ def refuted_by_a_weekly_final(
         return unreported
 
 
-def _event_probability(event: Event) -> float | None:
+def _event_probability(
+    event: Event,
+    *,
+    source_inputs: list[tuple[str, float]] | None = None,
+    source_method: list[str] | None = None,
+) -> float | None:
     """The blended home win probability, or None when we never measured one.
 
     Calls the canonical blend — it does NOT roll its own mean over sources.
@@ -1591,7 +1601,10 @@ def _event_probability(event: Event) -> float | None:
     """
     if not isinstance(event.win_probability_sources, (dict, type(None))):
         return None
-    return compute_aggregate_probability(event)
+    probability, _ = compute_aggregate_probability_tiered(
+        event, source_inputs=source_inputs, source_method=source_method
+    )
+    return probability
 
 
 async def _attach_venue_settlement(
@@ -1732,7 +1745,11 @@ def _format_game_brief(
     the iOS decoder already types; dropping it to "clean up" would silently retier
     every league.
     """
-    home_prob = _event_probability(event)
+    source_inputs: list[tuple[str, float]] = []
+    source_method: list[str] = []
+    home_prob = _event_probability(
+        event, source_inputs=source_inputs, source_method=source_method
+    )
     away_prob = round(1.0 - home_prob, 6) if home_prob is not None else None
 
     brief: dict = {
@@ -1775,6 +1792,12 @@ def _format_game_brief(
             "home_probability": home_prob,
             "away_probability": away_prob,
         }
+        brief["source_mark"], brief["away_source_mark"] = blended_source_marks(
+            event,
+            source_inputs,
+            method=source_method[0] if source_method else None,
+            away_available=not sport_prices_a_draw(sport_key),
+        )
 
     # Opening line — the card's live footer says "Opened 62/38" from this, and a
     # settled card falls back to it. Both columns are on the row already.
@@ -1911,11 +1934,9 @@ def _redis_or_none():
 def _read_league_slot(rc, key: str) -> dict | None:
     """Read one league cache slot, or None.
 
-    Deliberately NOT `event_concept_cache.read_slot`: that helper validates the
-    stamped `cache` envelope and reads an unstamped payload as a MISS, so adopting
-    it here would silently invalidate every live league entry and, worse, couple a
-    revalidation fix to a payload-shape migration. The keys are shared; the codec
-    is this tier's own until it adopts the envelope deliberately.
+    Pre-#12824 game rails could store the opening as current odds without a
+    source tag. Require a pricing policy stamp before serving any cached games,
+    including the outage fallback. Futures-only mirrors need no game price stamp.
     """
     if rc is None:
         return None
@@ -1931,7 +1952,12 @@ def _read_league_slot(rc, key: str) -> dict | None:
     except Exception:
         logger.warning("league cache: refusing undecodable payload for %s", key)
         return None
-    return payload if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    game_price_policy = payload.pop("_game_price_policy", None)
+    if has_games(payload) and game_price_policy != _GAME_PRICE_POLICY:
+        return None
+    return payload
 
 
 def _write_league_payload(rc, keys: ConceptCacheKeys, payload: dict) -> None:
@@ -1939,6 +1965,8 @@ def _write_league_payload(rc, keys: ConceptCacheKeys, payload: dict) -> None:
     if rc is None:
         return
     try:
+        if has_games(payload):
+            payload = {**payload, "_game_price_policy": _GAME_PRICE_POLICY}
         encoded = json.dumps(payload, default=str)
         rc.setex(keys.primary, LEAGUE_PRIMARY_TTL, encoded)
         rc.setex(keys.stale, LEAGUE_STALE_TTL, encoded)

@@ -17,6 +17,7 @@ import urllib.request
 import urllib.parse
 
 from model import build, instant, iso, public_title, PACIFIC, TRUSTED
+from signals import commands_from, test_file
 
 REPO = "alexander-bain/bainluck"
 RELEASE = "factory-data"
@@ -151,6 +152,7 @@ def collect_pull(api, summary, cached=None):
         k: summary.get(k)
         for k in (
             "number",
+            "created_at",
             "title",
             "draft",
             "state",
@@ -206,6 +208,11 @@ def collect_pull(api, summary, cached=None):
             {
                 "sha": c["sha"],
                 "parents": len(c["parents"]),
+                "merge_from_master": len(c["parents"]) > 1
+                and all(
+                    contains("origin/master", parent["sha"])
+                    for parent in c["parents"][1:]
+                ),
                 "at": c["commit"]["committer"]["date"],
             }
             for c in commits
@@ -220,9 +227,68 @@ def collect_pull(api, summary, cached=None):
     return pull
 
 
+def annotate_test_commits(api, pulls, cache):
+    """Read filenames only for new commits that could extend an earlier review."""
+    for pull in pulls:
+        if pull.get("merged_at"):
+            continue
+        reviews = [
+            r["submitted_at"]
+            for r in pull.get("reviews", [])
+            if r.get("state") == "APPROVED" and r.get("submitted_at")
+        ]
+        accepts = [
+            c["created_at"]
+            for c in pull.get("comments", [])
+            if c.get("fable_accept") and c.get("association") in TRUSTED
+        ]
+        cutoffs = reviews + accepts
+        if not cutoffs:
+            continue
+        cached_commits = {
+            c["sha"]: c for c in cache.get(str(pull["number"]), {}).get("commits", [])
+        }
+        for commit in pull.get("commits", []):
+            old = cached_commits.get(commit["sha"], {})
+            if "test_only" in old:
+                commit["test_only"] = old["test_only"]
+            if (
+                commit["parents"] > 1
+                and "merge_from_master" not in commit
+                and commit["at"] > min(cutoffs)
+            ):
+                details = api.request(f"repos/{REPO}/commits/{commit['sha']}")
+                commit["merge_from_master"] = len(details["parents"]) > 1 and all(
+                    contains("origin/master", parent["sha"])
+                    for parent in details["parents"][1:]
+                )
+            if (
+                "test_only" not in commit
+                and commit["parents"] == 1
+                and commit["at"] > min(cutoffs)
+            ):
+                files = api.pages(f"commits/{commit['sha']}", "files")
+                commit["test_only"] = (
+                    bool(files)
+                    and len(files) < 3000
+                    and all(
+                        test_file(f["filename"])
+                        and (
+                            not f.get("previous_filename")
+                            or test_file(f["previous_filename"])
+                        )
+                        for f in files
+                    )
+                )
+
+
 def refresh_open_evidence(api, pulls):
     active = [p for p in pulls if p["state"] == "open"]
     fields = """headRefOid
+      timelineItems(last:1,itemTypes:[READY_FOR_REVIEW_EVENT,REOPENED_EVENT]) { nodes {
+        ... on ReadyForReviewEvent { createdAt }
+        ... on ReopenedEvent { createdAt }
+      } }
       reviews(last:100) { totalCount nodes { author { __typename login } state submittedAt commit { oid } } }
       comments(last:100) { totalCount nodes { body createdAt updatedAt authorAssociation } }
       commits(last:1) { nodes { commit { oid statusCheckRollup { contexts(first:100) {
@@ -253,6 +319,8 @@ def refresh_open_evidence(api, pulls):
                     checks_complete=False, files_complete=False, reviews_complete=False
                 )
                 continue
+            intake = node["timelineItems"]["nodes"]
+            pull["review_resumed_at"] = intake[0]["createdAt"] if intake else None
             reviews = node["reviews"]
             pull["reviews"] = [
                 {
@@ -285,16 +353,14 @@ def refresh_open_evidence(api, pulls):
             checks = []
             for check in contexts["nodes"]:
                 if "context" in check:
+                    pending = check["state"] in {"PENDING", "EXPECTED"}
                     checks.append(
                         {
                             "name": check["context"],
                             "app": "commit-status",
                             "started_at": check["createdAt"],
-                            "state": (
-                                "in_progress"
-                                if check["state"] in {"PENDING", "EXPECTED"}
-                                else "completed"
-                            ),
+                            "finished_at": None if pending else check["createdAt"],
+                            "state": "in_progress" if pending else "completed",
                             "conclusion": (
                                 "success" if check["state"] == "SUCCESS" else "failure"
                             ),
@@ -457,6 +523,7 @@ def collect(api, previous=None, cache=None, open_summaries=None):
             )
         )
     refresh_open_evidence(api, pulls)
+    annotate_test_commits(api, pulls, cache)
     # A reported live time refines the server observation only after ancestry
     # independently proves this exact merged change was deployed.
     comments = api.pages(f"issues/12779/comments?since={iso(floor)}")
@@ -514,21 +581,19 @@ def collect(api, previous=None, cache=None, open_summaries=None):
     runs = api.request(
         f"repos/{REPO}/actions/runs?branch=master&event=push&per_page=30"
     )["workflow_runs"]
-    ci = next((r for r in runs if r["name"] == "CI"), None)
+    completed = api.request(
+        f"repos/{REPO}/actions/workflows/ci.yml/runs?branch=master&event=push&status=completed&per_page=1"
+    )["workflow_runs"]
+    ci = completed[0] if completed else None
     tests = "unknown"
     if ci:
-        jobs = api.pages(f"actions/runs/{ci['id']}/jobs", "jobs")
-        test_jobs = [
-            j for j in jobs if re.search(r"test|build|typecheck", j["name"], re.I)
-        ]
-        if any(j["conclusion"] in {"failure", "timed_out"} for j in test_jobs):
+        if ci["conclusion"] in {"failure", "timed_out"}:
             tests = "failing"
         elif ci["conclusion"] == "success":
             tests = "passing"
-        elif ci["status"] != "completed":
-            tests = "running"
     master = {
         "tests": tests,
+        "tests_at": ci.get("updated_at") if ci else None,
         "testflight": latest.get("Apps", {}).get("state", "unknown"),
     }
     flight_run = next((r for r in runs if r["name"] == "TestFlight release"), None)
@@ -540,7 +605,23 @@ def collect(api, previous=None, cache=None, open_summaries=None):
         "deployments": receipts,
         "master": master,
         "coverage": coverage,
+        "commands": reconcile_commands(comments, pulls, previous),
     }
+
+
+def reconcile_commands(comments, pulls, previous):
+    commands = previous.get("signals", {}).get("commands", []) + commands_from(comments)
+    latest = {}
+    merged = {p["number"]: p.get("merged_at") for p in pulls}
+    for command in sorted(commands, key=lambda c: c["at"]):
+        command = dict(command)
+        if command["kind"] == "merging":
+            command["resolved"] = command.get("resolved", False) or any(
+                merged.get(number) and merged[number] >= command["at"]
+                for number in command["numbers"]
+            )
+        latest[(command["kind"], command["line"])] = command
+    return list(latest.values())
 
 
 def floor_changed(previous, current):
@@ -548,7 +629,7 @@ def floor_changed(previous, current):
         visible = {
             key: value
             for key, value in snapshot.items()
-            if key not in {"generated_at", "_collector"}
+            if key not in {"generated_at", "read_expires_at", "_collector"}
         }
         visible["changes"] = sorted(
             visible.get("changes", []), key=lambda change: change["number"]

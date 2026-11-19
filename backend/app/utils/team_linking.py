@@ -26,7 +26,13 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-def _names_match(candidate: str, team_name: str, alt_names: Optional[list] = None) -> bool:
+def _names_match(
+    candidate: str,
+    team_name: str,
+    alt_names: Optional[list] = None,
+    *,
+    ignore_city_prefix_periods: bool = False,
+) -> bool:
     """Check if a candidate string (futures outcome name) matches a team.
 
     Uses conservative matching (exact + substring ≥8 chars) because futures
@@ -57,7 +63,7 @@ def _names_match(candidate: str, team_name: str, alt_names: Optional[list] = Non
             if candidate_norm in name_norm:
                 return True
             if name_norm in candidate_norm and not city_alias_names_someone_else(
-                candidate, name, team_name
+                candidate, name, team_name, ignore_city_prefix_periods=ignore_city_prefix_periods
             ):
                 return True
 
@@ -72,7 +78,14 @@ _GIVEN_NAME = re.compile(
 _NAME_SUFFIXES = frozenset({"jr", "jr.", "sr", "sr.", "ii", "iii", "iv"})
 
 
-def given_name_before_city(candidate: str, alias: str, team_name: str) -> bool:
+def given_name_before_city(
+    candidate: str,
+    alias: str,
+    team_name: str,
+    *,
+    ignore_city_prefix_periods: bool = False,
+    ignore_city_periods: bool = False,
+) -> bool:
     """True when ``candidate`` is one given name and then the team's city alias (#9726).
 
     The Washington Huskies carry the alias "Washington", and "washington" is a
@@ -86,16 +99,27 @@ def given_name_before_city(candidate: str, alias: str, team_name: str) -> bool:
     Only a CITY alias qualifies, i.e. a proper prefix of the team's name
     ("Washington" of "Washington Huskies"). A nickname alias ("Steelers" in "PIT
     Steelers D/ST") and a name that is all alias ("Athletics") are untouched.
+
+    The writer permits period variants in the team prefix after a literal
+    substring match. The reader also permits them in the surname.
     """
     alias_norm = _normalize_name(alias)
-    if not alias_norm or not _normalize_name(team_name).startswith(alias_norm + " "):
+    team_norm = _normalize_name(team_name)
+    city_prefix = alias_norm
+    if ignore_city_prefix_periods or ignore_city_periods:
+        city_prefix = city_prefix.replace(".", "")
+        team_norm = team_norm.replace(".", "")
+    if not city_prefix or not team_norm.startswith(city_prefix + " "):
         return False
     tokens = candidate.split()
     while tokens and tokens[-1].lower() in _NAME_SUFFIXES:
         tokens.pop()
     if len(tokens) < 2 or not _GIVEN_NAME.match(tokens[0]):
         return False
-    return _normalize_name(" ".join(tokens[1:])) == alias_norm
+    surname = _normalize_name(" ".join(tokens[1:]))
+    if ignore_city_periods:
+        return surname.replace(".", "") == city_prefix
+    return surname == alias_norm
 
 
 # Fantasy-defense labels as venues print them: "Washington D/ST", "Minnesota D/ST: 1+".
@@ -122,13 +146,15 @@ def fantasy_defense_on_city(candidate: str, alias: str, team_name: str) -> bool:
     return _normalize_name(" ".join(tokens[:-1])) == alias_norm
 
 
-def city_alias_names_someone_else(candidate: str, alias: str, team_name: str) -> bool:
+def city_alias_names_someone_else(
+    candidate: str, alias: str, team_name: str, *, ignore_city_prefix_periods: bool = False
+) -> bool:
     """True when the team's city alias sits in ``candidate`` as another thing's name (#9726):
     a person's surname ("Parker Washington") or an NFL fantasy defense ("Washington D/ST").
     """
-    return given_name_before_city(candidate, alias, team_name) or fantasy_defense_on_city(
-        candidate, alias, team_name
-    )
+    return given_name_before_city(
+        candidate, alias, team_name, ignore_city_prefix_periods=ignore_city_prefix_periods
+    ) or fantasy_defense_on_city(candidate, alias, team_name)
 
 
 def _normalized_names(team: dict) -> list[str]:
@@ -164,7 +190,7 @@ def match_outcome_to_team(
             continue
 
         names_norm = _normalized_names(team)
-        matched.append((team["id"], names_norm))
+        matched.append((team, names_norm))
         if candidate_norm and candidate_norm in names_norm:
             exact_team_ids.append(team["id"])
 
@@ -183,14 +209,24 @@ def match_outcome_to_team(
     if len(exact_team_ids) == 1:
         winner = exact_team_ids[0]
         shortens_a_sibling = any(
-            team_id != winner and any(candidate_norm in n for n in names_norm)
-            for team_id, names_norm in matched
+            team["id"] != winner and any(candidate_norm in n for n in names_norm)
+            for team, names_norm in matched
         )
         if not shortens_a_sibling:
             return winner
 
     if len(matched) == 1:
-        return matched[0][0]
+        team, _ = matched[0]
+        # #12534: "St. Louis" in a person's name is the city alias of
+        # "St Louis Blues". Check the unique winner so a veto cannot resolve
+        # an ambiguous match. Phase 3c still uses the default city-prefix check.
+        if _names_match(
+            outcome_name,
+            team["name"],
+            team.get("alternate_names"),
+            ignore_city_prefix_periods=True,
+        ):
+            return team["id"]
 
     return None
 

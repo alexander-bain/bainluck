@@ -1,7 +1,7 @@
 """#8761: real row writes reach SSE only once PostgreSQL keeps their snapshot."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -356,7 +356,9 @@ async def test_actual_betting_ingest_publishes_its_committed_consensus(
             session,
             event,
             {"bookmakers": [{"key": str(i)} for i in range(3)]},
-            datetime.now(timezone.utc),
+            # Pregame: a fake snapshot carries no `captured_at`, and #12938's live
+            # rule never counts an undated line (it has its own tests).
+            datetime.now(timezone.utc) + timedelta(hours=1),
             {},
             update_opening=False,
         )

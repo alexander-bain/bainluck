@@ -13,9 +13,28 @@ struct EventCardView: View {
     /// away probability via `_away_three_way_price` (#11541).
     var awayReadingIsServerVerified: Bool = false
 
+    init(
+        event: FeedEventData,
+        reason: String?,
+        personalizationReasons: [String]? = nil,
+        headline: String? = nil,
+        compactScheduleStyle: Bool = false,
+        awayReadingIsServerVerified: Bool = false
+    ) {
+        var cardEvent = event
+        cardEvent.currentOdds = CompactGameCard12616.currentOddsForCard(event)
+        self.event = cardEvent
+        self.reason = reason
+        self.personalizationReasons = personalizationReasons
+        self.headline = headline
+        self.compactScheduleStyle = compactScheduleStyle
+        self.awayReadingIsServerVerified = awayReadingIsServerVerified
+    }
+
     /// #11325 — selects the finished card's accessibility arm; see
     /// `FinishedCardAccessibility11325`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Unified onto `HeadlineStyleTable199` (`.card`) so team names, scores, and chances
     /// share one size and weight family across every surface.
@@ -118,15 +137,30 @@ struct EventCardView: View {
     /// unit test of the helper can see: a revert to
     /// `ProbabilityBarPalette.colors(awayHex:homeHex:)` compiles, renders and
     /// leaves every contrast test green. A test drives this on a real payload.
+    /// Light-mode test seam preserved for existing contrast wiring assertions;
+    /// rendered card colours resolve through `barColorHexes(for: colorScheme)`.
     var barColorHexes: (away: String, home: String) {
-        TeamTextContrast.cardColorHexes(
+        barColorHexes(for: .light)
+    }
+
+    func barColorHexes(for scheme: ColorScheme) -> (away: String, home: String) {
+        if scheme == .dark {
+            return TeamTextContrast.darkSurfaceColorHexes(
+                awayHex: event.awayTeamData?.primaryColor,
+                homeHex: event.homeTeamData?.primaryColor,
+                awaySecondaryHex: event.awayTeamData?.secondaryColor,
+                homeSecondaryHex: event.homeTeamData?.secondaryColor
+            )
+        }
+        return TeamTextContrast.cardColorHexes(
             awayHex: event.awayTeamData?.primaryColor,
             homeHex: event.homeTeamData?.primaryColor,
             awaySecondaryHex: event.awayTeamData?.secondaryColor
         )
     }
+
     private var barColors: (away: Color, home: Color) {
-        let hexes = barColorHexes
+        let hexes = barColorHexes(for: colorScheme)
         return (Color(hex: hexes.away), Color(hex: hexes.home))
     }
     private var awayColor: Color { barColors.away }
@@ -330,6 +364,90 @@ struct EventCardView: View {
         }
     }
 
+    static func resolvedCardSourceMark(
+        event: FeedEventData,
+        canStillBeGraded: Bool,
+        currentAwayIsWithheld: Bool,
+        prematch: PrematchReading?,
+        prematchAwayIsWithheld: Bool
+    ) -> (mark: SourceMark, number: Double?, subject: String?, isPregame: Bool)? {
+        let names = TeamShortName.shortPair(
+            away: event.awayTeam,
+            home: event.homeTeam,
+            sportKey: event.sport
+        )
+        if canStillBeGraded {
+            let homeCand: (SourceMark, Double, String)? = {
+                guard let m = event.sourceMark, m.draws,
+                      let p = event.currentOdds?.homeProbability else { return nil }
+                return (m, p, names.home)
+            }()
+            let awayCand: (SourceMark, Double, String)? = {
+                guard !currentAwayIsWithheld,
+                      let m = event.awaySourceMark, m.draws,
+                      let p = event.currentOdds?.awayProbability else { return nil }
+                return (m, p, names.away)
+            }()
+            if let h = homeCand, let a = awayCand {
+                return a.1 > h.1
+                    ? (a.0, a.1, a.2, false)
+                    : (h.0, h.1, h.2, false)
+            }
+            if let chosen = homeCand ?? awayCand {
+                return (chosen.0, chosen.1, chosen.2, false)
+            }
+            return nil
+        }
+
+        let homePreCand: (SourceMark, Double, String)? = {
+            guard let m = event.pregameSourceMark, m.draws,
+                  let p = prematch?.homeProbability else { return nil }
+            return (m, p, names.home)
+        }()
+        let awayPreCand: (SourceMark, Double, String)? = {
+            guard !prematchAwayIsWithheld,
+                  let m = event.awayPregameSourceMark, m.draws,
+                  let p = prematch?.awayProbability else { return nil }
+            return (m, p, names.away)
+        }()
+        if let h = homePreCand, let a = awayPreCand {
+            return a.1 > h.1
+                ? (a.0, a.1, a.2, true)
+                : (h.0, h.1, h.2, true)
+        }
+        if let chosen = homePreCand ?? awayPreCand {
+            return (chosen.0, chosen.1, chosen.2, true)
+        }
+        if let homeSettled = event.sourceMark, homeSettled.state == .settled, homeSettled.draws {
+            return (homeSettled, nil, names.home, false)
+        }
+        if let awaySettled = event.awaySourceMark, awaySettled.state == .settled, awaySettled.draws {
+            return (awaySettled, nil, names.away, false)
+        }
+        return nil
+    }
+
+    @ViewBuilder
+    private var cardSourceMarkButton: some View {
+        if let resolved = Self.resolvedCardSourceMark(
+            event: event,
+            canStillBeGraded: canStillBeGraded,
+            currentAwayIsWithheld: currentAwayIsWithheld,
+            prematch: prematch,
+            prematchAwayIsWithheld: prematchAwayIsWithheld
+        ),
+        let button = SourceMarkButton(
+            resolved.mark,
+            number: resolved.number,
+            subject: resolved.subject,
+            isPregame: resolved.isPregame,
+            numberSize: 17
+        ) {
+            button
+                .padding(.vertical, -8)
+        }
+    }
+
     private var singleRowTopBar: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 6) {
@@ -342,6 +460,7 @@ struct EventCardView: View {
                     .fixedSize(horizontal: true, vertical: false)
                 Spacer(minLength: 4)
                 trailingTopBarMeta
+                cardSourceMarkButton
                 PinButton(type: "event", id: event.id, compact: true)
             }
 
@@ -352,6 +471,7 @@ struct EventCardView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 6)
+                    cardSourceMarkButton
                     PinButton(type: "event", id: event.id, compact: true)
                 }
                 ViewThatFits(in: .horizontal) {
@@ -383,12 +503,14 @@ struct EventCardView: View {
                     statusBadge.fixedSize()
                     Spacer(minLength: 6)
                     formattedDate
+                    cardSourceMarkButton
                     PinButton(type: "event", id: event.id, compact: true)
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         statusBadge.fixedSize()
                         Spacer(minLength: 6)
+                        cardSourceMarkButton
                         PinButton(type: "event", id: event.id, compact: true)
                     }
                     formattedDate

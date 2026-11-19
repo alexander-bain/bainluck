@@ -82,21 +82,100 @@ class TestBothCarriersAgree:
         assert fs.price_change_stamp(folded) == _ago(12)
 
 
-def _roundup(ids):
+def _roundup(ids, *, relations=None, order=None, count_line=None, shown=None):
+    shown_ids = list(ids) if shown is None else list(ids[:shown])
+    roundup = {"rows": [{"market_id": i, "label": str(i)} for i in shown_ids]}
+    if relations is not None:
+        roundup["relations"] = list(relations)
+    if order is not None:
+        roundup["order"] = order
+    if count_line is not None:
+        roundup["count_line"] = count_line
     return {"type": "bundle", "data": {
         "id": "roundup:x", "member_ids": list(ids), "item_count": len(ids),
         "items": [{"type": "futures", "data": {"id": i}} for i in ids],
-        "roundup": {"rows": [{"market_id": i, "label": str(i)} for i in ids]},
+        "roundup": roundup,
     }}
 
 
 class TestRoundups:
     def test_a_stale_member_leaves_every_place_the_card_draws_it(self):
-        out = nt.trim_roundup(_roundup([1, 2, 3, 4]), {2})
+        out = nt.trim_roundup(_roundup([1, 2, 3, 4], relations=["same_window", "by_when"]), {2})
         data = out["data"]
         assert data["member_ids"] == [1, 3, 4] and data["item_count"] == 3
         assert [i["data"]["id"] for i in data["items"]] == [1, 3, 4]
         assert [r["market_id"] for r in data["roundup"]["rows"]] == [1, 3, 4]
+
+    def test_a_ranked_field_keeps_a_not_trading_top_member_and_its_of_n_count(self):
+        """Fable CHANGES #12765 (Nov 18): NHL playoffs (32 teams) / Argentine relegation (30 clubs)
+        must not drop their top ranked member or shrink 'Showing 5 of N'."""
+        card = _roundup(
+            list(range(1, 33)),
+            relations=["same_measure", "same_window", "sibling"],
+            order="probability_desc",
+            count_line="Showing 5 of 32 teams",
+            shown=5,
+        )
+        # Top member (#1, e.g. Minnesota at 96%) is not trading, plus two hidden teams.
+        out = nt.trim_roundup(card, {1, 14, 29})
+        assert out is card
+        assert [r["market_id"] for r in out["data"]["roundup"]["rows"]] == [1, 2, 3, 4, 5]
+        assert out["data"]["roundup"]["count_line"] == "Showing 5 of 32 teams"
+        assert out["data"]["item_count"] == 32
+        assert len(out["data"]["member_ids"]) == 32
+
+    def test_a_ranked_field_whose_shown_rows_are_all_not_trading_takes_no_seat(self):
+        """Fable CHANGES #12765 (Nov 18): when none of a ranked field's shown rows are trading,
+        the card takes no Discover seat even if an unshown rank #6+ is still trading."""
+        card = _roundup(
+            list(range(1, 31)),
+            relations=["same_measure", "same_window", "sibling"],
+            order="probability_desc",
+            count_line="Showing 5 of 30 clubs",
+            shown=5,
+        )
+        assert nt.trim_roundup(card, {1, 2, 3, 4, 5}) is None
+
+    def test_a_separate_market_roundup_still_loses_its_quiet_member(self):
+        """Fable CHANGES #12765 (Nov 18): 'By November 30' (separate markets with one deadline)
+        still removes its quiet Valve row and updates 'Showing K of N'."""
+        card = _roundup(
+            [1, 2, 3, 4, 5, 6],
+            relations=["same_window", "by_when"],
+            count_line="Showing 5 of 6",
+            shown=5,
+        )
+        out = nt.trim_roundup(card, {2})
+        assert [r["market_id"] for r in out["data"]["roundup"]["rows"]] == [1, 3, 4, 5]
+        assert out["data"]["roundup"]["count_line"] == "Showing 4 of 5"
+        assert out["data"]["member_ids"] == [1, 3, 4, 5, 6]
+        assert out["data"]["item_count"] == 5
+
+    def test_real_container_definitions_classify_ranked_fields_vs_separate_markets(self):
+        import json
+        from pathlib import Path
+
+        containers = Path(__file__).resolve().parents[1] / "data" / "containers"
+
+        def as_item(filename):
+            defn = json.loads((containers / filename).read_text(encoding="utf-8"))
+            return {
+                "type": "bundle",
+                "data": {
+                    "roundup": {
+                        "relations": defn.get("relations") or [],
+                        "order": defn.get("order"),
+                    }
+                },
+            }
+
+        assert nt.is_ranked_field_roundup(as_item("nhl-playoffs-2026-27.json")) is True
+        assert nt.is_ranked_field_roundup(as_item("liga-profesional-relegation-2026.json")) is True
+        assert nt.is_ranked_field_roundup(as_item("roundup-cfp-picture.json")) is True
+        assert nt.is_ranked_field_roundup(as_item("roundup-oscars-best-picture.json")) is True
+        assert nt.is_ranked_field_roundup(as_item("by-november-30.json")) is False
+        assert nt.is_ranked_field_roundup(as_item("by-december-31.json")) is False
+        assert nt.is_ranked_field_roundup(as_item("roundup-closest-races.json")) is False
 
     def test_too_few_left_drops_the_roundup(self):
         assert nt.trim_roundup(_roundup([1, 2, 3]), {2, 3}) is None

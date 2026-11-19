@@ -191,6 +191,24 @@ def headline_source_marks(
         reason = "opening_only" if hero.source == "opening" else "final_unresolved"
         return no_source_mark(reason), no_source_mark(reason)
 
+    return blended_source_marks(
+        event,
+        selected_inputs,
+        observations=observations,
+        method=method,
+        away_available=away_available,
+    )
+
+
+def blended_source_marks(
+    event: Any,
+    selected_inputs: Iterable[tuple[str, float]],
+    *,
+    observations: Mapping[str, Any] | None = None,
+    method: str | None = None,
+    away_available: bool = True,
+) -> tuple[dict, dict]:
+    """Orient the selected two-sided quote inputs for each team."""
     selected = list(selected_inputs)
     bag = getattr(event, "win_probability_sources", None)
     count = bag.get("betting_book_count") if isinstance(bag, dict) else None

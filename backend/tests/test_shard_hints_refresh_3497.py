@@ -411,7 +411,9 @@ def test_every_step_after_the_gate_is_held_by_it(workflow):
     gate = next(i for i, s in enumerate(steps) if s.get("id") == "staleness")
     for step in steps[gate + 1:]:
         cond = str(step.get("if", ""))
-        assert "steps.staleness.outputs.due" in cond or cond == "always()", (
+        # `steps.logs.outputs.have` is set only by the gated log fetch, so it is
+        # the staleness gate one step removed.
+        assert "steps.staleness.outputs.due" in cond or "steps.logs.outputs.have" in cond or cond == "always()", (
             f"step {step.get('name')!r} is not gated on the staleness verdict (if: {cond!r})"
         )
 
@@ -428,223 +430,75 @@ def test_the_refresh_records_with_the_census_required(workflow):
     assert "--require-census" in record["run"]
 
 
-def test_the_branch_is_pushed_before_the_pr_is_attempted(workflow):
-    """The branch is the deliverable; the PR is a convenience that may be refused.
+def test_it_never_pushes_a_branch_or_opens_a_pr(workflow):
+    """Nov 16: the PR path never landed anything. Actions cannot open PRs in this
+    repo (`can_approve_pull_request_reviews: false`) and the PR it kept updating,
+    #6115, had been closed since Sep 14, so master went red at 601 unmeasured
+    files on Nov 15. The deliverable is now an artifact every CI run applies."""
+    text = WORKFLOW.read_text()
+    for forbidden in ("git push", "gh pr create", "gh pr edit", "contents: write", "pull-requests: write"):
+        assert forbidden not in text, f"the refresh must not {forbidden!r}"
 
-    This repo reads `can_approve_pull_request_reviews: false`, the same switch as
-    "Allow GitHub Actions to create and approve pull requests", so `gh pr create`
-    under `GITHUB_TOKEN` may simply be forbidden. If the PR attempt came first and
-    the step stopped there, every firing would throw away the expensive half —
-    the log download, the census and the record — and the next run would redo it.
 
-    Pushing first makes a refused PR cost a click instead of a rerun. Asserted as
-    an ordering because that is exactly what the property is.
-    """
+def test_the_refresh_uploads_the_artifact_every_ci_run_applies(workflow):
     steps = workflow["jobs"]["refresh"]["steps"]
-    run = next(s for s in steps if str(s.get("name", "")).startswith("Open (or update)"))["run"]
-    assert "git push --force origin" in run
-    assert "gh pr create" in run
-    assert run.index("git push --force origin") < run.index("gh pr create"), (
-        "the refreshed branch must be pushed before the PR is attempted"
-    )
+    upload = next(s for s in steps if str(s.get("uses", "")).startswith("actions/upload-artifact@"))
+    assert upload["with"]["name"] == "ci-shard-durations"
+    assert upload["with"]["path"] == "backend/scripts/ci_shard_durations.json"
+    assert upload["with"]["if-no-files-found"] == "error"
+    fetch = (BACKEND / "scripts" / "ci_shard_hints_fetch.py").read_text()
+    assert 'ARTIFACT = "ci-shard-durations"' in fetch
 
 
-# --------------------------------------------------------------------------
-# 6. The refusal path, EXECUTED (CERT-2752's required repair + test)
-# --------------------------------------------------------------------------
-#
-# The structural tests above read the YAML. These run the step's actual shell
-# against stubbed `git` and `gh`, because the property under test is a runtime
-# ordering and an exit code, and neither is visible in the document.
-#
-# The defect this closes: the first version caught `gh pr create`'s refusal and
-# exited 0. The refreshed hints then sat on a branch nobody was told about while
-# master kept decaying toward the hard stop — a GREEN run that silently needed a
-# human, which is the same shape as #5662's "stay green and sync nothing".
-
-_GIT_STUB = r"""#!/usr/bin/env bash
-echo "git $*" >> "$STUB_LOG"
-case "$1 $2" in
-  # There ARE changes to propose, so the step does not take its early exit.
-  "diff --quiet") exit 1 ;;
-esac
-exit 0
-"""
-
-_GH_STUB = r"""#!/usr/bin/env bash
-echo "gh $*" >> "$STUB_LOG"
-case "$1 $2" in
-  "pr view")   exit "${STUB_PR_VIEW_RC:-1}" ;;
-  "pr create") echo "$STUB_PR_CREATE_MSG"; exit "${STUB_PR_CREATE_RC:-1}" ;;
-  "pr edit")   exit "${STUB_PR_EDIT_RC:-0}" ;;
-esac
-exit 0
-"""
-
-
-def _run_pr_step(tmp_path, **env):
-    """Execute the 'Open (or update) the refresh PR' step with git/gh stubbed."""
-    doc = yaml.safe_load(WORKFLOW.read_text())
-    step = next(
-        s for s in doc["jobs"]["refresh"]["steps"]
-        if str(s.get("name", "")).startswith("Open (or update)")
-    )
-    # GitHub expression interpolation is the runner's job, not bash's.
-    script = re.sub(r"\$\{\{[^}]*\}\}", "175", step["run"])
-
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    for name, body in (("git", _GIT_STUB), ("gh", _GH_STUB)):
-        f = bindir / name
-        f.write_text(body)
-        f.chmod(0o755)
-
-    runner_temp = tmp_path / "rt"
-    runner_temp.mkdir()
-    (runner_temp / "staleness-after.json").write_text('{"unmeasured": 0}')
-    summary = tmp_path / "summary.md"
-    summary.touch()
-    log = tmp_path / "stub.log"
-    log.touch()
-
-    script_file = tmp_path / "step.sh"
-    script_file.write_text(script)
-
-    import os
-    import subprocess
-
-    proc = subprocess.run(
-        ["bash", str(script_file)],
-        capture_output=True,
-        text=True,
-        cwd=tmp_path,
-        env={
-            **os.environ,
-            "PATH": f"{bindir}:{os.environ['PATH']}",
-            "RUNNER_TEMP": str(runner_temp),
-            "GITHUB_STEP_SUMMARY": str(summary),
-            "STUB_LOG": str(log),
-            "RUN_ID": "34709301550",
-            "REPO": "alexander-bain/bainluck",
-            "SOURCE_SHA": "deadbeef",
-            "STUB_PR_CREATE_MSG": "GitHub Actions is not permitted to create or approve pull requests",
-            **env,
-        },
-    )
-    return proc, log.read_text(), summary.read_text()
+def test_every_ci_partition_applies_the_newest_timings_first():
+    """#12797 (Fable, 9:35 PM Nov 17): the timings are decided ONCE per run, in
+    ``change-scope`` (three GitHub calls), and handed to every shard as the run
+    artifact ``ci-shard-timings-run``; each place that partitions or verifies the
+    shards downloads that artifact first, so all of them split from one file."""
+    wf_dir = BACKEND.parent / ".github" / "workflows"
+    for name in ("ci.yml", "live-path-watchdog.yml"):
+        text = (wf_dir / name).read_text()
+        doc = yaml.safe_load(text)
+        assert text.count("ci_shard_hints_fetch.py decide") == 1, f"{name}: one decider per run, not one per shard"
+        assert "ci_shard_hints_fetch.py\n" not in text and 'ci_shard_hints_fetch.py"' not in text, \
+            f"{name}: no shard asks GitHub itself any more"
+        cs = doc["jobs"]["change-scope"]["steps"]
+        dec = next(i for i, st in enumerate(cs) if "ci_shard_hints_fetch.py decide" in str(st.get("run", "")))
+        assert "github.token" in str(cs[dec].get("env", {}).get("GH_TOKEN", ""))
+        assert "continue-on-error" not in cs[dec], "a change-scope step is never waived; the script's own deadline bounds it"
+        up = next(i for i, st in enumerate(cs) if str(st.get("uses", "")).startswith("actions/upload-artifact@")
+                  and st.get("with", {}).get("name") == "ci-shard-timings-run")
+        assert dec < up and cs[up]["with"]["if-no-files-found"] == "error"
+        for job_name in ("backend-tests", "shard-completeness"):
+            assert "change-scope" in str(doc["jobs"][job_name].get("needs"))
+            steps = doc["jobs"][job_name]["steps"]
+            runs = [str(s.get("run", "")) for s in steps]
+            get = next(i for i, st in enumerate(steps) if str(st.get("uses", "")).startswith("actions/download-artifact@")
+                       and st.get("with", {}).get("name") == "ci-shard-timings-run")
+            assert steps[get]["with"]["path"] == "${{ runner.temp }}/shard-timings"
+            adopt = next(i for i, r in enumerate(runs) if "ci_shard_hints_fetch.py adopt" in r)
+            uses = next(i for i, r in enumerate(runs) if "ci_shard.py --shard" in r or "ci_shard.py --verify" in r)
+            assert get < adopt < uses, f"{name}:{job_name} must take the run's timings before partitioning"
+            assert steps[get].get("if") == steps[adopt].get("if") == steps[uses].get("if"), \
+                f"{name}:{job_name}: same condition as the step it feeds"
 
 
-def test_a_refused_pr_creation_fails_loudly_after_the_branch_is_preserved(tmp_path):
-    """CERT-2752's required test. Four properties, all on one real execution.
-
-    A green run whose work needs a human is worse than a red one, because only
-    the red is ever looked at. But failing BEFORE the branch is pushed would
-    throw away the download, the census and the record — so the order matters as
-    much as the exit code, and both are asserted here rather than inferred.
-    """
-    proc, log, summary = _run_pr_step(
-        tmp_path, STUB_PR_VIEW_RC="1", STUB_PR_CREATE_RC="1"
-    )
-
-    # 1. It fails. This is the repair.
-    assert proc.returncode != 0, (
-        f"a refused PR must not exit 0.\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
-    )
-
-    # 2. The branch was pushed, and pushed BEFORE the PR was attempted — so the
-    #    expensive half is banked and a retry is a click, not a rerun.
-    assert "git push --force origin ci/shard-hints-refresh" in log, log
-    assert log.index("git push --force") < log.index("gh pr create"), (
-        f"the branch must be pushed before the PR is attempted:\n{log}"
-    )
-
-    # 3. The work is recoverable by hand, and the summary says exactly how.
-    assert "ci/shard-hints-refresh" in summary
-    assert "gh pr create --base master --head ci/shard-hints-refresh" in summary
-    assert "nothing needs redoing" in summary
-
-    # 4. The failure explains itself where a reader will be looking — the log —
-    #    rather than only in a summary tab.
-    assert "::error::" in proc.stdout
-    assert "REFUSED" in proc.stdout
+def test_the_verify_matches_the_eight_shard_matrix(workflow):
+    ci = yaml.safe_load((BACKEND.parent / ".github" / "workflows" / "ci.yml").read_text())
+    shards = len(ci["jobs"]["backend-tests"]["strategy"]["matrix"]["shard"])
+    run = " ".join(str(s.get("run", "")) for s in workflow["jobs"]["refresh"]["steps"])
+    assert f"--verify --of {shards}" in run
 
 
-def test_the_step_succeeds_when_the_pr_can_be_created(tmp_path):
-    """Positive control.
-
-    Without it, the repair above is satisfied by a step that always fails — and
-    a workflow that is permanently red is one nobody reads either.
-    """
-    proc, log, summary = _run_pr_step(
-        tmp_path, STUB_PR_VIEW_RC="1", STUB_PR_CREATE_RC="0"
-    )
-    assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
-    assert "git push --force origin ci/shard-hints-refresh" in log
-    assert "::error::" not in proc.stdout
-
-
-def test_updating_an_already_open_pr_succeeds(tmp_path):
-    """The rolling-proposal path: the branch already has a PR, so update its body.
-
-    This is the common case after the first firing, and it must not be swept into
-    the failure branch by the repair above.
-    """
-    proc, log, _ = _run_pr_step(
-        tmp_path, STUB_PR_VIEW_RC="0", STUB_PR_EDIT_RC="0"
-    )
-    assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
-    assert "gh pr edit" in log
-    assert "gh pr create" not in log
-
-
-def test_a_failed_update_of_an_open_pr_is_also_loud(tmp_path):
-    """The other way the PR half can fail silently.
-
-    `gh pr edit` failing leaves an OPEN PR carrying a stale body — describing a
-    different run, a different sha and a different unmeasured count — which is
-    more misleading than no PR at all.
-    """
-    proc, _, _ = _run_pr_step(
-        tmp_path, STUB_PR_VIEW_RC="0", STUB_PR_EDIT_RC="1"
-    )
-    assert proc.returncode != 0, f"stdout:\n{proc.stdout}"
-
-
-def test_the_step_holds_when_there_is_nothing_to_propose(tmp_path):
-    """If the hints are already current on this sha, exit 0 and touch nothing.
-
-    Proven by the absence of a push, not by the exit code alone — exit 0 is also
-    what a successful run returns.
-    """
-    git_noop = _GIT_STUB.replace('"diff --quiet") exit 1 ;;', '"diff --quiet") exit 0 ;;')
-    doc = yaml.safe_load(WORKFLOW.read_text())
-    step = next(
-        s for s in doc["jobs"]["refresh"]["steps"]
-        if str(s.get("name", "")).startswith("Open (or update)")
-    )
-    import os
-    import subprocess
-
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    (bindir / "git").write_text(git_noop)
-    (bindir / "git").chmod(0o755)
-    (bindir / "gh").write_text(_GH_STUB)
-    (bindir / "gh").chmod(0o755)
-    rt = tmp_path / "rt"
-    rt.mkdir()
-    log = tmp_path / "stub.log"
-    log.touch()
-    sf = tmp_path / "step.sh"
-    sf.write_text(re.sub(r"\$\{\{[^}]*\}\}", "175", step["run"]))
-    proc = subprocess.run(
-        ["bash", str(sf)], capture_output=True, text=True, cwd=tmp_path,
-        env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
-             "RUNNER_TEMP": str(rt), "GITHUB_STEP_SUMMARY": str(tmp_path / "s.md"),
-             "STUB_LOG": str(log), "RUN_ID": "1", "REPO": "o/r", "SOURCE_SHA": "abc"},
-    )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "git push" not in log.read_text(), "nothing should be pushed when there is no change"
+def test_the_logs_are_read_per_job_so_a_rerun_cannot_hide_shards(workflow):
+    """Nov 15: run 43792521911 read run 43788726928's archive, which after a
+    re-run held 1 of 8 shard directories, and refused. Per-job logs of the latest
+    attempt hold all eight."""
+    steps = workflow["jobs"]["refresh"]["steps"]
+    fetch = next(s for s in steps if s.get("id") == "logs")
+    assert "ci_shard_hints_fetch.py job-logs" in fetch["run"]
+    assert "--shard-logs" not in WORKFLOW.read_text()
+    assert "/logs.zip" not in WORKFLOW.read_text()
 
 
 def test_the_checkout_pins_the_sha_whose_logs_are_read(workflow):

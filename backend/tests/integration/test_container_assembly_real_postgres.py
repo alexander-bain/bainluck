@@ -1464,6 +1464,50 @@ class TestTheReadContract:
         await s.commit()
         assert (await read_published(s, container.slug)).state == "empty"
 
+    async def test_headers_and_children_share_the_membership_snapshot(self, corrected_session):
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from app.models.models import Container
+        from app.utils.container_corrections import read_published, withdraw_publication
+
+        reader = corrected_session
+        root, market_ids = await _seed(reader)
+        child = Container(
+            kind="draw",
+            name="Draw",
+            slug="published-draw",
+            parent_container_id=root.id,
+            window_start=datetime(
+                2026, 11, 17, 12, 15, 30, 250000, tzinfo=timezone(timedelta(hours=-5))
+            ),
+        )
+        reader.add(child)
+        await reader.flush()
+        await assemble_container(reader, _plain(child), _candidates(market_ids))
+        await reader.execute(
+            text("UPDATE containers SET publication_state = 'published' WHERE id IN (:root, :child)"),
+            {"root": root.id, "child": child.id},
+        )
+        await reader.commit()
+
+        before = await read_published(reader, root.slug, include_headers=True)
+        assert (await read_published(reader, root.slug)).as_dict() == before.as_dict()
+        assert [row[0] for row in before.header_rows] == [root.id, child.id]
+        assert before.header_rows[1][6].isoformat() == "2026-11-17T17:15:30.250000+00:00"
+        assert {row["container_id"] for row in before.members} == {child.id}
+
+        async with AsyncSession(reader.bind) as writer:
+            await withdraw_publication(
+                writer, container_id=child.id, reason="wrong draw", actor="test"
+            )
+            await writer.commit()
+
+        after = await read_published(reader, root.slug, include_headers=True)
+        assert after.state == "empty" and after.members == []
+        assert after.revision > before.revision
+        assert [row[0] for row in after.header_rows] == [root.id]
+        assert [row[0] for row in before.header_rows] == [root.id, child.id]
+
     async def test_the_upgrade_is_rerunnable(self, corrected_session):
         from app.utils.container_corrections import UPGRADE_STATEMENTS
 

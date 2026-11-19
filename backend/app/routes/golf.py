@@ -36,6 +36,8 @@ from app.utils.golf_evolution_market import (
 from app.utils.competition_identity import next_edition, resolve_competition  # #8139
 from app.utils.majors_calendar import _as_utc_date  # one parser for the calendar's dates
 from app.utils.odds_math import probability_to_american
+from app.utils.golf_source_mark import golfer_price_mark, golfer_result_mark
+from app.utils.source_mark import no_source_mark, quote_source_mark
 from app.utils.futures_market_snapshot import reader_change_24h  # #10248
 from app.utils.golf_event_format import (  # #7985
     canonical_team_side_name,
@@ -1427,10 +1429,17 @@ def _name_champion_as_the_card_does(t: dict) -> None:
     if not champion:
         return
     key = _match_key(champion)
-    for g in t.get("_all_golfers") or t.get("golfers") or []:
-        if g.get("name") and _match_key(g["name"]) == key:
-            t["champion"] = g["name"]
-            return
+    field = t.get("_all_golfers") or t.get("golfers") or []
+    matched = next(
+        (g["name"] for g in field if g.get("name") and _match_key(g["name"]) == key),
+        None,
+    )
+    if matched:
+        t["champion"] = matched
+    for g in field:
+        g["source_mark"] = golfer_result_mark(g.get("name"), matched)
+    for overflow in t.get("overflow_outcomes", []):
+        overflow["source_mark"] = golfer_result_mark(overflow.get("name"), matched)
 
 
 async def _get_datagolf_schedule() -> list[dict]:
@@ -2692,10 +2701,11 @@ def _build_tournament_entry(
                            if k in datagolf_keys or v.get("is_field")}
 
     golfers = []
-    for data in golfer_data.values():
+    for key, data in golfer_data.items():
         source_vals = list(data["sources"].values())
         avg_prob = sum(source_vals) / len(source_vals) if source_vals else 0
         golfers.append({
+            "_source_group": key,  # The normalizer may remove placeholder rows.
             "name": data["name"],
             "is_field": bool(data.get("is_field")),
             "probability": avg_prob,
@@ -2730,6 +2740,8 @@ def _build_tournament_entry(
     # but is not a golfer and must not acquire a player rank or profile link.
     overflow_outcomes, named_golfers = [], []
     for golfer in golfers:
+        data = golfer_data[golfer.pop("_source_group")]
+        golfer["source_mark"] = golfer_price_mark(data, golfer["probability"])
         (overflow_outcomes if golfer.pop("is_field") else named_golfers).append(golfer)
     golfers = named_golfers
     golfers.sort(key=lambda g: g["probability"], reverse=True)
@@ -2903,6 +2915,8 @@ def _promote_team_matchup_to_card(tournaments: list[dict]) -> int:
                 "movement_24h": None,
                 "movement_is_dated": False,
                 "sources": {matchup.get("source") or "unknown": matchup[slot]["probability"]},
+                "source_mark": matchup[slot].get("source_mark")
+                or no_source_mark("source_evidence_incomplete"),
                 "opening_probability": None,
                 "rank": rank,
             }
@@ -3053,10 +3067,12 @@ def _build_h2h_entry(market, tourn_key: str) -> dict:
         "golfer_a": {
             "name": _normalize_golfer_name(a.name.strip()),
             "probability": round(a_prob, 3),
+            "source_mark": quote_source_mark([{"key": source, "probability": a_prob}]),
         },
         "golfer_b": {
             "name": _normalize_golfer_name(b.name.strip()),
             "probability": round(b_prob, 3),
+            "source_mark": quote_source_mark([{"key": source, "probability": b_prob}]),
         },
     }
 

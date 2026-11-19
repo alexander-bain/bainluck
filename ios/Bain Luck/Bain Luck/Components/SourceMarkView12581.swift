@@ -11,6 +11,10 @@ struct SourceMarkButton: View {
     let mark: SourceMark
     /// The number the mark follows, as the row prints it; the sheet repeats it.
     let number: Double?
+    /// Optional team or competitor name when the card shows two sides (#12989 follow-up).
+    let subject: String?
+    /// True when the tapped number is a finished game's pregame reading (#12989 follow-up).
+    let isPregame: Bool
     /// The font size of the number the ring follows; the ring is 0.7 of it.
     let numberSize: CGFloat
     /// Compact dense-list mode keeps row height tight while expanding hit area via `.contentShape`.
@@ -21,10 +25,19 @@ struct SourceMarkButton: View {
     /// The ring's share of the number's type size (Alex's ruling: about 0.7).
     static let ringScale: CGFloat = 0.7
 
-    init?(_ mark: SourceMark?, number: Double? = nil, numberSize: CGFloat, compactRow: Bool = false) {
+    init?(
+        _ mark: SourceMark?,
+        number: Double? = nil,
+        subject: String? = nil,
+        isPregame: Bool = false,
+        numberSize: CGFloat,
+        compactRow: Bool = false
+    ) {
         guard let mark, mark.draws else { return nil }
         self.mark = mark
         self.number = number
+        self.subject = subject
+        self.isPregame = isPregame
         self.numberSize = numberSize
         self.compactRow = compactRow
     }
@@ -43,7 +56,7 @@ struct SourceMarkButton: View {
         .accessibilityLabel("Where this number comes from")
         .accessibilityIdentifier("source-mark-12581")
         .sheet(isPresented: $open) {
-            SourceMarkSheet(mark: mark, number: number)
+            SourceMarkSheet(mark: mark, number: number, subject: subject, isPregame: isPregame)
                 .presentationDetents([.medium, .large])
         }
     }
@@ -56,10 +69,44 @@ struct SourceMarkButton: View {
 struct SourceMarkSheet: View {
     let mark: SourceMark
     var number: Double? = nil
+    var subject: String? = nil
+    var isPregame: Bool = false
     var now: Date = Date()
     @Environment(\.dismiss) private var dismiss
 
     static let title = "Where this number comes from"
+
+    static func contextLine(subject: String?, isPregame: Bool) -> String? {
+        let trimmed = subject?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmed.isEmpty && isPregame { return "\(trimmed) · Pregame" }
+        if !trimmed.isEmpty { return trimmed }
+        if isPregame { return "Pregame" }
+        return nil
+    }
+
+    /// When one unscaled venue stands behind the tapped number and its rounded
+    /// price equals the headline, state the venue once ("From Kalshi", "From
+    /// Sportsbooks (12) · 4m ago") instead of repeating both the venue and the
+    /// percentage across a row and a possessive footer.
+    static func singleUnscaledAttribution(
+        _ mark: SourceMark,
+        headline: String?,
+        now: Date = Date()
+    ) -> String? {
+        guard (mark.state == .single || mark.state == .blend),
+              mark.sources.count == 1,
+              Self.settledLine(mark, now: now) == nil,
+              mark.method?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+              let headline,
+              let only = Self.lines(mark, now: now).first,
+              only.price == headline else {
+            return nil
+        }
+        if let age = only.age {
+            return "From \(only.name) · \(age)"
+        }
+        return "From \(only.name)"
+    }
 
     /// One source as the sheet prints it.
     struct Line: Equatable {
@@ -112,18 +159,38 @@ struct SourceMarkSheet: View {
     }
 
     var body: some View {
+        let headlineText = Self.headline(number)
+        let contextText = Self.contextLine(subject: subject, isPregame: isPregame)
+        let singleAttribution = Self.singleUnscaledAttribution(mark, headline: headlineText, now: now)
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if let headline = Self.headline(number) {
-                        Text(headline)
-                            .font(.system(size: 44, weight: .bold))
-                            .monospacedDigit()
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    if contextText != nil || headlineText != nil {
+                        VStack(alignment: .leading, spacing: 2) {
+                            if let contextText {
+                                Text(contextText)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            if let headlineText {
+                                Text(headlineText)
+                                    .font(.system(size: 44, weight: .bold))
+                                    .monospacedDigit()
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
                     }
-                    rows
-                    if let method = Self.method(mark) {
-                        Text(method).font(.footnote).foregroundStyle(.secondary)
+                    if let singleAttribution {
+                        Text(singleAttribution)
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 2)
+                    } else {
+                        rows
+                        if let method = Self.method(mark) {
+                            Text(method).font(.footnote).foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .padding()

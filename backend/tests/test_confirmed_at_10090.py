@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.tasks.prediction_market_matching import _InversionDecision
 from app.utils import confirmed_at as ca
 from app.utils.confirmed_at import ConfirmedAt, ConfirmedReads, combine
 
@@ -579,12 +580,12 @@ class TestRefresherWiring:
         monkeypatch.setattr("app.utils.live_blend.compute_source_home_probability", _reading)
 
         async def _no_inversion(session, event_id, home_prob, source):
-            return home_prob
+            return _InversionDecision(home_prob)
 
         async def _no_snapshot(session, **kwargs):
             return object(), False
 
-        monkeypatch.setattr("app.tasks.prediction_market_matching._check_and_fix_inversion",
+        monkeypatch.setattr("app.tasks.prediction_market_matching._inversion_decision",
                             _no_inversion)
         monkeypatch.setattr("app.tasks.snapshots._create_or_update_win_prob_snapshot",
                             _no_snapshot)
@@ -818,14 +819,14 @@ def _real_refresher(monkeypatch, *, publish):
         )
 
     async def _no_inversion(session, event_id, home_prob, source):
-        return home_prob
+        return _InversionDecision(home_prob)
 
     async def _no_snapshot(session, **kwargs):
         return object(), False
 
     monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
     monkeypatch.setattr("app.utils.live_blend.compute_source_home_probability", _reading)
-    monkeypatch.setattr("app.tasks.prediction_market_matching._check_and_fix_inversion",
+    monkeypatch.setattr("app.tasks.prediction_market_matching._inversion_decision",
                         _no_inversion)
     monkeypatch.setattr("app.tasks.snapshots._create_or_update_win_prob_snapshot",
                         _no_snapshot)

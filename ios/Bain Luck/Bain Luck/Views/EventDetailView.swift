@@ -1216,7 +1216,7 @@ struct EventDetailView: View {
                     showUpdateStream = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showProbabilityDetails = true }
                 })
-                    .frame(idealWidth: 280, maxWidth: 300)
+                    .frame(minWidth: 320, idealWidth: 340, maxWidth: 358)
                     #if os(iOS)
                     .presentationCompactAdaptation(.popover)
                     #endif

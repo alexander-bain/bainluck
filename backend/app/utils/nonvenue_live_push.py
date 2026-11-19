@@ -439,6 +439,7 @@ async def write_nonvenue_probability(
     trace_inputs=None,
     received_at=None,
     entry_extra=None,
+    price_read_at=None,
 ):
     """Atomically replace/remove one allowed source and queue its returned blend.
 
@@ -460,6 +461,10 @@ async def write_nonvenue_probability(
     allowlist their fields, so these are never served, and later stamps carry
     sibling keys through untouched. Keys must be ``ENTRY_EXTRA_KEYS``; a
     removal (``value is None``) ignores them, because the entry is gone.
+    ``price_read_at`` (#12938, ``betting`` only) dates the value by its inputs
+    instead of ``received_at``: a live consensus is as old as its oldest counted
+    line, however recently the response carrying it arrived. It may only make
+    the reading OLDER than the receipt, never newer.
     """
     if source not in NONVENUE_SOURCES:
         raise ValueError(f"not a nonvenue probability source: {source}")
@@ -475,7 +480,7 @@ async def write_nonvenue_probability(
     )
     try:
         return await _write(session, event, source, value, metadata, values, evidence,
-                            trace, seam, received_at, entry_extra)
+                            trace, seam, received_at, entry_extra, price_read_at)
     except BaseException as exc:
         if seam is not None:
             trace.write_failed(seam, exc)
@@ -483,7 +488,7 @@ async def write_nonvenue_probability(
 
 
 async def _write(session, event, source, value, metadata, values, evidence, trace, seam,
-                 received_at=None, entry_extra=None):
+                 received_at=None, entry_extra=None, price_read_at=None):
     prior_txn_row_write = await _probe_prior_txn_row_write(session, event.id)
     # Literal source dispatch keeps the existing writer/eligibility scanner
     # able to verify every mint. This entry point never accepts venue sources.
@@ -496,6 +501,11 @@ async def _write(session, event, source, value, metadata, values, evidence, trac
                 read_at = datetime.fromtimestamp(received_at, timezone.utc)
             except (ValueError, OverflowError, OSError):
                 pass  # an invalid receive clock makes no age claim
+        if isinstance(price_read_at, datetime):
+            # #12938: the inputs' age. Never later than the receipt it came in.
+            if price_read_at.tzinfo is None:
+                price_read_at = price_read_at.replace(tzinfo=timezone.utc)
+            read_at = price_read_at if read_at is None else min(read_at, price_read_at)
         expression = atomic_stamp_expression("betting", value, price_read_at=read_at)
     elif source == "stat_model":
         expression = atomic_stamp_expression("stat_model", value)

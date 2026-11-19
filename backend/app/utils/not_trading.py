@@ -71,14 +71,87 @@ def _market_id(value: Any) -> Optional[int]:
     return int(value) if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _row_market_ids(row: Any) -> list[int]:
+    """Every market id backing one displayed roundup row (primary + paired venues)."""
+    if not isinstance(row, dict):
+        return []
+    ids: list[int] = []
+    primary = _market_id(row.get("market_id"))
+    if primary is not None:
+        ids.append(primary)
+    pair = row.get("pair")
+    if isinstance(pair, dict):
+        for key in ("kalshi_market_id", "polymarket_market_id"):
+            pmid = _market_id(pair.get(key))
+            if pmid is not None and pmid not in ids:
+                ids.append(pmid)
+    return ids
+
+
+def is_ranked_field_roundup(item: dict) -> bool:
+    """True when a round-up card ranks members of ONE field (a sibling family,
+    an award category's nominees, or a tournament field band/selection).
+
+    Fable look on #12765 (Nov 16 & Nov 18): removing quiet rows from a ranked
+    field drops contenders (e.g. a 96% favourite) and falsifies the field's
+    'of N' count. For these cards ruling 188 only decides whether the card may
+    take a seat: kept whole when at least one shown row is trading, dropped
+    when none of its shown rows are trading. Round-ups of separate markets keep
+    trimming quiet members row by row.
+    """
+    data = item.get("data")
+    if not isinstance(data, dict):
+        return False
+    roundup = data.get("roundup")
+    if not isinstance(roundup, dict):
+        return False
+    rels = {str(r).strip() for r in (roundup.get("relations") or ()) if str(r).strip()}
+    if "sibling" in rels or "implies" in rels:
+        return True
+    if {"same_event", "same_window"} <= rels:
+        return True
+    if roundup.get("order") == "probability_desc":
+        return True
+    return False
+
+
+def _ranked_field_has_trading_shown_row(data: dict, stale_ids: set[int]) -> bool:
+    roundup = data.get("roundup")
+    if isinstance(roundup, dict) and isinstance(roundup.get("rows"), list) and roundup["rows"]:
+        row_id_groups = [_row_market_ids(r) for r in roundup["rows"]]
+        row_id_groups = [g for g in row_id_groups if g]
+        if not row_id_groups:
+            return True
+        return any(any(mid not in stale_ids for mid in group) for group in row_id_groups)
+    item_ids = [
+        mid
+        for i in (data.get("items") or [])
+        if isinstance(i, dict) and (mid := _market_id((i.get("data") or {}).get("id"))) is not None
+    ]
+    if item_ids:
+        return any(mid not in stale_ids for mid in item_ids)
+    member_ids = [mid for m in (data.get("member_ids") or []) if (mid := _market_id(m)) is not None]
+    if member_ids:
+        return any(mid not in stale_ids for mid in member_ids)
+    return True
+
+
 def trim_roundup(item: dict, stale_ids: set[int]) -> Optional[dict]:
-    """A round-up card without its not-trading members, or ``None`` when too few
-    remain. A round-up is rated by its stalest member: none of the markets it
-    shows may be one nobody trades, so each is removed from every place the card
-    draws or counts it (rows, items, member ids)."""
+    """Apply ruling 188 to one round-up card.
+
+    - Single-field rankings (sibling families, award-category fields,
+      tournament field bands/selections): never remove rows or change 'of N';
+      return ``item`` untouched if at least one shown row is trading, or
+      ``None`` if none of its shown rows are trading.
+    - Round-ups of separate markets: remove not-trading members from every
+      place the card draws or counts them (rows, items, member_ids, count_line),
+      or return ``None`` when fewer than ``ROUNDUP_MIN_MEMBERS`` remain.
+    """
     data = item.get("data")
     if not isinstance(data, dict) or not stale_ids:
         return item
+    if is_ranked_field_roundup(item):
+        return item if _ranked_field_has_trading_shown_row(data, stale_ids) else None
     member_ids = [m for m in (data.get("member_ids") or []) if _market_id(m) not in stale_ids]
     items = [
         i for i in (data.get("items") or [])

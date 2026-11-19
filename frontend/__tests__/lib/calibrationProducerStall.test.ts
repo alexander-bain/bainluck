@@ -57,7 +57,7 @@ describe("the schedule clause reads the producer, not the calendar", () => {
     expect(clause).not.toBeNull();
     // The defect, stated as the thing that must not happen. Substring, not
     // equality: any rewording that still promises the cadence fails here.
-    expect(clause).not.toMatch(/rebuilds hourly/i);
+    expect(clause).not.toMatch(/rebuilds daily/i);
   });
 
   it("reports the measured miss count instead", () => {
@@ -73,7 +73,7 @@ describe("the schedule clause reads the producer, not the calendar", () => {
       ...PRODUCTION_2026_09_02,
       producer: { stalled: false, beats_missed: 0 },
     });
-    expect(clause).toMatch(/rebuilds hourly/i);
+    expect(clause).toMatch(/rebuilds daily/i);
   });
 
   // --- gotcha #53: absence is not health. ---
@@ -95,11 +95,11 @@ describe("the schedule clause reads the producer, not the calendar", () => {
       producer: { stalled: true, beats_missed: null },
     });
     expect(clause).not.toBeNull();
-    expect(clause).not.toMatch(/rebuilds hourly/i);
+    expect(clause).not.toMatch(/rebuilds daily/i);
     expect(clause).not.toMatch(/\d/);
   });
 
-  it("does not print '0 hourly rebuilds have come and gone'", () => {
+  it("does not print '0 daily rebuilds have come and gone'", () => {
     // `stalled: true` with `beats_missed: 0` is reachable: the server sets
     // `stalled` on an UNKNOWN age while `beats_missed` floors at 0. A literal
     // read would emit a sentence that says nothing happened.
@@ -108,7 +108,7 @@ describe("the schedule clause reads the producer, not the calendar", () => {
       producer: { stalled: true, beats_missed: 0 },
     });
     expect(clause).not.toMatch(/^0 /);
-    expect(clause).not.toMatch(/rebuilds hourly/i);
+    expect(clause).not.toMatch(/rebuilds daily/i);
   });
 
   it("uses a singular verb for exactly one missed beat", () => {
@@ -116,7 +116,7 @@ describe("the schedule clause reads the producer, not the calendar", () => {
       ...PRODUCTION_2026_09_02,
       producer: { stalled: true, beats_missed: 1 },
     });
-    expect(clause).toContain("1 hourly rebuild has");
+    expect(clause).toContain("1 daily rebuild has");
   });
 
   // --- The count measures the ARTIFACT, so it may not grade the RUNS. ---
@@ -147,7 +147,7 @@ describe("the schedule clause reads the producer, not the calendar", () => {
       ...PRODUCTION_2026_09_02,
       producer: { stalled: true, beats_missed: 4 },
     });
-    expect(clause).toContain("4 hourly rebuilds have");
+    expect(clause).toContain("4 daily rebuilds have");
   });
 });
 
