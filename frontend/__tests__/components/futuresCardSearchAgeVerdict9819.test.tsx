@@ -86,13 +86,13 @@ describe("#9819 the footer covers the printed prices and no printed result", () 
     expect(rowText(wire.nlds, "San Diego Padres")).toMatch(/^\s*79%/);
     // Padres/Braves/Cubs were written 2026-09-30 11:48Z; the Won rows on 09-29.
     expect(wire.nlds.prices_updated_at).toBe("2026-09-30T11:48:14+00:00");
-    expect(pip(wire.nlds)).toBe("2d ago");
+    expect(pip(wire.nlds)).toBe("As of Sep 30");
   });
 
   it("ALCS (open): Toronto prints a numeric 0%, so its Sep 23 age stays on the card", () => {
     expect(rowText(wire.alcs, "Toronto Blue Jays")).toMatch(/^\s*0%/);
     expect(rowText(wire.alcs, "Toronto Blue Jays")).not.toMatch(/Won|Lost/);
-    expect(pip(wire.alcs)).toBe("Sep 23");
+    expect(pip(wire.alcs)).toBe("As of Sep 23");
   });
 
   it("a resolved board of results prints Won/Lost and no age at all", () => {

@@ -90,8 +90,15 @@ LIVE_POLL_MARGIN_SECONDS = 4
 LIVE_POLL_INTERVAL = (
     ODDS_POLL_BEAT_SECONDS - SLOWEST_MEASURED_ODDS_PASS_SECONDS - LIVE_POLL_MARGIN_SECONDS
 )
-SOON_POLL_INTERVAL = 300      # 5 minutes for games starting in 0-1 hours
-LATER_POLL_INTERVAL = 3600    # 1 hour for games starting in 1-6 hours
+# Fable 3:33 PM Nov 16 2026 (direction 215, "use the plan we already pay for"):
+# 921,709 of 5,000,000 credits used ~17 days into the cycle, about 1.6M a month.
+# Pregame calls are the cheap ones (one bulk call per sport costs markets x
+# regions, whatever the number of games), so they get faster first:
+#   soon  (0-2 h, the code's window) 300 s -> 120 s  (tier 2: 4 min, tier 3: 8 min)
+#   later (2-6 h)                   3600 s -> 300 s  (tier 2: 10 min, tier 3: 20 min)
+# The quota guard is unchanged: LIVE_ONLY under 50K left, FULL_STOP under 20K.
+SOON_POLL_INTERVAL = 120      # 2 minutes for games starting in 0-2 hours (was 300)
+LATER_POLL_INTERVAL = 300     # 5 minutes for games starting in 2-6 hours (was 3600)
 
 # Adaptive polling thresholds (for when odds aren't changing)
 # When odds stay the same, gradually slow down to conserve API calls
@@ -131,8 +138,10 @@ MIN_HOURS_BEFORE_STALENESS_CHECK = 1.5  # Don't check staleness until match has 
 # inside the task skips sports that were polled too recently for their tier.
 DISCOVER_TIER1_INTERVAL = 900    # 15 min — reverted from 1800 (March emergency conservation)
 DISCOVER_TIER2_INTERVAL = 1800   # 30 min — reverted from 3600 (March emergency conservation)
-DISCOVER_TIER3_INTERVAL = 7200   # 2 hours — reverted from 14400 (March emergency conservation)
-DISCOVER_TIER4_INTERVAL = 14400  # 4 hours — reverted from 28800 (March emergency conservation)
+# Nov 16 2026 (direction 215): tiers 3-4 2 h / 4 h -> 30 min, i.e. every run of
+# the 30-minute discover beat, so no game beyond 6 h waits hours for a price.
+DISCOVER_TIER3_INTERVAL = 1800   # 30 min (was 7200)
+DISCOVER_TIER4_INTERVAL = 1800   # 30 min (was 14400)
 
 # Futures poll less frequently since they change slowly
 FUTURES_POLL_INTERVAL = 3600  # 1 hour default

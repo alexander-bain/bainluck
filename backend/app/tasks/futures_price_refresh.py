@@ -101,9 +101,8 @@ read inside its window are taken out before the cap, not after it.
 THREE ARMS, BECAUSE THERE ARE THREE KINDS OF WORTH REFRESHING
 --------------------------------------------------------------
 The sweep selects on **value** (volume above a floor at any tier, or tier 1
-where no volume was recorded), on **curation** (any market a committed
-tournament register renders —
-:func:`app.utils.tournament_register.registered_market_ids`), and since
+where no volume was recorded), on **curation** (the tournament and Midterms
+price registries, :func:`app.utils.futures_quote_freshness.registered_price_refresh_market_ids`), and since
 2026-09-05 on **what page one is actually showing**
 (:func:`app.utils.feed_served_markets.served_market_ids`).
 
@@ -230,13 +229,20 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 # module's reading, and its tests import it from here.
 from app.services.kalshi_api import venue_volume_24h  # noqa: F401
 from app.utils.futures_liveness import (
+    BOOK_REFUSED_FIRST_KEY,
+    BOOK_REFUSED_KEY,
+    CLEAR_BOOK_REFUSED_SQL,
     LIVE_MARKET_SQL,
+    STAMP_BOOK_REFUSED_SQL,
     VENUE_SETTLED_KEY,
     VENUE_SETTLED_NOW_SQL,
     venue_answered,
 )
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598 / CERT-3182
-from app.utils.futures_quote_freshness import price_refresh_due_sql
+from app.utils.futures_quote_freshness import (
+    price_refresh_due_sql,
+    registered_price_refresh_market_ids,
+)
 from app.utils.kalshi_resolution_window import derive_resolution_window  # #8871
 from app.utils.kalshi_threshold_label import (  # #9543
     THRESHOLD_LABEL_KEY,
@@ -1190,6 +1196,68 @@ async def _clear_if_stamped(session, market: dict, stats: dict) -> None:
         stats["errors"].append(f"clear venue-settled {market['external_id']}: {exc}")
 
 
+# --- the 198-B refused-book stamp -------------------------------------------
+
+
+async def _book_refused_market_ids(session, market_ids: list[int]) -> set[int]:
+    """Which of this run's Polymarket markets carry either 198-B stamp.
+
+    One primary-key lookup over the run's own candidates, read once a run, so an
+    accepted price issues a clear only where there is something to clear.
+    """
+    if not market_ids:
+        return set()
+    rows = await session.execute(
+        text(
+            f"""
+            SELECT id FROM futures_markets
+             WHERE id = ANY(:ids)
+               AND (market_metadata->>'{BOOK_REFUSED_FIRST_KEY}' IS NOT NULL
+                    OR market_metadata->>'{BOOK_REFUSED_KEY}' IS NOT NULL)
+            """
+        ),
+        {"ids": list(market_ids)},
+    )
+    return {r[0] for r in rows.fetchall()}
+
+
+async def _note_book_refused(session, market: dict, stats: dict, run_started) -> None:
+    """Ruling 198-B: this read refused every quoted leg. Stamp, or confirm.
+
+    Committed alone. A failure here costs a stamp, never a price, and the next
+    refused read tries again.
+    """
+    try:
+        rows = (
+            await session.execute(
+                text(STAMP_BOOK_REFUSED_SQL),
+                {"mid": market["id"], "run_started": run_started},
+            )
+        ).fetchall()
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        stats["errors"].append(f"book-refused stamp {market['external_id']}: {exc}")
+        return
+    if not rows:
+        return  # already confirmed, closed, not Polymarket, or stamped this run
+    key = "book_refused_confirmed" if rows[0][0] else "book_refused_first"
+    stats[key] = stats.get(key, 0) + 1
+
+
+async def _clear_book_refused(session, market: dict, stats: dict) -> None:
+    """An accepted price: the market may be featured again (198-B)."""
+    try:
+        result = await session.execute(text(CLEAR_BOOK_REFUSED_SQL), {"mid": market["id"]})
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        stats["errors"].append(f"book-refused clear {market['external_id']}: {exc}")
+        return
+    if result.rowcount:
+        stats["book_refused_cleared"] = stats.get("book_refused_cleared", 0) + result.rowcount
+
+
 async def _scan_candidates(
     session,
     *,
@@ -1263,7 +1331,7 @@ async def _scan_candidates(
 async def _scan_registered_candidates(
     session, *, market_ids: list[int], stale_minutes: int
 ) -> list[dict]:
-    """Stale markets a committed tournament register renders, at any tier or volume."""
+    """Stale markets in the curated price registries, at any tier or volume."""
     if not market_ids:
         return []
     rows = (
@@ -3255,8 +3323,16 @@ async def _fetch_polymarket_prices(
     event_ids: list[str],
     stats: dict | None = None,
     refuted_out: dict | None = None,
+    book_refused_out: set | None = None,
 ) -> tuple[dict, dict]:
     """Prices for a batch of Polymarket event ids, keyed by event id.
+
+    ``book_refused_out``, when given, collects the ids of events this pass READ,
+    where the venue is quoting at least one open leg (a real bid or a trade, the
+    same fact as :func:`_venue_quotes_this_leg`) and we accepted no price on any
+    leg (ruling 198-B: the market keeps its number on its own page but is not
+    featured on Discover). A field nobody quotes at all is not added; that is
+    "nobody is trading", which #12765's rule owns.
 
     Returns ``(priced_by_event, unpriced_legs_by_event)``. A value in the first
     is either a list of priced items or :data:`VENUE_SETTLED`; a value in the
@@ -3403,6 +3479,15 @@ async def _fetch_polymarket_prices(
             closed = _venue_closed_unpriced_legs(event)
             if closed:
                 unpriced_out[str(event.id)] = closed
+            # 198-B: the venue is quoting this field (a real bid or a trade on
+            # an open leg) and we refused every leg. `_venue_quotes_this_leg` is
+            # the reporting fact the declined counter above already uses, not a
+            # pricing rule; this only decides featuring. It covers single-market
+            # events, which `_refused_leg_books` does not.
+            if book_refused_out is not None and any(
+                not m.closed and _venue_quotes_this_leg(m) for m in event.markets
+            ):
+                book_refused_out.add(str(event.id))
             continue
         if field_is_incoherent(
             (p["probability"] for p in priced),
@@ -3472,7 +3557,6 @@ async def _refresh_stale_futures_prices(
         served_signal,
     )
     from app.utils.category_served_markets import category_served_market_ids
-    from app.utils.tournament_register import registered_market_ids
 
     started = time.monotonic()
     stats: dict = {
@@ -3771,7 +3855,7 @@ async def _refresh_stale_futures_prices(
                 stats["errors"].append(f"served reachability census: {exc}")
         registered_scan = await _scan_registered_candidates(
             session,
-            market_ids=sorted(registered_market_ids()),
+            market_ids=sorted(registered_price_refresh_market_ids()),
             stale_minutes=registered_refresh_minutes,
         )
         in_play_scan = await _scan_in_play_candidates(
@@ -4014,6 +4098,13 @@ async def _refresh_stale_futures_prices(
 
                 ids = list(by_event.keys())
                 poly_deadline = min(_POLYMARKET_WALL_BUDGET_S, _TIME_BUDGET_S)
+                # 198-B: which markets already carry a refusal stamp, read once,
+                # so an accepted price clears only those (no extra statement for
+                # the rest), and this run's own first stamps cannot confirm.
+                refusal_run_started = datetime.now(timezone.utc).replace(tzinfo=None)
+                book_refused_stamped = await _book_refused_market_ids(
+                    session, [m["id"] for ms in by_event.values() for m in ms]
+                )
                 for i in range(0, len(ids), POLYMARKET_ID_BATCH):
                     if time.monotonic() - started > poly_deadline:
                         # `budget_hit` either way: the run's coverage is not
@@ -4024,6 +4115,7 @@ async def _refresh_stale_futures_prices(
                         break
                     chunk = ids[i : i + POLYMARKET_ID_BATCH]
                     refuted_by_event: dict = {}
+                    book_refused_events: set = set()
                     try:
                         priced_by_event, unpriced_by_event = (
                             await _fetch_polymarket_prices(
@@ -4031,6 +4123,7 @@ async def _refresh_stale_futures_prices(
                                 chunk,
                                 stats,
                                 refuted_out=refuted_by_event,
+                                book_refused_out=book_refused_events,
                             )
                         )
                     except Exception as exc:  # one bad batch must not wipe the run
@@ -4053,6 +4146,10 @@ async def _refresh_stale_futures_prices(
                                 continue
                             if priced is None:
                                 stats["not_found"] += 1
+                                if event_id in book_refused_events:
+                                    await _note_book_refused(
+                                        session, market, stats, refusal_run_started
+                                    )
                                 # #1826: nothing priced, but the venue closed
                                 # some legs — withdraw those (only those; see
                                 # `_venue_closed_unpriced_legs`), then re-rank.
@@ -4168,6 +4265,8 @@ async def _refresh_stale_futures_prices(
                                 if market["arm"] == _ARM_CATEGORY_PAGE:
                                     stats["category_page_priced"] += 1
                                 await _clear_if_stamped(session, market, stats)
+                                if market["id"] in book_refused_stamped:
+                                    await _clear_book_refused(session, market, stats)
                             else:
                                 stats["unpriceable"] += 1
                         if isinstance(priced, list):

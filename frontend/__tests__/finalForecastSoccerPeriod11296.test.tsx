@@ -142,10 +142,21 @@ const DETAILS = "event-hero-final-forecast-details";
 const ANY_BAND_LABEL = /before scheduled start/i;
 
 const surfaces: Array<[string, (e: Event) => string, string, string]> = [
-  ["headline", page, HERO, "2-2 home-away"],
   ["EventCard", card, "event-card-final-forecast", "2-2 home-away"],
   ["FeedCard", (e) => feed(feedItem(e)), "feed-card-final-forecast", "2-2 away-home"],
 ];
+
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
 
 describe("the fixture is what production served", () => {
   it("a completed 1–1 soccer final, FT, with an admitted 90-minute forecast and no period key", () => {
@@ -236,28 +247,19 @@ describe("positive: Stuttgart 1–1 Atlético after a full-time finish", () => {
     }
   });
 
-  it("headline: the actual 1–1 stays the result and the band holds only the forecast", () => {
+  it("headline (Direction 199): prints Pregame · Final for 1–1 with no forecast band or second sentence", () => {
     const html = page(fullTime());
-    const at = html.indexOf(`data-testid="${HERO}"`);
-    const band = html.slice(at, html.indexOf(`data-testid="${DETAILS}"`, at));
-    expect(band).toContain("2");
-    expect(band).not.toMatch(/>1</);
-    expect(band).not.toMatch(/accent-(positive|negative|success|danger|live)/);
-    expect(html).toMatch(/aria-label="Projection \(90 min\) before scheduled start: [^"]+ 2, [^"]+ 2"/);
+    expect(html).toContain('data-phase="after"');
+    expect(html).toContain(">Final<");
+    expect(html).toMatch(/>1<\/span>/);
+    expect(stamp(html, HERO)).toBeNull();
+    expect(html).not.toContain(DETAILS);
+    expect(html).not.toMatch(ANY_BAND_LABEL);
   });
 
-  it("headline: provenance stays in the closed Details, the forecast's own (4 sportsbooks)", () => {
-    const html = page(fullTime());
-    const at = html.indexOf(`data-testid="${DETAILS}"`);
-    expect(at).toBeGreaterThan(html.indexOf(`data-testid="${HERO}"`));
-    const body = html.slice(at, html.indexOf("</details>", at));
-    expect(body).toContain("4 sportsbooks");
-    expect(body).toContain('data-forecast-boundary="2026-10-20T19:00:00+00:00"');
-    expect(body).not.toMatch(/\bbooks?\b|bookmaker|odds.?api|espn/i);
-  });
-
-  it("card and headline print the same pair for the same game", () => {
-    expect(stamp(card(fullTime()), "event-card-final-forecast")).toBe(stamp(page(fullTime()), HERO));
+  it("EventCard and FeedCard print the same pair for the same game", () => {
+    expect(stamp(card(fullTime()), "event-card-final-forecast")).toBe("2-2 home-away");
+    expect(stamp(feed(feedItem(fullTime())), "feed-card-final-forecast")).toBe("2-2 away-home");
   });
 });
 
@@ -301,10 +303,10 @@ describe("football and basketball are untouched", () => {
   const nflSearch = (patch: Partial<Event> = {}): Event =>
     ({ ...(F.search_14966179 as Event), ...patch }) as Event;
 
-  it("the served NFL final keeps its full-game band and label on the headline and the card", () => {
+  it("the served NFL final keeps its full-game band on the card and Pregame · Final on the headline", () => {
     const html = page(nflDetail());
-    expect(stamp(html, HERO)).toBe("18-20 home-away");
-    expect(bandLabel(html, HERO)?.text).toBe(FINAL_FORECAST_LABEL);
+    expect(html).toContain('data-phase="after"');
+    expect(stamp(html, HERO)).toBeNull();
     const c = card(nflSearch());
     expect(stamp(c, "event-card-final-forecast")).toBe("18-20 home-away");
     expect(bandLabel(c, "event-card-final-forecast")?.text).toBe(FINAL_FORECAST_LABEL);

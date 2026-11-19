@@ -28,16 +28,18 @@ import { join } from "path";
 
 const IOS_ROOT = join(__dirname, "../../../ios/Bain Luck/Bain Luck");
 const VIEW = join(IOS_ROOT, "Views/EventDetailView.swift");
+const HEADLINE = join(IOS_ROOT, "Utilities/EventSportHeadlines12472.swift");
 const HELPER = join(IOS_ROOT, "Utilities/RenderedPercent.swift");
 const FORMATTER = join(IOS_ROOT, "Utilities/FormattingUtilities.swift");
 
 // The whole suite is meaningless if it is pointed at nothing — a path typo would
 // otherwise read as a clean pass.
-const iosPresent = existsSync(VIEW) && existsSync(HELPER);
+const iosPresent = existsSync(VIEW) && existsSync(HEADLINE) && existsSync(HELPER);
 const d = iosPresent ? describe : describe.skip;
 
 d("the iOS event detail hero prints a decided pair", () => {
   const view = readFileSync(VIEW, "utf8");
+  const headline = readFileSync(HEADLINE, "utf8");
 
   it("the shared helper and the override parameter both still exist", () => {
     // If either of these is renamed, the assertions below would pass vacuously
@@ -52,159 +54,102 @@ d("the iOS event detail hero prints a decided pair", () => {
 
   it("the hero pair goes through renderedDuelPercents", () => {
     expect(view).toContain("complementDisplayPercents(away: away, home: home)");
+    expect(headline).toContain("complementDisplayPercents(away: away, home: home)");
   });
 
   it("the hero takes BOTH served percents or neither", () => {
     // One served value beside a locally derived one re-opens the same 101 from
     // the other direction, and an older deploy can carry one field and not the
-    // other. `DiscoverEventCard` still coalesces per side (`?? duelFallback[0]`)
-    // — that is a separate surface and a separate fix; this assertion is here so
-    // the pattern is not copied INTO this view later.
+    // other.
     //
-    // #9470 RE-ANCHORED: the pair is now read off `shown` (`OpeningLineHero`),
-    // which is `current_odds` with its served percents except on a pre-game
-    // `opening` hero, where it is the server's hero pair with none. The rule
-    // asserted is unchanged: both served percents or neither.
-    expect(view).toContain(
-      "let bothServed = shown.awayRenderedPercent != nil && shown.homeRenderedPercent != nil",
-    );
-    expect(view).toContain("bothServed ? shown.awayRenderedPercent : duelFallback[0]");
-    expect(view).toContain("bothServed ? shown.homeRenderedPercent : duelFallback[1]");
+    // Direction 199 RE-ANCHORED: the unified event-page headline resolves all
+    // pre-game pairs in `EventSportHeadlines12472.nflPregameChanceTexts` and
+    // `EventDetailView.heroPairPercents`, both enforcing both-or-neither.
+    for (const src of [view, headline]) {
+      expect(src).toContain(
+        "let bothServed = shown.awayRenderedPercent != nil && shown.homeRenderedPercent != nil",
+      );
+      expect(src).toContain("bothServed ? shown.awayRenderedPercent : duelFallback[0]");
+      expect(src).toContain("bothServed ? shown.homeRenderedPercent : duelFallback[1]");
+    }
   });
 
   it("no probability pair in this view is formatted without a decided percent", () => {
-    // THE LOAD-BEARING ASSERTION. Every `formatProbability` call in this file
-    // that draws one side of a two-sided question must carry a
-    // `renderedPercent:`. Listed by their argument names rather than by a
-    // catch-all regex, so a NEW pair added later shows up as an unlisted name
-    // in the next test rather than as a silently shorter scan.
-    //
-    // #5271 RE-ANCHORED. The opening captions now ask `DrawPricedWinner`
-    // whether they may print a pair at all, so both branches bind the same two
-    // names: `awayOpen` (from `opened.away`, inside the guard) and
-    // `opened.home`. That collapses the old four opening names to two and makes
-    // the settled and live captions indistinguishable here — which is the
-    // point of the separate both-branches test below. The claim is unchanged:
-    // every side of a two-sided question carries a decided percent.
-    //
-    // #10090 RE-ANCHORED (ALEX item 39). The hero pair prints in TENTHS through
-    // `EventHeadlineTenths10090.pair(home:away:)`, which decides both sides as
-    // one (the away tenth is derived from the home one, so the pair sums to
-    // 100.0) — the same claim in a finer unit. So `away` and `home` are asserted
-    // on that call below, and `away` stays banned from a bare rounding.
+    // Direction 199 RE-ANCHORED: the unified headline formats pairs in
+    // `EventSportHeadlines12472.swift` while `EventDetailView.swift` retains
+    // `openedText` and `nflPairedHeadline`. Neither file may format a paired
+    // `away` probability without a `renderedPercent:` or `EventHeadlineTenths10090.pair`.
     const PAIRED_ARGS = ["away", "home", "awayOpen", "opened\\.home"];
     const TENTHS_PAIRED = new Set(["away", "home"]);
-
-    // `home` and `opened.home` also each have exactly ONE legitimate bare use —
-    // the withheld arm, where there is no second side to sum with. Those are
-    // counted and located by the next test; here they are simply not counted as
-    // violations, and every other paired name stays banned outright.
     const BARE_IS_EARNED = new Set(["home", "opened\\.home"]);
 
     for (const arg of PAIRED_ARGS) {
       if (!BARE_IS_EARNED.has(arg)) {
         const bare = new RegExp(`formatProbability\\(${arg}\\)`);
         expect({ arg, bare: bare.test(view) }).toEqual({ arg, bare: false });
+        expect({ arg, bare: bare.test(headline) }).toEqual({ arg, bare: false });
       }
       if (TENTHS_PAIRED.has(arg)) continue;
       expect(view).toMatch(
         new RegExp(`formatProbability\\(${arg}, renderedPercent:`),
       );
     }
-    // The hero pair and the NFL paired headline, each decided as one pair.
-    expect(view).toContain("let printed = EventHeadlineTenths10090.pair(home: home, away: away)");
+    expect(headline).toContain("let tenths = EventHeadlineTenths10090.pair(home: home, away: away)");
+    expect(headline).toContain("let tenths = EventHeadlineTenths10090.pair(home: pair.home, away: away)");
+    expect(headline).toMatch(/formatProbability\(away, renderedPercent: awayPct\)/);
+    expect(headline).toMatch(/formatProbability\(home, renderedPercent: homePct\)/);
     expect(view).toContain("let printed = EventHeadlineTenths10090.pair(home: pair.home, away: away)");
     expect(view).not.toMatch(/formatProbability\(away, renderedPercent:/);
   });
 
-  /**
-   * #5271 — THE ONE EXEMPTION, and it is stated rather than carved out of the
-   * list above, because "which numbers may be rounded alone" is the question
-   * the assertion above exists to answer.
-   *
-   * On a draw-priced sport the hero withholds the away slot, so what it prints
-   * is not one side of a two-sided question — there is no complement for it to
-   * sum to 101 with. It must NOT go through `duelPercents`: that contract's
-   * answer for one side can be `100 − other`, a number about the very
-   * complement this branch refuses to print.
-   *
-   * Asserted by NAME rather than by sweeping every bare `formatProbability` in
-   * the file — this view has legitimate lone numbers that were never pairs (a
-   * divergence magnitude, a line move's before and after), and a sweep would
-   * make this guard a list of unrelated call sites that anyone would delete.
-   */
   it("the withheld single numbers are rounded alone, and only in that arm", () => {
-    // The hero's lone named number, directly under the name that attributes
-    // it — the two are one unit, and the name is what makes the bare rounding
-    // legitimate.
-    // #10090: in tenths, and still alone — `away: nil`, no complement.
-    expect(view).toMatch(
-      /Text\(named\.home\)[\s\S]{0,400}Text\(EventHeadlineTenths10090\.pair\(home: home, away: nil\)\.home\)/,
-    );
-    // Both "Opened {Home} 47%" captions, settled and live. #8320 moved the
-    // live one off the hero into Game Info, where `openedText` RETURNS the
-    // string rather than drawing a `Text` — same sentence, same rounding.
-    // #8622: the settled caption's word is `pregameWord` ("Pre-match" on the
-    // served reading, "Opened" on the fallback); its rounding is unchanged.
+    // Direction 199 RE-ANCHORED: on a draw-priced sport where `pair.away == nil`,
+    // `EventSportHeadlines12472.swift` formats `pair.home` alone (leaving the away
+    // cell `""`), never computing `1 - home`.
+    // #12822: before kickoff always uses whole-percent `formatProbability(...)`;
+    // only the live `during` arm formats lone home chances in tenths.
+    expect(
+      headline.match(/EventHeadlineTenths10090\.pair\(home: pair\.home, away: nil\)\.home/g) ?? [],
+    ).toHaveLength(1);
+    expect(headline).toMatch(/formatProbability\(pair\.home, renderedPercent: shown\.homeRenderedPercent\)/);
+    expect(headline).toMatch(/formatProbability\(pair\.home, renderedPercent: homePct\)/);
+
     const openedSolo =
       view.match(
-        /(?:Text\(|return )"(?:Opened|\\\(pregameWord\)) \\\(named\.home\) \\\(formatProbability\(opened\.home\)\)"/g,
+        /(?:Text\(|return )"Opened \\\(named\.home\) \\\(formatProbability\(opened\.home\)\)"/g,
       ) ?? [];
-    expect(openedSolo).toHaveLength(2);
+    expect(openedSolo).toHaveLength(1);
 
-    // EXACTLY those three bare uses and no fourth — this is the half the test
-    // above hands over, so a bare `home` appearing anywhere else (in the duel
-    // arm, say, where it would re-open the 101) fails here.
-    // #10090: the lone hero side moved to the tenths call above, so the bare
-    // whole rounding of `home` is gone entirely and its tenths twin is unique.
     expect(view.match(/formatProbability\(home\)/g) ?? []).toHaveLength(0);
-    expect(view.match(/EventHeadlineTenths10090\.pair\(home: home, away: nil\)/g) ?? []).toHaveLength(1);
-    expect(view.match(/formatProbability\(opened\.home\)/g) ?? []).toHaveLength(2);
+    expect(headline.match(/formatProbability\(home\)/g) ?? []).toHaveLength(0);
+    expect(view.match(/formatProbability\(opened\.home\)/g) ?? []).toHaveLength(1);
 
-    // AND THE DIRECTION THAT MATTERS: no withheld side is ever printed. If a
-    // later edit reaches for the complement again it has to name it, and these
-    // are the names it would have to use.
     for (const withheld of ["opened\\.away", "pair\\.away"]) {
       expect(view).not.toMatch(new RegExp(`formatProbability\\(${withheld}`));
+      expect(headline).not.toMatch(new RegExp(`formatProbability\\(${withheld}`));
     }
   });
 
-  it("both opening lines are covered, not just the settled one", () => {
-    // The settled branch and the live branch each draw their own
-    // "Opened away – home". Fixing one and not the other is the shape this
-    // counts against: two distinct `renderedDuelPercents(away:` call sites for
-    // opening probabilities, plus the hero's own.
-    //
-    // #8622: the settled caption's pair is now `pregame.percents`, decided in
-    // `PrematchReading.resolve` through the same two shared helpers — so one
-    // opening-duel call stays in this file and the other moved there.
-    const duelCalls = view.match(/(?:renderedDuelPercents|complementDisplayPercents)\(/g) ?? [];
-    expect(duelCalls.length).toBeGreaterThanOrEqual(2);
+  it("both pregame and opening lines decide their pairs through the shared helpers", () => {
     const resolver = readFileSync(
       join(IOS_ROOT, "Utilities/PrematchReading.swift"), "utf8");
     expect(resolver).toMatch(/percents: duelPercents\(/);
     expect(resolver).toMatch(/percents: renderedDuelPercents\(away: away, home: home\)/);
-    expect(view).toMatch(/let openDuel = pregame\.percents/);
-    // Whitespace-tolerant: SwiftFormat wraps a long argument list, and a guard
-    // that a reformat can turn red is a guard nobody keeps.
-    //
-    // #5271 RE-ANCHORED to the names the two captions bind now. Both still
-    // decide their pair through the shared helper; what changed is that each
-    // first asks `DrawPricedWinner` whether it may draw a pair at all, so the
-    // duel call sits inside an `if let awayOpen = opened.away`.
+
+    // Unified headline pregame column (`nbaPregameTexts`) + live pregame summary (`buildLivePregameSummary`).
+    expect(headline).toMatch(/formatProbability\(pregame\.awayProbability, renderedPercent: awayPct\)/);
+    expect(headline).toMatch(/formatProbability\(pregame\.homeProbability, renderedPercent: homePct\)/);
+    expect(headline).toMatch(/let favChanceText = formatProbability\(favProb, renderedPercent: favRendered\)/);
+
+    // Game Info `openedText` in `EventDetailView.swift`.
     const openingDuels =
       view.match(
         /renderedDuelPercents\(\s*away: awayOpen,\s*home: opened\.home\s*\)/g,
       ) ?? [];
     expect(openingDuels).toHaveLength(1);
-
-    // …and each of the two is guarded by its own withholding check, so a
-    // caption that lost its guard and printed the complement again fails here.
-    // #8320: the live caption is a function now (`openedText`), so its check
-    // is the early-return spelling of the same binding.
     const guards =
-      view.match(/(?:if let awayOpen = opened\.away \{|guard let awayOpen = opened\.away else \{)/g) ?? [];
-    expect(guards).toHaveLength(2);
+      view.match(/guard let awayOpen = opened\.away else \{/g) ?? [];
+    expect(guards).toHaveLength(1);
   });
 
   it("the probabilities themselves are still what the bar and the chart read", () => {

@@ -96,6 +96,49 @@ final class MacMainWindow10878Tests: XCTestCase {
         XCTAssertEqual(Set(sidebar).count, sidebar.count, "a tab appears twice in the sidebar")
         XCTAssertTrue(Set(sidebar).isDisjoint(with: MacMainWindow10878.detailOnlyTabs))
         XCTAssertEqual(Set(sidebar).union(MacMainWindow10878.detailOnlyTabs), all)
+
+        // Every detailOnlyTab maps to Browse (.leagues) so the sidebar never loses its highlight.
+        for detailTab in MacMainWindow10878.detailOnlyTabs {
+            XCTAssertEqual(MacMainWindow10878.highlightedSidebarTab(for: detailTab), .leagues)
+            XCTAssertTrue(Set(sidebar).contains(MacMainWindow10878.highlightedSidebarTab(for: detailTab)))
+        }
+        for sidebarTab in sidebar {
+            XCTAssertEqual(MacMainWindow10878.highlightedSidebarTab(for: sidebarTab), sidebarTab)
+        }
+    }
+
+    /// Production route-to-sidebar ownership via `NavigationCoordinator.handleURL`:
+    /// Browse owns markets, golf, fight cards, and non-sports category pages;
+    /// Sports owns games and teams; My Stuff owns About; Quick Links own
+    /// Preferences and Accuracy on sidebar hosts.
+    func testNavigationCoordinatorSelectsOwningSidebarSectionForEveryDetailRoute() throws {
+        let cases: [(url: String, expectedSidebar: AppTab)] = [
+            ("bainluck://events/9101", .feed),
+            ("bainluck://team/boston-red-sox-mlb", .feed),
+            ("bainluck://futures/13795456", .leagues),
+            ("bainluck://futures", .leagues),
+            ("bainluck://golf/masters-tournament", .leagues),
+            ("bainluck://event/ufc/26sep19", .leagues),
+            ("bainluck://tournaments/us-open", .leagues),
+            ("bainluck://politics", .leagues),
+            ("bainluck://weather", .leagues),
+            ("bainluck://economics", .leagues),
+            ("bainluck://entertainment", .leagues),
+            ("bainluck://about", .myStuff),
+            ("bainluck://preferences", .preferences),
+            ("bainluck://calibration", .calibration),
+        ]
+        for (raw, expected) in cases {
+            let coordinator = NavigationCoordinator()
+            coordinator.usesSidebarQuickLinks = true
+            coordinator.selectedTab = .discover
+            XCTAssertTrue(coordinator.handleURL(try XCTUnwrap(URL(string: raw))), raw)
+            XCTAssertEqual(
+                MacMainWindow10878.highlightedSidebarTab(for: coordinator.selectedTab),
+                expected,
+                "\(raw) highlighted wrong Mac sidebar section"
+            )
+        }
     }
 
     /// Every supported link lands on a sidebar place, so the Mac sidebar always

@@ -826,21 +826,15 @@ describe("event-page pack can prove both hero states", () => {
   const read = (...p) => stripComments(fs.readFileSync(path.join(repoRoot, ...p), "utf8"));
   const specRaw = () => read("frontend", "e2e", "specs", "event-page.spec.ts");
   const pageRaw = () => read("frontend", "app", "events", "[id]", "page.tsx");
-  // LAT-P119 (#2085) extracted the live/pregame hero's two percents into their
-  // own component, so the hook no longer lives in `page.tsx`. It still ships to
-  // the browser, which is what the pack needs and what this contract is really
-  // about — but a source read has to follow it.
-  //
-  // UX-P240 (#2443, CERT-641) did the same to the SETTLED hero: it now renders
-  // through `SettledOutcomeHero` so the outcome is a real component rather than
-  // inline JSX. Same reasoning, same remedy — read the component, and keep the
-  // page pinned to rendering it. The comment that used to say "the settled hero
-  // is untouched and stays pinned in the page" is what went stale here, and the
-  // gate went red on a healthy page for exactly one cycle because of it.
+  // Direction 199 (#12472) unified both the live/pregame and settled event-page
+  // headlines into `EventPageHeadline199` (matching iOS #12771). Both stable
+  // browser-pack hooks (`event-hero-probability` with `data-probability` on
+  // `before`/`during`, and `event-hero-settled` with `data-winner` on `after`)
+  // now live in `EventPageHeadline199.tsx`, and `page.tsx` renders it.
   const heroPairRaw = () =>
-    read("frontend", "components", "EventHeroProbabilityPair.tsx");
+    read("frontend", "components", "event", "EventPageHeadline199.tsx");
   const settledHeroRaw = () =>
-    read("frontend", "components", "event", "SettledOutcomeHero.tsx");
+    read("frontend", "components", "event", "EventPageHeadline199.tsx");
 
   it("the page ships a stable hook for the LIVE/PREGAME hero", () => {
     // Pinned in BOTH directions, because the extraction created two ways to
@@ -853,11 +847,10 @@ describe("event-page pack can prove both hero states", () => {
     );
     // Matched as a whole JSX tag for the same reason as the settled hero below:
     // a bare `includes` is satisfied by any component whose name merely STARTS
-    // with this one (`<EventHeroProbabilityPairFoo`), so renaming the render
-    // away would leave the gate green. CERT-641's cycle tightened the settled
-    // assertion and deliberately left this one; it is the same defect.
+    // with this one (`<EventPageHeadline199Foo`), so renaming the render
+    // away would leave the gate green.
     assert.ok(
-      /<EventHeroProbabilityPair[\s/>]/.test(pageRaw()),
+      /<EventPageHeadline199[\s/>]/.test(pageRaw()),
       "the page must still render the component that carries the hook"
     );
     // The rail reads `data-probability` here and on the Discover card that
@@ -885,11 +878,11 @@ describe("event-page pack can prove both hero states", () => {
     );
     // Matched as a whole JSX tag, not a substring: a bare `includes` here is
     // satisfied by any component whose name merely STARTS with this one
-    // (`<SettledOutcomeHeroFoo`), so renaming the render away would leave the
+    // (`<EventPageHeadline199Foo`), so renaming the render away would leave the
     // gate green. The delimiter is what makes this assertion mean the thing it
     // says.
     assert.ok(
-      /<SettledOutcomeHero[\s/>]/.test(pageRaw()),
+      /<EventPageHeadline199[\s/>]/.test(pageRaw()),
       "the page must still render the component that carries the settled hook"
     );
   });

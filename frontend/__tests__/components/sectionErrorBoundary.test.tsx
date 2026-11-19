@@ -166,6 +166,8 @@ describe("the event page actually wraps its sections", () => {
     const labels = [
       "The score and probability",
       "The win probability chart",
+      // Ruling 212-A (#11934 Step 1D): Discover teaser rail on shared-link arrivals.
+      "More of what the world thinks now",
       // #9483: the NFL game-story cards under the chart render independently of it.
       // #10346 pilot: three supported takeaways, mounted only with ?highlights=preview.
       "Three takeaways",

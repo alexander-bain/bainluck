@@ -395,3 +395,299 @@ async def test_produce_register_closest_applies_withheld_prices_and_hub_checks_a
     assert hub_check.reasons == (("register_closest", "settled_in_register_still_priced:109085"),)
 
 
+def _oscars_edition_fixture(
+    *,
+    parent_slug: str = "oscars-2027",
+    container_id: int = 9901,
+    featured_film: str = "The Odyssey",
+    sparse_film: str = "Small Indie",
+    advancement_count: int = 7,
+    mention_count: int = 0,
+) -> tuple[list[dict], dict[int, dict]]:
+    own_members: list[dict] = []
+    cards: dict[int, dict] = {}
+    cats = ["Best Picture", "Best Director", "Best Original Score", "Best Cinematography"]
+    mid = 8000
+    for cat in cats:
+        mid += 1
+        own_members.append({"id": mid, "type": "market", "class": "title", "container_id": container_id})
+        cards[mid] = {
+            "id": mid,
+            "name": f"Oscar Winner: {cat}",
+            "status": "open",
+            "source": "kalshi",
+            "top_outcomes": [
+                {"id": mid * 10 + 1, "name": featured_film, "probability": 0.48},
+                {"id": mid * 10 + 2, "name": sparse_film if cat == "Best Picture" else "Other Contender", "probability": 0.22},
+            ],
+        }
+    for idx in range(advancement_count):
+        mid += 1
+        own_members.append({"id": mid, "type": "market", "class": "advancement", "container_id": container_id})
+        cards[mid] = {
+            "id": mid,
+            "name": f"Oscar Nominees: Category {idx + 1}",
+            "status": "open",
+            "source": "kalshi",
+            "top_outcomes": [
+                {"id": mid * 10 + 1, "name": featured_film if idx < 4 else "Ensemble Film", "probability": 0.84},
+                {"id": mid * 10 + 2, "name": "Another Nominee", "probability": 0.51},
+            ],
+        }
+    for idx in range(mention_count):
+        mid += 1
+        own_members.append({"id": mid, "type": "market", "class": "side_question", "container_id": container_id})
+        cards[mid] = {
+            "id": mid,
+            "name": f"Oscars acceptance speech mention #{idx + 1}",
+            "status": "open",
+            "source": "kalshi",
+            "top_outcomes": [{"id": mid * 10 + 1, "name": "Yes", "probability": 0.35}],
+        }
+    # Add one settled market on featured_film to prove settled rows never inflate counts
+    mid += 1
+    own_members.append({"id": mid, "type": "market", "class": "side_question", "container_id": container_id})
+    cards[mid] = {
+        "id": mid,
+        "name": "Settled Oscar market",
+        "status": "settled",
+        "source": "kalshi",
+        "top_outcomes": [{"id": mid * 10 + 1, "name": featured_film, "probability": 1.0}],
+    }
+    return own_members, cards
+
+
+def test_automatic_child_discovery_oscars_nominations_odyssey_sparse_and_held_out_edition() -> None:
+    from app.utils.discovered_child_collections import (
+        discover_children_from_admitted_inventory,
+        event_hub_child_discovery_enabled,
+    )
+
+    assert event_hub_child_discovery_enabled() is False
+
+    # 1. Oscars 2027: discovers Nominations (7 open) + The Odyssey (8 open across title+advancement),
+    #    withholds sparse Small Indie (1 market) and withholds Mentions (0 markets).
+    own, cards = _oscars_edition_fixture(
+        parent_slug="oscars-2027",
+        featured_film="The Odyssey",
+        sparse_film="Small Indie",
+        advancement_count=7,
+        mention_count=2,  # below MIN_MENTION_CHILD_MARKETS (4) -> stays ungrouped
+    )
+    children = discover_children_from_admitted_inventory(
+        "oscars-2027", "Oscars 2027", own, cards
+    )
+    slugs = [c["slug"] for c in children]
+    assert slugs == [
+        "oscars-2027-nominations",
+        "oscars-2027-subject-the-odyssey",
+    ]
+    by_slug = {c["slug"]: c for c in children}
+    assert by_slug["oscars-2027-nominations"]["member_count"] == 7
+    assert by_slug["oscars-2027-subject-the-odyssey"]["member_count"] == 8  # excludes settled market!
+    assert all(c["cross_listed_in_parent"] is True for c in children)
+
+    # 2. When mention inventory is coherent (>= 4 open mention markets), Mentions child also qualifies.
+    own_m, cards_m = _oscars_edition_fixture(mention_count=4)
+    slugs_m = [
+        c["slug"]
+        for c in discover_children_from_admitted_inventory(
+            "oscars-2027", "Oscars 2027", own_m, cards_m
+        )
+    ]
+    assert "oscars-2027-mentions" in slugs_m
+
+    # 3. Sparse advancement (< 6 open nomination markets): stays an ordinary inline section!
+    own_sparse, cards_sparse = _oscars_edition_fixture(
+        featured_film="Two Category Film",
+        advancement_count=3,
+    )
+    # Trim featured_film to only 3 markets total -> neither nominations nor subject child created
+    for k in list(cards_sparse)[3:]:
+        for o in cards_sparse[k]["top_outcomes"]:
+            if o["name"] == "Two Category Film":
+                o["name"] = f"Distinct Film {k}"
+    assert (
+        discover_children_from_admitted_inventory(
+            "oscars-2027", "Oscars 2027", own_sparse, cards_sparse
+        )
+        == []
+    )
+
+    # 4. Held-out edition (oscars-2028 with 'Heat 2') works with ZERO bespoke member code.
+    own_28, cards_28 = _oscars_edition_fixture(
+        parent_slug="oscars-2028",
+        container_id=9902,
+        featured_film="Heat 2",
+        advancement_count=6,
+    )
+    children_28 = discover_children_from_admitted_inventory(
+        "oscars-2028", "Oscars 2028", own_28, cards_28
+    )
+    assert [c["slug"] for c in children_28] == [
+        "oscars-2028-nominations",
+        "oscars-2028-subject-heat-2",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_discovered_child_route_switched_off_for_readers_and_withholds_withdrawn_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import HTTPException
+    from app.routes import admin_utils, containers as containers_route
+    from app.utils import container_corrections as cc
+    from app.utils import discovered_child_collections as dcc
+
+    own, cards = _oscars_edition_fixture()
+    monkeypatch.setattr(containers_route, "containers_read_enabled", lambda: True)
+
+    async def _fake_admin_auth(_secret, req, _db=None) -> bool:
+        hdrs = getattr(req, "headers", None) or {}
+        return hdrs.get("Authorization") == "Bearer admin-preview"
+
+    monkeypatch.setattr(admin_utils, "_check_admin_auth", _fake_admin_auth)
+
+    async def _fake_read_published(_db, slug: str, **_kw):
+        if slug == "oscars-2027":
+            return SimpleNamespace(
+                state=cc.READ_PUBLISHED,
+                slug="oscars-2027",
+                container_id=9901,
+                revision=42,
+                reason=None,
+                members=own,
+            )
+        return SimpleNamespace(state=cc.READ_UNAVAILABLE, slug=slug)
+
+    monkeypatch.setattr(cc, "read_published", _fake_read_published)
+    monkeypatch.setattr(dcc, "read_published", _fake_read_published)
+    monkeypatch.setattr(containers_route, "read_published", _fake_read_published)
+
+    async def _fake_snap(_cid: int, _rev: int):
+        return {
+            "shown_ids": [m["id"] for m in own],
+            "shown_count": len(own),
+            "eligible_count": len(own),
+            "withheld": {},
+            "inventory_complete": True,
+        }
+
+    async def _fake_hydrate(_db, mids, **_kw):
+        return ({i: cards[i] for i in mids if i in cards}, {i: None for i in mids}, {})
+
+    monkeypatch.setattr(containers_route, "_read_theme_snapshot", _fake_snap)
+    monkeypatch.setattr(containers_route, "_hydrate_market_cards", _fake_hydrate)
+
+    class _FakeRowResult:
+        def fetchone(self):
+            return (9901, "theme", "Oscars 2027", "oscars-2027", "entertainment", "open", None, None, None)
+
+    class _FakeThemeDb:
+        async def execute(self, stmt, *_a, **_kw):
+            sql = str(stmt)
+            if "SELECT name, category" in sql:
+                res = SimpleNamespace(fetchone=lambda: ("Oscars 2027", "entertainment"))
+                return res
+            return _FakeRowResult()
+
+    public_req = SimpleNamespace(headers={})
+    admin_req = SimpleNamespace(headers={"Authorization": "Bearer admin-preview"})
+
+    # 1. Public reader while switched OFF: parent hub keeps children=[] and child URL returns 404.
+    pub_hub = await containers_route.get_container(
+        slug="oscars-2027",
+        include_children=True,
+        revision=None,
+        cursor=None,
+        limit=None,
+        market_revision=None,
+        market_cursor=None,
+        market_limit=None,
+        compact=True,
+        debug_timing=False,
+        db=_FakeThemeDb(),
+        request=public_req,
+    )
+    assert pub_hub["children"] == []
+
+    with pytest.raises(HTTPException) as pub_exc:
+        await containers_route.get_container(
+            slug="oscars-2027-subject-the-odyssey",
+            include_children=True,
+            revision=None,
+            cursor=None,
+            limit=None,
+            market_revision=None,
+            market_cursor=None,
+            market_limit=None,
+            compact=True,
+            debug_timing=False,
+            db=_FakeThemeDb(),
+            request=public_req,
+        )
+    assert pub_exc.value.status_code == 404
+
+    # 2. Admin previewer sees discovered children on oscars-2027 AND opens child hub cleanly.
+    adm_hub = await containers_route.get_container(
+        slug="oscars-2027",
+        include_children=True,
+        revision=None,
+        cursor=None,
+        limit=None,
+        market_revision=None,
+        market_cursor=None,
+        market_limit=None,
+        compact=True,
+        debug_timing=False,
+        db=_FakeThemeDb(),
+        request=admin_req,
+    )
+    adm_child_slugs = [c["slug"] for c in adm_hub["children"]]
+    assert "oscars-2027-nominations" in adm_child_slugs
+    assert "oscars-2027-subject-the-odyssey" in adm_child_slugs
+
+    odyssey_child = await containers_route.get_container(
+        slug="oscars-2027-subject-the-odyssey",
+        include_children=True,
+        revision=None,
+        cursor=None,
+        limit=None,
+        market_revision=None,
+        market_cursor=None,
+        market_limit=None,
+        compact=True,
+        debug_timing=False,
+        db=_FakeThemeDb(),
+        request=admin_req,
+    )
+    assert odyssey_child["state"] == "published"
+    assert odyssey_child["member_count"] == 8
+    assert odyssey_child["parent"]["slug"] == "oscars-2027"
+    assert [s["title"] for s in odyssey_child["sections"]] == [
+        "Award Winner Markets",
+        "Nomination Markets",
+    ]
+
+    # 3. Withdrawn parent immediately withholds child hub (zero leaked members or parent link).
+    async def _fake_withdrawn(_db, _slug: str, **_kw):
+        return SimpleNamespace(
+            state="withdrawn",
+            slug="oscars-2027",
+            container_id=9901,
+            revision=43,
+            reason="ceremony_cancelled",
+            members=own,
+        )
+
+    monkeypatch.setattr(dcc, "read_published", _fake_withdrawn)
+    withdrawn_child = await dcc.serve_discovered_child_collection(
+        "oscars-2027-subject-the-odyssey", _FakeThemeDb()
+    )
+    assert withdrawn_child["state"] == "withdrawn"
+    assert withdrawn_child["sections"] == []
+    assert withdrawn_child["member_count"] == 0
+    assert "parent" not in withdrawn_child
+
+
+

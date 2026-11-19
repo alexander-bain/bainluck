@@ -307,7 +307,7 @@ async def test_verified_title_aliases_reach_one_card_without_a_duplicate_family(
             canonical_source="odds_api",
         )
 
-    async def resolve(_db, markets, _deadline, *, missed):
+    async def resolve(_db, markets, _deadline, *, missed, started=None):
         return {market.id: verdicts[market.id] for market in markets if market.id in verdicts}
 
     async def title_window(*args, **kwargs):

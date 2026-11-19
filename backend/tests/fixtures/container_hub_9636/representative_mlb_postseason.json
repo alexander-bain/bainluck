@@ -45,6 +45,15 @@
           {
             "card": {
               "away_score": 5,
+              "away_source_mark": {
+                "settled": {
+                  "at": "2026-09-30T16:00:00+00:00",
+                  "result": "Won",
+                  "source": null
+                },
+                "sources": [],
+                "state": "settled"
+              },
               "away_team": "Boston Red Sox",
               "commence_time": "2026-09-30T13:00:00+00:00",
               "completed_at": "2026-09-30T16:00:00+00:00",
@@ -79,6 +88,15 @@
               "home_score": 2,
               "home_team": "New York Yankees",
               "id": 801,
+              "source_mark": {
+                "settled": {
+                  "at": "2026-09-30T16:00:00+00:00",
+                  "result": "Lost",
+                  "source": null
+                },
+                "sources": [],
+                "state": "settled"
+              },
               "sport": "baseball_mlb",
               "sport_name": "MLB",
               "start_is_from_schedule": false,
@@ -102,6 +120,11 @@
           {
             "card": {
               "away_score": null,
+              "away_source_mark": {
+                "reason": "no_probability",
+                "sources": [],
+                "state": "none"
+              },
               "away_team": "San Diego Padres",
               "commence_time": "2026-10-06T19:00:00+00:00",
               "completed_at": null,
@@ -132,6 +155,11 @@
               "home_score": null,
               "home_team": "Los Angeles Dodgers",
               "id": 802,
+              "source_mark": {
+                "reason": "no_probability",
+                "sources": [],
+                "state": "none"
+              },
               "sport": "baseball_mlb",
               "sport_name": "MLB",
               "start_is_from_schedule": false,

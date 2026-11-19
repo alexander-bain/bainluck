@@ -752,7 +752,7 @@ class TestComputeAggregateProbability:
         result = compute_aggregate_probability(MockEvent())
         assert result == 0.55
 
-    def test_opening_fallback(self):
+    def test_opening_is_not_a_current_fallback(self):
         from app.utils.aggregation import compute_aggregate_probability
 
         class MockEvent:
@@ -761,7 +761,7 @@ class TestComputeAggregateProbability:
             opening_home_probability = 0.40
 
         result = compute_aggregate_probability(MockEvent())
-        assert result == 0.4
+        assert result is None
 
     def test_none_when_no_data(self):
         from app.utils.aggregation import compute_aggregate_probability

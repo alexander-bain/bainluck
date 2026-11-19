@@ -1385,29 +1385,17 @@ export function FuturesChart({
             className="pointer-events-none absolute bottom-0 left-0 top-0 z-20"
           >
             {yTicks.map(({ pct, label }) => {
-              /* #4262: THE LABEL ON THE BASELINE IS ONLY HALF IN THE PLOT.
-                 Centring is right for the interior rules and wrong for `0%`,
-                 which sits on the plot floor: half its OPAQUE box hung below
-                 the floor into the x-axis strip, and whatever tick label was
-                 under it lost its head. Measured on production at 390px:
-                 the `0%` chip covered x 41.47→63.67 of `Sep 7 9 PM`, whose own
-                 box starts at 41.47 — so the reader saw `ep 7 9 PM`. The tick
-                 was never clipped; it was painted over.
-                 Anchoring `0%` by its bottom lifts all of its ink above the
-                 floor and leaves 5px of air at 390px, 7.8px at desktop width.
-                 Same rule, same reason as #3520 on `ContenderChart`.
-                 The ceiling label is NOT the mirror case and is left centred:
-                 `padding.top` gives it 20 units of margin to sit in, so it has
-                 no plot edge to hang out of. */
-              const onFloor = pct === 0;
+              /* #12750 / Ruling 202-A: every y-axis label — including `0%` — sits
+                 centred on the gridline it names (`-translate-y-1/2 leading-none`).
+                 `FULL_PADDING.left` is 55 viewBox units (41.25 px at 390 px width)
+                 while `0%` is 21 px wide (`left-0 pr-1`), so centring `0%` on its
+                 rule never overlaps the left-aligned first x-axis label at x=55. */
               return (
                 <span
                   key={pct}
                   data-testid="chart-y-label"
-                  data-anchor={onFloor ? "bottom" : "centre"}
-                  className={`absolute left-0 bg-surface-card pr-1 text-xs text-text-muted ${
-                    onFloor ? "-translate-y-full" : "-translate-y-1/2"
-                  }`}
+                  data-anchor="centre"
+                  className="absolute left-0 -translate-y-1/2 bg-surface-card pr-1 text-xs leading-none text-text-muted"
                   style={{ top: `${(yScale(maxProb * pct) / effectiveHeight) * 100}%` }}
                 >
                   {label}

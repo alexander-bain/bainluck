@@ -1,0 +1,29 @@
+{
+  "slug": "roundup-oscars-best-picture",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "implies"
+  ],
+  "level": "member",
+  "parent_slug": "oscars-2027",
+  "parent_name": "Oscars 2027",
+  "kicker": "THE OSCARS · BEST PICTURE",
+  "name": "Best Picture: who gets nominated, who wins",
+  "category": "entertainment",
+  "tag": "ENTERTAINMENT",
+  "section_title": "Best Picture",
+  "footer": "Several films are nominated; one wins.",
+  "rule": {
+    "producer": "awards_category_roundup",
+    "register": "oscars-2027-best-picture",
+    "ceremony": "Oscars",
+    "category_name": "Best Picture",
+    "min_paired_nominees": 3,
+    "card_rows": 5,
+    "require_guard_11995": true,
+    "refusal": "all-or-nothing",
+    "materialize": "read-time"
+  }
+}

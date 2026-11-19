@@ -127,6 +127,18 @@ function renderedWordCount(html: string, word: string): number {
   return html.split(`>${word}<`).length - 1;
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#5245(a) a finished card's two team names stay separable", () => {
   beforeAll(() => jest.useFakeTimers().setSystemTime(NOW));
   afterAll(() => jest.useRealTimers());

@@ -395,11 +395,11 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
             .deletingLastPathComponent()
             .appendingPathComponent("Bain Luck/Components/OddsChartView.swift")
         let source = try String(contentsOf: chartURL, encoding: .utf8)
-        XCTAssertTrue(source.contains("if ReleaseSurfaces.isEventPageAtlasEnabled() {\n                            EventAtlasChartHeaderView11666("))
-        XCTAssertTrue(source.contains("if ReleaseSurfaces.isEventPageAtlasEnabled() {\n                    EventAtlasChartOverlay11666("))
-        XCTAssertTrue(source.contains("servedSettledResult: servedSettledResult,\n                                gameStart: kickoffDate"))
-        XCTAssertTrue(source.contains("servedSettledResult: servedSettledResult,\n                        gameStart: kickoffDate,\n                        settledResult: atlasSettledResult"))
-        XCTAssertTrue(source.contains("if let finishedEnd {\n                    if atlasSettledResult == nil {"))
+        XCTAssertTrue(source.contains("if sharesPageAxis, let history = vm.history, ReleaseSurfaces.isEventPageAtlasEnabled() {\n                EventAtlasChartHeaderView11666("))
+        XCTAssertTrue(source.contains("if ReleaseSurfaces.isEventPageAtlasEnabled() {\n                        EventAtlasChartOverlay11666("))
+        XCTAssertTrue(source.contains("servedSettledResult: servedSettledResult,\n                    gameStart: kickoffDate"))
+        XCTAssertTrue(source.contains("servedSettledResult: servedSettledResult,\n                            gameStart: kickoffDate,\n                            settledResult: atlasSettledResult"))
+        XCTAssertTrue(source.contains("if let finishedEnd {\n                        if atlasSettledResult == nil {"))
     }
 
     @MainActor

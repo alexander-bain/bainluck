@@ -87,7 +87,7 @@ function draw() {
 }
 const latestRow = (html: string) => html.match(/Latest source update<\/dt><dd>(.*?)<\/dd>/)![1];
 const status = (html: string) => html.match(/data-testid="live-connection-status" data-status="([^"]*)"/)![1];
-const heroDigits = (html: string) => (html.match(/data-hero-digits="">([^<]+)/g) ?? []).map(m => m.replace(/.*>/, ""));
+const heroDigits = (html: string) => (html.match(/data-hero-digits=""[^>]*>([^<]+)/g) ?? []).map(m => m.replace(/.*>/, ""));
 const delivery = (html: string) => html.match(/data-observation-delivery="([^"]*)"/)![1];
 
 beforeEach(() => {
@@ -116,7 +116,7 @@ test("a preview printing another number is never called confirmed and keeps its 
   blendPreview = preview(.64); // prints 64.0 / 36.0 over a committed 60.0 / 40.0
   const html = draw();
   expect(delivery(html)).toBe("dnpl");
-  expect(heroDigits(html)).toEqual(["64", "36"]);
+  expect(heroDigits(html)).toEqual(["36.0%", "64.0%"]);
   // Never the confirmation's clock: the preview's own observation.
   expect(latestRow(html)).toContain(`dateTime="${OBSERVED}"`);
   expect(latestRow(html)).not.toContain(CONFIRMED);
@@ -132,7 +132,7 @@ test("'the same number' is the printed number, at the precision this reader sees
   // Opted out (`?tenths=off`): both print 60 / 40, so it is the confirmed number.
   tenthsOn = false;
   const whole = draw();
-  expect(heroDigits(whole)).toEqual(["60", "40"]);
+  expect(heroDigits(whole)).toEqual(["40%", "60%"]);
   expect(latestRow(whole)).toContain(`dateTime="${CONFIRMED}"`);
   expect(status(whole)).toBe("Connected");
 });

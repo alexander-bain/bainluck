@@ -362,6 +362,66 @@ def _cpu_per_call(fn, calls=30):
     return (time.thread_time() - t0) / calls
 
 
+_TIMER_SIGNAL = {signal.ITIMER_PROF: signal.SIGPROF, signal.ITIMER_REAL: signal.SIGALRM}
+
+
+def _bare_handler_counts(timer, interval_s, rounds, seed=7):
+    """The KERNEL's own attribution on this host: a handler that only notes the
+    interrupted function, re-armed one-shot with the sampler's jitter, over the
+    same loops. Whatever this misattributes, no sampler on this host can fix."""
+    import random
+
+    rng = random.Random(seed)
+    counts: dict = {}
+
+    def arm():
+        signal.setitimer(timer, interval_s * (0.5 + rng.random()))
+
+    def on_signal(signum, frame):
+        if frame is not None:
+            name = frame.f_code.co_name
+            counts[name] = counts.get(name, 0) + 1
+        arm()
+
+    signal.signal(_TIMER_SIGNAL[timer], on_signal)
+    arm()
+    try:
+        for _ in range(rounds):
+            hot_three()
+            syscall_decoy()
+    finally:
+        signal.setitimer(timer, 0)
+        signal.signal(_TIMER_SIGNAL[timer], signal.SIG_DFL)
+    return counts
+
+
+def _sampler_counts(timer, interval_s, rounds):
+    sampler = LoopCpuSampler(interval_s=interval_s, enabled=_on, timer=timer).start(thread=False)
+    try:
+        for _ in range(rounds):
+            hot_three()
+            syscall_decoy()
+    finally:
+        sampler.stop()
+    return _names(sampler._window.self_counts)
+
+
+#: Interleaved bare/sampler trials per run, judged on their MEDIANS (Nov 17).
+ATTRIBUTION_TRIALS = 3
+#: A trial's share is read only from at least this many samples.
+ATTRIBUTION_TRIAL_MIN_SAMPLES = 40
+#: The kernel's attribution counts as clean, so the CPU-time expectation can be
+#: judged, only when the bare handler's median sits this close to it. On a
+#: healthy runner (20261103.629, #12802's six rows) the bare median is within
+#: 0.02 of the expectation; the failing 82.6-class runs read 0.13 to 0.25 away.
+CLEAN_KERNEL_TOLERANCE = 0.05
+
+
+def _share(counts):
+    hot, decoy = counts.get("hot_three", 0), counts.get("syscall_decoy", 0)
+    return (hot / (hot + decoy) if hot + decoy >= ATTRIBUTION_TRIAL_MIN_SAMPLES else None), hot + decoy
+
+
 @pytest.mark.parametrize("timer", [
     pytest.param(signal.ITIMER_PROF, id="prof", marks=pytest.mark.skipif(
         sys.platform != "linux",
@@ -372,22 +432,70 @@ def test_samples_are_not_pulled_onto_the_frame_that_makes_syscalls(restore_sigpr
     """Production's timer (prof, on Linux) charges CPU where it was spent even
     when a neighbour makes a syscall every microsecond. On macOS the prof
     timer fails exactly this (the decoy takes the hot function's samples),
-    which is why a rig there uses the real timer."""
+    which is why a rig there uses the real timer.
+
+    Nov 16 2026: some GitHub runner builds (``ubuntu-26.04`` 20261111.82.6)
+    fail it too, by ~22 points, with identical code and an identical shard,
+    while 20261111.196.1 passes. That is the kernel, not the sampler. So the
+    sampler is judged against two references, both on this host:
+
+    * a bare signal handler (the kernel's own attribution) — ALWAYS, within
+      15 points. A sampler bug that pulls samples onto the wrong frame shows
+      here on every host;
+    * the CPU-time expectation — whenever the kernel's attribution is clean
+      (the bare handler within ``CLEAN_KERNEL_TOLERANCE`` of it): the original
+      assertion, unchanged, on every host whose kernel can pass it.
+
+    Nov 17 2026 (Builder B's #12864, CI 44105817469): bare 0.810, sampler
+    0.675, expectation 0.944. The bare handler fell 13 points short, just
+    inside the old 15-point switch, so a degraded kernel was judged as a clean
+    one; and one sequential bare-then-sampler pair is exposed to whatever the
+    shared host does during either half. So the two now run INTERLEAVED, three
+    times, and are compared on their medians: a sampler that misattributes does
+    it in every trial and still fails, while one trial caught by a host burst
+    no longer decides the run. The thresholds are unchanged.
+
+    A host whose kernel itself misattributes warns with both numbers; it never
+    passes silently.
+    """
+    import statistics
+
     hot, decoy = _cpu_per_call(hot_three), _cpu_per_call(syscall_decoy)
     expected = hot / (hot + decoy)
-    rounds = max(50, int(1.5 / (hot + decoy)))
-    sampler = LoopCpuSampler(interval_s=0.003, enabled=_on, timer=timer).start(thread=False)
-    try:
-        for _ in range(rounds):
-            hot_three()
-            syscall_decoy()
-    finally:
-        sampler.stop()
-    counts = _names(sampler._window.self_counts)
-    got_hot, got_decoy = counts.get("hot_three", 0), counts.get("syscall_decoy", 0)
-    assert got_hot + got_decoy >= 150, counts
-    share = got_hot / (got_hot + got_decoy)
-    assert abs(share - expected) < 0.15, (share, expected, counts)
+    rounds = max(30, int(0.6 / (hot + decoy)))
+
+    bare_shares, sampler_shares, trials = [], [], []
+    bare_total = sampler_total = 0
+    for trial in range(ATTRIBUTION_TRIALS):
+        bare = _bare_handler_counts(timer, 0.003, rounds, seed=7 + trial)
+        counts = _sampler_counts(timer, 0.003, rounds)
+        b_share, b_n = _share(bare)
+        s_share, s_n = _share(counts)
+        bare_total += b_n
+        sampler_total += s_n
+        trials.append((b_share, s_share, bare, counts))
+        if b_share is not None and s_share is not None:
+            bare_shares.append(b_share)
+            sampler_shares.append(s_share)
+
+    assert bare_total >= 150 and sampler_total >= 150, trials
+    assert len(bare_shares) >= 2, ("too few trials with enough samples", trials)
+    bare_share = statistics.median(bare_shares)
+    share = statistics.median(sampler_shares)
+
+    detail = (share, bare_share, expected, trials)
+    assert abs(share - bare_share) < 0.15, ("sampler strays from the kernel's own attribution", detail)
+    if abs(bare_share - expected) < CLEAN_KERNEL_TOLERANCE:
+        assert abs(share - expected) < 0.15, detail
+    else:
+        import warnings
+
+        warnings.warn(
+            f"this host's kernel misattributes {signal.ITIMER_PROF == timer and 'ITIMER_PROF' or 'ITIMER_REAL'}: "
+            f"bare handler median {bare_share:.3f} vs CPU-time {expected:.3f}; sampler median "
+            f"{share:.3f} tracks the bare handler, so the expectation check cannot be judged here",
+            stacklevel=1,
+        )
 
 
 # ── R1 (latency's review of 32219d19): the walk crosses SQLAlchemy's greenlet ──

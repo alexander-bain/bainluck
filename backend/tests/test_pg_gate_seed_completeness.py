@@ -48,6 +48,9 @@ from app.models.models import Base
 #: the discovery arm below fails if such a gate grows an INSERT and is not
 #: listed, so this list cannot silently fall behind.
 COVERED = (
+    # 177-A: seeds `push_devices` and phone-owned `activitykit_registrations`
+    # by raw INSERT to prove the migration's CHECKs and its downgrade.
+    "test_push_devices_177a_pg.py",
     # #10090: seeds `sports` (naming `active`) and `events` by raw INSERT to
     # prove the enrich task's count no longer holds an enriched row's lock.
     "test_enrich_events_metadata_row_locks_10090_pg.py",

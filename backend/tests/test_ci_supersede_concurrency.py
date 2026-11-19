@@ -37,7 +37,8 @@ REQUIRED_JOBS = {
 DEPLOY_NEEDS = {
     "backend-tests",
     "shard-completeness",
-    "search-recall",
+    # Fable, Wed Nov 18: deploy reads the integration groups itself, not via search-recall.
+    "database-integration",
     "frontend-build",
     "e2e-contract",
     "release-required",

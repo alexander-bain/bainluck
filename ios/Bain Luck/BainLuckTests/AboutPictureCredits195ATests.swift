@@ -109,57 +109,17 @@ final class AboutPictureCredits195ATests: XCTestCase {
         host.view.layoutIfNeeded()
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
 
-        let wk = try XCTUnwrap(findWebView(in: host.view))
         XCTAssertNil(
-            findView(withIdentifier: "in-app-webview-scroll-footer", in: wk.scrollView),
+            findWebView(in: host.view),
+            "Native #12672 AboutView renders directly in SwiftUI"
+        )
+        XCTAssertNil(
+            findView(withIdentifier: "in-app-webview-scroll-footer", in: host.view),
             "Separate duplicate Picture credits row must not be mounted below Start Exploring"
         )
         XCTAssertNil(
             findView(withIdentifier: "about-picture-credits-link", in: host.view),
-            "AboutView must not mount a second native Picture credits link alongside the fine-print link"
+            "AboutView must not mount a second duplicate Picture credits row alongside the bottom fine-print row"
         )
-        XCTAssertEqual(wk.scrollView.contentInset.bottom, 0, accuracy: 0.5)
-
-        if let outDir = ProcessInfo.processInfo.environment["EXPORT_195A_RENDERS_DIR"], !outDir.isEmpty {
-            let dirURL = URL(fileURLWithPath: outDir, isDirectory: true)
-            try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
-
-            let deadline = Date().addingTimeInterval(12.0)
-            repeat {
-                host.view.setNeedsLayout()
-                host.view.layoutIfNeeded()
-                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-                try await Task.sleep(nanoseconds: 100_000_000)
-                if !wk.isLoading, wk.estimatedProgress >= 0.99, wk.scrollView.contentSize.height > 900 {
-                    break
-                }
-            } while Date() < deadline
-
-            let totalHeight = wk.scrollView.contentSize.height + wk.scrollView.adjustedContentInset.bottom
-            let maxOffset = max(0, totalHeight - wk.scrollView.bounds.height)
-            let steps = 6
-            for i in 1...steps {
-                let y = maxOffset * CGFloat(i) / CGFloat(steps)
-                wk.scrollView.setContentOffset(CGPoint(x: 0, y: y), animated: false)
-                wk.setNeedsLayout()
-                wk.layoutIfNeeded()
-                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-                try await Task.sleep(nanoseconds: 150_000_000)
-            }
-            let finalTotal = wk.scrollView.contentSize.height + wk.scrollView.adjustedContentInset.bottom
-            let finalBottomOffset = max(0, finalTotal - wk.scrollView.bounds.height)
-            wk.scrollView.setContentOffset(CGPoint(x: 0, y: finalBottomOffset), animated: false)
-            try await Task.sleep(nanoseconds: 900_000_000)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-
-            let fmt = UIGraphicsImageRendererFormat()
-            fmt.scale = 3.0
-            let img = UIGraphicsImageRenderer(bounds: host.view.bounds, format: fmt).image { _ in
-                _ = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
-            }
-            if let png = img.pngData() {
-                try png.write(to: dirURL.appendingPathComponent("about-picture-credits-fineprint-only-195a-390x852.png"))
-            }
-        }
     }
 }

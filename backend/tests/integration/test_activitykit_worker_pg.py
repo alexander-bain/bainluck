@@ -9,6 +9,7 @@ from sqlalchemy import insert, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.models.activitykit import ActivityKitRegistration
+from app.models.push_device import PushDevice
 from app.models.activitykit_delivery import ActivityKitDelivery
 from app.services.activitykit_apns import APNsResult
 from app.services.activitykit_worker import DurableActivityKitWorker, decode_state
@@ -39,6 +40,8 @@ async def pg():
         await conn.execute(text("CREATE TABLE events(id INTEGER PRIMARY KEY)"))
         await conn.execute(text("INSERT INTO users VALUES (1)"))
         await conn.execute(text("INSERT INTO events VALUES (42)"))
+        # 177-A: a registration may belong to a phone (FK target).
+        await conn.run_sync(PushDevice.__table__.create)
         await conn.run_sync(REG.create)
         await conn.run_sync(DEL.create)
         await conn.execute(
@@ -126,6 +129,23 @@ async def test_restart_lease_recovery_preserves_payload_and_fences_old_ack(pg):
         == "accepted"
     )
     assert transport.calls[0][0] == before
+
+
+async def test_each_send_logs_one_age_record_without_any_token(pg, caplog):
+    """#10542 step 1: the send writes one line with the reading's ages and
+    Apple's answer, and neither the push token nor the provider token."""
+    w = await seed(pg)
+    reservation = await w.reserve("a", now=NOW)
+    caplog.set_level("INFO", logger="app.activitykit.push")
+    assert (
+        await w.send(reservation, MockTransport(), provider_token="mock.jwt.sig", now=NOW)
+        == "accepted"
+    )
+    lines = [r.getMessage() for r in caplog.records if r.name == "app.activitykit.push"]
+    assert len(lines) == 1
+    assert "outcome=accepted reason=apns_accepted" in lines[0]
+    assert "score_age=0.0 chance_age=0.0" in lines[0]
+    assert "ab" * 32 not in lines[0] and "mock.jwt.sig" not in lines[0]
 
 
 async def test_replacement_fences_old_token_before_dispatch(pg):

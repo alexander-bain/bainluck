@@ -76,6 +76,7 @@ from typing import Any, Iterable, Mapping, NamedTuple, Optional, Sequence
 # real price. `draw_priced_winner` imports only `graded_card`, which is stdlib
 # only, so this adds no cycle.
 from app.utils.draw_priced_winner import away_is_the_complement, sport_prices_a_draw
+from app.utils.graded_card import rendered_duel_percents
 
 logger = logging.getLogger(__name__)
 
@@ -386,10 +387,34 @@ def resolve_prematch_reading(
     when no rung has a reading. ``None`` means "we hold nothing", which is the
     only case where a settled card is allowed to print no pre-match number.
     """
+    reading = _select_prematch_reading(by_source, books_home, books_away, ladder, sport)
+    if reading is None:
+        return None
+    return {
+        "home_probability": reading.home,
+        "away_probability": reading.away,
+        "source": reading.source,
+    }
+
+
+class _SelectedPrematch(NamedTuple):
+    source: str
+    home: float
+    away: float
+    away_input: Any
+
+
+def _select_prematch_reading(
+    by_source: Optional[Mapping[str, Any]],
+    books_home: Any,
+    books_away: Any,
+    ladder: Iterable[str],
+    sport: Any,
+) -> Optional[_SelectedPrematch]:
     readings = dict(by_source or {})
     for source in ladder:
         if source == BOOKS_SOURCE:
-            pair = _pair(books_home, books_away, sport=sport)
+            home, away, draw = books_home, books_away, None
         else:
             served = readings.get(source)
             if served is None:
@@ -406,15 +431,47 @@ def resolve_prematch_reading(
                 home, away, draw = (list(served) + [None, None, None])[:3]
             if _is_a_two_way_reading_of_a_three_way_game(home, away, draw, sport):
                 continue
-            pair = _pair(home, away, draw, sport=sport)
-        if pair is None:
-            continue
-        return {
-            "home_probability": pair[0],
-            "away_probability": pair[1],
-            "source": source,
-        }
+        pair = _pair(home, away, draw, sport=sport)
+        if pair is not None:
+            return _SelectedPrematch(source, pair[0], pair[1], away)
     return None
+
+
+def serialize_prematch_odds(
+    *,
+    by_source: Optional[Mapping[str, Any]] = None,
+    books_home: Any = None,
+    books_away: Any = None,
+    sport: Any = None,
+) -> Optional[dict]:
+    """Serialize the selected pair and its own marks for detail and game cards."""
+    from app.utils.source_mark import no_source_mark, quote_source_mark
+
+    reading = _select_prematch_reading(
+        by_source, books_home, books_away, PREMATCH_LADDER, sport,
+    )
+    if reading is None:
+        return None
+
+    away_pct, home_pct = rendered_duel_percents(reading.away, reading.home)
+    source_key = "betting" if reading.source == BOOKS_SOURCE else reading.source
+    # The historical inputs establish prices. They carry no clock for the
+    # venue's observation of this exact quote. A repaired away value is also
+    # unbound to any quoted away price, even though the old pair is still served.
+    away_mark = (
+        quote_source_mark([{"key": source_key, "probability": reading.away}])
+        if _as_probability(reading.away_input) == reading.away
+        else no_source_mark("source_evidence_incomplete")
+    )
+    return {
+        "home_probability": reading.home,
+        "away_probability": reading.away,
+        "home_rendered_percent": home_pct,
+        "away_rendered_percent": away_pct,
+        "source": reading.source,
+        "source_mark": quote_source_mark([{"key": source_key, "probability": reading.home}]),
+        "away_source_mark": away_mark,
+    }
 
 
 # ── READING IT OUT OF THE SNAPSHOT TABLE (LAT-P222) ──────────────────────────
@@ -598,6 +655,9 @@ SETTLED_STATUSES: frozenset[str] = frozenset({"completed", "closed"})
 
 def settled_prematch_cutoffs(
     events: Iterable[Any],
+    *,
+    live_detail: bool = False,
+    now: Optional[datetime] = None,
 ) -> tuple[list[int], list[datetime]]:
     """The `(ids, cutoffs)` binds for :data:`PREMATCH_PRIOR_SQL`.
 
@@ -609,7 +669,8 @@ def settled_prematch_cutoffs(
 
     Two rows are dropped, both deliberately:
 
-    * anything not settled — those cards print no pre-match reading;
+    * anything not settled — those cards print no pre-match reading. The
+      event page alone opts in to live rows, after their kickoff has passed;
     * anything with no ``commence_time``. The join this replaced compared
       ``s.captured_at <= e.commence_time``, and ``x <= NULL`` is NULL, so such
       an event contributed no rows there either. Excluding it here keeps that
@@ -618,11 +679,16 @@ def settled_prematch_cutoffs(
     """
     ids: list[int] = []
     cutoffs: list[datetime] = []
+    live_now = _as_utc(now or _utcnow()) if live_detail else None
     for event in events:
-        if getattr(event, "status", None) not in SETTLED_STATUSES:
+        status = getattr(event, "status", None)
+        live = live_detail and status == "live"
+        if status not in SETTLED_STATUSES and not live:
             continue
         cutoff = getattr(event, "commence_time", None)
         if cutoff is None:
+            continue
+        if live and (not isinstance(cutoff, datetime) or _as_utc(cutoff) > live_now):
             continue
         ids.append(event.id)
         cutoffs.append(cutoff)
@@ -632,14 +698,19 @@ def settled_prematch_cutoffs(
 def prematch_prior_binds(
     events: Iterable[Any],
     sources: Sequence[str] = PREDICTION_MARKET_SOURCES,
+    *,
+    live_detail: bool = False,
+    now: Optional[datetime] = None,
 ) -> Optional[dict]:
     """Every bind :data:`PREMATCH_PRIOR_SQL` takes, or ``None`` to skip the read.
 
-    ``None`` when no candidate is settled — the read is not merely empty then,
+    By default only settled rows are asked; ``live_detail`` also admits live
+    rows whose kickoff has passed. Feed and list callers keep their default.
+    ``None`` when no candidate qualifies — the read is not merely empty then,
     it is unnecessary, and a round trip that can only return zero rows is one
     the cold build should not pay for.
     """
-    ids, cutoffs = settled_prematch_cutoffs(events)
+    ids, cutoffs = settled_prematch_cutoffs(events, live_detail=live_detail, now=now)
     if not ids:
         return None
     return {"ids": ids, "cutoffs": cutoffs, "sources": list(sources)}

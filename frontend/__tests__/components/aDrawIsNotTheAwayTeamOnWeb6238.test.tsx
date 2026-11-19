@@ -282,9 +282,15 @@ describe("#6238 the event page is actually wired to the rule", () => {
    * DOMAIN, not a relaxation of it: #6238's defect — a served away value
    * reaching a render unguarded — is still caught on both pairs.
    */
-  it("the CURRENT away values are taken through printableAway", () => {
+  const HEADLINE_LIB = readFileSync(
+    join(__dirname, "..", "..", "lib", "eventPageHeadline199.ts"),
+    "utf8",
+  );
+
+  it("the CURRENT away values are taken through printableAway in eventPageHeadline199", () => {
     for (const name of ["servedAwayProb", "servedAwayPct"]) {
       expect(PAGE).toMatch(new RegExp(`printableAway\\(${name},\\s*event\\.sport\\)`));
+      expect(HEADLINE_LIB).toMatch(new RegExp(`printableAway\\(input\\.${name},\\s*event\\.sport\\)`));
     }
   });
 
@@ -306,34 +312,17 @@ describe("#6238 the event page is actually wired to the rule", () => {
   });
 
   it("the served away values are renamed at the destructure, so none can reach a render", () => {
-    // If `awayProb` came straight out of `resolveProbability` again, the four
-    // `const` declarations below it would be a redeclaration and the build would
-    // fail — but only if the rename survives. This pins the rename itself.
     expect(PAGE).toMatch(/awayProb:\s*servedAwayProb/);
     expect(PAGE).toMatch(/openingAwayPct:\s*servedOpeningAwayPct/);
-    // The defect itself: the served value handed to the hero.
     expect(PAGE).not.toMatch(/awayProb=\{servedAwayProb\}/);
     expect(PAGE).not.toMatch(/awayPct=\{servedAwayPct\}/);
   });
 
-  it("the hero is told to OMIT the slot, not just handed a null", () => {
-    // Without this the page renders the redaction bar the LOOK caught.
+  it("the hero and charts are told to OMIT the slot on draw-priced sports", () => {
     expect(PAGE).toMatch(/awayWithheld=\{awaySlotWithheld\}/);
     expect(PAGE).toMatch(/const awaySlotWithheld = sportPricesADraw\(event\.sport\)/);
-  });
-
-  it("the opening line is covered too, not just the hero", () => {
-    // #5696's lesson: a hero that withholds above an `Opened 64% – 36%` line that
-    // does not has moved the false number three rows down, not deleted it.
-    expect(PAGE).toMatch(/Opened \{formatProbability\(openingHomeProb/);
-    // …and its separator is gated with it, or the line reads `Opened 64% – -`.
-    //
-    // #6614: gated on the OPENING pair's own answer. Gating it on
-    // `awaySlotWithheld` — the hero pair's — is what deleted `Opened 32% – 40%`
-    // down to `Opened 32%` on 9 of 25 live soccer cards. The two loci on one
-    // screen legitimately answer differently, because they are two different
-    // pairs from two different producers.
-    expect(PAGE).toMatch(/!openingAwaySlotWithheld && <>[\s\S]{0,80}openingAwayProb/);
+    expect(HEADLINE_LIB).toContain("sportPricesADraw(event.sport)");
+    expect(HEADLINE_LIB).toContain("awayIsTheComplement(");
   });
 });
 

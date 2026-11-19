@@ -17,10 +17,17 @@ struct SportCategoryView: View {
     /// (#3709).
     @State private var gridWidth: CGFloat = 0
 
-    init(categoryKey: String, categoryName: String) {
+    private let isPreloadedForTest: Bool
+
+    init(
+        categoryKey: String,
+        categoryName: String,
+        preloadedViewModel: SportCategoryViewModel? = nil
+    ) {
         self.categoryKey = categoryKey
         self.categoryName = categoryName
-        _viewModel = StateObject(wrappedValue: SportCategoryViewModel(categoryKey: categoryKey))
+        self.isPreloadedForTest = (preloadedViewModel != nil)
+        _viewModel = StateObject(wrappedValue: preloadedViewModel ?? SportCategoryViewModel(categoryKey: categoryKey))
     }
 
     var body: some View {
@@ -82,7 +89,9 @@ struct SportCategoryView: View {
             AnalyticsService.trackScreen(name: "sport_category", type: "category")
         }
         .task {
-            await viewModel.load()
+            if !isPreloadedForTest {
+                await viewModel.load()
+            }
         }
         .refreshable {
             await viewModel.load()
@@ -111,15 +120,34 @@ struct SportCategoryView: View {
 
     private var categoryList: some View {
         List {
-            if !viewModel.liveNow.isEmpty {
+            if !viewModel.liveNow.isEmpty || !viewModel.leagueLiveGames.isEmpty {
                 // live/048 — the header reads the bucket. See `EventState`.
-                feedSection(title: EventState.liveSectionTitle(hasSuspended: viewModel.liveNowHasSuspended), systemImage: "circle.fill", imageColor: .red, items: viewModel.liveNow)
+                combinedGameSection(
+                    title: EventState.liveSectionTitle(hasSuspended: viewModel.leagueLiveHasSuspended),
+                    systemImage: "circle.fill",
+                    imageColor: .red,
+                    feedItems: viewModel.liveNow,
+                    extraEvents: viewModel.leagueLiveGames
+                )
             }
-            if !viewModel.justHappened.isEmpty {
-                feedSection(title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: viewModel.justHappened)
+            // #13001: live -> upcoming -> recent -> events/futures.
+            if !viewModel.upcoming.isEmpty || !viewModel.leagueUpcomingGames.isEmpty {
+                combinedGameSection(
+                    title: "Upcoming",
+                    systemImage: "calendar",
+                    imageColor: .blue,
+                    feedItems: viewModel.upcoming,
+                    extraEvents: viewModel.leagueUpcomingGames
+                )
             }
-            if !viewModel.upcoming.isEmpty {
-                feedSection(title: "Upcoming", systemImage: "calendar", imageColor: .blue, items: viewModel.upcoming)
+            if !viewModel.justHappened.isEmpty || !viewModel.leagueRecentGames.isEmpty {
+                combinedGameSection(
+                    title: "Just Happened",
+                    systemImage: "clock.arrow.circlepath",
+                    imageColor: .secondary,
+                    feedItems: viewModel.justHappened,
+                    extraEvents: viewModel.leagueRecentGames
+                )
             }
             // #1471: event concepts and tournaments — a UFC fight night, a Grand
             // Prix, a golf tournament. Placed ABOVE Markets because they are the
@@ -182,6 +210,51 @@ struct SportCategoryView: View {
         #if os(iOS)
         .listStyle(.insetGrouped)
         #endif
+    }
+
+    private func combinedGameSection(
+        title: String,
+        systemImage: String,
+        imageColor: Color,
+        feedItems: [FeedItem],
+        extraEvents: [FeedEventData]
+    ) -> some View {
+        let totalCount = feedItems.count + extraEvents.count
+        return Section {
+            ForEach(feedItems) { item in
+                feedRow(item)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        pinSwipeButton(item)
+                    }
+            }
+            ForEach(extraEvents) { event in
+                NavigationLink(value: Route.eventDetail(id: event.id)) {
+                    EventCardView(
+                        event: event,
+                        reason: nil,
+                        personalizationReasons: nil,
+                        headline: nil
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        } header: {
+            HStack(spacing: 6) {
+                Label(title, systemImage: systemImage)
+                    .foregroundStyle(imageColor)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .textCase(nil)
+                Text("\(totalCount)")
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.12))
+                    .clipShape(Capsule())
+            }
+        }
     }
 
     private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem]) -> some View {
@@ -258,7 +331,14 @@ struct SportCategoryView: View {
                 .lineLimit(2)
 
             if let outcomes = market.topOutcomes, !outcomes.isEmpty {
-                ForEach(Array(outcomes.prefix(3).enumerated()), id: \.offset) { _, o in
+                let shown = NumericalMarketScaleOrder228.orderedSlice(
+                    outcomes,
+                    limit: 3,
+                    label: \.name,
+                    probability: { $0.prob / 100.0 },
+                    totalOutcomeCount: market.outcomeCount ?? outcomes.count
+                )?.map(\.element) ?? Array(outcomes.prefix(3))
+                ForEach(Array(shown.enumerated()), id: \.offset) { _, o in
                     HStack(spacing: 4) {
                         Text(o.name)
                             .font(.caption)
@@ -274,12 +354,14 @@ struct SportCategoryView: View {
             }
 
             HStack(spacing: 4) {
-                Text(market.source)
-                    .font(.caption2)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(market.source == "kalshi" ? Color.green.opacity(0.1) : Color.blue.opacity(0.1))
-                    .clipShape(Capsule())
+                if let sourceLabel = SourceLabels.cardFaceLabel(for: market.source) {
+                    Text(sourceLabel)
+                        .font(.caption2)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.1))
+                        .clipShape(Capsule())
+                }
                 if let count = market.outcomeCount, count > 3 {
                     Text("+\(count - 3) more")
                         .font(.caption2)

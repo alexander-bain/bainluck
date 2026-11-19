@@ -1,0 +1,110 @@
+{
+  "slug": "machinery-2028-presidential",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "same_measure",
+    "sibling",
+    "movement"
+  ],
+  "level": "member",
+  "kicker": "POLITICS · 2028 RACE",
+  "name": "2028 Presidential Race",
+  "category": "politics",
+  "tag": "POLITICS",
+  "section_title": "Presidential Contenders",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "card_section_key": "presidential_field",
+    "sections": [
+      {
+        "key": "party_duel",
+        "title": "White House Party Control",
+        "note": "Two-party general-election balance.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["2028", "presidential", "party"],
+          "exclude_tokens": ["nominee"],
+          "shape": "two_way",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 2
+        }
+      },
+      {
+        "key": "presidential_field",
+        "title": "General Election Contenders",
+        "note": "Individual candidates priced highest to win the presidency.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["presidential", "election", "winner", "2028"],
+          "exclude_tokens": ["party", "vice"],
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 6
+        }
+      },
+      {
+        "key": "race_history",
+        "title": "2028 Primary & Ticket Moves This Week",
+        "fallback_title": "2028 Primary & Ticket Odds",
+        "note": "7-day odds movement across early presidential primaries, battleground states, and ticket races.",
+        "atom_query": {
+          "kind": "market_history",
+          "title_all_tokens": ["2028"],
+          "any_tokens": [
+            "presidential primary",
+            "presidential caucus",
+            "presidential election:",
+            "vice-presidential",
+            "vp nominee",
+            "presidential ticket"
+          ],
+          "exclude_tokens": [
+            "senate",
+            "house",
+            "governor",
+            "mayor",
+            "uefa",
+            "euro",
+            "olympic",
+            "odds hit",
+            "which state",
+            "which city",
+            "who will run"
+          ],
+          "shape": "any",
+          "order_by": "movement_desc",
+          "min_items": 1,
+          "max_items": 3,
+          "max_outcomes": 3,
+          "hours": 168
+        }
+      },
+      {
+        "key": "party_nominations",
+        "title": "Party Nominations & Running Mates",
+        "note": "Primary fields and ticket races feeding the general election.",
+        "dynamic_item_note": true,
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["2028"],
+          "any_tokens": ["democratic presidential nominee", "republican presidential nominee", "vice-presidential election winner"],
+          "exclude_tokens": ["woman", "age", "trump family"],
+          "shape": "field",
+          "order_by": "closeness_to_50",
+          "min_items": 2,
+          "max_items": 2,
+          "max_outcomes": 3
+        }
+      }
+    ]
+  }
+}

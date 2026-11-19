@@ -34,6 +34,10 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _ADMIN_HEALTH_CACHE_TTL = 3600  # 1h — generous so a few skipped beats never empty it
+#: 215-B (Nov 16 2026): the link-rate precompute is daily, so its key lives 50 h
+#: and one missed night never empties the tile. Its own constant: the retention
+#: windows below derive from `_ADMIN_HEALTH_CACHE_TTL` and must not move.
+_ADMIN_LINK_RATE_CACHE_TTL = 50 * 3600
 #: C-1 (2026-11-06): audit-all and matured-linkage moved from every 30 min to
 #: hourly, so their two keys live 2 h and one late beat never empties the tile.
 #: A separate constant on purpose: the retention windows below derive from
@@ -76,7 +80,7 @@ async def _precompute_admin_link_rate():
     rc.set(
         "bainluck:admin:link_rate",
         json.dumps(payload),
-        ex=_ADMIN_HEALTH_CACHE_TTL,
+        ex=_ADMIN_LINK_RATE_CACHE_TTL,
     )
     overall = payload.get("overall", {})
     logger.info(

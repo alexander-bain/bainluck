@@ -210,6 +210,17 @@ import Foundation
     defaults.set(202, forKey: selectionKey)
     let mismatch = WatchSelectedGameStore(defaults: defaults)
     precondition(mismatch.game == nil && !mismatch.isSelected(eventID: 101) && !mismatch.isSelected(eventID: 111))
+
+    // Ruling 194-A: college games print school names ("Duke", "Ole Miss") and served abbreviations ("DUKE", "MISS"), leaving pro teams unchanged.
+    let collegeJSON = """
+    {"id":9901,"sport":"basketball_ncaab","home_team":"Duke Blue Devils","away_team":"Ole Miss Rebels","status":"scheduled","home_team_data":{"team_id":150,"short_name":"Blue Devils","abbreviation":"DUKE"},"away_team_data":{"team_id":145,"short_name":"Rebels","abbreviation":"MISS"}}
+    """.data(using: .utf8)!
+    let collegeGame = try JSONDecoder().decode(WatchSelectedGame.self, from: collegeJSON)
+    precondition(collegeGame.homeTeam == "Duke", "Expected Duke, got \(collegeGame.homeTeam)")
+    precondition(collegeGame.awayTeam == "Ole Miss", "Expected Ole Miss, got \(collegeGame.awayTeam)")
+    precondition(collegeGame.homeCompactIdentity?.abbreviation == "DUKE")
+    precondition(collegeGame.awayCompactIdentity?.abbreviation == "MISS")
+
     print("PASS: selected identity direct/alias no-op, clocks, restart/offline, bounded chains/cycles, cadence/backoff/server pause, pending/canceled/stale fences, unrelated selection/clear and tolerant legacy metadata")
 }
 

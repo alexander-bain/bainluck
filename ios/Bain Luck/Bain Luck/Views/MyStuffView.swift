@@ -56,6 +56,16 @@ struct MyStuffView: View {
         isAuthenticated
     }
 
+    static let signInMaxWidth: CGFloat = 560
+    static let signedInManagePinsMaxWidth: CGFloat = 800
+
+    #if os(iOS)
+    private var myStuffTitleDisplayMode: NavigationBarItem.TitleDisplayMode {
+        if sizeClass == .regular { return .inline }
+        return .large
+    }
+    #endif
+
     var body: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
@@ -64,13 +74,31 @@ struct MyStuffView: View {
                 } label: {
                     HStack {
                         Label("Manage pins", systemImage: "bookmark.fill")
+                            .font(.subheadline.weight(.medium))
                         Spacer()
                         Text("\(pinManager.savedPins.count)")
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(.secondary)
                         Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
                     }
-                    .padding()
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color.cardBackgroundDark)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                    )
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+                .frame(maxWidth: authManager.isAuthenticated ? Self.signedInManagePinsMaxWidth : Self.signInMaxWidth)
+                .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("myStuffManagePins")
+                SiriProbabilityTip12315()
                 Group {
                     if authManager.isLoading {
                         ProgressView()
@@ -85,7 +113,7 @@ struct MyStuffView: View {
             }
             .navigationTitle("My Stuff")
             #if os(iOS)
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(myStuffTitleDisplayMode)
             #endif
             .toolbar {
                 // Gated on being SIGNED IN and nothing else. It used to also
@@ -259,6 +287,8 @@ struct MyStuffView: View {
                     .foregroundStyle(.tertiary)
                     .padding(.bottom, 40)
             }
+            .frame(maxWidth: Self.signInMaxWidth)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -766,6 +796,13 @@ struct MyStuffView: View {
 
     // MARK: - Context Menu Pin (iPad)
 
+    static func eventCopyProbabilityText(_ event: FeedEventData) -> String? {
+        guard let probability = CompactGameCard12616.currentOddsForCard(event)?.homeProbability else {
+            return nil
+        }
+        return "\(event.homeTeam): \(Int(probability * 100))%"
+    }
+
     @ViewBuilder
     private func pinContextMenu(_ item: FeedItem) -> some View {
         if let pinInfo = pinInfo(for: item) {
@@ -777,9 +814,8 @@ struct MyStuffView: View {
             }
         }
         if let event = item.event {
-            if let prob = event.currentOdds?.homeProbability {
+            if let text = Self.eventCopyProbabilityText(event) {
                 Button {
-                    let text = "\(event.homeTeam): \(Int(prob * 100))%"
                     copyToClipboard(text)
                 } label: {
                     Label("Copy Probability", systemImage: "doc.on.doc")
@@ -1494,7 +1530,7 @@ private struct TeamFuturesSection: View {
 /// Futures card for My Stuff that highlights the user's team outcomes instead
 /// of showing the global top 3 leaders. Shows the user's team probability,
 /// rank, and movement in the context of the broader market.
-private struct MyTeamFuturesCard: View {
+struct MyTeamFuturesCard: View {
     private let futures: FeedFuturesData
     private let matchedOutcomes: [MatchedOutcome]
 
@@ -1515,11 +1551,11 @@ private struct MyTeamFuturesCard: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 PinButton(type: "future", id: futures.id, compact: true)
-                if let count = futures.sourceCount, count > 1 {
-                    Text("\(count) sources")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                } else if let source = SourceLabels.label(for: futures.source) {
+                if let source = SourceLabels.cardFaceLabel(
+                    for: futures.source,
+                    sources: futures.sources,
+                    sourceCount: futures.sourceCount
+                ) {
                     Text(source)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
@@ -1530,7 +1566,8 @@ private struct MyTeamFuturesCard: View {
             Text(futures.name)
                 .font(.subheadline)
                 .fontWeight(.medium)
-                .lineLimit(2)
+                .lineLimit(4)
+                .fixedSize(horizontal: false, vertical: true)
 
             // User's matched team outcomes — shown prominently
             ForEach(matchedOutcomes) { outcome in

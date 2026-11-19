@@ -912,15 +912,18 @@ struct WatchSelectedGameView: View {
 
     @ViewBuilder
     private func pickerMatchup(away: String, home: String, metadata: WatchFeedEvent?) -> some View {
+        let displayTeams = TeamShortName.isCollegeSport(sportKey: metadata?.sport)
+            ? TeamShortName.shortPair(away: away, home: home, sportKey: metadata?.sport)
+            : (away: away, home: home)
         let awayColor = pickerTeamColor(metadata?.awayTeamData?.primaryColor)
         let homeColor = pickerTeamColor(metadata?.homeTeamData?.primaryColor)
         if awayColor != nil || homeColor != nil {
             VStack(alignment: .leading, spacing: 2) {
-                pickerTeamName(away, color: awayColor)
-                pickerTeamName("at " + home, color: homeColor)
+                pickerTeamName(displayTeams.away, color: awayColor)
+                pickerTeamName("at " + displayTeams.home, color: homeColor)
             }
         } else {
-            Text("\(away) at \(home)")
+            Text("\(displayTeams.away) at \(displayTeams.home)")
                 .font(.footnote.weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
         }

@@ -17,6 +17,7 @@ struct GamePlayCardView: View {
     var awayTeamColor: Color = .primary
     var homeTeamLogo: String?
     var awayTeamLogo: String?
+    var sportKey: String? = nil
     /// Most recent chart point (shown when not scrubbing)
     var lastPoint: GamePlayPoint?
     /// #9185 — both sides' chances print on EVERY moment, a scoring play
@@ -357,7 +358,7 @@ struct GamePlayCardView: View {
 
     /// #3430 — both competitors of one matchup, so the pair rule decides.
     private var sides: (away: String, home: String) {
-        TeamShortName.shortPair(away: awayTeam, home: homeTeam)
+        TeamShortName.shortPair(away: awayTeam, home: homeTeam, sportKey: sportKey)
     }
 
     private var homeShort: String { sides.home }

@@ -18,6 +18,7 @@ export function marketHref(marketId: number | null | undefined): string | null {
 
 interface MarketLinkProps {
   marketId: number | null | undefined;
+  dataTestId?: string;
   className?: string;
   style?: CSSProperties;
   onMouseEnter?: MouseEventHandler<HTMLElement>;
@@ -29,11 +30,11 @@ interface MarketLinkProps {
  *  `<div>` it always was when it has none. An `<a>` is inline, so a caller
  *  whose box had no display class of its own passes `block`; one that already
  *  says `grid` or `flex` keeps it, with no second display class to fight. */
-export default function MarketLink({ marketId, className, style, onMouseEnter, onMouseLeave, children }: MarketLinkProps) {
+export default function MarketLink({ marketId, dataTestId, className, style, onMouseEnter, onMouseLeave, children }: MarketLinkProps) {
   const href = marketHref(marketId);
   if (!href) {
     return (
-      <div className={className} style={style} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+      <div data-testid={dataTestId} className={className} style={style} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
         {children}
       </div>
     );
@@ -41,7 +42,7 @@ export default function MarketLink({ marketId, className, style, onMouseEnter, o
   return (
     <Link
       href={href}
-      data-testid="weather-market-link"
+      data-testid={dataTestId ?? "weather-market-link"}
       className={className}
       style={style}
       onMouseEnter={onMouseEnter}

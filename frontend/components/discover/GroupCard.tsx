@@ -24,6 +24,8 @@ interface GroupCardProps {
    * rendering a blank line.
    */
   sharedQuestion?: string | null;
+  imageUrl?: string | null;
+  imagePresentation?: string | null;
   positionIndex?: number;
 }
 
@@ -51,7 +53,7 @@ interface GroupCardProps {
  * cards side by side in one scroll are one card family (notice 35), and these
  * two differed in seat count, label, colour and border at once.
  */
-export function GroupCard({ items, title, sharedQuestion, positionIndex }: GroupCardProps) {
+export function GroupCard({ items, title, sharedQuestion, imageUrl, imagePresentation, positionIndex }: GroupCardProps) {
   const [expanded, setExpanded] = useState(false);
   const primary = items[0];
   const peek = items.slice(0, bundleSeatCount(items.length));
@@ -65,7 +67,11 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
   const shown = expanded ? items : peek;
   const scoreComparison = rottenTomatoesComparison(items);
   const displayedQuestion = scoreComparison ? "Rotten Tomatoes score forecasts" : sharedQuestion;
-  const cat = primary.type === "futures" ? (primary.data as FeedFuturesData).llm_sport_category : null;
+  const primaryFutures = primary.type === "futures" ? (primary.data as FeedFuturesData) : null;
+  const cat = primaryFutures?.llm_sport_category ?? null;
+  const resolvedImageUrl = imageUrl ?? primaryFutures?.image_url ?? null;
+  const resolvedImagePresentation =
+    imagePresentation ?? primaryFutures?.image_presentation ?? null;
   const analytics = getDiscoverItemAnalytics(primary);
 
   const setExpandedWithTracking = (next: boolean) => {
@@ -89,6 +95,8 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
         sharedQuestion={displayedQuestion}
         fallbackCount={`${items.length} markets`}
         category={cat}
+        imageUrl={resolvedImageUrl}
+        imagePresentation={resolvedImagePresentation}
         expanded={expanded}
         canExpand={canExpand}
         onToggle={() => setExpandedWithTracking(!expanded)}

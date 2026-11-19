@@ -95,6 +95,16 @@ from app.utils.sports_first_page_rails import (
     finished_card_max_age_hours,
 )
 
+
+@pytest.fixture(autouse=True)
+def _pre_190_game_admission(monkeypatch):
+    """These cases pin the pre-190 admission: a marquee or finished game held a
+    Discover seat by selection. Ruling 190 (#11937) requires a stated reason
+    instead, and keeps this rule only behind `DISCOVER_GAME_NEEDS_REASON=false`,
+    which is what these cases now guard. The 190 rule is guarded in
+    `test_discover_game_reason_190.py`."""
+    monkeypatch.setenv("DISCOVER_GAME_NEEDS_REASON", "false")
+
 # ═════════════════════════════════════════════════════════════════════════════
 # THE SPECIMEN, and every clock below is an offset from it. No branch on the
 # real clock anywhere in this file (gotcha #44): the anchor is the game, the

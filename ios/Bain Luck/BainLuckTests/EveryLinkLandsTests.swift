@@ -48,7 +48,32 @@ final class EveryLinkLandsTests: XCTestCase {
     func testBareFuturesLinkOpensTheFuturesList() throws {
         let nav = NavigationCoordinator()
         XCTAssertTrue(nav.handleURL(try XCTUnwrap(URL(string: "bainluck://futures"))))
-        XCTAssertEqual(nav.selectedTab, .feed)
+        XCTAssertEqual(nav.selectedTab, .leagues)
+    }
+
+    @MainActor
+    func testFuturesDetailLinkOpensInBrowse() throws {
+        let nav = NavigationCoordinator()
+        XCTAssertTrue(nav.handleURL(try XCTUnwrap(URL(string: "bainluck://futures/13795456"))))
+        XCTAssertEqual(nav.selectedTab, .leagues)
+        let pushed = expectation(description: "route published")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { pushed.fulfill() }
+        wait(for: [pushed], timeout: 1.0)
+        XCTAssertEqual(nav.consumeRoute(), .futuresDetail(id: 13795456))
+    }
+
+    @MainActor
+    func testSidebarQuickLinksSelectPreferencesAndCalibrationDirectly() throws {
+        let nav = NavigationCoordinator()
+        nav.usesSidebarQuickLinks = true
+
+        XCTAssertTrue(nav.handleURL(try XCTUnwrap(URL(string: "bainluck://preferences"))))
+        XCTAssertEqual(nav.selectedTab, .preferences)
+        XCTAssertNil(nav.pendingRoute)
+
+        XCTAssertTrue(nav.handleURL(try XCTUnwrap(URL(string: "bainluck://calibration"))))
+        XCTAssertEqual(nav.selectedTab, .calibration)
+        XCTAssertNil(nav.pendingRoute)
     }
 
     // MARK: - The tournament hub

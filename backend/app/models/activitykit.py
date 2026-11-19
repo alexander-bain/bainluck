@@ -1,8 +1,23 @@
-"""Account-owned ActivityKit registrations, separate from generic device tokens."""
+"""ActivityKit registrations, separate from generic device tokens.
+
+Owned by an account, or (177-A) by a phone with no account: at least one of
+``user_id`` and ``device_id`` is set.
+"""
 
 from datetime import datetime
+from uuid import UUID
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    func,
+)
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.services.database import Base
@@ -12,8 +27,14 @@ class ActivityKitRegistration(Base):
     __tablename__ = "activitykit_registrations"
 
     activity_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    device_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("push_devices.device_id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
     )
     event_id: Mapped[int] = mapped_column(
         ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True
@@ -32,4 +53,11 @@ class ActivityKitRegistration(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "user_id IS NOT NULL OR device_id IS NOT NULL",
+            name="ck_activitykit_registrations_owner",
+        ),
     )

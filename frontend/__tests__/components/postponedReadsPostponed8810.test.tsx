@@ -166,15 +166,10 @@ describe("the event page feeds the authority's word from the payload", () => {
     );
   });
 
-  it("the pill, the hero slot, both scores and the score chart all read it", () => {
-    expect(src).toMatch(/"home-away",[\s\S]{0,200}stoppageLabel,\s*\)/);
-    expect(src).toContain("authorityStoppageDescription(stoppageLabel)");
-    expect(src).toContain("stopped={stoppageLabel !== null}");
-    // Both hero scores, the score chart, (#10239) the final score handed to the projected final
-    // points module, (#9483) the NFL card reader's match line, and (#11296) the actual score the
-    // final's "Before scheduled start" band is admitted against: a postponed match's 0–0 filler
-    // is never passed in as a final or printed as a score.
-    expect(src.match(/!heroScoreIsStoppageFiller/g)?.length).toBe(6);
+  it("the headline, the score chart, and the final score guards all read stoppageLabel and heroScoreIsStoppageFiller", () => {
+    expect(src).toMatch(/resolveEventPageHeadline199\(\{[\s\S]{0,400}stoppageLabel,/);
+    expect(src).toContain("stoppageLabel={stoppageLabel}");
+    expect(src.match(/!heroScoreIsStoppageFiller/g)?.length).toBe(4);
     expect(src).toMatch(
       /isFinished && heroScorePairPresent && !heroScoreIsStoppageFiller\s*\?\s*finalForecastComparison\(/,
     );
@@ -192,7 +187,6 @@ describe("every surface that prints the suspended summary passes the authority's
     "components/discover/EventCard.tsx",
     "app/events/[id]/opengraph-image.tsx",
     "lib/eventShareMeta.ts",
-    "app/events/[id]/page.tsx",
   ];
   it.each(SITES)("%s", (rel) => {
     const src = fs.readFileSync(path.join(FRONTEND, rel), "utf8");

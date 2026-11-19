@@ -51,6 +51,7 @@ import { join } from "path";
 
 const IOS_ROOT = join(__dirname, "../../../ios/Bain Luck/Bain Luck");
 const DETAIL = join(IOS_ROOT, "Views/EventDetailView.swift");
+const CARD = join(IOS_ROOT, "Components/EventSportHeadlineCard12472.swift");
 
 function stripComments(source: string): string {
   return source
@@ -60,86 +61,71 @@ function stripComments(source: string): string {
 }
 
 // A path typo would otherwise read as a clean pass.
-const d = existsSync(DETAIL) ? describe : describe.skip;
+const d = existsSync(DETAIL) && existsSync(CARD) ? describe : describe.skip;
 
 d("#3978 — the event hero restacks at accessibility text sizes", () => {
   const detail = () => readFileSync(DETAIL, "utf8");
+  const card = () => readFileSync(CARD, "utf8");
   const code = () => stripComments(detail());
+  const cardCode = () => stripComments(card());
 
-  /**
-   * `heroSection`'s body alone.
-   *
-   * Scoped for the reason the #3966 guard had to be: `EventDetailView` is ~2,000
-   * lines and draws several unrelated rows, at least one of which is legitimately
-   * a fixed-size HStack. A whole-file assertion here would not read as strict, it
-   * would read as wrong, and the only way to green it would be to change layouts
-   * nobody asked about.
-   */
   function heroBody(): string {
     const source = code();
     const start = source.indexOf("private func heroSection(");
     expect(start).toBeGreaterThan(-1);
-    const next = source.indexOf("\n    private ", start + 1);
-    expect(next).toBeGreaterThan(start);
-    return source.slice(start, next);
+    const next = source.indexOf("\n    static ", start + 1);
+    const nextPriv = source.indexOf("\n    private ", start + 1);
+    const end = [next, nextPriv].filter((idx) => idx > start).sort((a, b) => a - b)[0];
+    expect(end).toBeGreaterThan(start);
+    return source.slice(start, end);
   }
 
-  it("the view reads the reader's text size from the environment", () => {
-    // Not `UIApplication.shared.preferredContentSizeCategory`: that reads the
-    // APP's setting and ignores any `.dynamicTypeSize` a parent has applied, so
-    // it measures a different size from the one being drawn.
+  it("the view and unified headline card read the reader's text size from the environment", () => {
     expect(code()).toMatch(
+      /@Environment\(\\\.dynamicTypeSize\) private var dynamicTypeSize/
+    );
+    expect(cardCode()).toMatch(
       /@Environment\(\\\.dynamicTypeSize\) private var dynamicTypeSize/
     );
   });
 
-  it("the larger-text decision is taken once and shared by both rows", () => {
-    // One `let`, not two call sites: the meta row and the team row must agree.
-    // A hero whose badge row stacked while its teams did not would be a third
-    // layout nobody designed.
-    const body = heroBody();
-    expect(body).toMatch(/let stacked = dynamicTypeSize >= \.xxLarge/);
-    expect(body).toMatch(/let heroLayout = stacked\n\s*\? AnyLayout\(EventHeroTeamLayout/);
-    expect(body).toMatch(/let metaLayout = stacked\n\s*\? AnyLayout\(VStackLayout/);
-    // …and the default-size arm retains the compact row.
-    expect(body).toMatch(/: AnyLayout\(HStackLayout\(spacing: 0\)\)/);
-    expect(body).toMatch(/: AnyLayout\(HStackLayout\(spacing: 8\)\)/);
+  it("heroSection unconditionally mounts EventSportHeadlineCard12472 with one shared stacking predicate", () => {
+    expect(heroBody()).toMatch(/EventSportHeadlineCard12472\(/);
+    expect(cardCode()).toContain("isAccessibilitySize: dynamicTypeSize.isAccessibilitySize");
+    expect(cardCode()).toMatch(
+      /private var stacksRowsVertically: Bool \{\s*cellLayout\.stacksRowsVertically\s*\}/
+    );
   });
 
-  it("both rows are drawn THROUGH the switching layout, not beside it", () => {
-    // The hazard `AnyLayout` invites: declare the layout, then forget to use it
-    // and leave the literal `HStack` in place. Both `let`s above would still be
-    // there and the page would be unchanged.
-    const body = heroBody();
-    expect(body).toMatch(/metaLayout \{/);
-    expect(body).toMatch(/heroLayout \{/);
-    expect(body).not.toMatch(/\n\s*HStack\(spacing: 0\) \{\n\s*\/\/ Away team/);
+  it("top bar and competitor rows restack vertically at accessibility sizes", () => {
+    const body = cardCode();
+    expect(body).toMatch(
+      /let layout = stacksRowsVertically\s*\? AnyLayout\(VStackLayout\(alignment: \.leading, spacing: 6\)\)\s*: AnyLayout\(HStackLayout\(alignment: \.center, spacing: 8\)\)/
+    );
+    expect(body).toMatch(/layout \{/);
+    expect(body).toMatch(/if stacksRowsVertically \{\s*VStack\(alignment: \.leading, spacing: 4\)/);
   });
 
-  it("THE MUTANT: the centre column does not go back to a hard fixed size", () => {
-    // `.fixedSize(horizontal: true, vertical: false)` is the pre-fix line,
-    // verbatim from origin/master d448e172. One word, and the bleed is back.
-    const body = heroBody();
-    expect(body).toMatch(/\.fixedSize\(horizontal: !stacked, vertical: false\)/);
-    expect(body).not.toMatch(/\.fixedSize\(horizontal: true, vertical: false\)/);
+  it("THE MUTANT: live league text never forces horizontal fixedSize when stacked", () => {
+    const body = cardCode();
+    expect(body).toMatch(
+      /\.fixedSize\(horizontal: !stacksRowsVertically, vertical: stacksRowsVertically\)/
+    );
   });
 
-  it("the mutant check is looking at the right function, and would still fire", () => {
-    // A silently-empty slice would make every assertion above vacuous.
-    const body = heroBody();
-    expect(body).toMatch(/Giant probabilities centered|heroStatusBadge\(event\)/);
+  it("the mutant check is looking at the right component, and would still fire", () => {
+    const body = cardCode();
+    expect(body).toMatch(/private func competitorRowView\(/);
     const mutated = body.replace(
-      /\.fixedSize\(horizontal: !stacked, vertical: false\)/,
+      /\.fixedSize\(horizontal: !stacksRowsVertically, vertical: stacksRowsVertically\)/,
       ".fixedSize(horizontal: true, vertical: false)"
     );
-    expect(mutated).toMatch(/\.fixedSize\(horizontal: true, vertical: false\)/);
-    expect(mutated).not.toMatch(/\.fixedSize\(horizontal: !stacked, vertical: false\)/);
+    expect(mutated).not.toMatch(
+      /\.fixedSize\(horizontal: !stacksRowsVertically, vertical: stacksRowsVertically\)/
+    );
   });
 
-  it("the row arrangement keeps its Spacer and the column does not", () => {
-    // A `Spacer` pushes to both ends of a row; in a column it is a blank line
-    // that shoves the date away from the badge. Gating it is not tidiness — an
-    // ungated Spacer is a visible gap in the stacked hero.
-    expect(heroBody()).toMatch(/if !stacked \{ Spacer\(\) \}/);
+  it("the row arrangement keeps its Spacer and the stacked column gates it", () => {
+    expect(cardCode()).toMatch(/if !stacksRowsVertically \{\s*Spacer\(minLength: 6\)\s*\}/);
   });
 });

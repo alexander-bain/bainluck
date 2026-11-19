@@ -173,17 +173,21 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
             source.contains("@inline(never)\n    private func stackBoundary12278<V: View>(@ViewBuilder _ make: () -> V) -> AnyView"),
             "EventDetailView must keep @inline(never) stackBoundary12278 so Release (-O) cannot inline child @ViewBuilder frames into body/contentView/heroSection"
         )
-        let boundaryOccurrences = source.components(separatedBy: "stackBoundary12278 {").count - 1
+        let cardSource = try String(
+            contentsOf: root.appendingPathComponent("Components/EventSportHeadlineCard12472.swift"),
+            encoding: .utf8
+        )
+        let boundaryOccurrences =
+            (source.components(separatedBy: "stackBoundary12278 {").count - 1)
+            + (cardSource.components(separatedBy: "cardStackBoundary12278 {").count - 1)
         XCTAssertGreaterThanOrEqual(
             boundaryOccurrences,
             24,
-            "EventDetailView must preserve all 24+ stackBoundary12278 seams across body, contentView, heroSection, and nflPairedHeadlineView (found \(boundaryOccurrences))"
+            "EventDetailView + EventSportHeadlineCard12472 must preserve all 24+ non-inlined stack-boundary seams (found \(boundaryOccurrences))"
         )
-        let minimumScaleOccurrences = source.components(separatedBy: ".minimumScaleFactor(stacked ? 1.0 : 0.8)").count - 1
-        XCTAssertEqual(
-            minimumScaleOccurrences,
-            2,
-            "Three-column hero away and home team labels must allow 0.8 minimumScaleFactor at regular Dynamic Type so multi-word names do not truncate or collide with the center verdict (#11666)"
+        XCTAssertTrue(
+            cardSource.contains(".minimumScaleFactor(stacksRowsVertically ? 0.72 : 0.80)"),
+            "Unified headline competitor labels must allow 0.80 minimumScaleFactor at regular Dynamic Type so multi-word names do not collide with right-aligned columns"
         )
     }
 
@@ -207,7 +211,7 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
     }
 
     @MainActor
-    func testThreeColumnHeroKeepsScoresLevelWhenOneTeamNameWrapsAt390px() throws {
+    func testUnifiedHeroKeepsFinalScoresAlignedInTrailingColumnAt390px() throws {
         let json = """
         {
           "id": 15331713,
@@ -221,12 +225,10 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
           "away_score": 23,
           "home_team_data": { "record": "5-1-4" },
           "away_team_data": { "record": "1-5-4" },
-          "opening_odds": {
+          "prematch_odds": {
             "home_probability": 0.44,
             "away_probability": 0.30,
-            "draw_probability": 0.26,
-            "home_rendered_percent": 44,
-            "away_rendered_percent": 30
+            "draw_probability": 0.26
           }
         }
         """
@@ -256,30 +258,22 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
 
         let observations = try XCTUnwrap(request.results)
         let seen = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
-        func midYPoints(matching exact: String) -> CGFloat? {
+        func maxXPoints(startingWith prefix: String) -> CGFloat? {
             for obs in observations {
-                guard let top = obs.topCandidates(1).first,
-                      top.string.trimmingCharacters(in: .whitespacesAndNewlines) == exact else { continue }
-                // Vision boundingBox has origin at bottom-left in [0, 1]; convert to top-down points.
-                return (1.0 - obs.boundingBox.midY) * image.size.height
+                guard let top = obs.topCandidates(1).first else { continue }
+                let trimmed = top.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard trimmed == prefix || trimmed.hasPrefix(prefix) else { continue }
+                return obs.boundingBox.maxX * image.size.width
             }
             return nil
         }
 
-        let awayScoreY = try XCTUnwrap(midYPoints(matching: "23"), "Expected away score '23' in rendered 390px hero (seen: \(seen))")
-        let homeScoreY = try XCTUnwrap(midYPoints(matching: "34"), "Expected home score '34' in rendered 390px hero (seen: \(seen))")
+        let awayScoreMaxX = try XCTUnwrap(maxXPoints(startingWith: "23"), "Expected away score '23' in rendered 390px hero (seen: \(seen))")
+        let homeScoreMaxX = try XCTUnwrap(maxXPoints(startingWith: "34"), "Expected home score '34' in rendered 390px hero (seen: \(seen))")
         XCTAssertLessThanOrEqual(
-            abs(awayScoreY - homeScoreY),
-            1.5,
-            "Scores under wrapped ('Manchester United') and single-line ('Chelsea') team names must sit on the same horizontal line (awayY=\(awayScoreY), homeY=\(homeScoreY))"
-        )
-
-        let awayRecordY = try XCTUnwrap(midYPoints(matching: "1-5-4"), "Expected away record '1-5-4' (seen: \(seen))")
-        let homeRecordY = try XCTUnwrap(midYPoints(matching: "5-1-4"), "Expected home record '5-1-4' (seen: \(seen))")
-        XCTAssertLessThanOrEqual(
-            abs(awayRecordY - homeRecordY),
-            1.5,
-            "Team records must sit on the same horizontal line (awayRecordY=\(awayRecordY), homeRecordY=\(homeRecordY))"
+            abs(awayScoreMaxX - homeScoreMaxX),
+            18.0,
+            "Scores in the unified Final column (including winner tick) stay aligned in the trailing Final column"
         )
     }
 }

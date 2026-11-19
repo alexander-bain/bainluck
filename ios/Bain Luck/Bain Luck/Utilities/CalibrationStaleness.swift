@@ -170,15 +170,15 @@ nonisolated enum CalibrationStaleness {
     /// Web's `stalenessScheduleClause`. THE BANNER MAY DESCRIBE, IT MAY NOT PREDICT.
     static func scheduleClause(_ notice: CalibrationStalenessNotice) -> String? {
         if notice.producerStalled == false {
-            // #4113: `stalled` is a four-hour verdict; `beats_missed` is the hour.
-            return notice.beatsMissed == 0 ? "The curve rebuilds hourly." : nil
+            // #4113 / 215-B: `stalled` is a 3-day verdict; `beats_missed` is the daily beat.
+            return notice.beatsMissed == 0 ? "The curve rebuilds daily." : nil
         }
         guard notice.producerStalled == true else { return nil }
         // #5042: the count measures the ARTIFACT's age, not failed runs.
         guard let missed = notice.beatsMissed, missed > 0 else {
-            return "Hourly rebuilds have not produced a new snapshot."
+            return "Daily rebuilds have not produced a new snapshot."
         }
-        let noun = missed == 1 ? "hourly rebuild has" : "hourly rebuilds have"
+        let noun = missed == 1 ? "daily rebuild has" : "daily rebuilds have"
         return "\(count(missed)) \(noun) come and gone without a new snapshot."
     }
 

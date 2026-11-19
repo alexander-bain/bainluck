@@ -214,13 +214,17 @@ d("iOS reads one event-status vocabulary", () => {
     });
 
     it("both broadcast chips are gated, the hero's and Game Info's", () => {
-      // Two separate renders of the same channel list, one scroll apart. Fixing
-      // only the hero leaves the promise on the page.
-      // #8320: the hero's chip is also gated on `carriesContext` (a live hero
-      // hands the broadcast to Game Info) — an extra clause in front of the
-      // same gate, which is still required.
-      expect(detail()).toMatch(
-        /if carriesContext,\n\s*let broadcast = event\.espn\?\.broadcast,\n\s*EventDetailView\.showsBroadcast\(\n\s*status: event\.status, commenceTime: event\.commenceTime\?\.asDate\) \{/
+      // Direction 199 RE-ANCHORED: the unified headline's pregame meta row
+      // (`EventSportHeadlines12472.pregameMetaText` + `EventSportHeadlineCard12472.livePregameMetaText`)
+      // and Game Info (`EventDetailView.espnSection`) all gate broadcast via
+      // `EventDetailView.showsBroadcast`.
+      const headline = readFileSync(join(IOS_ROOT, "Utilities/EventSportHeadlines12472.swift"), "utf8");
+      const headlineCard = readFileSync(join(IOS_ROOT, "Components/EventSportHeadlineCard12472.swift"), "utf8");
+      expect(headline).toMatch(
+        /if let broadcast = trimmedNonEmpty\(event\.espn\?\.broadcast\),\s*EventDetailView\.showsBroadcast\(/
+      );
+      expect(headlineCard).toMatch(
+        /if let broadcast = model\.broadcast,\s*EventDetailView\.showsBroadcast\(/
       );
       expect(detail()).toMatch(/let showsBroadcast = event\.espn\?\.broadcast != nil\n\s*&& EventDetailView\.showsBroadcast\(\n\s*status: event\.status, commenceTime: event\.commenceTime\?\.asDate\)/);
       expect(detail()).toMatch(/if let broadcast = event\.espn\?\.broadcast, showsBroadcast \{/);
@@ -872,53 +876,34 @@ describe("#6381 — the hero stops denying a result the venue already gave us", 
     );
   });
 
-  it("the hero's centre slot answers before it prices, and never prints vs over a result", () => {
-    // The slot that said **vs**. Placed above the `currentOdds` arm on purpose:
-    // two giant percentages between two crests are read as what the market
-    // thinks WILL happen, and the question is already answered. The finished
-    // branch resolves the same way — verdict first, opening price demoted.
-    const code = read(DETAIL);
-    const settled = code.indexOf("} else if EventState.showsVenueSettledVerdict(");
-    const priced = code.indexOf("} else if let odds = event.currentOdds,");
-    const vs = code.indexOf('Text("vs")');
+  it("the hero resolves venue-settled matches to after before pricing, and never prints vs", () => {
+    // Direction 199 RE-ANCHORED: `EventSportHeadlines12472.kind(for:)` checks
+    // `EventState.showsVenueSettledVerdict` BEFORE live or pregame pricing,
+    // routing graded-unscored events to `.after`, printing `event.venueSettledResult`
+    // in `plainMetaText` (or `"\(league) · Ended"` when empty — never repeating
+    // `EventState.venueSettledLabel`), and never printing `"vs"` on the hero.
+    const headline = read("Utilities/EventSportHeadlines12472.swift");
+    const headlineCard = read("Components/EventSportHeadlineCard12472.swift");
+    const settled = headline.indexOf("EventState.showsVenueSettledVerdict(");
+    const liveCheck = headline.indexOf('if event.status == "live"');
     expect(settled).toBeGreaterThan(-1);
-    expect(priced).toBeGreaterThan(settled);
-    expect(vs).toBeGreaterThan(priced);
-    // The verbatim result.
-    expect(code).toMatch(/Text\(result\)\s*\n\s*\.font\(\.title3\.weight\(\.bold\)\)/);
-
-    // 🔴 AND THE NO-SCORE ARM SAYS NOTHING, BECAUSE THE BADGE ALREADY SAID IT.
-    // This slot used to print `venueSettledLabel`, which the badge prints too,
-    // so 370 of the 426 rows — every event graded on props with no scoreline —
-    // drew the same word twice on one card (event 15304840, caught in the
-    // after-shot). An empty middle is the honest answer: "vs" reads as a
-    // fixture, "no score" reads as 0-0, and the word again is an echo.
-    // Asserted as ABSENCE in the hero, while the badge's own copy above is
-    // asserted as PRESENCE — the pair is what pins "exactly once".
+    expect(liveCheck).toBeGreaterThan(settled);
+    expect(headline).toMatch(/trimmedNonEmpty\(event\.venueSettledResult\)/);
+    expect(headlineCard).not.toMatch(/Text\("vs"\)/);
     expect(read(BADGE)).toMatch(/Text\(EventState\.venueSettledLabel\)/);
-    expect(code).not.toMatch(/Text\(EventState\.venueSettledLabel\)/);
+    expect(headlineCard).not.toMatch(/Text\(EventState\.venueSettledLabel\)/);
   });
 
-  it("the verdict slot accepts any offered width, because the string is the venue's", () => {
-    // 🔴 THE AFTER-SHOT CAUGHT THIS, NO TEST DID. The hero's centre column is
-    // its inflexible middle — the two crest columns take
-    // `.frame(maxWidth: .infinity)` and this one is given its ideal width. At
-    // `.title3` a 31-character verdict ("Brighton & Hove Albion wins 5-0",
-    // event 15310517) pushed the whole card off BOTH screen edges. Lengths
-    // arrive from the venue, so the slot has to bend, and a guard that only
-    // checked the short specimen would have shipped it.
+  it("the verdict slot wraps horizontally within card bounds instead of pushing the card off screen", () => {
     const code = read(DETAIL);
-    expect(code).toMatch(
-      /Text\(result\)[\s\S]{0,400}?\.frame\(maxWidth: Self\.heroVerdictWidth\(at: dynamicTypeSize\)\)\s*\n\s*\.layoutPriority\(-1\)/,
+    const headlineCard = read("Components/EventSportHeadlineCard12472.swift");
+    // In `EventSportHeadlineCard12472`, `leadingMeta` (`case .after`) draws
+    // `plainMetaText` with `.fixedSize(horizontal: false, vertical: true)` so a
+    // long venue verdict wraps vertically without widening the card.
+    expect(headlineCard).toMatch(
+      /case \.after:\s*if let text = model\.plainMetaText \{\s*Text\(text\)[\s\S]{0,240}?\.fixedSize\(horizontal: false, vertical: true\)/,
     );
-    // #10796: the cap applies while the verdict shares a row with the crests.
     expect(code).toMatch(/size >= \.xxLarge \? nil : verdictSlotWidth/);
-    // 🔴 THE CAP IS FINITE, AND THAT IS THE ASSERTION — the second shot of this
-    // ship proved `.infinity` does not hold this slot. The two crest columns are
-    // `maxWidth: .infinity` siblings, so an infinite maximum here asks the row
-    // for MORE width, never less, and the card went off both screen edges with
-    // the modifier in place. A future tidy-up that "makes it consistent with its
-    // siblings" reintroduces the exact defect, so the number is pinned.
     expect(code).toMatch(/static let verdictSlotWidth: CGFloat = \d+$/m);
   });
 

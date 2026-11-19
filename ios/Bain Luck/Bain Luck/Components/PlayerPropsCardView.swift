@@ -19,6 +19,8 @@ struct PlayerPropsCardView: View {
     /// rung by name, so an absent url is not an absent crest.
     var homeLogoURL: String? = nil
     var awayLogoURL: String? = nil
+    var homeAbbreviation: String? = nil
+    var awayAbbreviation: String? = nil
     var sportKey: String? = nil
 
     @State private var teamFilter: String = "all"
@@ -43,7 +45,7 @@ struct PlayerPropsCardView: View {
     /// prop attributed to a team the other side shares a label with is
     /// attributed to nobody.
     private var sides: (away: String, home: String) {
-        TeamShortName.shortPair(away: awayTeam, home: homeTeam)
+        TeamShortName.shortPair(away: awayTeam, home: homeTeam, sportKey: sportKey)
     }
     private var homeAbbr: String {
         homeTeam.isEmpty ? "Home" : sides.home
@@ -478,7 +480,9 @@ struct PlayerPropsCardView: View {
                 color: card.color,
                 size: size,
                 sportKey: sportKey,
-                opponentName: crestTeam == homeTeam ? awayTeam : homeTeam
+                opponentName: crestTeam == homeTeam ? awayTeam : homeTeam,
+                abbreviation: crestTeam == homeTeam ? homeAbbreviation : awayAbbreviation,
+                opponentAbbreviation: crestTeam == homeTeam ? awayAbbreviation : homeAbbreviation
             )
             .accessibilityHidden(true)
         } else if let url = card.headshotURL {

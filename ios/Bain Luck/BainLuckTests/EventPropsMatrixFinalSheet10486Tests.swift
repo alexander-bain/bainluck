@@ -202,7 +202,8 @@ final class EventPropsMatrixFinalSheet10486Tests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("props-final-sheet-10486-\(name).png")
         try XCTUnwrap(image.pngData()).write(to: url)
         print("Final sheet rendered evidence (#10486, route-harness data): \(url.path)")
-        let request = VNRecognizeTextRequest(); request.recognitionLevel = .accurate
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
         try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([request])
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
     }
@@ -249,7 +250,8 @@ final class EventPropsMatrixFinalSheet10486Tests: XCTestCase {
         XCTAssertTrue(before.joined(separator: " ").contains("Aaron Judge") && before.contains { $0.contains("48%") },
                       "control: the live question was open: \(before)")
         XCTAssertTrue(keepsFinalContext(final), "the final sheet lost its context: \(final)")
-        XCTAssertTrue(final.contains { $0.contains("This game is over") }, "no game-over line: \(final)")
+        // #12513 — on Xcode 27.2 font metrics, multi-word sheet copy can wrap across two visual OCR lines.
+        XCTAssertTrue(final.joined(separator: " ").contains("This game is over"), "no game-over line: \(final)")
         XCTAssertFalse(final.contains { $0.contains("48%") }, "a live price survived the final: \(final)")
     }
 
@@ -258,7 +260,7 @@ final class EventPropsMatrixFinalSheet10486Tests: XCTestCase {
     /// final-state verdict above refuses exactly that sheet.
     func testAQuestionDroppedMidGameStillReadsWithdrawnAndTheVerdictRefusesIt() throws {
         let (_, final) = try journey("withdrawn") { feed in feed.during = Self.noRows }
-        XCTAssertTrue(final.contains { $0.contains("being offered right now") }, "mid-game withdrawal lost: \(final)")
+        XCTAssertTrue(final.joined(separator: " ").contains("being offered right now"), "mid-game withdrawal lost: \(final)")
         XCTAssertTrue(final.joined(separator: " ").contains("Aaron Judge"), "the player's name is kept here too: \(final)")
         XCTAssertFalse(keepsFinalContext(final), "the final-state verdict must refuse the withdrawal sentence: \(final)")
     }
@@ -270,6 +272,6 @@ final class EventPropsMatrixFinalSheet10486Tests: XCTestCase {
         }
         XCTAssertTrue(keepsFinalContext(final), "the followed sheet lost its context: \(final)")
         XCTAssertTrue(final.contains { $0.uppercased().contains("RESULT") }, "the After detail is not shown: \(final)")
-        XCTAssertFalse(final.contains { $0.contains("This game is over") }, "followed After yet said game over: \(final)")
+        XCTAssertFalse(final.joined(separator: " ").contains("This game is over"), "followed After yet said game over: \(final)")
     }
 }

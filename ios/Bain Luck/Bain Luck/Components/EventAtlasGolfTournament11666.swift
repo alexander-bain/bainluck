@@ -792,18 +792,13 @@ enum EventAtlasGolfTournament11666 {
     }
 
     /// Computes the `Auto` Y-axis upper bound (`0.20`, `0.30`, `0.50`, `0.75`, `1.00`)
-    /// or `1.00` when `fullScale` is true.
+    /// or `1.00` when `fullScale` is true, via `ChartScaleRule201` (Ruling 202-A).
     nonisolated static func yAxisCeiling(contenders: [JourneyContender], fullScale: Bool) -> Double {
-        if fullScale { return 1.0 }
         let maxPoint = contenders.flatMap { $0.points.map(\.probability) }.max() ?? 0
         let maxCurrent = contenders.compactMap(\.currentProbability).max() ?? 0
         let maxOpen = contenders.compactMap(\.openingProbability).max() ?? 0
         let peak = max(maxPoint, max(maxCurrent, maxOpen))
-        if peak <= 0.18 { return 0.20 }
-        if peak <= 0.28 { return 0.30 }
-        if peak <= 0.45 { return 0.50 }
-        if peak <= 0.70 { return 0.75 }
-        return 1.0
+        return ChartScaleRule201.zeroToTopCeilingFraction(peakFraction: peak, fullScale: fullScale)
     }
 
     /// Ruling 192-A: the Golf headline card names the top 4 golfers, and the first-screen
@@ -1651,10 +1646,17 @@ struct EventAtlasGolfJourneyCardView11666: View {
                         if let minD = allDates.min(), let maxD = allDates.max(), maxD > minD {
                             let spanHours = maxD.timeIntervalSince(minD) / 3600
                             let midD = minD.addingTimeInterval(maxD.timeIntervalSince(minD) / 2.0)
-                            let tickDates = dynamicTypeSize.isAccessibilitySize ? [minD, maxD] : [minD, midD, maxD]
+                            let useTwoTicks = dynamicTypeSize.isAccessibilitySize || spanHours < 48
+                            let tickDates = useTwoTicks ? [minD, maxD] : [minD, midD, maxD]
                             AxisMarks(values: tickDates) { value in
                                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.4, dash: [3, 3]))
-                                if spanHours < 48 {
+                                if spanHours < 6 {
+                                    AxisValueLabel(
+                                        format: .dateTime.hour().minute(),
+                                        anchor: OddsChartView.xAxisLabelAnchor(index: value.index, count: value.count)
+                                    )
+                                    .font(.caption2)
+                                } else if spanHours < 48 {
                                     AxisValueLabel(
                                         format: .dateTime.weekday(.abbreviated).hour(),
                                         anchor: OddsChartView.xAxisLabelAnchor(index: value.index, count: value.count)
@@ -2485,24 +2487,46 @@ struct EventAtlasGolfContenderChooserView11666: View {
             }
             if phase == .final {
                 if row.isWinner == true {
-                    Text("✓ Won")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(DS.emeraldDark)
+                    HStack(spacing: 4) {
+                        Text("✓ Won")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(DS.emeraldDark)
+                        if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.name, numberSize: 15, compactRow: true) {
+                            mark.buttonStyle(.borderless)
+                        }
+                    }
                 } else if showsPregameBaseline, let open = row.openingProbability, open > 0, open < 1 {
-                    Text("○ Pregame \(formatProbability(open))")
-                        .font(.caption)
-                        .foregroundStyle(DS.textSecondaryReadable)
-                        .monospacedDigit()
+                    HStack(spacing: 4) {
+                        Text("○ Pregame \(formatProbability(open))")
+                            .font(.caption)
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .monospacedDigit()
+                        if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.name, numberSize: 13, compactRow: true) {
+                            mark.buttonStyle(.borderless)
+                        }
+                    }
                 } else {
                     Text("—")
                         .font(.caption)
                         .foregroundStyle(DS.textSecondaryReadable)
                 }
             } else {
-                Text(row.probabilityLabel)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(row.position == 1 ? .blue : .primary)
-                    .monospacedDigit()
+                HStack(spacing: 4) {
+                    Text(row.probabilityLabel)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(row.position == 1 ? .blue : .primary)
+                        .monospacedDigit()
+                    if let mark = SourceMarkButton(
+                        row.sourceMark,
+                        number: row.probability,
+                        subject: row.name,
+                        numberSize: 15,
+                        compactRow: true,
+                        showsTenths: row.probabilityLabel.contains(".")
+                    ) {
+                        mark.buttonStyle(.borderless)
+                    }
+                }
             }
         }
     }

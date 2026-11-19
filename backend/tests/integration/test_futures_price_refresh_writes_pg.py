@@ -841,10 +841,11 @@ class TestTheVenueAnsweredAndThePageHasToStopSayingNinetyNine:
             "quoting a contest that has not kicked off — CERT-2772 exactly"
         )
         assert after_pct != 99, f"the page still prints {after_pct}%"
-        assert after_prob == pytest.approx(_SEVILLA_OPENING, abs=1e-3), (
-            "the hero should fall to the sources still speaking — here the "
-            f"opening line — and instead reads {after_prob}"
+        assert after_prob is None, (
+            "#12824: no current source remains after the venue withdraws; "
+            f"the historical opening must not replace it (served {after_prob})"
         )
+        assert float(after.opening_home_probability) == pytest.approx(_SEVILLA_OPENING)
         # The other keys are not collateral. `betting_book_count` is metadata the
         # card prints beside the number and has nothing to do with Kalshi.
         assert (after.win_probability_sources or {}).get("betting_book_count") == 2

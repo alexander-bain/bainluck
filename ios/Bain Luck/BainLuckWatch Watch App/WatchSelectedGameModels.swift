@@ -1,4 +1,11 @@
 import Foundation
+// Watch builds never link the iOS `Bain_Luck` module (they compile `TeamShortName.swift`
+// directly via target membership); this conditional import exists solely when `BainLuckTests`
+// compiles `WatchSelectedGameModels.swift` alongside `@testable import Bain_Luck`, matching
+// `WatchPinsModels12640.swift`.
+#if DEBUG && canImport(Bain_Luck)
+@testable import Bain_Luck
+#endif
 
 /// Public event-detail fields only. Missing readings stay missing; an away or draw
 /// probability is never manufactured from a home reading.
@@ -20,6 +27,18 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
     let homeProbability: Double?
     let awayProbability: Double?
     let drawProbability: Double?
+    let prematchHomeProbability: Double?
+    let prematchAwayProbability: Double?
+    let prematchDrawProbability: Double?
+    let projectedHomeScore: Double?
+    let projectedAwayScore: Double?
+    let homePrimaryColor: String?
+    let awayPrimaryColor: String?
+    let homeSecondaryColor: String?
+    let awaySecondaryColor: String?
+    /// The crest the event page serves for each side (direction 217's Matchup slot).
+    let homeLogoURL: String?
+    let awayLogoURL: String?
 
     var isFinal: Bool { ["completed", "final"].contains(status?.lowercased() ?? "") }
     var isClosed: Bool { status?.lowercased() == "closed" }
@@ -41,6 +60,24 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         // The shared helper keeps a missing away price missing and uses scalar
         // rounding when these two prices are not a complementary pair.
         return renderedDuelPercents(away: awayProbability, home: homeProbability)[1]
+    }
+
+    /// Each side's chance before the game, rounded the way `homeRenderedPercent`
+    /// rounds the live pair (direction 209: a final shows the winner's pregame
+    /// chance). A missing price stays missing.
+    var pregameRenderedPercents: (home: Int?, away: Int?) {
+        let drawSport = (sportKey.map { DrawPricedWinner.sportPricesADraw($0) } ?? true) || prematchDrawProbability != nil
+        if drawSport {
+            return (renderedPercent(prematchHomeProbability), renderedPercent(prematchAwayProbability))
+        }
+        let pair = renderedDuelPercents(away: prematchAwayProbability, home: prematchHomeProbability)
+        return (pair[1], pair[0])
+    }
+
+    static func httpsLogo(_ raw: String?) -> String? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let url = URL(string: raw), url.scheme == "https", url.host != nil else { return nil }
+        return raw
     }
 
     /// Format the already-decided integer once for both the screen and VoiceOver.
@@ -81,17 +118,34 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         case homeTeamData = "home_team_data", awayTeamData = "away_team_data"
         case homeScore = "home_score", awayScore = "away_score"
         case commenceTime = "commence_time", scoreObservedAt = "score_observed_at"
-        case currentOdds = "current_odds", espn, sportKey = "sport_key", sport
+        case currentOdds = "current_odds", prematchOdds = "prematch_odds"
+        case espn, sportKey = "sport_key", sport
         case heroProbability = "hero_probability", heroAway = "hero_probability_away"
         case probabilityObservedAt = "hero_probability_observed_at"
+    }
+    private struct TeamColorFields: Codable {
+        let teamID: Int?
+        let abbreviation: String?
+        let primaryColor: String?
+        let secondaryColor: String?
+        var logoSmall: String? = nil
+        var logoLarge: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case teamID = "team_id", abbreviation
+            case primaryColor = "primary_color", secondaryColor = "secondary_color"
+            case logoSmall = "logo_small", logoLarge = "logo_large"
+        }
     }
     private struct Odds: Decodable {
         let homeProbability: Double?
         let awayProbability: Double?
         let drawProbability: Double?
+        let projectedHomeScore: Double?
+        let projectedAwayScore: Double?
         enum CodingKeys: String, CodingKey {
             case homeProbability = "home_probability", awayProbability = "away_probability"
             case drawProbability = "draw_probability"
+            case projectedHomeScore = "projected_home_score", projectedAwayScore = "projected_away_score"
         }
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -100,9 +154,16 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
                       value.isFinite, (0...1).contains(value) else { return nil }
                 return value
             }
+            func positiveScore(_ key: CodingKeys) -> Double? {
+                guard let value = try? c.decode(Double.self, forKey: key),
+                      value.isFinite, value > 0 else { return nil }
+                return value
+            }
             homeProbability = probability(.homeProbability)
             awayProbability = probability(.awayProbability)
             drawProbability = probability(.drawProbability)
+            projectedHomeScore = positiveScore(.projectedHomeScore)
+            projectedAwayScore = positiveScore(.projectedAwayScore)
         }
     }
     init(from decoder: Decoder) throws {
@@ -111,21 +172,48 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         guard id > 0 else { throw DecodingError.dataCorruptedError(forKey: .id, in: c, debugDescription: "Invalid event id") }
         // Identity and named sides are essential: {} is an invalid response, not
         // an empty selection or an unnamed game the reader must interpret.
-        homeTeam = try c.decode(String.self, forKey: .homeTeam)
-        awayTeam = try c.decode(String.self, forKey: .awayTeam)
-        guard !homeTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !awayTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let rawHomeTeam = try c.decode(String.self, forKey: .homeTeam)
+        let rawAwayTeam = try c.decode(String.self, forKey: .awayTeam)
+        guard !rawHomeTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !rawAwayTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw DecodingError.dataCorruptedError(forKey: .homeTeam, in: c, debugDescription: "Missing team name")
+        }
+        // Public event detail uses `sport`; older snapshots use `sport_key`.
+        let decodedSportKey = (try? c.decode(String.self, forKey: .sport))
+            ?? (try? c.decode(String.self, forKey: .sportKey))
+        sportKey = decodedSportKey
+        // Ruling 194-A — college teams print the school ("Duke", "Alabama",
+        // "Gonzaga", "Ole Miss"), never the mascot.
+        if TeamShortName.isCollegeSport(sportKey: decodedSportKey) {
+            let schools = TeamShortName.shortPair(
+                away: rawAwayTeam,
+                home: rawHomeTeam,
+                sportKey: decodedSportKey
+            )
+            awayTeam = schools.away
+            homeTeam = schools.home
+        } else {
+            homeTeam = rawHomeTeam
+            awayTeam = rawAwayTeam
         }
         // The server attaches canonical identities to their event side; never derive a shorthand.
         homeCompactIdentity = try? c.decode(WatchCompactTeamIdentity.self, forKey: .homeTeamData)
         awayCompactIdentity = try? c.decode(WatchCompactTeamIdentity.self, forKey: .awayTeamData)
+        let homeColors = try? c.decode(TeamColorFields.self, forKey: .homeTeamData)
+        let awayColors = try? c.decode(TeamColorFields.self, forKey: .awayTeamData)
+        homePrimaryColor = homeColors?.primaryColor
+        awayPrimaryColor = awayColors?.primaryColor
+        homeSecondaryColor = homeColors?.secondaryColor
+        awaySecondaryColor = awayColors?.secondaryColor
+        homeLogoURL = Self.httpsLogo(homeColors?.logoSmall) ?? Self.httpsLogo(homeColors?.logoLarge)
+        awayLogoURL = Self.httpsLogo(awayColors?.logoSmall) ?? Self.httpsLogo(awayColors?.logoLarge)
         homeScore = try? c.decode(Int.self, forKey: .homeScore)
         awayScore = try? c.decode(Int.self, forKey: .awayScore)
         status = try? c.decode(String.self, forKey: .status)
         commenceTime = Self.date(try? c.decode(String.self, forKey: .commenceTime))
         scoreObservedAt = Self.date(try? c.decode(String.self, forKey: .scoreObservedAt))
         let odds = try? c.decode(Odds.self, forKey: .currentOdds)
+        let prematch = try? c.decode(Odds.self, forKey: .prematchOdds)
         let rawHero = try? c.decode(Double.self, forKey: .heroProbability)
         let hero = rawHero.flatMap { $0.isFinite && (0...1).contains($0) ? $0 : nil }
         let heroAway = try? c.decode(Double.self, forKey: .heroAway)
@@ -133,13 +221,15 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         awayProbability = hero != nil ? heroAway.flatMap { (0...1).contains($0) ? $0 : nil } : odds?.awayProbability
         // The producer clock dates the hero, never the sportsbook capture or score.
         probabilityObservedAt = hero != nil ? Self.date(try? c.decode(String.self, forKey: .probabilityObservedAt)) : nil
-        // Public event detail uses `sport`; older snapshots use `sport_key`.
-        sportKey = (try? c.decode(String.self, forKey: .sport))
-            ?? (try? c.decode(String.self, forKey: .sportKey))
         let espn = try? c.decode(GameState.self, forKey: .espn)
         period = espn?.period
         gameClock = espn?.gameClock
         drawProbability = odds?.drawProbability
+        prematchHomeProbability = prematch?.homeProbability
+        prematchAwayProbability = prematch?.awayProbability
+        prematchDrawProbability = prematch?.drawProbability
+        projectedHomeScore = odds?.projectedHomeScore
+        projectedAwayScore = odds?.projectedAwayScore
     }
     // Encode the validated public reading in the same shape as its decoder.
     // Observation clocks remain producer clocks across a process restart.
@@ -148,8 +238,30 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         try c.encode(id, forKey: .id)
         try c.encode(homeTeam, forKey: .homeTeam)
         try c.encode(awayTeam, forKey: .awayTeam)
-        try c.encodeIfPresent(homeCompactIdentity, forKey: .homeTeamData)
-        try c.encodeIfPresent(awayCompactIdentity, forKey: .awayTeamData)
+        if homeCompactIdentity != nil || homePrimaryColor != nil || homeSecondaryColor != nil || homeLogoURL != nil {
+            try c.encode(
+                TeamColorFields(
+                    teamID: homeCompactIdentity?.teamID,
+                    abbreviation: homeCompactIdentity?.abbreviation,
+                    primaryColor: homePrimaryColor,
+                    secondaryColor: homeSecondaryColor,
+                    logoSmall: homeLogoURL
+                ),
+                forKey: .homeTeamData
+            )
+        }
+        if awayCompactIdentity != nil || awayPrimaryColor != nil || awaySecondaryColor != nil || awayLogoURL != nil {
+            try c.encode(
+                TeamColorFields(
+                    teamID: awayCompactIdentity?.teamID,
+                    abbreviation: awayCompactIdentity?.abbreviation,
+                    primaryColor: awayPrimaryColor,
+                    secondaryColor: awaySecondaryColor,
+                    logoSmall: awayLogoURL
+                ),
+                forKey: .awayTeamData
+            )
+        }
         try c.encodeIfPresent(homeScore, forKey: .homeScore)
         try c.encodeIfPresent(awayScore, forKey: .awayScore)
         try c.encodeIfPresent(status, forKey: .status)
@@ -165,6 +277,14 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         try odds.encodeIfPresent(homeProbability, forKey: .homeProbability)
         try odds.encodeIfPresent(awayProbability, forKey: .awayProbability)
         try odds.encodeIfPresent(drawProbability, forKey: .drawProbability)
+        try odds.encodeIfPresent(projectedHomeScore, forKey: .projectedHomeScore)
+        try odds.encodeIfPresent(projectedAwayScore, forKey: .projectedAwayScore)
+        if prematchHomeProbability != nil || prematchAwayProbability != nil || prematchDrawProbability != nil {
+            var pre = c.nestedContainer(keyedBy: Odds.CodingKeys.self, forKey: .prematchOdds)
+            try pre.encodeIfPresent(prematchHomeProbability, forKey: .homeProbability)
+            try pre.encodeIfPresent(prematchAwayProbability, forKey: .awayProbability)
+            try pre.encodeIfPresent(prematchDrawProbability, forKey: .drawProbability)
+        }
         var state = c.nestedContainer(keyedBy: GameState.CodingKeys.self, forKey: .espn)
         try state.encodeIfPresent(period, forKey: .period)
         try state.encodeIfPresent(gameClock, forKey: .gameClock)

@@ -50,7 +50,11 @@ nonisolated enum SavedWidgetDetailPayload10875: Equatable, Sendable {
 
     var title: String {
         switch self {
-        case .game(let event): return "\(event.awayTeam) vs \(event.homeTeam)"
+        case .game(let event):
+            let displayTeams = TeamShortName.isCollegeSport(sportKey: event.sport)
+                ? TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+                : (away: event.awayTeam, home: event.homeTeam)
+            return "\(displayTeams.away) vs \(displayTeams.home)"
         case .market(let market): return market.name
         }
     }

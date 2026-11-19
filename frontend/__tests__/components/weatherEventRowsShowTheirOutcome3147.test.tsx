@@ -69,19 +69,11 @@ describe("HurricaneTracker — the outcome is not the part that gets cut", () =>
     expect(between(html, QUESTION, LONG_LEADER)).toContain("</div>");
   });
 
-  it("keeps the source badge from compressing the line the outcome now sits on", () => {
+  it("omits the venue badge on the card face and keeps the outcome row non-shrinking", () => {
     const html = renderToStaticMarkup(<HurricaneTracker items={[hurricaneRow()]} />);
 
-    // SourceBadge is an inline-flex with no flex-shrink of its own, so as a bare
-    // flex child it shrinks — and a shrinking badge takes the room back off the
-    // leader beside it.
-    //
-    // The terminator is `rounded-full`, the badge's OWN opening tag, not the
-    // word "Kalshi" inside it. Written the obvious way this arm passed against
-    // the unfixed component: the badge's coloured dot carries `flexShrink: 0`
-    // of its own, and it renders between the two, so the assertion was matching
-    // the dot and proving nothing.
-    expect(between(html, LONG_LEADER, "rounded-full")).toContain("flex-shrink:0");
+    expect(html).not.toContain("Kalshi");
+    expect(between(html, LONG_LEADER, "95%")).toContain("flex-shrink:0");
   });
 
   it("wraps that line rather than squeezing it", () => {
@@ -120,10 +112,7 @@ describe("EventList — the same class in the card next door", () => {
     // The meta row: everything between the question and the close date.
     const metaRow = between(html, "US Tornadoes in September 2026", "Thu, Oct 15");
     expect(metaRow).toContain("flex-wrap");
-    // The badge kept whole — terminated on `rounded-full`, the badge's own tag,
-    // for the reason given in the HurricaneTracker arm above (its inner dot
-    // carries a flex-shrink that makes the naive assertion vacuous)...
-    expect(between(html, "US Tornadoes in September 2026", "rounded-full")).toContain("flex-shrink:0");
+    expect(html).not.toContain("Polymarket");
     // ...and the date kept whole: squeezed, it broke mid-date across two lines
     // ("Thu, Oct" / "15"), which is a worse read than moving down one line.
     expect(between(html, "50 - 74", "Thu, Oct 15")).toContain("flex-shrink:0");

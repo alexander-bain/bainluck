@@ -1,6 +1,7 @@
 """The actual Phase 3 writer must not reorient named history using today's odds."""
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -30,6 +31,8 @@ async def run_backfill(
         id=15290678,
         home_team_name="Bulgaria",
         away_team_name="Luxembourg",
+        status="live",
+        commence_time=datetime.now(timezone.utc) - timedelta(hours=1),
         opening_home_probability=None,
         win_probability_sources={},
     )

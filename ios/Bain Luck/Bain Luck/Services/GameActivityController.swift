@@ -69,6 +69,7 @@ struct GameActivityRecord {
     @Published private(set) var isEnabled = false
     private let service: any GameActivityServing
     private let isForeground: () -> Bool
+    private let hasPushUpdates: () -> Bool
     private let now: () -> Date
     private var activationObserver: AnyCancellable?
     private var pendingSnapshot: (snapshot: GameActivitySnapshot, generation: Int)?
@@ -85,13 +86,16 @@ struct GameActivityRecord {
 
     convenience init() {
         self.init(service: SystemGameActivityService(),
-                  isForeground: { UIApplication.shared.applicationState == .active })
+                  isForeground: { UIApplication.shared.applicationState == .active },
+                  hasPushUpdates: { GameActivityRegistrationCoordinator.shared.canRequestPushToken })
     }
     init(service: any GameActivityServing, isForeground: @escaping () -> Bool,
+         hasPushUpdates: @escaping () -> Bool = { false },
          now: @escaping () -> Date = Date.init,
          notificationCenter: NotificationCenter = .default) {
         self.service = service
         self.isForeground = isForeground
+        self.hasPushUpdates = hasPushUpdates
         self.now = now
         reconcile()
         // A hidden SwiftUI Group has no child lifecycle callbacks. Observe app
@@ -139,9 +143,13 @@ struct GameActivityRecord {
 
     /// Invalidate synchronously, before a view's asynchronous teardown can race
     /// with a queued update. A later appearance must acquire a new generation.
+    /// When server push updates are active for this signed-in session (#10542 / #12999),
+    /// leaving the app does not immediately force the activity stale; the observation
+    /// staleDate (score clock + 6 min) stays in force while pushes run.
     func endViewing(eventID: Int) {
         guard viewingEventID == eventID else { return }
         let generation = invalidateViewing(eventID: eventID)
+        guard !hasPushUpdates() else { return }
         Task { await self.applyStale(eventID: eventID, generation: generation) }
     }
 
@@ -164,7 +172,8 @@ struct GameActivityRecord {
         do {
             try service.request(snapshot, staleDate: staleDate(for: snapshot))
             beginViewing(eventID: snapshot.eventID)
-            setStatus("Live Activity started. Updates arrive while this game is open.", for: snapshot.eventID)
+            // #12827: success needs no sentence; the button now reads "Stop Live Activity".
+            feedback = nil
         } catch {
             setStatus("Couldn't start the Live Activity. Try again.", for: snapshot.eventID)
         }
@@ -271,19 +280,24 @@ struct GameActivityRecord {
         observationFences[id] = fence
     }
 
+    /// #10542 step 4, the server's rule (`activitykit_payload.OBSERVATION_MAX_AGE`, #12860):
+    /// the activity turns stale when the score has gone unconfirmed this long.
+    static let observationMaxAge: TimeInterval = 360
+
+    /// The score's clock decides; the chance's clock decides only when there is no
+    /// score (pregame), because the chance prints its own age. A shown number with no
+    /// clock, or a clock from the future, is stale now. It was the older of both clocks
+    /// + 120 s, which turned a 20-second-old score orange behind an older chance.
     private func staleDate(for snapshot: GameActivitySnapshot) -> Date {
         let current = now()
-        var clocks: [Date] = []
-        if snapshot.homeScore != nil || snapshot.awayScore != nil {
-            guard let clock = snapshot.scoreObservedAt else { return current }
-            clocks.append(clock)
+        let hasScore = snapshot.homeScore != nil || snapshot.awayScore != nil
+        let hasChance = snapshot.homeRenderedPercent != nil
+        if (hasScore && snapshot.scoreObservedAt == nil) || (hasChance && snapshot.probabilityObservedAt == nil) {
+            return current
         }
-        if snapshot.homeRenderedPercent != nil {
-            guard let clock = snapshot.probabilityObservedAt else { return current }
-            clocks.append(clock)
-        }
-        guard let oldest = clocks.min(), oldest <= current else { return current }
-        return oldest.addingTimeInterval(120)
+        guard let clock = hasScore ? snapshot.scoreObservedAt : hasChance ? snapshot.probabilityObservedAt : nil,
+              clock <= current else { return current }
+        return clock.addingTimeInterval(Self.observationMaxAge)
     }
 
     private func canAdopt(_ candidate: GameActivitySnapshot, after previous: GameActivitySnapshot,

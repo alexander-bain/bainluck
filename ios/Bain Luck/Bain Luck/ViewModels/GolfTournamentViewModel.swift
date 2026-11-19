@@ -20,13 +20,28 @@ final class GolfTournamentViewModel: ObservableObject {
     @Published private(set) var atlasData: EventAtlasGolfTournament11666.TournamentAtlasData = .init()
 
     let slug: String
+    private var skipNetworkLoad = false
 
     init(slug: String) {
         self.slug = slug
     }
 
+    #if DEBUG
+    init(
+        slug: String,
+        loadedPresentation: GolfTournamentPresentation,
+        atlasData: EventAtlasGolfTournament11666.TournamentAtlasData = .init()
+    ) {
+        self.slug = slug
+        self.state = .loaded(loadedPresentation)
+        self.atlasData = atlasData
+        self.skipNetworkLoad = true
+    }
+    #endif
+
     @MainActor
     func load() async {
+        guard !skipNetworkLoad else { return }
         // A refresh keeps the last good screen up while it runs. Dropping back
         // to a skeleton on every pull-to-refresh is how a live page flickers.
         if case .loaded = state {} else { state = .loading }
@@ -252,7 +267,8 @@ nonisolated struct GolfTournamentPresentation: Equatable, Sendable {
                     movement24h: golfer.movement24h,
                     renderedPercent: golfer.renderedPercent,
                     openingProbability: golfer.openingProbability,
-                    isWinner: (golfer.isWinner == true) || (golfer.won == true) ? true : golfer.isWinner
+                    isWinner: (golfer.isWinner == true) || (golfer.won == true) ? true : golfer.isWinner,
+                    sourceMark: golfer.sourceMark
                 )
             }
     }
@@ -266,6 +282,7 @@ nonisolated struct GolfTournamentFieldRow: Equatable, Identifiable, Sendable {
     var renderedPercent: Int? = nil
     var openingProbability: Double? = nil
     var isWinner: Bool? = nil
+    var sourceMark: SourceMark? = nil
 
     var probabilityLabel: String {
         renderedPercent.map { formatProbability(probability, renderedPercent: $0) } ?? String(format: "%.1f%%", probability * 100)

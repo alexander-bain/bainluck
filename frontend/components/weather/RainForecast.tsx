@@ -6,6 +6,7 @@ import type { RainDay, MonthlyRain as MonthlyRainType } from "./data";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { ATLAS_STATE_COPY } from "@/components/atlas/atlasStateCopy";
 import { SourceBadge } from "./SourceBadge";
+import MarketLink from "./MarketLink";
 import { fetchRain } from "@/lib/weatherApi";
 import { rainCardHeading, rainGridStyle } from "@/lib/rainCardHeading";
 
@@ -91,7 +92,8 @@ function RainDaySkeleton() {
 // Francisco" rendered as "San Francis…". 104px is measured, not computed —
 // `tools/look-local.mjs` at 390px with all ten cities, which is also the width
 // where the bar has least room to give.
-const MONTHLY_GRID = "104px 1fr 52px 36px";
+const MONTHLY_GRID = "120px 1fr 56px 36px";
+const MONTHLY_GRID_NO_DELTA = "132px 1fr 64px";
 
 function MonthlySkeleton() {
   return (
@@ -100,12 +102,11 @@ function MonthlySkeleton() {
         <div
           key={i}
           className="grid items-center gap-2"
-          style={{ gridTemplateColumns: MONTHLY_GRID }}
+          style={{ gridTemplateColumns: MONTHLY_GRID_NO_DELTA }}
         >
           <div className="h-4 bg-gray-200 rounded animate-pulse" />
           <div className="h-[7px] bg-gray-200 rounded-full animate-pulse" />
           <div className="h-4 w-10 bg-gray-200 rounded animate-pulse ml-auto" />
-          <div className="h-3 w-6 bg-gray-200 rounded animate-pulse ml-auto" />
         </div>
       ))}
     </div>
@@ -132,6 +133,11 @@ export default function RainForecast() {
   // bar width 0/0 = NaN, which the browser drops on the floor silently.
   const maxMonthly = monthly ? Math.max(1, ...monthly.map((m) => m.prob)) : 0;
   const cityCount = monthly?.length ?? 0;
+  const unsettledMonthly = monthly?.filter((m) => !weatherRowSettled(m)) ?? [];
+  const monthlyWithDelta = unsettledMonthly.filter((m) => (m.delta24h ?? 0) !== 0);
+  const showMonthlyDelta =
+    unsettledMonthly.length > 0 && monthlyWithDelta.length * 2 >= unsettledMonthly.length;
+  const monthlyGridCols = showMonthlyDelta ? MONTHLY_GRID : MONTHLY_GRID_NO_DELTA;
 
   return (
     <section className="pt-14 px-4 md:px-6">
@@ -190,12 +196,13 @@ export default function RainForecast() {
                     const txtCol = rainTextColor(d.prob);
 
                     return (
-                      <div
+                      <MarketLink
                         key={d.iso ?? d.date}
+                        marketId={d.market_id}
                         // The heading counts these (#3230), so the guard has to
                         // count the same things the reader does, not a class.
-                        data-testid="rain-day-tile"
-                        className="flex flex-col items-center text-center border py-3 px-1"
+                        dataTestId="rain-day-tile"
+                        className="flex flex-col items-center text-center border py-3 px-1 hover:border-text-muted/40 transition-colors"
                         style={{
                           borderColor: isToday ? "#BAE6FD" : "var(--surface-border)",
                           backgroundColor: isToday ? "#F0F9FF" : "transparent",
@@ -239,7 +246,7 @@ export default function RainForecast() {
                             />
                           </div>
                         </div>
-                      </div>
+                      </MarketLink>
                     );
                   })}
                 </div>
@@ -292,10 +299,12 @@ export default function RainForecast() {
                   const delta = m.delta24h ?? 0;
 
                   return (
-                    <div
+                    <MarketLink
                       key={m.city}
-                      className="grid items-center gap-2"
-                      style={{ gridTemplateColumns: MONTHLY_GRID }}
+                      marketId={m.market_id}
+                      dataTestId="monthly-rain-row"
+                      className="grid items-center gap-2 rounded-lg px-1 -mx-1 py-0.5 hover:bg-surface-elevated/60 transition-colors"
+                      style={{ gridTemplateColumns: monthlyGridCols }}
                     >
                       <div className="min-w-0">
                         <span className="block text-sm text-text-primary font-medium truncate">
@@ -326,26 +335,32 @@ export default function RainForecast() {
                               rendered: m.prob,
                             })}
                       </span>
-                      <span
-                        className="text-right font-mono text-[10px]"
-                        style={{
-                          color: delta > 0 ? "#22C55E" : delta < 0 ? "#EF4444" : "#9CA3AF",
-                        }}
-                      >
-                        {delta > 0 ? `+${delta}` : delta === 0 ? "—" : delta}
-                      </span>
-                    </div>
+                      {showMonthlyDelta && (
+                        <span
+                          className="text-right font-mono text-[10px]"
+                          style={{
+                            color: delta > 0 ? "#22C55E" : delta < 0 ? "#EF4444" : "#9CA3AF",
+                          }}
+                        >
+                          {delta > 0 ? `+${delta}` : delta === 0 ? "—" : `${delta}`}
+                        </span>
+                      )}
+                    </MarketLink>
                   );
                 })}
               </div>
             )}
 
-            <div className="mt-4 pt-3 border-t border-dashed border-surface-border text-xs text-text-muted flex items-center justify-between">
-              <span>24h change shown at right</span>
-              <span className="font-mono">
-                {monthly ? `Kalshi · ${cityCount} ${cityCount === 1 ? "city" : "cities"}` : "Kalshi"}
-              </span>
-            </div>
+            {showMonthlyDelta && (
+              <div className="mt-4 pt-3 border-t border-dashed border-surface-border text-xs text-text-muted flex items-center justify-between">
+                <span>24h change shown at right</span>
+                {monthly && (
+                  <span className="font-mono">
+                    {`${cityCount} ${cityCount === 1 ? "city" : "cities"}`}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

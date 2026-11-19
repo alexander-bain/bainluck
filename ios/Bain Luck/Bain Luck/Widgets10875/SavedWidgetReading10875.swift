@@ -112,15 +112,19 @@ enum SavedWidgetReadingRules10875 {
 
     static func game(_ event: SavedWidgetEventDetail10875, side: SavedWidgetGameSide10875?,
                      now: Date = Date()) -> SavedWidgetReading10875 {
-        let subject = "\(event.awayTeam) vs \(event.homeTeam)"
+        let displayTeams = TeamShortName.isCollegeSport(sportKey: event.sport)
+            ? TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+            : (away: event.awayTeam, home: event.homeTeam)
+        let subject = "\(displayTeams.away) vs \(displayTeams.home)"
         let short = TeamShortName.abbreviationPair(
             away: event.awayTeam, home: event.homeTeam,
-            awayServed: event.awayTeamData?.abbreviation, homeServed: event.homeTeamData?.abbreviation)
+            awayServed: event.awayTeamData?.abbreviation, homeServed: event.homeTeamData?.abbreviation,
+            sportKey: event.sport)
         let shortSubject = "\(short.away) vs \(short.home)"
         let commence = SavedWidgetDetailDecoding10875.date(event.commenceTime)
 
         func row(_ isHome: Bool, figure: String?, verdict: String? = nil, emphasized: Bool = false) -> SavedWidgetReading10875.Row {
-            .init(label: isHome ? event.homeTeam : event.awayTeam,
+            .init(label: isHome ? displayTeams.home : displayTeams.away,
                   shortLabel: isHome ? short.home : short.away,
                   figure: figure, verdict: verdict, emphasized: emphasized)
         }
@@ -138,7 +142,7 @@ enum SavedWidgetReadingRules10875 {
             guard let away = event.awayScore, let home = event.homeScore else { return nil }
             return (String(away), String(home))
         }()
-        let scoreSentence = scores.map { " \(event.awayTeam) \($0.away), \(event.homeTeam) \($0.home)." } ?? ""
+        let scoreSentence = scores.map { " \(displayTeams.away) \($0.away), \(displayTeams.home) \($0.home)." } ?? ""
 
         // 1. Finished: the verdict, never a price.
         if EventState.isFinished(event.status) {
@@ -161,7 +165,7 @@ enum SavedWidgetReadingRules10875 {
                 let homeWon = outcome == .home
                 let rows = [row(false, figure: scores?.away, verdict: homeWon ? "Lost" : "Won", emphasized: !homeWon),
                             row(true, figure: scores?.home, verdict: homeWon ? "Won" : "Lost", emphasized: homeWon)]
-                let winner = homeWon ? event.homeTeam : event.awayTeam
+                let winner = homeWon ? displayTeams.home : displayTeams.away
                 let headline: SavedWidgetReading10875.Row
                 if let side {
                     headline = side == .home ? rows[1] : rows[0]

@@ -251,7 +251,8 @@ async def test_stale_is_served_at_once_and_rebuilt_once_in_the_background(
     assert (await _get(_session(), compact=compact)).headers["X-Feed-Cache"] == "stale_hit"
     gate.set()
     await _drain_background()
-    assert len(rebuilds) == (2 if compact else 1)
+    # This test session exposes no spare pool capacity.
+    assert len(rebuilds) == 1
     assert _cards_hydrated(rebuilds[0])
     assert sum(bool(_cards_hydrated(session)) for session in rebuilds) == 1
 
@@ -417,7 +418,7 @@ def test_the_envelope_round_trips_and_refuses_garbage():
 
 def test_the_key_names_slug_revision_and_scope():
     key = cache.container_read_cache_key("nfl-2026-week-4", 2, True)
-    assert key == "container_read:v3:nfl-2026-week-4:r2:all"
+    assert key == "container_read:v4:nfl-2026-week-4:r2:all"
     assert cache.container_read_cache_key("nfl-2026-week-4", 3, True) != key
     assert cache.container_read_cache_key("nfl-2026-week-4", 2, False) != key
     assert cache.container_read_cache_key("nfl-2026-week-4", 2, True, compact=True) == f"{key}:compact"

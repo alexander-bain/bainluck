@@ -118,7 +118,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       "Alcaraz won in five sets. So why did his odds run from 98% up two sets to 14% — the brink of elimination — before he won?",
     scoreSaid: "Final: Alcaraz d. Zverev 6-4, 7-6, 6-7, 6-7, 7-5.",
     moment:
-      "A pre-match favorite around 84%, Alcaraz went up two sets and the market pushed him to 98%. Then an adductor injury — and across the next two sets it watched him crash to 14%, the edge of elimination, before he broke back in the fifth to win. The market tracked every swing.",
+      "A pregame favorite around 84%, Alcaraz went up two sets and the market pushed him to 98%. Then an adductor injury — and across the next two sets it watched him crash to 14%, the edge of elimination, before he broke back in the fifth to win. The market tracked every swing.",
     takeaway:
       "The scoreline says close. The probability line says he won, nearly lost, and won again. That's the night we show you.",
     // Alex ruling 2026-07-30: no dollar-volume social proof anywhere in the

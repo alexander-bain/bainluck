@@ -952,9 +952,13 @@ final class CalibrationViewModel: ObservableObject {
         return "\(Self.monthYear(s))\u{2013}\(Self.monthYear(e))"
     }
 
-    var updatedLabel: String {
-        guard let g = data?.generatedAt, let date = Self.parseISO(g) else { return "hourly" }
-        let f = DateFormatter(); f.dateFormat = "MMM d"
+    /// #7612: formatted date when `generated_at` is present, or `nil` when absent
+    /// (never promising a cadence like `"hourly"` when the date could not be read).
+    var updatedLabel: String? {
+        guard let g = data?.generatedAt, let date = Self.parseISO(g) else { return nil }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "MMM d"
         return f.string(from: date)
     }
 

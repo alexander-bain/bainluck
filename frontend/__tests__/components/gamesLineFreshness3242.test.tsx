@@ -131,7 +131,7 @@ describe("the hero actually hands the stamp to the chip", () => {
   const path = require("path");
 
   const SUBJECT = "app/events/[id]/page.tsx";
-  const WIRING = /<FreshnessChip\s+asOf=\{event\.linescore\?\.observed_at\}\s*\/>/;
+  const WIRING = /scoreStamp:\s*liveGamesLine\s*\?\s*event\.linescore\?\.observed_at\s*:\s*renderedScoreStamp/;
 
   const source = (): string => {
     const p = path.join(process.cwd(), SUBJECT);
@@ -145,9 +145,7 @@ describe("the hero actually hands the stamp to the chip", () => {
   });
 
   test("and the scan would notice if it stopped", () => {
-    // The same pattern against the real file with the wiring removed. Without
-    // this arm a typo in the regex would make the test above pass forever.
-    const gutted = source().replace(WIRING, "<FreshnessChip />");
+    const gutted = source().replace(WIRING, "scoreStamp: renderedScoreStamp");
     expect(gutted).not.toMatch(WIRING);
   });
 });

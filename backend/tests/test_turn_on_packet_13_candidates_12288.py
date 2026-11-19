@@ -165,6 +165,7 @@ async def test_each_r4_candidate_passes_eval_rows_trading_guard_and_website_cont
     subtitle = str(roundup.get("subtitle") or "").strip()
     kicker = str(roundup.get("kicker") or "").strip()
     footer = str(roundup.get("footer") or "").strip()
+    count_line = str(roundup.get("count_line") or "").strip()
     rows = roundup.get("rows") or []
 
     assert 12 <= len(title) <= 45, f"{slug} title violates Rule 1 (<=45 chars): {len(title)} {title!r}"
@@ -197,7 +198,7 @@ async def test_each_r4_candidate_passes_eval_rows_trading_guard_and_website_cont
         assert not BRACKET_RE.search(label), f"{slug} row label contains bracket (Rule 4/5): {label!r}"
         assert not EDITORIAL_JARGON_RE.search(label), f"{slug} row label contains jargon: {label!r}"
 
-    for text_field in (title, subtitle, footer):
+    for text_field in (title, subtitle, footer, count_line):
         assert not FORBIDDEN_READER_COPY_RE.search(text_field), f"{slug} banned copy in: {text_field}"
         assert not BRACKET_RE.search(text_field), f"{slug} bracket in reader copy (Rule 4): {text_field!r}"
         assert not EDITORIAL_JARGON_RE.search(text_field), f"{slug} jargon in reader copy (Rule 3): {text_field!r}"

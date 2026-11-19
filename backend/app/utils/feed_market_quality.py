@@ -1445,7 +1445,6 @@ _ENTERTAINMENT_METRIC_RE = re.compile(
     r"\b("
     r"streams up this week|weekly streams|album equivalent units|"
     r"weekly top (songs|albums)|"
-    r"top album on weekly|top song on weekly|"
     r"rank on the billboard|#[2-9]\d* on the billboard"
     r")\b",
     re.IGNORECASE,
@@ -1561,8 +1560,16 @@ _RUNNER_UP_RE = re.compile(
 )
 
 
+_ARTWORK_LOT_SALE_RE = re.compile(
+    r"\blot\s+[0-9a-z]+\b.*\bsale price\b",
+    re.IGNORECASE,
+)
+
+
 def _is_runner_up_rank(name: str) -> bool:
     """R8 — non-#1 ranking market (runner-up / #2+); not a 'number one' market."""
+    if _ARTWORK_LOT_SALE_RE.search(name):
+        return False
     return bool(_RUNNER_UP_RE.search(name)) and not bool(_NUMBER_ONE_RE.search(name))
 
 
@@ -3000,7 +3007,16 @@ def _story_key(name: str, category: str) -> str | None:
     if "ipo" in lower:
         return "story:ipo_markets"
 
-    if re.search(r"\b(spotify|billboard)\b", lower):
+    if re.search(r"\bbillboard\s+hot\s+100\b", lower):
+        return "story:billboard_hot100"
+
+    if re.search(r"\bbillboard\s+200\b", lower):
+        return "story:billboard_200"
+
+    if re.search(r"\bspotify\b", lower):
+        return "story:spotify_charts"
+
+    if re.search(r"\bbillboard\b", lower):
         return "story:music_charts"
 
     if is_daily_direction_filler(name):
@@ -3042,8 +3058,20 @@ def _story_key(name: str, category: str) -> str | None:
     ):
         return "story:ai"
 
-    if re.search(r"\b(met gala|oscars?|academy awards?|grammys?|emmys?)\b", lower):
-        return "story:major_entertainment_events"
+    if re.search(r"\b(oscars?|academy awards?)\b", lower):
+        return "story:oscars"
+
+    if re.search(r"\bgrammys?\b", lower):
+        return "story:grammys"
+
+    if re.search(r"\bemmys?\b", lower):
+        return "story:emmys"
+
+    if re.search(r"\bgolden globes?\b", lower):
+        return "story:golden_globes"
+
+    if re.search(r"\bmet gala\b", lower):
+        return "story:met_gala"
 
     if _is_us_federal_power(name):
         return "story:us_federal_power"
@@ -5387,9 +5415,17 @@ def diversify_quality_families(
         "story:ipo_markets": 4,
         "story:spacex_launches": 3,
         "story:major_entertainment_events": 2,
+        "story:oscars": 2,
+        "story:grammys": 2,
+        "story:emmys": 2,
+        "story:golden_globes": 2,
+        "story:met_gala": 1,
         "story:us_federal_power": 3,
         "story:drake_iceman": 1,
         "story:music_charts": 1,
+        "story:billboard_hot100": 1,
+        "story:billboard_200": 1,
+        "story:spotify_charts": 1,
         "story:us_government_stakes": 2,
         "story:single_stock_earnings": 1,
         "story:golf_truist_championship": 3,

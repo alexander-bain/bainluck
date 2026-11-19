@@ -47,6 +47,10 @@ struct TeamLogoView: View {
     /// two sides share — see `badge(teamName:opponentName:)`. Defaults to nil,
     /// which is every one-circle surface unchanged.
     var opponentName: String? = nil
+    /// Ruling 194-A — provider-served team abbreviation (e.g. `DUKE`, `ALA`)
+    /// shown on the fallback badge when a logo is missing or fails to load.
+    var abbreviation: String? = nil
+    var opponentAbbreviation: String? = nil
 
     @State private var image: PlatformImage?
     @State private var loadFailed = false
@@ -157,14 +161,24 @@ struct TeamLogoView: View {
     /// #10714 — this circle is a reader-facing tile, so a badge that spells a
     /// result word ("Chak Lam Coleman Wong" `WON`, beside the real WON chip on the
     /// finished hero) is re-lettered (`CW`). `abbreviation` itself is untouched.
-    static func badge(teamName: String, opponentName: String?, sportKey: String? = nil) -> String {
+    static func badge(
+        teamName: String,
+        opponentName: String?,
+        sportKey: String? = nil,
+        servedAbbreviation: String? = nil,
+        opponentAbbreviation: String? = nil
+    ) -> String {
         let badge: String
         if let opponentName, !opponentName.isEmpty, opponentName != teamName {
             badge = TeamShortName.abbreviationPair(
                 away: teamName,
                 home: opponentName,
+                awayServed: servedAbbreviation,
+                homeServed: opponentAbbreviation,
                 sportKey: sportKey
             ).away
+        } else if let served = servedAbbreviation?.trimmingCharacters(in: .whitespacesAndNewlines), !served.isEmpty {
+            badge = served
         } else {
             badge = TeamShortName.abbreviation(teamName, sportKey: sportKey)
         }
@@ -176,15 +190,19 @@ struct TeamLogoView: View {
             Circle()
                 .fill(color.opacity(0.2))
             // Three glyphs where one used to sit, at every size this view is drawn
-            // (18 on a leaderboard row, 80 on the iPad hero). The width frame is the
-            // chord the circle can actually hold, so `minimumScaleFactor` shrinks a
-            // wide trio to fit instead of truncating it to "BE…" — a badge that
-            // ellipsises is worse than the letter it replaced.
-            Text(Self.badge(teamName: teamName, opponentName: opponentName, sportKey: sportKey))
-                .font(.system(size: size * 0.40, weight: .bold))
+            // (18 on a leaderboard row, 80 on the iPad hero), plus four-letter
+            // served college codes (`DUKE`, `GONZ`, `MISS`) under Ruling 194-A.
+            Text(Self.badge(
+                teamName: teamName,
+                opponentName: opponentName,
+                sportKey: sportKey,
+                servedAbbreviation: abbreviation,
+                opponentAbbreviation: opponentAbbreviation
+            ))
+                .font(.system(size: size * 0.38, weight: .bold))
                 .lineLimit(1)
-                .minimumScaleFactor(0.45)
-                .frame(width: size * 0.82)
+                .minimumScaleFactor(0.40)
+                .frame(width: size * 0.84)
                 .foregroundStyle(color)
         }
         .frame(width: size, height: size)

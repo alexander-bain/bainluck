@@ -7,8 +7,11 @@ to make deduplication and filtering independently testable.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from app.utils.futures_market_snapshot import reader_change_24h  # #10248
+from app.utils.settlement_display import RETRACTED_SOURCE
+from app.utils.source_mark import no_source_mark, quote_source_mark
 
 # How old a futures quote may be before it stops being a valid answer to
 # "what are their chances?" during a live season (#1589).
@@ -25,6 +28,24 @@ _PER_TEAM_MERGE_GROUPS = {
     "make_nhl_playoffs", "make_mlb_playoffs",
 }
 _PER_TEAM_MERGE_SUFFIXES = ("_division", "_conf_champion", "_conf_1_seed", "_conf_playin")
+
+
+def related_futures_quote_mark(
+    market: Any, outcome: Any, probability: float | None,
+) -> dict:
+    """The price this direct row carries, with no market touch time or count."""
+    if probability is None:
+        return no_source_mark("no_probability")
+    grade = getattr(outcome, "resolution_source", None)
+    # The legacy rail also carries closed and graded values. Those alone
+    # cannot establish an observed quote or the provenance of a result.
+    if (
+        getattr(market, "status", None) in {"resolved", "closed"}
+        or getattr(outcome, "is_winner", None) is True
+        or (isinstance(grade, str) and grade not in {"", RETRACTED_SOURCE})
+    ):
+        return no_source_mark("result_unknown")
+    return quote_source_mark([{"key": market.source, "probability": probability}])
 
 
 def dedup_by_merge_group(

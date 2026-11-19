@@ -86,6 +86,7 @@
  */
 
 import type { SettledOutcome } from "./eventOutcome";
+import { isStoredOpeningChance } from "./probabilityEvidence";
 import { awayIsTheComplement } from "./drawPricedWinner";
 import { liveClaimIsUnbacked } from "./eventLivePush";
 import { authorityStoppageLabel } from "./gameTimeLabel";
@@ -279,6 +280,7 @@ export function isFinishedForShare(event: EventShareMetaInput): boolean {
 export function shareForecastPercents(
   event: EventShareMetaInput,
 ): { away: string; home: string } | null {
+  if (isStoredOpeningChance(event)) return null;
   const away = formatProbability(event.current_odds?.away_probability);
   const home = formatProbability(event.current_odds?.home_probability);
   if (away === null || home === null) return null;
@@ -345,6 +347,7 @@ export function shareForecastPercents(
  * window reads it.
  */
 export function hasNoPriceForShare(event: EventShareMetaInput): boolean {
+  if (isStoredOpeningChance(event)) return true;
   const away = event.current_odds?.away_probability;
   const home = event.current_odds?.home_probability;
 

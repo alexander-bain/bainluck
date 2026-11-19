@@ -26,7 +26,7 @@ import AboutPage from "@/app/about/page";
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-describe("AboutPage Decision 189 behind NEXT_PUBLIC_ABOUT_189 (#12672)", () => {
+describe("AboutPage Decision 189 default ON (Ruling 205-A / #12672)", () => {
   const originalEnv = process.env.NEXT_PUBLIC_ABOUT_189;
   let host: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;
@@ -59,8 +59,8 @@ describe("AboutPage Decision 189 behind NEXT_PUBLIC_ABOUT_189 (#12672)", () => {
     }
   });
 
-  it("keeps the current About page when NEXT_PUBLIC_ABOUT_189 is off", () => {
-    delete process.env.NEXT_PUBLIC_ABOUT_189;
+  it("renders the legacy About page only when NEXT_PUBLIC_ABOUT_189 is explicitly false", () => {
+    process.env.NEXT_PUBLIC_ABOUT_189 = "false";
     act(() => {
       root.render(React.createElement(AboutPage));
     });
@@ -69,8 +69,8 @@ describe("AboutPage Decision 189 behind NEXT_PUBLIC_ABOUT_189 (#12672)", () => {
     expect(host.querySelector("h1")?.textContent).toBe("Bain Luck");
   });
 
-  it("renders Alex and Fable's approved Decision 189 About copy and final Picture credits row when flagged on", () => {
-    process.env.NEXT_PUBLIC_ABOUT_189 = "true";
+  it("renders Alex and Fable's approved Decision 189 About copy and final Picture credits row by default", () => {
+    delete process.env.NEXT_PUBLIC_ABOUT_189;
     act(() => {
       root.render(React.createElement(AboutPage));
     });

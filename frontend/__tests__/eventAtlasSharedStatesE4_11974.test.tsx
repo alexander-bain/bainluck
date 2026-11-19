@@ -327,12 +327,9 @@ describe("Event-page Atlas Step E4 — shared state language (#11974)", () => {
     expect(pageSrc).toContain(
       "text={atlasOptIn && !pastSlowLoadMark ? ATLAS_STATE_COPY.loading : loadingView.text}",
     );
-    expect(pageSrc).toContain(
-      "atlasOptIn && venueVoided\n                  ? ATLAS_STATE_COPY.voided\n                  : venueSettledSentence ??",
-    );
     expect(pageSrc).toContain("atlasMode: atlasOptIn,");
     expect(pageSrc).toContain("atlasMode={atlasOptIn}");
-    expect(pageSrc).toContain("voided={venueVoided}");
+    expect(pageSrc).toContain("venueVoided,");
     expect(pageSrc).toContain("stoppageLabel={stoppageLabel}");
     expect(pageSrc).toContain(
       "<GameLineBrowser data={gameMarkets} status={event.status} atlasMode={atlasOptIn} />",

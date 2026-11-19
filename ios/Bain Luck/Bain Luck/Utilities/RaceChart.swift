@@ -355,8 +355,11 @@ nonisolated enum RaceChart {
             // axis must be able to contain it.
             if let current = entry.probability, current.isFinite, current > max { max = current }
         }
-        let wanted = max * ceilingHeadroom
-        return ceilingSteps.first { $0 >= wanted } ?? 1.0
+        return ChartScaleRule201.raceCeilingFraction(
+            peakFraction: max,
+            steps: ceilingSteps,
+            headroom: ceilingHeadroom
+        )
     }
 
     /// The y-axis labels, top to bottom (#2451).

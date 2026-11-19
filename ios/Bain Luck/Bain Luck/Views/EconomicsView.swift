@@ -334,21 +334,16 @@ struct EconomicsView: View {
             Divider()
                 .padding(.vertical, 6)
 
-            // Rate distribution bars
+            // Rate distribution bars (Direction 228 #12885: ascending rate order)
+            let fomcRows = NumericalMarketScaleOrder228.orderedFOMCDistribution(meeting.dist, limit: 5)
             VStack(spacing: 6) {
-                ForEach(Array(meeting.dist.prefix(5).enumerated()), id: \.offset) { _, pair in
-                    if pair.count >= 2,
-                       let prob = pair[0].doubleValue,
-                       let rate = pair[1].stringValue,
-                       prob >= 1 {
-                        fomcDistRow(rate: rate, prob: prob)
-                    }
+                ForEach(Array(fomcRows.enumerated()), id: \.offset) { _, row in
+                    fomcDistRow(rate: row.rate, prob: row.prob)
                 }
             }
 
             FooterNote(
-                left: "Resolves post-FOMC",
-                right: "Kalshi"
+                left: "Resolves post-FOMC"
             )
         }
         #if os(macOS)
@@ -486,9 +481,12 @@ struct EconomicsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 2)
 
-            // Peak bucket label
-            if let brackets = release.brackets,
-               let peakIdx = release.peakIs,
+            // Peak bucket label & histogram (Direction 228 #12885: ascending numerical bracket order)
+            let orderedCPI = release.brackets.map {
+                NumericalMarketScaleOrder228.orderedCPIBrackets($0, fallbackPeakIndex: release.peakIs)
+            }
+            if let brackets = orderedCPI?.brackets,
+               let peakIdx = orderedCPI?.peakIndex,
                peakIdx < brackets.count,
                let label = brackets[peakIdx][1].stringValue,
                let prob = brackets[peakIdx][0].doubleValue {
@@ -506,11 +504,11 @@ struct EconomicsView: View {
             }
 
             // Mini histogram bars
-            if let brackets = release.brackets, !brackets.isEmpty {
+            if let brackets = orderedCPI?.brackets, !brackets.isEmpty {
                 Divider()
                     .padding(.vertical, 4)
 
-                cpiHistogram(brackets: brackets, peakIdx: release.peakIs)
+                cpiHistogram(brackets: brackets, peakIdx: orderedCPI?.peakIndex)
             }
 
             // No venue mark. It was hardcoded "Kalshi" and is false on this row
