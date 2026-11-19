@@ -28,6 +28,7 @@ from app.utils.futures_source_merge import (
     entities_compatible,
     merge_relabel_collisions,
 )
+from app.utils.source_mark import no_source_mark, quote_source_mark
 
 FIXTURE = Path(__file__).parent / "fixtures" / "event_15194464_related_futures.json"
 
@@ -113,6 +114,72 @@ def test_an_equal_weight_pair_now_prints_the_midpoint(payload):
     # The pair is 3.65 points apart, nowhere near the sanity threshold, so the
     # divergence gate must NOT claim it.
     assert "divergence" not in row
+
+
+def _with_quote(row, **overrides):
+    row = {**row, **overrides}
+    if row["probability"] is None:
+        row["source_mark"] = no_source_mark("no_probability")
+    else:
+        row["source_mark"] = quote_source_mark([
+            {"key": row["source"], "probability": row["probability"]},
+        ])
+    return row
+
+
+def test_related_futures_midpoint_mark_names_each_actual_input(payload):
+    original = payload["home_team_futures"]
+    marked = [_with_quote(row) for row in original]
+    new = merge_relabel_collisions(marked)
+    row, = _champ(new)
+
+    assert [
+        {key: value for key, value in entry.items() if key != "source_mark"}
+        for entry in new
+    ] == merge_relabel_collisions(original)
+    assert row["probability"] == pytest.approx(0.05875)
+    assert row["source_mark"]["state"] == "blend"
+    assert row["source_mark"]["method"] == "Bain Luck blend · the average of these sources"
+    assert [
+        (source["key"], source["probability"], source["observed_at"])
+        for source in row["source_mark"]["sources"]
+    ] == [("kalshi", 0.077, None), ("polymarket", 0.0405, None)]
+
+
+def test_related_futures_divergence_marks_only_its_selected_quote(payload):
+    kalshi, other = _champ(payload["home_team_futures"])
+    rows = [
+        _with_quote(kalshi, probability=0.1),
+        _with_quote(other, source="betting", probability=0.9),
+    ]
+    row, = merge_relabel_collisions(rows)
+
+    assert row["blend_rule"] == "divergence_gate"
+    assert row["probability"] == 0.9
+    assert row["market_id"] == kalshi["market_id"]
+    assert row["divergence"]["primary_source"] == "betting"
+    assert row["source_mark"] == rows[1]["source_mark"]
+
+
+def test_related_futures_mark_omits_unpriced_collision_input(payload):
+    kalshi, polymarket = _champ(payload["home_team_futures"])
+    rows = [_with_quote(kalshi, probability=None), _with_quote(polymarket)]
+    row, = merge_relabel_collisions(rows)
+
+    assert row["probability"] == polymarket["probability"]
+    assert row["source_mark"] == rows[1]["source_mark"]
+
+
+def test_related_futures_does_not_average_two_quotes_from_one_source_in_the_mark(payload):
+    kalshi, polymarket = _champ(payload["home_team_futures"])
+    rows = [
+        _with_quote(kalshi),
+        _with_quote(polymarket),
+        _with_quote(polymarket, market_id=114585, probability=0.06),
+    ]
+    row, = merge_relabel_collisions(rows)
+    assert row["probability"] == 0.06
+    assert row["source_mark"] == no_source_mark("source_evidence_incomplete")
 
 
 def test_a_merge_needs_all_three_conditions(payload):

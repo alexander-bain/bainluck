@@ -37,8 +37,9 @@
       },
       {
         "key": "best_picture_history",
-        "title": "Companion Award Odds Over the Past Week",
-        "note": "Recent probability paths across Best Actress, Supporting Actor, and Animated Feature.",
+        "title": "Companion Category Moves This Week",
+        "fallback_title": "Companion Category Odds",
+        "note": "7-day odds movement across companion Academy Award categories.",
         "atom_query": {
           "kind": "market_history",
           "title_all_tokens": ["oscar"],
@@ -47,11 +48,15 @@
             "supporting actor",
             "supporting actress",
             "animated feature",
-            "international feature"
+            "international feature",
+            "adapted screenplay",
+            "original screenplay",
+            "original score",
+            "documentary feature"
           ],
           "exclude_tokens": ["nomin", "odds hit"],
           "shape": "field",
-          "order_by": "lead_prob_desc",
+          "order_by": "movement_desc",
           "min_items": 1,
           "max_items": 4,
           "max_outcomes": 3,
@@ -77,6 +82,7 @@
         "key": "acting_categories",
         "title": "Acting Races",
         "note": "Companion acting fields sharing the same Best Picture contenders.",
+        "dynamic_item_note": true,
         "atom_query": {
           "kind": "markets",
           "title_all_tokens": ["oscar"],

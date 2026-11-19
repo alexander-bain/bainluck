@@ -2486,12 +2486,19 @@ struct DiscoverView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
-                // #12288: Owner-only machinery groupings preview (Alex + Preferences switch ON).
-                // Strictly absent for public, signed-out, and switched-off accounts.
+                // #12288 (`252: A`): Owner-only machinery groupings preview (Alex + Preferences switch ON),
+                // deduplicated against any `machinery-*` slugs already served in `vm.items` (`machinery=1`).
+                let servedMachinerySlugs = Set(
+                    vm.items.compactMap { $0.bundle?.roundupContract?.machineryCard?.slug }
+                )
+                let unservedPreviewItems = machineryPreviewItems.filter { entry in
+                    guard let slug = entry.machineryCard?.slug else { return false }
+                    return !servedMachinerySlugs.contains(slug)
+                }
                 if GroupingMachineryGate12288.canAccessMachinery(user: authManager.user),
-                   !machineryPreviewItems.isEmpty {
+                   !unservedPreviewItems.isEmpty {
                     VStack(spacing: DiscoverMasonry.spacing) {
-                        ForEach(machineryPreviewItems) { entry in
+                        ForEach(unservedPreviewItems) { entry in
                             if let card = entry.machineryCard {
                                 MachineryDiscoverEntryCardView(
                                     card: card,
@@ -3628,6 +3635,7 @@ struct NativeGroupCard: View {
 
     private func compactRow(_ data: FeedFuturesData) -> some View {
         let summary = DiscoverGroupRows.compactSummary(for: data)
+        let hasMark = summary.sourceMark?.draws == true
         return HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(data.name)
@@ -3646,9 +3654,20 @@ struct NativeGroupCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             if let probability = summary.probability {
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text(formatProbability(probability))
-                        .font(.title2.weight(.bold).monospacedDigit())
-                        .foregroundStyle(primaryInk)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(formatProbability(probability))
+                            .font(.title2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(primaryInk)
+                        if let mark = SourceMarkButton(
+                            summary.sourceMark,
+                            number: summary.sourceMark?.state == .settled ? nil : probability,
+                            subject: summary.label,
+                            numberSize: 18,
+                            compactRow: true
+                        ) {
+                            mark.buttonStyle(.borderless)
+                        }
+                    }
                     MovementBadge(movement: summary.movement)
                 }
                 .frame(minWidth: 58, alignment: .trailing)
@@ -3659,7 +3678,7 @@ struct NativeGroupCard: View {
         // Keep the existing tap gesture: a NavigationLink here turns a swipe
         // into navigation on touch-up (#7074).
         .onTapGesture { navigationPath.append(Route.futuresDetail(id: data.id)) }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: hasMark ? .contain : .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier(NativeCompactFuturesRow.rowIdentifier)
     }

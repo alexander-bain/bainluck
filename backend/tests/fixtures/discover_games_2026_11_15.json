@@ -1,0 +1,374 @@
+[
+ {
+  "type": "event",
+  "score": 89,
+  "data": {
+   "status": "live",
+   "home_team": "Dallas Cowboys",
+   "away_team": "San Francisco 49ers",
+   "home_score": 19,
+   "away_score": 31,
+   "opening_odds": {
+    "home_probability": 0.3632,
+    "away_probability": 0.6368,
+    "favorite": "away"
+   },
+   "hero_probability": 0.113057,
+   "event_tags": [
+    "importance:regular_season",
+    "league:nfl"
+   ],
+   "win_probability_sources": {
+    "espn": {
+     "value": 0.0975
+    },
+    "kalshi": {
+     "value": 0.115
+    },
+    "betting": {
+     "value": 0.1376
+    },
+    "polymarket": {
+     "value": 0.115
+    },
+    "stat_model": {
+     "value": 0.0511
+    }
+   },
+   "id": 14969889,
+   "home_team_data": {
+    "team_id": 552
+   },
+   "away_team_data": {
+    "team_id": 546
+   }
+  }
+ },
+ {
+  "type": "event",
+  "score": 87,
+  "data": {
+   "status": "live",
+   "home_team": "Toronto Raptors",
+   "away_team": "New York Knicks",
+   "home_score": 17,
+   "away_score": 14,
+   "opening_odds": {
+    "home_probability": 0.3998,
+    "away_probability": 0.6002,
+    "favorite": "away"
+   },
+   "hero_probability": 0.439826,
+   "event_tags": [
+    "importance:regular_season",
+    "league:nba"
+   ],
+   "win_probability_sources": {
+    "espn": {
+     "value": 0.395
+    },
+    "kalshi": {
+     "value": 0.425
+    },
+    "betting": {
+     "value": 0.4401
+    },
+    "polymarket": {
+     "value": 0.455
+    },
+    "stat_model": {
+     "value": 0.5052
+    }
+   },
+   "id": 15349001,
+   "home_team_data": {
+    "team_id": 35
+   },
+   "away_team_data": {
+    "team_id": 108
+   }
+  }
+ },
+ {
+  "type": "event",
+  "score": 84,
+  "data": {
+   "status": "live",
+   "home_team": "Phoenix Suns",
+   "away_team": "Los Angeles Lakers",
+   "home_score": 116,
+   "away_score": 122,
+   "opening_odds": {
+    "home_probability": 0.3999,
+    "away_probability": 0.6001,
+    "favorite": "away"
+   },
+   "hero_probability": 0.094939,
+   "event_tags": [
+    "importance:regular_season",
+    "league:nba"
+   ],
+   "win_probability_sources": {
+    "espn": {
+     "value": 0.105
+    },
+    "kalshi": {
+     "value": 0.095
+    },
+    "betting": {
+     "value": 0.1099
+    },
+    "polymarket": {
+     "value": 0.1005
+    },
+    "stat_model": {
+     "value": 0.0181
+    }
+   },
+   "id": 15349130,
+   "home_team_data": {
+    "team_id": 45
+   },
+   "away_team_data": {
+    "team_id": 49
+   }
+  }
+ },
+ {
+  "type": "event",
+  "score": 79,
+  "data": {
+   "status": "completed",
+   "home_team": "New Orleans Saints",
+   "away_team": "Carolina Panthers",
+   "home_score": 17,
+   "away_score": 20,
+   "opening_odds": {
+    "home_probability": 0.4892,
+    "away_probability": 0.5108,
+    "favorite": "even"
+   },
+   "hero_probability": 0.0,
+   "event_tags": [
+    "importance:regular_season",
+    "league:nfl"
+   ],
+   "win_probability_sources": {
+    "espn": {
+     "value": 0.2134
+    },
+    "betting": {
+     "value": 0.1711
+    },
+    "polymarket": {
+     "value": 0.0005
+    },
+    "stat_model": {
+     "value": 0.4991
+    }
+   },
+   "id": 14969884,
+   "home_team_data": {
+    "team_id": 551
+   },
+   "away_team_data": {
+    "team_id": 545
+   }
+  }
+ },
+ {
+  "type": "event",
+  "score": 33,
+  "data": {
+   "status": "completed",
+   "home_team": "Philadelphia 76ers",
+   "away_team": "Indiana Pacers",
+   "home_score": 131,
+   "away_score": 124,
+   "opening_odds": {
+    "home_probability": 0.709,
+    "away_probability": 0.2909,
+    "favorite": "home"
+   },
+   "hero_probability": 1.0,
+   "event_tags": [
+    "importance:regular_season",
+    "league:nba"
+   ],
+   "win_probability_sources": {
+    "espn": {
+     "value": 0.985
+    },
+    "polymarket": {
+     "value": 0.9995
+    },
+    "stat_model": {
+     "value": 0.999
+    }
+   },
+   "id": 15349000,
+   "home_team_data": {
+    "team_id": 50
+   },
+   "away_team_data": {
+    "team_id": 103
+   }
+  }
+ },
+ {
+  "type": "event",
+  "score": 98,
+  "data": {
+   "status": "live",
+   "home_team": "Stanford Cardinal",
+   "away_team": "Gonzaga Bulldogs",
+   "home_score": 52,
+   "away_score": 56,
+   "opening_odds": {
+    "home_probability": 0.7098,
+    "away_probability": 0.2903,
+    "favorite": "home"
+   },
+   "hero_probability": 0.5234,
+   "event_tags": [
+    "importance:regular_season",
+    "league:wncaab"
+   ],
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.56
+    },
+    "stat_model": {
+     "value": 0.4136
+    }
+   },
+   "id": 15349468,
+   "home_team_data": {
+    "team_id": 2394
+   },
+   "away_team_data": {
+    "team_id": 8426
+   }
+  }
+ },
+ {
+  "type": "event",
+  "score": 98,
+  "data": {
+   "status": "live",
+   "home_team": "Louisville Cardinals",
+   "away_team": "UConn Huskies",
+   "home_score": 30,
+   "away_score": 16,
+   "opening_odds": {
+    "home_probability": 0.162,
+    "away_probability": 0.838,
+    "favorite": "away"
+   },
+   "hero_probability": 0.706396,
+   "event_tags": [
+    "importance:regular_season",
+    "league:wncaab"
+   ],
+   "win_probability_sources": {
+    "espn": {
+     "value": 0.861
+    },
+    "kalshi": {
+     "value": 0.655
+    },
+    "betting": {
+     "value": 0.6478
+    },
+    "stat_model": {
+     "value": 0.7953
+    }
+   },
+   "id": 15349317,
+   "home_team_data": {
+    "team_id": 73
+   },
+   "away_team_data": {
+    "team_id": 147
+   }
+  }
+ },
+ {
+  "type": "event",
+  "score": 82,
+  "data": {
+   "status": "scheduled",
+   "home_team": "Philadelphia Flyers",
+   "away_team": "Edmonton Oilers",
+   "home_score": null,
+   "away_score": null,
+   "opening_odds": {
+    "home_probability": 0.429,
+    "away_probability": 0.571,
+    "favorite": "away"
+   },
+   "hero_probability": 0.425,
+   "event_tags": [
+    "importance:regular_season",
+    "league:nhl"
+   ],
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.425
+    },
+    "betting": {
+     "value": 0.429
+    },
+    "polymarket": {
+     "value": 0.425
+    }
+   },
+   "id": 15348825,
+   "home_team_data": {
+    "team_id": 55
+   },
+   "away_team_data": {
+    "team_id": 114
+   }
+  }
+ },
+ {
+  "type": "event",
+  "score": 79,
+  "data": {
+   "status": "scheduled",
+   "home_team": "Dallas Stars",
+   "away_team": "Florida Panthers",
+   "home_score": null,
+   "away_score": null,
+   "opening_odds": {
+    "home_probability": 0.5435,
+    "away_probability": 0.4565,
+    "favorite": "home"
+   },
+   "hero_probability": 0.545,
+   "event_tags": [
+    "importance:regular_season",
+    "league:nhl"
+   ],
+   "win_probability_sources": {
+    "kalshi": {
+     "value": 0.555
+    },
+    "betting": {
+     "value": 0.5435
+    },
+    "polymarket": {
+     "value": 0.545
+    }
+   },
+   "id": 15348827,
+   "home_team_data": {
+    "team_id": 116
+   },
+   "away_team_data": {
+    "team_id": 62
+   }
+  }
+ }
+]

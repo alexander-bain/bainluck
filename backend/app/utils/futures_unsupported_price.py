@@ -1073,6 +1073,7 @@ def needs_unbacked_majority_evidence(
     yes_ask: Optional[float],
     *,
     in_exclusive_field: bool,
+    multi_selection_award: bool = False,
     volume_24h: Optional[int] = None,
     volume_24h_at: Optional[datetime] = None,
     last_seen_at: Optional[datetime] = None,
@@ -1093,7 +1094,7 @@ def needs_unbacked_majority_evidence(
     """
     if (source or "").strip().lower() != KALSHI_BOOKMAKER:
         return False
-    if not in_exclusive_field:
+    if not (in_exclusive_field or multi_selection_award):
         return False
     if row_carries_a_verdict(resolution_source):
         return False
@@ -1125,6 +1126,7 @@ def price_is_an_unbacked_majority(
     *,
     has_trade_evidence: bool,
     in_exclusive_field: bool,
+    multi_selection_award: bool = False,
     volume_24h: Optional[int] = None,
     volume_24h_at: Optional[datetime] = None,
     last_seen_at: Optional[datetime] = None,
@@ -1214,6 +1216,10 @@ def price_is_an_unbacked_majority(
     (gotcha #144 / ruling 103), so an invented price becomes a forecast we are
     graded on. The leg keeps its name and loses its number.
 
+    Multi-selection basketball awards use the same check for each player's
+    price (#13017). First and Second Team are separate fields with multiple
+    selections each, so the caller identifies those series explicitly.
+
     SCOPED TO OPEN MARKETS BY ITS CALL SITE and to ungraded rows here: a settled
     board is a RESULT, and settled means settled.
     """
@@ -1224,6 +1230,7 @@ def price_is_an_unbacked_majority(
         yes_bid,
         yes_ask,
         in_exclusive_field=in_exclusive_field,
+        multi_selection_award=multi_selection_award,
         volume_24h=volume_24h,
         volume_24h_at=volume_24h_at,
         last_seen_at=last_seen_at,

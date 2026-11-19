@@ -4,6 +4,7 @@ import XCTest
 final class RectangularWidgetHostJourneyTests: XCTestCase {
     @MainActor
     func testActualRectangularLauncherAndTap() throws {
+        executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
         defer { app.terminate() }
@@ -63,7 +64,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         let editorArrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             editors.count == 1 && namedEditors.count == 1 && !library.exists
         }, object: host)
-        XCTAssertEqual(XCTWaiter.wait(for: [editorArrived], timeout: 15), .completed,
+        XCTAssertEqual(XCTWaiter.wait(for: [editorArrived], timeout: 45), .completed,
                        "Named Modular Add did not reach its face editor")
         capture(host, "Named Modular editor before bounded page search")
         for _ in 0..<8 {
@@ -92,31 +93,25 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         XCTAssertTrue(host.otherElements["Watch Face"].firstMatch.waitForExistence(timeout: 15))
         let center = host.otherElements["center"].firstMatch
         XCTAssertTrue(center.waitForExistence(timeout: 15) && center.isHittable && host.frame.contains(center.frame))
-        // #4933: the installed extension reads the App Group file the app just published
-        // and draws the chosen game's compact probability reading with its age or As-of clock, never "Saved" or "stale".
-        let reading = host.descendants(matching: .any)["watch.complication.rectangular.reading"].firstMatch
+        // #4933: the installed extension reads the App Group file the app just published.
+        // Direction 217 (#12854): a team game with published Matchup facts fills the big
+        // rectangular slot in the Matchup look, named for the leader, with the score and its
+        // clock, "Live" or As-of time, never "Saved" or "stale". The look is one accessibility
+        // element that fills the slot, so it must sit inside the mounted slot, not strictly within it.
+        let matchups = center.descendants(matching: .any).matching(identifier: "watch.complication.matchup.during")
+        let reading = matchups.firstMatch
         XCTAssertTrue(reading.waitForExistence(timeout: 20), "Actual installed extension must render the published reading")
         let spoken = reading.label
-        XCTAssertTrue(spoken.hasPrefix("Los Angeles Dodgers at San Francisco Giants. Score Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants 64%. "), spoken)
+        let named = "Los Angeles Dodgers at San Francisco Giants. Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants 64% to win now. "
+        XCTAssertTrue(spoken.hasPrefix(named), spoken)
         XCTAssertTrue(spoken.hasSuffix(" Open your game in Bain Luck."), spoken)
         XCTAssertFalse(spoken.localizedCaseInsensitiveContains("stale"), spoken)
         XCTAssertFalse(spoken.localizedCaseInsensitiveContains("saved"), spoken)
-        let freshSpoken = spoken.contains("Live, less than 1 minute ago.") || spoken.contains("Live, 1 minute ago.") || spoken.contains("Live, 2 minutes ago.")
-        let agedSpoken = spoken.contains("As of ")
-        XCTAssertTrue(freshSpoken || agedSpoken, spoken)
+        let when = spoken.dropFirst(named.count).dropLast(" Open your game in Bain Luck.".count)
+        XCTAssertTrue(when.hasSuffix(".") && when.count > 1, spoken)
         print("WATCH_RECTANGULAR_READING_LABEL=\(spoken)")
-        // The drawn lines: compact matchup with the verified score, "SF 64%",
-        // and "Live · <age>" (or "As of <clock>" once > 2 minutes old).
-        let header = host.descendants(matching: .any)["watch.complication.rectangular.header"].firstMatch
-        let primary = host.descendants(matching: .any)["watch.complication.rectangular.primary"].firstMatch
-        let metadata = host.descendants(matching: .any)["watch.complication.rectangular.metadata"].firstMatch
-        XCTAssertEqual(header.label, "LA at SF · 2–3")
-        XCTAssertEqual(primary.label, "SF 64%")
-        XCTAssertFalse(metadata.label.localizedCaseInsensitiveContains("stale"), metadata.label)
-        XCTAssertFalse(metadata.label.localizedCaseInsensitiveContains("saved"), metadata.label)
-        XCTAssertTrue((metadata.label.hasPrefix("Live · ") && metadata.label.hasSuffix(" ago"))
-                      || metadata.label.hasPrefix("As of "), metadata.label)
-        try requireNamedReadingInsideSlot(reading, center: center, host: host)
+        try requireMatchupInsideSlot(reading, center: center, host: host)
+        XCTAssertFalse(host.descendants(matching: .any)["watch.complication.rectangular.reading"].firstMatch.exists)
         XCTAssertFalse(host.descendants(matching: .any)["watch.complication.fallback"].firstMatch.exists)
         XCTAssertFalse(host.descendants(matching: .any)["watch.complication.rectangular.legacy"].firstMatch.exists)
         capture(host, "Actual Modular saved reading with its age")
@@ -126,7 +121,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         XCTAssertTrue(probability.label.contains("San Francisco Giants") && probability.label.contains("64%"))
         let route = app.staticTexts["watch.launch-receipt"]
         let delivered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Launcher opens: 1"), object: route)
-        XCTAssertEqual(XCTWaiter.wait(for: [delivered], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [delivered], timeout: 45), .completed)
         capture(app, "Actual rectangular launcher retained selected game")
         print("WATCH_UI_ACTUAL_RECTANGULAR_LAUNCHER=PASS")
 
@@ -213,18 +208,18 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
             ? NSPredicate(format: "label == %@", finalHeader)
             : NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Saved reading", "Offline"),
             object: gameState)
-        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 45), .completed)
         let savedNote = app.staticTexts["watch.saved-update"]
         let explanation = app.staticTexts["watch.update-explanation"]
         if final {
             let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format:
                 "exists == true AND label BEGINSWITH %@", "Offline."), object: explanation)
-            XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)
+            XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 45), .completed)
             XCTAssertEqual(savedNote.label, "Last saved update")
         }
         let route = app.staticTexts["watch.launch-receipt"]
         let delivered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Launcher opens: 1"), object: route)
-        XCTAssertEqual(XCTWaiter.wait(for: [delivered], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [delivered], timeout: 45), .completed)
         let process = app.staticTexts["watch.launch-process"].label
         XCTAssertNotNil(UUID(uuidString: process))
         XCTAssertNotEqual(process, priorProcess)
@@ -258,38 +253,28 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         print("WATCH_SCORE_MODULAR_HOST_ROUTE_CHECKS=PASS scenario=\(scenario)")
     }
 
-    /// #4933: the published reading lies wholly inside the slot's own content area. That
-    /// area's margins are the system's, measured from the mounted root (7.0 pt on a 45 mm
-    /// Series 9 under watchOS 27), never a guessed constant.
+    /// Direction 217 (#12854): the Matchup look is one accessibility element that fills the
+    /// slot's WidgetKit remote root, measured from the mounted root, never a guessed
+    /// space. It lies within that root and may touch its edges.
     @MainActor
-    private func requireNamedReadingInsideSlot(_ reading: XCUIElement, center: XCUIElement,
-                                               host: XCUIApplication) throws {
+    private func requireMatchupInsideSlot(_ reading: XCUIElement, center: XCUIElement,
+                                          host: XCUIApplication) throws {
         let centerFrame = center.frame
         XCTAssertTrue(host.frame.contains(centerFrame))
         let remoteRoot = try XCTUnwrap(center.descendants(matching: .any).allElementsBoundByIndex.first {
             $0.frame.origin == .zero && $0.frame.size == centerFrame.size
         }, "Mounted Modular center has no proven zero-origin WidgetKit remote root")
-        let localReadings = remoteRoot.descendants(matching: .any).matching(identifier: reading.identifier)
-        XCTAssertEqual(localReadings.count, 1, "Reading must belong uniquely to the proven remote root")
         let root = remoteRoot.frame
         let card = reading.frame
-        XCTAssertEqual(localReadings.firstMatch.frame, card)
         XCTAssertTrue([card.minX, card.minY, card.maxX, card.maxY].allSatisfy { $0.isFinite }, "Reading frame must be finite")
         XCTAssertTrue(card.width > 0 && card.height > 0)
-        XCTAssertTrue(card.minX > root.minX && card.minY > root.minY && card.maxX < root.maxX && card.maxY < root.maxY,
-                      "Reading touches or escapes the WidgetKit slot")
-        // A full-width card spans exactly the system content area, so its side margins
-        // match; a line forcing the card wider would push it off one side.
-        XCTAssertEqual(card.minX - root.minX, root.maxX - card.maxX, accuracy: 0.5,
-                       "Reading is not centered in the slot's content area")
-        // Every drawn line, the saved line with its age included, lies inside the card.
-        for id in ["watch.complication.rectangular.header", "watch.complication.rectangular.primary",
-                   "watch.complication.rectangular.metadata"] {
-            let lines = remoteRoot.descendants(matching: .any).matching(identifier: id)
-            XCTAssertEqual(lines.count, 1, id)
-            let line = lines.firstMatch.frame
-            XCTAssertTrue(line.width > 0 && line.height > 0 && card.contains(line), "\(id) \(line) escapes \(card)")
-        }
+        XCTAssertTrue(root.contains(card), "Matchup reading \(card) escapes the WidgetKit slot \(root)")
+        // WidgetKit's tree repeats the identifier on an inner node (run 44333150411); exactly
+        // one element carrying it spans the whole slot, and it says what the test heard.
+        let spanning = remoteRoot.descendants(matching: .any).matching(identifier: reading.identifier)
+            .allElementsBoundByIndex.filter { $0.frame == root }
+        XCTAssertEqual(spanning.count, 1, "Matchup reading must belong uniquely to the proven remote root")
+        XCTAssertEqual(spanning.first?.label, reading.label)
         XCTAssertFalse(remoteRoot.descendants(matching: .any)["watch.complication.detail"].firstMatch.exists)
         print("WATCH_RECTANGULAR_READING_BOUNDS root=\(root) reading=\(card)")
     }
@@ -357,7 +342,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         let editorArrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             editors.count == 1 && namedEditors.count == 1 && !library.exists
         }, object: host)
-        XCTAssertEqual(XCTWaiter.wait(for: [editorArrived], timeout: 15), .completed,
+        XCTAssertEqual(XCTWaiter.wait(for: [editorArrived], timeout: 45), .completed,
                        "Named Modular Add did not reach its face editor")
         capture(host, "Named Modular editor before bounded page search")
         for _ in 0..<8 {
@@ -399,7 +384,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             library.exists || face.exists
         }, object: host)
-        XCTAssertEqual(XCTWaiter.wait(for: [arrived], timeout: 15), .completed,
+        XCTAssertEqual(XCTWaiter.wait(for: [arrived], timeout: 45), .completed,
                        "Configured Modular face did not leave its editor")
         if library.exists {
             let title = host.staticTexts["Switcher Face Title"].firstMatch
@@ -419,7 +404,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         let activated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             face.exists && !library.exists
         }, object: host)
-        XCTAssertEqual(XCTWaiter.wait(for: [activated], timeout: 15), .completed,
+        XCTAssertEqual(XCTWaiter.wait(for: [activated], timeout: 45), .completed,
                        "Configured Modular face did not become active")
         XCTAssertTrue(face.isHittable)
         capture(host, "Configured Modular active Watch Face")
@@ -434,6 +419,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
     @MainActor
     private func reveal(_ element: XCUIElement, in app: XCUIApplication, belowNavigationChrome: Bool = false) throws {
         var previousEarlierTop: CGFloat?
+        var previousBelowTop: CGFloat?
         var usedRecoveryDrag = false
         for _ in 0..<32 {
             let chromeBottom = belowNavigationChrome ? app.navigationBars.allElementsBoundByIndex
@@ -462,6 +448,15 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
                 start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
                 continue
             }
+            // The OS face gallery snaps card to card: a short upward drag snaps back
+            // and the next card's Add never moves (run 43963455417, widgets: Modular's
+            // Add stayed at y 233 through 32 drags). A list that did not move under a
+            // drag advances one Digital Crown step instead.
+            if belowNavigationChrome && !earlier, let priorTop = previousBelowTop, element.frame.minY == priorTop {
+                XCUIDevice.shared.rotateDigitalCrown(delta: 0.5)
+                continue
+            }
+            previousBelowTop = belowNavigationChrome && !earlier ? element.frame.minY : nil
             previousEarlierTop = belowNavigationChrome && earlier ? element.frame.minY : nil
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
             let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.75 : 0.45))

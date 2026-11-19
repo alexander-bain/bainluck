@@ -27,7 +27,8 @@ nonisolated enum HeadlineCellFit12822 {
 
         var totalColumnsWidth: CGFloat {
             let sum = columnWidths.reduce(0, +)
-            let gaps = CGFloat(max(columnWidths.count - 1, 0)) * columnSpacing
+            let activeCount = columnWidths.filter { $0 > 0 }.count
+            let gaps = CGFloat(max(activeCount - 1, 0)) * columnSpacing
             let extra = extraLeadingGaps.reduce(0, +)
             return sum + gaps + extra
         }
@@ -87,13 +88,24 @@ nonisolated enum HeadlineCellFit12822 {
         let cappedHeader = min(headerFontSize, 15)
         let manyCols = cols.count >= 5
 
+        let isActiveCol: [Bool] = cols.enumerated().map { idx, col in
+            !col.header.isEmpty || model.rows.contains { row in
+                let hasText = idx < row.cells.count && !row.cells[idx].isEmpty
+                let hasWinnerTick = col.role == .finalResult && row.won == true
+                return hasText || hasWinnerTick
+            }
+        }
+        let activeColCount = isActiveCol.filter { $0 }.count
+        let firstActiveIdx = isActiveCol.firstIndex(of: true)
+
         let naturalSpacing: CGFloat = manyCols ? 4 : 6
         let naturalExtraGaps: [CGFloat] = cols.indices.map { idx in
-            guard idx > 0, !manyCols else { return 0 }
+            guard isActiveCol[idx], let firstActiveIdx, idx > firstActiveIdx, !manyCols else { return 0 }
             return cols[idx].role == .now ? 8 : 0
         }
 
         let naturalWidths: [CGFloat] = cols.enumerated().map { idx, col in
+            guard isActiveCol[idx] else { return 0 }
             let hasSup = model.rows.contains { row in
                 guard let s = row.cellSuperscripts[idx] else { return false }
                 return !s.isEmpty
@@ -164,7 +176,7 @@ nonisolated enum HeadlineCellFit12822 {
         }
 
         let naturalSum = naturalWidths.reduce(0, +)
-        let naturalGaps = CGFloat(max(cols.count - 1, 0)) * naturalSpacing + naturalExtraGaps.reduce(0, +)
+        let naturalGaps = CGFloat(max(activeColCount - 1, 0)) * naturalSpacing + naturalExtraGaps.reduce(0, +)
         let naturalTotal = naturalSum + naturalGaps
 
         let usableWidth = max(innerWidth, 160)
@@ -195,12 +207,12 @@ nonisolated enum HeadlineCellFit12822 {
         }
 
         // First compress inter-column gaps before scaling font/column widths.
-        let tightSpacing: CGFloat = cols.count > 1 ? 3 : 0
+        let tightSpacing: CGFloat = activeColCount > 1 ? 3 : 0
         let tightExtraGaps: [CGFloat] = cols.indices.map { idx in
-            guard idx > 0, !manyCols else { return 0 }
+            guard isActiveCol[idx], let firstActiveIdx, idx > firstActiveIdx, !manyCols else { return 0 }
             return cols[idx].role == .now ? 3 : 0
         }
-        let tightGapsTotal = CGFloat(max(cols.count - 1, 0)) * tightSpacing + tightExtraGaps.reduce(0, +)
+        let tightGapsTotal = CGFloat(max(activeColCount - 1, 0)) * tightSpacing + tightExtraGaps.reduce(0, +)
         if naturalSum + tightGapsTotal <= columnRowBudget {
             return ResolvedLayout(
                 stacksRowsVertically: stacksVertically,
@@ -212,7 +224,7 @@ nonisolated enum HeadlineCellFit12822 {
         }
 
         // Proportionally compress column widths and font scale so every cell shrinks cleanly without ellipsis.
-        let availableForCells = max(columnRowBudget - tightGapsTotal, CGFloat(cols.count) * 18)
+        let availableForCells = max(columnRowBudget - tightGapsTotal, CGFloat(max(activeColCount, 1)) * 18)
         let ratio = min(1.0, max(0.38, availableForCells / max(naturalSum, 1)))
         let scaledWidths = naturalWidths.map { floor($0 * ratio * 2) / 2 }
         return ResolvedLayout(

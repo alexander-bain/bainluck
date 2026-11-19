@@ -1,10 +1,62 @@
 #!/usr/bin/env bash
-# #12252 item 2 — the flaky-canary job: run the quarantined tests (open `Flaky: <id>` issues)
+# #12252 item 2 + ruling 241: A — the flaky-canary job: run the quarantined tests
+# (open `Flaky: <id>` issues plus active entries in backend/tests/timing_quarantine.json)
 # for real, with every outcome visible, and never block a merge (the job is non-required and
 # continue-on-error). Runs from backend/ with the database-integration job's Postgres + Redis
 # services; provisions the same pinned pieces the shared tail uses (pg_trgm, redislite).
 set -uo pipefail
-mapfile -t ids < <(python -c 'import json, os, sys; [print(i) for i in json.loads(os.environ.get("CI_QUARANTINE") or "[]")]')
+mapfile -t ids < <(python - <<'PYIDS'
+import datetime as dt, json, os
+from pathlib import Path
+
+seen = []
+def add(item):
+    if isinstance(item, str) and item and item not in seen:
+        seen.append(item)
+
+try:
+    env_ids = json.loads(os.environ.get("CI_QUARANTINE") or "[]")
+except ValueError:
+    env_ids = []
+if isinstance(env_ids, list):
+    for item in env_ids:
+        add(item)
+
+qfile = Path("tests/timing_quarantine.json")
+if qfile.exists():
+    try:
+        entries = json.loads(qfile.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        entries = []
+    today = dt.date.today()
+    if isinstance(entries, list):
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            nodeid = entry.get("nodeid")
+            issue = entry.get("issue")
+            added = entry.get("added")
+            expires = entry.get("expires")
+            try:
+                add_d = dt.date.fromisoformat(added) if isinstance(added, str) else None
+                exp_d = dt.date.fromisoformat(expires) if isinstance(expires, str) else None
+            except ValueError:
+                add_d, exp_d = None, None
+            if (
+                isinstance(issue, int)
+                and not isinstance(issue, bool)
+                and issue > 0
+                and add_d is not None
+                and exp_d is not None
+                and 0 <= (exp_d - add_d).days <= 7
+                and today <= exp_d
+            ):
+                add(nodeid)
+
+for item in seen:
+    print(item)
+PYIDS
+)
 if [ "${#ids[@]}" -eq 0 ]; then
   echo "No quarantined tests."; exit 0
 fi

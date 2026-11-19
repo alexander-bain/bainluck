@@ -288,6 +288,16 @@ export default function CollectionHub({ slug }: { slug: string }) {
     </>;
   };
 
+  const isMachinerySlug = slug.startsWith("machinery-");
+  const machineryReadIncomplete =
+    isMachinerySlug &&
+    Boolean(
+      shown &&
+        (shown.state !== "published" ||
+          Boolean(shown.note) ||
+          shown.sections.length === 0),
+    );
+
   return <div className={`mx-auto w-full space-y-6${slug === "midterms-2026" ? "" : " max-w-4xl"}`} data-collection-hub={slug}>
     <div className="flex items-center justify-between gap-4">
       <div className="flex items-center gap-3">
@@ -333,22 +343,22 @@ export default function CollectionHub({ slug }: { slug: string }) {
       )}
     </header>
     {fetching && !shown && !error && <p role="status" className="py-8 text-text-secondary">Loading collection…</p>}
-    {error && shown && <div role="status" className="sticky top-16 z-40 flex items-center justify-between gap-3 rounded-card border border-surface-border bg-surface-card px-4 py-2 text-sm shadow-sm">
+    {error && shown && !machineryReadIncomplete && <div role="status" className="sticky top-16 z-40 flex items-center justify-between gap-3 rounded-card border border-surface-border bg-surface-card px-4 py-2 text-sm shadow-sm">
       <p className="text-text-secondary">{error}</p>
       <button type="button" disabled={fetching} onClick={() => void load()} className="shrink-0 text-accent-brand hover:underline disabled:text-text-muted">Try again</button>
     </div>}
-    {error && !shown && <div role="status" className="rounded-card border border-surface-border bg-surface-card p-5 space-y-3">
-      <p className="text-text-secondary">{error}</p>
+    {((error && !shown) || (!fetching && machineryReadIncomplete)) && <div role="alert" data-testid="machinery-collection-error" className="rounded-card border border-surface-border bg-surface-card p-5 space-y-3">
+      <p className="text-text-secondary">{error || "Couldn't load this collection. Please try again."}</p>
       <button type="button" onClick={() => void load()} className="text-accent-brand hover:underline">Try again</button>
     </div>}
-    {shown?.state === "published" && isNflWeekCollectionSlug(slug) && <CollectionWeekNavigation key={slug} slug={slug} read={navigationRead} onSettle={settleWeekNavigation} onNavigate={() => {
+    {!machineryReadIncomplete && shown?.state === "published" && isNflWeekCollectionSlug(slug) && <CollectionWeekNavigation key={slug} slug={slug} read={navigationRead} onSettle={settleWeekNavigation} onNavigate={() => {
       const member = shown.members.find((member) => (document.getElementById(collectionMemberDomId(member.key))?.getBoundingClientRect().bottom ?? 0) > 0);
       if (member) remember(member.key);
     }} />}
-    {shown?.note && <p role="status" className="text-sm text-text-secondary">{shown.note}</p>}
-    {shown?.theme && !shown.theme.inventoryComplete && <p className="text-sm text-text-secondary">This list may not include every market yet.</p>}
-    {shown?.children.map((child) => <Link key={child.key} id={collectionMemberDomId(child.key)} data-collection-child={child.key.replace(/^container:/, "")} href={child.href} onClick={() => remember(child.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card p-4 font-semibold text-text-primary hover:bg-surface-elevated">{child.name}<span aria-hidden>›</span></Link>)}
-    {activePairedSets.length > 0 && (
+    {!machineryReadIncomplete && shown?.note && <p role="status" className="text-sm text-text-secondary">{shown.note}</p>}
+    {!machineryReadIncomplete && shown?.theme && !shown.theme.inventoryComplete && <p className="text-sm text-text-secondary">This list may not include every market yet.</p>}
+    {!machineryReadIncomplete && shown?.children.map((child) => <Link key={child.key} id={collectionMemberDomId(child.key)} data-collection-child={child.key.replace(/^container:/, "")} href={child.href} onClick={() => remember(child.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card p-4 font-semibold text-text-primary hover:bg-surface-elevated">{child.name}<span aria-hidden>›</span></Link>)}
+    {!machineryReadIncomplete && activePairedSets.length > 0 && (
       <section data-testid="collection-paired-award-categories" className="space-y-4">
         {isOscarsHub && (
           <div className="space-y-0.5">
@@ -370,23 +380,31 @@ export default function CollectionHub({ slug }: { slug: string }) {
     )}
     {/* #10985: a hub served as one unclassified list (every provider event) has no
         section to name, so "More" would follow nothing; the page title names it. */}
-    <div data-collection-sections className={shown?.slug === "midterms-2026" ? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-start" : "space-y-6"}>
+    {!machineryReadIncomplete && <div data-collection-sections className={shown?.slug === "midterms-2026" ? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-start" : "space-y-6"}>
     {(shown?.slug === "midterms-2026"
       ? [shown.sections.slice(0, 2), ...shown.sections.slice(2).map(section => [section])]
       : [shown?.sections ?? []]).map((group, groupIndex) => <div key={group[0]?.key ?? groupIndex} className={shown?.slug === "midterms-2026" && groupIndex === 0 ? "grid grid-cols-1 md:col-span-2 md:grid-cols-2 xl:col-span-1 xl:grid-cols-1 gap-6 items-start" : "space-y-6 min-w-0"}>
-    {group.map((section) => {
+    {group.map((section, sectionIndex) => {
       const visibleSectionMembers = pairedCoveredMarketIds.size > 0
         ? section.members.filter((m) => !(m.type === "market" && pairedCoveredMarketIds.has(m.id)))
         : section.members;
       if (visibleSectionMembers.length === 0 && section.layout !== "party") return null;
       const lone = shown?.sections.length === 1 && section.cls === "unclassified";
       const midterms = shown?.slug === "midterms-2026";
-      return <section key={section.key} className="min-w-0 space-y-3" aria-labelledby={lone ? "collection-title" : `section-${section.key}`}>
-      {!lone && <div className="space-y-1">
+      const repeatsPageHeadline =
+        groupIndex === 0 &&
+        sectionIndex === 0 &&
+        Boolean(shown?.title) &&
+        section.title.trim().toLowerCase() === (shown?.title ?? "").trim().toLowerCase();
+      return <section key={section.key} className="min-w-0 space-y-3" aria-labelledby={lone || repeatsPageHeadline ? "collection-title" : `section-${section.key}`}>
+      {!lone && !repeatsPageHeadline && <div className="space-y-1">
         <h2 id={`section-${section.key}`} className="text-lg font-semibold text-text-primary">{section.title}</h2>
         {/* #11040: one plain sentence saying how this section's markets settle. */}
         {section.note && <p data-section-note={section.cls} className="text-sm text-text-secondary">{section.note}</p>}
       </div>}
+      {!lone && repeatsPageHeadline && section.note && (
+        <p data-section-note={section.cls} className="text-sm text-text-secondary">{section.note}</p>
+      )}
       {allowMachineryBlocks && section.visualBlock ? (
         <MachinerySectionRenderer visualBlock={section.visualBlock} members={visibleSectionMembers} />
       ) : section.layout === "party" && control(108620) && control(108621) ? (
@@ -417,7 +435,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
     </section>;
     })}
     </div>)}
-    </div>
+    </div>}
     {shown?.relatedSummary && shown.relatedSummary.count > 0 && <p data-related-market-summary className="text-sm text-text-secondary">
       {shown.relatedSummary.count.toLocaleString()} more linked markets
       {shown.relatedSummary.unclassifiedCount > 0 && <> · {shown.relatedSummary.unclassifiedCount.toLocaleString()} uncategorized</>}

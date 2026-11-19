@@ -37,7 +37,7 @@ actor WidgetAPIClient {
 
         return await MainActor.run { feed.items.compactMap { item -> WidgetGame? in
             guard let event = item.data,
-                  event.status == "live",
+                  WidgetLifecycle.admitsLiveProbability(event),
                   let homeProbability = event.currentOdds?.homeProbability,
                   // #2279 — `Int(_:)` below TRAPS on a non-finite Double, and a
                   // trap in a widget timeline is a blank widget with no log.

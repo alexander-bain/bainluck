@@ -223,6 +223,7 @@ def detail_session(routes, *, now, price=0.61, read_at):
     session = routes.session(now, sources=sources, twin_sources=twin_sources)
     session.event.status = "live"
     session.event.commence_time = now - timedelta(hours=1)
+    session.event.commence_time_source = "espn"
     return session
 
 

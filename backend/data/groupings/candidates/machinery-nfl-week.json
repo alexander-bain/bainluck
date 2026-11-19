@@ -36,8 +36,9 @@
       },
       {
         "key": "prop_leaders",
-        "title": "Touchdown & Yardage Prop Leaders",
-        "note": "Players priced highest in passing, rushing, and receiving leader markets.",
+        "title": "Season Stat Leaders",
+        "note": "Players priced highest across open NFL stat-leader markets.",
+        "dynamic_item_note": true,
         "atom_query": {
           "kind": "markets",
           "content_kind": "props",
@@ -92,6 +93,7 @@
         "key": "division_races",
         "title": "Tightest Division Races",
         "note": "Open NFL division title fields priced closest at the top.",
+        "dynamic_item_note": true,
         "atom_query": {
           "kind": "markets",
           "title_all_tokens": ["champion"],

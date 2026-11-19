@@ -61,6 +61,11 @@ def test_a_confirmed_field_precedes_title_chances_without_printing_result_probab
         row["probability"] is None
         and row["is_winner"] is True
         and row["resolution_source"] == "api_settlement"
+        and row["source_mark"] == {
+            "state": "settled",
+            "sources": [],
+            "settled": {"source": "api_settlement", "result": "Won", "at": None},
+        }
         for row in results["top_outcomes"]
     )
     assert members.members[1]["card"]["status"] == "open"
@@ -135,6 +140,11 @@ def test_a_settled_championship_keeps_its_winner_and_withdraws_the_prices():
     assert champion["status"] == "resolved"
     assert champion["top_outcomes"][0]["name"] == "Ohio State"
     assert champion["top_outcomes"][0]["probability"] is None
+    assert champion["top_outcomes"][0]["source_mark"] == {
+        "state": "settled",
+        "sources": [],
+        "settled": {"source": "api_settlement", "result": "Won", "at": None},
+    }
     assert members.sections[1]["title"] == "Champion"
     assert members.footer == "Venue-confirmed playoff field · Champion confirmed"
 

@@ -159,7 +159,8 @@ enum FuturesOutcomeRowColumns {
     static func layout(
         percentLabels: [String],
         availableWidth: Double,
-        typeSize: DynamicTypeSize = .large
+        typeSize: DynamicTypeSize = .large,
+        hasSourceMark: Bool = false
     ) -> Layout {
         let ink = (percentLabels
             .map { percentWidth($0, typeSize: typeSize) }
@@ -173,9 +174,11 @@ enum FuturesOutcomeRowColumns {
             return Layout(percentWidth: ink, nameMaximum: nameMinimum)
         }
 
+        let markSlot = hasSourceMark ? (22 + interColumnSpacing) : 0
         let remaining = availableWidth
             - ink
             - interColumnSpacing * 2
+            - markSlot
             - availableWidth * barMinimumShare
 
         return Layout(percentWidth: ink, nameMaximum: max(nameMinimum, remaining))

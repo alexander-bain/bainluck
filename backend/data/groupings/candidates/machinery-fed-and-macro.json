@@ -39,22 +39,21 @@
       },
       {
         "key": "rate_history",
-        "title": "Implied Rate Path Over Time",
-        "note": "Recent market probability trajectories across upcoming FOMC meetings and rate-cut timing.",
+        "title": "FOMC & Rate-Cut Moves This Week",
+        "fallback_title": "Upcoming FOMC & Rate-Cut Odds",
+        "note": "7-day odds movement across upcoming FOMC meetings and rate-cut timing.",
         "atom_query": {
           "kind": "market_history",
           "any_tokens": [
             "fed decision in",
-            "fed rate cut",
-            "predicted fed rate under each fed chair",
-            "fed rate hit",
-            "who will trump nominate as fed chair"
+            "next fed rate cut",
+            "fed rate cut by"
           ],
-          "exclude_tokens": ["minutes", "jan 2027"],
+          "exclude_tokens": ["minutes", "jan 2027", "january", "predicted", "hit"],
           "shape": "field",
-          "order_by": "lead_prob_desc",
+          "order_by": "movement_desc",
           "min_items": 1,
-          "max_items": 4,
+          "max_items": 2,
           "max_outcomes": 3,
           "hours": 168
         }
@@ -63,6 +62,7 @@
         "key": "rate_path",
         "title": "Year-End Rate & Hike Count",
         "note": "Mutually exclusive year-end target rate and 2026 rate-hike count scales.",
+        "dynamic_item_note": true,
         "atom_query": {
           "kind": "markets",
           "any_tokens": ["fed rate be at the end of 2026", "fed rate hikes in 2026"],
@@ -76,18 +76,52 @@
       },
       {
         "key": "recession_benchmarks",
-        "title": "Recession Benchmark",
-        "note": "Yes-or-no market on official U.S. and G7 recession calls.",
+        "title": "U.S. Recession Benchmark",
+        "note": "Yes-or-no market on official U.S. recession calls.",
         "atom_query": {
           "kind": "markets",
           "title_all_tokens": ["recession"],
-          "any_tokens": ["recession in 2027", "us recession", "japan recession", "canada recession"],
-          "exclude_tokens": ["sweep", "which countries"],
+          "any_tokens": ["recession in 2027", "us recession"],
+          "exclude_tokens": ["sweep", "which countries", "dem sweep"],
           "shape": "binary",
           "order_by": "lead_prob_desc",
           "min_items": 1,
           "max_items": 1,
           "max_outcomes": 1
+        }
+      },
+      {
+        "key": "macro_history",
+        "title": "U.S. Growth & Jobs Moves This Week",
+        "fallback_title": "U.S. Growth & Jobs Odds",
+        "note": "7-day odds movement across U.S. GDP growth and unemployment markets.",
+        "atom_query": {
+          "kind": "market_history",
+          "any_tokens": [
+            "us gdp growth",
+            "us real gdp growth",
+            "gdp growth in 2026",
+            "unemployment rate",
+            "november unemployment"
+          ],
+          "exclude_tokens": [
+            "canada",
+            "mexico",
+            "brazil",
+            "uk",
+            "eurozone",
+            "world",
+            "wyoming",
+            "youth",
+            "before 2030",
+            "how high"
+          ],
+          "shape": "field",
+          "order_by": "movement_desc",
+          "min_items": 1,
+          "max_items": 2,
+          "max_outcomes": 3,
+          "hours": 168
         }
       }
     ]
