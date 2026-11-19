@@ -13,7 +13,7 @@ import XCTest
 final class AnOpeningHeroIsNamedAnOpeningLine9470Tests: XCTestCase {
     private func event(
         status: String = "scheduled", source: String = "opening",
-        hero: Double = 0.5996, heroAway: String = "0.4004",
+        hero: Double? = 0.5996, heroAway: String = "0.4004",
         current: Double = 0.5996
     ) throws -> EventDetail {
         let decoder = JSONDecoder()
@@ -25,7 +25,7 @@ final class AnOpeningHeroIsNamedAnOpeningLine9470Tests: XCTestCase {
            "home_rendered_percent":\(Int((current * 100).rounded())),
            "away_rendered_percent":\(Int(((1 - current) * 100).rounded())),
            "captured_at":"2026-09-13T15:10:39.053494+00:00","bookmaker_count":2},
-         "hero_probability":\(hero),"hero_probability_away":\(heroAway),
+         "hero_probability":\(hero.map { String($0) } ?? "null"),"hero_probability_away":\(heroAway),
          "hero_probability_source":"\(source)","hero_probability_observed_at":null,
          "win_probability_sources":{"betting_book_count":{"value":1.0,"display_name":"betting_book_count","type":"model"}}}
         """.utf8))
@@ -72,11 +72,25 @@ final class AnOpeningHeroIsNamedAnOpeningLine9470Tests: XCTestCase {
         XCTAssertEqual(hero.homeProbability, 0.78)
     }
 
-    func testAnUnusableHeroFallsBackToCurrentOdds() throws {
-        for bad in [0.0, 1.0] {
-            let hero = try resolve(event(hero: bad, heroAway: "null", current: 0.55))
-            XCTAssertFalse(hero.isOpeningLine, "\(bad)")
-            XCTAssertEqual(hero.homeProbability, 0.55)
+    func testAnUnusableOpeningHeroDoesNotPromoteCachedOdds() throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-11T19:25:00Z"))
+        for bad: Double? in [nil, 0, 1] {
+            let event = try event(hero: bad, heroAway: "null", current: 0.55)
+            let hero = try resolve(event)
+            XCTAssertFalse(hero.isOpeningLine)
+            XCTAssertNil(hero.homeProbability)
+            XCTAssertNil(hero.awayProbability)
+            XCTAssertNil(hero.homeRenderedPercent)
+            XCTAssertNil(hero.awayRenderedPercent)
+
+            let answer = ProbabilityAnswer10873.gameBothSides(event, now: now)
+            XCTAssertEqual(answer.kind, .unavailable)
+            XCTAssertFalse(answer.text.contains("55%"))
+
+            let sheet = EventAtlasDetailsSheetModel11666.fromHeadline(
+                event: event, phase: nil, observedAt: nil, liveStatus: .awaitingUpdate, now: now
+            )
+            XCTAssertEqual(sheet.primaryReadingValue, "No recent probability")
         }
     }
 
