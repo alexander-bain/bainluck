@@ -112,6 +112,7 @@ SELECTOR_RULE_KEYS: tuple[str, ...] = (
     "category_name",
     "subject",
     "selector",
+    "sections",
     "team_slug",
     "series_code",
 )
@@ -172,6 +173,7 @@ class RoundupMembers:
     parent_name: Optional[str] = None
     children: tuple[dict[str, Any], ...] = ()
     paired_metric_set: Optional[dict[str, Any]] = None
+    machinery_card: Optional[dict[str, Any]] = None
 
     def __init__(
         self,
@@ -192,6 +194,7 @@ class RoundupMembers:
         parent_name: Optional[str] = None,
         children: Sequence[Mapping[str, Any]] = (),
         paired_metric_set: Optional[Mapping[str, Any]] = None,
+        machinery_card: Optional[Mapping[str, Any]] = None,
     ) -> None:
         object.__setattr__(self, "members", tuple(members))
         object.__setattr__(self, "rows", tuple(rows))
@@ -241,6 +244,13 @@ class RoundupMembers:
             "paired_metric_set",
             copy.deepcopy(dict(paired_metric_set))
             if isinstance(paired_metric_set, Mapping)
+            else None,
+        )
+        object.__setattr__(
+            self,
+            "machinery_card",
+            copy.deepcopy(dict(machinery_card))
+            if isinstance(machinery_card, Mapping)
             else None,
         )
 
@@ -543,13 +553,18 @@ def _normalize_section_entry(
 ) -> dict[str, Any]:
     raw_sec_members = section.get("members") or ()
     norm_members = [_normalize_member_entry(m) for m in raw_sec_members]
-    return {
+    out_sec: dict[str, Any] = {
         "class": str(section.get("class") or "title"),
         "title": str(section.get("title") or default_title),
         "layout": str(section.get("layout") or "field"),
         "count": len(norm_members),
         "members": norm_members,
     }
+    if section.get("note"):
+        out_sec["note"] = str(section["note"])
+    if isinstance(section.get("visual_block"), Mapping):
+        out_sec["visual_block"] = copy.deepcopy(dict(section["visual_block"]))
+    return out_sec
 
 
 def compose_roundup_container(
@@ -807,6 +822,8 @@ def compose_roundup_feed_item(
         roundup_contract["count_line"] = members.count_line
     if getattr(members, "paired_metric_set", None) is not None:
         roundup_contract["paired_metric_set"] = copy.deepcopy(members.paired_metric_set)
+    if getattr(members, "machinery_card", None) is not None:
+        roundup_contract["machinery_card"] = copy.deepcopy(members.machinery_card)
     context_summary_val: Optional[str] = None
     if members.sections and isinstance(members.sections[0], Mapping):
         sec_ctx = str(members.sections[0].get("context_line") or "").strip()
@@ -1151,6 +1168,17 @@ def _strip_parent_from_payload(out: dict[str, Any]) -> None:
         out["container"].pop("parent_name", None)
 
 
+def ensure_optional_roundup_candidates() -> None:
+    """Register flag-gated candidate roundup producers when explicitly enabled."""
+    import importlib
+    import os
+
+    flag = os.environ.get("CONTAINER_MACHINERY_SLICE1_ENABLED", "").strip().lower()
+    if flag in {"1", "true", "yes", "on"}:
+        mod = importlib.import_module("app.utils.container_machinery")
+        mod.register_machinery_slice1_candidates()
+
+
 async def serve_roundup(
     slug: str,
     db: Any,
@@ -1167,6 +1195,7 @@ async def serve_roundup(
         read_published,
     )
 
+    ensure_optional_roundup_candidates()
     producer = ROUNDUP_PRODUCERS.get(slug)
     if producer is None:
         raise HTTPException(
@@ -1259,7 +1288,7 @@ def roundup_feed_enabled(
     """Whether Discover should place registered round-up cards on the canonical feed."""
     from app.routes.containers import containers_read_enabled
 
-    return (
+    if not (
         (mode or "discover").lower() == "discover"
         and bool(include_events)
         and bool(include_futures)
@@ -1268,9 +1297,11 @@ def roundup_feed_enabled(
         and not category
         and not sport
         and containers_read_enabled()
-        and any(
-            p.enabled is None or p.enabled() for p in ROUNDUP_PRODUCERS.values()
-        )
+    ):
+        return False
+    ensure_optional_roundup_candidates()
+    return any(
+        p.enabled is None or p.enabled() for p in ROUNDUP_PRODUCERS.values()
     )
 
 
@@ -2083,6 +2114,10 @@ def insert_roundup_feed_items(
     return result
 
 
+def _is_machinery_producer_slug(slug: Any) -> bool:
+    return isinstance(slug, str) and slug.strip().lower().startswith("machinery-")
+
+
 async def add_roundup_feed_items(
     db: Any,
     items: list[dict[str, Any]],
@@ -2097,8 +2132,16 @@ async def add_roundup_feed_items(
     seen_futures_ids: Optional[Sequence[int] | set[int]] = None,
     seen_event_ids: Optional[Sequence[int] | set[int]] = None,
     novelty_seat_cap: int = ROUNDUP_NOVELTY_SEAT_CAP,
+    include_machinery: bool = False,
+    machinery_only: bool = False,
 ) -> list[dict[str, Any]]:
-    """Evaluate registered round-up producers and place their cards on Discover."""
+    """Evaluate registered round-up producers and place their cards on Discover.
+
+    Under Ruling 252: A (#12288), ``machinery-*`` candidate groupings are only
+    included when ``include_machinery=True`` (sent by website and iOS 1.0.7+
+    via ``machinery=1``), so older App Store versions (1.0.6) never receive
+    machinery cards on the Discover feed.
+    """
     if not items or len(items) < seat_floor:
         return items
     if budget_seconds <= 0:
@@ -2114,8 +2157,20 @@ async def add_roundup_feed_items(
         else ROUNDUP_READ_BUDGET_SECONDS
     )
     stage_budget = min(float(budget_seconds), stage_cap)
+    ensure_optional_roundup_candidates()
     started = time.perf_counter()
-    producers = list(ROUNDUP_PRODUCERS.values())
+    if machinery_only:
+        producers = [
+            p for p in ROUNDUP_PRODUCERS.values() if _is_machinery_producer_slug(p.slug)
+        ]
+    elif include_machinery:
+        producers = list(ROUNDUP_PRODUCERS.values())
+    else:
+        producers = [
+            p for p in ROUNDUP_PRODUCERS.values() if not _is_machinery_producer_slug(p.slug)
+        ]
+    if not producers:
+        return items
     produced: list[dict[str, Any]] = []
     for idx, producer in enumerate(producers):
         elapsed = time.perf_counter() - started
@@ -2458,6 +2513,10 @@ _KIND_TO_MODULE_BUILDER: dict[str, tuple[str, str]] = {
     "window_events_upsets": (
         "app.utils.window_events_upsets",
         "build_window_events_upsets_producer",
+    ),
+    "container_machinery": (
+        "app.utils.container_machinery",
+        "build_container_machinery_producer",
     ),
 }
 

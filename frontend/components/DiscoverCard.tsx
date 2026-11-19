@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { discoverCardForm } from "@/lib/discoverCardForm";
 import { useRouter } from "next/navigation";
 import { ThumbsUp, ThumbsDown } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
@@ -68,13 +69,16 @@ interface DiscoverCardProps {
 export default function DiscoverCard({ groupedItem, onDismiss, positionIndex, showProbabilityHint, pinFor, onFeedbackAttempt, nowIso, timeZone }: DiscoverCardProps) {
   if (groupedItem.type === "group" && groupedItem.items) {
     return (
-      <GroupCard
-        items={groupedItem.items}
-        title={groupedItem.groupTitle || ""}
-        kind={groupedItem.groupKind}
-        theme={groupedItem.groupTheme}
-        positionIndex={positionIndex}
-      />
+      // 227-A point 6: `display: contents` names the form without changing layout.
+      <div data-card-form="group" className="contents">
+        <GroupCard
+          items={groupedItem.items}
+          title={groupedItem.groupTitle || ""}
+          kind={groupedItem.groupKind}
+          theme={groupedItem.groupTheme}
+          positionIndex={positionIndex}
+        />
+      </div>
     );
   }
   const item = groupedItem.item!;
@@ -182,7 +186,7 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
         </div>
       )}
 
-      <div className="relative z-10" style={cardStyle}>
+      <div className="relative z-10" style={cardStyle} data-card-form={discoverCardForm(item)}>
         {item.type === "event" && <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />}
         {item.type === "futures" && (item.data as FeedFuturesData).discover_card?.suggested_format === "outcome_distribution" && (item.data as FeedFuturesData).top_outcomes?.length >= 4 ? (
           <ComparisonCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} pin={pinFor?.((item.data as FeedFuturesData).id)} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />

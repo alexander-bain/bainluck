@@ -65,6 +65,32 @@ def test_new_spelling_evidence_does_not_change_fixture_rescue_aliases():
     )
 
 
+@pytest.mark.parametrize("query,identity,name,sport", [
+    ("celtcs", "celtics", "Boston Celtics", "basketball_nba"),
+    ("pinstripes", "yankees", "New York Yankees", "baseball_mlb"),
+    ("maple laefs", "maple leafs", "Toronto Maple Leafs", "icehockey_nhl"),
+])
+def test_saved_public_alias_gaps_recall_and_promote_the_named_team(query, identity, name, sport):
+    assert expand_club_short_forms(query) == identity
+    assert expand_club_short_forms("  " + query.upper() + "  ") == identity
+    team = SimpleNamespace(
+        id=1, name=name, sport_key=sport, slug="test-team", abbreviation=None,
+        logo_url_small=None, current_record=None, alternate_names=[],
+        standings_updated_at=None, team_rank=1,
+    )
+    card = route._team_card_keyed([team], identity)[0][1]
+    assert route._query_names_team_card(card, query)
+    assert match_class(query, route._search_team_evidence(card, query)) == MC0_EXACT
+    # Search-only spellings must not become fixture-rescue identity evidence.
+    assert query not in route._team_row_aliases(team)
+    assert not route._query_names_team_card(
+        {"name": "Celtic", "sport_key": "soccer_scotland_premiership"}, query
+    )
+    for qualified in ("not " + query, query + " tomorrow", query + " vs giants"):
+        assert expand_club_short_forms(qualified) == qualified
+        assert not route._query_names_team_card(card, qualified)
+
+
 @pytest.mark.parametrize("typo,names", [
     ("gaints", {"New York Giants", "San Francisco Giants"}),
     ("jetts", {"New York Jets", "Winnipeg Jets"}),

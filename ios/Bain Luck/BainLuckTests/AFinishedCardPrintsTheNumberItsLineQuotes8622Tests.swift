@@ -145,13 +145,39 @@ final class AFinishedCardPrintsTheNumberItsLineQuotes8622Tests: XCTestCase {
 
     func testTheSettledHeroCaptionReadsTheResolvedReading() throws {
         let page = try Self.source("Bain Luck/Views/EventDetailView.swift")
-        let start = try XCTUnwrap(page.range(of: "// Pre-game odds as secondary context"))
-        let end = try XCTUnwrap(page.range(of: "} else if EventState.showsVenueSettledVerdict(",
-                                           range: start.upperBound..<page.endIndex))
-        let caption = String(page[start.upperBound..<end.lowerBound])
-        XCTAssertTrue(caption.contains("PrematchReading.resolve("))
-        XCTAssertFalse(caption.contains("event.openingOdds?.awayProbability"))
-        XCTAssertFalse(caption.contains("Text(\"Opened "), "the word follows the rung")
-        XCTAssertTrue(caption.contains("pregame?.captionWord"))
+        let hero = try Self.body(of: "private func heroSection(", in: page)
+        let wiring = hero.filter { !$0.isWhitespace }
+        XCTAssertTrue(wiring.contains("letsportHeadline12472=EventSportHeadlines12472.resolve("))
+        XCTAssertTrue(wiring.contains("EventSportHeadlineCard12472(model:sportHeadline12472,"))
+
+        func headline(prematch: String) throws -> EventSportHeadlines12472.Model {
+            let event = try decoder().decode(EventDetail.self, from: Data("""
+            {"id": 15317920, "home_team": "Mirra Andreeva", "away_team": "Leylah Fernandez",
+             "sport": "tennis_wta", "status": "completed", "home_score": 0, "away_score": 2,
+             "opening_odds": \(Self.openingJSON), "prematch_odds": \(prematch)}
+            """.utf8))
+            return EventSportHeadlines12472.resolve(
+                event: event,
+                awayFullName: event.awayTeam,
+                homeFullName: event.homeTeam,
+                liveStatusText: nil,
+                hasScore: true,
+                numberStreams: false,
+                now: Date(timeIntervalSince1970: 1_790_000_000)
+            )
+        }
+
+        let served = try headline(prematch: Self.prematchJSON)
+        let openingOnly = try headline(prematch: "null")
+        XCTAssertEqual(served.kind, .tennisAfterGame)
+        XCTAssertEqual(served.columns.map(\.role), [.pregame, .finalResult])
+        XCTAssertEqual(served.columns.map(\.header), ["Pregame", "Final"])
+        XCTAssertEqual(served.rows.map(\.fullName), ["Leylah Fernandez", "Mirra Andreeva"])
+        XCTAssertEqual(served.rows.map(\.cells), [["22%", "2"], ["78%", "0"]])
+        XCTAssertEqual(served.rows.map(\.won), [true, false])
+        XCTAssertEqual(openingOnly.columns.map(\.role), served.columns.map(\.role))
+        XCTAssertEqual(openingOnly.columns.map(\.header), ["", "Final"])
+        XCTAssertEqual(openingOnly.rows.map(\.cells), [["", "2"], ["", "0"]])
+        XCTAssertEqual(openingOnly.rows.map(\.won), served.rows.map(\.won))
     }
 }

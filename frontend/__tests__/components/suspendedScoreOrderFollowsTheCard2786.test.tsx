@@ -119,6 +119,18 @@ function renderShared(over: Record<string, unknown> = {}): string {
   );
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the shared EventCard's suspended score reads like its own scores", () => {
   it("matches the order of its FINAL score block", () => {
     // The settled twin, rendered from the same row. Its block is unambiguous

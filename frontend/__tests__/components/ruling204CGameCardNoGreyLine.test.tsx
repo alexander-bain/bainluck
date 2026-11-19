@@ -254,11 +254,11 @@ describe("Ruling 204-C — buildUnifiedCardFromTeamGame & EventCard183A flag-gat
         data: eventData,
       } as unknown as FeedItem;
 
-      delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+      process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
       const offHtml = renderToStaticMarkup(<FeedCard item={feedItem} />);
       expect(offHtml).not.toContain('data-testid="event-card-183a-standard"');
 
-      process.env.NEXT_PUBLIC_GAME_CARD_183A = "true";
+      delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
       const onHtml = renderToStaticMarkup(<FeedCard item={feedItem} />);
       expect(onHtml).toContain('data-testid="event-card-183a-standard"');
       expect(onHtml).toContain(">Score<");
@@ -324,7 +324,7 @@ describe("Ruling 204-C — buildUnifiedCardFromTeamGame & EventCard183A flag-gat
         pregame_win_probability: 0.58,
       });
 
-      delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+      process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
       const upcomingOff = renderToStaticMarkup(
         <UpcomingGameCard game={upcoming} teamName="Detroit Lions" teamColor="#0076B6" />,
       );
@@ -332,7 +332,7 @@ describe("Ruling 204-C — buildUnifiedCardFromTeamGame & EventCard183A flag-gat
       expect(upcomingOff).not.toContain('data-testid="event-card-183a-standard"');
       expect(recentOff).not.toContain('data-testid="event-card-183a-standard"');
 
-      process.env.NEXT_PUBLIC_GAME_CARD_183A = "true";
+      delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
       const upcomingOn = renderToStaticMarkup(
         <UpcomingGameCard game={upcoming} teamName="Detroit Lions" teamColor="#0076B6" />,
       );

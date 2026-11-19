@@ -131,6 +131,23 @@ async def test_restart_lease_recovery_preserves_payload_and_fences_old_ack(pg):
     assert transport.calls[0][0] == before
 
 
+async def test_each_send_logs_one_age_record_without_any_token(pg, caplog):
+    """#10542 step 1: the send writes one line with the reading's ages and
+    Apple's answer, and neither the push token nor the provider token."""
+    w = await seed(pg)
+    reservation = await w.reserve("a", now=NOW)
+    caplog.set_level("INFO", logger="app.activitykit.push")
+    assert (
+        await w.send(reservation, MockTransport(), provider_token="mock.jwt.sig", now=NOW)
+        == "accepted"
+    )
+    lines = [r.getMessage() for r in caplog.records if r.name == "app.activitykit.push"]
+    assert len(lines) == 1
+    assert "outcome=accepted reason=apns_accepted" in lines[0]
+    assert "score_age=0.0 chance_age=0.0" in lines[0]
+    assert "ab" * 32 not in lines[0] and "mock.jwt.sig" not in lines[0]
+
+
 async def test_replacement_fences_old_token_before_dispatch(pg):
     w = await seed(pg)
     old = await w.reserve("a", now=NOW)

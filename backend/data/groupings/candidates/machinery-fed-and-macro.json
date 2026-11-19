@@ -1,0 +1,129 @@
+{
+  "slug": "machinery-fed-and-macro",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "same_measure",
+    "sibling",
+    "movement"
+  ],
+  "level": "member",
+  "kicker": "ECONOMICS · FEDERAL RESERVE",
+  "name": "Fed & U.S. Macro",
+  "category": "economics",
+  "tag": "ECONOMICS",
+  "section_title": "January FOMC Decision",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "card_section_key": "jan_fomc",
+    "sections": [
+      {
+        "key": "jan_fomc",
+        "title": "January 2027 FOMC Rate Decision",
+        "note": "Priced probabilities along the policy-move scale from cut to hike.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["fed", "decision", "jan"],
+          "exclude_tokens": ["decisions", "oct-jan"],
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 4
+        }
+      },
+      {
+        "key": "rate_history",
+        "title": "FOMC & Rate-Cut Moves This Week",
+        "fallback_title": "Upcoming FOMC & Rate-Cut Odds",
+        "note": "7-day odds movement across upcoming FOMC meetings and rate-cut timing.",
+        "atom_query": {
+          "kind": "market_history",
+          "any_tokens": [
+            "fed decision in",
+            "next fed rate cut",
+            "fed rate cut by"
+          ],
+          "exclude_tokens": ["minutes", "jan 2027", "january", "predicted", "hit"],
+          "shape": "field",
+          "order_by": "movement_desc",
+          "min_items": 1,
+          "max_items": 2,
+          "max_outcomes": 3,
+          "hours": 168
+        }
+      },
+      {
+        "key": "rate_path",
+        "title": "Year-End Rate & Hike Count",
+        "note": "Mutually exclusive year-end target rate and 2026 rate-hike count scales.",
+        "dynamic_item_note": true,
+        "atom_query": {
+          "kind": "markets",
+          "any_tokens": ["fed rate be at the end of 2026", "fed rate hikes in 2026"],
+          "exclude_tokens": ["above", "below", "hit"],
+          "shape": "field",
+          "order_by": "closeness_to_50",
+          "min_items": 2,
+          "max_items": 2,
+          "max_outcomes": 4
+        }
+      },
+      {
+        "key": "recession_benchmarks",
+        "title": "U.S. Recession Benchmark",
+        "note": "Yes-or-no market on official U.S. recession calls.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["recession"],
+          "any_tokens": ["recession in 2027", "us recession"],
+          "exclude_tokens": ["sweep", "which countries", "dem sweep"],
+          "shape": "binary",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 1
+        }
+      },
+      {
+        "key": "macro_history",
+        "title": "U.S. Growth & Jobs Moves This Week",
+        "fallback_title": "U.S. Growth & Jobs Odds",
+        "note": "7-day odds movement across U.S. GDP growth and unemployment markets.",
+        "atom_query": {
+          "kind": "market_history",
+          "any_tokens": [
+            "us gdp growth",
+            "us real gdp growth",
+            "gdp growth in 2026",
+            "unemployment rate",
+            "november unemployment"
+          ],
+          "exclude_tokens": [
+            "canada",
+            "mexico",
+            "brazil",
+            "uk",
+            "eurozone",
+            "world",
+            "wyoming",
+            "youth",
+            "before 2030",
+            "how high"
+          ],
+          "shape": "field",
+          "order_by": "movement_desc",
+          "min_items": 1,
+          "max_items": 2,
+          "max_outcomes": 3,
+          "hours": 168
+        }
+      }
+    ]
+  }
+}

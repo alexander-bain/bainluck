@@ -114,6 +114,11 @@ async def test_finished_card_matches_detail_not_opening_or_live(serve, door, row
     assert prior == await route._settled_prematch_odds(Session([event], rows), event, "americanfootball_nfl")
     assert prior["source"] == source and prior["home_probability"] == home
     assert prior["home_rendered_percent"] + prior["away_rendered_percent"] == 100
+    for field, probability in (("source_mark", home), ("away_source_mark", 1 - home)):
+        quote, = prior[field]["sources"]
+        assert quote["key"] == ("betting" if source == "books" else source)
+        assert quote["probability"] == pytest.approx(probability)
+        assert quote["observed_at"] is None
     assert len(session.calls) == 1
     assert session.calls[0]["cutoffs"] == [event.commence_time]
 

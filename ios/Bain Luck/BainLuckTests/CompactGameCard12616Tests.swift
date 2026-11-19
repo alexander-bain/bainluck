@@ -590,35 +590,29 @@ final class CompactGameCard12616Tests: XCTestCase {
             fileName: "12616-soccer-draw-and-tennis-390.png"
         )
 
-        let discoverStack = VStack(spacing: 12) {
-            NativeEventDiscoverCard(
-                event: beforeNFL,
-                feedContext: "TOR 77-80 · BAL 76-81",
-                expandedContext: nil,
-                navigationPath: .constant(NavigationPath())
-            )
-            NativeEventDiscoverCard(
-                event: duringNBA,
-                feedContext: "Close fourth-quarter pace",
-                expandedContext: nil,
-                navigationPath: .constant(NavigationPath())
-            )
-            NativeEventDiscoverCard(
-                event: afterPackersUpset,
-                feedContext: nil,
-                expandedContext: nil,
-                navigationPath: .constant(NavigationPath())
-            )
-        }
-        .padding(16)
-        .frame(width: 390)
-        .background(Color(white: 0.965))
-        .environmentObject(pins)
-        .environment(\.colorScheme, .light)
-        let discoverRenderer = rendererForMeasurement(discoverStack, at: .large)
-        discoverRenderer.scale = 3.0
-        try XCTUnwrap(discoverRenderer.uiImage?.pngData())
-            .write(to: outDir.appendingPathComponent("12616-discover-cards-182a-390.png"))
+        try saveRender(
+            VStack(spacing: 12) {
+                NativeEventDiscoverCard(
+                    event: beforeNFL,
+                    feedContext: "TOR 77-80 · BAL 76-81",
+                    expandedContext: nil,
+                    navigationPath: .constant(NavigationPath())
+                )
+                NativeEventDiscoverCard(
+                    event: duringNBA,
+                    feedContext: "Close fourth-quarter pace",
+                    expandedContext: nil,
+                    navigationPath: .constant(NavigationPath())
+                )
+                NativeEventDiscoverCard(
+                    event: afterPackersUpset,
+                    feedContext: nil,
+                    expandedContext: nil,
+                    navigationPath: .constant(NavigationPath())
+                )
+            },
+            fileName: "12616-discover-cards-182a-390.png"
+        )
 
         try saveRender(
             cardBox(longNamesLargeText),

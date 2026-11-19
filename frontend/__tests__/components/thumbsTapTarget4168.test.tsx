@@ -97,6 +97,18 @@ const ROWS: Array<[string, string]> = [
   ["thumbs-only row (no reason, no opener)", ""],
 ];
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#4168 — each thumb button is at least a 24px target", () => {
   it.each(ROWS)("%s: both buttons render (vacuity control)", (_name, reason) => {
     const data = reason ? makeData() : makeData({ opening_odds: undefined });

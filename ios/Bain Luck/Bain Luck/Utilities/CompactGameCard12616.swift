@@ -6,6 +6,19 @@ import SwiftUI
 /// `EventCardView`.
 enum CompactGameCard12616 {
 
+    /// Older feed items can carry the stored opening in `current_odds` (#12824).
+    /// Keep projections on the card while withholding the chance and its rendered pair.
+    nonisolated static func currentOddsForCard(_ event: FeedEventData) -> CurrentOdds? {
+        guard event.heroProbabilitySource == OpeningLineHero.openingSource,
+              var odds = event.currentOdds else { return event.currentOdds }
+        odds.homeProbability = nil
+        odds.awayProbability = nil
+        odds.drawProbability = nil
+        odds.homeRenderedPercent = nil
+        odds.awayRenderedPercent = nil
+        return odds
+    }
+
     /// Column headers above the team rows (`medium` context on the left,
     /// optional `Proj.` middle column on live cards under Ruling 204-C, and
     /// `large` primary answer on the right). A blank column draws no header.
@@ -302,8 +315,8 @@ enum CompactGameCard12616 {
     /// or `"Projected (90 min) 1–2"` on regulation soccer), in away–home card order.
     nonisolated static func finalContextText(_ comparison: FinalForecastComparison11296.Comparison) -> String {
         let prefix = comparison.label == FinalForecastComparison11296.label90Min
-            ? "Projected (90 min)"
-            : "Projected"
+            ? "Pregame projection (90 min)"
+            : "Pregame projection"
         return "\(prefix) \(comparison.away)\u{2013}\(comparison.home)"
     }
 

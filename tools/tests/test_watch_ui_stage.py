@@ -1,4 +1,4 @@
-"""Preparation and upload cannot reset the50m gate or consume an hour silently."""
+"""Preparation and upload cannot reset the 90m gate or consume an hour silently."""
 
 import json
 import os
@@ -20,7 +20,7 @@ class StageTests(unittest.TestCase):
         self.root = Path(self.temp.name)
 
     def prepare(self):
-        self.assertEqual(stage.admission(self.root, "prepare", 100), 1200)
+        self.assertEqual(stage.admission(self.root, "prepare", 100), 1800)
         path = self.root / "global-deadline.json"
         data = json.loads(path.read_text())
         data["stages"]["prepare"] = 0
@@ -28,13 +28,13 @@ class StageTests(unittest.TestCase):
 
     def test_upload_time_counts_and_global_deadline_cannot_reset(self):
         self.prepare()
-        self.assertEqual(stage.admission(self.root, "execute", 700), 2400)
+        self.assertEqual(stage.admission(self.root, "execute", 700), 4800)
         with self.assertRaisesRegex(ValueError, "reset"):
             stage.admission(self.root, "prepare", 701)
         with self.assertRaisesRegex(ValueError, "admission"):
-            stage.admission(self.root, "execute", 1301)
+            stage.admission(self.root, "execute", 1901)
         with self.assertRaisesRegex(ValueError, "exhausted"):
-            stage.admission(self.root, "execute", 3101)
+            stage.admission(self.root, "execute", 5501)
 
     def test_failed_missing_or_repeated_preparation_cannot_start_execution(self):
         with self.assertRaises(OSError):
@@ -62,8 +62,8 @@ class StageTests(unittest.TestCase):
         for required in [
             '-xctestrun "$XCTESTRUN"',
             "-test-timeouts-enabled YES",
-            "-default-test-execution-time-allowance 180",
-            "-maximum-test-execution-time-allowance 300",
+            "-default-test-execution-time-allowance 300",
+            "-maximum-test-execution-time-allowance 540",
         ]:
             self.assertIn(required, source)
         workflow = (ROOT / ".github/workflows/watch-mvp.yml").read_text()
@@ -80,7 +80,7 @@ class StageTests(unittest.TestCase):
             matrix.index("watch_ui_stage.py execute"),
         )
         self.assertIn("if: always()", matrix)
-        self.assertIn("timeout-minutes: 60", matrix)
+        self.assertIn("timeout-minutes: 105", matrix)
 
 
 class ExecutionGuardTests(unittest.TestCase):
@@ -96,13 +96,13 @@ class ExecutionGuardTests(unittest.TestCase):
 
     def test_guard_covers_inner_budget_and_shutdown_without_resetting_global(self):
         original = (self.root / "global-deadline.json").read_bytes()
-        for now in (100, 135, 700, 780.392925333, 1299.9, 1300):
+        for now in (100, 135, 700, 780.392925333, 1899.9, 1900):
             with self.subTest(now=now):
-                remaining = 3000 - (now - 100)
+                remaining = 5400 - (now - 100)
                 minutes = stage.execution_timeout(self.root, now)
                 self.assertGreaterEqual(minutes * 60, remaining + 35)
                 self.assertLess(minutes * 60, remaining + 35 + 60)
-                self.assertLessEqual(minutes, 51)
+                self.assertLessEqual(minutes, 91)
                 record = json.loads(
                     (self.root / "execution-step-guard.json").read_text()
                 )
@@ -113,7 +113,7 @@ class ExecutionGuardTests(unittest.TestCase):
                 )
 
     def test_insufficient_reserve_and_expired_budget_cannot_emit_timeout(self):
-        for now in (1300.01, 3100, 3200):
+        for now in (1900.01, 4600, 4700):
             with self.subTest(now=now), self.assertRaises(ValueError):
                 stage.execution_timeout(self.root, now)
         self.assertFalse((self.root / "execution-step-guard.json").exists())

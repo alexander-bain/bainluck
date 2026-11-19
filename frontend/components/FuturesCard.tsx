@@ -31,6 +31,7 @@ import { categoryKeyLabel } from "@/lib/sportCategories";
 import { gamePropContextLine, spreadSideLabels, type GamePropGameRef } from "@/lib/gamePropCardContext";
 import { relatedGameListingText } from "@/lib/relatedGameListing";
 import { openFieldLegIsOut } from "@/lib/openFieldLegOut";
+import { numericalScaleOrderIndices } from "@/lib/numericalScaleOrder";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -159,17 +160,26 @@ export default function FuturesCard({
   // and prints the first character of a number. Decided over the WHOLE shipped
   // set for the same reason `outcomeLabels` is: a ladder is only recognisable
   // from its siblings, and the sliced five must not be able to manufacture one.
-  const numericLadder = isNumericLadder(outcomes.map((o) => o.name));
-  // #8834: a ladder served in threshold order keeps it — search serves the rungs
-  // around the crossing that way, and a probability sort swapped the near-tied
-  // ones (`Above 3.75%` 0.995 drawn over `Above 3.50%` 0.99). The same five rows
-  // survive either way (`ladderSlice` keeps the leader, #1526). Its highlighted
-  // row is the rung nearest even — the one that says where the number lands —
-  // rather than whichever rung happens to be served first. Anything that is not
-  // visibly a ladder in order is sorted leader-first exactly as before (#2789).
+  const scaleLadder =
+    numericalScaleOrderIndices(outcomes, { marketType: market.market_type }) !== null;
+  const numericLadder = scaleLadder || isNumericLadder(outcomes.map((o) => o.name));
+  // #8834 + Direction 228 (#12885): any numeric ladder, range, count, rate, or
+  // signed bps market lists its kept rows in ascending numerical order (keeping
+  // the leader via `leaderFirstSlice`, #1526), never by probability.
   const servedLadder = inThresholdOrder(outcomes.map((o) => o.name));
-  const topOutcomes = servedLadder ? ladderSlice(labelled, 5) : leaderFirstSlice(labelled, 5);
-  const highlighted = servedLadder ? answerRung(topOutcomes) : topOutcomes[0];
+  const leaderCut = leaderFirstSlice(labelled, 5);
+  const scaleIdx = scaleLadder
+    ? numericalScaleOrderIndices(
+        leaderCut.map((r) => ({ name: r.outcome.name })),
+        { marketType: market.market_type },
+      )
+    : null;
+  const topOutcomes = scaleIdx
+    ? scaleIdx.map((i) => leaderCut[i])
+    : servedLadder
+      ? ladderSlice(labelled, 5)
+      : leaderCut;
+  const highlighted = scaleLadder || servedLadder ? answerRung(topOutcomes) : topOutcomes[0];
   const isResolved = market.status === "resolved";
   // UX-P276 (#2710). Resolved once here rather than in the chip so the chip's
   // truthiness gate and the text it renders are the same value — a chip that

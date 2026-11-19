@@ -373,7 +373,7 @@ async def test_a_real_live_batch_opens_one_session_and_stamps_each_event_in_a_sa
         monkeypatch):
     monkeypatch.setattr(lbr.time, "monotonic", lambda: 1000.0)
     r, session, opened, committed, published = _real_live_refresher(monkeypatch, 4)
-    _warm_orientation(r, 4)
+    _warm_orientation(r, 4, live=True)
     window = _window(r, [1, 2, 3, 4])
     await r._stamp_admitted(window, [1, 2, 3, 4], live_batch=True)
     await r.drain_history()

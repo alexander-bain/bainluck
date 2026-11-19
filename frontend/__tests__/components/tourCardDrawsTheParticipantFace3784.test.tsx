@@ -102,6 +102,18 @@ function imgTagFor(html: string, src: string): string {
 
 // ── the ship ───────────────────────────────────────────────────────────────
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the served face reaches the shared card", () => {
   it("draws both players' headshots instead of two initials squares", () => {
     const html = card({

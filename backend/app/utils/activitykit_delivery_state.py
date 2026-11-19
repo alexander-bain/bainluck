@@ -16,6 +16,13 @@ from app.utils.activitykit_payload import (
 )
 
 Kind = Literal["update", "terminal", "stop"]
+
+#: #10542 step 3: a reading that changes nothing on screen (only its clocks moved)
+#: waits until this long after the last push, then goes as one priority-5
+#: refresh that carries the newest clocks forward. A quiet stretch costs 30 pushes
+#: an hour instead of 120, and the stale date (score clock + 6 min) only arrives
+#: if a phone misses two refreshes or the score really stops updating.
+QUIET_REFRESH_SECONDS = 120
 Failure = Literal["transient", "permanent", "unavailable"]
 
 
@@ -203,6 +210,14 @@ class DeliveryState:
         timestamp = int(now.timestamp())
         # APNs ordering has second precision. Wait instead of fabricating a future send time.
         if timestamp <= self.last_timestamp:
+            return self, None
+        if (
+            self.pending == "update"
+            and self.sent_view is not None
+            and reader_view(self.snapshot) == self.sent_view
+            and timestamp < self.last_timestamp + QUIET_REFRESH_SECONDS
+        ):
+            # Same screen, recent push: hold (still pending) for the quiet refresh.
             return self, None
         sent_at = now
         sent_view = self.sent_view

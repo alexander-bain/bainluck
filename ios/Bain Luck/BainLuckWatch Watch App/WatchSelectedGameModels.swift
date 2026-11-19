@@ -36,6 +36,9 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
     let awayPrimaryColor: String?
     let homeSecondaryColor: String?
     let awaySecondaryColor: String?
+    /// The crest the event page serves for each side (direction 217's Matchup slot).
+    let homeLogoURL: String?
+    let awayLogoURL: String?
 
     var isFinal: Bool { ["completed", "final"].contains(status?.lowercased() ?? "") }
     var isClosed: Bool { status?.lowercased() == "closed" }
@@ -57,6 +60,24 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         // The shared helper keeps a missing away price missing and uses scalar
         // rounding when these two prices are not a complementary pair.
         return renderedDuelPercents(away: awayProbability, home: homeProbability)[1]
+    }
+
+    /// Each side's chance before the game, rounded the way `homeRenderedPercent`
+    /// rounds the live pair (direction 209: a final shows the winner's pregame
+    /// chance). A missing price stays missing.
+    var pregameRenderedPercents: (home: Int?, away: Int?) {
+        let drawSport = (sportKey.map { DrawPricedWinner.sportPricesADraw($0) } ?? true) || prematchDrawProbability != nil
+        if drawSport {
+            return (renderedPercent(prematchHomeProbability), renderedPercent(prematchAwayProbability))
+        }
+        let pair = renderedDuelPercents(away: prematchAwayProbability, home: prematchHomeProbability)
+        return (pair[1], pair[0])
+    }
+
+    static func httpsLogo(_ raw: String?) -> String? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let url = URL(string: raw), url.scheme == "https", url.host != nil else { return nil }
+        return raw
     }
 
     /// Format the already-decided integer once for both the screen and VoiceOver.
@@ -107,9 +128,12 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         let abbreviation: String?
         let primaryColor: String?
         let secondaryColor: String?
+        var logoSmall: String? = nil
+        var logoLarge: String? = nil
         enum CodingKeys: String, CodingKey {
             case teamID = "team_id", abbreviation
             case primaryColor = "primary_color", secondaryColor = "secondary_color"
+            case logoSmall = "logo_small", logoLarge = "logo_large"
         }
     }
     private struct Odds: Decodable {
@@ -181,6 +205,8 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         awayPrimaryColor = awayColors?.primaryColor
         homeSecondaryColor = homeColors?.secondaryColor
         awaySecondaryColor = awayColors?.secondaryColor
+        homeLogoURL = Self.httpsLogo(homeColors?.logoSmall) ?? Self.httpsLogo(homeColors?.logoLarge)
+        awayLogoURL = Self.httpsLogo(awayColors?.logoSmall) ?? Self.httpsLogo(awayColors?.logoLarge)
         homeScore = try? c.decode(Int.self, forKey: .homeScore)
         awayScore = try? c.decode(Int.self, forKey: .awayScore)
         status = try? c.decode(String.self, forKey: .status)
@@ -212,24 +238,26 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         try c.encode(id, forKey: .id)
         try c.encode(homeTeam, forKey: .homeTeam)
         try c.encode(awayTeam, forKey: .awayTeam)
-        if homeCompactIdentity != nil || homePrimaryColor != nil || homeSecondaryColor != nil {
+        if homeCompactIdentity != nil || homePrimaryColor != nil || homeSecondaryColor != nil || homeLogoURL != nil {
             try c.encode(
                 TeamColorFields(
                     teamID: homeCompactIdentity?.teamID,
                     abbreviation: homeCompactIdentity?.abbreviation,
                     primaryColor: homePrimaryColor,
-                    secondaryColor: homeSecondaryColor
+                    secondaryColor: homeSecondaryColor,
+                    logoSmall: homeLogoURL
                 ),
                 forKey: .homeTeamData
             )
         }
-        if awayCompactIdentity != nil || awayPrimaryColor != nil || awaySecondaryColor != nil {
+        if awayCompactIdentity != nil || awayPrimaryColor != nil || awaySecondaryColor != nil || awayLogoURL != nil {
             try c.encode(
                 TeamColorFields(
                     teamID: awayCompactIdentity?.teamID,
                     abbreviation: awayCompactIdentity?.abbreviation,
                     primaryColor: awayPrimaryColor,
-                    secondaryColor: awaySecondaryColor
+                    secondaryColor: awaySecondaryColor,
+                    logoSmall: awayLogoURL
                 ),
                 forKey: .awayTeamData
             )

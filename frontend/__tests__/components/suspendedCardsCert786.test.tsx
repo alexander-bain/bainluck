@@ -139,6 +139,18 @@ const EXPECTED_DISCOVER = suspendedSummary(1, 2, "away-home"); // "… last scor
 // FeedCard — /sports, the category grids, My Stuff
 // ---------------------------------------------------------------------------
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("FeedCard renders the suspended state", () => {
   it("prints the shared summary", () => {
     expect(text(renderFeedCard(makeData()))).toContain(EXPECTED_FEED);

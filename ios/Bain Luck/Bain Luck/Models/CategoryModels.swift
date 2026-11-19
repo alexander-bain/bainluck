@@ -330,9 +330,22 @@ nonisolated struct LeagueMarketsResponse: Decodable, Sendable {
     let totalMarkets: Int
     /// Market rows the payload carried and this client could not read.
     let droppedMarkets: Int
+    /// #13001 + #12932: upcoming/live games and recent finals served by `/api/leagues/{sport_key}`,
+    /// including served `source_mark` and `away_source_mark`.
+    let upcomingGames: [FeedEventData]
+    let recentResults: [FeedEventData]
+
+    var allGames: [FeedEventData] {
+        var seen = Set<Int>()
+        var result: [FeedEventData] = []
+        for g in upcomingGames + recentResults where seen.insert(g.id).inserted {
+            result.append(g)
+        }
+        return result
+    }
 
     private enum CodingKeys: String, CodingKey {
-        case sportKey, sections, totalMarkets
+        case sportKey, sections, totalMarkets, upcomingGames, recentResults
     }
 
     init(from decoder: Decoder) throws {
@@ -343,14 +356,20 @@ nonisolated struct LeagueMarketsResponse: Decodable, Sendable {
         let lossy = try c.decode([String: LossyArray<LeagueMarketItem>].self, forKey: .sections)
         sections = lossy.mapValues(\.elements)
         droppedMarkets = lossy.values.reduce(0) { $0 + $1.dropped }
+        upcomingGames = (try? c.decodeIfPresent(LossyArray<FeedEventData>.self, forKey: .upcomingGames))?.elements ?? []
+        recentResults = (try? c.decodeIfPresent(LossyArray<FeedEventData>.self, forKey: .recentResults))?.elements ?? []
     }
 
     init(sportKey: String, sections: [String: [LeagueMarketItem]], totalMarkets: Int,
-         droppedMarkets: Int = 0) {
+         droppedMarkets: Int = 0,
+         upcomingGames: [FeedEventData] = [],
+         recentResults: [FeedEventData] = []) {
         self.sportKey = sportKey
         self.sections = sections
         self.totalMarkets = totalMarkets
         self.droppedMarkets = droppedMarkets
+        self.upcomingGames = upcomingGames
+        self.recentResults = recentResults
     }
 }
 

@@ -108,8 +108,21 @@ function settledCardIds(markup: string): number[] {
     .filter((n) => Number.isFinite(n));
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
 const MARKUP = render(REAL_EVENTS);
 const SETTLED_IDS = REAL_EVENTS.filter((e) => e.venue_settled === true).map((e) => e.id);
+
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
 
 describe("A · CONTROL — the fixture reaches the page and the cards speak", () => {
   test("all 19 real cards render", () => {

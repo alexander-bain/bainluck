@@ -13,6 +13,11 @@ import subprocess
 import sys
 import tarfile
 
+# Run 44219658774: on a slow hosted runner `codesign --verify --strict` of the
+# companion's main binary took longer than 30 s and failed the whole products
+# stage. Each inspection tool still has a bound; it is just one a slow disk can meet.
+TOOL_SECONDS = 180
+
 GROUP = "group.com.bainluck.watch"
 XCTEST = "BainLuckWatchUITests"
 WATCH = "BainLuckWatch Watch App"
@@ -310,18 +315,26 @@ def verify_runtime_support(payload, mapping, environment):
         raise ValueError("xctestrun changed beyond exact checker path relocation")
 
 
+# Hosted preflight can stall after simulator preparation, and xcrun can stall for
+# minutes on a loaded runner: run 44360250607 built every product, then
+# `xcrun swiftc --version` timed out twice at 60 s while packing, though the same
+# read answered at once when the job started. The one retry waits longer.
+TOOLCHAIN_READ_TIMEOUTS = (60, 240)
+
+
 def toolchain():
     def read(*command):
-        # Hosted preflight can stall after simulator preparation. Retry only a
-        # timed-out identity read once; real command failures still fail closed.
-        for attempt in range(2):
+        # Retry only a timed-out identity read, once; real command failures
+        # still fail closed.
+        for attempt, timeout in enumerate(TOOLCHAIN_READ_TIMEOUTS):
             try:
-                return subprocess.check_output(command, text=True, timeout=60).strip()
+                return subprocess.check_output(command, text=True, timeout=timeout).strip()
             except subprocess.TimeoutExpired:
-                if attempt == 1:
+                if attempt == len(TOOLCHAIN_READ_TIMEOUTS) - 1:
                     raise
                 print(
-                    f"Toolchain identity read timed out after 60s; retrying once: {command!r}",
+                    f"Toolchain identity read timed out after {timeout}s; retrying once"
+                    f" with {TOOLCHAIN_READ_TIMEOUTS[attempt + 1]}s: {command!r}",
                     file=sys.stderr,
                     flush=True,
                 )
@@ -362,6 +375,29 @@ def source_fingerprint(repo):
     return hashlib.sha256(json.dumps(records, sort_keys=True).encode()).hexdigest()
 
 
+def _comparable_toolchain(identity):
+    """Normalize only the default host macOS point-release triple from `swiftc --version`.
+
+    GitHub's `xcode-27` runner pool serves both macOS 27.0 and macOS 27.2 host VMs
+    with the identical `/Applications/Xcode_27.2.app` (`27B52`), Swift 6.4.2 compiler,
+    and 27.2 Watch/iPhone simulator SDKs, causing `xcrun swiftc --version` (called
+    without `-target`) to print `Target: arm64-apple-macosx27.0.0` vs `27.2.0`.
+    Architecture, macOS major version, Swift/clang build, Xcode build, and all
+    simulator SDK versions/builds still fail closed on any difference.
+    """
+    if not isinstance(identity, dict):
+        return identity
+    normalized = dict(identity)
+    swift = normalized.get("swift")
+    if isinstance(swift, str):
+        normalized["swift"] = re.sub(
+            r"(?m)^(Target:\s+\S+-apple-macosx\d+)\.\d+(?:\.\d+)?$",
+            r"\1",
+            swift,
+        )
+    return normalized
+
+
 def verify_manifest(root, sha, environment, pins_hash, source_hash):
     path = root / "manifest.json"
     manifest = json.loads(path.read_text())
@@ -373,7 +409,9 @@ def verify_manifest(root, sha, environment, pins_hash, source_hash):
         raise ValueError("Wrong simulator product source/schema")
     if manifest.get("source_fingerprint") != source_hash:
         raise ValueError("Simulator product source fingerprint mismatch")
-    if manifest.get("toolchain") != environment:
+    if _comparable_toolchain(manifest.get("toolchain")) != _comparable_toolchain(
+        environment
+    ):
         raise ValueError("Simulator product toolchain/SDK mismatch")
     if manifest.get("pins_sha256") != pins_hash:
         raise ValueError("Simulator product package pins mismatch")
@@ -470,7 +508,7 @@ def classify_carrier_stubs(payload, environment):
     links = {}
     for binary in binaries:
         raw = subprocess.check_output(
-            ["otool", "-l", str(binary)], text=True, timeout=30
+            ["otool", "-l", str(binary)], text=True, timeout=TOOL_SECONDS
         )
         links[binary.relative_to(payload).as_posix()] = load_references(raw)
     result = {}
@@ -487,14 +525,14 @@ def classify_carrier_stubs(payload, environment):
                     "Future-minimum carrier framework is a loaded dependency"
                 )
         arches = subprocess.check_output(
-            ["lipo", "-archs", str(binary)], text=True, timeout=30
+            ["lipo", "-archs", str(binary)], text=True, timeout=TOOL_SECONDS
         ).split()
         slices = []
         for architecture in arches:
             build = subprocess.check_output(
                 ["xcrun", "vtool", "-show-build", "-arch", architecture, str(binary)],
                 text=True,
-                timeout=30,
+                timeout=TOOL_SECONDS,
             )
             if (
                 not re.search(r"platform IOSSIMULATOR\s", build)
@@ -510,7 +548,7 @@ def classify_carrier_stubs(payload, environment):
                 ["nm", "-arch", architecture, "-gU", str(binary)],
                 text=True,
                 stderr=subprocess.PIPE,
-                timeout=30,
+                timeout=TOOL_SECONDS,
             )
             if exports.strip():
                 raise ValueError(
@@ -542,7 +580,7 @@ def verify_binaries(payload, architecture):
         raise ValueError("No Mach-O products in simulator package")
     for binary in sorted(binaries):
         arches = subprocess.check_output(
-            ["lipo", "-archs", str(binary)], text=True, timeout=30
+            ["lipo", "-archs", str(binary)], text=True, timeout=TOOL_SECONDS
         ).split()
         if architecture not in arches or not set(arches) <= {
             "arm64",
@@ -554,7 +592,7 @@ def verify_binaries(payload, architecture):
             ["codesign", "--verify", "--strict", str(binary)],
             check=True,
             capture_output=True,
-            timeout=30,
+            timeout=TOOL_SECONDS,
         )
     for info_path in payload.rglob("Info.plist"):
         info = plistlib.loads(info_path.read_bytes())
@@ -569,7 +607,7 @@ def verify_binaries(payload, architecture):
             ["codesign", "--verify", "--strict", str(info_path.parent)],
             check=True,
             capture_output=True,
-            timeout=30,
+            timeout=TOOL_SECONDS,
         )
 
 

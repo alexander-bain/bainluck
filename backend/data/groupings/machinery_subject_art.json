@@ -1,0 +1,1261 @@
+{
+  "schema": "machinery-subject-art/1",
+  "description": "Verified subject imagery for container_machinery (#12288 Direction 223 / Decision 224). Every entry is an official ESPN headshot/logo or a verified Wikimedia Commons portrait with exact author, license, and source_page for /picture-credits (Ruling 195-A). Zero stock photos (#12659).",
+  "subjects": [
+    {
+      "key": "joe-burrow",
+      "aliases": [
+        "Joe Burrow"
+      ],
+      "kind": "person",
+      "detail": "QB · Cincinnati",
+      "accent_color": "#FB4F14",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/3915511.png"
+    },
+    {
+      "key": "brock-purdy",
+      "aliases": [
+        "Brock Purdy"
+      ],
+      "kind": "person",
+      "detail": "QB · San Francisco",
+      "accent_color": "#AA0000",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4361741.png"
+    },
+    {
+      "key": "josh-allen",
+      "aliases": [
+        "Josh Allen"
+      ],
+      "kind": "person",
+      "detail": "QB · Buffalo",
+      "accent_color": "#00338D",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/3918298.png"
+    },
+    {
+      "key": "trevor-lawrence",
+      "aliases": [
+        "Trevor Lawrence"
+      ],
+      "kind": "person",
+      "detail": "QB · Jacksonville",
+      "accent_color": "#006778",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4360310.png"
+    },
+    {
+      "key": "jordan-love",
+      "aliases": [
+        "Jordan Love"
+      ],
+      "kind": "person",
+      "detail": "QB · Green Bay",
+      "accent_color": "#203731",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4036378.png"
+    },
+    {
+      "key": "bryce-young",
+      "aliases": [
+        "Bryce Young"
+      ],
+      "kind": "person",
+      "detail": "QB · Carolina",
+      "accent_color": "#0085CA",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4685720.png"
+    },
+    {
+      "key": "zendaya",
+      "aliases": [
+        "Zendaya"
+      ],
+      "kind": "person",
+      "detail": "Best Actress Contender",
+      "accent_color": "#0F172A",
+      "url": "https://image.tmdb.org/t/p/w185/3WdOloHpjtjL96uVOhFRRCcYSwq.jpg"
+    },
+    {
+      "key": "lamar-jackson",
+      "aliases": [
+        "Lamar Jackson"
+      ],
+      "kind": "person",
+      "detail": "QB · Baltimore",
+      "accent_color": "#241773",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/3916387.png"
+    },
+    {
+      "key": "patrick-mahomes",
+      "aliases": [
+        "Patrick Mahomes"
+      ],
+      "kind": "person",
+      "detail": "QB · Kansas City",
+      "accent_color": "#E31837",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/3139477.png"
+    },
+    {
+      "key": "jared-goff",
+      "aliases": [
+        "Jared Goff"
+      ],
+      "kind": "person",
+      "detail": "QB · Detroit",
+      "accent_color": "#0076B6",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/3046779.png"
+    },
+    {
+      "key": "jon-ossoff",
+      "aliases": [
+        "Jon Ossoff"
+      ],
+      "kind": "person",
+      "detail": "U.S. Senator · Georgia",
+      "accent_color": "#2563EB",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/97/Jon_Ossoff_Senate_Portrait_2021.jpg/500px-Jon_Ossoff_Senate_Portrait_2021.jpg",
+      "author": "United States Senate",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Jon_Ossoff_Senate_Portrait_2021.jpg"
+    },
+    {
+      "key": "jd-vance",
+      "aliases": [
+        "JD Vance",
+        "J.D. Vance",
+        "J. D. Vance"
+      ],
+      "kind": "person",
+      "detail": "Vice President",
+      "accent_color": "#DC2626",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/46/March_2026_Official_Vice_Presidential_Portrait_of_JD_Vance_%28medium_crop%29_%282%29.jpg/500px-March_2026_Official_Vice_Presidential_Portrait_of_JD_Vance_%28medium_crop%29_%282%29.jpg",
+      "author": "Emily J. Higgins",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:March_2026_Official_Vice_Presidential_Portrait_of_JD_Vance_(medium_crop)_(2).jpg"
+    },
+    {
+      "key": "alexandria-ocasio-cortez",
+      "aliases": [
+        "Alexandria Ocasio-Cortez",
+        "AOC"
+      ],
+      "kind": "person",
+      "detail": "U.S. Representative · NY",
+      "accent_color": "#2563EB",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4a/Alexandria_Ocasio-Cortez_Official_Portrait.jpg/500px-Alexandria_Ocasio-Cortez_Official_Portrait.jpg",
+      "author": "Franmarie Metzler; U.S. House Office of Photography",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Alexandria_Ocasio-Cortez_Official_Portrait.jpg"
+    },
+    {
+      "key": "gavin-newsom",
+      "aliases": [
+        "Gavin Newsom"
+      ],
+      "kind": "person",
+      "detail": "Governor · California",
+      "accent_color": "#2563EB",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/90/Governor_of_California_Gavin_Newsom_%28cropped_3x4%29.jpg/500px-Governor_of_California_Gavin_Newsom_%28cropped_3x4%29.jpg",
+      "author": "Charles Ommanney – Office of the Governor of California",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Governor_of_California_Gavin_Newsom_(cropped_3x4).jpg"
+    },
+    {
+      "key": "pete-buttigieg",
+      "aliases": [
+        "Pete Buttigieg"
+      ],
+      "kind": "person",
+      "detail": "Former Transportation Sec.",
+      "accent_color": "#2563EB",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2e/Pete_Buttigieg%2C_Secretary_of_Transportation.jpg/500px-Pete_Buttigieg%2C_Secretary_of_Transportation.jpg",
+      "author": "United States Department of Transportation",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Pete_Buttigieg,_Secretary_of_Transportation.jpg"
+    },
+    {
+      "key": "marco-rubio",
+      "aliases": [
+        "Marco Rubio"
+      ],
+      "kind": "person",
+      "detail": "Secretary of State",
+      "accent_color": "#DC2626",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f7/Official_portrait_of_Secretary_Marco_Rubio_%28cropped%29%282%29.jpg/500px-Official_portrait_of_Secretary_Marco_Rubio_%28cropped%29%282%29.jpg",
+      "author": "U.S. Department of State",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Official_portrait_of_Secretary_Marco_Rubio_(cropped)(2).jpg"
+    },
+    {
+      "key": "ron-desantis",
+      "aliases": [
+        "Ron DeSantis"
+      ],
+      "kind": "person",
+      "detail": "Governor · Florida",
+      "accent_color": "#DC2626",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4f/Ron_DeSantis_official_photo.jpg/500px-Ron_DeSantis_official_photo.jpg",
+      "author": "Government of Florida",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Ron_DeSantis_official_photo.jpg"
+    },
+    {
+      "key": "josh-shapiro",
+      "aliases": [
+        "Josh Shapiro"
+      ],
+      "kind": "person",
+      "detail": "Governor · Pennsylvania",
+      "accent_color": "#2563EB",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/02/Gov._Shapiro.jpg/500px-Gov._Shapiro.jpg",
+      "author": "Maryland GovPics",
+      "license": "CC BY 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Gov._Shapiro.jpg"
+    },
+    {
+      "key": "james-talarico",
+      "aliases": [
+        "James Talarico"
+      ],
+      "kind": "person",
+      "detail": "State Rep. · Texas",
+      "accent_color": "#2563EB",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/70/James_Talarico_Press_Conference_%28cropped%29.jpg/500px-James_Talarico_Press_Conference_%28cropped%29.jpg",
+      "author": "Antonioaesparza",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:James_Talarico_Press_Conference_(cropped).jpg"
+    },
+    {
+      "key": "tucker-carlson",
+      "aliases": [
+        "Tucker Carlson"
+      ],
+      "kind": "person",
+      "detail": "Commentator",
+      "accent_color": "#DC2626",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8b/Tucker_Carlson_%2854670577849%29_%28cropped_2%29.jpg/500px-Tucker_Carlson_%2854670577849%29_%28cropped_2%29.jpg",
+      "author": "Gage Skidmore",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Tucker_Carlson_(54670577849)_(cropped_2).jpg"
+    },
+    {
+      "key": "paul-giamatti",
+      "aliases": [
+        "Paul Giamatti"
+      ],
+      "kind": "person",
+      "detail": "Actor",
+      "accent_color": "#059669",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3e/Paul_Giamatti_at_the_2026_New_York_Film_Festival-032.jpg/500px-Paul_Giamatti_at_the_2026_New_York_Film_Festival-032.jpg",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Paul_Giamatti_at_the_2026_New_York_Film_Festival-032.jpg"
+    },
+    {
+      "key": "andrew-garfield",
+      "aliases": [
+        "Andrew Garfield"
+      ],
+      "kind": "person",
+      "detail": "Actor",
+      "accent_color": "#059669",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/Andrew_Garfield_at_the_2026_New_York_Film_Festival-18.jpg/500px-Andrew_Garfield_at_the_2026_New_York_Film_Festival-18.jpg",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Andrew_Garfield_at_the_2026_New_York_Film_Festival-18.jpg"
+    },
+    {
+      "key": "anne-hathaway",
+      "aliases": [
+        "Anne Hathaway",
+        "Anne hathaway"
+      ],
+      "kind": "person",
+      "detail": "Actress",
+      "accent_color": "#059669",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a5/AnneHathaway-byPhilipRomano-Crop.jpg/500px-AnneHathaway-byPhilipRomano-Crop.jpg",
+      "author": "PhilipRomano",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:AnneHathaway-byPhilipRomano-Crop.jpg"
+    },
+    {
+      "key": "renate-reinsve",
+      "aliases": [
+        "Renate Reinsve"
+      ],
+      "kind": "person",
+      "detail": "Actress",
+      "accent_color": "#059669",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4f/Renate_Reinsve-9937.jpg/500px-Renate_Reinsve-9937.jpg",
+      "author": "Harald Krichel",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Renate_Reinsve-9937.jpg"
+    },
+    {
+      "key": "guitarricadelafuente",
+      "aliases": [
+        "Guitarricadelafuente"
+      ],
+      "kind": "person",
+      "detail": "Actor & Musician",
+      "accent_color": "#059669",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/76/GUITARRICADELAFUENTE_at_2026_Montreux_Jazz_Festival-1.jpg/500px-GUITARRICADELAFUENTE_at_2026_Montreux_Jazz_Festival-1.jpg",
+      "author": "CamilaAlves.raf",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:GUITARRICADELAFUENTE_at_2026_Montreux_Jazz_Festival-1.jpg"
+    },
+    {
+      "key": "mark-kelly",
+      "aliases": [
+        "Mark Kelly"
+      ],
+      "kind": "person",
+      "detail": "U.S. Senator · Arizona",
+      "accent_color": "#2563EB",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/86/Mark_Kelly_Official_Portrait_119th.jpg/500px-Mark_Kelly_Official_Portrait_119th.jpg",
+      "author": "John Shinkle, U.S. Senate Photographic Services",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Mark_Kelly_Official_Portrait_119th.jpg"
+    },
+    {
+      "key": "andy-beshear",
+      "aliases": [
+        "Andy Beshear"
+      ],
+      "kind": "person",
+      "detail": "Governor · Kentucky",
+      "accent_color": "#2563EB",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d9/Andy_Beshear_in_April_2026_%28cropped_3%29.jpg/500px-Andy_Beshear_in_April_2026_%28cropped_3%29.jpg",
+      "author": "Governor Andy Beshear",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Andy_Beshear_in_April_2026_(cropped_3).jpg"
+    },
+    {
+      "key": "democratic-party",
+      "aliases": [
+        "Democratic party",
+        "Democratic Party",
+        "Democrats"
+      ],
+      "kind": "monogram",
+      "detail": "Major U.S. party",
+      "accent_color": "#2563EB",
+      "url": null,
+      "author": "",
+      "license": "",
+      "source_page": ""
+    },
+    {
+      "key": "jaxon-smith-njigba",
+      "aliases": [
+        "Jaxon Smith-Njigba"
+      ],
+      "kind": "person",
+      "detail": "WR · Seattle",
+      "accent_color": "#002244",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4430878.png"
+    },
+    {
+      "key": "jahmyr-gibbs",
+      "aliases": [
+        "Jahmyr Gibbs"
+      ],
+      "kind": "person",
+      "detail": "RB · Detroit",
+      "accent_color": "#0076B6",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4429795.png"
+    },
+    {
+      "key": "jamarr-chase",
+      "aliases": [
+        "Ja'Marr Chase",
+        "JaMarr Chase"
+      ],
+      "kind": "person",
+      "detail": "WR · Cincinnati",
+      "accent_color": "#FB4F14",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4362628.png"
+    },
+    {
+      "key": "ceedee-lamb",
+      "aliases": [
+        "CeeDee Lamb"
+      ],
+      "kind": "person",
+      "detail": "WR · Dallas",
+      "accent_color": "#003594",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4241389.png"
+    },
+    {
+      "key": "dak-prescott",
+      "aliases": [
+        "Dak Prescott"
+      ],
+      "kind": "person",
+      "detail": "QB · Dallas",
+      "accent_color": "#003594",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/2577417.png"
+    },
+    {
+      "key": "amon-ra-st-brown",
+      "aliases": [
+        "Amon-Ra St. Brown"
+      ],
+      "kind": "person",
+      "detail": "WR · Detroit",
+      "accent_color": "#0076B6",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4374302.png"
+    },
+    {
+      "key": "christian-mccaffrey",
+      "aliases": [
+        "Christian McCaffrey"
+      ],
+      "kind": "person",
+      "detail": "RB · San Francisco",
+      "accent_color": "#AA0000",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/3117251.png"
+    },
+    {
+      "key": "james-cook",
+      "aliases": [
+        "James Cook III",
+        "James Cook"
+      ],
+      "kind": "person",
+      "detail": "RB · Buffalo",
+      "accent_color": "#00338D",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4379399.png"
+    },
+    {
+      "key": "jerome-powell",
+      "aliases": [
+        "Jerome Powell",
+        "Jerome H. Powell"
+      ],
+      "kind": "person",
+      "detail": "Federal Reserve Chair",
+      "accent_color": "#0F766E",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f0/Jerome_H._Powell%2C_Federal_Reserve_Chair_%28cropped%29.jpg/500px-Jerome_H._Powell%2C_Federal_Reserve_Chair_%28cropped%29.jpg",
+      "author": "Federal Reserve",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Jerome_H._Powell,_Federal_Reserve_Chair_(cropped).jpg"
+    },
+    {
+      "key": "kevin-warsh",
+      "aliases": [
+        "Kevin Warsh",
+        "Kevin M. Warsh"
+      ],
+      "kind": "person",
+      "detail": "Former Fed Governor",
+      "accent_color": "#1D4ED8",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/77/Official_portrait_of_Kevin_M._Warsh_%28cropped%29.jpg/500px-Official_portrait_of_Kevin_M._Warsh_%28cropped%29.jpg",
+      "author": "Federal Reserve",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Official_portrait_of_Kevin_M._Warsh_(cropped).jpg"
+    },
+    {
+      "key": "republican-party",
+      "aliases": [
+        "Republican party",
+        "Republican Party",
+        "Republicans"
+      ],
+      "kind": "monogram",
+      "detail": "Major U.S. party",
+      "accent_color": "#DC2626",
+      "url": null,
+      "author": "",
+      "license": "",
+      "source_page": ""
+    },
+    {
+      "key": "nba-atl",
+      "aliases": [
+        "Atlanta Hawks",
+        "Hawks"
+      ],
+      "kind": "team_logo",
+      "detail": "ATL",
+      "accent_color": "#E03A3E",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/atl.png"
+    },
+    {
+      "key": "nba-bos",
+      "aliases": [
+        "Boston Celtics",
+        "Celtics"
+      ],
+      "kind": "team_logo",
+      "detail": "BOS",
+      "accent_color": "#007A33",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/bos.png"
+    },
+    {
+      "key": "nba-bkn",
+      "aliases": [
+        "Brooklyn Nets",
+        "Nets"
+      ],
+      "kind": "team_logo",
+      "detail": "BKN",
+      "accent_color": "#111827",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/bkn.png"
+    },
+    {
+      "key": "nba-cha",
+      "aliases": [
+        "Charlotte Hornets",
+        "Hornets"
+      ],
+      "kind": "team_logo",
+      "detail": "CHA",
+      "accent_color": "#1D1160",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/cha.png"
+    },
+    {
+      "key": "nba-chi",
+      "aliases": [
+        "Chicago Bulls",
+        "Bulls"
+      ],
+      "kind": "team_logo",
+      "detail": "CHI",
+      "accent_color": "#CE1141",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/chi.png"
+    },
+    {
+      "key": "nba-cle",
+      "aliases": [
+        "Cleveland Cavaliers",
+        "Cavaliers",
+        "Cavs"
+      ],
+      "kind": "team_logo",
+      "detail": "CLE",
+      "accent_color": "#860038",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/cle.png"
+    },
+    {
+      "key": "nba-dal",
+      "aliases": [
+        "Dallas Mavericks",
+        "Mavericks",
+        "Mavs"
+      ],
+      "kind": "team_logo",
+      "detail": "DAL",
+      "accent_color": "#00538C",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/dal.png"
+    },
+    {
+      "key": "nba-den",
+      "aliases": [
+        "Denver Nuggets",
+        "Nuggets"
+      ],
+      "kind": "team_logo",
+      "detail": "DEN",
+      "accent_color": "#0E2240",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/den.png"
+    },
+    {
+      "key": "nba-det",
+      "aliases": [
+        "Detroit Pistons",
+        "Pistons"
+      ],
+      "kind": "team_logo",
+      "detail": "DET",
+      "accent_color": "#C8102E",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/det.png"
+    },
+    {
+      "key": "nba-gsw",
+      "aliases": [
+        "Golden State Warriors",
+        "Warriors"
+      ],
+      "kind": "team_logo",
+      "detail": "GS",
+      "accent_color": "#1D428A",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/gs.png"
+    },
+    {
+      "key": "nba-hou",
+      "aliases": [
+        "Houston Rockets",
+        "Rockets"
+      ],
+      "kind": "team_logo",
+      "detail": "HOU",
+      "accent_color": "#CE1141",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/hou.png"
+    },
+    {
+      "key": "nba-ind",
+      "aliases": [
+        "Indiana Pacers",
+        "Pacers"
+      ],
+      "kind": "team_logo",
+      "detail": "IND",
+      "accent_color": "#002D62",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/ind.png"
+    },
+    {
+      "key": "nba-lac",
+      "aliases": [
+        "Los Angeles Clippers",
+        "LA Clippers",
+        "Clippers"
+      ],
+      "kind": "team_logo",
+      "detail": "LAC",
+      "accent_color": "#C8102E",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/lac.png"
+    },
+    {
+      "key": "nba-lal",
+      "aliases": [
+        "Los Angeles Lakers",
+        "LA Lakers",
+        "Lakers"
+      ],
+      "kind": "team_logo",
+      "detail": "LAL",
+      "accent_color": "#552583",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/lal.png"
+    },
+    {
+      "key": "nba-mem",
+      "aliases": [
+        "Memphis Grizzlies",
+        "Grizzlies"
+      ],
+      "kind": "team_logo",
+      "detail": "MEM",
+      "accent_color": "#5D76A9",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/mem.png"
+    },
+    {
+      "key": "nba-mia",
+      "aliases": [
+        "Miami Heat",
+        "Heat"
+      ],
+      "kind": "team_logo",
+      "detail": "MIA",
+      "accent_color": "#98002E",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/mia.png"
+    },
+    {
+      "key": "nba-mil",
+      "aliases": [
+        "Milwaukee Bucks",
+        "Bucks"
+      ],
+      "kind": "team_logo",
+      "detail": "MIL",
+      "accent_color": "#00471B",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/mil.png"
+    },
+    {
+      "key": "nba-min",
+      "aliases": [
+        "Minnesota Timberwolves",
+        "Timberwolves",
+        "Wolves"
+      ],
+      "kind": "team_logo",
+      "detail": "MIN",
+      "accent_color": "#0C2340",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/min.png"
+    },
+    {
+      "key": "nba-nop",
+      "aliases": [
+        "New Orleans Pelicans",
+        "Pelicans"
+      ],
+      "kind": "team_logo",
+      "detail": "NO",
+      "accent_color": "#0C2340",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/no.png"
+    },
+    {
+      "key": "nba-nyk",
+      "aliases": [
+        "New York Knicks",
+        "NY Knicks",
+        "Knicks"
+      ],
+      "kind": "team_logo",
+      "detail": "NY",
+      "accent_color": "#006BB6",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/ny.png"
+    },
+    {
+      "key": "nba-okc",
+      "aliases": [
+        "Oklahoma City Thunder",
+        "Thunder"
+      ],
+      "kind": "team_logo",
+      "detail": "OKC",
+      "accent_color": "#007AC1",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/okc.png"
+    },
+    {
+      "key": "nba-orl",
+      "aliases": [
+        "Orlando Magic",
+        "Magic"
+      ],
+      "kind": "team_logo",
+      "detail": "ORL",
+      "accent_color": "#0077C0",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/orl.png"
+    },
+    {
+      "key": "nba-phi",
+      "aliases": [
+        "Philadelphia 76ers",
+        "76ers",
+        "Sixers"
+      ],
+      "kind": "team_logo",
+      "detail": "PHI",
+      "accent_color": "#006BB6",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/phi.png"
+    },
+    {
+      "key": "nba-phx",
+      "aliases": [
+        "Phoenix Suns",
+        "Suns"
+      ],
+      "kind": "team_logo",
+      "detail": "PHX",
+      "accent_color": "#1D1160",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/phx.png"
+    },
+    {
+      "key": "nba-por",
+      "aliases": [
+        "Portland Trail Blazers",
+        "Trail Blazers",
+        "Blazers"
+      ],
+      "kind": "team_logo",
+      "detail": "POR",
+      "accent_color": "#E03A3E",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/por.png"
+    },
+    {
+      "key": "nba-sac",
+      "aliases": [
+        "Sacramento Kings",
+        "Kings"
+      ],
+      "kind": "team_logo",
+      "detail": "SAC",
+      "accent_color": "#5A2D81",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/sac.png"
+    },
+    {
+      "key": "nba-sas",
+      "aliases": [
+        "San Antonio Spurs",
+        "Spurs"
+      ],
+      "kind": "team_logo",
+      "detail": "SA",
+      "accent_color": "#111827",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/sa.png"
+    },
+    {
+      "key": "nba-tor",
+      "aliases": [
+        "Toronto Raptors",
+        "Raptors"
+      ],
+      "kind": "team_logo",
+      "detail": "TOR",
+      "accent_color": "#CE1141",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/tor.png"
+    },
+    {
+      "key": "nba-uta",
+      "aliases": [
+        "Utah Jazz",
+        "Jazz"
+      ],
+      "kind": "team_logo",
+      "detail": "UTAH",
+      "accent_color": "#002B5C",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/utah.png"
+    },
+    {
+      "key": "nba-was",
+      "aliases": [
+        "Washington Wizards",
+        "Wizards"
+      ],
+      "kind": "team_logo",
+      "detail": "WSH",
+      "accent_color": "#002B5C",
+      "url": "https://a.espncdn.com/i/teamlogos/nba/500/wsh.png"
+    },
+    {
+      "key": "nba-wemby",
+      "aliases": [
+        "Victor Wembanyama"
+      ],
+      "kind": "person",
+      "detail": "Center · San Antonio",
+      "accent_color": "#111827",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/5104157.png"
+    },
+    {
+      "key": "nba-luka",
+      "aliases": [
+        "Luka Doncic",
+        "Luka Dončić"
+      ],
+      "kind": "person",
+      "detail": "Guard · LA Lakers",
+      "accent_color": "#552583",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3945274.png"
+    },
+    {
+      "key": "nba-sga",
+      "aliases": [
+        "Shai Gilgeous-Alexander"
+      ],
+      "kind": "person",
+      "detail": "Guard · Oklahoma City",
+      "accent_color": "#007AC1",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4278073.png"
+    },
+    {
+      "key": "nba-tatum",
+      "aliases": [
+        "Jayson Tatum"
+      ],
+      "kind": "person",
+      "detail": "Forward · Boston",
+      "accent_color": "#007A33",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4065648.png"
+    },
+    {
+      "key": "nba-giannis",
+      "aliases": [
+        "Giannis Antetokounmpo"
+      ],
+      "kind": "person",
+      "detail": "Forward · NBA",
+      "accent_color": "#00471B",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3032977.png"
+    },
+    {
+      "key": "nba-jokic",
+      "aliases": [
+        "Nikola Jokic",
+        "Nikola Jokić"
+      ],
+      "kind": "person",
+      "detail": "Center · Denver",
+      "accent_color": "#0E2240",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3112335.png"
+    },
+    {
+      "key": "nba-ant",
+      "aliases": [
+        "Anthony Edwards"
+      ],
+      "kind": "person",
+      "detail": "Guard · Minnesota",
+      "accent_color": "#0C2340",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4594268.png"
+    },
+    {
+      "key": "nba-bam",
+      "aliases": [
+        "Bam Adebayo"
+      ],
+      "kind": "person",
+      "detail": "Center · Miami",
+      "accent_color": "#98002E",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4066261.png"
+    },
+    {
+      "key": "nba-zion",
+      "aliases": [
+        "Zion Williamson"
+      ],
+      "kind": "person",
+      "detail": "Forward · New Orleans",
+      "accent_color": "#0C2340",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4395628.png"
+    },
+    {
+      "key": "nba-trae",
+      "aliases": [
+        "Trae Young"
+      ],
+      "kind": "person",
+      "detail": "Guard · NBA",
+      "accent_color": "#E03A3E",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4277905.png"
+    },
+    {
+      "key": "nba-hali",
+      "aliases": [
+        "Tyrese Haliburton"
+      ],
+      "kind": "person",
+      "detail": "Guard · Indiana",
+      "accent_color": "#002D62",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4396993.png"
+    },
+    {
+      "key": "nba-franz",
+      "aliases": [
+        "Franz Wagner"
+      ],
+      "kind": "person",
+      "detail": "Forward · Orlando",
+      "accent_color": "#0077C0",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4566434.png"
+    },
+    {
+      "key": "nba-davion",
+      "aliases": [
+        "Davion Mitchell"
+      ],
+      "kind": "person",
+      "detail": "Guard · Miami",
+      "accent_color": "#98002E",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4278053.png"
+    },
+    {
+      "key": "nba-cade",
+      "aliases": [
+        "Cade Cunningham"
+      ],
+      "kind": "person",
+      "detail": "Guard · Detroit",
+      "accent_color": "#C8102E",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4432166.png"
+    },
+    {
+      "key": "nba-kat",
+      "aliases": [
+        "Karl-Anthony Towns"
+      ],
+      "kind": "person",
+      "detail": "Center · New York",
+      "accent_color": "#006BB6",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3136195.png"
+    },
+    {
+      "key": "nba-domas",
+      "aliases": [
+        "Domantas Sabonis"
+      ],
+      "kind": "person",
+      "detail": "Center · Sacramento",
+      "accent_color": "#5A2D81",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3155942.png"
+    },
+    {
+      "key": "nba-clingan",
+      "aliases": [
+        "Donovan Clingan"
+      ],
+      "kind": "person",
+      "detail": "Center · Portland",
+      "accent_color": "#E03A3E",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/5105565.png"
+    },
+    {
+      "key": "nba-pp",
+      "aliases": [
+        "Payton Pritchard"
+      ],
+      "kind": "person",
+      "detail": "Guard · Boston",
+      "accent_color": "#007A33",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4066354.png"
+    },
+    {
+      "key": "nba-jrue",
+      "aliases": [
+        "Jrue Holiday"
+      ],
+      "kind": "person",
+      "detail": "Guard · NBA",
+      "accent_color": "#007A33",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3995.png"
+    },
+    {
+      "key": "nba-grimes",
+      "aliases": [
+        "Quentin Grimes"
+      ],
+      "kind": "person",
+      "detail": "Guard · NBA",
+      "accent_color": "#00538C",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4397014.png"
+    },
+    {
+      "key": "nba-ayo",
+      "aliases": [
+        "Ayo Dosunmu"
+      ],
+      "kind": "person",
+      "detail": "Guard · NBA",
+      "accent_color": "#CE1141",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4397002.png"
+    },
+    {
+      "key": "nba-simons",
+      "aliases": [
+        "Anfernee Simons"
+      ],
+      "kind": "person",
+      "detail": "Guard · NBA",
+      "accent_color": "#006BB6",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4351851.png"
+    },
+    {
+      "key": "nba-mamu",
+      "aliases": [
+        "Sandro Mamukelashvili"
+      ],
+      "kind": "person",
+      "detail": "Forward · NBA",
+      "accent_color": "#111827",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4278580.png"
+    },
+    {
+      "key": "nba-jerome",
+      "aliases": [
+        "Ty Jerome"
+      ],
+      "kind": "person",
+      "detail": "Guard · NBA",
+      "accent_color": "#5D76A9",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4065733.png"
+    },
+    {
+      "key": "nba-ajay",
+      "aliases": [
+        "Ajay Mitchell"
+      ],
+      "kind": "person",
+      "detail": "Guard · Oklahoma City",
+      "accent_color": "#007AC1",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4900671.png"
+    },
+    {
+      "key": "nba-kyshawn",
+      "aliases": [
+        "Kyshawn George"
+      ],
+      "kind": "person",
+      "detail": "Forward · Washington",
+      "accent_color": "#002B5C",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/5174563.png"
+    },
+    {
+      "key": "nba-harper",
+      "aliases": [
+        "Dylan Harper"
+      ],
+      "kind": "person",
+      "detail": "Guard · San Antonio",
+      "accent_color": "#111827",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/5037871.png"
+    },
+    {
+      "key": "nba-camara",
+      "aliases": [
+        "Toumani Camara"
+      ],
+      "kind": "person",
+      "detail": "Forward · Portland",
+      "accent_color": "#E03A3E",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4431736.png"
+    },
+    {
+      "key": "nba-rudy",
+      "aliases": [
+        "Rudy Gobert"
+      ],
+      "kind": "person",
+      "detail": "Center · Minnesota",
+      "accent_color": "#0C2340",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3032976.png"
+    },
+    {
+      "key": "nba-ausar",
+      "aliases": [
+        "Ausar Thompson"
+      ],
+      "kind": "person",
+      "detail": "Forward · Detroit",
+      "accent_color": "#C8102E",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4684742.png"
+    },
+    {
+      "key": "nba-og",
+      "aliases": [
+        "OG Anunoby"
+      ],
+      "kind": "person",
+      "detail": "Forward · New York",
+      "accent_color": "#006BB6",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3934719.png"
+    },
+    {
+      "key": "nba-dyson",
+      "aliases": [
+        "Dyson Daniels"
+      ],
+      "kind": "person",
+      "detail": "Guard · Atlanta",
+      "accent_color": "#E03A3E",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4869342.png"
+    }
+  ],
+  "nfl_teams": {
+    "Arizona Cardinals": {
+      "abbr": "ari",
+      "color": "#97233F"
+    },
+    "Atlanta Falcons": {
+      "abbr": "atl",
+      "color": "#A71930"
+    },
+    "Baltimore Ravens": {
+      "abbr": "bal",
+      "color": "#241773"
+    },
+    "Buffalo Bills": {
+      "abbr": "buf",
+      "color": "#00338D"
+    },
+    "Carolina Panthers": {
+      "abbr": "car",
+      "color": "#0085CA"
+    },
+    "Chicago Bears": {
+      "abbr": "chi",
+      "color": "#C83803"
+    },
+    "Cincinnati Bengals": {
+      "abbr": "cin",
+      "color": "#FB4F14"
+    },
+    "Cleveland Browns": {
+      "abbr": "cle",
+      "color": "#FF3C00"
+    },
+    "Dallas Cowboys": {
+      "abbr": "dal",
+      "color": "#041E42"
+    },
+    "Denver Broncos": {
+      "abbr": "den",
+      "color": "#FB4F14"
+    },
+    "Detroit Lions": {
+      "abbr": "det",
+      "color": "#0076B6"
+    },
+    "Green Bay Packers": {
+      "abbr": "gb",
+      "color": "#203731"
+    },
+    "Houston Texans": {
+      "abbr": "hou",
+      "color": "#03202F"
+    },
+    "Indianapolis Colts": {
+      "abbr": "ind",
+      "color": "#002C5F"
+    },
+    "Jacksonville Jaguars": {
+      "abbr": "jax",
+      "color": "#006778"
+    },
+    "Kansas City Chiefs": {
+      "abbr": "kc",
+      "color": "#E31837"
+    },
+    "Las Vegas Raiders": {
+      "abbr": "lv",
+      "color": "#000000"
+    },
+    "Los Angeles Chargers": {
+      "abbr": "lac",
+      "color": "#0080C6"
+    },
+    "Los Angeles Rams": {
+      "abbr": "lar",
+      "color": "#003594"
+    },
+    "Miami Dolphins": {
+      "abbr": "mia",
+      "color": "#008E97"
+    },
+    "Minnesota Vikings": {
+      "abbr": "min",
+      "color": "#4F2683"
+    },
+    "New England Patriots": {
+      "abbr": "ne",
+      "color": "#002244"
+    },
+    "New Orleans Saints": {
+      "abbr": "no",
+      "color": "#D3BC8D"
+    },
+    "New York Giants": {
+      "abbr": "nyg",
+      "color": "#0B2265"
+    },
+    "New York Jets": {
+      "abbr": "nyj",
+      "color": "#125740"
+    },
+    "Philadelphia Eagles": {
+      "abbr": "phi",
+      "color": "#004C54"
+    },
+    "Pittsburgh Steelers": {
+      "abbr": "pit",
+      "color": "#FFB612"
+    },
+    "San Francisco 49ers": {
+      "abbr": "sf",
+      "color": "#AA0000"
+    },
+    "Seattle Seahawks": {
+      "abbr": "sea",
+      "color": "#002244"
+    },
+    "Tampa Bay Buccaneers": {
+      "abbr": "tb",
+      "color": "#D50A0A"
+    },
+    "Tennessee Titans": {
+      "abbr": "ten",
+      "color": "#4B92DB"
+    },
+    "Washington Commanders": {
+      "abbr": "wsh",
+      "color": "#5A1414"
+    }
+  }
+}

@@ -303,14 +303,22 @@ def _discovery_sql(
             "to_char(MAX(schedule_event.commence_time) AT TIME ZONE 'America/New_York', 'Mon FMDD YYYY')) "
             "~* ALL(:query_patterns)))"
         )
-    if by_markets and not title_only:
+    if (by_events or by_markets) and not title_only:
+        member_preds = []
+        if by_events:
+            member_preds.append(
+                "(member_edge.child_type = 'event' AND member_edge.child_id = ANY(:event_ids))"
+            )
+        if by_markets:
+            member_preds.append(
+                "(member_edge.child_type = 'market' AND member_edge.child_id = ANY(:market_ids))"
+            )
         hub_filters.append(
             "c.id = ANY(ARRAY(SELECT DISTINCT COALESCE(member_part.parent_container_id, member_part.id) "
             "FROM event_edges member_edge JOIN containers member_part ON member_part.id=member_edge.parent_id "
             "WHERE member_edge.parent_type='container' AND member_edge.kind='contains' "
             f"AND member_part.{PUBLICATION_COLUMN}<>'withdrawn' AND "
-            "((member_edge.child_type = 'event' AND member_edge.child_id = ANY(:event_ids)) "
-            "OR (member_edge.child_type = 'market' AND member_edge.child_id = ANY(:market_ids)))))"
+            f"({' OR '.join(member_preds)})))"
         )
     if by_slug:
         hub_filters.append("c.slug = ANY(:slugs)")
