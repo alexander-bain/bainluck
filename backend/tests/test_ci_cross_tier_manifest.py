@@ -32,6 +32,7 @@ cannot prove, and this guard defaults to red on anything it cannot account for.
 from __future__ import annotations
 
 import ast
+import functools
 import re
 import subprocess
 from pathlib import Path
@@ -183,7 +184,55 @@ def _cross_tier_reads() -> dict[str, set[str]]:
             found.setdefault(path.name, set()).add("frontend/" + "/".join(parts))
         for whole in _WHOLE_PATH.findall(text):
             found.setdefault(path.name, set()).add(whole.removeprefix("./"))
+    for target in _mutation_harness_frontend_targets():
+        found.setdefault(MUTATION_GUARD_TEST, set()).add(target)
     return found
+
+
+# THE THIRD SHAPE: A READ THROUGH THE MUTATION SCANNER (Fable, Tue Nov 17 8:07 PM).
+# `test_mutation_guard.py` runs `backend/scripts/evals/scan_mutation_residue.py`,
+# which loads every `*_mutations.py` harness and checks each needle against its
+# TARGET file. Some targets are website files, and no literal in backend/tests
+# names them, so the two scans above could not see them. On Nov 17 website merges
+# #12911 and #12906 moved lines those harnesses read; their website-only runs
+# skipped the backend shards, and master went red on the next server batch
+# (run 44227615988, `backend-tests (3)`). The scanner's own `harvest()` is the
+# source of truth, so a new harness target turns this suite red until listed.
+MUTATION_GUARD_TEST = "test_mutation_guard.py"
+
+
+@functools.lru_cache(maxsize=1)
+def _mutation_harness_frontend_targets() -> frozenset:
+    """The scanner's own targets under frontend/, read in a SUBPROCESS.
+
+    In a subprocess so the harness modules (and `_mutation_guard`, which derives
+    its manifest folder at import) never land in this process's `sys.modules`,
+    where `test_mutation_guard.py` would later find a stale copy.
+    """
+    import json
+    import subprocess
+    import sys
+
+    evals = REPO / "backend" / "scripts" / "evals"
+    probe = (
+        "import json, sys; sys.path.insert(0, sys.argv[1]); import scan_mutation_residue as s; "
+        "pairs, unknown = s.harvest(); "
+        "print(json.dumps({'unknown': unknown, 'targets': sorted({str(p.target) for p in pairs})}))"
+    )
+    done = subprocess.run([sys.executable, "-c", probe, str(evals)], capture_output=True,
+                          text=True, timeout=300, cwd=str(REPO / "backend"))
+    assert done.returncode == 0, f"the mutation scanner's harvest() failed:\n{done.stderr[-2000:]}"
+    data = json.loads(done.stdout.strip().splitlines()[-1])
+    assert not data["unknown"], f"the mutation scanner cannot read some harnesses: {data['unknown']}"
+    out = set()
+    for target in data["targets"]:
+        try:
+            rel = Path(target).resolve().relative_to(REPO.resolve()).as_posix()
+        except ValueError:
+            continue
+        if rel.startswith("frontend/"):
+            out.add(rel)
+    return frozenset(out)
 
 
 class TestTheManifestDescribesReality:
@@ -248,6 +297,16 @@ class TestTheManifestDescribesReality:
         }
         missing = sorted(expected - names)
         assert missing == [], f"cross-tier scan no longer sees: {missing}"
+
+    def test_the_scan_sees_the_mutation_harness_targets(self):
+        # Guards the third shape the same way: if `harvest()` stopped returning
+        # website targets, the rot check would pass vacuously for them.
+        targets = _mutation_harness_frontend_targets()
+        assert {
+            "frontend/components/EventHeroProbabilityPair.tsx",
+            "frontend/lib/servedDuelPercents.ts",
+        } <= targets
+        assert targets <= _cross_tier_reads()[MUTATION_GUARD_TEST]
 
     def test_the_scan_finds_both_read_shapes_by_path(self):
         # Named paths, not just owning modules: a scan could find the file for
