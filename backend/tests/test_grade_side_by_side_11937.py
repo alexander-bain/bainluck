@@ -195,6 +195,7 @@ def test_the_shipped_pairs_file_is_valid():
 async def test_default_morning_pair_computes_frozen_candidate_without_pairs_file(wired, monkeypatch):
     """#11937: one link (/grade/pair with no query params) computes today's blind pair
     from the frozen candidate on the server when ranking_pairs.json has no entry."""
+    monkeypatch.setenv(admin.MORNING_PAIR_PAUSED_ENV, "0")
     monkeypatch.setattr(admin, "load_pairs", lambda path=None: {})
     # Pretend SLATE was captured today (PT).
     monkeypatch.setattr(admin, "_captured_today_pt", lambda captured_at, now=None: True)
@@ -216,9 +217,23 @@ async def test_default_morning_pair_computes_frozen_candidate_without_pairs_file
     assert exc.value.status_code == 404
 
 
+async def test_morning_pair_is_paused_by_default_under_ruling_277a(wired, monkeypatch):
+    """#13100 (Ruling 277: A): Candidate 2 ended after one morning; opening bare
+    /grade/pair says nothing is open to grade until Candidate 3 is declared."""
+    monkeypatch.delenv(admin.MORNING_PAIR_PAUSED_ENV, raising=False)
+    monkeypatch.setattr(admin, "_captured_today_pt", lambda captured_at, now=None: True)
+    with pytest.raises(HTTPException) as exc:
+        await admin.get_pair(
+            _request(), slate="latest", pair=admin.DEFAULT_MORNING_PAIR, surface="discover", secret=None, db=FakeDB()
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail == admin.MORNING_PAIR_PAUSED_DETAIL
+
+
 async def test_morning_pair_and_deck_refuse_yesterdays_slate_before_715am(wired, monkeypatch):
     """Fable look on #13022: before today's 7:15 AM PT capture, default morning
     Step 1 (/pair) and Step 2 (/grade-deck?slate=today) must refuse yesterday's slate."""
+    monkeypatch.setenv(admin.MORNING_PAIR_PAUSED_ENV, "0")
     monkeypatch.setattr(admin, "load_pairs", lambda path=None: {})
     # 6:50 AM PT on 2026-11-13 vs SLATE captured 2026-11-12 7:15 AM PT -> yesterday!
     early_morning = datetime(2026, 11, 13, 14, 50, tzinfo=timezone.utc)
