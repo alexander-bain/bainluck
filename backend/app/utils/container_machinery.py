@@ -21,12 +21,14 @@ import logging
 import math
 import os
 import re
+import time
 import unicodedata
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
+from zoneinfo import ZoneInfo
 
 from app.utils.container_presentation import (
     MEMBER_EVENT,
@@ -1681,16 +1683,8 @@ async def _load_snapshot_from_db(
         m_rows: list[Any] = []
         seen_mids: set[int] = set()
         if needs_markets:
-            m_stmt = (
-                select(FuturesMarket)
-                .options(selectinload(FuturesMarket.outcomes))
-                .where(FuturesMarket.status == "open")
-                .order_by(FuturesMarket.volume.desc().nullslast())
-                .limit(800)
-            )
-            m_rows = list((await db.execute(m_stmt)).scalars().all())
-            seen_mids = {fm.id for fm in m_rows}
             extra_clauses = []
+            has_unfiltered_market_section = False
             for sec in sections_cfg:
                 if not isinstance(sec, Mapping) or not isinstance(sec.get("atom_query"), Mapping):
                     continue
@@ -1707,15 +1701,31 @@ async def _load_snapshot_from_db(
                     parts.append(~FuturesMarket.name.ilike(f"%{ex}%"))
                 if parts:
                     extra_clauses.append(and_(*parts))
+                else:
+                    has_unfiltered_market_section = True
+
             if extra_clauses:
                 targeted_stmt = (
                     select(FuturesMarket)
                     .options(selectinload(FuturesMarket.outcomes))
                     .where(FuturesMarket.status == "open", or_(*extra_clauses))
                     .order_by(FuturesMarket.volume.desc().nullslast(), FuturesMarket.id.asc())
-                    .limit(200)
+                    .limit(120)
                 )
                 for fm in (await db.execute(targeted_stmt)).scalars().all():
+                    if fm.id not in seen_mids:
+                        seen_mids.add(fm.id)
+                        m_rows.append(fm)
+
+            if has_unfiltered_market_section or not extra_clauses:
+                m_stmt = (
+                    select(FuturesMarket)
+                    .options(selectinload(FuturesMarket.outcomes))
+                    .where(FuturesMarket.status == "open")
+                    .order_by(FuturesMarket.volume.desc().nullslast())
+                    .limit(400)
+                )
+                for fm in (await db.execute(m_stmt)).scalars().all():
                     if fm.id not in seen_mids:
                         seen_mids.add(fm.id)
                         m_rows.append(fm)
@@ -1764,7 +1774,11 @@ async def _load_snapshot_from_db(
                 continue
             aq = sec["atom_query"]
             if aq.get("kind") in {"markets", "market_history"}:
-                cap_n = max(int(aq.get("max_items", 6)) + 4, 8)
+                cap_n = (
+                    max(int(aq.get("max_items", 4)) + 3, 6)
+                    if aq.get("kind") == "market_history"
+                    else max(int(aq.get("max_items", 4)) + 2, 4)
+                )
                 matched_sec = [pm for pm in prelim_markets if _market_matches_query(pm, aq)]
                 for pm in matched_sec[:cap_n]:
                     candidate_mids.add(int(pm["id"]))
@@ -1782,8 +1796,12 @@ async def _load_snapshot_from_db(
             out_map = await out_legs_by_market(list(vt_rows))
             for fm in vt_rows:
                 unsupported_ids = await _withheld_price_outcome_ids(db, fm)
-                leg_sides = await _game_container_leg_sides(db, fm)
-                lead_leg = await _game_container_lead_leg(db, fm, leg_sides)
+                if getattr(fm, "source", None) == "polymarket" and not getattr(fm, "mutually_exclusive", True):
+                    leg_sides = await _game_container_leg_sides(db, fm)
+                    lead_leg = await _game_container_lead_leg(db, fm, leg_sides)
+                else:
+                    leg_sides = {}
+                    lead_leg = None
                 detail = _format_market_detail(
                     fm,
                     None,
@@ -1927,13 +1945,14 @@ async def _load_snapshot_from_db(
             wanted_oids: set[int] = set()
             max_hours = max([int(hq.get("hours") or 168) for hq in all_hist_queries] or [168])
             for hq in all_hist_queries:
+                hist_cap = max(int(hq.get("max_items", 4)) + 2, 5)
                 matched_for_hq = [m_dict for m_dict in markets_out if _market_matches_query(m_dict, hq)]
-                for m_dict in matched_for_hq[:12]:
+                for m_dict in matched_for_hq[:hist_cap]:
                     outs_sorted = sorted(
                         m_dict["top_outcomes"],
                         key=lambda x: -float(x.get("probability") or 0.0),
                     )
-                    for o_d in outs_sorted[:4]:
+                    for o_d in outs_sorted[:3]:
                         wanted_oids.add(int(o_d["id"]))
             if wanted_oids:
                 cutoff = now_dt - timedelta(hours=max_hours)
@@ -2095,23 +2114,62 @@ def _resolve_section_heading(
     return raw_title, raw_note
 
 
+_US_SPORT_TZ = ZoneInfo("America/New_York")
+_EUROPE_SPORT_TZ = ZoneInfo("Europe/London")
+_AUSTRALIA_SPORT_TZ = ZoneInfo("Australia/Sydney")
+
+_EUROPEAN_SPORT_PREFIXES = (
+    "soccer_epl",
+    "soccer_england_",
+    "soccer_efl",
+    "soccer_fa_cup",
+    "soccer_uefa_",
+    "soccer_spain_",
+    "soccer_italy_",
+    "soccer_germany_",
+    "soccer_france_",
+    "soccer_netherlands_",
+    "soccer_portugal_",
+    "soccer_scotland_",
+    "rugby",
+    "cricket",
+)
+_AUSTRALIAN_SPORT_PREFIXES = ("aussierules_", "rugbyleague_nrl")
+
+
+def _sport_play_timezone(sport_key: str) -> ZoneInfo:
+    """Resolve the local game-day timezone for a sport/league so slate date ranges reflect
+    the calendar days games are played locally rather than UTC rollovers.
+    """
+    low = (sport_key or "").strip().lower()
+    if low.startswith(_AUSTRALIAN_SPORT_PREFIXES):
+        return _AUSTRALIA_SPORT_TZ
+    if low.startswith(_EUROPEAN_SPORT_PREFIXES):
+        return _EUROPE_SPORT_TZ
+    return _US_SPORT_TZ
+
+
 def _format_event_date_span(events: Sequence[Mapping[str, Any]]) -> str:
-    dts: list[datetime] = []
+    local_dates: list[date] = []
     for ev in events:
         raw = str(ev.get("commence_time") or "").strip()
         if not raw:
             continue
         try:
-            dts.append(datetime.fromisoformat(raw.replace("Z", "+00:00")))
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         except ValueError:
             continue
-    if not dts:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        tz = _sport_play_timezone(str(ev.get("sport") or ""))
+        local_dates.append(dt.astimezone(tz).date())
+    if not local_dates:
         return ""
-    lo = min(dts)
-    hi = max(dts)
-    if lo.month == hi.month and lo.day == hi.day:
+    lo = min(local_dates)
+    hi = max(local_dates)
+    if lo == hi:
         return f"{lo.strftime('%b')} {lo.day}"
-    if lo.month == hi.month:
+    if lo.year == hi.year and lo.month == hi.month:
         return f"{lo.strftime('%b')} {lo.day}–{hi.day}"
     return f"{lo.strftime('%b')} {lo.day}–{hi.strftime('%b')} {hi.day}"
 
@@ -3819,6 +3877,19 @@ def _machinery_preview_error_response(
     }
 
 
+_MACHINERY_PREVIEW_CACHE_TTL_S = 60.0
+_machinery_preview_local_cache: dict[tuple[str, bool], tuple[float, dict[str, Any]]] = {}
+
+
+def reset_machinery_preview_cache_for_tests() -> None:
+    _machinery_preview_local_cache.clear()
+
+
+def _preview_redis_key(slug: str, include_children: bool) -> str:
+    suffix = "children" if include_children else "nochildren"
+    return f"machinery:preview:v1:{slug}:{suffix}"
+
+
 async def serve_machinery_candidate_preview(
     slug: str,
     db: Any,
@@ -3834,7 +3905,13 @@ async def serve_machinery_candidate_preview(
     never return ``None`` (which would fall through to an empty unpublished page or silently
     drop the grouping from the preview list). Instead raise HTTP 503 for direct container
     reads or return an explicit ``status='error'`` envelope for preview-list reads.
+
+    Preview cache (60s per slug, ok responses only): avoids repeated full snapshot rebuilds
+    when opening or refreshing ``/admin/groupings-preview`` while never caching errors.
     """
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.container_read_cache import container_read_cache_enabled
     from app.utils.roundup_containers import (
         RoundupRefusal,
         compose_roundup_container,
@@ -3849,6 +3926,60 @@ async def serve_machinery_candidate_preview(
     if target_path is None:
         return None
     defn = load_machinery_definition(target_path)
+    canon_slug = str(defn.get("slug") or target_path.stem).replace("\r", "").replace("\n", "")
+    use_preview_cache = (
+        isinstance(db, AsyncSession)
+        and now is None
+        and container_read_cache_enabled()
+    )
+    t_start = time.monotonic()
+    cache_key = (canon_slug, bool(include_children))
+    if use_preview_cache:
+        now_ts = time.time()
+        local_hit = _machinery_preview_local_cache.get(cache_key)
+        if local_hit is not None and (now_ts - local_hit[0]) < _MACHINERY_PREVIEW_CACHE_TTL_S:
+            elapsed_ms = int((time.monotonic() - t_start) * 1000)
+            logger.info(
+                "machinery_preview_built slug=%s elapsed_ms=%d cache_hit=local",
+                canon_slug,
+                elapsed_ms,
+            )
+            return copy.deepcopy(local_hit[1])
+        try:
+            from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+            redis_client = await get_shared_async_redis()
+            r_res = await bounded_redis_call(
+                lambda: redis_client.get(_preview_redis_key(canon_slug, bool(include_children)))
+            )
+            if r_res.is_ok and r_res.value:
+                raw_env = json.loads(
+                    r_res.value.decode("utf-8")
+                    if isinstance(r_res.value, (bytes, bytearray))
+                    else r_res.value
+                )
+                if (
+                    isinstance(raw_env, dict)
+                    and raw_env.get("status") == "ok"
+                    and isinstance(raw_env.get("cached_at"), (int, float))
+                    and (now_ts - float(raw_env["cached_at"])) < _MACHINERY_PREVIEW_CACHE_TTL_S
+                    and isinstance(raw_env.get("payload"), dict)
+                ):
+                    payload_hit = raw_env["payload"]
+                    _machinery_preview_local_cache[cache_key] = (
+                        float(raw_env["cached_at"]),
+                        payload_hit,
+                    )
+                    elapsed_ms = int((time.monotonic() - t_start) * 1000)
+                    logger.info(
+                        "machinery_preview_built slug=%s elapsed_ms=%d cache_hit=redis",
+                        canon_slug,
+                        elapsed_ms,
+                    )
+                    return copy.deepcopy(payload_hit)
+        except Exception:  # noqa: BLE001 — preview cache fails open
+            logger.debug("machinery preview redis read failed for %s", canon_slug, exc_info=True)
+
     expected_sections = len(
         [
             s
@@ -3911,8 +4042,8 @@ async def serve_machinery_candidate_preview(
     if not include_children:
         out["children"] = []
     report = compute_visual_diversity_report(defn, feed_item, out)
-    return {
-        "slug": slug,
+    envelope = {
+        "slug": canon_slug,
         "status": "ok",
         "definition": {
             "slug": defn["slug"],
@@ -3925,6 +4056,30 @@ async def serve_machinery_candidate_preview(
         "container": out,
         "diversity_report": report,
     }
+    if use_preview_cache:
+        stored_at = time.time()
+        _machinery_preview_local_cache[cache_key] = (stored_at, copy.deepcopy(envelope))
+        try:
+            from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+            redis_client = await get_shared_async_redis()
+            blob = json.dumps({"status": "ok", "cached_at": stored_at, "payload": envelope})
+            await bounded_redis_call(
+                lambda: redis_client.setex(
+                    _preview_redis_key(canon_slug, bool(include_children)),
+                    int(_MACHINERY_PREVIEW_CACHE_TTL_S),
+                    blob,
+                )
+            )
+        except Exception:  # noqa: BLE001 — preview cache write fails open
+            logger.debug("machinery preview redis write failed for %s", canon_slug, exc_info=True)
+    elapsed_ms = int((time.monotonic() - t_start) * 1000)
+    logger.info(
+        "machinery_preview_built slug=%s elapsed_ms=%d cache_hit=miss",
+        canon_slug,
+        elapsed_ms,
+    )
+    return envelope
 
 
 async def evaluate_machinery_candidates_preview(

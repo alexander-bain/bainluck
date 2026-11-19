@@ -721,3 +721,44 @@ async def test_error_item_logs_slug_and_exception_class_and_keeps_session_usable
     assert len(error_logs) == 1
     assert "slug=machinery-nfl-week" in error_logs[0]
     assert "ProgrammingError" in error_logs[0]
+
+
+async def test_preview_caches_ok_responses_for_60s_and_never_caches_errors(
+    pg_machinery, monkeypatch, caplog
+):
+    """Preview single-slug cache serves repeat reads from 60s cache without hitting DB
+    again, while never caching status='error' envelopes.
+    """
+    from app.utils.roundup_containers import reset_roundup_cache_for_tests
+
+    cm.reset_machinery_preview_cache_for_tests()
+    reset_roundup_cache_for_tests()
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+    maker = pg_machinery["maker"]
+    call_count = 0
+    real_load = cm._load_snapshot_from_db
+
+    async def _counting_load(db, defn, *args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return await real_load(db, defn, *args, **kwargs)
+
+    monkeypatch.setattr(cm, "_load_snapshot_from_db", _counting_load)
+    caplog.set_level(logging.INFO, logger=cm.__name__)
+
+    async with maker() as session:
+        first = await cm.serve_machinery_candidate_preview(
+            "machinery-nfl-week", session, allow_error_envelope=True
+        )
+        second = await cm.serve_machinery_candidate_preview(
+            "machinery-nfl-week", session, allow_error_envelope=True
+        )
+
+    assert first is not None and first["status"] == "ok"
+    assert second is not None and second["status"] == "ok"
+    assert call_count == 1
+    built_logs = [r.getMessage() for r in caplog.records if "machinery_preview_built" in r.getMessage()]
+    assert any("cache_hit=miss" in msg for msg in built_logs)
+    assert any("cache_hit=local" in msg for msg in built_logs)
+    cm.reset_machinery_preview_cache_for_tests()
+    reset_roundup_cache_for_tests()

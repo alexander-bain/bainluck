@@ -23,6 +23,14 @@ interface MachineryPreviewResponse {
   items: MachineryPreviewEntry[];
 }
 
+const ORDERED_PREVIEW_SLUGS = [
+  "machinery-nfl-week",
+  "machinery-oscars-best-picture",
+  "machinery-2028-presidential",
+  "machinery-fed-and-macro",
+  "machinery-nba-night",
+] as const;
+
 const SLICE1_SLUGS = new Set([
   "machinery-nfl-week",
   "machinery-oscars-best-picture",
@@ -42,43 +50,91 @@ export default function AdminGroupingsPreviewPage() {
   return <GroupingsPreviewBody />;
 }
 
+function buildClientErrorEntry(
+  slug: string,
+  code: string,
+  message: string
+): MachineryPreviewEntry {
+  return {
+    slug,
+    status: "error",
+    error: message,
+    error_code: code,
+    definition: { slug, name: slug, category: "", kicker: "", footer: "" },
+    feed_item: null,
+    container: null,
+    diversity_report: null,
+  };
+}
+
 function GroupingsPreviewBody() {
   const { secret, clearSecret } = useAdminAuth();
-  const [data, setData] = useState<MachineryPreviewResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [publicSwitchEnabled, setPublicSwitchEnabled] = useState(false);
+  const [itemsBySlug, setItemsBySlug] = useState<Record<string, MachineryPreviewEntry>>({});
+  const [loadingBySlug, setLoadingBySlug] = useState<Record<string, boolean>>({});
   const [showAll, setShowAll] = useState(true);
   const [viewport, setViewport] = useState<"390" | "1280">("390");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await adminFetchJSON<MachineryPreviewResponse>(
-        "/api/containers/preview/machinery",
-        secret
-      );
-      setData(res);
-    } catch (err) {
-      if (isAdminAuthError(err)) {
-        clearSecret({ rejected: true });
-        return;
+  const loadSlug = useCallback(
+    async (slug: string) => {
+      setLoadingBySlug((prev) => ({ ...prev, [slug]: true }));
+      try {
+        const res = await adminFetchJSON<MachineryPreviewResponse>(
+          `/api/containers/preview/machinery?slugs=${encodeURIComponent(slug)}`,
+          secret
+        );
+        setPublicSwitchEnabled(Boolean(res.public_switch_enabled));
+        const match =
+          (res.items ?? []).find((it) => it.slug === slug) ?? (res.items ?? [])[0];
+        if (match) {
+          setItemsBySlug((prev) => ({ ...prev, [slug]: match }));
+        } else {
+          setItemsBySlug((prev) => ({
+            ...prev,
+            [slug]: buildClientErrorEntry(
+              slug,
+              "empty_response",
+              `Preview response omitted ${slug}.`
+            ),
+          }));
+        }
+      } catch (err) {
+        if (isAdminAuthError(err)) {
+          clearSecret({ rejected: true });
+          return;
+        }
+        setItemsBySlug((prev) => ({
+          ...prev,
+          [slug]: buildClientErrorEntry(
+            slug,
+            "request_failed",
+            err instanceof Error ? err.message : `Failed to load ${slug}.`
+          ),
+        }));
+      } finally {
+        setLoadingBySlug((prev) => ({ ...prev, [slug]: false }));
       }
-      setError(err instanceof Error ? err.message : "Failed to load machinery preview.");
-    } finally {
-      setLoading(false);
-    }
-  }, [secret, clearSecret]);
+    },
+    [secret, clearSecret]
+  );
+
+  const loadAll = useCallback(() => {
+    void Promise.all(ORDERED_PREVIEW_SLUGS.map((slug) => loadSlug(slug)));
+  }, [loadSlug]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    loadAll();
+  }, [loadAll]);
 
-  const allCount = data?.items.length ?? 0;
-  const visibleItems = useMemo(() => {
-    const all = data?.items ?? [];
-    return showAll ? all : all.filter((it) => SLICE1_SLUGS.has(it.slug));
-  }, [data, showAll]);
+  const targetSlugs = useMemo(
+    () =>
+      showAll
+        ? [...ORDERED_PREVIEW_SLUGS]
+        : ORDERED_PREVIEW_SLUGS.filter((slug) => SLICE1_SLUGS.has(slug)),
+    [showAll]
+  );
+  const anyLoading = targetSlugs.some((slug) => loadingBySlug[slug]);
+  const loadedCount = targetSlugs.filter((slug) => Boolean(itemsBySlug[slug])).length;
 
   return (
     <main className="min-h-screen bg-surface-primary px-4 py-6 text-text-primary sm:px-6">
@@ -87,7 +143,7 @@ function GroupingsPreviewBody() {
           <div>
             <div className="text-xs font-bold uppercase tracking-wider text-accent-brand">
               Private Admin Preview · Public Switch{" "}
-              {data?.public_switch_enabled ? "ON" : "OFF"}
+              {publicSwitchEnabled ? "ON" : "OFF"}
             </div>
             <h1 className="text-2xl font-bold text-text-primary">
               Grouping &amp; Container Machinery (#12288)
@@ -95,7 +151,7 @@ function GroupingsPreviewBody() {
             <p className="text-sm text-text-secondary">
               One definition produces both the Discover card and the multi-section
               container page, with 227: A Diversity Report counts and member-page
-              number parity.
+              number parity. Each grouping loads independently (60s cache).
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -105,7 +161,7 @@ function GroupingsPreviewBody() {
               className="rounded-button border border-surface-border bg-surface-card px-3 py-1.5 text-xs font-semibold text-text-primary hover:bg-surface-elevated"
             >
               {showAll
-                ? `Showing all ${allCount || 4} groupings`
+                ? `Showing all ${ORDERED_PREVIEW_SLUGS.length} groupings`
                 : "Showing Slice 1 (3 groupings)"}
             </button>
             <button
@@ -115,49 +171,53 @@ function GroupingsPreviewBody() {
             >
               Viewport: {viewport} px
             </button>
+            <button
+              type="button"
+              onClick={() => loadAll()}
+              disabled={anyLoading}
+              className="rounded-button border border-surface-border bg-surface-card px-3 py-1.5 text-xs font-semibold text-text-primary hover:bg-surface-elevated disabled:opacity-50"
+            >
+              {anyLoading
+                ? `Loading (${loadedCount}/${targetSlugs.length})…`
+                : "Refresh all"}
+            </button>
           </div>
         </div>
 
-        {loading && (
-          <div className="rounded-card border border-surface-border bg-surface-card p-6 text-sm text-text-secondary">
-            Loading live machinery groupings…
-          </div>
-        )}
-
-        {error && (
-          <div
-            role="alert"
-            className="rounded-card border border-surface-border bg-surface-card p-6 space-y-3 text-sm text-accent-negative"
-          >
-            <p>{error}</p>
-            <button
-              type="button"
-              onClick={() => void load()}
-              className="rounded-button border border-surface-border bg-surface-elevated px-3 py-1.5 text-xs font-semibold text-accent-brand hover:bg-surface-primary"
-            >
-              Try again
-            </button>
-          </div>
-        )}
-
-        {!loading && !error && (
-          <div
-            className={
-              viewport === "390"
-                ? "flex flex-wrap items-start gap-6"
-                : "space-y-10"
+        <div
+          className={
+            viewport === "390"
+              ? "flex flex-wrap items-start gap-6"
+              : "space-y-10"
+          }
+        >
+          {targetSlugs.map((slug) => {
+            const entry = itemsBySlug[slug];
+            if (!entry) {
+              return (
+                <section
+                  key={slug}
+                  data-testid={`machinery-loading-${slug}`}
+                  className={
+                    viewport === "390"
+                      ? "w-full max-w-[390px] rounded-card border border-surface-border bg-surface-card p-6 text-sm text-text-secondary"
+                      : "w-full rounded-card border border-surface-border bg-surface-card p-6 text-sm text-text-secondary"
+                  }
+                >
+                  Loading {slug}…
+                </section>
+              );
             }
-          >
-            {visibleItems.map((entry) => (
+            return (
               <PreviewGroupingColumn
-                key={entry.slug}
+                key={slug}
                 entry={entry}
                 viewport={viewport}
-                onRetry={() => void load()}
+                onRetry={() => void loadSlug(slug)}
               />
-            ))}
-          </div>
-        )}
+            );
+          })}
+        </div>
       </div>
     </main>
   );
