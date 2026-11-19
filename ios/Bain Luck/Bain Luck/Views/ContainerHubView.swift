@@ -6,6 +6,14 @@ import SwiftUI
 struct ContainerHubView: View {
     let displayName: String
     @StateObject private var vm: ContainerHubViewModel
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var hubSurface: Color { colorScheme == .dark ? Color.black : DS.surface }
+    private var hubCardBg: Color { colorScheme == .dark ? Color(white: 0.11) : DS.cardBg }
+    private var hubSubtleBg: Color { colorScheme == .dark ? Color.white.opacity(0.08) : DS.surface }
+    private var hubBorder: Color { colorScheme == .dark ? Color.white.opacity(0.14) : DS.border }
+    private var hubTextPrimary: Color { colorScheme == .dark ? Color.primary : DS.textPrimary }
+    private var hubTextSecondary: Color { colorScheme == .dark ? Color.secondary : DS.textSecondary }
 
     init(slug: String, displayName: String, service: any ContainerHubLoading = ContainerHubService()) {
         self.displayName = displayName
@@ -25,7 +33,7 @@ struct ContainerHubView: View {
                 status(message, retry: true)
             }
         }
-        .background(DS.surface)
+        .background(hubSurface)
         .navigationTitle(effectiveNavigationTitle)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -51,19 +59,19 @@ struct ContainerHubView: View {
                 if let title = presentation.title {
                     Text(title)
                         .font(.title2.weight(.bold))
-                        .foregroundStyle(DS.textPrimary)
+                        .foregroundStyle(hubTextPrimary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let subtitle = presentation.subtitle {
                     Text(subtitle)
                         .font(.subheadline)
-                        .foregroundStyle(DS.textSecondary)
+                        .foregroundStyle(hubTextSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let note = presentation.note {
                     Text(note)
                         .font(.subheadline)
-                        .foregroundStyle(DS.textSecondary)
+                        .foregroundStyle(hubTextSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if presentation.response.edition?.isTheme == true, presentation.isPartial {
@@ -71,12 +79,12 @@ struct ContainerHubView: View {
                         .disabled(vm.isRefreshing)
                 }
                 if let counts = presentation.countLabel {
-                    Text(counts).font(.subheadline).foregroundStyle(DS.textSecondary)
+                    Text(counts).font(.subheadline).foregroundStyle(hubTextSecondary)
                         .accessibilityIdentifier("hub.loadedCount")
                 }
                 if vm.refreshError != nil {
                     Text("Couldn’t refresh. Showing the last loaded collection.")
-                        .font(.subheadline).foregroundStyle(DS.textSecondary)
+                        .font(.subheadline).foregroundStyle(hubTextSecondary)
                     Button("Try refresh again") { Task { await vm.load() } }
                 }
                 ForEach(presentation.children) { child in
@@ -86,9 +94,9 @@ struct ContainerHubView: View {
                             Spacer()
                             Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                         }
-                        .foregroundStyle(DS.textPrimary)
+                        .foregroundStyle(hubTextPrimary)
                         .padding(16)
-                        .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
+                        .background(hubCardBg, in: RoundedRectangle(cornerRadius: 12))
                     }
                     .buttonStyle(.plain)
                     .id("container:\(child.slug)")
@@ -99,10 +107,10 @@ struct ContainerHubView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Nominated & Wins by Category")
                                     .font(.headline)
-                                    .foregroundStyle(DS.textPrimary)
+                                    .foregroundStyle(hubTextPrimary)
                                 Text("Each contender’s chance of being nominated and chance of winning side by side.")
                                     .font(.subheadline)
-                                    .foregroundStyle(DS.textSecondary)
+                                    .foregroundStyle(hubTextSecondary)
                             }
                             .padding(.top, 4)
                         }
@@ -132,13 +140,13 @@ struct ContainerHubView: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(presentation.resolvedSectionTitle(section))
                                     .font(.headline)
-                                    .foregroundStyle(DS.textPrimary)
+                                    .foregroundStyle(hubTextPrimary)
                                     .fixedSize(horizontal: false, vertical: true)
                                 if let sectionNote = section.note?.trimmingCharacters(in: .whitespacesAndNewlines),
                                    !sectionNote.isEmpty {
                                     Text(sectionNote)
                                         .font(.subheadline)
-                                        .foregroundStyle(DS.textSecondary)
+                                        .foregroundStyle(hubTextSecondary)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
@@ -157,7 +165,7 @@ struct ContainerHubView: View {
                             } header: {
                                 Text(presentation.resolvedSectionTitle(section))
                                     .font(.headline)
-                                    .foregroundStyle(DS.textPrimary)
+                                    .foregroundStyle(hubTextPrimary)
                                     .fixedSize(horizontal: false, vertical: true)
                                     .padding(.top, 8)
                             }
@@ -165,7 +173,7 @@ struct ContainerHubView: View {
                     }
                 }
                 if vm.pageError != nil {
-                    Text("Couldn’t load more markets. Try again.").font(.subheadline).foregroundStyle(DS.textSecondary)
+                    Text("Couldn’t load more markets. Try again.").font(.subheadline).foregroundStyle(hubTextSecondary)
                 }
                 if presentation.response.state == .published, presentation.response.page?.nextCursor != nil {
                     Button {
@@ -211,10 +219,10 @@ struct ContainerHubView: View {
                             Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                         }
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(DS.textSecondary)
+                        .foregroundStyle(hubTextSecondary)
                         .padding(.vertical, 10)
                         .padding(.horizontal, 12)
-                        .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+                        .background(hubSubtleBg, in: RoundedRectangle(cornerRadius: 8))
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -223,8 +231,8 @@ struct ContainerHubView: View {
                 }
             }
             .padding(14)
-            .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.border, lineWidth: 0.5))
+            .background(hubCardBg, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(hubBorder, lineWidth: 0.5))
         case .question(let feed, let search):
             questionCard(member, feed: feed, search: search)
         case .unsupported:
@@ -258,30 +266,30 @@ struct ContainerHubView: View {
                             Spacer(minLength: 8)
                             Text(ContainerHubPresentation.outcomeLabel(outcome, market: search))
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(outcome.verdict(in: search) == .won ? DS.emerald : DS.textSecondary)
+                                .foregroundStyle(outcome.verdict(in: search) == .won ? DS.emerald : hubTextSecondary)
                             if let mark = SourceMarkButton(outcomeMark, number: nil, numberSize: 12, compactRow: true) {
                                 mark
                             }
                         }
                     }
                     if search.topOutcomes?.isEmpty != false {
-                        Text("Result unavailable").font(.caption).foregroundStyle(DS.textSecondary)
+                        Text("Result unavailable").font(.caption).foregroundStyle(hubTextSecondary)
                     }
                 } else {
                     // This existing compact card omits missing prices rather
                     // than the Discover hero's current `nil -> 0%` treatment.
                     FuturesCardView(futures: feed)
                     if search.topOutcomes?.isEmpty != false {
-                        Text("Prices aren't available right now.").font(.caption).foregroundStyle(DS.textSecondary)
+                        Text("Prices aren't available right now.").font(.caption).foregroundStyle(hubTextSecondary)
                     } else if search.topOutcomes?.contains(where: { $0.probability == nil }) == true {
-                        Text("Some prices aren't available right now.").font(.caption).foregroundStyle(DS.textSecondary)
+                        Text("Some prices aren't available right now.").font(.caption).foregroundStyle(hubTextSecondary)
                     }
                 }
             }
-            .foregroundStyle(DS.textPrimary)
+            .foregroundStyle(hubTextPrimary)
             .padding(14)
-            .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.border, lineWidth: 0.5))
+            .background(hubCardBg, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(hubBorder, lineWidth: 0.5))
         }
         .buttonStyle(.plain)
         .simultaneousGesture(TapGesture().onEnded { vm.opened(member) })
@@ -289,7 +297,7 @@ struct ContainerHubView: View {
 
     private func status(_ message: String, retry: Bool) -> some View {
         VStack(spacing: 16) {
-            Text(message).font(.subheadline).foregroundStyle(DS.textSecondary)
+            Text(message).font(.subheadline).foregroundStyle(hubTextSecondary)
                 .multilineTextAlignment(.center)
             if retry {
                 Button("Try Again") { Task { await vm.load() } }.buttonStyle(.borderedProminent)
@@ -304,6 +312,7 @@ struct ContainerHubView: View {
 /// they place it. Deep links reach the same screen independently of placement.
 struct ContainerHubCollectionLink: View {
     let collection: ContainerHubCollection
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if collection.canOpen {
@@ -313,9 +322,9 @@ struct ContainerHubCollectionLink: View {
                     Spacer()
                     Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                 }
-                .foregroundStyle(DS.textPrimary)
+                .foregroundStyle(colorScheme == .dark ? Color.primary : DS.textPrimary)
                 .padding(16)
-                .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
+                .background(colorScheme == .dark ? Color(white: 0.11) : DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
             }
             .buttonStyle(.plain)
         }

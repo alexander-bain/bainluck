@@ -47,8 +47,15 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
         withheldCount = try c.decodeIfPresent(Int.self, forKey: .withheldCount) ?? 0
         assembled = try c.decodeIfPresent(Bool.self, forKey: .assembled) ?? false
         knownClasses = try c.decodeIfPresent([String].self, forKey: .knownClasses) ?? []
-        counts = try c.decodeIfPresent(ContainerHubCounts.self, forKey: .counts)
-        page = try c.decodeIfPresent(ContainerHubPage.self, forKey: .page)
+        if edition?.isTheme == true {
+            counts = try c.decodeIfPresent(ContainerHubCounts.self, forKey: .counts)
+            page = try c.decodeIfPresent(ContainerHubPage.self, forKey: .page)
+        } else {
+            // #12901: non-theme compact NFL week responses carry market-selection
+            // `counts` and `page` envelopes (`kind == "nfl_week_markets"`).
+            counts = try? c.decodeIfPresent(ContainerHubCounts.self, forKey: .counts)
+            page = nil
+        }
         revisionMoved = try c.decodeIfPresent(Bool.self, forKey: .revisionMoved) ?? false
         pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet)) ?? nil
         if state == .published {
