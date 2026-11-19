@@ -153,12 +153,20 @@ struct NativeTournamentDiscoverCard: View {
                                     .clipShape(Capsule())
                             }
                         } else {
+                            let leaderPriceText = leader.renderedPercent.map { formatProbability(leader.probability, renderedPercent: $0) } ?? FeedProbabilityScale.percentLabel(fromFraction: leader.probability)
                             HStack(spacing: 8) {
                                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                                    Text(leader.renderedPercent.map { formatProbability(leader.probability, renderedPercent: $0) } ?? FeedProbabilityScale.percentLabel(fromFraction: leader.probability))
+                                    Text(leaderPriceText)
                                         .font(.title.bold())
                                         .foregroundStyle(.white)
-                                    if let mark = SourceMarkButton(leader.sourceMark, number: leader.probability, subject: leader.name, numberSize: 22, compactRow: true) {
+                                    if let mark = SourceMarkButton(
+                                        leader.sourceMark,
+                                        number: leader.probability,
+                                        subject: leader.name,
+                                        numberSize: 22,
+                                        compactRow: true,
+                                        showsTenths: leaderPriceText.contains(".")
+                                    ) {
                                         if colorScheme == .light {
                                             mark.colorInvert()
                                         } else {

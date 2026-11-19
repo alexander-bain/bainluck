@@ -417,10 +417,36 @@ final class GolfPlayoffDeadlineSourceMarksTests: XCTestCase {
         XCTAssertFalse(ax5Lines.contains(where: { $0.contains("…") }), "Golf hero AX5 must not truncate: \(ax5Lines)")
 
         let sheetMark = try XCTUnwrap(leader.sourceMark)
-        let lightSheet = captureView(SourceMarkSheet(mark: sheetMark, number: leader.probability, subject: leader.name, now: fixedNow), fixedHeight: 380, scheme: .light)
-        let darkSheet = captureView(SourceMarkSheet(mark: sheetMark, number: leader.probability, subject: leader.name, now: fixedNow), fixedHeight: 380, scheme: .dark)
+        XCTAssertTrue(leader.probabilityLabel.contains("."), "Golf row prints tenths: \(leader.probabilityLabel)")
+        XCTAssertEqual(SourceMarkSheet.headline(leader.probability, showsTenths: true), "4.6%")
+        XCTAssertEqual(SourceMarkSheet.lines(sheetMark, showsTenths: true).map(\.price), ["6.1%", "3.5%", "4.2%"])
+
+        let lightSheet = captureView(
+            SourceMarkSheet(
+                mark: sheetMark,
+                number: leader.probability,
+                subject: leader.name,
+                showsTenths: leader.probabilityLabel.contains("."),
+                now: fixedNow
+            ),
+            fixedHeight: 380,
+            scheme: .light
+        )
+        let darkSheet = captureView(
+            SourceMarkSheet(
+                mark: sheetMark,
+                number: leader.probability,
+                subject: leader.name,
+                showsTenths: leader.probabilityLabel.contains("."),
+                now: fixedNow
+            ),
+            fixedHeight: 380,
+            scheme: .dark
+        )
         let sheetLines = try ocrLines(lightSheet)
         let sheetJoined = sheetLines.joined(separator: " ")
+        XCTAssertTrue(sheetJoined.contains("4.6%"), "Golf sheet headline must print 4.6% when row prints tenths: \(sheetLines)")
+        XCTAssertTrue(sheetJoined.contains("6.1%") && sheetJoined.contains("4.2%"), "Golf sheet sources must print tenths: \(sheetLines)")
         XCTAssertTrue(sheetJoined.contains("Kalshi") && sheetJoined.contains("Polymarket") && sheetJoined.contains("DataGolf"),
                       "Golf sheet must list all 3 contributing sources: \(sheetLines)")
 

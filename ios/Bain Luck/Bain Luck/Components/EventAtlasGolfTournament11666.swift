@@ -2516,7 +2516,14 @@ struct EventAtlasGolfContenderChooserView11666: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(row.position == 1 ? .blue : .primary)
                         .monospacedDigit()
-                    if let mark = SourceMarkButton(row.sourceMark, number: row.probability, subject: row.name, numberSize: 15, compactRow: true) {
+                    if let mark = SourceMarkButton(
+                        row.sourceMark,
+                        number: row.probability,
+                        subject: row.name,
+                        numberSize: 15,
+                        compactRow: true,
+                        showsTenths: row.probabilityLabel.contains(".")
+                    ) {
                         mark.buttonStyle(.borderless)
                     }
                 }
