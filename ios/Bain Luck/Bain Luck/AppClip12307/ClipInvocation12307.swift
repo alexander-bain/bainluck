@@ -59,6 +59,27 @@ nonisolated enum ClipLoad12307: Equatable, Sendable {
     case unreachable
 }
 
+/// Live score and game clock for a game shown in the App Clip (176: A names
+/// "the chance, score and clock"). Absent for markets, scheduled games, or
+/// fixtures whose feed carries no live score or clock.
+nonisolated struct ClipGameScoreClock12307: Equatable, Sendable {
+    let isLive: Bool
+    let awayScore: Int?
+    let homeScore: Int?
+    let clockLine: String?
+
+    var hasLiveScores: Bool { isLive && awayScore != nil && homeScore != nil }
+
+    func score(forRowIndex index: Int) -> String? {
+        guard hasLiveScores else { return nil }
+        switch index {
+        case 0: return awayScore.map(String.init)
+        case 1: return homeScore.map(String.init)
+        default: return nil
+        }
+    }
+}
+
 /// Main-actor, like `SavedWidgetReadingRules10875`, whose readings it returns.
 enum ClipLoader12307 {
     /// One read. `fetch` returns the response body and status, or throws on a
@@ -90,6 +111,37 @@ enum ClipLoader12307 {
         case .game(let event): return SavedWidgetReadingRules10875.game(event, side: nil, now: date)
         case .market(let market): return SavedWidgetReadingRules10875.market(market, outcomeID: nil, now: date)
         }
+    }
+
+    /// Live score and period/clock from the event payload (176: A).
+    /// Returns nil for markets or non-live games (finals already put each team's
+    /// score and Won/Lost verdict on `reading.rows`).
+    static func gameScoreClock(_ payload: SavedWidgetDetailPayload10875) -> ClipGameScoreClock12307? {
+        guard case .game(let event) = payload else { return nil }
+        let isLive = event.status == "live"
+        guard isLive else { return nil }
+        let bothScores = event.awayScore != nil && event.homeScore != nil
+        let period = event.espn?.period?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let clock = event.espn?.gameClock?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = [period, clock].compactMap { $0 }.filter { !$0.isEmpty }
+        let clockLine = parts.isEmpty ? nil : parts.joined(separator: " · ")
+        return ClipGameScoreClock12307(
+            isLive: true,
+            awayScore: bothScores ? event.awayScore : nil,
+            homeScore: bothScores ? event.homeScore : nil,
+            clockLine: clockLine
+        )
+    }
+
+    /// Status eyebrow for the App Clip header: on a live game with a score
+    /// column in the rows, lead with "Live" + game clock/period (never repeating
+    /// the score twice); otherwise keep `reading.status`.
+    static func statusText(for reading: SavedWidgetReading10875, scoreClock: ClipGameScoreClock12307?) -> String {
+        guard let scoreClock, scoreClock.isLive else { return reading.status }
+        if let clockLine = scoreClock.clockLine {
+            return "Live · \(clockLine)"
+        }
+        return scoreClock.hasLiveScores ? "Live" : reading.status
     }
 
     /// The line under the rows, in the saved widget's words (`SavedClock10875`):

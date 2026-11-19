@@ -50,6 +50,7 @@ struct ClipPageView12307: View {
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 ClipReadingView12307(
                     reading: ClipLoader12307.reading(payload, at: context.date),
+                    scoreClock: ClipLoader12307.gameScoreClock(payload),
                     subjectKind: model.subject?.kind ?? .game,
                     now: context.date,
                     lastUpdateFailed: model.lastUpdateFailed,
@@ -78,11 +79,14 @@ struct ClipPageView12307: View {
 
 struct ClipReadingView12307: View {
     let reading: SavedWidgetReading10875
+    let scoreClock: ClipGameScoreClock12307?
     let subjectKind: SavedWidgetSubject10875.Kind
     let now: Date
     let lastUpdateFailed: Bool
     let webURL: URL?
     let getApp: () -> Void
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var getAppButtonTitle: String {
         switch subjectKind {
@@ -91,17 +95,35 @@ struct ClipReadingView12307: View {
         }
     }
 
+    private var statusLine: String {
+        ClipLoader12307.statusText(for: reading, scoreClock: scoreClock)
+    }
+
+    private var showsLiveScoreColumn: Bool {
+        scoreClock?.hasLiveScores == true && reading.rows.count == 2
+    }
+
     private var caption: String? {
         ClipLoader12307.caption(reading, now: now).map { clock in
             reading.priceCaption.map { "\($0) · \(clock)" } ?? clock
         }
     }
 
+    private var accessibilitySummary: String {
+        var parts = [reading.spoken]
+        if let clock = scoreClock?.clockLine, !reading.spoken.contains(clock) {
+            parts.append(clock)
+        }
+        if let caption { parts.append(caption) }
+        return parts.joined(separator: " ")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(reading.status)
+            Text(statusLine)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("clipStatus")
             Text(reading.subject)
                 .font(.title2.weight(.bold))
@@ -115,14 +137,35 @@ struct ClipReadingView12307: View {
                         .font(.body.weight(.medium))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                } else if showsLiveScoreColumn && !dynamicTypeSize.isAccessibilitySize {
+                    HStack(spacing: 12) {
+                        Spacer(minLength: 8)
+                        Text("Score")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .frame(minWidth: 44, alignment: .trailing)
+                        Text("Now")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .frame(minWidth: 68, alignment: .trailing)
+                    }
                 }
-                ForEach(Array(reading.rows.enumerated()), id: \.offset) { _, row in
-                    ClipRowView12307(row: row)
+                ForEach(Array(reading.rows.enumerated()), id: \.offset) { index, row in
+                    ClipRowView12307(
+                        row: row,
+                        liveScore: scoreClock?.score(forRowIndex: index),
+                        alignColumns: showsLiveScoreColumn && !dynamicTypeSize.isAccessibilitySize
+                    )
                 }
                 if let caption {
                     Text(caption)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("clipCaption")
                 }
@@ -130,7 +173,7 @@ struct ClipReadingView12307: View {
             .padding(16)
             .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(.secondarySystemBackground)))
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(reading.spoken + (caption.map { " \($0)." } ?? ""))
+            .accessibilityLabel(accessibilitySummary)
 
             if lastUpdateFailed {
                 Label("Not updated: Bain Luck couldn't be reached.", systemImage: "wifi.exclamationmark")
@@ -157,27 +200,90 @@ struct ClipReadingView12307: View {
 
 private struct ClipRowView12307: View {
     let row: SavedWidgetReading10875.Row
+    let liveScore: String?
+    let alignColumns: Bool
 
-    var body: some View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    @ViewBuilder private var accessibilityFigures: some View {
+        if let liveScore {
+            Text("Score \(liveScore)")
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        if let figure = row.figure {
+            Text(figure)
+                .font(.title.weight(.bold).monospacedDigit())
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        if let verdict = row.verdict {
+            Text(verdict)
+                .font(.headline)
+                .foregroundStyle(row.emphasized ? Color.green : Color.secondary)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    @ViewBuilder private var numbers: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(row.label)
-                .font(.body.weight(row.emphasized ? .semibold : .regular))
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
+            if let liveScore {
+                Text(liveScore)
+                    .font(.title3.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(minWidth: alignColumns ? 44 : nil, alignment: .trailing)
+            }
             if let figure = row.figure {
                 Text(figure)
                     .font(.title.weight(.bold).monospacedDigit())
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(minWidth: alignColumns ? 68 : nil, alignment: .trailing)
             }
             if let verdict = row.verdict {
                 Text(verdict)
                     .font(.headline)
                     .foregroundStyle(row.emphasized ? Color.green : Color.secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
-            if row.figure == nil && row.verdict == nil {
+            if liveScore == nil && row.figure == nil && row.verdict == nil {
                 Text("—")
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("No number")
+            }
+        }
+    }
+
+    var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(row.label)
+                    .font(.body.weight(row.emphasized ? .semibold : .regular))
+                    .fixedSize(horizontal: false, vertical: true)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        accessibilityFigures
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        accessibilityFigures
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(row.label)
+                    .font(.body.weight(row.emphasized ? .semibold : .regular))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                numbers
             }
         }
     }

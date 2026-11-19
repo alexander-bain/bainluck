@@ -190,4 +190,35 @@ final class AppClip12307Tests: XCTestCase {
         XCTAssertEqual(ClipLoader12307.clock(t0, relativeTo: t0.addingTimeInterval(3 * 86_400)),
                        t0.formatted(.dateTime.month(.abbreviated).day().hour().minute()), "another day names the date")
     }
+
+    func testALiveGameCarriesScoreAndClockWhenPresentAndOmitsThemWhenAbsent() throws {
+        let scored = try SavedWidgetDetailPayload10875.decode(
+            eventJSON(status: "live", homeScore: 67, awayScore: 65,
+                      extra: #", "espn": {"period": "Q4", "game_clock": "3:18"}"#), as: .game)
+        let reading = ClipLoader12307.reading(scored, at: t0)
+        let sc = try XCTUnwrap(ClipLoader12307.gameScoreClock(scored))
+        XCTAssertTrue(sc.hasLiveScores)
+        XCTAssertEqual(sc.score(forRowIndex: 0), "65")
+        XCTAssertEqual(sc.score(forRowIndex: 1), "67")
+        XCTAssertEqual(sc.clockLine, "Q4 · 3:18")
+        XCTAssertEqual(ClipLoader12307.statusText(for: reading, scoreClock: sc), "Live · Q4 · 3:18")
+
+        let scoredNoClock = try SavedWidgetDetailPayload10875.decode(
+            eventJSON(status: "live", homeScore: 67, awayScore: 65), as: .game)
+        let scNoClock = try XCTUnwrap(ClipLoader12307.gameScoreClock(scoredNoClock))
+        XCTAssertTrue(scNoClock.hasLiveScores)
+        XCTAssertNil(scNoClock.clockLine)
+        XCTAssertEqual(ClipLoader12307.statusText(for: ClipLoader12307.reading(scoredNoClock, at: t0), scoreClock: scNoClock), "Live")
+
+        let scoreless = try SavedWidgetDetailPayload10875.decode(
+            eventJSON(status: "live", homeScore: nil, awayScore: nil), as: .game)
+        let scNone = try XCTUnwrap(ClipLoader12307.gameScoreClock(scoreless))
+        XCTAssertFalse(scNone.hasLiveScores)
+        XCTAssertNil(scNone.score(forRowIndex: 0))
+        XCTAssertEqual(ClipLoader12307.statusText(for: ClipLoader12307.reading(scoreless, at: t0), scoreClock: scNone), "Live")
+
+        let finalPayload = try SavedWidgetDetailPayload10875.decode(
+            eventJSON(status: "completed", homeScore: 27, awayScore: 24, extra: #", "hero_settled_result": "home""#), as: .game)
+        XCTAssertNil(ClipLoader12307.gameScoreClock(finalPayload))
+    }
 }
