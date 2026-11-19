@@ -1,11 +1,13 @@
 name: Master red alarm
 
-# Fable, Mon Nov 16 (item 3): when a CI run on master fails, post
-# "stuck: master red, <test>, <run>" on the NOW-lines issue within minutes, so no
-# lane has to notice by hand. On Nov 16 master sat red from 12:09 AM to 5:23 AM PT.
+# Fable, Mon Nov 16 (item 3) + Alex ruling 241: A (Wed Nov 18): when a CI run on
+# master fails, re-run its failed jobs once automatically (attempt 1 only) and
+# post "stuck: master red, <test>, <run>" on the NOW-lines issue within minutes,
+# with the two-line 241-A procedure, so no lane has to notice or press re-run.
 #
 # GitHub API only, through `gh`: it reads the run, its failed jobs' logs, and the
-# issue's comments, then posts one line. No production read, no re-run, no deploy.
+# issue's comments, triggers one rerun-failed-jobs on attempt 1 (when deploy did
+# not succeed), and posts one line. No production read, no deploy.
 # One line per run and attempt: the line carries a hidden marker checked first.
 # Script and its tests: backend/scripts/master_red_alarm.py,
 # backend/tests/test_master_red_alarm.py.
@@ -17,11 +19,11 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: "A CI run id to read (prints the line; posts nothing)"
+        description: "A CI run id to read (prints the line; posts and re-runs nothing)"
         required: true
 
 permissions:
-  actions: read
+  actions: write
   contents: read
   issues: write
 
