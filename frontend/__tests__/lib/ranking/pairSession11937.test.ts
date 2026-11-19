@@ -3,9 +3,13 @@
  * link, and asks the server for two unlabelled sides.
  */
 import {
+  MORNING_NOT_READY_MESSAGE,
   PAIR_CHOICES,
   PAIR_CHOICE_LABELS,
+  formatCaptureDayPt,
   gradeDeckHref,
+  isCapturedTodayPt,
+  normalizeMorningError,
   pairFromSearch,
   pairPath,
   pairTargetFromSearch,
@@ -51,5 +55,17 @@ describe("the three answers", () => {
 describe("gradeDeckHref", () => {
   it("goes on to the same slate's deck after the pick", () => {
     expect(gradeDeckHref("59da9307253a78dc")).toBe("/grade?slate=59da9307253a78dc");
+  });
+});
+
+describe("capture day and before-7:15 AM morning guard", () => {
+  it("formats the capture day in Pacific time and distinguishes yesterday from today", () => {
+    const wedCapture = "2026-11-18T15:15:00+00:00"; // Wed Nov 18, 7:15 AM PT
+    const thuEarly = new Date("2026-11-19T14:50:00Z"); // Thu Nov 19, 6:50 AM PT
+    const wedLater = new Date("2026-11-18T16:00:00Z"); // Wed Nov 18, 8:00 AM PT
+    expect(formatCaptureDayPt(wedCapture)).toMatch(/Nov 18/);
+    expect(isCapturedTodayPt(wedCapture, thuEarly)).toBe(false);
+    expect(isCapturedTodayPt(wedCapture, wedLater)).toBe(true);
+    expect(normalizeMorningError(`HTTP 409: ${MORNING_NOT_READY_MESSAGE}`)).toBe(MORNING_NOT_READY_MESSAGE);
   });
 });

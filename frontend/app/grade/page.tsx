@@ -39,6 +39,12 @@ import {
   type GradeDeck,
   type TallyEntry,
 } from "@/lib/ranking/gradeSession";
+import {
+  MORNING_NOT_READY_MESSAGE,
+  formatCaptureDayPt,
+  isCapturedTodayPt,
+  normalizeMorningError,
+} from "@/lib/ranking/pairSession";
 
 const GRADER_KEY = "bainluck_grader_name";
 const KID_KEY = "bainluck_grader_kid";
@@ -117,6 +123,12 @@ function GradeSession() {
     adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef, setFromSearch(window.location.search)), secret)
       .then((d) => {
         if (cancelled) return;
+        // Same before-7:15 AM PT guard on Step 2: bare /grade or ?slate=today
+        // never serves yesterday's slate as today's morning deck.
+        if ((!slateRef || slateRef === "today") && d.captured_at && !isCapturedTodayPt(d.captured_at)) {
+          setError(MORNING_NOT_READY_MESSAGE);
+          return;
+        }
         setDeck(drawnOnly(d));
         void loadTally(d.slate_id);
       })
@@ -124,7 +136,7 @@ function GradeSession() {
         if (cancelled) return;
         handleGradeDeckReadError(e, "Could not load the cards", {
           clearSecret,
-          setError,
+          setError: (msg) => setError(normalizeMorningError(msg)),
         });
       });
     return () => {
@@ -199,11 +211,13 @@ function GradeSession() {
 
   const tallyLine = formatTally(tally);
   const leftOut = deck ? leftOutLine(deck) : "";
-  const stepLabel = setRef
+  const captureDay = formatCaptureDayPt(deck?.captured_at);
+  const stepBase = setRef
     ? "Step 3 of 3: the extra set"
     : slateRef
       ? "Step 2 of 3: the deck"
       : null;
+  const stepLabel = stepBase ? `${stepBase}${captureDay ? ` · ${captureDay}` : ""}` : null;
 
   if (error && !deck) {
     return <Shell><p className="text-sm text-text-secondary">{error}</p></Shell>;

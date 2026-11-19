@@ -316,6 +316,29 @@ def deck_with_set(order: list[dict], slate_id: str, keys: list[str], *, size: in
     return mixed(deck, slate_id)
 
 
+#: Plain-English refusal when today's 7:15 AM PT Discover slate has not landed yet (#11937).
+MORNING_NOT_READY_DETAIL = "This morning's cards are not ready yet. They arrive at 7:15 AM."
+
+
+def _captured_today_pt(captured_at: Any, *, now: datetime | None = None) -> bool:
+    """Whether ``captured_at`` falls on today's calendar date in Pacific time."""
+    if not captured_at:
+        return False
+    if isinstance(captured_at, str):
+        try:
+            dt = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+    elif isinstance(captured_at, datetime):
+        dt = captured_at
+    else:
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    ref_now = (now or datetime.now(timezone.utc)).astimezone(TALLY_TZ)
+    return dt.astimezone(TALLY_TZ).date() == ref_now.date()
+
+
 @router.get("/grade-deck")
 async def get_grade_deck(
     request: Request,
@@ -324,6 +347,7 @@ async def get_grade_deck(
     size: int = Query(SPREAD_DECK_SIZE, ge=5, le=60),
     # `?set=` in the URL; not named `set` here, which would shadow the builtin.
     card_set: str | None = Query(None, alias="set", max_length=64),
+    today_only: bool = Query(False),
     secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -332,12 +356,16 @@ async def get_grade_deck(
     slate = slate if isinstance(slate, str) and slate.strip() else None
     size = size if isinstance(size, int) else SPREAD_DECK_SIZE
     set_name = card_set if isinstance(card_set, str) and card_set.strip() else None
+    require_today = today_only is True or slate == "today"
+    lookup_ref = "latest" if slate in (None, "today") else slate
     if set_name and not slate:
         raise HTTPException(status_code=422, detail="a named set needs ?slate=")
     # The grader's name comes in a header, never the URL: query strings land in
     # request logs, and the family's kids type their names on this page.
     grader = urllib.parse.unquote(request.headers.get(GRADER_HEADER) or "")[:40]
-    row = slate_row_dict(await _slate_row(db, slate or "latest", surface))
+    row = slate_row_dict(await _slate_row(db, lookup_ref, surface))
+    if require_today and not _captured_today_pt(row.get("captured_at")):
+        raise HTTPException(status_code=409, detail=MORNING_NOT_READY_DETAIL)
     out = {
         "switch_on": ranking_snapshots_enabled(),
         "slate_id": row["slate_id"],
@@ -1428,13 +1456,24 @@ async def get_pair(
 ) -> dict:
     """#11937 (171-A): two first tens for one slate, unlabelled, sides random."""
     _check_admin_secret(secret, request=request)
-    row = slate_row_dict(await _slate_row(db, slate, surface))
+    lookup_ref = "latest" if slate in ("latest", "today") else slate
+    row = slate_row_dict(await _slate_row(db, lookup_ref, surface))
+    # Default morning link ("latest"/"today") must never serve yesterday's slate
+    # before today's 7:15 AM PT capture lands (Fable review on #13022).
+    if slate in ("latest", "today") and not _captured_today_pt(row.get("captured_at")):
+        raise HTTPException(status_code=409, detail=MORNING_NOT_READY_DETAIL)
     keys = _resolve_pair_keys(row, pair)
     if keys is None:
         raise HTTPException(status_code=404, detail=f"no pair {pair!r} for this slate")
     served, candidate = _pair_sides(row, list(keys))
     left, right = (candidate, served) if candidate_on_left(row["slate_id"], pair) else (served, candidate)
-    return {"slate_id": row["slate_id"], "pair": pair, "left": left, "right": right}
+    return {
+        "slate_id": row["slate_id"],
+        "pair": pair,
+        "captured_at": row.get("captured_at"),
+        "left": left,
+        "right": right,
+    }
 
 
 class PairPickIn(BaseModel):

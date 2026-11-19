@@ -25,8 +25,51 @@ export interface PairSide {
 export interface PairDeck {
   slate_id: string;
   pair: string;
+  captured_at?: string | null;
   left: PairSide[];
   right: PairSide[];
+}
+
+export const MORNING_NOT_READY_MESSAGE =
+  "This morning's cards are not ready yet. They arrive at 7:15 AM.";
+
+const PT_DATE_FORMAT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Los_Angeles",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+const PT_DAY_LABEL_FORMAT = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/Los_Angeles",
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+});
+
+/** Pacific calendar day of a capture ISO stamp (e.g. "Thu, Nov 19"), or "". */
+export function formatCaptureDayPt(capturedAt: string | null | undefined): string {
+  if (!capturedAt) return "";
+  const dt = new Date(capturedAt);
+  if (Number.isNaN(dt.getTime())) return "";
+  return PT_DAY_LABEL_FORMAT.format(dt);
+}
+
+/** Whether a capture ISO stamp falls on today's calendar day in Pacific time. */
+export function isCapturedTodayPt(
+  capturedAt: string | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (!capturedAt) return false;
+  const dt = new Date(capturedAt);
+  if (Number.isNaN(dt.getTime())) return false;
+  return PT_DATE_FORMAT.format(dt) === PT_DATE_FORMAT.format(now);
+}
+
+/** Surface the plain-English morning-not-ready message cleanly without HTTP status noise. */
+export function normalizeMorningError(message: string): string {
+  if (message.includes(MORNING_NOT_READY_MESSAGE)) return MORNING_NOT_READY_MESSAGE;
+  return message;
 }
 
 const REF = /^[A-Za-z0-9-]{1,64}$/;
