@@ -59,12 +59,54 @@ struct ContainerHubView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                ShareLink(
+                    item: shareURL,
+                    subject: Text(effectiveShareTitle)
+                ) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 14))
+                }
+                .accessibilityLabel("Share")
+                .accessibilityIdentifier("hub.shareButton")
+                .recordsShareOpened { recordShareOpened() }
+            }
+        }
         .task {
             // Returning revalidates publication/lifecycle while retaining the
             // existing view model and anchor. No new hub or loading skeleton.
             await vm.load()
             AnalyticsService.trackScreen(name: "collection_hub", type: vm.slug)
         }
+    }
+
+    static func shareLinkURL(slug: String) -> URL {
+        URL(string: collectionShareURL(slug)) ?? bainLuckFallbackURL
+    }
+
+    private var shareURL: URL {
+        Self.shareLinkURL(slug: vm.slug)
+    }
+
+    private var effectiveShareTitle: String {
+        if case .loaded(let presentation) = vm.state,
+           let title = presentation.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            return title
+        }
+        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Bain Luck" : trimmed
+    }
+
+    private func recordShareOpened() {
+        ShareInstrumentation.recordShareOpened(
+            itemType: "collection",
+            itemId: vm.slug,
+            itemName: effectiveShareTitle,
+            category: nil,
+            surface: .collectionDetail
+        )
     }
 
     private var effectiveNavigationTitle: String {
@@ -120,6 +162,20 @@ struct ContainerHubView: View {
                         .background(hubCardBg, in: RoundedRectangle(cornerRadius: 12))
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        CollectionContextMenuItems(
+                            slug: child.slug,
+                            onShare: {
+                                ShareInstrumentation.recordShareOpened(
+                                    itemType: "collection",
+                                    itemId: child.slug,
+                                    itemName: child.name,
+                                    category: nil,
+                                    surface: .discoverCard
+                                )
+                            }
+                        )
+                    }
                     .id("container:\(child.slug)")
                 }
                 if !vm.pairedMetricSets.isEmpty {
@@ -348,6 +404,20 @@ struct ContainerHubCollectionLink: View {
                 .background(ContainerHubThemeTokens.cardBg(colorScheme), in: RoundedRectangle(cornerRadius: 12))
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                CollectionContextMenuItems(
+                    slug: collection.slug,
+                    onShare: {
+                        ShareInstrumentation.recordShareOpened(
+                            itemType: "collection",
+                            itemId: collection.slug,
+                            itemName: collection.name,
+                            category: nil,
+                            surface: .discoverCard
+                        )
+                    }
+                )
+            }
         }
     }
 }
