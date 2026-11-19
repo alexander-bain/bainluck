@@ -190,6 +190,16 @@ def project_activitykit_snapshot(detail: Mapping[str, object]) -> GameActivitySn
         else None
     )
     pregame_away, pregame_home = _pregame_percents(detail, sport)
+    score_source_unavailable: bool | None = (
+        True
+        if (
+            lifecycle == "live"
+            and home_score is None
+            and away_score is None
+            and detail.get("score_source_unavailable") is True
+        )
+        else None
+    )
     return GameActivitySnapshot(
         event_id=detail.get("id"),
         home_team=detail.get("home_team"),
@@ -212,4 +222,5 @@ def project_activitykit_snapshot(detail: Mapping[str, object]) -> GameActivitySn
         result=result,
         pregame_away_percent=pregame_away,
         pregame_home_percent=pregame_home,
+        score_source_unavailable=score_source_unavailable,
     )
