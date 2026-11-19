@@ -15,7 +15,7 @@ from app.tasks.prediction_market_matching import (
 )
 from app.utils.prediction_market_matching import extract_matchup, match_teams_to_event
 from app.utils.venue_competition import (
-    POLYMARKET_EVENT_SLUG_KEY,
+    POLYMARKET_EVENT_SLUG_KEY as SLUG_FIELD,
     venue_named_league,
     venue_named_sport_family,
 )
@@ -34,7 +34,7 @@ def test_strip_womens_suffix_removes_trailing_marker_only():
 
 
 def test_cwbb_polymarket_slug_resolves_to_basketball_wncaab():
-    meta = {POLYMARKET_EVENT_SLUG_KEY: "cwbb-sou-nd-2026-11-18"}
+    meta = {SLUG_FIELD: "cwbb-sou-nd-2026-11-18"}
     assert venue_named_sport_family(meta) == "basketball"
     assert venue_named_league("polymarket", "12345", meta) == "basketball_wncaab"
 
@@ -47,7 +47,7 @@ def test_cwbb_polymarket_slug_resolves_to_basketball_wncaab():
             "Southern Jaguars vs. Notre Dame Fighting Irish (W)",
             "basketball_wncaab",
             True,
-            {POLYMARKET_EVENT_SLUG_KEY: "cwbb-sou-nd-2026-11-18"},
+            {SLUG_FIELD: "cwbb-sou-nd-2026-11-18"},
             "Notre Dame Fighting Irish",
             "Southern Jaguars",
         ),
@@ -64,7 +64,7 @@ def test_cwbb_polymarket_slug_resolves_to_basketball_wncaab():
             "George Washington Revolutionaries vs. UAB Blazers",
             "basketball_wncaab",
             False,
-            {POLYMARKET_EVENT_SLUG_KEY: "cwbb-gwu-uab-2026-11-20"},
+            {SLUG_FIELD: "cwbb-gwu-uab-2026-11-20"},
             "UAB Blazers",
             "George Washington Revolutionaries",
         ),
@@ -99,7 +99,7 @@ def test_cwbb_polymarket_slug_resolves_to_basketball_wncaab():
             "Arsenal vs. Chelsea",
             "soccer_epl",
             False,
-            {POLYMARKET_EVENT_SLUG_KEY: "epl-ars-che-2026-11-22"},
+            {SLUG_FIELD: "epl-ars-che-2026-11-22"},
             "Arsenal",
             "Chelsea",
         ),
@@ -189,7 +189,7 @@ async def test_create_event_from_prediction_market_orients_wbb_and_strips_w(monk
         name=market_name,
         llm_sport_category="basketball",
         commence_time=datetime(2026, 11, 19, 23, 0, tzinfo=timezone.utc),
-        market_metadata={POLYMARKET_EVENT_SLUG_KEY: "cwbb-ttu-unc-2026-11-19"},
+        market_metadata={SLUG_FIELD: "cwbb-ttu-unc-2026-11-19"},
     )
 
     out = await _create_event_from_prediction_market(object(), matchup, market, now)
