@@ -54,13 +54,14 @@ final class SportFilterChipsTennisTests: XCTestCase {
         XCTAssertNotEqual(key, "tennis_wta")
     }
 
-    func testTennisSitsWithTheOtherSportsAheadOfTheNonSportChips() throws {
+    func testSportsTabChipsAreSportsOnlyAndIncludeCollegeFootballAndBasketball() throws {
         let ids = sportCategories.map(\.id)
-        let tennis = try XCTUnwrap(ids.firstIndex(of: "tennis"))
-        let soccer = try XCTUnwrap(ids.firstIndex(of: "soccer"))
-        let politics = try XCTUnwrap(ids.firstIndex(of: "politics"))
-        XCTAssertGreaterThan(tennis, soccer)
-        XCTAssertLessThan(tennis, politics, "tennis is a sport; it belongs before the category chips")
+        XCTAssertTrue(ids.contains("ncaaf"), "Sports tab pills must include NCAAF (#13001)")
+        XCTAssertTrue(ids.contains("ncaab"), "Sports tab pills must include NCAAB (#13001)")
+        XCTAssertTrue(ids.contains("tennis"), "Sports tab pills must include Tennis")
+        for nonSport in ["politics", "entertainment", "economics", "weather"] {
+            XCTAssertFalse(ids.contains(nonSport), "\(nonSport) must not sit on the Sports tab (#13001)")
+        }
     }
 
     // MARK: - Classification (`matches`) agrees with what production serves

@@ -23,20 +23,18 @@ struct SportCategory: Identifiable, Hashable {
 
 let sportCategories: [SportCategory] = [
     .init(id: "all", name: "All", sportPrefixes: [], futuresCategories: [], route: nil),
-    .init(id: "basketball", name: "NBA", sportPrefixes: ["basketball"], futuresCategories: ["basketball"], route: .leagueGrid(slug: "nba")),
-    .init(id: "football", name: "NFL", sportPrefixes: ["americanfootball"], futuresCategories: ["football"], route: .leagueGrid(slug: "nfl")),
+    .init(id: "basketball", name: "NBA", sportPrefixes: ["basketball_nba", "basketball_wnba"], futuresCategories: ["basketball"], route: .leagueGrid(slug: "nba")),
+    .init(id: "football", name: "NFL", sportPrefixes: ["americanfootball_nfl"], futuresCategories: ["football"], route: .leagueGrid(slug: "nfl")),
+    .init(id: "ncaaf", name: "NCAAF", sportPrefixes: ["americanfootball_ncaaf"], futuresCategories: ["ncaaf", "college_football"], route: .leagueGrid(slug: "ncaa-football")),
+    .init(id: "ncaab", name: "NCAAB", sportPrefixes: ["basketball_ncaab", "basketball_wncaab"], futuresCategories: ["ncaab", "college_basketball"], route: .leagueGrid(slug: "ncaa-basketball")),
     .init(id: "baseball", name: "MLB", sportPrefixes: ["baseball"], futuresCategories: ["baseball"], route: .leagueGrid(slug: "mlb")),
     .init(id: "hockey", name: "NHL", sportPrefixes: ["icehockey"], futuresCategories: ["hockey"], route: .leagueGrid(slug: "nhl")),
     .init(id: "soccer", name: "Soccer", sportPrefixes: ["soccer"], futuresCategories: ["soccer"], route: .leagueGrid(slug: "epl")),
     // Tennis routes to the CATEGORY, not a league grid: `/api/leagues/tennis` answers 200 with
-    // `total_markets: 0`, while `/api/feed?sport=tennis` carries both tours plus the Slam futures
-    // (`tennis_atp` alone drops the WTA half and the futures). Same word, two different keys.
+    // `total_markets: 0`, while `SportCategoryView(key: "tennis")` merges ATP + WTA matches and
+    // Slam futures (`tennis_atp` alone drops the WTA half).
     .init(id: "tennis", name: "Tennis", sportPrefixes: ["tennis"], futuresCategories: ["tennis"], route: .sportCategory(key: "tennis", name: "Tennis")),
     .init(id: "golf", name: "Golf", sportPrefixes: ["golf"], futuresCategories: ["golf"], route: .golfCategory),
-    .init(id: "politics", name: "Politics", sportPrefixes: [], futuresCategories: ["politics"], route: .politics),
-    .init(id: "entertainment", name: "Entmt", sportPrefixes: [], futuresCategories: ["entertainment"], route: .entertainment),
-    .init(id: "economics", name: "Econ", sportPrefixes: [], futuresCategories: ["economics"], route: .economics),
-    .init(id: "weather", name: "Weather", sportPrefixes: [], futuresCategories: ["weather"], route: .weather),
 ]
 
 // MARK: - Filter Chips View
@@ -105,6 +103,8 @@ struct SportFilterChips: View {
         switch key {
         case "basketball": return "basketball.fill"
         case "football": return "football.fill"
+        case "ncaaf": return "football.circle.fill"
+        case "ncaab": return "basketball.circle.fill"
         case "baseball": return "baseball.fill"
         case "hockey": return "hockey.puck.fill"
         case "soccer": return "soccerball"

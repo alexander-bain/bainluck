@@ -21,25 +21,44 @@ final class SportCategoryViewModel: ObservableObject {
     }
 
     func load() async {
-        let isInitial = items.isEmpty
+        let isInitial = items.isEmpty && leagueMarkets == nil
         if isInitial { loading = true }
-        do {
-            async let feedTask = APIClient.shared.fetchFeed(sport: categoryKey, limit: pageSize, offset: 0)
-            async let marketsTask = loadLeagueMarkets()
-            let feed = try await feedTask
-            _ = await marketsTask
-            items = feed.items
-            hasMore = feed.hasMore
-            error = nil
-            loading = false
-            logger.info("Category \(self.categoryKey) loaded: \(self.items.count) items")
-        } catch {
-            if isInitial {
-                self.error = error.localizedDescription
+
+        // #13001: publish whichever source arrives first so Tennis (`tennis_atp` + `tennis_wta`
+        // in ~0.4s) draws matches immediately without waiting 4s+ on `/api/feed`, and use
+        // `mode: "sports"` on the category feed.
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { @MainActor [weak self] in
+                guard let self else { return }
+                await self.loadLeagueMarkets()
+                if !self.drawsNoRows {
+                    self.loading = false
+                }
             }
-            loading = false
-            logger.error("Category feed error: \(error)")
+            group.addTask { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let feed = try await APIClient.shared.fetchFeed(
+                        sport: self.categoryKey,
+                        limit: self.pageSize,
+                        offset: 0,
+                        mode: "sports"
+                    )
+                    self.items = feed.items
+                    self.hasMore = feed.hasMore
+                    self.error = nil
+                    self.loading = false
+                    logger.info("Category \(self.categoryKey) loaded: \(self.items.count) items")
+                } catch {
+                    if isInitial && self.drawsNoRows {
+                        self.error = error.localizedDescription
+                    }
+                    self.loading = false
+                    logger.error("Category feed error: \(error)")
+                }
+            }
         }
+        loading = false
     }
 
     /// Seed `items` without a network call, so the section partition (#1471)
@@ -55,7 +74,12 @@ final class SportCategoryViewModel: ObservableObject {
         guard !loadingMore, hasMore else { return }
         loadingMore = true
         do {
-            let feed = try await APIClient.shared.fetchFeed(sport: categoryKey, limit: pageSize, offset: items.count)
+            let feed = try await APIClient.shared.fetchFeed(
+                sport: categoryKey,
+                limit: pageSize,
+                offset: items.count,
+                mode: "sports"
+            )
             items.append(contentsOf: feed.items)
             hasMore = feed.hasMore
             logger.info("Category \(self.categoryKey) loaded more: +\(feed.items.count), total \(self.items.count)")
@@ -131,13 +155,88 @@ final class SportCategoryViewModel: ObservableObject {
     /// the PAYLOAD was empty — a different question from whether the page has
     /// anything to show, and the gap between them is the blank screen. A page
     /// that can draw nothing must say so.
+    private var feedEventIDs: Set<Int> {
+        Set(items.compactMap { $0.event?.id })
+    }
+
+    var leagueLiveGames: [FeedEventData] {
+        let seen = feedEventIDs
+        return (leagueMarkets?.allGames ?? []).filter {
+            !seen.contains($0.id) && EventState.section(of: $0) == .live
+        }
+    }
+
+    var leagueLiveHasSuspended: Bool {
+        liveNowHasSuspended || leagueLiveGames.contains { EventState.isSuspended($0.status) }
+    }
+
+    var leagueUpcomingGames: [FeedEventData] {
+        let seen = feedEventIDs
+        return (leagueMarkets?.allGames ?? []).filter {
+            !seen.contains($0.id) && EventState.section(of: $0) == .upcoming
+        }
+    }
+
+    var leagueRecentGames: [FeedEventData] {
+        let seen = feedEventIDs
+        return (leagueMarkets?.allGames ?? []).filter {
+            !seen.contains($0.id) && EventState.section(of: $0) == .finished
+        }
+    }
+
     var drawsNoRows: Bool {
         liveNow.isEmpty && justHappened.isEmpty && upcoming.isEmpty
+            && leagueLiveGames.isEmpty && leagueUpcomingGames.isEmpty && leagueRecentGames.isEmpty
             && topMarkets.isEmpty && otherEvents.isEmpty
             && (leagueMarkets?.sections.values.allSatisfy(\.isEmpty) ?? true)
     }
 
+    static func mergeTourLeagueResponses(_ responses: [LeagueMarketsResponse], sportKey: String = "tennis") -> LeagueMarketsResponse {
+        var mergedSections: [String: [LeagueMarketItem]] = [:]
+        var seenMarketIDs = Set<Int>()
+        for r in responses {
+            for (k, rows) in r.sections {
+                for row in rows where seenMarketIDs.insert(row.id).inserted {
+                    mergedSections[k, default: []].append(row)
+                }
+            }
+        }
+        var seenUpcoming = Set<Int>()
+        let upcoming = responses
+            .flatMap(\.upcomingGames)
+            .filter { seenUpcoming.insert($0.id).inserted }
+            .sorted { ($0.commenceTime ?? "") < ($1.commenceTime ?? "") }
+
+        var seenRecent = Set<Int>()
+        let recent = responses
+            .flatMap(\.recentResults)
+            .filter { !seenUpcoming.contains($0.id) && seenRecent.insert($0.id).inserted }
+            .sorted { ($0.commenceTime ?? "") > ($1.commenceTime ?? "") }
+
+        let total = mergedSections.values.reduce(0) { $0 + $1.count }
+        let dropped = responses.reduce(0) { $0 + $1.droppedMarkets }
+        return LeagueMarketsResponse(
+            sportKey: sportKey,
+            sections: mergedSections,
+            totalMarkets: total,
+            droppedMarkets: dropped,
+            upcomingGames: upcoming,
+            recentResults: recent
+        )
+    }
+
     private func loadLeagueMarkets() async {
+        if categoryKey == "tennis" {
+            async let atpTask = try? APIClient.shared.fetchLeagueMarkets(sportKey: "tennis_atp")
+            async let wtaTask = try? APIClient.shared.fetchLeagueMarkets(sportKey: "tennis_wta")
+            let parts = await [atpTask, wtaTask].compactMap { $0 }
+            if !parts.isEmpty {
+                let merged = Self.mergeTourLeagueResponses(parts, sportKey: "tennis")
+                leagueMarkets = merged
+                logger.info("Tennis tour markets merged: \(merged.totalMarkets) markets, \(merged.allGames.count) matches")
+            }
+            return
+        }
         do {
             leagueMarkets = try await APIClient.shared.fetchLeagueMarkets(sportKey: categoryKey)
             logger.info("League markets for \(self.categoryKey): \(self.leagueMarkets?.totalMarkets ?? 0) total")

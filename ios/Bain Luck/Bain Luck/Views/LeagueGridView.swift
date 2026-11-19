@@ -5,24 +5,26 @@ import SwiftUI
 struct LeagueGridView: View {
     let slug: String
     @StateObject private var viewModel: LeagueGridViewModel
+    @State private var showAllUpcoming = false
+    @State private var showAllRecent = false
 
-    init(slug: String) {
+    init(slug: String, preloadedViewModel: LeagueGridViewModel? = nil) {
         self.slug = slug
-        _viewModel = StateObject(wrappedValue: LeagueGridViewModel(slug: slug))
+        _viewModel = StateObject(wrappedValue: preloadedViewModel ?? LeagueGridViewModel(slug: slug))
     }
 
     var body: some View {
         Group {
-            if viewModel.loading && viewModel.grid == nil {
+            if viewModel.loading && viewModel.grid == nil && viewModel.leagueMarkets == nil {
                 gridSkeleton
-            } else if let error = viewModel.error, viewModel.grid == nil {
+            } else if let error = viewModel.error, viewModel.grid == nil && viewModel.leagueMarkets == nil {
                 ContentUnavailableView(
                     "Error",
                     systemImage: "exclamationmark.triangle",
                     description: Text(error)
                 )
-            } else if let grid = viewModel.grid {
-                gridContent(grid)
+            } else {
+                gridContent(viewModel.grid)
             }
         }
         .navigationTitle(viewModel.displayName)
@@ -75,67 +77,72 @@ struct LeagueGridView: View {
 
     // MARK: - Grid Content
 
-    private func gridContent(_ grid: ChampionshipGridResponse) -> some View {
+    private func gridContent(_ grid: ChampionshipGridResponse?) -> some View {
         List {
-            // Season info
-            if let season = grid.season {
-                Section {
-                    HStack {
-                        Text("Season")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text(season)
-                            .fontWeight(.medium)
-                    }
-                    .font(.caption)
-                }
-            }
+            // #13001 + #12932: Games first (live, upcoming, recent), then futures.
+            leagueGamesSections
 
-            // Conference filter
-            if viewModel.conferences.count > 1 {
-                Section {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            filterButton("All", isActive: viewModel.conferenceFilter == nil) {
-                                viewModel.conferenceFilter = nil
-                            }
-                            ForEach(viewModel.conferences, id: \.self) { conf in
-                                filterButton(conf, isActive: viewModel.conferenceFilter == conf) {
-                                    viewModel.conferenceFilter = viewModel.conferenceFilter == conf ? nil : conf
+            if let grid {
+                // Season info
+                if let season = grid.season {
+                    Section {
+                        HStack {
+                            Text("Season")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(season)
+                                .fontWeight(.medium)
+                        }
+                        .font(.caption)
+                    }
+                }
+
+                // Conference filter
+                if viewModel.conferences.count > 1 {
+                    Section {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                filterButton("All", isActive: viewModel.conferenceFilter == nil) {
+                                    viewModel.conferenceFilter = nil
+                                }
+                                ForEach(viewModel.conferences, id: \.self) { conf in
+                                    filterButton(conf, isActive: viewModel.conferenceFilter == conf) {
+                                        viewModel.conferenceFilter = viewModel.conferenceFilter == conf ? nil : conf
+                                    }
                                 }
                             }
                         }
                     }
+                    .listRowBackground(Color.clear)
                 }
-                .listRowBackground(Color.clear)
-            }
 
-            // Movers (exclude zero-movement entries)
-            let realMovers = grid.movers.filter { abs($0.change24H) >= 0.001 }
-            if !realMovers.isEmpty {
-                Section("Biggest Movers (24h)") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(realMovers) { mover in
-                                moverChip(mover)
+                // Movers (exclude zero-movement entries)
+                let realMovers = grid.movers.filter { abs($0.change24H) >= 0.001 }
+                if !realMovers.isEmpty {
+                    Section("Biggest Movers (24h)") {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(realMovers) { mover in
+                                    moverChip(mover)
+                                }
                             }
                         }
                     }
+                    .listRowBackground(Color.clear)
                 }
-                .listRowBackground(Color.clear)
-            }
 
-            // Teams — design 2c (native grids Phase 2): a ranked list of self-labeled
-            // per-team ladder cards built from the shipped LadderCardView "2b"
-            // primitive, replacing the dense web-style matrix that never worked on a
-            // phone. Each card carries its own milestone labels (in-cell), so no shared
-            // column rail is needed; sorted by championship probability.
-            Section("Championship Probabilities") {
-                ForEach(Array(rankedTeams(grid.columns).enumerated()), id: \.element.id) { index, team in
-                    LadderCardView(gridTeam: team, columns: grid.columns, rank: index + 1)
-                        .listRowInsets(EdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 12))
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
+                // Teams — design 2c (native grids Phase 2): a ranked list of self-labeled
+                // per-team ladder cards built from the shipped LadderCardView "2b"
+                // primitive, replacing the dense web-style matrix that never worked on a
+                // phone. Each card carries its own milestone labels (in-cell), so no shared
+                // column rail is needed; sorted by championship probability.
+                Section("Championship Probabilities") {
+                    ForEach(Array(rankedTeams(grid.columns).enumerated()), id: \.element.id) { index, team in
+                        LadderCardView(gridTeam: team, columns: grid.columns, rank: index + 1)
+                            .listRowInsets(EdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 12))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
                 }
             }
 
@@ -145,6 +152,107 @@ struct LeagueGridView: View {
         #if os(iOS)
         .listStyle(.insetGrouped)
         #endif
+    }
+
+    @ViewBuilder
+    private var leagueGamesSections: some View {
+        let live = viewModel.liveGames
+        let upcoming = viewModel.upcomingGames
+        let recent = viewModel.recentGames
+
+        if viewModel.loadingMarkets && viewModel.leagueMarkets == nil {
+            Section {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Loading games…")
+                        .font(.subheadline)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                }
+            }
+        }
+
+        if !live.isEmpty {
+            gameSection(
+                title: EventState.liveSectionTitle(hasSuspended: viewModel.liveHasSuspended),
+                systemImage: "circle.fill",
+                imageColor: .red,
+                games: live,
+                limit: live.count,
+                expanded: .constant(true)
+            )
+        }
+
+        if !upcoming.isEmpty {
+            gameSection(
+                title: "Upcoming",
+                systemImage: "calendar",
+                imageColor: .blue,
+                games: upcoming,
+                limit: 5,
+                expanded: $showAllUpcoming
+            )
+        }
+
+        if !recent.isEmpty {
+            gameSection(
+                title: "Just Happened",
+                systemImage: "clock.arrow.circlepath",
+                imageColor: .secondary,
+                games: recent,
+                limit: 4,
+                expanded: $showAllRecent
+            )
+        }
+    }
+
+    private func gameSection(
+        title: String,
+        systemImage: String,
+        imageColor: Color,
+        games: [FeedEventData],
+        limit: Int,
+        expanded: Binding<Bool>
+    ) -> some View {
+        let visible = expanded.wrappedValue ? games : Array(games.prefix(limit))
+        return Section {
+            ForEach(visible) { event in
+                NavigationLink(value: Route.eventDetail(id: event.id)) {
+                    EventCardView(
+                        event: event,
+                        reason: nil,
+                        personalizationReasons: nil,
+                        headline: nil
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+            if games.count > limit {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        expanded.wrappedValue.toggle()
+                    }
+                } label: {
+                    Text(expanded.wrappedValue ? "Show fewer" : "Show all \(games.count)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(DS.blueReadable)
+                }
+                .buttonStyle(.borderless)
+            }
+        } header: {
+            HStack(spacing: 6) {
+                Label(title, systemImage: systemImage)
+                    .foregroundStyle(imageColor)
+                    .font(.subheadline.weight(.semibold))
+                    .textCase(nil)
+                Text("\(games.count)")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.12))
+                    .clipShape(Capsule())
+            }
+        }
     }
 
     // MARK: - League Market Sections

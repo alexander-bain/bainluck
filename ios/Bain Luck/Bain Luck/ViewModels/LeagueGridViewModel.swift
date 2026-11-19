@@ -27,15 +27,44 @@ final class LeagueGridViewModel: ObservableObject {
     @Published private(set) var grid: ChampionshipGridResponse?
     @Published private(set) var leagueMarkets: LeagueMarketsResponse?
     @Published private(set) var loading = true
+    @Published private(set) var loadingMarkets = false
     @Published private(set) var error: String?
     @Published var conferenceFilter: String?
 
-    init(slug: String) {
+    private let isPreloadedForTest: Bool
+
+    init(
+        slug: String,
+        preloadedGrid: ChampionshipGridResponse? = nil,
+        preloadedMarkets: LeagueMarketsResponse? = nil
+    ) {
         self.slug = slug
+        self.grid = preloadedGrid
+        self.leagueMarkets = preloadedMarkets
+        self.isPreloadedForTest = (preloadedGrid != nil || preloadedMarkets != nil)
+        if isPreloadedForTest {
+            self.loading = false
+        }
     }
 
     var displayName: String {
         grid?.name ?? slug.replacingOccurrences(of: "-", with: " ").uppercased()
+    }
+
+    var liveGames: [FeedEventData] {
+        (leagueMarkets?.allGames ?? []).filter { EventState.section(of: $0) == .live }
+    }
+
+    var liveHasSuspended: Bool {
+        liveGames.contains { EventState.isSuspended($0.status) }
+    }
+
+    var upcomingGames: [FeedEventData] {
+        (leagueMarkets?.allGames ?? []).filter { EventState.section(of: $0) == .upcoming }
+    }
+
+    var recentGames: [FeedEventData] {
+        (leagueMarkets?.allGames ?? []).filter { EventState.section(of: $0) == .finished }
     }
 
     var conferences: [String] {
@@ -63,45 +92,86 @@ final class LeagueGridViewModel: ObservableObject {
 
     /// In-memory cache shared across instances
     private static var cache: [String: (grid: ChampionshipGridResponse, date: Date)] = [:]
+    private static var marketsCache: [String: (markets: LeagueMarketsResponse, date: Date)] = [:]
 
     @MainActor
     func load() async {
-        // Show cached data immediately while refreshing in background
+        guard !isPreloadedForTest else { return }
+
+        let sportKey = leagueGridSlugToSportKey[slug] ?? slug
         if grid == nil, let cached = Self.cache[slug] {
             grid = cached.grid
-            // If cache is fresh enough (<60s), skip network
-            if Date().timeIntervalSince(cached.date) < 60 {
-                await loadLeagueMarkets()
-                return
-            }
+        }
+        if leagueMarkets == nil, let cachedM = Self.marketsCache[sportKey] {
+            leagueMarkets = cachedM.markets
         }
 
-        loading = true
+        let gridFresh = Self.cache[slug].map { Date().timeIntervalSince($0.date) < 60 } ?? false
+        let marketsFresh = Self.marketsCache[sportKey].map { Date().timeIntervalSince($0.date) < 60 } ?? false
+        if gridFresh && marketsFresh {
+            loading = false
+            loadingMarkets = false
+            return
+        }
+
+        if grid == nil && leagueMarkets == nil {
+            loading = true
+        }
+        if !marketsFresh {
+            loadingMarkets = (leagueMarkets == nil)
+        }
+
+        // #13001: publish whichever endpoint returns first instead of holding
+        // `/api/playoffs/{slug}` (0.4s) hostage to `/api/leagues/{sport_key}` (2.8-5.7s).
+        await withTaskGroup(of: Void.self) { group in
+            if !gridFresh {
+                group.addTask { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.loadGrid()
+                }
+            } else {
+                loading = false
+            }
+            if !marketsFresh {
+                group.addTask { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.loadLeagueMarkets()
+                }
+            }
+        }
+        loading = false
+        loadingMarkets = false
+    }
+
+    @MainActor
+    private func loadGrid() async {
         do {
-            async let gridTask = APIClient.shared.fetchChampionshipGrid(slug: slug)
-            async let marketsTask = loadLeagueMarkets()
-            let freshGrid = try await gridTask
-            _ = await marketsTask
+            let freshGrid = try await APIClient.shared.fetchChampionshipGrid(slug: slug)
             grid = freshGrid
             Self.cache[slug] = (freshGrid, Date())
             error = nil
+            loading = false
         } catch {
-            // Only show error if we have no cached data
-            if grid == nil {
+            if grid == nil && leagueMarkets == nil {
                 self.error = error.localizedDescription
             }
+            loading = false
             logger.error("Grid load failed for \(self.slug): \(error)")
         }
-        loading = false
     }
 
     @MainActor
     private func loadLeagueMarkets() async {
         let sportKey = leagueGridSlugToSportKey[slug] ?? slug
         do {
-            leagueMarkets = try await APIClient.shared.fetchLeagueMarkets(sportKey: sportKey)
-            logger.info("League markets for \(self.slug): \(self.leagueMarkets?.totalMarkets ?? 0) total")
+            let fresh = try await APIClient.shared.fetchLeagueMarkets(sportKey: sportKey)
+            leagueMarkets = fresh
+            Self.marketsCache[sportKey] = (fresh, Date())
+            loading = false
+            loadingMarkets = false
+            logger.info("League markets for \(self.slug): \(fresh.totalMarkets) total, \(fresh.allGames.count) games")
         } catch {
+            loadingMarkets = false
             logger.debug("League markets not available for \(self.slug): \(error)")
         }
     }
