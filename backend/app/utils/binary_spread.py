@@ -20,16 +20,28 @@ Example:
     # => {"spread": -10.0, "confidence": 0.95}
 """
 
+import os
 import re
 import logging
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from datetime import datetime, timezone
+from typing import Any, Mapping, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
 
 # Fallback preference between venues when their readings are equally trusted.
 PROJECTION_SOURCE_ORDER: tuple[str, ...] = ("kalshi", "polymarket", "sportsbook")
+
+# Canonical ordering when listing sources that went into a blended projected final (#13007).
+PROJECTION_BLEND_SOURCE_ORDER: tuple[str, ...] = ("sportsbook", "kalshi", "polymarket")
+
+# Ruling 242: A (#13007) — off by default until Alex's go on the switch.
+PROJECTED_FINAL_BLEND_ENV = "PROJECTED_FINAL_BLEND_ENABLED"
+
+# Minimum bracket confidence for a prediction-market ladder to join the clean
+# spread/total blend (#13007, chosen from the 48-hour live & scheduled census).
+CLEAN_PROJECTION_MIN_CONFIDENCE = 0.70
 
 
 # Two bracketing rungs whose thresholds differ by less than this sit on the SAME
@@ -250,6 +262,9 @@ class ImpliedSpread:
     upper_threshold: float
     lower_prob: float
     upper_prob: float
+    pool_recrosses: bool = False
+    same_line_contradiction: bool = False
+    updated_at: Optional[str] = None
 
 
 def home_margin_from_spread(spread: float) -> float:
@@ -286,6 +301,9 @@ class ImpliedTotal:
     upper_threshold: float
     lower_prob: float
     upper_prob: float
+    pool_recrosses: bool = False
+    same_line_contradiction: bool = False
+    updated_at: Optional[str] = None
 
 
 @dataclass
@@ -297,6 +315,34 @@ class ProjectedScore:
     total: float
     spread_source: Optional[str] = None
     total_source: Optional[str] = None
+
+
+def _parse_utc_timestamp(value: Any) -> Optional[datetime]:
+    """Parse an ISO timestamp or datetime to timezone-aware UTC, else None."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str) and value.strip():
+        try:
+            dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def _bracket_updated_at(low: Mapping[str, Any], high: Mapping[str, Any]) -> Optional[str]:
+    """Oldest timestamp of the two bracketing rungs (matching 233-A's oldest-counted-line rule)."""
+    stamps = [
+        ts
+        for ts in (
+            _parse_utc_timestamp(low.get("updated_at")),
+            _parse_utc_timestamp(high.get("updated_at")),
+        )
+        if ts is not None
+    ]
+    if not stamps:
+        return None
+    return min(stamps).isoformat()
 
 
 def binary_to_implied_spread(
@@ -348,6 +394,11 @@ def binary_to_implied_spread(
 
             # Confidence based on how tight the bracket is
             bracket_width = high["threshold"] - low["threshold"]
+            same_line_contradiction = (
+                not pool_recrosses
+                and bracket_width < _SAME_LINE_EPSILON
+                and prob_range >= _DEGENERATE_PROB_RANGE
+            )
             confidence = _bracket_confidence(
                 bracket_width, prob_range, 20.0, pool_recrosses
             )
@@ -359,6 +410,9 @@ def binary_to_implied_spread(
                 upper_threshold=high["threshold"],
                 lower_prob=low_prob,
                 upper_prob=high_prob,
+                pool_recrosses=pool_recrosses,
+                same_line_contradiction=same_line_contradiction,
+                updated_at=_bracket_updated_at(low, high),
             )
 
     # No rung crosses 50%, so this ladder does not locate a spread and we
@@ -434,6 +488,11 @@ def binary_to_implied_total(
                 total = low["threshold"] + fraction * (high["threshold"] - low["threshold"])
 
             bracket_width = high["threshold"] - low["threshold"]
+            same_line_contradiction = (
+                not pool_recrosses
+                and bracket_width < _SAME_LINE_EPSILON
+                and prob_range >= _DEGENERATE_PROB_RANGE
+            )
             confidence = _bracket_confidence(
                 bracket_width, prob_range, 10.0, pool_recrosses
             )
@@ -445,6 +504,9 @@ def binary_to_implied_total(
                 upper_threshold=high["threshold"],
                 lower_prob=low_prob,
                 upper_prob=high_prob,
+                pool_recrosses=pool_recrosses,
+                same_line_contradiction=same_line_contradiction,
+                updated_at=_bracket_updated_at(low, high),
             )
 
     return None
@@ -560,6 +622,306 @@ def select_projected_final(
             return found
 
     return None
+
+
+@dataclass(frozen=True)
+class BlendedProjectedFinal:
+    """Blended projected final score plus source attribution (#13007, Ruling 242: A)."""
+
+    spread_source: str
+    total_source: str
+    spread_sources: tuple[str, ...]
+    total_sources: tuple[str, ...]
+    projection: ProjectedScore
+
+
+def projected_final_blend_enabled() -> bool:
+    """Feature switch for Ruling 242: A (#13007). Strictly OFF by default."""
+    return os.environ.get(PROJECTED_FINAL_BLEND_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _blend_source_sort_key(source: str, order: Sequence[str]) -> tuple[int, str]:
+    try:
+        idx = order.index(source)
+    except ValueError:
+        idx = len(order)
+    return (idx, source)
+
+
+def _source_is_live_fresh(
+    entry: Mapping[str, Any],
+    *,
+    now: Optional[datetime],
+    state_changed_at: Optional[datetime],
+) -> bool:
+    """True when an arm's timestamp satisfies Ruling 233: A (`live_line_is_current`)."""
+    if state_changed_at is None:
+        return True
+    ts = _parse_utc_timestamp(entry.get("updated_at"))
+    if ts is None:
+        return False
+    from app.utils.odds_filtering import live_line_is_current
+
+    eff_now = now if now is not None else datetime.now(timezone.utc)
+    return live_line_is_current(ts, now=eff_now, state_changed_at=state_changed_at)
+
+
+def source_is_clean_for_projection(
+    source: str,
+    entry: Mapping[str, Any],
+    *,
+    min_confidence: float = CLEAN_PROJECTION_MIN_CONFIDENCE,
+    is_live: bool = False,
+    now: Optional[datetime] = None,
+    state_changed_at: Optional[datetime] = None,
+) -> bool:
+    """Whether ``source`` is clean enough to enter the Ruling 242: A spread/total blend.
+
+    Clean means:
+    * On a live game with a known state clock (233-A), the source's line is current;
+      stale live lines are excluded, never averaged with fresh ones.
+    * The sportsbooks' line (``source == "sportsbook"``), OR
+    * A prediction-market ladder that is neither a same-line contradiction nor a
+      re-crossing pool, with bracket confidence >= ``min_confidence``.
+    """
+    if not isinstance(entry, Mapping):
+        return False
+    if is_live and state_changed_at is not None:
+        if not _source_is_live_fresh(entry, now=now, state_changed_at=state_changed_at):
+            return False
+
+    if source == "sportsbook":
+        return True
+
+    if entry.get("pool_recrosses") is True or entry.get("same_line_contradiction") is True:
+        return False
+
+    contracts = entry.get("contracts")
+    if isinstance(contracts, Sequence) and len(contracts) >= 2:
+        try:
+            sorted_contracts = sorted(contracts, key=_threshold_order)
+            if ladder_recrosses(sorted_contracts, 0.50):
+                return False
+            for i in range(len(sorted_contracts) - 1):
+                low = sorted_contracts[i]
+                high = sorted_contracts[i + 1]
+                if low["probability"] >= 0.50 >= high["probability"]:
+                    width = high["threshold"] - low["threshold"]
+                    prob_range = low["probability"] - high["probability"]
+                    if width < _SAME_LINE_EPSILON and prob_range >= _DEGENERATE_PROB_RANGE:
+                        return False
+                    break
+        except (KeyError, TypeError, ValueError):
+            pass
+
+    try:
+        confidence = float(entry.get("confidence"))
+    except (TypeError, ValueError):
+        return False
+
+    if (
+        "pool_recrosses" not in entry
+        and "same_line_contradiction" not in entry
+        and confidence in (_RECROSS_CONFIDENCE, _CONTRADICTION_CONFIDENCE)
+    ):
+        return False
+
+    return confidence >= float(min_confidence)
+
+
+# Sports where the sportsbook point spread moves with the matchup in scoreboard
+# units (mirroring `frontend/lib/projectedFinalPair.ts`, #2920 / #9483 / #13007).
+# Pinned-handicap sports (`icehockey_*` ±1.5 puck line, `baseball_*` ±1.5 run
+# line) and non-margin sports (`tennis_*`, `mma_*`, `boxing_*`, etc.) must NOT
+# enter the projected-final spread blend as a clean source at confidence 1.0.
+SPORTSBOOK_IMPLIED_MARGIN_SPORT_PREFIXES: tuple[str, ...] = (
+    "americanfootball_",
+    "basketball_",
+    "soccer_",
+)
+
+
+def sportsbook_spread_is_implied_margin(sport_key: Optional[str]) -> bool:
+    """Return True iff the sportsbook spread for ``sport_key`` is an implied
+    expected margin rather than a pinned handicap (e.g. NHL ±1.5 puck line or
+    MLB ±1.5 run line) or mismatched unit."""
+    if not sport_key:
+        return True
+    key = str(sport_key).strip().lower()
+    if not key:
+        return True
+    return any(key.startswith(p) for p in SPORTSBOOK_IMPLIED_MARGIN_SPORT_PREFIXES)
+
+
+def blend_projected_final(
+    implied_spreads: Optional[Mapping[str, Any]],
+    implied_totals: Optional[Mapping[str, Any]],
+    *,
+    order: Sequence[str] = PROJECTION_SOURCE_ORDER,
+    blend_source_order: Sequence[str] = PROJECTION_BLEND_SOURCE_ORDER,
+    min_confidence: float = CLEAN_PROJECTION_MIN_CONFIDENCE,
+    is_live: bool = False,
+    now: Optional[datetime] = None,
+    state_changed_at: Optional[datetime] = None,
+    sport_key: Optional[str] = None,
+) -> Optional[BlendedProjectedFinal]:
+    """Projected final under Ruling 242: A + Ruling 265: A, for now (#13007).
+
+    * **Before the game (`is_live=False`):** plain average of every clean source's
+      spread and every clean source's total (`>= min_confidence`, no same-line
+      contradiction, no re-crossing pool, pinned sportsbook handicaps excluded for
+      NHL/MLB/non-margin sports). A single clean source stands alone identically to
+      today; if no clean source exists or the blended pair fails renderability,
+      falls back to ``select_projected_final`` over the eligible pool.
+    * **During the game (`is_live=True`, Ruling 265: A, for now):** sportsbooks
+      only, with Ruling 233: A (``live_line_is_current``) still applied and
+      pinned-handicap sports excluded. Prediction-market ladders are never blended
+      or used as a live fallback. When no sportsbook line is current during a live
+      game, returns ``None`` so the projected final is withheld rather than showing
+      a stale book line.
+    """
+    if not implied_spreads or not implied_totals:
+        return None
+
+    # #13007 (Fable point 3): pinned sportsbook handicaps (NHL ±1.5 puck line,
+    # MLB ±1.5 run line, non-margin sports) are never expected margins.
+    sb_spread_eligible = sportsbook_spread_is_implied_margin(sport_key)
+
+    if is_live:
+        if not sb_spread_eligible:
+            return None
+        sb_sp = implied_spreads.get("sportsbook")
+        sb_to = implied_totals.get("sportsbook")
+        if not isinstance(sb_sp, Mapping) or not isinstance(sb_to, Mapping):
+            return None
+        if state_changed_at is not None:
+            if not _source_is_live_fresh(
+                sb_sp, now=now, state_changed_at=state_changed_at
+            ) or not _source_is_live_fresh(
+                sb_to, now=now, state_changed_at=state_changed_at
+            ):
+                return None
+        try:
+            sp_val = round(float(sb_sp["spread"]), 1)
+            to_val = round(float(sb_to["total"]), 1)
+        except (KeyError, TypeError, ValueError):
+            return None
+        candidate = projected_final_score(sp_val, to_val)
+        if not projection_is_renderable(candidate):
+            return None
+        return BlendedProjectedFinal(
+            spread_source="sportsbook",
+            total_source="sportsbook",
+            spread_sources=("sportsbook",),
+            total_sources=("sportsbook",),
+            projection=ProjectedScore(
+                home_score=candidate.home_score,
+                away_score=candidate.away_score,
+                spread=candidate.spread,
+                total=candidate.total,
+                spread_source="sportsbook",
+                total_source="sportsbook",
+            ),
+        )
+
+    fresh_spreads = dict(implied_spreads)
+    fresh_totals = dict(implied_totals)
+
+    if not sb_spread_eligible:
+        fresh_spreads = {
+            src: entry for src, entry in fresh_spreads.items() if src != "sportsbook"
+        }
+        if not fresh_spreads:
+            return None
+
+    clean_spread_items: list[tuple[str, float]] = []
+    for src, entry in fresh_spreads.items():
+        if not source_is_clean_for_projection(
+            src,
+            entry,
+            min_confidence=min_confidence,
+            is_live=is_live,
+            now=now,
+            state_changed_at=state_changed_at,
+        ):
+            continue
+        val = entry.get("spread")
+        if val is not None:
+            try:
+                clean_spread_items.append((src, float(val)))
+            except (TypeError, ValueError):
+                continue
+
+    clean_total_items: list[tuple[str, float]] = []
+    for src, entry in fresh_totals.items():
+        if not source_is_clean_for_projection(
+            src,
+            entry,
+            min_confidence=min_confidence,
+            is_live=is_live,
+            now=now,
+            state_changed_at=state_changed_at,
+        ):
+            continue
+        val = entry.get("total")
+        if val is not None:
+            try:
+                clean_total_items.append((src, float(val)))
+            except (TypeError, ValueError):
+                continue
+
+    clean_spread_items.sort(key=lambda item: _blend_source_sort_key(item[0], blend_source_order))
+    clean_total_items.sort(key=lambda item: _blend_source_sort_key(item[0], blend_source_order))
+
+    if clean_spread_items and clean_total_items:
+        avg_spread = round(sum(v for _, v in clean_spread_items) / len(clean_spread_items), 1)
+        avg_total = round(sum(v for _, v in clean_total_items) / len(clean_total_items), 1)
+        candidate = projected_final_score(avg_spread, avg_total)
+        if projection_is_renderable(candidate):
+            sp_sources = tuple(s for s, _ in clean_spread_items)
+            to_sources = tuple(s for s, _ in clean_total_items)
+            sp_label = sp_sources[0] if len(sp_sources) == 1 else "blend"
+            to_label = to_sources[0] if len(to_sources) == 1 else "blend"
+            return BlendedProjectedFinal(
+                spread_source=sp_label,
+                total_source=to_label,
+                spread_sources=sp_sources,
+                total_sources=to_sources,
+                projection=ProjectedScore(
+                    home_score=candidate.home_score,
+                    away_score=candidate.away_score,
+                    spread=candidate.spread,
+                    total=candidate.total,
+                    spread_source=sp_label,
+                    total_source=to_label,
+                ),
+            )
+
+    # No clean source on one/both sides, or blended result failed renderability:
+    # fall back to today's ranked pick on the live-fresh pool.
+    fallback = select_projected_final(fresh_spreads, fresh_totals, order=order)
+    if fallback is None:
+        return None
+    fb_spread_src, fb_total_src, fb_proj = fallback
+    return BlendedProjectedFinal(
+        spread_source=fb_spread_src,
+        total_source=fb_total_src,
+        spread_sources=(fb_spread_src,),
+        total_sources=(fb_total_src,),
+        projection=ProjectedScore(
+            home_score=fb_proj.home_score,
+            away_score=fb_proj.away_score,
+            spread=fb_proj.spread,
+            total=fb_proj.total,
+            spread_source=fb_spread_src,
+            total_source=fb_total_src,
+        ),
+    )
 
 
 # =========================================================================
