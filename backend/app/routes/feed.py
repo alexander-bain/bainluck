@@ -3871,11 +3871,12 @@ async def get_feed(
         None,
         description="Optional ranking_judgments surface filter for reviewed exclusion.",
     ),
-    machinery: Optional[int] = Query(
+    machinery: Optional[str] = Query(
         None,
         description=(
             "Ruling 252: A (#12288) — opt in (`machinery=1`) for website and iOS 1.0.7+ "
-            "machinery groupings. Omitted by iOS 1.0.6 and older app versions."
+            "public machinery groupings, or `machinery=preview` (#13097) to include "
+            "stage='preview' groupings before public promotion. Omitted by iOS 1.0.6."
         ),
     ),
     secret: Optional[str] = Query(
@@ -4559,8 +4560,17 @@ async def get_feed(
             max_age_seconds=0.0 if _prewarm_rebuild else 5.0,
             budget_seconds=_feed_budget_remaining_s(),
         )
+    _machinery_raw = (
+        str(machinery).strip().lower()
+        if isinstance(machinery, (str, int))
+        else ""
+    )
+    _include_machinery_preview = _machinery_raw == "preview" and not _prewarm_rebuild
     _include_machinery_feed = (
-        isinstance(machinery, int) and bool(machinery) and not _prewarm_rebuild
+        _include_machinery_preview or _machinery_raw in {"1", "true", "yes"}
+    ) and not _prewarm_rebuild
+    _machinery_cache_mode: bool | str = (
+        "preview" if _include_machinery_preview else _include_machinery_feed
     )
     if (
         not debug
@@ -4590,7 +4600,7 @@ async def get_feed(
             edition=_edition_request,
             collections=_collections_key,
             opening_seating=_opening_seating,
-            machinery=_include_machinery_feed,
+            machinery=_machinery_cache_mode,
         )
         # LAT-P001: shared key builder — the pre-warm beat writes through the
         # SAME function, so a warmed key can never drift from the read key.
@@ -5285,6 +5295,7 @@ async def get_feed(
                         now=_request_now,
                         include_machinery=True,
                         machinery_only=True,
+                        include_preview=_include_machinery_preview,
                     )
                     _base_body = {
                         **_base_body,
@@ -6583,6 +6594,7 @@ async def get_feed(
                     ),
                     include_machinery=True,
                     machinery_only=True,
+                    include_preview=_include_machinery_preview,
                 )
             if _capture is not None and feed_items is not _before_roundups:
                 _capture.abandon("roundup_containers")

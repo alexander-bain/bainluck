@@ -958,7 +958,7 @@ def feed_response_cache_key(
     edition: Optional[str] = None,
     collections: Optional[str] = None,
     opening_seating: bool = False,
-    machinery: bool = False,
+    machinery: bool | str = False,
 ) -> str:
     """Build the Redis response-cache key for one ``GET /api/feed`` shape.
 
@@ -1033,7 +1033,10 @@ def feed_response_cache_key(
         # #12288 / Ruling 252: A. Website and iOS 1.0.7+ opt in via `machinery=1`;
         # older app versions (1.0.6) omit it and hash the byte-identical key they
         # always did, hitting the single 1.0.6-safe prewarmed base feed.
-        parts = f"mach=1|{parts}"
+        # #13097: `machinery=preview` hashes under `mach=preview` so preview sets
+        # never share a cached response with public `machinery=1` readers.
+        mach_tag = "preview" if machinery == "preview" else "1"
+        parts = f"mach={mach_tag}|{parts}"
     return f"{FEED_RESPONSE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
 
 

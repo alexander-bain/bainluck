@@ -99,6 +99,15 @@ CLOSED_PERMISSION_LEVELS: frozenset[str] = frozenset(
     }
 )
 
+#: Closed list of publication stages for computed groupings (#13097, Fable 2:03 PM PT).
+#: ``preview`` sets are served only when ``machinery=preview`` is requested (and by
+#: direct container URL) so Fable can inspect live numbers before one-line promotion
+#: to ``public``.
+CLOSED_GROUPING_STAGES: frozenset[str] = frozenset({"public", "preview"})
+
+#: Closed list of visual looks for computed groupings (Alex 1:18 PM PT / #13097).
+CLOSED_GROUPING_LOOKS: frozenset[str] = frozenset({"bars", "map", "faces"})
+
 #: Rule keys that select members by query/pattern/window (Decide 73-A).
 SELECTOR_RULE_KEYS: tuple[str, ...] = (
     "title_ilike",
@@ -328,6 +337,8 @@ class RoundupProducer:
     enabled: Optional[Callable[[], bool]] = None
     valid_from: Optional[float] = None
     valid_until: Optional[float] = None
+    stage: str = "public"
+    look: str = "bars"
 
     def __init__(
         self,
@@ -355,6 +366,8 @@ class RoundupProducer:
         children: Optional[Sequence[Mapping[str, Any]]] = None,
         score: float = 0.0,
         enabled: Optional[Callable[[], bool]] = None,
+        stage: Optional[str] = None,
+        look: Optional[str] = None,
     ) -> None:
         if produce is None:
             raise TypeError("RoundupProducer requires a 'produce' callable")
@@ -515,6 +528,30 @@ class RoundupProducer:
         start, end = _definition_window(rule or {})
         object.__setattr__(self, "valid_from", start)
         object.__setattr__(self, "valid_until", end)
+        raw_stage = (
+            stage
+            if stage is not None
+            else (rule.get("stage") if isinstance(rule, Mapping) else None)
+        )
+        stage_clean = str(raw_stage or "public").strip().lower()
+        if stage_clean not in CLOSED_GROUPING_STAGES:
+            raise ValueError(
+                f"RoundupProducer {slug!r} has invalid stage {raw_stage!r}; "
+                f"allowed: {sorted(CLOSED_GROUPING_STAGES)}"
+            )
+        raw_look = (
+            look
+            if look is not None
+            else (rule.get("look") if isinstance(rule, Mapping) else None)
+        )
+        look_clean = str(raw_look or "bars").strip().lower()
+        if look_clean not in CLOSED_GROUPING_LOOKS:
+            raise ValueError(
+                f"RoundupProducer {slug!r} has invalid look {raw_look!r}; "
+                f"allowed: {sorted(CLOSED_GROUPING_LOOKS)}"
+            )
+        object.__setattr__(self, "stage", stage_clean)
+        object.__setattr__(self, "look", look_clean)
 
 
 def roundup_container_id(slug: str) -> int:
@@ -2484,6 +2521,7 @@ async def add_roundup_feed_items(
     novelty_seat_cap: int = ROUNDUP_NOVELTY_SEAT_CAP,
     include_machinery: bool = False,
     machinery_only: bool = False,
+    include_preview: bool = False,
 ) -> list[dict[str, Any]]:
     """Evaluate registered round-up producers and place their cards on Discover.
 
@@ -2491,6 +2529,10 @@ async def add_roundup_feed_items(
     included when ``include_machinery=True`` (sent by website and iOS 1.0.7+
     via ``machinery=1``), so older App Store versions (1.0.6) never receive
     machinery cards on the Discover feed.
+
+    Under #13097 (Fable 2:03 PM PT), groupings with ``stage="preview"`` are
+    omitted unless ``include_preview=True`` (``machinery=preview``), so new
+    sets never reach public Discover before Fable inspects them with live numbers.
     """
     if not items or len(items) < seat_floor:
         return items
@@ -2518,6 +2560,10 @@ async def add_roundup_feed_items(
     else:
         producers = [
             p for p in ROUNDUP_PRODUCERS.values() if not _is_machinery_producer_slug(p.slug)
+        ]
+    if not include_preview:
+        producers = [
+            p for p in producers if getattr(p, "stage", "public") != "preview"
         ]
     if not producers:
         return items
@@ -2718,9 +2764,27 @@ def validate_roundup_definition(
     out["slug"] = slug
     out["relations"] = list(relations_list)
     out["level"] = level_clean
+    raw_stage = data.get("stage") if "stage" in data else rule_raw.get("stage")
+    stage_clean = str(raw_stage or "public").strip().lower()
+    if stage_clean not in CLOSED_GROUPING_STAGES:
+        raise ValueError(
+            f"Round-up definition {slug!r}{loc} has invalid 'stage' {raw_stage!r}; "
+            f"allowed: {sorted(CLOSED_GROUPING_STAGES)}"
+        )
+    raw_look = data.get("look") if "look" in data else rule_raw.get("look")
+    look_clean = str(raw_look or "bars").strip().lower()
+    if look_clean not in CLOSED_GROUPING_LOOKS:
+        raise ValueError(
+            f"Round-up definition {slug!r}{loc} has invalid 'look' {raw_look!r}; "
+            f"allowed: {sorted(CLOSED_GROUPING_LOOKS)}"
+        )
+    out["stage"] = stage_clean
+    out["look"] = look_clean
     rule_copy = dict(rule_raw)
     rule_copy["relations"] = list(relations_list)
     rule_copy["level"] = level_clean
+    rule_copy["stage"] = stage_clean
+    rule_copy["look"] = look_clean
     parent_slug = str(
         data.get("parent_slug") or rule_raw.get("parent_slug") or ""
     ).strip()

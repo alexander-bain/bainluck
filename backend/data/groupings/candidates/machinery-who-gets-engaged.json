@@ -1,5 +1,7 @@
 {
   "slug": "machinery-who-gets-engaged",
+  "stage": "preview",
+  "look": "faces",
   "membership": "computed-produced",
   "kind": "roundup",
   "relations": [
@@ -25,7 +27,7 @@
       {
         "key": "engaged_couples",
         "title": "Couples to Watch",
-        "note": "Odds that celebrity couples get engaged before the end of 2026.",
+        "note": "Engagement odds across celebrity and public-figure couples, one row per couple.",
         "atom_query": {
           "kind": "markets",
           "title_all_tokens": ["engaged"],

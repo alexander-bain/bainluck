@@ -1,5 +1,7 @@
 {
   "slug": "machinery-next-james-bond",
+  "stage": "preview",
+  "look": "faces",
   "membership": "computed-produced",
   "kind": "roundup",
   "relations": [

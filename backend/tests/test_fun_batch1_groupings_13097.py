@@ -60,25 +60,40 @@ async def test_batch1_three_fun_groupings_build_cleanly_with_full_parity_and_twi
 
     # 1. White Christmas
     wc_def = load_machinery_definition("data/groupings/candidates/machinery-white-christmas.json")
+    assert wc_def["stage"] == "preview"
+    assert wc_def["look"] == "map"
     assert "weather" in (_category_llm_pool_for_definition(wc_def) or ())
     wc_prod = build_container_machinery_producer(wc_def)
+    assert wc_prod.stage == "preview" and wc_prod.look == "map"
     wc_res = await produce_container_machinery(db, wc_def, now=NOW)
     assert wc_res.machinery_card["form_id"] == "benchmark_strip"
+    assert wc_res.machinery_card["stage"] == "preview"
+    assert wc_res.machinery_card["look"] == "map"
     assert [r["name"] for r in wc_res.machinery_card["rows"]] == ["Pittsburgh", "Milwaukee", "Detroit"]
     assert [r["rendered_percent"] for r in wc_res.machinery_card["rows"]] == [44, 41, 38]
-    assert wc_res.title == "Pittsburgh leads White Christmas at 44%, with Milwaukee at 41%"
+    assert wc_res.title == "Pittsburgh is the likeliest white Christmas at 44%, with Milwaukee at 41%"
     wc_fi = compose_roundup_feed_item(wc_prod, wc_res)
     wc_cp = compose_roundup_container(wc_prod, wc_res)
     c_p, p_p = _compute_member_number_parity(wc_fi, wc_cp)
     assert c_p["passes"] is True and p_p["passes"] is True
 
-    # 2. The Next James Bond Film
+    # 2. The Next James Bond Film (including "to play M" role phrasing)
     jb_def = load_machinery_definition("data/groupings/candidates/machinery-next-james-bond.json")
+    assert jb_def["stage"] == "preview"
+    assert jb_def["look"] == "faces"
     jb_prod = build_container_machinery_producer(jb_def)
-    jb_res = await produce_container_machinery(db, jb_def, now=NOW)
+    assert jb_prod.stage == "preview" and jb_prod.look == "faces"
+    bond_markets = list(_sample_markets()) + [
+        {"id": 108259, "name": "Next James Bond film: Actor cast as M", "status": "open", "source": "kalshi", "category": "entertainment", "outcomes": [{"id": 91, "name": "Ralph Fiennes", "probability": 0.34}, {"id": 92, "name": "Gary Oldman", "probability": 0.12}, {"id": 93, "name": "Idris Elba", "probability": 0.08}]},
+    ]
+    jb_db = {"events": [], "markets": bond_markets, "paired_sets": {}, "market_histories": {}}
+    jb_res = await produce_container_machinery(jb_db, jb_def, now=NOW)
     assert jb_res.machinery_card["form_id"] == "sibling_fields_grid"
-    assert len(jb_res.members) == 3
+    assert jb_res.machinery_card["stage"] == "preview"
+    assert jb_res.machinery_card["look"] == "faces"
+    assert len(jb_res.members) == 4
     assert jb_res.machinery_card["rows"][0]["name"].startswith("James Bond Theme · Raye")
+    assert "with Ralph Fiennes to play M at 34%" in jb_res.title
     jb_fi = compose_roundup_feed_item(jb_prod, jb_res)
     jb_cp = compose_roundup_container(jb_prod, jb_res)
     c_p, p_p = _compute_member_number_parity(jb_fi, jb_cp)
@@ -86,10 +101,16 @@ async def test_batch1_three_fun_groupings_build_cleanly_with_full_parity_and_twi
 
     # 3. Who Gets Engaged? (Ruling 273: B)
     eg_def = load_machinery_definition("data/groupings/candidates/machinery-who-gets-engaged.json")
+    assert eg_def["stage"] == "preview"
+    assert eg_def["look"] == "faces"
+    assert "2026" not in eg_def["rule"]["sections"][0]["note"]
     assert "politics" in (_category_llm_pool_for_definition(eg_def) or ())
     eg_prod = build_container_machinery_producer(eg_def)
+    assert eg_prod.stage == "preview" and eg_prod.look == "faces"
     eg_res = await produce_container_machinery(db, eg_def, now=NOW)
     assert eg_res.machinery_card["form_id"] == "benchmark_strip"
+    assert eg_res.machinery_card["stage"] == "preview"
+    assert eg_res.machinery_card["look"] == "faces"
     shown_ids = [m["id"] for m in eg_res.members]
     assert 57774265 not in shown_ids, "Roblox hours engaged must be excluded"
     assert 9990001 not in shown_ids, "Taylor Swift wedding must be excluded (273: B)"
@@ -118,3 +139,75 @@ async def test_batch1_three_fun_groupings_build_cleanly_with_full_parity_and_twi
     returning = apply_novelty_seats(first_time, returning_reader=True, seen_card_keys=set(), now=NOW)
     ret_ids = [str((it.get("data") or {}).get("id") or "") for it in returning]
     assert any(fid.startswith("roundup:machinery-") for fid in ret_ids[:10]), "Unseen fun set must be 32-C novelty-eligible"
+
+
+@pytest.mark.asyncio
+async def test_preview_stage_hidden_from_public_machinery_feed_and_search_but_served_on_preview() -> None:
+    from unittest.mock import patch
+
+    from app.utils.feed_cache import feed_response_cache_key
+    from app.utils.roundup_containers import (
+        add_roundup_feed_items,
+        register_roundup_producer,
+        reset_roundup_cache_for_tests,
+    )
+    from app.utils.search_collections import _append_roundup_matches
+
+    # Existing public definitions default to stage='public', look='bars'
+    fed_def = load_machinery_definition("data/groupings/candidates/machinery-fed-and-macro.json")
+    assert fed_def["stage"] == "public"
+    assert fed_def["look"] == "bars"
+
+    # Cache keys stay isolated between 1.0.6 (False), machinery=1 (True), and machinery=preview
+    k_none = feed_response_cache_key(limit=20, offset=0, machinery=False)
+    k_pub = feed_response_cache_key(limit=20, offset=0, machinery=True)
+    k_prev = feed_response_cache_key(limit=20, offset=0, machinery="preview")
+    assert len({k_none, k_pub, k_prev}) == 3
+
+    wc_def = load_machinery_definition("data/groupings/candidates/machinery-white-christmas.json")
+    wc_prod = build_container_machinery_producer(wc_def, enabled=lambda: True)
+    db = {"events": [], "markets": _sample_markets(), "paired_sets": {}, "market_histories": {}}
+    base = [
+        {"type": "futures", "score": 80.0 - i * 0.5, "data": {"id": 90000 + i, "name": f"S{i}", "status": "open"}}
+        for i in range(25)
+    ]
+
+    with patch.dict(ROUNDUP_PRODUCERS, {}, clear=True):
+        register_roundup_producer(wc_prod)
+        reset_roundup_cache_for_tests()
+
+        # Public machinery=1 MUST NOT serve stage="preview" groupings
+        out_public = await add_roundup_feed_items(
+            db,
+            list(base),
+            page_window=20,
+            now=NOW,
+            include_machinery=True,
+            machinery_only=True,
+            include_preview=False,
+        )
+        assert not any(
+            ((it.get("data") or {}).get("collection_ref") or {}).get("slug") == "machinery-white-christmas"
+            for it in out_public
+        )
+
+        # Public search MUST NOT leak stage="preview" groupings
+        search_cards: list[dict] = []
+        await _append_roundup_matches(db, search_cards, ("white", "christmas"))
+        assert search_cards == []
+
+        # Preview feed (machinery=preview) DOES serve stage="preview" groupings
+        out_preview = await add_roundup_feed_items(
+            db,
+            list(base),
+            page_window=20,
+            now=NOW,
+            include_machinery=True,
+            machinery_only=True,
+            include_preview=True,
+        )
+        assert any(
+            ((it.get("data") or {}).get("collection_ref") or {}).get("slug") == "machinery-white-christmas"
+            for it in out_preview
+        )
+

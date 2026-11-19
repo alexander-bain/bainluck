@@ -2833,20 +2833,25 @@ def _build_dynamic_title_from_set(
         lead_bm = benchmark_items[0]
         lead_o = _fav_outcome(lead_bm)
         group_name = str(definition.get("name") or "").strip().rstrip("?")
+        rule_pred = str((definition.get("rule") or {}).get("headline_predicate") or "").strip()
         if lead_o is not None:
             lead_t = str(lead_bm.get("title") or "").strip()
             lead_p = int(lead_o["rendered_percent"])
             verb = "lead" if " & " in lead_t else "leads"
+            if rule_pred:
+                lead_clause = f"{lead_t} {rule_pred} at {lead_p}%"
+            elif group_name:
+                lead_clause = f"{lead_t} {verb} {group_name} at {lead_p}%"
+            else:
+                lead_clause = f"{lead_t} {verb} at {lead_p}%"
             if len(benchmark_items) >= 2:
                 sec_bm = benchmark_items[1]
                 sec_o = _fav_outcome(sec_bm)
                 if sec_o is not None:
                     sec_t = str(sec_bm.get("title") or "").strip()
                     sec_p = int(sec_o["rendered_percent"])
-                    if group_name:
-                        return f"{lead_t} {verb} {group_name} at {lead_p}%, with {sec_t} at {sec_p}%"
-                    return f"{lead_t} {verb} at {lead_p}%, with {sec_t} at {sec_p}%"
-            return f"{lead_t} {verb} {group_name} at {lead_p}%" if group_name else f"{lead_t} at {lead_p}%"
+                    return f"{lead_clause}, with {sec_t} at {sec_p}%"
+            return lead_clause
 
     if sibling_items:
         lead_sib = sibling_items[0]
@@ -2855,6 +2860,15 @@ def _build_dynamic_title_from_set(
             lead_name = _prose_outcome_name(str(lead_o["name"]))
             lead_title = str(lead_sib.get("title") or "").strip()
             lead_p = int(lead_o["rendered_percent"])
+            _CASTING_ROLES = {
+                "james bond",
+                "m",
+                "q",
+                "moneypenny",
+                "bond girl",
+                "villain",
+                "main villain",
+            }
             if len(sibling_items) >= 2:
                 sec_sib = sibling_items[1]
                 sec_o = _fav_outcome(sec_sib)
@@ -2862,7 +2876,12 @@ def _build_dynamic_title_from_set(
                     sec_name = _prose_outcome_name(str(sec_o["name"]))
                     sec_title = str(sec_sib.get("title") or "").strip()
                     sec_p = int(sec_o["rendered_percent"])
-                    return f"{lead_name} leads {lead_title} at {lead_p}%, with {sec_name} leading {sec_title} at {sec_p}%"
+                    sec_verb = (
+                        "to play"
+                        if sec_title.lower() in _CASTING_ROLES
+                        else "leading"
+                    )
+                    return f"{lead_name} leads {lead_title} at {lead_p}%, with {sec_name} {sec_verb} {sec_title} at {sec_p}%"
             return f"{lead_name} leads {lead_title} at {lead_p}%"
 
     return str(definition.get("name") or definition.get("slug") or "Round-Up")
@@ -3571,6 +3590,8 @@ async def produce_container_machinery(
     machinery_card: dict[str, Any] = {
         "slug": slug,
         "form_id": vb_form,
+        "stage": str(definition.get("stage") or "public"),
+        "look": str(definition.get("look") or "bars"),
         "kicker": str(definition.get("kicker") or "ROUND-UP"),
         "title": dynamic_title,
         "subtitle": str(card_sec.get("note") or ""),
@@ -3665,6 +3686,8 @@ def build_container_machinery_producer(
         parent_slug=validated.get("parent_slug"),
         parent_name=validated.get("parent_name"),
         enabled=enabled if enabled is not None else container_machinery_enabled,
+        stage=validated.get("stage", "public"),
+        look=validated.get("look", "bars"),
     )
 
 

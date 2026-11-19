@@ -1,5 +1,7 @@
 {
   "slug": "machinery-white-christmas",
+  "stage": "preview",
+  "look": "map",
   "membership": "computed-produced",
   "kind": "roundup",
   "relations": [
@@ -20,6 +22,7 @@
     "materialize": "read-time",
     "card_rows": 3,
     "card_section_key": "christmas_snow",
+    "headline_predicate": "is the likeliest white Christmas",
     "sections": [
       {
         "key": "christmas_snow",

@@ -176,7 +176,8 @@ async def attach_search_collections(
         from app.utils.roundup_containers import ROUNDUP_PRODUCERS
 
         named_roundup = bool(tokens) and any(
-            _matches(tokens, _producer_search_terms(producer))
+            getattr(producer, "stage", "public") != "preview"
+            and _matches(tokens, _producer_search_terms(producer))
             for producer in ROUNDUP_PRODUCERS.values()
         )
         if named_roundup:
@@ -304,7 +305,8 @@ async def _append_roundup_matches(
     named = [
         producer
         for producer in ROUNDUP_PRODUCERS.values()
-        if _matches(tokens, _producer_search_terms(producer))
+        if getattr(producer, "stage", "public") != "preview"
+        and _matches(tokens, _producer_search_terms(producer))
     ]
     failed = False
     for producer in named:
