@@ -9,6 +9,7 @@
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { AwardCategoryPairedCard } from "@/components/discover/forms/AwardCategoryPairedCard";
 import MachinerySectionRenderer, {
   MachineryDiscoverCard,
   resolveDistinctChartSeries,
@@ -478,5 +479,52 @@ describe("#12288 Slice 6 — Website parity, error states, and non-repeating fir
     expect(html).toContain("Center · San Antonio");
     expect(html).toContain("Guard · Oklahoma City");
     expect(html).not.toContain("line-clamp-1");
+  });
+
+  it("wraps paired_stage_bars subject and studio credit detail without truncate ellipsis", () => {
+    const html = renderToStaticMarkup(
+      <AwardCategoryPairedCard
+        set={{
+          set_id: "oscars-2027-best-picture",
+          title: "Best Picture",
+          kicker: "OSCARS 2027",
+          subtitle: "99th Academy Awards",
+          category: "entertainment",
+          stage_1_label: "Nominated",
+          stage_2_label: "Wins",
+          stage_1_settled_yes_label: "Nominated",
+          stage_1_settled_no_label: "Not nominated",
+          never_blend: true,
+          as_of: "2026-11-18T00:00:00Z",
+          stage_1_market: { id: 5165726, source: "kalshi", name: "Best Picture Nominees" },
+          stage_2_market: { id: 6173044, source: "kalshi", name: "Best Picture Winner" },
+          entries: [
+            {
+              subject_key: "film:you-can-see-everything",
+              subject: "You Can See Everything",
+              detail: "Nathan Fielder & Lance Oppenheim · Blow Out Productions",
+              stage_1_market_id: 5165726,
+              stage_1_outcome: "You Can See Everything",
+              stage_1_probability: 0.89,
+              stage_1_settled_state: null,
+              stage_2_market_id: 6173044,
+              stage_2_outcome: "You Can See Everything",
+              stage_2_probability: 0.21,
+              art: {
+                url: "https://image.tmdb.org/t/p/w185/sample.jpg",
+                kind: "tmdb_poster",
+                adult: false,
+                kid_safe_vetted: true,
+              },
+            },
+          ],
+        }}
+        surface="collection"
+        showHeader={false}
+      />,
+    );
+    expect(html).toContain("Nathan Fielder &amp; Lance Oppenheim · Blow Out Productions");
+    expect(html).not.toContain("block truncate text-xs text-text-muted");
+    expect(html).not.toContain("block truncate text-sm font-semibold");
   });
 });

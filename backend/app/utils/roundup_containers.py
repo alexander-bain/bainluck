@@ -1195,6 +1195,7 @@ async def serve_roundup(
         read_published,
     )
 
+    ensure_optional_roundup_candidates()
     producer = ROUNDUP_PRODUCERS.get(slug)
     if producer is None:
         raise HTTPException(
@@ -2142,6 +2143,7 @@ async def add_roundup_feed_items(
         else ROUNDUP_READ_BUDGET_SECONDS
     )
     stage_budget = min(float(budget_seconds), stage_cap)
+    ensure_optional_roundup_candidates()
     started = time.perf_counter()
     producers = list(ROUNDUP_PRODUCERS.values())
     produced: list[dict[str, Any]] = []
