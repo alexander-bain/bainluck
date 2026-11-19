@@ -40,6 +40,7 @@ from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
 from app.utils.start_placeholder import start_is_tbd
 from app.utils.feed_snapshot_fallback import WITHDRAWAL_MARKER_KEY
 from app.utils.scheduled_start import (
+    loaded_price_admission_kickoff,
     loaded_commence_time_source,
     served_start_is_from_schedule,
 )
@@ -20373,6 +20374,7 @@ async def get_event(
     _cached_resp = None if fresh else _cached_detail_payload(event_id, _now)
     if _cached_resp is not None:
         return _cached_resp
+    request_started_at = datetime.now(timezone.utc)
 
     result = await db.execute(
         select(Event)
@@ -21187,6 +21189,21 @@ async def get_event(
     # #10090: the entry is marked cached — every later reader of it gets a
     # window read before it asked — and this request's own copy fresh.
     if not _detail_skip_cache_publish.get():
+        if event.status == "live":
+            from app.utils.aggregation import has_dated_price_source
+
+            kickoff = loaded_price_admission_kickoff(event)
+            if (
+                (kickoff is None or kickoff > request_started_at)
+                and has_dated_price_source(folded_sources, now=datetime.now(timezone.utc))
+            ):
+                # Until kickoff can qualify this quote, the next request must
+                # see the row again. Apply the rule to both public cache keys.
+                for key in {requested_event_id, event_id}:
+                    old = _event_detail_cache.get(key)
+                    if old is not None and old[0] <= _now:
+                        del _event_detail_cache[key]
+                return _with_state_read_fresh(response, True)
         _published = _with_state_read_fresh(response, False)
         for _cache_key in {requested_event_id, event_id}:
             if len(_event_detail_cache) >= _EVENT_DETAIL_MAX_SIZE:
@@ -35249,6 +35266,21 @@ async def get_event_odds_history(
         # an older process-local hero. Recompute value AND revision together;
         # ordinary history requests retain their existing cached-hero parity.
         _served = None if fresh else _cached_detail_payload(event_id, _time.time())
+        admission_kickoff = loaded_price_admission_kickoff(event) if event.status == "live" else None
+        if (
+            _served is not None
+            and _served.get("hero_probability_source") == _PINNABLE_HERO_SOURCE
+            and admission_kickoff is not None
+            and admission_kickoff <= now
+        ):
+            # A newer date for the same price cannot redate a cached input.
+            cached_sources = (_served.get("source_mark") or {}).get("sources", ())
+            if any(
+                observed_at < admission_kickoff
+                for source in cached_sources
+                if (observed_at := _coerce_utc_datetime(source.get("observed_at"))) is not None
+            ):
+                _served = None
         if (
             _served is not None
             and _served.get("hero_probability_source") == _PINNABLE_HERO_SOURCE
@@ -37317,6 +37349,15 @@ def _format_event(
         if probability_sources is not None
         else getattr(event, "win_probability_sources", None)
     )
+    if event.status == "live" and isinstance(_wps, dict) and _wps:
+        from app.utils.aggregation import witnessed_pregame_price_sources
+
+        # The native source disclosure and web models view print these as
+        # current. Historical reads still carry their original evidence.
+        price_view = FoldedBlendView(event, _wps) if probability_sources is not None else event
+        pregame_sources = witnessed_pregame_price_sources(price_view, now=_served_now)
+        if pregame_sources:
+            _wps = {key: entry for key, entry in _wps.items() if key not in pregame_sources}
     response = {
         "id": event.id,
         "external_id": event.external_id,
