@@ -18,7 +18,7 @@ to prove the fixture carries the defect and the failure direction.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -199,7 +199,7 @@ async def test_a_priced_leg_of_the_same_market_still_takes_the_slot():
 )
 async def test_source_mark_uses_the_selected_team_futures_quote(source, key, name, probability):
     outcome = _outcome(1, "Philadelphia Eagles", probability, 0.36, 0.38, team_id=EAGLES)
-    outcome.last_updated = datetime(2026, 11, 17, tzinfo=timezone.utc)
+    outcome.last_updated = datetime.now(timezone.utc) - timedelta(minutes=1)
     outcome.price_changed_at = outcome.last_updated
     if source == "kalshi":
         outcome.resolution_source = "ungradeable_result"
