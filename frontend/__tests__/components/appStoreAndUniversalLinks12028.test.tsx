@@ -105,6 +105,7 @@ describe("#12028 — App Store links on the website and Universal Links for both
       expect.arrayContaining([
         "/events/*",
         "/futures/*",
+        "/collections/*",
         "/ei/hall-of-fame",
         "/search",
         "/search?*",
