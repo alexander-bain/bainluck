@@ -495,6 +495,9 @@ nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
     /// (#11493). Only `/api/teams/{id}` serves it, and only on a row whose market
     /// a decided grid column lists. Read it through ``gridVerdict``.
     let state: String?
+    /// #12957 / #12581 — server-owned provenance mark for this selected team-futures
+    /// outcome row (`/api/teams/{slug}` and `/api/me/teams/futures`).
+    var sourceMark: SourceMark? = nil
 
     var id: Int { outcomeId }
 
@@ -506,7 +509,7 @@ nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
         case category, source, probability
         case probabilityChange24h = "probabilityChange24H"
         case rank, totalOutcomes, resolutionDate, isWinner, matchedTeam, canonicalMarketKey
-        case state
+        case state, sourceMark
     }
 }
 
