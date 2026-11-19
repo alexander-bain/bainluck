@@ -136,13 +136,17 @@ const openPRs=()=>Array.from({length:74},(_,i)=>({number:i+1,state:'open',user:{
 const reviewerRun=(overrides={})=>({action:'completed',workflow_run:{
   name:'Tier-B review',path:'.github/workflows/tier-b-review.yml',event:'pull_request',
   status:'completed',head_sha:'head-1',pull_requests:[{number:1}],...overrides}});
+const triggerRun=(overrides={})=>({action:'completed',workflow_run:{
+  name:'Tier-B policy trigger',path:'.github/workflows/tier-b-trigger.yml',event:'pull_request',
+  status:'completed',head_sha:'head-1',pull_requests:[{number:1}],...overrides}});
 
 for (const [eventName,payload] of [
   ['pull_request_target',{pull_request:{number:1}}],
   ['workflow_run',reviewerRun()],
+  ['workflow_run',triggerRun()],
   ['repository_dispatch',{client_payload:{pull_number:1}}],
   ['workflow_dispatch',{inputs:{pull_number:'1'}}],
-]) test(`${eventName} ${payload.action || ''} evaluates only its PR, even with 74 open PRs`,async()=>{
+]) test(`${eventName} ${payload.workflow_run?.name || payload.action || ''} evaluates only its PR, even with 74 open PRs`,async()=>{
   const {evaluate}=require(file);
   const {github,calls,created}=policyClient(openPRs());
   await evaluate(github,{repo,eventName,payload});
@@ -173,6 +177,8 @@ test('malformed, ambiguous or unrelated reviewer completions refuse before API c
     {},reviewerRun({pull_requests:undefined}),reviewerRun({pull_requests:[]}),
     reviewerRun({pull_requests:[{number:1},{number:2}]}),
     reviewerRun({path:'.github/workflows/untrusted.yml'}),
+    reviewerRun({path:'.github/workflows/tier-b-trigger.yml'}),
+    triggerRun({path:'.github/workflows/tier-b-review.yml'}),
     reviewerRun({name:'Other review'}),reviewerRun({event:'workflow_dispatch'}),
     reviewerRun({status:'in_progress'}),{...reviewerRun(),action:'requested'},
     ...[undefined,0,-1,'not-a-number',1.5].map(number=>reviewerRun({pull_requests:[{number}]})),
@@ -242,14 +248,32 @@ test('membership churn retries once, then fails every observed head',async()=>{
   assert.ok([...latest.values()].every(check=>check.conclusion==='failure'));
 });
 
-test('the workflow uses a half-hour sweep and keeps per-PR events from coalescing each other',()=>{
-  const workflow=fs.readFileSync(path.resolve(__dirname,'../../.github/workflows/tier-b.yml'),'utf8');
+test('the workflow uses a half-hour sweep, never pull_request_target, and keeps per-PR events from coalescing each other',()=>{
+  const workflowsDir=path.resolve(__dirname,'../../.github/workflows');
+  const workflow=fs.readFileSync(path.join(workflowsDir,'tier-b.yml'),'utf8');
+  const trigger=fs.readFileSync(path.join(workflowsDir,'tier-b-trigger.yml'),'utf8');
   assert.doesNotMatch(workflow,/pull_request_review:/);
-  assert.match(workflow,/workflow_run:\n\s+workflows: \[Tier-B review\]\n\s+types: \[completed\]/);
+  assert.doesNotMatch(workflow,/^\s*pull_request_target:/m,'pull_request_target poisons head_sha check-suite (#12957/#12873)');
+  assert.match(workflow,/workflow_run:\n\s+workflows: \[Tier-B review, Tier-B policy trigger\]\n\s+types: \[completed\]/);
   assert.match(workflow,/ref: \$\{\{ github.event.repository.default_branch \}\}/);
   assert.match(workflow,/persist-credentials: false/);
   assert.match(workflow,/cron: '\*\/30 \* \* \* \*'/);
   assert.match(workflow,/cancel-in-progress: false/);
-  assert.ok(workflow.includes("github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.client_payload.pull_number || github.event.inputs.pull_number || 'sweep'"));
+  assert.ok(workflow.includes("github.event.workflow_run.pull_requests[0].number || github.event.client_payload.pull_number || github.event.inputs.pull_number || 'sweep'"));
   assert.match(workflow,/pull_number:\s+description: Pull request to evaluate\s+required: true\s+type: number/);
+
+  // Trigger workflow must stay on pull_request with zero permissions and no checkout.
+  assert.match(trigger,/on:\n\s+pull_request:\n\s+types: \[opened, synchronize, reopened, labeled, unlabeled, ready_for_review, edited\]/);
+  assert.match(trigger,/permissions: \{\}/);
+  assert.match(trigger,/cancel-in-progress: false/);
+  assert.doesNotMatch(trigger,/actions\/checkout/);
+  assert.doesNotMatch(trigger,/^\s*pull_request_target:/m);
+
+  // No workflow in .github/workflows/ may declare a pull_request_target trigger,
+  // or it can race ahead of push/pull_request and capture checks.create.
+  for (const name of fs.readdirSync(workflowsDir)) {
+    if (!name.endsWith('.yml') && !name.endsWith('.yaml')) continue;
+    const text=fs.readFileSync(path.join(workflowsDir,name),'utf8');
+    assert.doesNotMatch(text,/^\s*pull_request_target:/m,`${name} must not trigger on pull_request_target`);
+  }
 });
