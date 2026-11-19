@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -159,6 +160,21 @@ async def test_real_default_http_keeps_all_14_games_but_hydrates_only_12_boards(
         for member in section["members"]:
             if member["card"].get("name") == "1st Quarter Winner":
                 assert section["class"] == "side_question"
+
+
+async def test_only_compact_http_reads_defer_pregame_cache_writes(monkeypatch):
+    attach = AsyncMock(wraps=route._attach_settled_prematch)
+    monkeypatch.setattr(route, "_attach_settled_prematch", attach)
+    session = WeekSession(count=18)
+
+    await get(session)
+    await get(session, compact=False)
+    published = await route.read_published(session, session.hub.slug, include_headers=True)
+    await route._build_entry(session, published, include_children=True, compact=True)
+
+    assert [
+        call.kwargs["defer_missing_cache_writes"] for call in attach.await_args_list
+    ] == [True, False, False]
 
 
 class AuxiliaryWeekSession(WeekSession):

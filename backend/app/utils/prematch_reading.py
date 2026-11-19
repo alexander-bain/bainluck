@@ -973,9 +973,15 @@ async def _l2_read(keys: list[tuple]) -> Optional[list]:
         return None
 
 
-async def _l2_publish(entries: list[tuple[tuple, tuple]]) -> int:
-    """Publish ``(key, rows)`` pairs; the count published (0 on any failure)."""
-    stored_wall = _wall()
+async def _l2_publish(
+    entries: list[tuple[tuple, tuple]], *, defer_from_wall: Optional[float] = None,
+) -> int:
+    """Publish rows, keeping the original age for deferred empty-key fills."""
+    now_wall = _wall()
+    stored_wall = now_wall if defer_from_wall is None else defer_from_wall
+    age = now_wall - stored_wall
+    if not 0 <= age < PREMATCH_READING_CACHE_TTL_S:
+        return 0
     blobs = []
     for key, rows in entries:
         try:
@@ -984,17 +990,22 @@ async def _l2_publish(entries: list[tuple[tuple, tuple]]) -> int:
             continue
     if not blobs:
         return 0
-    expire_s = int(PREMATCH_READING_CACHE_TTL_S) + 1
+    expire_s = int(PREMATCH_READING_CACHE_TTL_S - age) + 1
 
-    def _write() -> None:
+    def _write():
         pipe = client.pipeline(transaction=False)
         for redis_key, blob in blobs:
-            pipe.set(redis_key, blob, ex=expire_s)
-        pipe.execute()
+            if defer_from_wall is None:
+                pipe.set(redis_key, blob, ex=expire_s)
+            else:
+                pipe.set(redis_key, blob, ex=expire_s, nx=True)
+        return pipe.execute()
 
     try:
         client = _shared_client()
-        await _l2_call(_write)
+        results = await _l2_call(_write)
+        if defer_from_wall is not None:
+            return sum(result is True for result in results)
         return len(blobs)
     except asyncio.CancelledError:
         raise
@@ -1043,7 +1054,14 @@ def _finish(counts: Mapping[str, int]) -> None:
         logger.info(line)
 
 
-async def fetch_prematch_prior_rows(db: Any, binds: Mapping[str, Any]) -> list:
+async def _publish_missing_entries(entries: list[tuple[tuple, tuple]], read_wall: float) -> None:
+    published = await _l2_publish(entries, defer_from_wall=read_wall)
+    _finish({"l2_published": published} if published >= 0 else {"l2_errors": 1})
+
+
+async def fetch_prematch_prior_rows(
+    db: Any, binds: Mapping[str, Any], *, defer_missing_cache_writes: bool = False,
+) -> list:
     """Every :data:`PREMATCH_PRIOR_SQL` row for one bind set, kicked-off games cached.
 
     The one place the statement executes, so every surface that prints a
@@ -1112,6 +1130,7 @@ async def fetch_prematch_prior_rows(db: Any, binds: Mapping[str, Any]) -> list:
 
     shared = prematch_reading_cache_shared_enabled()
     want = [e for e in unique_ids if keys[e] is not None and e not in held]
+    absent_keys = set()
     if shared and want:
         blobs = await _l2_read([keys[e] for e in want])
         if blobs is None:
@@ -1122,6 +1141,8 @@ async def fetch_prematch_prior_rows(db: Any, binds: Mapping[str, Any]) -> list:
             with _prematch_cache_lock:
                 for event_id, blob in zip(want, blobs):
                     if blob is None:
+                        if defer_missing_cache_writes:
+                            absent_keys.add(keys[event_id])
                         continue
                     decoded = _decode_entry(keys[event_id], blob, now_wall)
                     if decoded is None:
@@ -1163,11 +1184,20 @@ async def fetch_prematch_prior_rows(db: Any, binds: Mapping[str, Any]) -> list:
             while len(_prematch_cache) > PREMATCH_READING_CACHE_MAX_KEYS:
                 _prematch_cache.popitem(last=False)
         if shared and to_publish:
-            published = await _l2_publish(to_publish)
-            if published < 0:
-                counts["l2_errors"] = counts.get("l2_errors", 0) + 1
-            else:
-                counts["l2_published"] = published
+            if absent_keys:
+                from app.utils.request_cache import schedule_background
+
+                delayed = [entry for entry in to_publish if entry[0] in absent_keys]
+                to_publish = [entry for entry in to_publish if entry[0] not in absent_keys]
+                # The response already has the database rows. A late fill can
+                # only set an empty key and uses this read's remaining TTL.
+                schedule_background(_publish_missing_entries(delayed, _wall()))
+            if to_publish:
+                published = await _l2_publish(to_publish)
+                if published < 0:
+                    counts["l2_errors"] = counts.get("l2_errors", 0) + 1
+                else:
+                    counts["l2_published"] = published
 
     rows: list = []
     for event_id in ids:

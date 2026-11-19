@@ -430,15 +430,21 @@ class _FakeRedis:
         ops = []
 
         class _Pipe:
-            def set(self, key, value, ex=None):
-                ops.append((key, value, ex))
+            def set(self, key, value, ex=None, nx=False):
+                ops.append((key, value, ex, nx))
 
             def execute(self):
                 if fake.fail:
                     raise ConnectionError("redis down")
-                for key, value, ex in ops:
+                results = []
+                for key, value, ex, nx in ops:
+                    if nx and key in fake.store:
+                        results.append(None)
+                        continue
                     fake.store[key] = value.encode()
                     fake.expiry[key] = ex
+                    results.append(True)
+                return results
 
         return _Pipe()
 
@@ -457,6 +463,52 @@ def redis(clock, monkeypatch):
 def _another_process():
     """A different worker: its own empty dict, the same Redis."""
     pr._prematch_cache.clear()
+
+
+@pytest.mark.asyncio
+async def test_confirmed_empty_keys_publish_later_at_their_original_age(redis, clock, monkeypatch):
+    pending = []
+    monkeypatch.setattr("app.utils.request_cache.schedule_background", pending.append)
+    db = _FakeDb(_slate())
+    binds = _binds([(1, KICK_1), (2, KICK_2), (3, KICK_3)])
+    sources = tuple(_SOURCES)
+    keys = [(1, KICK_1, sources), (2, KICK_2, sources), (3, KICK_3, sources)]
+    first, second, third = map(pr._l2_key, keys)
+    redis.store[third] = b"{malformed"
+    read_wall = pr._wall()
+
+    rows = await fetch_prematch_prior_rows(db, binds, defer_missing_cache_writes=True)
+    assert _sorted(rows) == _sorted((await _FakeDb(_slate()).execute(pr_text(), binds)).all())
+    assert db.calls == [binds]
+    assert set(redis.store) == {third} and redis.store[third] != b"{malformed"
+    assert len(pending) == 1
+
+    # A reader on another process fills the first key while these writes wait.
+    newer = pr._encode_entry(keys[0], (), read_wall + 5)
+    redis.store[first] = newer
+    clock["wall"]["wall"] += 9
+    await pending.pop()
+
+    assert redis.store[first] == newer
+    assert redis.expiry[second] == int(PREMATCH_READING_CACHE_TTL_S) + 1 - 9
+    age, published = pr._decode_entry(keys[1], redis.store[second], pr._wall())
+    assert age == 9
+    assert _sorted(published) == _sorted(r for r in rows if r.event_id == 2)
+    assert pr._stats["l2_published"] == 2
+
+
+@pytest.mark.asyncio
+async def test_delayed_fill_that_has_expired_does_not_write(redis, clock, monkeypatch):
+    pending = []
+    monkeypatch.setattr("app.utils.request_cache.schedule_background", pending.append)
+    db = _FakeDb(_slate())
+    binds = _binds([(1, KICK_1)])
+    rows = await fetch_prematch_prior_rows(db, binds, defer_missing_cache_writes=True)
+    assert len(rows) == 2 and redis.store == {}
+
+    clock["wall"]["wall"] += PREMATCH_READING_CACHE_TTL_S
+    await pending.pop()
+    assert redis.store == {}
 
 
 @pytest.mark.asyncio
