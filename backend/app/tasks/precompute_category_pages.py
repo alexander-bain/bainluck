@@ -382,10 +382,17 @@ async def _publish_discover_candidate_base():
 
     now = datetime.now(timezone.utc)
     t0 = time.perf_counter()
+    fun_admission_ids: list[int] = []
     try:
         async with get_task_session() as db:
             market_ids, pool_counts, curator_ids = await asyncio.wait_for(
-                _compute_ordered_candidate_ids(db, now, None, None),
+                _compute_ordered_candidate_ids(
+                    db,
+                    now,
+                    None,
+                    None,
+                    fun_admission_ids_out=fun_admission_ids,
+                ),
                 timeout=deadline_s,
             )
     except asyncio.TimeoutError:
@@ -403,6 +410,7 @@ async def _publish_discover_candidate_base():
         market_ids,
         pool_counts=pool_counts,
         external_curator_recall_ids=curator_ids,
+        fun_admission_ids=fun_admission_ids if fun_admission_ids else None,
     )
 
     # Failed/partial builds never replace last-good: only publish a fully-built,

@@ -4576,6 +4576,16 @@ async def get_feed(
         # principal-independent key differ only in the principal, so deriving
         # both from one dict is what stops them drifting apart — the same class
         # of silent defect LAT-P001 closed between the route and the warmer.
+        from app.utils.discover_fun_tags import is_discover_fun_admission_enabled
+
+        _fun_admission_enabled = bool(
+            not category
+            and not sport
+            and not tags
+            and not my_teams_only
+            and (mode or "discover") == "discover"
+            and is_discover_fun_admission_enabled()
+        )
         _cache_shape = dict(
             sport=sport,
             limit=limit,
@@ -4591,6 +4601,7 @@ async def get_feed(
             collections=_collections_key,
             opening_seating=_opening_seating,
             machinery=_include_machinery_feed,
+            fun_admission=_fun_admission_enabled,
         )
         # LAT-P001: shared key builder — the pre-warm beat writes through the
         # SAME function, so a warmed key can never drift from the read key.
@@ -9988,6 +9999,7 @@ def _market_runtime_filter_trace(
     no_resolution_stale_days: float = 5,
     strict_no_movement_days: float | None = None,
     strict_no_resolution_stale_days: float | None = None,
+    allow_extreme_odds: bool = False,
 ) -> dict:
     """Decide whether a market may surface, and say why not when it may not.
 
@@ -10045,14 +10057,20 @@ def _market_runtime_filter_trace(
     all_settled = len(probs_available) >= 2 and all(
         p < 0.05 or p > 0.95 for p in probs_available
     )
-    if all_settled and not deadline_near_certain_mover:
+    if all_settled and not deadline_near_certain_mover and not allow_extreme_odds:
         blockers.append("all_outcomes_settled")
-    if leader_prob is not None and leader_prob >= 0.97 and not deadline_near_certain_mover:
+    if (
+        leader_prob is not None
+        and leader_prob >= 0.97
+        and not deadline_near_certain_mover
+        and not allow_extreme_odds
+    ):
         blockers.append("locked_market")
     if (
         leader_prob is not None
         and leader_prob <= 0.03
         and len(probs_available) <= 2
+        and not allow_extreme_odds
     ):
         blockers.append("near_zero_binary")
     # Dead market: all outcomes at zero probability
@@ -10143,6 +10161,7 @@ def _market_runtime_filter_trace(
         is_effectively_resolved
         and (leader_opening is None or leader_opening >= opening_threshold)
         and not deadline_near_certain_mover
+        and not allow_extreme_odds
     ):
         blockers.append("effectively_resolved")
 
@@ -10357,6 +10376,26 @@ async def _discover_candidate_pool_trace(
                 "candidate_count": len(ids),
                 "included": market_id in ids,
                 "position": ids.index(market_id) + 1 if market_id in ids else None,
+            }
+        )
+
+    from app.utils.discover_fun_tags import (
+        all_fun_market_ids,
+        is_discover_fun_admission_enabled,
+    )
+
+    if is_discover_fun_admission_enabled():
+        fun_ids = await _discover_fun_admission_market_ids(db, now)
+        candidate_ids.extend(fun_ids)
+        pools.append(
+            {
+                "name": "fun_admission",
+                "limit": len(all_fun_market_ids()),
+                "candidate_count": len(fun_ids),
+                "included": market_id in fun_ids,
+                "position": (
+                    fun_ids.index(market_id) + 1 if market_id in fun_ids else None
+                ),
             }
         )
 
@@ -14509,6 +14548,16 @@ async def _score_sports_mode_futures(
     return scored_items
 
 
+async def _discover_fun_admission_market_ids(
+    db: AsyncSession,
+    now: datetime,
+) -> list[int]:
+    """Return fun-tagged candidate IDs when ``DISCOVER_FUN_ADMISSION_ENABLED`` is on."""
+    from app.utils.discover_fun_tags import discover_fun_admission_market_ids
+
+    return await discover_fun_admission_market_ids(db, now)
+
+
 async def _compute_ordered_candidate_ids(
     db: AsyncSession,
     now: datetime,
@@ -14517,6 +14566,7 @@ async def _compute_ordered_candidate_ids(
     *,
     category_filter: Optional[str] = None,
     mark_timing=None,
+    fun_admission_ids_out: Optional[list[int]] = None,
 ) -> tuple[list[int], dict[str, int], list[int]]:
     """Run the Discover futures candidate pools and return the ordered ID union.
 
@@ -14597,6 +14647,21 @@ async def _compute_ordered_candidate_ids(
             pool_ids[name] = ids
             candidate_market_ids.extend(ids)
 
+    from app.utils.discover_fun_tags import is_discover_fun_admission_enabled
+
+    fun_admission_ids: list[int] = []
+    if (
+        category_filter is None
+        and sport_filter is None
+        and not static_tag_filter
+        and is_discover_fun_admission_enabled()
+    ):
+        fun_admission_ids = await _discover_fun_admission_market_ids(db, now)
+        _mark("pool_fun_admission")
+        candidate_market_ids.extend(fun_admission_ids)
+    if fun_admission_ids_out is not None:
+        fun_admission_ids_out[:] = fun_admission_ids
+
     seen_market_ids: set[int] = set()
     market_ids: list[int] = []
     for market_id in candidate_market_ids:
@@ -14608,6 +14673,11 @@ async def _compute_ordered_candidate_ids(
     pool_counts = {
         "external_curator_recall": len(external_curator_recall_list),
         **{name: len(ids) for name, ids in pool_ids.items()},
+        **(
+            {"fun_admission": len(fun_admission_ids)}
+            if fun_admission_ids or is_discover_fun_admission_enabled()
+            else {}
+        ),
         "deduped": len(market_ids),
     }
     return market_ids, pool_counts, external_curator_recall_list
@@ -15007,14 +15077,28 @@ async def _score_futures(
     # relaxed scoring loop below still runs (that IS the point of #1090), and
     # membership/order are unchanged (the base is config-independent, so a fresh
     # reload would return the identical rows in the identical order).
+    from app.utils.discover_fun_tags import (
+        is_discover_fun_admission_enabled as _is_fun_admission_on,
+    )
+
+    _fun_admission_on = bool(
+        not category_filter
+        and not sport_filter
+        and not static_tag_filter
+        and not my_teams_only
+        and _is_fun_admission_on()
+    )
+    fun_admission_ids: set[int] = set()
     if preloaded_base is not None and preloaded_base.get("markets") is not None:
         markets = list(preloaded_base["markets"])
         market_ids = [m.id for m in markets]
         external_curator_recall_ids = set(preloaded_base.get("curator_ids") or ())
+        fun_admission_ids = set(preloaded_base.get("fun_admission_ids") or ())
         # Provenance-only stage: records that ZERO candidate-pool AND market-load
         # SQL ran on this reused build.
         mark_timing("market_load_reused")
     else:
+        _cb_fun_ids: list[int] = []
         if category_filter:
             # The shared base identity is (sport_filter, static_tag_filter) — it
             # has NO category segment, so a category browse must never read or
@@ -15028,6 +15112,16 @@ async def _score_futures(
                 _candidate_base.PROV_DISABLED,
                 None,
             )
+        elif _fun_admission_on:
+            _cb_base_ids, _cb_provenance, _cb_curator_ids = (
+                await _candidate_base.get_candidate_base(
+                    now,
+                    sport_filter,
+                    static_tag_filter,
+                    stages=None,
+                    fun_admission_ids_out=_cb_fun_ids,
+                )
+            )
         else:
             _cb_base_ids, _cb_provenance, _cb_curator_ids = (
                 await _candidate_base.get_candidate_base(
@@ -15037,11 +15131,18 @@ async def _score_futures(
         if _cb_base_ids is not None:
             market_ids = list(_cb_base_ids)
             external_curator_recall_ids = set(_cb_curator_ids or [])
+            fun_admission_ids = set(_cb_fun_ids)
             # Provenance-only timing stage — records fresh|last_good and that ZERO
             # candidate-pool SQL ran on this build (no IDs / content recorded).
             mark_timing(f"candidate_base_{_cb_provenance}")
         else:
             candidate_queries_started_at = timing_previous_at
+            _compute_kwargs: dict[str, Any] = {
+                "category_filter": category_filter,
+                "mark_timing": mark_timing,
+            }
+            if _fun_admission_on:
+                _compute_kwargs["fun_admission_ids_out"] = _cb_fun_ids
             (
                 market_ids,
                 _cb_pool_counts,
@@ -15051,10 +15152,10 @@ async def _score_futures(
                 now,
                 sport_filter,
                 static_tag_filter,
-                category_filter=category_filter,
-                mark_timing=mark_timing,
+                **_compute_kwargs,
             )
             external_curator_recall_ids = set(_cb_curator_ids)
+            fun_admission_ids = set(_cb_fun_ids)
             mark_timing(
                 "candidate_queries",
                 since_at=candidate_queries_started_at,
@@ -15083,6 +15184,9 @@ async def _score_futures(
                                 market_ids,
                                 pool_counts=_cb_pool_counts,
                                 external_curator_recall_ids=_cb_curator_ids,
+                                fun_admission_ids=(
+                                    _cb_fun_ids if _cb_fun_ids else None
+                                ),
                             )
                         )
                     )
@@ -15195,6 +15299,7 @@ async def _score_futures(
         if capture_base is not None:
             capture_base["markets"] = markets
             capture_base["curator_ids"] = set(external_curator_recall_ids)
+            capture_base["fun_admission_ids"] = set(fun_admission_ids)
 
     if not markets:
         return []
@@ -15697,6 +15802,48 @@ async def _score_futures(
                 now=now,
             )
 
+            # #13097 (Rulings 272: A / 273: B): when fun-market admission is
+            # switched on and this market was admitted by the fun pool (real
+            # lifetime trading + taste guard + still ahead), derive its Discover
+            # subject from the fun tag rather than a misfiled llm_sport_category
+            # and keep curated longshots from being dropped purely for extreme
+            # odds while still enforcing every liveness/staleness/book gate.
+            _admitted_fun_entry = None
+            if (
+                not price_refresh
+                and not category_filter
+                and not sport_filter
+                and not static_tag_filter
+                and not my_teams_only
+                and market.id in fun_admission_ids
+            ):
+                from app.utils.discover_fun_tags import (
+                    check_fun_still_ahead,
+                    check_fun_taste_guard,
+                    get_fun_market_entry,
+                )
+
+                _candidate_fun_entry = get_fun_market_entry(market.id)
+                if _candidate_fun_entry is not None:
+                    _fun_taste_ok, _ = check_fun_taste_guard(market.name)
+                    _fun_ahead_ok, _ = check_fun_still_ahead(
+                        title=market.name,
+                        status=market.status,
+                        resolution_date=market.resolution_date,
+                        sport_category=_candidate_fun_entry.discover_category,
+                        market_metadata=market.market_metadata,
+                        now=now,
+                        event_date=_candidate_fun_entry.event_date,
+                    )
+                    if _fun_taste_ok and _fun_ahead_ok:
+                        _admitted_fun_entry = _candidate_fun_entry
+
+            effective_sport_category = (
+                _admitted_fun_entry.discover_category
+                if _admitted_fun_entry is not None
+                else market.llm_sport_category
+            )
+
             # --- Staleness filters ---
             # Keep serving-time exclusions on the same helper used by admin trace
             # output so stale/debug decisions cannot drift.
@@ -15706,12 +15853,13 @@ async def _score_futures(
                 leader_name,
                 leader_prob,
                 now,
-                sport_category=market.llm_sport_category,
+                sport_category=effective_sport_category,
                 newest_outcome_at=_price_poll_stamp(market),
                 stale_no_movement_days=_gate_no_movement_days,
                 no_resolution_stale_days=_gate_no_resolution_days,
                 strict_no_movement_days=_strict_no_movement_days,
                 strict_no_resolution_stale_days=_strict_no_resolution_days,
+                allow_extreme_odds=_admitted_fun_entry is not None,
             )
             if not price_refresh and not runtime_filters["eligible"]:
                 continue
@@ -15745,6 +15893,7 @@ async def _score_futures(
             # or a high-volume market stays eligible.
             _locked_near_certain = bool(
                 not price_refresh
+                and _admitted_fun_entry is None
                 and market.outcomes
                 and is_locked_near_certain(
                     leader_prob,
@@ -15778,7 +15927,7 @@ async def _score_futures(
 
             highlight_result = compute_futures_highlight(
                 market_tier=market.market_tier,
-                sport_category=market.llm_sport_category,
+                sport_category=effective_sport_category,
                 resolution_date=market.resolution_date,
                 outcomes=outcomes_data,
                 source_count=source_count,
@@ -15980,7 +16129,7 @@ async def _score_futures(
 
             quality = classify_market_quality(
                 market_name=market.name,
-                sport_category=market.llm_sport_category,
+                sport_category=effective_sport_category,
                 outcome_names=[o.name for o in market.outcomes if o.name],
                 external_id=market.external_id,
                 status=market.status,  # R6: resolved sports never surface
@@ -16595,6 +16744,9 @@ async def _score_futures(
                 # list, so it would be a weaker oracle than the one the server used.
                 "_quality_ladder_or_bucket": quality.is_ladder_or_bucket,
             }
+            if _admitted_fun_entry is not None:
+                item["_fun_tags"] = list(_admitted_fun_entry.sub_tags)
+                item["_fun_bucket"] = _admitted_fun_entry.fun_bucket
             if ladder_refused:
                 item["_refused_ladder_leg_ages"] = {
                     _card_outcome_name(o): (
