@@ -9,11 +9,24 @@ struct ClipPageView12307: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                content
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    content
+                        .padding(.horizontal, 20)
+                        .padding(.top, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                #if DEBUG
+                .onChange(of: model.load) { _, load in
+                    if case .detail = load,
+                       ProcessInfo.processInfo.environment["_XCAppClipDemoScrollBottom"] == "1" {
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(350))
+                            proxy.scrollTo("clipBottomAnchor", anchor: .bottom)
+                        }
+                    }
+                }
+                #endif
             }
             .navigationTitle("Bain Luck")
             .navigationBarTitleDisplayMode(.inline)
@@ -183,16 +196,26 @@ struct ClipReadingView12307: View {
 
             Button(action: getApp) {
                 Label(getAppButtonTitle, systemImage: "arrow.down.app")
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity)
+                    .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 6 : 2)
             }
             .buttonStyle(.borderedProminent)
+            .buttonBorderShape(dynamicTypeSize.isAccessibilitySize ? .roundedRectangle(radius: 14) : .capsule)
             .controlSize(.large)
             .padding(.top, 8)
+            .accessibilityIdentifier("clipGetAppButton")
 
             if let webURL {
                 Link("Open on bainluck.com", destination: webURL)
                     .font(.footnote)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity)
+                    .padding(.bottom, 16)
+                    .accessibilityIdentifier("clipWebLink")
+                    .id("clipBottomAnchor")
             }
         }
     }
@@ -295,6 +318,8 @@ private struct ClipMessageView12307: View {
     var retry: (() -> Void)?
     let getApp: () -> Void
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
@@ -310,9 +335,13 @@ private struct ClipMessageView12307: View {
             }
             Button(action: getApp) {
                 Label("Get Bain Luck", systemImage: "arrow.down.app")
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity)
+                    .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 6 : 2)
             }
             .buttonStyle(.borderedProminent)
+            .buttonBorderShape(dynamicTypeSize.isAccessibilitySize ? .roundedRectangle(radius: 14) : .capsule)
             .controlSize(.large)
             .padding(.top, 8)
         }

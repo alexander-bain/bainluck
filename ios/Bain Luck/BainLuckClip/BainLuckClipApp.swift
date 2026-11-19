@@ -57,6 +57,29 @@ final class ClipModel12307 {
 
     func refresh() async {
         guard let subject else { return }
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["_XCAppClipDemoFixture"] == "live_clock",
+           subject.kind == .game {
+            // DEBUG-only fixture decoded through the exact production payload & reading path
+            // so simulator renders can show a live ESPN game clock off-hours (#12307 / 176: A).
+            let observed = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-60))
+            let commence = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-5400))
+            let json = Data("""
+            {"id": \(subject.id), "sport": "americanfootball_nfl",
+             "home_team": "Detroit Lions", "away_team": "New England Patriots",
+             "status": "live", "commence_time": "\(commence)",
+             "home_score": 21, "away_score": 17,
+             "espn": {"period": "3rd Quarter", "game_clock": "8:14"},
+             "current_odds": {"home_probability": 0.662, "away_probability": 0.338},
+             "hero_probability_source": "blend", "hero_probability_observed_at": "\(observed)"}
+            """.utf8)
+            if let payload = try? SavedWidgetDetailPayload10875.decode(json, as: .game) {
+                load = .detail(payload)
+                lastUpdateFailed = false
+                return
+            }
+        }
+        #endif
         let next = await ClipLoader12307.load(subject, fetch: ClipLoader12307.productionFetch)
         guard subject == self.subject else { return }
         // A failed refresh keeps the page it had; the reading goes on ageing on
