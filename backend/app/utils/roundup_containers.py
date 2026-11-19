@@ -899,6 +899,45 @@ def _is_cacheable_refusal(reasons: Sequence[Any]) -> bool:
     return True
 
 
+ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S = 300.0
+
+
+def _roundup_payload_has_live_event(container_payload: Optional[Mapping[str, Any]]) -> bool:
+    if not isinstance(container_payload, Mapping):
+        return False
+    for sec in container_payload.get("sections") or ():
+        if not isinstance(sec, Mapping):
+            continue
+        for m in sec.get("members") or ():
+            if not isinstance(m, Mapping) or m.get("type") != "event":
+                continue
+            card = m.get("card")
+            if isinstance(card, Mapping):
+                st = str(card.get("status") or "").strip().lower()
+                if st in {"live", "in_progress", "halftime"}:
+                    return True
+    return False
+
+
+def _roundup_cache_ttl_seconds(
+    slug: str,
+    container_payload: Optional[Mapping[str, Any]],
+) -> float:
+    """TTL for a cached roundup entry.
+
+    Machinery groupings (`machinery-*`) keep the tight 60s TTL whenever they hold
+    a live game, and use a 300s TTL for scheduled/futures groupings so the 120s
+    background prewarmer keeps every reader read warm across beat jitter.
+    """
+    if (
+        _is_machinery_producer_slug(slug)
+        and container_payload is not None
+        and not _roundup_payload_has_live_event(container_payload)
+    ):
+        return ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S
+    return ROUNDUP_CACHE_TTL_S
+
+
 async def _store_roundup_cache_entry(
     cache_key: tuple[str, Any],
     slug: str,
@@ -909,6 +948,7 @@ async def _store_roundup_cache_entry(
 ) -> None:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    ttl_s = _roundup_cache_ttl_seconds(slug, container_payload)
     _roundup_local_cache[cache_key] = (
         ts,
         copy.deepcopy(feed_item),
@@ -921,6 +961,7 @@ async def _store_roundup_cache_entry(
             encoded = json.dumps(
                 {
                     "built_at": ts,
+                    "ttl_s": ttl_s,
                     "feed_item": feed_item,
                     "container_payload": container_payload,
                 },
@@ -931,7 +972,7 @@ async def _store_roundup_cache_entry(
                 lambda: client.set(
                     _redis_cache_key(slug),
                     encoded,
-                    ex=int(ROUNDUP_CACHE_TTL_S),
+                    ex=int(ttl_s),
                 ),
                 treat_none_as_miss=False,
             )
@@ -991,6 +1032,7 @@ async def evaluate_roundup_producer(
     now: Optional[float | datetime] = None,
     licences_registry: Optional[dict[str, Any]] = None,
     licences_path: Optional[Path | str] = None,
+    force_refresh: bool = False,
 ) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
     """Run ``producer`` once and return ``(feed_item, container_payload)``, cached 60s per slug."""
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -1040,10 +1082,12 @@ async def evaluate_roundup_producer(
         "live" if isinstance(db, AsyncSession) else id(db),
     )
 
-    if use_cache:
+    if use_cache and not force_refresh:
         cached = _roundup_local_cache.get(cache_key)
-        if cached is not None and (ts - cached[0]) < ROUNDUP_CACHE_TTL_S:
-            return copy.deepcopy(cached[1]), copy.deepcopy(cached[2])
+        if cached is not None:
+            local_ttl = _roundup_cache_ttl_seconds(producer.slug, cached[2])
+            if (ts - cached[0]) < local_ttl:
+                return copy.deepcopy(cached[1]), copy.deepcopy(cached[2])
         if isinstance(db, AsyncSession):
             try:
                 from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
@@ -1058,10 +1102,11 @@ async def evaluate_roundup_producer(
                         if isinstance(res.value, (bytes, bytearray))
                         else res.value
                     )
+                    raw_ttl = float(raw.get("ttl_s") or ROUNDUP_CACHE_TTL_S) if isinstance(raw, dict) else ROUNDUP_CACHE_TTL_S
                     if (
                         isinstance(raw, dict)
                         and isinstance(raw.get("built_at"), (int, float))
-                        and (ts - float(raw["built_at"])) < ROUNDUP_CACHE_TTL_S
+                        and (ts - float(raw["built_at"])) < raw_ttl
                     ):
                         fi = raw.get("feed_item")
                         cp = raw.get("container_payload")
@@ -2198,7 +2243,10 @@ async def add_roundup_feed_items(
                     await db.rollback()
                 except Exception:  # noqa: BLE001
                     pass
-            if per_timeout >= ROUNDUP_PRODUCER_TIMEOUT_SECONDS:
+            if (
+                per_timeout >= ROUNDUP_PRODUCER_TIMEOUT_SECONDS
+                and not _is_machinery_producer_slug(producer.slug)
+            ):
                 await _cache_roundup_timeout_refusal(producer, db)
             logger.warning(
                 "Discover round-up read failed for %s; keeping ordinary cards",

@@ -1780,7 +1780,62 @@ async def _prewarm_discover_feed_responses():
     except Exception:
         logger.debug("feed pre-warm status write failed", exc_info=True)
 
+    # #12288: keep the 5 machinery roundup Redis caches warm in parallel when
+    # CONTAINER_MACHINERY_SLICE1_ENABLED=true so website & iOS 1.0.7+ `machinery=1`
+    # Discover splices and `/collections/machinery-*` opens hit warm Redis (<20 ms)
+    # without ever modifying the 1.0.6-safe Discover base cache.
+    await _prewarm_machinery_roundups()
+
     return sum(1 for s in shapes.values() if s.get("outcome") == "ok")
+
+
+async def _prewarm_machinery_roundups(deadline_s: float = 25.0) -> dict:
+    """Warm all registered `machinery-*` roundup caches into shared Redis in parallel."""
+    import asyncio
+
+    from app.routes.containers import containers_read_enabled
+    from app.tasks.base import get_task_session
+    from app.utils.container_machinery import container_machinery_enabled
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        _is_machinery_producer_slug,
+        ensure_optional_roundup_candidates,
+        evaluate_roundup_producer,
+    )
+
+    if not container_machinery_enabled() or not containers_read_enabled():
+        return {"outcome": "disabled", "warmed": 0}
+
+    ensure_optional_roundup_candidates()
+    producers = [
+        p
+        for p in ROUNDUP_PRODUCERS.values()
+        if _is_machinery_producer_slug(p.slug) and (p.enabled is None or p.enabled())
+    ]
+    if not producers:
+        return {"outcome": "empty", "warmed": 0}
+
+    async def _warm_one(prod) -> tuple[str, str]:
+        try:
+            async with get_task_session(
+                statement_timeout_ms=int(deadline_s * 1000)
+            ) as db:
+                fi, cp = await asyncio.wait_for(
+                    evaluate_roundup_producer(prod, db, force_refresh=True),
+                    timeout=deadline_s,
+                )
+                return prod.slug, ("ok" if fi is not None and cp is not None else "refused")
+        except asyncio.TimeoutError:
+            logger.warning("Machinery roundup pre-warm timeout for %s after %.1fs", prod.slug, deadline_s)
+            return prod.slug, "timeout"
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Machinery roundup pre-warm failed for %s: %s", prod.slug, exc)
+            return prod.slug, "error"
+
+    results = dict(await asyncio.gather(*(_warm_one(p) for p in producers)))
+    warmed = sum(1 for v in results.values() if v == "ok")
+    logger.info("Machinery roundup pre-warm finished: %d/%d ok (%s)", warmed, len(producers), results)
+    return {"outcome": "ok" if warmed else "empty", "warmed": warmed, "slugs": results}
 
 
 async def _prewarm_live_feed_shapes():
