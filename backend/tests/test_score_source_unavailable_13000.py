@@ -168,9 +168,9 @@ class TestRouteFormattersEmitScoreSourceUnavailable:
         )
 
         assert _format_event(unanchored)["score_source_unavailable"] is True
-        assert _format_event(covered)["score_source_unavailable"] is False
-        assert _format_event(nba)["score_source_unavailable"] is False
-        assert _format_event(scheduled)["score_source_unavailable"] is False
+        assert "score_source_unavailable" not in _format_event(covered)
+        assert "score_source_unavailable" not in _format_event(nba)
+        assert "score_source_unavailable" not in _format_event(scheduled)
 
     def test_league_futures_format_game_brief_emits_score_source_unavailable(self):
         past = datetime.now(timezone.utc) - timedelta(minutes=20)
@@ -182,7 +182,7 @@ class TestRouteFormattersEmitScoreSourceUnavailable:
             espn_id="401777",
         )
         assert _format_game_brief(unanchored, "tennis_atp")["score_source_unavailable"] is True
-        assert _format_game_brief(covered, "tennis_atp")["score_source_unavailable"] is False
+        assert "score_source_unavailable" not in _format_game_brief(covered, "tennis_atp")
 
     def test_teams_format_event_brief_emits_score_source_unavailable(self):
         past = datetime.now(timezone.utc) - timedelta(minutes=20)
@@ -195,7 +195,7 @@ class TestRouteFormattersEmitScoreSourceUnavailable:
             espn_id="401777",
         )
         assert _format_event_brief(unanchored, team)["score_source_unavailable"] is True
-        assert _format_event_brief(covered, team)["score_source_unavailable"] is False
+        assert "score_source_unavailable" not in _format_event_brief(covered, team)
 
     @pytest.mark.asyncio
     async def test_feed_score_events_emits_score_source_unavailable(self, monkeypatch):
@@ -248,4 +248,4 @@ class TestRouteFormattersEmitScoreSourceUnavailable:
         )
         by_id = {item["data"]["id"]: item["data"] for item in scored}
         assert by_id[9101]["score_source_unavailable"] is True
-        assert by_id[9102]["score_source_unavailable"] is False
+        assert "score_source_unavailable" not in by_id[9102]

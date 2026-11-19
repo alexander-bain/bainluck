@@ -87,3 +87,23 @@ def event_score_source_unavailable(
     if key.startswith(_NON_SCOREBOARD_COVERED_PREFIXES):
         return False
     return True
+
+
+def score_source_unavailable_fields(
+    event: Any,
+    *,
+    sport_key: Optional[str] = None,
+    status: Optional[str] = None,
+    payload: Optional[Mapping[str, Any]] = None,
+) -> dict[str, bool]:
+    """Present-only payload dict: ``{"score_source_unavailable": True}`` or ``{}``.
+
+    Mirrors ``score_observation_fields`` so covered, scheduled, and finished
+    event payloads stay byte-for-byte unchanged while uncovered live matches
+    carry explicit ``score_source_unavailable: true``.
+    """
+    if event_score_source_unavailable(
+        event, sport_key=sport_key, status=status, payload=payload
+    ):
+        return {"score_source_unavailable": True}
+    return {}
