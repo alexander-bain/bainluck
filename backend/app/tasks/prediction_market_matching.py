@@ -107,6 +107,8 @@ from app.utils.live_blend import (
     select_primary_market as _select_primary_market,
 )
 from app.utils.venue_competition import (
+    POLYMARKET_EVENT_SLUG_KEY,
+    polymarket_league_code,
     venue_named_league,
     venue_named_sport_family,
     venue_refuses_placement,
@@ -10484,6 +10486,122 @@ def matchup_names_one_competitor(team_a: str, team_b: str) -> bool:
     return names_match(team_a, team_b) and not shared_token_rivals(team_a, team_b)
 
 
+_WOMENS_SUFFIX_RE = re.compile(r"\s*\(W\)\s*$", re.IGNORECASE)
+_ROAD_AT_HOME_RE = re.compile(r"\s+at\s+", re.IGNORECASE)
+
+
+def strip_womens_suffix(name: str) -> tuple[str, bool]:
+    """Strip a trailing Polymarket/Kalshi ``(W)`` women's marker from a team name.
+
+    Returns ``(cleaned_name, had_suffix)``. Leaving ``(W)`` on ``team_b`` both
+    polluted stored team names ("Notre Dame Fighting Irish (W)") and prevented
+    club-based placement from resolving ``basketball_wncaab``, stranding 126 of
+    146 live/scheduled women's college basketball rows in ``basketball_other``.
+    """
+    cleaned, count = _WOMENS_SUFFIX_RE.subn("", (name or "").strip())
+    return cleaned.strip(), count > 0
+
+
+def _market_uses_away_at_home(market_name: str, team_a: str, team_b: str) -> bool:
+    """True when ``market_name`` explicitly spells ``<team_a> at <team_b>``."""
+    if not market_name or not team_a or not team_b:
+        return False
+    a_low, b_low = team_a.lower(), team_b.lower()
+    if " at " in a_low or " at " in b_low:
+        return False
+    m = _ROAD_AT_HOME_RE.search(market_name)
+    if not m:
+        return False
+    before = market_name[: m.start()].lower()
+    after = market_name[m.end() :].lower()
+    return a_low in before and b_low in after
+
+
+def orient_auto_created_matchup(
+    team_a: str,
+    team_b: str,
+    *,
+    sport_key: str,
+    market_name: str = "",
+    has_womens_suffix: bool = False,
+    market_metadata: object = None,
+    existing_home: Optional[str] = None,
+    existing_away: Optional[str] = None,
+) -> tuple[str, str]:
+    """Return ``(home_team, away_team)`` for an auto-created event row.
+
+    Women's college basketball markets on both Polymarket (``cwbb-*``,
+    ``"<Away> vs. <Home> (W)"``) and Kalshi (``KXNCAAWBGAME``,
+    ``"<Away> at <Home>"``) list the away team first (128 of 128 ESPN-matched
+    ``(W)`` rows on production were reversed). Prefer an existing schedule-backed
+    row's orientation when one is already present; otherwise apply US away-first
+    orientation for women's college basketball / ``(W)`` / ``cwbb`` / explicit
+    ``"<Away> at <Home>"`` wording, leaving all other sports on ``(team_a, team_b)``.
+    """
+    if existing_home and existing_away:
+        return existing_home, existing_away
+    slug = (
+        market_metadata.get(POLYMARKET_EVENT_SLUG_KEY)
+        if isinstance(market_metadata, dict)
+        else None
+    )
+    is_wbb = (
+        sport_key == "basketball_wncaab"
+        or has_womens_suffix
+        or polymarket_league_code(slug) == "cwbb"
+    )
+    if is_wbb or _market_uses_away_at_home(market_name, team_a, team_b):
+        return team_b, team_a
+    return team_a, team_b
+
+
+async def _lookup_existing_wbb_orientation(
+    session,
+    team_a: str,
+    team_b: str,
+    commence_time: datetime,
+) -> Optional[tuple[str, str]]:
+    """Find an existing ``basketball_wncaab`` row's ``(home, away)`` within ±36h.
+
+    Prefers non-synthetic (Odds API / ESPN schedule-backed) rows over market-born
+    rows so an already-correct schedule row always dictates orientation.
+    """
+    from app.utils.name_normalization import names_match as _names_match
+
+    window_start = commence_time - timedelta(hours=36)
+    window_end = commence_time + timedelta(hours=36)
+    result = await session.execute(
+        select(
+            Event.home_team_name,
+            Event.away_team_name,
+            Event.external_id,
+        )
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(
+            Sport.key == "basketball_wncaab",
+            Event.commence_time >= window_start,
+            Event.commence_time <= window_end,
+        )
+    )
+    candidates = result.all()
+    fallback: Optional[tuple[str, str]] = None
+    for home_name, away_name, ext_id in candidates:
+        if not home_name or not away_name:
+            continue
+        same_pair = (
+            (_names_match(team_a, home_name) and _names_match(team_b, away_name))
+            or (_names_match(team_a, away_name) and _names_match(team_b, home_name))
+        )
+        if not same_pair:
+            continue
+        is_schedule_backed = bool(ext_id) and not str(ext_id).startswith("pm_")
+        if is_schedule_backed:
+            return home_name, away_name
+        if fallback is None:
+            fallback = (home_name, away_name)
+    return fallback
+
+
 async def _create_event_from_prediction_market(session, matchup, market, now):
     """
     Auto-create an Event when a game-level prediction market has no matching Event.
@@ -10642,10 +10760,14 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         )
         return None
 
-    # Clean team names: strip sport name prefixes ("Ice Hockey USA" → "USA")
-    # and championship suffixes that may leak through ("Canada Medal" → "Canada")
+    # Clean team names: strip sport name prefixes ("Ice Hockey USA" → "USA"),
+    # championship suffixes ("Canada Medal" → "Canada"), and trailing "(W)"
+    # women's markers ("Notre Dame Fighting Irish (W)" → "Notre Dame Fighting Irish").
     team_a = _strip_championship_suffix(_strip_sport_name_prefix(matchup.team_a.strip())).strip()
     team_b = _strip_championship_suffix(_strip_sport_name_prefix((matchup.team_b or "").strip())).strip()
+    team_a, had_w_a = strip_womens_suffix(team_a)
+    team_b, had_w_b = strip_womens_suffix(team_b)
+    has_womens_suffix = had_w_a or had_w_b
 
     # Determine sport key from ticker or category
     sport_key = get_sport_prefix_from_ticker(market.external_id) if market.external_id else None
@@ -10892,13 +11014,40 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     status = auto_create_status(commence_time, commence_source, now)
     external_id = f"pm_{market.source}_{market.external_id}"
 
+    # Orient home vs away before creating the Event row. Women's college
+    # basketball venues (Polymarket `cwbb-*` "(W)" and Kalshi `KXNCAAWBGAME`
+    # "at") list Away first and Home second.
+    market_meta = getattr(market, "market_metadata", None)
+    slug_code = (
+        polymarket_league_code(market_meta.get(POLYMARKET_EVENT_SLUG_KEY))
+        if isinstance(market_meta, dict)
+        else None
+    )
+    existing_orientation: Optional[tuple[str, str]] = None
+    if session is not None and (
+        sport_key == "basketball_wncaab" or has_womens_suffix or slug_code == "cwbb"
+    ):
+        existing_orientation = await _lookup_existing_wbb_orientation(
+            session, team_a, team_b, commence_time
+        )
+    home_team, away_team = orient_auto_created_matchup(
+        team_a,
+        team_b,
+        sport_key=sport_key,
+        market_name=market.name or "",
+        has_womens_suffix=has_womens_suffix,
+        market_metadata=market_meta,
+        existing_home=existing_orientation[0] if existing_orientation else None,
+        existing_away=existing_orientation[1] if existing_orientation else None,
+    )
+
     from app.services.event_registry import (
         find_or_create_event, EventIdentity, EventClaim,
     )
     identity = EventIdentity(
         sport_key=sport_key,
-        home_team_name=team_a,
-        away_team_name=team_b,
+        home_team_name=home_team,
+        away_team_name=away_team,
         commence_time=commence_time,
         # #2020: say where the time came from. `kalshi_ticker` is a strictly
         # better provenance than the bare source name, because it records that
@@ -10936,20 +11085,20 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         )
         return None
 
-    # Determine yes_is_home mapping
-    team_match = match_teams_to_event(matchup, team_a, team_b, external_id=external_id)
+    # Determine yes_is_home mapping against the oriented (home_team, away_team).
+    team_match = match_teams_to_event(matchup, home_team, away_team, external_id=external_id)
     yes_is_home = team_match["yes_is_home"] if team_match else True
 
     logger.info(
-        "Auto-created event %d for %s market '%s': %s vs %s [sport=%s, status=%s]",
+        "Auto-created event %d for %s market '%s': %s (home) vs %s (away) [sport=%s, status=%s]",
         event.id, market.source, market.name,
-        team_a, team_b, sport_key, status,
+        home_team, away_team, sport_key, status,
     )
 
     return {
         "event_id": event.id,
-        "home_team": team_a,
-        "away_team": team_b,
+        "home_team": home_team,
+        "away_team": away_team,
         "yes_is_home": yes_is_home,
         "auto_created": True,
     }
