@@ -66,13 +66,15 @@ const TIER_B_FILES = /^(tools\/release\/tier_b|\.github\/workflows\/tier-b|docs\
 // Short list of backend files that compute a blended probability, consensus
 // chance or projected score a reader sees (Fable follow-up on #12987, Nov 18):
 // never bypass Fable via `(server fields)` or `(switched off: X)`.
-const BLEND_FILES = /^backend\/app\/(config\/win_prob_sources\.py|utils\/(aggregation|live_blend|book_consensus|current_odds_probability|win_probability|hero_probability|pinned_live_probability|probability_publication|probability_eligibility|futures_source_merge|odds_filtering|pregame_projection|card_projected_pair|blend_preview|folded_blend_preview|folded_blend_preview_v2)\.py)$/;
+const BLEND_FILES = /^backend\/app\/(config\/win_prob_sources\.py|utils\/(aggregation|live_blend|book_consensus|current_odds_probability|win_probability|hero_probability|pinned_live_probability|probability_publication|probability_eligibility|futures_source_merge|odds_filtering|pregame_projection|card_projected_pair|binary_spread|blend_preview|folded_blend_preview|folded_blend_preview_v2)\.py)$/;
 const ALWAYS_FABLE = [
   {why: 'destructive (migration, index change or data repair)', re: FABLE_PATHS.find(r => r.why.startsWith('destructive')).re},
   {why: 'eval or grades', re: /(exam|golden|grade)/i},
   {why: 'eval', re: /^(evals\/|backend\/scripts\/evals\/|backend\/tests\/evals\/|tools\/ranking\/|tools\/reader_walk\/)/},
   {why: 'licence', re: /licen[cs]e/i},
   {why: 'a gate: the Tier-B files', re: TIER_B_FILES},
+  {why: 'a gate: timing quarantine (241: A)', re: /^backend\/tests\/timing_quarantine\.json$/},
+  {why: 'a gate: read-only admin allowlist (247: A)', re: /^tools\/admin\/readonly_allowlist\.json$/},
   {why: 'the blend (computes a number a reader sees)', re: BLEND_FILES},
 ];
 const READER_CLIENT = FABLE_PATHS.filter(r => /^reader-visible \((web|iOS)/.test(r.why));

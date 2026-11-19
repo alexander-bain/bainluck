@@ -278,6 +278,7 @@ test('blend files always need Fable under every 235: A category, and the brief s
     'backend/app/utils/book_consensus.py',
     'backend/app/utils/futures_source_merge.py',
     'backend/app/utils/pregame_projection.py',
+    'backend/app/utils/binary_spread.py',
     'backend/app/config/win_prob_sources.py',
   ];
   for (const body of ['Fable: not needed (tests)', 'Fable: not needed (switched off: BLEND_V2)', 'Fable: not needed (server fields)']) {
@@ -285,6 +286,11 @@ test('blend files always need Fable under every 235: A category, and the brief s
       const result = verdict(pr(body), CONFIRMED, files(name));
       assert.equal(result.conclusion, 'failure', `${body} / ${name}`);
       assert.match(result.summary, /the blend/);
+    }
+    for (const gateFile of ['backend/tests/timing_quarantine.json', 'tools/admin/readonly_allowlist.json']) {
+      const result = verdict(pr(body), CONFIRMED, files(gateFile));
+      assert.equal(result.conclusion, 'failure', `${body} / ${gateFile}`);
+      assert.match(result.summary, /still need Fable under 235: A/);
     }
   }
   const brief = fs.readFileSync(path.join(repoRoot, 'docs/release-loop/tier-b-review-brief.md'), 'utf8');
