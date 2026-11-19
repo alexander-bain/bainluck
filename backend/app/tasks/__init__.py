@@ -7995,6 +7995,18 @@ def deliver_activitykit_starts():
     return result
 
 
+@celery_app.task(name="app.tasks.probe_live_tennis_scores", soft_time_limit=45,
+                 time_limit=60, max_retries=0)
+def probe_live_tennis_scores():
+    """Read-only 15-minute coverage probe of livetennisapi.com (#13000 / 257: B).
+
+    Off when LIVE_TENNIS_API_KEY is unset; never writes DB rows or reader data.
+    """
+    from app.tasks.live_tennis_probe import run_live_tennis_probe
+
+    return run_async(run_live_tennis_probe())
+
+
 celery_app.conf.beat_schedule = {
     "activitykit-runtime": {
         # #10542 step 5: 15 s beat so pinned Live Activities read ESPN and push
@@ -8009,6 +8021,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.deliver_activitykit_starts",
         "schedule": 30.0,
         "options": {"queue": "realtime", "expires": 25},
+    },
+    "probe-live-tennis-scores": {
+        # #13000 (Ruling 257: B): read-only coverage probe of livetennisapi.com,
+        # off when LIVE_TENNIS_API_KEY is unset, capped at <=96 requests/day.
+        # Runs on realtime (same `bainluck` app as LIVE_TENNIS_API_KEY, <1 ms
+        # when disabled, 1 read-only GET every 15 min when enabled) at :03/:18/:33/:48.
+        "task": "app.tasks.probe_live_tennis_scores",
+        "schedule": crontab(minute="3,18,33,48"),
+        "options": {"queue": "realtime", "expires": 840},
     },
     "poll-odds-adaptive": {
         "task": "app.tasks.poll_all_odds",
