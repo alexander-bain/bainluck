@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from typing import NamedTuple, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, func, exists
+from sqlalchemy import select, and_, or_, func, exists, union
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, joinedload, selectinload
 
@@ -3564,22 +3564,26 @@ async def grouped_feed(
     )
     if slate_market_ids:
         # The same recency pool, plus the slate rows it missed — in ONE read.
+        # #11931: combine the two small ID sets via UNION and join back on PK
+        # instead of `OR(id IN (subquery), id IN (slate_market_ids))`. Postgres
+        # cannot turn an `IN (SELECT ...)` inside an `OR` into a semi-join, so
+        # the old form scanned all of `futures_markets` (13-24 s on prod); the
+        # UNION join bounds the outer lookup to <= limit*5 + len(slate) PK hits.
         recent_ids = (
-            select(FuturesMarket.id)
+            select(FuturesMarket.id.label("id"))
             .where(and_(*filters))
             .order_by(FuturesMarket.updated_at.desc())
             .limit(limit * 5)
         )
+        slate_ids = select(FuturesMarket.id.label("id")).where(
+            FuturesMarket.id.in_(slate_market_ids),
+            and_(*filters),
+        )
+        pool_ids = union(recent_ids, slate_ids).subquery("grouped_feed_pool_ids")
         stmt = (
             select(FuturesMarket)
             .options(selectinload(FuturesMarket.outcomes))
-            .where(
-                and_(*filters),
-                or_(
-                    FuturesMarket.id.in_(recent_ids),
-                    FuturesMarket.id.in_(slate_market_ids),
-                ),
-            )
+            .join(pool_ids, FuturesMarket.id == pool_ids.c.id)
             .order_by(FuturesMarket.updated_at.desc())
         )
     result = await db.execute(stmt)
