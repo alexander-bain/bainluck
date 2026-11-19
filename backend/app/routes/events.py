@@ -25956,15 +25956,22 @@ def _build_props_script(player_props):
         # classification, so this never re-derives orientation from the label —
         # the two would drift the moment either list of prefixes changed.
         inverted = bool(pp.get("_inverted"))
+        mark = pp.get("source_mark")
+        if hit is not None:
+            evidence = mark.get("settled") if mark else None
+            mark = settled_source_mark(
+                evidence.get("source") if evidence is not None else pp.get("resolution_source"),
+                "Won" if hit else "Lost",
+                evidence.get("at") if evidence is not None else None,
+            )
+        else:
+            mark = source_mark_on_axis(mark, inverted=inverted)
         script.append({
             "key": f"{pp.get('market_name', '')}|{pp.get('outcome_name', '')}",
             "label": label,
             "pregame_mark": _own_axis(pp.get("pregame_mark"), inverted),
             "current": _own_axis(pp.get("over_probability"), inverted),
-            "source_mark": (
-                settled_source_mark(pp.get("resolution_source"), "Won" if hit else "Lost")
-                if hit is not None else source_mark_on_axis(pp.get("source_mark"), inverted=inverted)
-            ),
+            "source_mark": mark,
             "graded_result": graded_result,
             "graded_label": graded_label,
             # #5088 — THE ROW SAYS WHETHER IT IS SETTLED; THE SECTION SAYS WHAT
@@ -27962,9 +27969,12 @@ async def _build_game_markets(
         hit = row.get("hit")
         if hit is not None:
             won = not hit if row.get("_inverted") else hit
-            return settled_source_mark(
-                getattr(event, "score_source", None), "Won" if won else "Lost",
-            )
+            # The prop grader needs both an actual and a threshold to grade
+            # from the box score. A typed hit can also come from the venue.
+            grade_source = row.get("resolution_source")
+            if row.get("actual") is not None and row.get("threshold") is not None:
+                grade_source = getattr(event, "score_source", None)
+            return settled_source_mark(grade_source, "Won" if won else "Lost")
         if _verdict_is_provable(row, row.get("_market_id") in markets_with_a_winner):
             return settled_source_mark(
                 row.get("resolution_source"),
