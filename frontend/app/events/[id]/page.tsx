@@ -2832,8 +2832,9 @@ export default function EventPage({ params }: EventPageProps) {
     homeColor: nflStrokes.home,
   };
   const nflScored = (isLive || isFinished) && !heroScoreIsStoppageFiller && bestHomeScore != null && bestAwayScore != null;
-  // #12824 — a legacy scheduled response can carry the first stored line in both chance fields.
-  const readerShowsChance = !(event.status === "scheduled" && isStoredOpeningChance(event));
+  // #12824 — a cached opening reading can outlive the scheduled state.
+  const readerShowsChance = probSourceLabel !== "Opening line" &&
+    (event.status !== "scheduled" || !isOpeningChance);
   const nflReaderHeader = readerHeader({
     awayShort: heroShortNames.away,
     homeShort: heroShortNames.home,
