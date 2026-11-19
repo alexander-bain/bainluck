@@ -35,6 +35,7 @@ from app.utils.team_short_name import is_college_sport, school_label
 from app.utils.container_presentation import MEMBER_EVENT, event_destination
 from app.utils.field_band import _validate_narrative_copy
 from app.utils.grouping_captions import compose_container_caption
+from app.utils.source_mark import no_source_mark
 from app.utils.sport_keys import SPORT_HIERARCHY
 from app.utils.tonights_games import _parse_dt
 
@@ -360,6 +361,7 @@ class _SequenceGame:
     commence_utc: datetime
     commence_iso: str
     team_prob: float
+    source_mark: dict[str, Any]
     rendered_percent: int
     row_label: str
     opponent_label: str
@@ -555,6 +557,7 @@ def select_subject_sequence(
             continue
         home_prob, away_prob, observed_iso = g.blend
         team_prob = home_prob if g.is_home else away_prob
+        mark_key = "source_mark" if g.is_home else "away_source_mark"
         rendered_pct = int(math.floor(team_prob * 100.0 + 0.5))
         ordered.append(
             _SequenceGame(
@@ -562,6 +565,7 @@ def select_subject_sequence(
                 commence_utc=g.commence_utc,
                 commence_iso=g.commence_iso,
                 team_prob=team_prob,
+                source_mark=g.card.get(mark_key) or no_source_mark("source_evidence_incomplete"),
                 rendered_percent=rendered_pct,
                 row_label=g.row_label,
                 opponent_label=g.opp_label,
@@ -597,6 +601,7 @@ def select_subject_sequence(
             "date_label": g.date_label,
             "commence_time": g.commence_iso,
             "probability": g.team_prob,
+            "source_mark": g.source_mark,
             "rendered_percent": g.rendered_percent,
             "observed_at": g.observed_at,
         }
