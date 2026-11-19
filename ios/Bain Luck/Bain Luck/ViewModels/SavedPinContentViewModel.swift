@@ -167,6 +167,7 @@ extension FeedEventData {
             id: d.id, externalId: d.externalId, sport: d.sport, sportName: nil,
             homeTeam: d.homeTeam, awayTeam: d.awayTeam, commenceTime: d.commenceTime,
             startIsTbd: d.startIsTbd, status: d.status, homeScore: d.homeScore, awayScore: d.awayScore,
+            scoreSourceUnavailable: d.scoreSourceUnavailable,
             blendFoldRevision: d.blendFoldRevision, heroProbabilitySource: d.heroProbabilitySource,
             heroProbabilityObservedAt: d.heroProbabilityObservedAt, currentOdds: d.currentOdds,
             openingOdds: d.openingOdds, prematchOdds: d.prematchOdds,
