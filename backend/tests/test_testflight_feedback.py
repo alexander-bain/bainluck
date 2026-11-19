@@ -222,13 +222,13 @@ def test_oversized_png_is_reencoded_to_jpeg_instead_of_dropped():
 
 def test_strip_emails_and_phones_redacts_pii_without_touching_scores_or_dates():
     text = (
-        "- Game page: Houston 78-74 Florida, Now 61.4% vs 38.6% on 2026-11-18 at 5:02 PM.\n"
+        "- Game page: Houston 78-74 Florida, Now 61.4% vs 38.6% on 2001-01-01 at 5:02 PM.\n"
         "- Contact tester@example.com or +1 (555) 234-5678 / 555-867-5309."
     )
     cleaned = tf.strip_emails_and_phones(text)
     assert "Houston 78-74 Florida" in cleaned
     assert "61.4%" in cleaned
-    assert "2026-11-18" in cleaned
+    assert "2001-01-01" in cleaned
     assert "5:02 PM" in cleaned
     assert "tester@example.com" not in cleaned
     assert "234-5678" not in cleaned
