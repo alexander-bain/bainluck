@@ -165,4 +165,4 @@ d6ebef9997e3cb2aec9d2c5947855748b67b5d09:evals/ranking/grades/2026-11-10-groupin
 # beside constant name POLYMARKET_EVENT_SLUG_KEY (ends with _KEY); not a credential.
 # Exact findings from gitleaks run 44461617146 on PR #13037; renamed to SLUG_FIELD in follow-up commit.
 67845ab2138ce91077ff5fb1351a9cd857aef194:backend/tests/test_wbb_auto_create_orientation.py:generic-api-key:37
-67845ab2138ce91077ff5fb1351a9cd857aef194:backend/tests/test_wbb_auto_create_orientation.py:50
+67845ab2138ce91077ff5fb1351a9cd857aef194:backend/tests/test_wbb_auto_create_orientation.py:generic-api-key:50
