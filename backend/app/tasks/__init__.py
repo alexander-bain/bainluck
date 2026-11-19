@@ -7997,9 +7997,13 @@ def deliver_activitykit_starts():
 
 celery_app.conf.beat_schedule = {
     "activitykit-runtime": {
+        # #10542 step 5: 15 s beat so pinned Live Activities read ESPN and push
+        # score changes within ~15 s instead of waiting behind the 60 s full-slate
+        # sync + 30 s sweep. When scanned == 0 (no active Live Activities), the
+        # task exits in ~0.2 s with zero ESPN calls.
         "task": "app.tasks.deliver_activitykit_updates",
-        "schedule": 30.0,
-        "options": {"queue": "realtime", "expires": 25},
+        "schedule": 15.0,
+        "options": {"queue": "realtime", "expires": 12},
     },
     "activitykit-start-push": {
         "task": "app.tasks.deliver_activitykit_starts",
