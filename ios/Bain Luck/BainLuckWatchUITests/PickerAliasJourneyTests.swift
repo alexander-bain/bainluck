@@ -6,12 +6,14 @@ import XCTest
 final class PickerAliasJourneyTests: XCTestCase {
     @MainActor
     func testResolvedAliasRetainsReadingOfflineAndAfterRestart() throws {
+        executionTimeAllowance = 300
         try aliasJourney(largeText: false)
         print("WATCH_UI_PICKER_ALIAS_STANDARD=PASS")
     }
 
     @MainActor
     func testResolvedAliasRetainsReadingAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         try aliasJourney(largeText: true)
         print("WATCH_UI_PICKER_ALIAS_LARGE=PASS")
     }
@@ -173,7 +175,10 @@ final class PickerAliasJourneyTests: XCTestCase {
     private func assertState(saved: Bool, in app: XCUIApplication) throws {
         let state = app.descendants(matching: .any)["watch.game-state"].firstMatch
         let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label CONTAINS %@", "Offline."), object: state)
-        XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)
+        // A state wait passes the moment its predicate holds, so a long ceiling costs
+        // nothing on a healthy run. When the simulator's accessibility service stalls,
+        // each query takes about 7 s and 15 s allowed only two looks (run 44042203928).
+        XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 45), .completed)
         XCTAssertEqual(state.label.contains("Saved reading. Refresh to confirm."), saved)
         XCTAssertTrue(state.label.contains("Live"))
     }

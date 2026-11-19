@@ -29,7 +29,11 @@ final class ContainerHubContractTests: XCTestCase {
               case .event(let scheduled) = members[1].card else { return XCTFail("Both event cards must decode") }
         XCTAssertEqual(final.status, "completed")
         XCTAssertNotNil(final.homeScore)
+        XCTAssertEqual(final.sourceMark?.state, .settled)
+        XCTAssertEqual(final.awaySourceMark?.state, .settled)
         XCTAssertEqual(scheduled.status, "scheduled")
+        XCTAssertEqual(scheduled.sourceMark?.state, SourceMark.State.none)
+        XCTAssertEqual(scheduled.awaySourceMark?.state, SourceMark.State.none)
         XCTAssertFalse(ContainerHubPresentation(response: r).isPartial)
         XCTAssertEqual(members.map(\.memberId), [801, 802, 9201, 9202])
     }

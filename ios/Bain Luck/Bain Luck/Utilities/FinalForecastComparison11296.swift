@@ -127,10 +127,13 @@ enum FinalForecastComparison11296 {
         homeScore: Int?,
         awayScore: Int?,
         actualPeriod: ScorePeriod?,
-        projection p: PregameProjection?
+        projection p: PregameProjection?,
+        homeChance: Double? = nil,
+        awayChance: Double? = nil
     ) -> Comparison? {
         qualified(sport: sport, status: status, homeScore: homeScore, awayScore: awayScore,
-                  actualPeriod: actualPeriod, projection: p)?.comparison
+                  actualPeriod: actualPeriod, projection: p,
+                  homeChance: homeChance, awayChance: awayChance)?.comparison
     }
 
     /// `resolve`'s gates, returning the served halves beside the printed pair.
@@ -140,7 +143,9 @@ enum FinalForecastComparison11296 {
         homeScore: Int?,
         awayScore: Int?,
         actualPeriod: ScorePeriod?,
-        projection p: PregameProjection?
+        projection p: PregameProjection?,
+        homeChance: Double? = nil,
+        awayChance: Double? = nil
     ) -> Qualified? {
         guard EventState.isFinished(status) else { return nil }
         guard let homeScore, let awayScore, homeScore >= 0, awayScore >= 0 else { return nil }
@@ -179,7 +184,15 @@ enum FinalForecastComparison11296 {
         // Int withholds the line instead of trapping.
         guard let roundedHome = Int(exactly: home.rounded()),
               let roundedAway = Int(exactly: away.rounded()) else { return nil }
-        guard roundedHome != roundedAway || vocab.canEndInATie else { return nil }
+        if ProjectedFinalChanceGuard240A.conflicts(
+            projectedHome: Double(roundedHome),
+            projectedAway: Double(roundedAway),
+            homeChance: homeChance,
+            awayChance: awayChance,
+            sportKey: sport
+        ) {
+            return nil
+        }
 
         return Qualified(
             comparison: Comparison(label: actualPeriod == .regulation ? label90Min : label,

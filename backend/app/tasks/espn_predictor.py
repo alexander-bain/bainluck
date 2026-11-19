@@ -368,7 +368,7 @@ def candidate_statement(now: datetime):
 
 
 async def _read_espn(rows: list[PredictorRow], now: datetime, stats: dict) -> dict:
-    """``{event_id: ("write", value, evidence) | ("remove", reason) | ("keep", reason)}``.
+    """Plan a write with value, evidence and receive time, or give a refusal reason.
 
     No database session is open while ESPN is read.
     """
@@ -412,6 +412,7 @@ async def _read_espn(rows: list[PredictorRow], now: datetime, stats: dict) -> di
                 continue
             try:
                 payload = await espn.get_predictor(row.sport_key, str(matched.espn_id))
+                read_at = datetime.now(timezone.utc)
             except ESPNAuthorityDark:
                 stats["predictor_dark"] += 1
                 plans[row.event_id] = ("keep", "predictor-dark")
@@ -434,7 +435,7 @@ async def _read_espn(rows: list[PredictorRow], now: datetime, stats: dict) -> di
                 "basis": "espn_predictor",
                 "espn_id": str(matched.espn_id),
                 "last_modified": payload.get("lastModified"),
-            })
+            }, read_at)
     finally:
         await espn.close()
     return plans
@@ -528,11 +529,14 @@ async def _run_refresh_espn_predictor() -> dict:
             target = SimpleNamespace(id=row.event_id)
             try:
                 if plan[0] == "write":
+                    _, probability, evidence, read_at = plan
+                    last_modified = evidence.get("last_modified")
                     await write_nonvenue_probability(
-                        session, target, "espn", plan[1], evidence=plan[2],
+                        session, target, "espn", probability, evidence=evidence,
+                        price_read_at=read_at,
                         entry_extra=(
-                            {"predictor_last_modified": plan[2]["last_modified"]}
-                            if plan[2].get("last_modified") else None
+                            {"predictor_last_modified": last_modified}
+                            if last_modified else None
                         ),
                     )
                     stats["written"] += 1

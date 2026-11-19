@@ -152,10 +152,11 @@ def source_mark_on_axis(mark: dict | None, *, inverted: bool) -> dict:
 
 
 def cap_source_mark(row: dict) -> None:
-    """Keep a capped rung's own evidence; never credit its donor's quote."""
+    """Keep the rung's own evidence and any independent official result."""
     mark = row.get("source_mark") or no_source_mark("source_evidence_incomplete")
     row["source_evidence"] = list(mark.get("sources", []))
-    row["source_mark"] = no_source_mark("monotonic_conflict")
+    if mark.get("state") != "settled":
+        row["source_mark"] = no_source_mark("monotonic_conflict")
 
 
 def headline_source_marks(

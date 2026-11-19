@@ -48,6 +48,7 @@ from tests.test_cu_frame_grounding import (
 
 APP = pathlib.Path(__file__).resolve().parents[1] / "app"
 REGISTRY = APP / "services" / "llm_models.py"
+FACTORY_NOTES = APP.parents[1] / "scripts" / "factory" / "notes.py"
 BEFORE_SHUTDOWN = date(2026, 12, 1)
 SHUTDOWN = date(2027, 1, 14)
 
@@ -139,17 +140,24 @@ def test_only_the_request_layer_sends_a_completion():
 
 def test_the_task_inventory_matches_the_call_sites_both_ways():
     used = {task for _, _, task, _ in _completion_sites()}
+    # The master-only publisher uses the registry without loading the web app.
+    used.update(
+        _entry_task(node)
+        for node in ast.walk(ast.parse(FACTORY_NOTES.read_text()))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "chat_request_kwargs"
+    )
     assert used - set(TASKS) == set(), "call site names an unregistered task"
     assert set(TASKS) - used == set(), "registry lists a task no call site uses"
 
 
 def test_no_model_id_literal_outside_the_registry():
     hits = []
-    for path in _app_files():
+    for path in [*_app_files(), FACTORY_NOTES]:
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 if node.value in MODELS or _MODEL_ID.fullmatch(node.value):
-                    hits.append((str(path.relative_to(APP.parent)), node.lineno, node.value))
+                    hits.append((str(path.relative_to(APP.parents[1])), node.lineno, node.value))
     assert hits == [], f"model ids belong in app/services/llm_models.py only: {hits}"
 
 

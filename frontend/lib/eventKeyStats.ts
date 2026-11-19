@@ -1038,9 +1038,12 @@ export function resolveProbability(
   includeSelection = false,
 ): ResolvedProbability {
   const snapshot = event.current_odds;
-  // Older detail responses copied the opening into the aggregate fallback.
+  // Older detail responses can carry the opening under either an aggregate
+  // fallback or a raw book snapshot captured before kickoff.
   const repeatsOpening =
-    isLive && isStoredOpeningChance(event) && snapshot?.source === "aggregate";
+    isLive && isStoredOpeningChance(event) &&
+    (snapshot?.source === "aggregate" ||
+      Date.parse(snapshot?.captured_at ?? "") < Date.parse(event.commence_time));
   const odds = repeatsOpening ? undefined : snapshot;
   const opening = event.opening_odds;
 

@@ -33,7 +33,10 @@ jobs:
         with:
           ref: master
           fetch-depth: 1
-          sparse-checkout: scripts/factory
+          sparse-checkout: |
+            /scripts/factory/
+            /backend/app/services/llm_models.py
+          sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: Read master ancestry without historical file contents
         env:
@@ -42,4 +45,6 @@ jobs:
       - name: Collect, compare and publish a changed floor
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_MODEL_FACTORY_NOTES: gpt-6-luna
         run: python3 scripts/factory/collect.py --output /tmp/factory.json --publish

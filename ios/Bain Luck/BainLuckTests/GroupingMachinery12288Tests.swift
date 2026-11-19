@@ -59,7 +59,7 @@ final class GroupingMachinery12288Tests: XCTestCase {
 
         let publicUser = AuthUser(
             id: 9001,
-            email: "reader@example.com",
+            email: nil,
             displayName: "Public Reader",
             photoUrl: nil,
             onboardingCompleted: true,
@@ -67,7 +67,7 @@ final class GroupingMachinery12288Tests: XCTestCase {
         )
         let nonOwnerFamilyUser = AuthUser(
             id: 500,
-            email: "member@example.com",
+            email: nil,
             displayName: "Family Member",
             photoUrl: nil,
             onboardingCompleted: true,
@@ -75,7 +75,7 @@ final class GroupingMachinery12288Tests: XCTestCase {
         )
         let ownerAlex = AuthUser(
             id: 364,
-            email: "owner@example.com",
+            email: nil,
             displayName: "Owner Account",
             photoUrl: nil,
             onboardingCompleted: true,
@@ -144,8 +144,35 @@ final class GroupingMachinery12288Tests: XCTestCase {
             "Alex must see 'Grouping machinery preview' in Preferences: \(ownerPrefsOCR)"
         )
 
-        // Network request prevention across ALL 4 non-authorized states (anonymous, public user,
-        // non-owner family admin, and Alex with switch OFF):
+        // 252: A — 1.0.7 sends `machinery=1` on Discover `GET /api/feed` (default nil mode and
+        // explicit "discover" mode), while Sports mode and filtered feeds omit it.
+        var discoverDefaultQ: [String: String] = ["limit": "50", "offset": "0"]
+        APIClient.addDiscoverMachinery252A(to: &discoverDefaultQ)
+        XCTAssertEqual(discoverDefaultQ["machinery"], "1")
+
+        var discoverExplicitQ: [String: String] = ["limit": "50", "offset": "20"]
+        APIClient.addDiscoverMachinery252A(mode: "discover", to: &discoverExplicitQ)
+        XCTAssertEqual(discoverExplicitQ["machinery"], "1")
+
+        var sportsModeQ: [String: String] = ["limit": "50", "offset": "0"]
+        APIClient.addDiscoverMachinery252A(mode: "sports", to: &sportsModeQ)
+        XCTAssertNil(sportsModeQ["machinery"])
+
+        var sportFilterQ: [String: String] = ["limit": "50", "offset": "0"]
+        APIClient.addDiscoverMachinery252A(sport: "basketball_nba", to: &sportFilterQ)
+        XCTAssertNil(sportFilterQ["machinery"])
+
+        var myTeamsQ: [String: String] = ["limit": "50", "offset": "0"]
+        APIClient.addDiscoverMachinery252A(myTeamsOnly: true, to: &myTeamsQ)
+        XCTAssertNil(myTeamsQ["machinery"])
+
+        var tagFilterQ: [String: String] = ["limit": "50", "offset": "0"]
+        APIClient.addDiscoverMachinery252A(tags: ["politics"], to: &tagFilterQ)
+        XCTAssertNil(tagFilterQ["machinery"])
+
+        // 252: A — In 1.0.7, the client owner-only gate on opening `machinery-*` grouping pages
+        // is removed so any 1.0.7 reader can open served groupings, while `/api/containers/preview/machinery`
+        // stays strictly gated off for public, non-owner, and switched-off accounts.
         for candidateUser in [nil, publicUser, nonOwnerFamilyUser, ownerAlex] {
             GroupingMachineryGate12288.setActiveUser(candidateUser)
 
@@ -156,23 +183,14 @@ final class GroupingMachinery12288Tests: XCTestCase {
             let loaderItems = try await loader.loadPreview(user: candidateUser)
             XCTAssertTrue(loaderItems.isEmpty)
 
-            do {
-                _ = try await APIClient.shared.fetchContainerHub(slug: "machinery-nfl-week")
-                XCTFail("Expected 404 before network on machinery-nfl-week for unauthorized/off user")
-            } catch let APIError.httpError(statusCode, _) {
-                XCTAssertEqual(statusCode, 404)
-            }
-
             let spyHub = SpyContainerHubService()
             let hubVM = ContainerHubViewModel(slug: "machinery-oscars-best-picture", service: spyHub)
             await hubVM.load()
-            XCTAssertEqual(spyHub.loadCallCount, 0, "Zero network requests allowed for machinery-* when gated off")
-            XCTAssertEqual(spyHub.pairedCallCount, 0)
-            if case .unavailable = hubVM.state {
-                // expected
-            } else {
-                XCTFail("Expected .unavailable for gated machinery-* slug, got \(hubVM.state)")
-            }
+            XCTAssertEqual(
+                spyHub.loadCallCount,
+                1,
+                "252: A — 1.0.7 must allow any reader to request /api/containers/machinery-* without owner switch"
+            )
 
             let spyDiscoverLoader = SpyMachineryPreviewLoader()
             let discoverAuth = AuthManager()
@@ -189,7 +207,7 @@ final class GroupingMachinery12288Tests: XCTestCase {
             XCTAssertEqual(
                 spyDiscoverLoader.callCount,
                 0,
-                "DiscoverView must make ZERO machinery requests for \(String(describing: candidateUser?.email)) while switch is off"
+                "DiscoverView must make ZERO admin preview requests while switch is off"
             )
         }
 
@@ -456,12 +474,17 @@ final class GroupingMachinery12288Tests: XCTestCase {
 
     func testLiveFourGroupingsCardsPagesDiversityCountsAnd390PxRenders() throws {
         let inputDir = URL(fileURLWithPath: "/Users/bain/.gemini/antigravity/brain/4c590449-f20c-4ff4-921d-f7e1343a4327/renders-12288")
-        let renderDir = URL(fileURLWithPath: "/Users/bain/.gemini/antigravity/brain/4c590449-f20c-4ff4-921d-f7e1343a4327/renders-12288-polish")
+        let renderDir = URL(fileURLWithPath: "/Users/bain/.gemini/antigravity/brain/4c590449-f20c-4ff4-921d-f7e1343a4327/renders-12288-252a")
+        let fiveJSONPath = renderDir.appendingPathComponent("five_groupings_preview.json")
         let liveJSONPath = inputDir.appendingPathComponent("live_machinery_preview_12288.json")
-        let manifestPath = inputDir.appendingPathComponent("art_manifest.json")
+        let manifestPath = FileManager.default.fileExists(atPath: renderDir.appendingPathComponent("art_manifest.json").path)
+            ? renderDir.appendingPathComponent("art_manifest.json")
+            : inputDir.appendingPathComponent("art_manifest.json")
 
         let payloadData: Data
-        if let diskData = try? Data(contentsOf: liveJSONPath) {
+        if let fiveData = try? Data(contentsOf: fiveJSONPath) {
+            payloadData = fiveData
+        } else if let diskData = try? Data(contentsOf: liveJSONPath) {
             payloadData = diskData
         } else {
             payloadData = Data(Self.embeddedFallbackPreviewJSON.utf8)
@@ -504,14 +527,30 @@ final class GroupingMachinery12288Tests: XCTestCase {
         GroupingMachineryGate12288.setOverrideDefaultsForTesting(isolatedDefaults)
         let ownerAlex = AuthUser(
             id: 364,
-            email: "owner@example.com",
+            email: nil,
             displayName: "Owner Account",
             photoUrl: nil,
             onboardingCompleted: true,
             createdAt: nil
         )
-        GroupingMachineryGate12288.setActiveUser(ownerAlex)
-        GroupingMachineryGate12288.setSwitchEnabled(true, for: ownerAlex)
+        // 252: A — verify pages load and render with the owner switch OFF (public 1.0.7 reader state).
+        GroupingMachineryGate12288.setActiveUser(nil)
+
+        // Also verify all served `feed_item` objects decode directly as `FeedItem` (`GET /api/feed?machinery=1`)
+        // and pass Discover roundup admission & grouping for public readers.
+        if let rootObj = try JSONSerialization.jsonObject(with: payloadData) as? [String: Any],
+           let rawItems = rootObj["items"] as? [[String: Any]] {
+            let feedItems: [FeedItem] = try rawItems.compactMap { dict in
+                guard let fiObj = dict["feed_item"] else { return nil }
+                let fiData = try JSONSerialization.data(withJSONObject: fiObj)
+                return try snakeDecoder.decode(FeedItem.self, from: fiData)
+            }
+            for fi in feedItems {
+                XCTAssertEqual(fi.bundle?.admitsRoundupCard, true, "Bundle for \(String(describing: fi.bundle?.roundupCollectionRef?.slug)) must pass admitsRoundupCard")
+            }
+            let groupedOnDiscover = DiscoverView.groupRelatedItems(feedItems)
+            XCTAssertEqual(groupedOnDiscover.count, feedItems.count, "Every served machinery roundup must survive DiscoverView.groupRelatedItems")
+        }
 
         var iphoneDiversitySummary: [[String: Any]] = []
         let canExportDisk = FileManager.default.fileExists(atPath: renderDir.path)
@@ -585,6 +624,13 @@ final class GroupingMachinery12288Tests: XCTestCase {
                 style: .light,
                 dynamicType: .xxxLarge
             )
+            let pageXXXLargeDarkResult = renderAndMeasureContainerPage(
+                presentation: presentation,
+                displayName: entry.displayName,
+                preloadedImages: preloadedImages,
+                style: .dark,
+                dynamicType: .xxxLarge
+            )
 
             let pageLargeOCR = try recognizeStrings(in: XCTUnwrap(pageLightResult.image.cgImage))
             assertCleanCopyAndNoEllipsis(pageLargeOCR, context: "page(\(entry.slug), .large)")
@@ -604,8 +650,10 @@ final class GroupingMachinery12288Tests: XCTestCase {
             if canExportDisk {
                 try? cardLightImg.pngData()?.write(to: renderDir.appendingPathComponent("12288-card-\(entry.slug)-light-390.png"))
                 try? cardDarkImg.pngData()?.write(to: renderDir.appendingPathComponent("12288-card-\(entry.slug)-dark-390.png"))
-                try? pageLightResult.image.pngData()?.write(to: renderDir.appendingPathComponent("12288-page-\(entry.slug)-light-390.png"))
-                try? pageDarkResult.image.pngData()?.write(to: renderDir.appendingPathComponent("12288-page-\(entry.slug)-dark-390.png"))
+                try? pageLightResult.image.pngData()?.write(to: renderDir.appendingPathComponent("12288-page-\(entry.slug)-default-light-390.png"))
+                try? pageDarkResult.image.pngData()?.write(to: renderDir.appendingPathComponent("12288-page-\(entry.slug)-default-dark-390.png"))
+                try? pageXXXLargeResult.image.pngData()?.write(to: renderDir.appendingPathComponent("12288-page-\(entry.slug)-largest-light-390.png"))
+                try? pageXXXLargeDarkResult.image.pngData()?.write(to: renderDir.appendingPathComponent("12288-page-\(entry.slug)-largest-dark-390.png"))
             }
         }
 
@@ -899,15 +947,26 @@ final class GroupingMachinery12288Tests: XCTestCase {
         let finalSize = CGSize(width: 390, height: intrinsicHeight)
         host.view.frame = CGRect(origin: .zero, size: finalSize)
 
+        let sliceMaxHeight: CGFloat = 1_600
+        let firstViewportHeight = min(finalSize.height, sliceMaxHeight)
+
+        let containerVC = UIViewController()
+        containerVC.overrideUserInterfaceStyle = style
+        containerVC.view.frame = CGRect(x: 0, y: 0, width: 390, height: firstViewportHeight)
+        containerVC.view.clipsToBounds = true
+        containerVC.addChild(host)
+        containerVC.view.addSubview(host.view)
+        host.didMove(toParent: containerVC)
+
         let window: UIWindow
         if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
             window = UIWindow(windowScene: scene)
         } else {
-            window = UIWindow(frame: host.view.frame)
+            window = UIWindow(frame: containerVC.view.frame)
         }
-        window.frame = host.view.frame
+        window.frame = containerVC.view.frame
         window.overrideUserInterfaceStyle = style
-        window.rootViewController = host
+        window.rootViewController = containerVC
         window.isHidden = false
         defer {
             window.isHidden = true
@@ -918,13 +977,43 @@ final class GroupingMachinery12288Tests: XCTestCase {
         repeat {
             host.view.setNeedsLayout()
             host.view.layoutIfNeeded()
+            containerVC.view.layoutIfNeeded()
             RunLoop.current.run(until: Date().addingTimeInterval(0.015))
         } while Date() < deadline
 
-        let fmt = UIGraphicsImageRendererFormat()
-        fmt.scale = finalSize.height > 3_600 ? 1.5 : (finalSize.height > 2_400 ? 2.0 : 3.0)
-        let img = UIGraphicsImageRenderer(bounds: host.view.bounds, format: fmt).image { _ in
-            _ = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        // Tile in <= 1,600 pt vertical viewports (`<= 4,800 px` at 3x) so CoreAnimation's
+        // 8,192 px Metal backing-texture ceiling never drops tall pages (`> 2,730 pt`).
+        let sliceFmt = UIGraphicsImageRendererFormat()
+        sliceFmt.scale = 2.0
+        sliceFmt.opaque = true
+
+        // Keep viewport height constant across every slice so NavigationStack's layout
+        // geometry never shifts at the final partial slice (`0` seam overlap).
+        let fixedVPRect = CGRect(x: 0, y: 0, width: 390, height: firstViewportHeight)
+        window.frame = fixedVPRect
+        containerVC.view.frame = fixedVPRect
+
+        var slices: [(y: CGFloat, h: CGFloat, image: UIImage)] = []
+        var offsetY: CGFloat = 0
+        while offsetY < finalSize.height - 0.5 {
+            let sliceH = min(firstViewportHeight, finalSize.height - offsetY)
+            containerVC.view.bounds = CGRect(x: 0, y: offsetY, width: 390, height: firstViewportHeight)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+
+            let sliceImg = UIGraphicsImageRenderer(size: CGSize(width: 390, height: sliceH), format: sliceFmt).image { _ in
+                _ = containerVC.view.drawHierarchy(in: fixedVPRect, afterScreenUpdates: true)
+            }
+            slices.append((y: offsetY, h: sliceH, image: sliceImg))
+            offsetY += sliceH
+        }
+
+        let fullFmt = UIGraphicsImageRendererFormat()
+        fullFmt.scale = 2.0
+        fullFmt.opaque = true
+        let img = UIGraphicsImageRenderer(size: finalSize, format: fullFmt).image { _ in
+            for s in slices {
+                s.image.draw(in: CGRect(x: 0, y: s.y, width: 390, height: s.h))
+            }
         }
         return (img, finalSize.height, collector.rects)
     }

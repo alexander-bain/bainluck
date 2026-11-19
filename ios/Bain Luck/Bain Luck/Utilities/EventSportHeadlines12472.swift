@@ -700,15 +700,15 @@ enum EventSportHeadlines12472 {
             chance: "Chance"
         )
 
-        let pregameProj = canGrade ? admittedPregameProjectedPair(
+        var pregameProj = canGrade ? admittedPregameProjectedPair(
             event: event,
             hasScore: hasScore,
             ladderHome: ladderHome,
             ladderAway: ladderAway,
             now: now
         ) : nil
-        let awayProjCell = pregameProj?.awayNumber ?? ""
-        let homeProjCell = pregameProj?.homeNumber ?? ""
+        var awayProjCell = pregameProj?.awayNumber ?? ""
+        var homeProjCell = pregameProj?.homeNumber ?? ""
 
         let awayRecord = trimmedNonEmpty(event.awayTeamData?.record)
         let homeRecord = trimmedNonEmpty(event.homeTeamData?.record)
@@ -716,6 +716,18 @@ enum EventSportHeadlines12472 {
         // 3-way soccer before match: Chance is always whole percents before kickoff (#12822, Direction 199).
         if canGrade, !withholdsOpeningAsCurrent(event), isSoccerSport(event.sport),
            let shares = extractSoccerThreeWayOpenShares(event: event, gameMarkets: gameMarkets, now: now) {
+            if let proj = pregameProj,
+               ProjectedFinalChanceGuard240A.conflicts(
+                   projectedHome: printedHeadlineProjectedValue(proj.rawHome, sportKey: event.sport),
+                   projectedAway: printedHeadlineProjectedValue(proj.rawAway, sportKey: event.sport),
+                   homeChance: shares.home,
+                   awayChance: shares.away,
+                   sportKey: event.sport
+               ) {
+                pregameProj = nil
+                awayProjCell = ""
+                homeProjCell = ""
+            }
             let formatted = soccerThreeWayChanceTexts(
                 home: shares.home,
                 draw: shares.draw,
@@ -831,6 +843,20 @@ enum EventSportHeadlines12472 {
             }
         }
 
+        if !homeChance.isEmpty,
+           let proj = pregameProj,
+           ProjectedFinalChanceGuard240A.conflicts(
+               projectedHome: printedHeadlineProjectedValue(proj.rawHome, sportKey: event.sport),
+               projectedAway: printedHeadlineProjectedValue(proj.rawAway, sportKey: event.sport),
+               homeChance: homeProb,
+               awayChance: awayChance.isEmpty ? nil : awayProb,
+               sportKey: event.sport
+           ) {
+            pregameProj = nil
+            awayProjCell = ""
+            homeProjCell = ""
+        }
+
         let awayRow = CompetitorRow(
             role: .away,
             fullName: awayFullName,
@@ -927,15 +953,15 @@ enum EventSportHeadlines12472 {
         let isScoreless = isMMASport(event.sport) || isBoxingSport(event.sport)
         let hasProjCol = carriesProjectedScoreColumn(sport: event.sport)
 
-        let liveProjNumbers = isLive ? admittedLiveProjectedNumberPair(
+        var liveProjNumbers = isLive ? admittedLiveProjectedNumberPair(
             event: event,
             hasScore: hasScore,
             ladderHome: ladderHome,
             ladderAway: ladderAway,
             now: now
         ) : nil
-        let awayProjCell = liveProjNumbers?.away ?? ""
-        let homeProjCell = liveProjNumbers?.home ?? ""
+        var awayProjCell = liveProjNumbers?.away ?? ""
+        var homeProjCell = liveProjNumbers?.home ?? ""
 
         // Tennis score-slot columns (`S1`, `S2`, … or `Sets` + optional `Pts` / `TB`)
         let tennisScoreSlot: TennisScoreSlotResult? = isTennis
@@ -985,6 +1011,18 @@ enum EventSportHeadlines12472 {
             }()
 
             if let shares = openShares {
+                if let proj = liveProjNumbers,
+                   ProjectedFinalChanceGuard240A.conflicts(
+                       projectedHome: printedHeadlineProjectedValue(proj.rawHome, sportKey: event.sport),
+                       projectedAway: printedHeadlineProjectedValue(proj.rawAway, sportKey: event.sport),
+                       homeChance: shares.home,
+                       awayChance: shares.away,
+                       sportKey: event.sport
+                   ) {
+                    liveProjNumbers = nil
+                    awayProjCell = ""
+                    homeProjCell = ""
+                }
                 let formatted = soccerThreeWayChanceTexts(
                     home: shares.home,
                     draw: shares.draw,
@@ -1108,6 +1146,20 @@ enum EventSportHeadlines12472 {
                         .map { abs(pair.home - $0) > 0.001 } ?? false
                 )?.rawValue
             }
+        }
+
+        if !homeNow.isEmpty,
+           let proj = liveProjNumbers,
+           ProjectedFinalChanceGuard240A.conflicts(
+               projectedHome: printedHeadlineProjectedValue(proj.rawHome, sportKey: event.sport),
+               projectedAway: printedHeadlineProjectedValue(proj.rawAway, sportKey: event.sport),
+               homeChance: homeProb,
+               awayChance: awayNow.isEmpty ? nil : awayProb,
+               sportKey: event.sport
+           ) {
+            liveProjNumbers = nil
+            awayProjCell = ""
+            homeProjCell = ""
         }
 
         let summary = isLive ? resolveLivePregameSummary(event: event, shortNames: shortNames) : nil
@@ -2098,13 +2150,34 @@ enum EventSportHeadlines12472 {
         return String(format: "%.1f", value)
     }
 
+    nonisolated static func printedHeadlineProjectedValue(
+        _ value: Double,
+        sportKey: String?
+    ) -> Double {
+        let lower = (sportKey ?? "").lowercased()
+        if lower.hasPrefix("americanfootball") || lower.hasPrefix("basketball") {
+            return value.rounded()
+        }
+        return (value * 10.0).rounded() / 10.0
+    }
+
+    nonisolated struct AdmittedHeadlineProjection: Equatable, Sendable {
+        let awayNumber: String
+        let homeNumber: String
+        let rawAway: Double
+        let rawHome: Double
+
+        var away: String { awayNumber }
+        var home: String { homeNumber }
+    }
+
     nonisolated static func admittedPregameProjectedPair(
         event: EventDetail,
         hasScore: Bool,
         ladderHome: Double?,
         ladderAway: Double?,
         now: Date = Date()
-    ) -> (awayNumber: String, homeNumber: String)? {
+    ) -> AdmittedHeadlineProjection? {
         let vocab = SportVocab.forSport(event.sport)
         guard EventState.canStillBeGraded(event.status, commenceTime: event.commenceTime?.asDate, now: now) else {
             return nil
@@ -2128,12 +2201,14 @@ enum EventSportHeadlines12472 {
             return nil
         }
 
-        let roundedAway = Int(pair.away.rounded())
-        let roundedHome = Int(pair.home.rounded())
-        guard vocab.canEndInATie || roundedAway != roundedHome else { return nil }
-        return (
+        // Ruling 240: A (Rule 1): a level rounded pair prints in every sport (#8156 removed).
+        guard Int(exactly: pair.away.rounded()) != nil,
+              Int(exactly: pair.home.rounded()) != nil else { return nil }
+        return AdmittedHeadlineProjection(
             awayNumber: formatLiveProjectedColumnNumber(pair.away, sportKey: event.sport),
-            homeNumber: formatLiveProjectedColumnNumber(pair.home, sportKey: event.sport)
+            homeNumber: formatLiveProjectedColumnNumber(pair.home, sportKey: event.sport),
+            rawAway: pair.away,
+            rawHome: pair.home
         )
     }
 
@@ -2143,7 +2218,7 @@ enum EventSportHeadlines12472 {
         ladderHome: Double?,
         ladderAway: Double?,
         now: Date = Date()
-    ) -> (away: String, home: String)? {
+    ) -> AdmittedHeadlineProjection? {
         guard hasScore,
               let awayScore = event.awayScore,
               let homeScore = event.homeScore
@@ -2159,11 +2234,9 @@ enum EventSportHeadlines12472 {
         case .absent:
             guard vocab.scoreboardCountsTheUnit, !vocab.unit.isEmpty,
                   let away = ladderAway, let home = ladderHome,
-                  away.isFinite, home.isFinite, away > 0, home > 0
-            else { return nil }
-            let rAway = Int(away.rounded())
-            let rHome = Int(home.rounded())
-            guard vocab.canEndInATie || rAway != rHome,
+                  away.isFinite, home.isFinite, away > 0, home > 0,
+                  let rAway = Int(exactly: away.rounded()),
+                  let rHome = Int(exactly: home.rounded()),
                   rAway >= awayScore, rHome >= homeScore
             else { return nil }
             rawPair = (away: away, home: home)
@@ -2171,20 +2244,26 @@ enum EventSportHeadlines12472 {
 
         let safeAway = max(rawPair.away, Double(awayScore))
         let safeHome = max(rawPair.home, Double(homeScore))
-        return (
-            away: formatLiveProjectedColumnNumber(safeAway, sportKey: event.sport),
-            home: formatLiveProjectedColumnNumber(safeHome, sportKey: event.sport)
+        return AdmittedHeadlineProjection(
+            awayNumber: formatLiveProjectedColumnNumber(safeAway, sportKey: event.sport),
+            homeNumber: formatLiveProjectedColumnNumber(safeHome, sportKey: event.sport),
+            rawAway: safeAway,
+            rawHome: safeHome
         )
     }
 
     nonisolated static func qualifiedLivePregameProjectionPair(
-        event: EventDetail
+        event: EventDetail,
+        homeChance: Double? = nil,
+        awayChance: Double? = nil
     ) -> (away: Int, home: Int)? {
         qualifiedPregameProjectionPair(
             projection: event.pregameProjection,
             sport: event.sport,
             status: event.status,
-            commenceTime: event.commenceTime
+            commenceTime: event.commenceTime,
+            homeChance: homeChance,
+            awayChance: awayChance
         )
     }
 
@@ -2192,7 +2271,9 @@ enum EventSportHeadlines12472 {
         projection: PregameProjection?,
         sport: String?,
         status: String?,
-        commenceTime: String?
+        commenceTime: String?,
+        homeChance: Double? = nil,
+        awayChance: Double? = nil
     ) -> (away: Int, home: Int)? {
         guard status == "live",
               let p = projection,
@@ -2219,9 +2300,18 @@ enum EventSportHeadlines12472 {
         let vocab = SportVocab.forSport(sport)
         guard vocab.sportsbookSpreadIsAMargin,
               let roundedHome = Int(exactly: home.rounded()),
-              let roundedAway = Int(exactly: away.rounded()),
-              roundedHome != roundedAway || vocab.canEndInATie
+              let roundedAway = Int(exactly: away.rounded())
         else { return nil }
+
+        if ProjectedFinalChanceGuard240A.conflicts(
+            projectedHome: Double(roundedHome),
+            projectedAway: Double(roundedAway),
+            homeChance: homeChance,
+            awayChance: awayChance,
+            sportKey: sport
+        ) {
+            return nil
+        }
 
         return (away: roundedAway, home: roundedHome)
     }
@@ -2234,7 +2324,11 @@ enum EventSportHeadlines12472 {
             prematch: event.prematchOdds,
             opening: nil
         )
-        let projPair = qualifiedLivePregameProjectionPair(event: event)
+        let projPair = qualifiedLivePregameProjectionPair(
+            event: event,
+            homeChance: strictPregame?.homeProbability,
+            awayChance: strictPregame?.awayProbability
+        )
 
         var chanceInfo: (namedInk: LivePregameSummary.SegmentInk, homeIsFav: Bool, favName: String, favChanceText: String)?
         if let strictPregame,
@@ -2290,7 +2384,11 @@ enum EventSportHeadlines12472 {
         shortNames: (away: String, home: String),
         pregameShares: (home: Double, draw: Double, away: Double)?
     ) -> LivePregameSummary? {
-        let projPair = qualifiedLivePregameProjectionPair(event: event)
+        let projPair = qualifiedLivePregameProjectionPair(
+            event: event,
+            homeChance: pregameShares?.home,
+            awayChance: pregameShares?.away
+        )
         var chanceInfo: (namedInk: LivePregameSummary.SegmentInk, homeIsFav: Bool, favName: String, favChanceText: String)?
         if let shares = pregameShares {
             let texts = soccerThreeWayChanceTexts(

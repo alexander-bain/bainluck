@@ -199,9 +199,14 @@ def test_a_frontend_scope_runs_only_the_marker_and_anything_else_runs_everything
 
 def test_deploy_still_waits_on_the_sibling_gates_that_skip_on_frontend():
     jobs = _jobs()
-    assert {"backend-tests", "shard-completeness", "search-recall"} <= set(
+    # Fable, Wed Nov 18: deploy reads every database integration group itself and
+    # requires `needs.database-integration.result == 'success'` (a skipped group is not
+    # success), instead of waiting for `search-recall`'s runner to re-check it.
+    # `search-recall` stays the required pull-request context, so its shape is still pinned.
+    assert {"backend-tests", "shard-completeness", "database-integration"} <= set(
         jobs["deploy"]["needs"]
     )
+    assert "needs.database-integration.result == 'success'" in jobs["deploy"]["if"]
     for name in ("shard-completeness", "search-recall"):
         job = jobs[name]
         assert not (job.get("strategy") or {}).get(

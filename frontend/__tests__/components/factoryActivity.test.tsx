@@ -46,10 +46,8 @@ it("prints both observed November 18 stoppages at 10 AM Pacific", () => {
   const messages = (data.stops as Stop[]).map((s) =>
     stopText(s, "2026-11-18T18:00:00Z"),
   );
-  expect(messages).toContain(
-    "Server: nothing merged for 3 hr 50 min, 14 waiting.",
-  );
-  expect(messages).toContain("Announced at 8:47 AM, not merged.");
+  expect(messages).toContain("Server loading dock has stalled.");
+  expect(messages).toContain("Server announced a merge at 8:47 AM PT.");
 });
 
 it("runs only recently crossed belts and stops them for an old read or a blocking station", () => {
@@ -81,6 +79,7 @@ it("runs only recently crossed belts and stops them for an old read or a blockin
       since: flowing.generated_at,
       count: 1,
       level: "red",
+      source: { id: 6994962892, author: "Builder B" },
     },
   ];
   expect(beltFlowing(flowing, "Server", 2, "2026-11-18T18:01:00Z")).toBe(false);
@@ -172,4 +171,63 @@ it("omits the question mark on a Ship crate awaiting live confirmation", () => {
   );
   expect(html).toContain("data-crate=");
   expect(html).not.toContain(">?</span>");
+});
+
+it("shows red only for an attributed NOW hold and drops the unsupported legacy warning", () => {
+  const now = "2026-11-18T18:00:00Z";
+  const hold = {
+    kind: "hold",
+    line: "Server",
+    station: "Merge line",
+    since: "2026-11-18T17:50:00Z",
+    count: 1,
+    level: "red",
+  } as const;
+  const verified = { ...hold, source: { id: 6994962892, author: "Builder B" } };
+  const snapshot: FactoryData = {
+    ...data,
+    generated_at: now,
+    stops: [verified, { ...hold, line: "Website" }],
+  };
+  const html = renderToStaticMarkup(
+    <FactoryFloor data={snapshot} lastGoodAt={now} renderedAt={now} />,
+  );
+  expect((html.match(/data-level="red"/g) ?? []).length).toBe(1);
+  expect(html).toContain("#issuecomment-6994962892");
+  expect(html).toContain("9:50 AM PT · Builder B");
+  expect(html).not.toContain("Website on HOLD");
+});
+
+it("puts sent-back changes at Write and bot updates on a separate shelf", () => {
+  const now = "2026-11-18T18:00:00Z";
+  const base = { ...data.changes[0], merged_at: null, side_track: false };
+  const snapshot: FactoryData = {
+    ...data,
+    generated_at: now,
+    stops: [],
+    changes: [
+      {
+        ...base,
+        number: 12765,
+        line: "Server",
+        station: "Write",
+        sent_back: true,
+      },
+      {
+        ...base,
+        number: 12211,
+        line: "Server",
+        station: "Review",
+        bot_update: true,
+      },
+    ],
+  };
+  const html = renderToStaticMarkup(
+    <FactoryFloor data={snapshot} lastGoodAt={now} renderedAt={now} />,
+  );
+  expect(html).toContain('data-crate="12765" data-station="Server/Write"');
+  expect(html).toContain("Sent back");
+  expect(html.indexOf('data-crate="12211"')).toBeGreaterThan(
+    html.indexOf("Bot updates"),
+  );
 });

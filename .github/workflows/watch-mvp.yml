@@ -38,6 +38,10 @@ on:
       - 'tools/watch_ui_stage.py'
       - 'tools/tests/test_watch_ui_products.py'
       - 'tools/tests/test_watch_ui_stage.py'
+      - 'tools/watch_ui_infra_retry.py'
+      - 'tools/tests/test_watch_ui_infra_retry.py'
+      - 'tools/watch_ui_hang_watchdog.py'
+      - 'tools/tests/test_watch_ui_hang_watchdog.py'
       - 'tools/watch_ui_shards.py'
       - 'tools/watch_simulator_architecture.py'
       - 'tools/tests/test_watch_simulator_architecture.py'
@@ -152,12 +156,18 @@ on:
 permissions:
   contents: read
 
+# #13027 (251: A): cancel superseded PR and master Watch runs so stale heads
+# stop holding the 5-slot macOS runner pool. Previously watch-ui-products had
+# no concurrency group, iphone-compatibility set cancel-in-progress: false,
+# and master pushes fell back to github.run_id. The latest head of every PR
+# and master still runs all nine Watch jobs intact.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('watch-mvp-pr-{0}', github.event.pull_request.number) || format('watch-mvp-{0}', github.ref) }}
+  cancel-in-progress: true
+
 jobs:
   watch-mvp:
     name: Watch behavior and unsigned builds
-    concurrency:
-      group: watch-build-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-      cancel-in-progress: true
     runs-on: macos-15
     timeout-minutes: 20
     env:
@@ -197,21 +207,30 @@ jobs:
 
   iphone-compatibility:
     name: Watch change iPhone compatibility
-    concurrency:
-      # Preserve full-suite evidence without blocking independent Watch UI work.
-      group: watch-iphone-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-      cancel-in-progress: false
     needs: watch-mvp
     runs-on: xcode-27
-    timeout-minutes: 60
+    # #12513: the full suite on Xcode 27.2 ran 62 min and was cut at 60.
+    timeout-minutes: 90
     env:
-      # Same compiler build as Native's current local Xcode (27A266a).
+      # Fallback only; the next step selects Native's local Xcode (27.2, 27B52) when present.
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Use Native's local Xcode (27.2) when this runner has it (#12513)
+        run: |
+          # Native's gate passes the full iPhone suite on Xcode 27.2 (27B52);
+          # on 27.0 (27A266a) this job failed every run since mid-October.
+          ls -d /Applications/Xcode*.app
+          for x in /Applications/Xcode_27.2.app /Applications/Xcode_27.0.app; do
+            if [ -d "$x" ]; then
+              echo "DEVELOPER_DIR=$x/Contents/Developer" >> "$GITHUB_ENV"
+              DEVELOPER_DIR="$x/Contents/Developer" xcodebuild -version
+              break
+            fi
+          done
       - name: Verify updating journeys require actual executed cases
         run: python3 -m unittest discover -s tools/tests -p test_watch_game_updating_gate.py
       - name: Verify receipt rejects incomplete and misleading results
@@ -235,7 +254,8 @@ jobs:
     name: Build exact simulator products once for five fresh pairs
     needs: watch-mvp
     runs-on: xcode-27
-    timeout-minutes: 60
+    # Must cover watch_ui_stage.py's 90m (5400s) products budget + 7m artifact uploads.
+    timeout-minutes: 105
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
@@ -243,10 +263,24 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Use Native's local Xcode (27.2) when this runner has it (#12513)
+        run: |
+          # Native's gate passes the full iPhone suite on Xcode 27.2 (27B52);
+          # on 27.0 (27A266a) this job failed every run since mid-October.
+          ls -d /Applications/Xcode*.app
+          for x in /Applications/Xcode_27.2.app /Applications/Xcode_27.0.app; do
+            if [ -d "$x" ]; then
+              echo "DEVELOPER_DIR=$x/Contents/Developer" >> "$GITHUB_ENV"
+              DEVELOPER_DIR="$x/Contents/Developer" xcodebuild -version
+              break
+            fi
+          done
       - name: Verify immutable product and stage contracts
         run: |
           python3 -m unittest discover -s tools/tests -p test_watch_ui_products.py
           python3 -m unittest discover -s tools/tests -p test_watch_ui_stage.py
+          python3 -m unittest discover -s tools/tests -p test_watch_ui_infra_retry.py
+          python3 -m unittest discover -s tools/tests -p test_watch_ui_hang_watchdog.py
       - name: Build and package exact signed simulator products
         run: python3 tools/watch_ui_stage.py products --output-dir build/watch-ui-products -- bash tools/watch-ui-products.sh
       - uses: actions/upload-artifact@v4
@@ -279,14 +313,11 @@ jobs:
       fail-fast: false
       matrix:
         shard: [corner, readings, navigation, controls, widgets]
-    concurrency:
-      group: watch-ui-${{ matrix.shard }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-      cancel-in-progress: true
     needs: watch-ui-products
     runs-on: xcode-27
     # Reduced selected-game scope: exact101 cases across five isolated pairs.
-    # The aggregate requires exact coverage; all command/job/test limits stay fixed.
-    timeout-minutes: 60
+    # #12513: 39-case navigation shard + 19m prepare exceeds 50m/60m on Xcode 27.2.
+    timeout-minutes: 105
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
       WATCH_UI_SHARD: ${{ matrix.shard }}
@@ -295,6 +326,18 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Use Native's local Xcode (27.2) when this runner has it (#12513)
+        run: |
+          # Native's gate passes the full iPhone suite on Xcode 27.2 (27B52);
+          # on 27.0 (27A266a) this job failed every run since mid-October.
+          ls -d /Applications/Xcode*.app
+          for x in /Applications/Xcode_27.2.app /Applications/Xcode_27.0.app; do
+            if [ -d "$x" ]; then
+              echo "DEVELOPER_DIR=$x/Contents/Developer" >> "$GITHUB_ENV"
+              DEVELOPER_DIR="$x/Contents/Developer" xcodebuild -version
+              break
+            fi
+          done
       - uses: actions/download-artifact@v4
         timeout-minutes: 5
         with:
@@ -348,7 +391,9 @@ jobs:
       - name: Preserve UI journey evidence
         if: always()
         uses: actions/upload-artifact@v4
-        timeout-minutes: 2
+        # Run 44371871767 (corner): every case passed, then uploading the 115 evidence
+        # files stalled in GitHub's storage past 2 minutes and the group failed.
+        timeout-minutes: 10
         with:
           name: watch-ui-journey-${{ matrix.shard }}
           path: |
@@ -417,9 +462,6 @@ jobs:
     needs: watch-mvp
     runs-on: xcode-27
     timeout-minutes: 45
-    concurrency:
-      group: watch-companion-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-      cancel-in-progress: true
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
@@ -427,6 +469,18 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Use Native's local Xcode (27.2) when this runner has it (#12513)
+        run: |
+          # Native's gate passes the full iPhone suite on Xcode 27.2 (27B52);
+          # on 27.0 (27A266a) this job failed every run since mid-October.
+          ls -d /Applications/Xcode*.app
+          for x in /Applications/Xcode_27.2.app /Applications/Xcode_27.0.app; do
+            if [ -d "$x" ]; then
+              echo "DEVELOPER_DIR=$x/Contents/Developer" >> "$GITHUB_ENV"
+              DEVELOPER_DIR="$x/Contents/Developer" xcodebuild -version
+              break
+            fi
+          done
       - name: Reject missing or misleading archive payloads
         run: python3 tools/tests/test_watch_companion_archive.py -v
       - name: Archive unsigned companion and inspect actual payload

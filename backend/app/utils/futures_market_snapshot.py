@@ -286,6 +286,10 @@ OUTCOME_LOAD_ONLY_EXTRA: tuple[str, ...] = (
     "volume_24h",
     "volume_24h_at",
     "is_winner",
+    # Ruling 188 (#11937): when the price last actually MOVED, folded into the
+    # derived `price_changed_at` market column below so the feed can refuse a
+    # market nobody is trading.
+    "price_changed_at",
 )
 
 #: Outcome-level values COMPUTED for the artifact, not loaded (#5809).
@@ -391,6 +395,10 @@ DERIVED_MARKET_COLUMNS: tuple[str, ...] = (
     "price_polled_at",
     "opening_baseline_at",
     "withheld_outcome_ids",
+    # Ruling 188 (#11937): `MAX(outcome.price_changed_at)`, i.e. when any leg's
+    # stored price last moved. `None` = no leg has a stamp, "we do not know",
+    # which the not-trading rule reads as trading (it never refuses on unknown).
+    "price_changed_at",
 )
 
 #: The full positional market row on the wire: loaded columns, then derived ones.
@@ -469,7 +477,9 @@ SPORT_COLUMNS: tuple[str, ...] = ("key", "name")
 #: is a MISS that rebuilds.
 # v9 carries whether every opening belongs to the one recorded field instant.
 # Older cache entries cannot prove that complete normalized comparison.
-SNAPSHOT_SCHEMA_VERSION = 9
+# v10 (ruling 188, #11937): `price_changed_at` joins `DERIVED_MARKET_COLUMNS`,
+# so a v9 row is one value short and must never be decoded as a v10 one.
+SNAPSHOT_SCHEMA_VERSION = 10
 
 
 class _Snapshot:
@@ -656,6 +666,21 @@ def _price_polled_at(outcomes: Iterable[Any]) -> Any:
     ]
     return max(stamps) if stamps else None
 
+
+
+def latest_price_change(outcomes: Iterable[Any]) -> Any:
+    """`MAX(outcome.price_changed_at)` for one market, or `None` when no leg has
+    a stamp (ruling 188). Same carrier rules as `_price_polled_at`: `__dict__`
+    reads only, and an outcome with no stamp contributes nothing."""
+    stamps = [
+        stamp
+        for stamp in (
+            (_instance_dict(o) or _NO_INSTANCE_DICT).get("price_changed_at")
+            for o in outcomes
+        )
+        if stamp is not None
+    ]
+    return max(stamps) if stamps else None
 
 #: How many legs a Discover futures card PRINTS. `feed.py` slices
 #: `card_outcomes[:3]` at both of its futures serializers, and
@@ -1646,6 +1671,13 @@ def price_poll_stamp(market: Any) -> Any:
     return _carrier_stamp(market, "price_polled_at", _price_polled_at)
 
 
+
+def price_change_stamp(market: Any) -> Any:
+    """When any of the market's prices last moved, on either carrier shape
+    (ruling 188): the folded `price_changed_at` on a rebuilt snapshot row, else
+    the fold over an ORM row's projected outcomes. `None` = we do not know."""
+    return _carrier_stamp(market, "price_changed_at", latest_price_change)
+
 def _carrier_stamp(market: Any, key: str, fold: Any) -> Any:
     """One derived stamp off whichever of the three carriers `market` is.
 
@@ -1920,6 +1952,7 @@ def to_plain(
         "withheld_outcome_ids": lambda market, outcomes: _withheld_ids_row(
             market, withheld_by_market
         ),
+        "price_changed_at": lambda market, outcomes: latest_price_change(outcomes),
     }
     # Same rule, one level down (#5809): keyed by NAME so a derived outcome
     # column added to the tuple without a producer here is a `KeyError` on the

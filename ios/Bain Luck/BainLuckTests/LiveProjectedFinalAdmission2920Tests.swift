@@ -487,14 +487,14 @@ final class LiveProjectedFinalAdmission2920Tests: XCTestCase {
         }
     }
 
-    func testALevelPairPrintsOnlyWhereTheSportCanEndLevel() throws {
+    func testALevelPairPrintsInEverySportUnder240A() throws {
         func level(_ h: String, _ a: String) throws -> LiveProjection {
             try object(edited(edited(Self.nflObject, "projected_home_score", h), "projected_away_score", a))
         }
-        assertWithheld(try resolve(try level("110.4", "110.2"), sport: "basketball_nba", home: 90, away: 88),
-                       .levelPair, "basketball cannot end 110 – 110")
+        try assertPair(try resolve(try level("110.4", "110.2"), sport: "basketball_nba", home: 90, away: 88),
+                       home: 110, away: 110, "240: A — basketball level rounded pair prints")
         try assertPair(try resolve(try level("20.2", "19.9"), home: 17, away: 17), home: 20, away: 20,
-                       "the NFL can end level")
+                       "the NFL prints 20 – 20")
         let soccerLevel = try object(edited(edited(Self.soccerObject, "projected_home_score", "1.2"),
                                             "projected_away_score", "1.4"))
         try assertPair(try resolve(soccerLevel, sport: "soccer_epl", home: 1, away: 1, phase: .regulation),
