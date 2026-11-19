@@ -142,7 +142,7 @@ def test_closest_games_rows_print_the_school_for_college_and_change_nothing_for_
                 "hero_probability_away": 0.57, "home_team_data": {"abbreviation": "X"},
                 "away_team_data": {"abbreviation": "Y"}}
 
-    _, leader, row, _ = _extract_blended_leader(card("basketball_ncaab", "UMBC Retrievers", "Iona Gaels"))
+    _, leader, row, _, _ = _extract_blended_leader(card("basketball_ncaab", "UMBC Retrievers", "Iona Gaels"))
     assert (leader, row) == ("Iona", "Iona at UMBC: Iona")
-    _, leader, row, _ = _extract_blended_leader(card("basketball_nba", "Miami Heat", "Houston Rockets"))
+    _, leader, row, _, _ = _extract_blended_leader(card("basketball_nba", "Miami Heat", "Houston Rockets"))
     assert (leader, row) == ("Houston Rockets", "Houston Rockets at Miami Heat: Houston Rockets")
