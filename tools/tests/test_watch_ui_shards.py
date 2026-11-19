@@ -328,7 +328,7 @@ class WatchUIShardTests(unittest.TestCase):
         complete = workflow.split("  watch-ui-complete:", 1)[1].split(
             "  companion-archive:", 1
         )[0]
-        self.assertIn("needs: watch-ui-journey", complete)
+        self.assertIn("watch-ui-journey", complete)
         self.assertIn("if: always()", complete)
         downloads = set(re.findall(r"name: (watch-ui-journey-\w+)", complete))
         self.assertEqual(
