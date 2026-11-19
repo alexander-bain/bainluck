@@ -50,6 +50,7 @@ struct ClipPageView12307: View {
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 ClipReadingView12307(
                     reading: ClipLoader12307.reading(payload, at: context.date),
+                    subjectKind: model.subject?.kind ?? .game,
                     now: context.date,
                     lastUpdateFailed: model.lastUpdateFailed,
                     webURL: model.subject.flatMap(ClipInvocation12307.webURL(for:)),
@@ -77,10 +78,18 @@ struct ClipPageView12307: View {
 
 struct ClipReadingView12307: View {
     let reading: SavedWidgetReading10875
+    let subjectKind: SavedWidgetSubject10875.Kind
     let now: Date
     let lastUpdateFailed: Bool
     let webURL: URL?
     let getApp: () -> Void
+
+    private var getAppButtonTitle: String {
+        switch subjectKind {
+        case .game: return "Get Bain Luck for the whole game page"
+        case .market: return "Get Bain Luck for the whole market page"
+        }
+    }
 
     private var caption: String? {
         ClipLoader12307.caption(reading, now: now).map { clock in
@@ -130,7 +139,7 @@ struct ClipReadingView12307: View {
             }
 
             Button(action: getApp) {
-                Label("Get Bain Luck for the whole game page", systemImage: "arrow.down.app")
+                Label(getAppButtonTitle, systemImage: "arrow.down.app")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
