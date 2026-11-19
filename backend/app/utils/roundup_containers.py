@@ -2313,13 +2313,21 @@ def insert_roundup_feed_items(
                         )
                     ]
                     if len(kept_children) != len(orig_children):
-                        changed = True
-                        if (
-                            earliest_post_opening_seat is None
-                            and seat_floor <= idx < page_window
+                        # Ruling 275 (#13100): a card never loses a row to a card seated
+                        # below it. Only full dissolution where a machinery grouping takes
+                        # over the card's own seat (e.g. Fed & Rates -> Fed & U.S. Macro)
+                        # or a post-opening bundle dissolves runs before seating; partial
+                        # overlap is pruned after final seats are known, and ONLY against
+                        # round-ups seated strictly above the bundle.
+                        if len(kept_children) < 2 and (
+                            is_machinery or idx >= initial_floor_idx
                         ):
-                            earliest_post_opening_seat = idx
-                        if len(kept_children) < 2:
+                            changed = True
+                            if (
+                                earliest_post_opening_seat is None
+                                and seat_floor <= idx < page_window
+                            ):
+                                earliest_post_opening_seat = idx
                             # Absorbing an older bundle's markets so it dissolves takes
                             # over that card's seat for machinery groupings only; standing
                             # round-ups seat identically to master (Fable 12:16 PM PT, #12288).
@@ -2333,17 +2341,6 @@ def insert_roundup_feed_items(
                                     if prev_post is None or idx < prev_post:
                                         dissolved_post_opening_seat_by_id[r_id] = idx
                             continue
-                        updated_existing = copy.deepcopy(dict(existing))
-                        updated_existing["data"]["items"] = kept_children
-                        updated_existing["data"]["item_count"] = len(kept_children)
-                        if isinstance(updated_existing["data"].get("member_ids"), list):
-                            updated_existing["data"]["member_ids"] = [
-                                mid
-                                for mid in updated_existing["data"]["member_ids"]
-                                if mid not in covered_ids
-                            ]
-                        filtered.append(updated_existing)
-                        continue
                 filtered.append(existing)
             result = filtered
         earliest_seat_by_id[r_id] = (
@@ -2461,7 +2458,58 @@ def insert_roundup_feed_items(
             now=now,
         )
 
-    return result
+    # Ruling 275 (#13100): a card never loses a row to a card seated below it.
+    # Prune overlapping rows from surviving theme bundles ONLY when an accepted
+    # round-up covering those markets ended up seated strictly ABOVE the bundle.
+    accepted_ids = {r["data"].get("id") for r in accepted_roundups}
+    covered_above: set[int] = set()
+    pruned_result: list[dict[str, Any]] = []
+    for card in result:
+        if (
+            isinstance(card, Mapping)
+            and card.get("type") == "bundle"
+            and isinstance(card.get("data"), Mapping)
+            and card["data"].get("id") in accepted_ids
+        ):
+            covered_above.update(_roundup_covered_market_ids(card))
+            pruned_result.append(card)
+            continue
+        if (
+            covered_above
+            and isinstance(card, Mapping)
+            and card.get("type") == "bundle"
+            and isinstance(card.get("data"), Mapping)
+            and card["data"].get("kind") != "roundup"
+            and isinstance(card["data"].get("items"), list)
+        ):
+            orig_children = card["data"]["items"]
+            kept_children = [
+                ch
+                for ch in orig_children
+                if not (
+                    isinstance(ch, Mapping)
+                    and ch.get("type") == "futures"
+                    and isinstance(ch.get("data"), Mapping)
+                    and ch["data"].get("id") in covered_above
+                )
+            ]
+            if len(kept_children) != len(orig_children):
+                if len(kept_children) < 2:
+                    continue
+                updated_card = copy.deepcopy(dict(card))
+                updated_card["data"]["items"] = kept_children
+                updated_card["data"]["item_count"] = len(kept_children)
+                if isinstance(updated_card["data"].get("member_ids"), list):
+                    updated_card["data"]["member_ids"] = [
+                        mid
+                        for mid in updated_card["data"]["member_ids"]
+                        if mid not in covered_above
+                    ]
+                pruned_result.append(updated_card)
+                continue
+        pruned_result.append(card)
+
+    return pruned_result
 
 
 def _is_machinery_producer_slug(slug: Any) -> bool:
