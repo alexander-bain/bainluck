@@ -15,9 +15,11 @@ final class SportCategoryViewModel: ObservableObject {
 
     let categoryKey: String
     private let pageSize = 50
+    private let clock: () -> Date
 
-    init(categoryKey: String) {
+    init(categoryKey: String, clock: @escaping () -> Date = Date.init) {
         self.categoryKey = categoryKey
+        self.clock = clock
     }
 
     func load() async {
@@ -110,9 +112,10 @@ final class SportCategoryViewModel: ObservableObject {
     }
 
     var upcoming: [FeedItem] {
-        items.filter {
+        let now = clock()
+        return items.filter {
             guard $0.type == "event" else { return false }
-            return EventState.section(of: $0.event) == .upcoming
+            return SportsUpcomingCutoff13001.admitsUpcoming($0.event, now: now)
         }
     }
 
@@ -172,8 +175,9 @@ final class SportCategoryViewModel: ObservableObject {
 
     var leagueUpcomingGames: [FeedEventData] {
         let seen = feedEventIDs
+        let now = clock()
         return (leagueMarkets?.allGames ?? []).filter {
-            !seen.contains($0.id) && EventState.section(of: $0) == .upcoming
+            !seen.contains($0.id) && SportsUpcomingCutoff13001.admitsUpcoming($0, now: now)
         }
     }
 

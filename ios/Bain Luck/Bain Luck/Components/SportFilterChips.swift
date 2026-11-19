@@ -1,5 +1,20 @@
 import SwiftUI
 
+/// #13001 — Shared Upcoming cutoff across every Sports-tab pill (`All`, league
+/// grids, and category pills such as `Tennis`): a non-live match whose start is
+/// more than `12 hours` behind `now` is dropped from `Upcoming` (and has no
+/// result to show under `Just Happened`), while same-day rain delays and late
+/// session carry-overs (`<= 12h`) stay visible.
+enum SportsUpcomingCutoff13001 {
+    nonisolated static let maxPastStartAge: TimeInterval = 12 * 3600
+
+    nonisolated static func admitsUpcoming(_ event: FeedEventData?, now: Date) -> Bool {
+        guard let event, EventState.section(of: event, now: now) == .upcoming else { return false }
+        guard let start = event.commenceTime?.asDate else { return true }
+        return now.timeIntervalSince(start) <= maxPastStartAge
+    }
+}
+
 // MARK: - Sport Category Model
 
 struct SportCategory: Identifiable, Hashable {

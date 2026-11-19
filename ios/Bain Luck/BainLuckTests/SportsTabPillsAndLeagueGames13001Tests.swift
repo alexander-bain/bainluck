@@ -82,7 +82,8 @@ final class SportsTabPillsAndLeagueGames13001Tests: XCTestCase {
     }
 
     private func writeRenderIfEnabled(_ image: UIImage, name: String) throws {
-        let dir = URL(fileURLWithPath: "/tmp/renders-13001-12932", isDirectory: true)
+        let dirPath = ProcessInfo.processInfo.environment["RENDER_13001_STAGE_DIR"] ?? "/tmp/renders-13001-12932"
+        let dir = URL(fileURLWithPath: dirPath, isDirectory: true)
         guard FileManager.default.fileExists(atPath: dir.path) else { return }
         let data = try XCTUnwrap(image.pngData())
         try data.write(to: dir.appendingPathComponent("\(name).png"))
@@ -298,8 +299,109 @@ final class SportsTabPillsAndLeagueGames13001Tests: XCTestCase {
         try writeRenderIfEnabled(dark, name: "fixture-13001-tennis-matches-dark-390")
     }
 
+    func testUpcomingDropsYesterdaysScheduledMatchAndKeepsSameDayRainDelayAcrossAllPills() throws {
+        // Wed Nov 18, 2026 5:10 PM PT (`2026-11-19T01:10:00Z`):
+        // - Yesterday's scheduled match (`Tue Nov 17`, 30h behind `now`) must NOT appear in Upcoming or Just Happened.
+        // - A same-day rain-delayed scheduled match (`8h` behind `now`, `<= 12h` cutoff) MUST survive in Upcoming.
+        // - Tomorrow's scheduled match (`+16h` ahead of `now`) MUST appear in Upcoming.
+        let fixedNow = ISO8601DateFormatter().date(from: "2026-11-19T01:10:00Z")!
+        let leagueJSON = """
+        {
+          "sport_key": "tennis_atp",
+          "total_markets": 0,
+          "sections": {},
+          "upcoming_games": [
+            {
+              "id": 15349294,
+              "sport": "tennis_atp",
+              "home_team": "Heliovaara / Patten",
+              "away_team": "Arribage / Olivetti",
+              "commence_time": "2026-11-17T19:00:00Z",
+              "status": "scheduled",
+              "current_odds": { "home_probability": 0.58, "away_probability": 0.42 }
+            },
+            {
+              "id": 15349501,
+              "sport": "tennis_atp",
+              "home_team": "Taylor Fritz",
+              "away_team": "Alex de Minaur",
+              "commence_time": "2026-11-18T17:10:00Z",
+              "status": "scheduled",
+              "current_odds": { "home_probability": 0.54, "away_probability": 0.46 }
+            },
+            {
+              "id": 15349502,
+              "sport": "tennis_atp",
+              "home_team": "Jannik Sinner",
+              "away_team": "Casper Ruud",
+              "commence_time": "2026-11-19T17:10:00Z",
+              "status": "scheduled",
+              "current_odds": { "home_probability": 0.81, "away_probability": 0.19 }
+            }
+          ],
+          "recent_results": []
+        }
+        """
+        let markets = try decodeSnake(LeagueMarketsResponse.self, leagueJSON)
+
+        // 1. Tennis / SportCategoryViewModel pill
+        let tennisVM = SportCategoryViewModel(categoryKey: "tennis", clock: { fixedNow })
+        tennisVM.setItemsForTesting([], leagueMarkets: markets)
+        XCTAssertEqual(
+            tennisVM.leagueUpcomingGames.map(\.id),
+            [15349501, 15349502],
+            "Yesterday's match (30h behind) must be dropped while same-day 8h rain delay survives"
+        )
+        XCTAssertTrue(tennisVM.leagueRecentGames.isEmpty, "Unfinished stale scheduled match must not enter Just Happened")
+
+        // 2. LeagueGridViewModel pills (NBA / NFL / NCAAF / NCAAB / MLB / NHL / Soccer)
+        let gridVM = LeagueGridViewModel(slug: "nba", preloadedMarkets: markets, clock: { fixedNow })
+        XCTAssertEqual(gridVM.upcomingGames.map(\.id), [15349501, 15349502])
+        XCTAssertTrue(gridVM.recentGames.isEmpty)
+
+        // 3. FeedViewModel ('All' pill)
+        let feedJSON = """
+        {
+          "items": [
+            { "type": "event", "score": 50, "data": { "id": 15349294, "sport": "tennis_atp", "home_team": "Heliovaara / Patten", "away_team": "Arribage / Olivetti", "commence_time": "2026-11-17T19:00:00Z", "status": "scheduled" } },
+            { "type": "event", "score": 50, "data": { "id": 15349501, "sport": "tennis_atp", "home_team": "Taylor Fritz", "away_team": "Alex de Minaur", "commence_time": "2026-11-18T17:10:00Z", "status": "scheduled" } }
+          ],
+          "total": 2,
+          "limit": 50,
+          "offset": 0,
+          "has_more": false
+        }
+        """
+        let feedResp = try decodeSnake(FeedResponse.self, feedJSON)
+        let emptyFeed = try decodeSnake(FeedResponse.self, #"{"items":[],"total":0,"limit":50,"offset":0,"has_more":false}"#)
+        let emptyGrouped = try decodeSnake(GroupedFeedResponse.self, #"{"feed":[],"total":0,"limit":20,"offset":0}"#)
+        struct StaticFeedClient: SportsFeedProviding {
+            let response: FeedResponse
+            let emptyFeed: FeedResponse
+            let emptyGrouped: GroupedFeedResponse
+            nonisolated func fetchSportsFeed() async throws -> FeedResponse { response }
+            nonisolated func fetchSportsEventBackfill(limit: Int) async throws -> FeedResponse { emptyFeed }
+            nonisolated func fetchSportsGroupedFeed(limit: Int) async throws -> GroupedFeedResponse { emptyGrouped }
+        }
+        let allVM = FeedViewModel(
+            client: StaticFeedClient(response: feedResp, emptyFeed: emptyFeed, emptyGrouped: emptyGrouped),
+            telemetry: nil,
+            clock: { fixedNow },
+            autoRefreshEnabled: false
+        )
+        let exp = expectation(description: "load")
+        Task {
+            await allVM.load()
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 3.0)
+        XCTAssertEqual(allVM.filteredUpcoming(for: "all").compactMap({ $0.event?.id }), [15349501])
+        XCTAssertTrue(allVM.filteredJustHappened(for: "all").isEmpty)
+    }
+
     func testRenderLivePayloadsWhenStaged() throws {
-        let dir = URL(fileURLWithPath: "/tmp/renders-13001-12932", isDirectory: true)
+        let dirPath = ProcessInfo.processInfo.environment["RENDER_13001_STAGE_DIR"] ?? "/tmp/renders-13001-12932"
+        let dir = URL(fileURLWithPath: dirPath, isDirectory: true)
         guard FileManager.default.fileExists(atPath: dir.path) else { return }
 
         let decoder = JSONDecoder()

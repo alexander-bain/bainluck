@@ -32,15 +32,18 @@ final class LeagueGridViewModel: ObservableObject {
     @Published var conferenceFilter: String?
 
     private let isPreloadedForTest: Bool
+    private let clock: () -> Date
 
     init(
         slug: String,
         preloadedGrid: ChampionshipGridResponse? = nil,
-        preloadedMarkets: LeagueMarketsResponse? = nil
+        preloadedMarkets: LeagueMarketsResponse? = nil,
+        clock: @escaping () -> Date = Date.init
     ) {
         self.slug = slug
         self.grid = preloadedGrid
         self.leagueMarkets = preloadedMarkets
+        self.clock = clock
         self.isPreloadedForTest = (preloadedGrid != nil || preloadedMarkets != nil)
         if isPreloadedForTest {
             self.loading = false
@@ -52,7 +55,8 @@ final class LeagueGridViewModel: ObservableObject {
     }
 
     var liveGames: [FeedEventData] {
-        (leagueMarkets?.allGames ?? []).filter { EventState.section(of: $0) == .live }
+        let now = clock()
+        return (leagueMarkets?.allGames ?? []).filter { EventState.section(of: $0, now: now) == .live }
     }
 
     var liveHasSuspended: Bool {
@@ -60,11 +64,15 @@ final class LeagueGridViewModel: ObservableObject {
     }
 
     var upcomingGames: [FeedEventData] {
-        (leagueMarkets?.allGames ?? []).filter { EventState.section(of: $0) == .upcoming }
+        let now = clock()
+        return (leagueMarkets?.allGames ?? []).filter {
+            SportsUpcomingCutoff13001.admitsUpcoming($0, now: now)
+        }
     }
 
     var recentGames: [FeedEventData] {
-        (leagueMarkets?.allGames ?? []).filter { EventState.section(of: $0) == .finished }
+        let now = clock()
+        return (leagueMarkets?.allGames ?? []).filter { EventState.section(of: $0, now: now) == .finished }
     }
 
     var conferences: [String] {
