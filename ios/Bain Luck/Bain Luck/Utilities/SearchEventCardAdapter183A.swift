@@ -20,6 +20,19 @@ enum SearchEventCardAdapter183A {
                     current.drawProbability = nil
                     current.homeRenderedPercent = nil
                     current.awayRenderedPercent = nil
+                } else if event.heroProbabilitySource != "settled",
+                          EventState.canStillBeGraded(
+                              event.status,
+                              commenceTime: event.commenceTime?.asDate
+                          ),
+                          let heroHome = event.heroProbability,
+                          current.homeProbability == nil || abs((current.homeProbability ?? 0) - heroHome) > 0.0005 {
+                    // #12865 / #3937 — `source_mark` and `away_source_mark` explain `resolve_hero`
+                    // (including suppressed-twin folded sources and draw-sport away refusal).
+                    current.homeProbability = heroHome
+                    current.awayProbability = event.heroProbabilityAway
+                    current.homeRenderedPercent = nil
+                    current.awayRenderedPercent = nil
                 }
                 return current
             }
@@ -62,6 +75,7 @@ enum SearchEventCardAdapter183A {
             status: event.status,
             homeScore: event.homeScore,
             awayScore: event.awayScore,
+            scoreSourceUnavailable: event.scoreSourceUnavailable,
             blendFoldRevision: nil,
             heroProbabilitySource: event.heroProbabilitySource,
             heroProbabilityObservedAt: nil,
@@ -204,6 +218,7 @@ enum SearchEventCardAdapter183A {
             status: event.status,
             homeScore: event.homeScore,
             awayScore: event.awayScore,
+            scoreSourceUnavailable: event.scoreSourceUnavailable,
             blendFoldRevision: nil,
             heroProbabilitySource: nil,
             heroProbabilityObservedAt: nil,

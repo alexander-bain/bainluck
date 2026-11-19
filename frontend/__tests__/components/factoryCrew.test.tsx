@@ -193,6 +193,49 @@ it("shows carrying, standing in line, working and sleeping from snapshot evidenc
   ).toBe("working");
 });
 
+it("counts each delivery line and keeps held changes and quiet drafts off the floor total", async () => {
+  watchMotion();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const waiting: Change = { ...base, station: "Merge line" };
+  const shipped = snapshot.changes[3];
+  const changes: Change[] = [
+    waiting,
+    { ...waiting, line: "Website" },
+    shipped,
+    { ...shipped, line: "Website", testflight_build: undefined },
+    { ...base, number: 13070, checks_running: true, held_for_108: true },
+    { ...base, number: 12621, station: "Write", parked: true },
+  ];
+  try {
+    await act(async () =>
+      root.render(
+        <FactoryFloor
+          data={{ ...snapshot, changes, stops: [], notes: undefined }}
+          lastGoodAt={now}
+          renderedAt={now}
+        />,
+      ),
+    );
+    const stats = container.querySelector('[aria-label="The factory at a glance"]')!;
+    expect(Array.from(stats.querySelectorAll("strong"), (n) => n.textContent)).toEqual([
+      "1", "1", "1",
+    ]);
+    for (const line of ["Website", "Apps"]) {
+      const row = container.querySelector(`[data-factory-row="${line}"]`)!;
+      expect(row.textContent).toContain("1 shipped");
+      expect(row.querySelector(`[data-bay="Live"] [data-crate="${shipped.number}"]`)).not.toBeNull();
+    }
+    expect(container.querySelector('[aria-labelledby="held-heading"] [data-crate="13070"]')).not.toBeNull();
+    expect(container.querySelector('[aria-labelledby="parked-heading"] [data-crate="12621"]')).not.toBeNull();
+    expect(container.querySelector('[data-factory-row] [data-crate="13070"]')).toBeNull();
+    expect(container.querySelector('[data-factory-row] [data-crate="12621"]')).toBeNull();
+    expect(beltFlowing({ ...snapshot, changes, transitions: [] }, "Server", 1, now)).toBe(false);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
 it("moves the checks conveyor while CI runs and pauses it on an old read", () => {
   const running = { ...snapshot, transitions: [] };
   expect(beltFlowing(running, "Server", 1, now)).toBe(true);

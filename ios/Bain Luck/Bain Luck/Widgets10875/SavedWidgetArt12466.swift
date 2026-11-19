@@ -55,6 +55,8 @@ struct SavedWidgetArt12466: Equatable, Sendable {
     var pregameDuringProjection: ProjectedPair? = nil
     var pregameAwayBarShare: Double? = nil
     var pregameThreeWay: ThreeWayPregame? = nil
+    var currentHomeChance: Double? = nil
+    var currentAwayChance: Double? = nil
 
     nonisolated struct Scores: Equatable, Sendable {
         let away: Int
@@ -108,8 +110,16 @@ struct SavedWidgetArt12466: Equatable, Sendable {
         let liveBadge: String? = live
             ? (PeriodLabel.liveStatusText(period: event.espn?.period, gameClock: event.espn?.gameClock) ?? "Live")
             : nil
+        let isOpening = event.heroProbabilitySource == "opening"
+        let curHome: Double? = isOpening ? nil : (event.currentOdds?.homeProbability ?? event.heroProbability)
+        let curAway: Double? = isOpening ? nil : (event.currentOdds?.awayProbability ?? event.heroProbabilityAway)
         let projected: ProjectedPair? = (!live && !finished)
-            ? resolveScheduledProjection(odds: event.currentOdds, sportKey: event.sport)
+            ? resolveScheduledProjection(
+                odds: event.currentOdds,
+                sportKey: event.sport,
+                homeChance: curHome,
+                awayChance: curAway
+            )
             : nil
         let pregame: PregamePair? = (live || finished)
             ? resolvePregamePair(prematch: event.prematchOdds, sportKey: event.sport)
@@ -119,7 +129,9 @@ struct SavedWidgetArt12466: Equatable, Sendable {
                 projection: event.pregameProjection,
                 sportKey: event.sport,
                 status: event.status,
-                commence: commence
+                commence: commence,
+                homeChance: pregame?.homeProbability,
+                awayChance: pregame?.awayProbability
             )
             : nil
         let pregameTick: Double? = live
@@ -147,7 +159,9 @@ struct SavedWidgetArt12466: Equatable, Sendable {
             liveProjection: event.currentOdds?.liveProjection,
             pregameDuringProjection: pregameDuringProj,
             pregameAwayBarShare: pregameTick,
-            pregameThreeWay: threeWayPre
+            pregameThreeWay: threeWayPre,
+            currentHomeChance: curHome,
+            currentAwayChance: curAway
         )
     }
 
@@ -178,7 +192,9 @@ struct SavedWidgetArt12466: Equatable, Sendable {
 
     static func resolveScheduledProjection(
         odds: SavedWidgetEventOdds10875?,
-        sportKey: String?
+        sportKey: String?,
+        homeChance: Double? = nil,
+        awayChance: Double? = nil
     ) -> ProjectedPair? {
         let key = (sportKey ?? "").lowercased()
         let admitsUnit = key.hasPrefix("americanfootball_") || key.hasPrefix("basketball_") || key.hasPrefix("soccer_")
@@ -191,9 +207,17 @@ struct SavedWidgetArt12466: Equatable, Sendable {
               home.isFinite, away.isFinite,
               home > 0, away > 0,
               let roundedHome = Int(exactly: home.rounded()),
-              let roundedAway = Int(exactly: away.rounded()),
-              roundedHome != roundedAway || vocab.canEndInATie
+              let roundedAway = Int(exactly: away.rounded())
         else { return nil }
+        if ProjectedFinalChanceGuard240A.conflicts(
+            projectedHome: Double(roundedHome),
+            projectedAway: Double(roundedAway),
+            homeChance: homeChance,
+            awayChance: awayChance,
+            sportKey: sportKey
+        ) {
+            return nil
+        }
         return ProjectedPair(away: roundedAway, home: roundedHome)
     }
 
@@ -293,7 +317,9 @@ struct SavedWidgetArt12466: Equatable, Sendable {
         projection: SavedWidgetPregameProjection10875?,
         sportKey: String?,
         status: String?,
-        commence: Date?
+        commence: Date?,
+        homeChance: Double? = nil,
+        awayChance: Double? = nil
     ) -> ProjectedPair? {
         let key = (sportKey ?? "").lowercased()
         let expected: (unit: String, period: String)? = {
@@ -330,9 +356,18 @@ struct SavedWidgetArt12466: Equatable, Sendable {
         let vocab = SportVocab.forSport(sportKey)
         guard vocab.sportsbookSpreadIsAMargin,
               let roundedHome = Int(exactly: home.rounded()),
-              let roundedAway = Int(exactly: away.rounded()),
-              roundedHome != roundedAway || vocab.canEndInATie
+              let roundedAway = Int(exactly: away.rounded())
         else { return nil }
+
+        if ProjectedFinalChanceGuard240A.conflicts(
+            projectedHome: Double(roundedHome),
+            projectedAway: Double(roundedAway),
+            homeChance: homeChance,
+            awayChance: awayChance,
+            sportKey: sportKey
+        ) {
+            return nil
+        }
 
         return ProjectedPair(away: roundedAway, home: roundedHome)
     }
@@ -383,10 +418,19 @@ struct SavedWidgetArt12466: Equatable, Sendable {
         guard vocab.sportsbookSpreadIsAMargin,
               let roundedHome = Int(exactly: home.rounded()),
               let roundedAway = Int(exactly: away.rounded()),
-              roundedHome != roundedAway || vocab.canEndInATie,
               roundedHome >= scores.home,
               roundedAway >= scores.away
         else { return nil }
+
+        if ProjectedFinalChanceGuard240A.conflicts(
+            projectedHome: Double(roundedHome),
+            projectedAway: Double(roundedAway),
+            homeChance: currentHomeChance,
+            awayChance: currentAwayChance,
+            sportKey: sportKey
+        ) {
+            return nil
+        }
 
         return LiveProjectedPair(
             awayText: String(roundedAway),

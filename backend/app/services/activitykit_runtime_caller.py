@@ -30,7 +30,8 @@ async def run_serialized_page(
     transport,
     provider_token,
     *,
-    policy=RuntimePolicy()
+    policy=RuntimePolicy(),
+    score_refresher=None,
 ):
     if not policy.enabled:
         return {"status": "disabled", "terminal": "skipped"}
@@ -65,14 +66,16 @@ async def run_serialized_page(
                     # Unreadable/malformed is never treated as an empty store.
                     raise ValueError("Unavailable cursor")
                 phase = "delivery"
+                page_kwargs = {"policy": policy, "after": after}
+                if score_refresher is not None:
+                    page_kwargs["score_refresher"] = score_refresher
                 result = await run_activitykit_page(
                     sessions,
                     adapter,
                     worker,
                     transport,
                     provider_token,
-                    policy=policy,
-                    after=after,
+                    **page_kwargs,
                 )
                 summary = asdict(result)
                 summary.pop("next_cursor")  # No registration identity in task logs.

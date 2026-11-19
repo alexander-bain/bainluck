@@ -55,6 +55,8 @@ from zoneinfo import ZoneInfo
 
 from app.utils.container_presentation import MEMBER_MARKET, market_destination
 from app.utils.futures_liveness import leg_is_graded
+from app.utils.futures_source_mark import futures_outcome_source_mark
+from app.utils.source_mark import no_source_mark, source_mark_on_axis
 from app.utils.tonights_games import _parse_dt
 
 
@@ -403,6 +405,8 @@ class _SiblingMember:
     settled_winner: Optional[str]
     probability: Optional[float]
     no_probability: Optional[float]
+    source_mark: dict[str, Any]
+    no_outcome_mark: dict[str, Any]
     outcome_id: int
     observed_at: Optional[str]
     raw_market: Mapping[str, Any]
@@ -904,6 +908,7 @@ def _build_member_card(member: _SiblingMember) -> dict[str, Any]:
                 "id": member.outcome_id,
                 "name": "Yes",
                 "probability": member.probability,
+                "source_mark": member.source_mark,
                 "rendered_percent": yes_pct,
                 "american_odds": None,
                 "rank": 1,
@@ -915,6 +920,7 @@ def _build_member_card(member: _SiblingMember) -> dict[str, Any]:
                 "id": member.outcome_id + 1,
                 "name": "No",
                 "probability": no_prob,
+                "source_mark": member.no_outcome_mark,
                 "rendered_percent": no_pct,
                 "american_odds": None,
                 "rank": 2,
@@ -1582,6 +1588,15 @@ def select_sibling_family(
             .strip()
             .lower()
         )
+        source_mark = target_outcome.get("source_mark") or no_source_mark(
+            "source_evidence_incomplete"
+        )
+        if no_outcome is not None and no_prob is not None:
+            no_outcome_mark = no_outcome.get("source_mark") or no_source_mark(
+                "source_evidence_incomplete"
+            )
+        else:
+            no_outcome_mark = source_mark_on_axis(source_mark, inverted=True)
 
         parsed_members.append(
             _SiblingMember(
@@ -1601,6 +1616,8 @@ def select_sibling_family(
                 settled_winner=settled_winner,
                 probability=prob,
                 no_probability=no_prob,
+                source_mark=source_mark,
+                no_outcome_mark=no_outcome_mark,
                 outcome_id=target_oid,
                 observed_at=obs,
                 raw_market=m,
@@ -1888,6 +1905,7 @@ def select_sibling_family(
                         "outcome_id": pm.outcome_id,
                         "label": pm.subject,
                         "probability": pm.probability,
+                        "source_mark": pm.source_mark,
                         "rendered_percent": _half_up_percent(pm.probability),
                         "observed_at": pm.observed_at,
                     }
@@ -2050,8 +2068,9 @@ async def _load_markets_from_db(
         ):
             continue
 
-        outcomes_list = [
-            {
+        outcomes_list = []
+        for o in getattr(m, "outcomes", None) or ():
+            outcome = {
                 "id": int(o.id),
                 "name": o.name,
                 "probability": (
@@ -2072,8 +2091,8 @@ async def _load_markets_from_db(
                     else None
                 ),
             }
-            for o in (getattr(m, "outcomes", None) or ())
-        ]
+            outcome["source_mark"] = futures_outcome_source_mark(m, o, outcome)
+            outcomes_list.append(outcome)
         raw_name = getattr(m, "name", None)
         raw_res_date = getattr(m, "resolution_date", None)
         norm_name, norm_res_date = normalize_registered_family_market(

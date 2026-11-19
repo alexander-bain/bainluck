@@ -78,17 +78,22 @@ final class TheRunLineIsNotAMarginMapProjection8721Tests: XCTestCase {
     }
 
     func testTheLiveRunLineIsNotAProjection() {
-        // The run line the card used to negate: Cubs +1.1 on the home side.
+        // The run/puck line the card used to negate: Cubs +1.1 / +1.5 on the home side.
         XCTAssertNil(Self.projection(sport: "baseball_mlb", homeSpread: 1.1, rungs: Self.cubsAtRedSox, isLive: true),
                      "the live Run margin map prints the run line as its projection (#8721)")
         XCTAssertNil(Self.projection(sport: "baseball_mlb", homeSpread: nil, rungs: Self.cubsAtRedSox, isLive: true),
                      "a live baseball ladder's coin-flip rung is not a projection either")
+        XCTAssertNil(Self.projection(sport: "icehockey_nhl", homeSpread: 1.5, rungs: Self.cubsAtRedSox, isLive: true),
+                     "the live Goal margin map prints the ±1.5 puck line as its projection (#13007)")
+        XCTAssertNil(Self.projection(sport: "icehockey_nhl", homeSpread: nil, rungs: Self.cubsAtRedSox, isLive: true))
     }
 
     func testAnUnplayedCloseGameNamesNoLongShotRung() {
-        // Nearest a coin flip is "Cubs by 1.5+" at 35% — the run line again.
+        // Nearest a coin flip is "Cubs by 1.5+" at 35% — the run/puck line again.
         XCTAssertNil(Self.projection(sport: "baseball_mlb", homeSpread: 1.5, rungs: Self.cubsAtRedSox, isLive: false))
         XCTAssertNil(Self.projection(sport: "baseball_npb", homeSpread: 1.5, rungs: Self.cubsAtRedSox, isLive: false))
+        XCTAssertNil(Self.projection(sport: "icehockey_nhl", homeSpread: 1.5, rungs: Self.cubsAtRedSox, isLive: false))
+        XCTAssertNil(Self.projection(sport: "icehockey_ahl", homeSpread: 1.5, rungs: Self.cubsAtRedSox, isLive: false))
     }
 
     func testAnUnplayedGameWithAnEvenMoneyRungReadsIt() {
@@ -119,7 +124,7 @@ final class TheRunLineIsNotAMarginMapProjection8721Tests: XCTestCase {
     }
 
     func testControlAMarginSportReadsExactlyAsBefore() {
-        for sport in ["americanfootball_nfl", "basketball_nba", "icehockey_nhl"] {
+        for sport in ["americanfootball_nfl", "basketball_nba"] {
             XCTAssertEqual(Self.projection(sport: sport, homeSpread: 1.5, rungs: Self.cubsAtRedSox, isLive: true), -1.5, sport)
             XCTAssertEqual(Self.projection(sport: sport, homeSpread: 1.5, rungs: Self.cubsAtRedSox, isLive: false), -1.5, sport)
             XCTAssertEqual(

@@ -22,6 +22,7 @@ from app.utils.roundup_containers import (
     compose_roundup_feed_item,
     load_roundup_definition,
 )
+from app.utils.source_mark import quote_source_mark
 from app.utils.subject_sequence import (
     CELTICS_NEXT_3_GAMES_DEFINITION,
     CELTICS_NEXT_3_GAMES_SLUG,
@@ -143,6 +144,13 @@ class TestSubjectSequenceSelectorAndTruthChecks:
         self,
     ) -> None:
         cards = _make_celtics_fixture_cards()
+        cards[0]["source_mark"] = quote_source_mark([{"key": "espn", "probability": 0.50}])
+        cards[1]["source_mark"] = quote_source_mark([{"key": "kalshi", "probability": 0.145}])
+        cards[1]["away_source_mark"] = quote_source_mark([{
+            "key": "kalshi", "probability": 0.855, "observed_at": "2026-11-08T19:18:00Z",
+        }])
+        cards[2]["source_mark"] = quote_source_mark([{"key": "polymarket", "probability": 0.64}])
+        cards[2]["away_source_mark"] = quote_source_mark([{"key": "polymarket", "probability": 0.36}])
         res = select_subject_sequence(
             cards,
             now=NOW_NOV_8,
@@ -160,6 +168,13 @@ class TestSubjectSequenceSelectorAndTruthChecks:
             "at Bucks \u00b7 Sun Nov 8",
             "at 76ers \u00b7 Tue Nov 10",
             "vs Raptors \u00b7 Wed Nov 11",
+        ]
+        feed = compose_roundup_feed_item(ROUNDUP_PRODUCERS[CELTICS_NEXT_3_GAMES_SLUG], res)
+        assert feed is not None
+        assert [row["source_mark"] for row in feed["data"]["roundup"]["rows"]] == [
+            cards[1]["away_source_mark"],
+            {"state": "none", "sources": [], "reason": "source_evidence_incomplete"},
+            cards[2]["source_mark"],
         ]
 
     def test_refuses_when_fewer_than_three_blended_games_in_window(self) -> None:

@@ -331,8 +331,12 @@ class TestThroughTheRoute:
         await _serve(session)
         sql = _sql(session.pool_statements[0])
         assert "futures_markets.id IN (63812910)" in sql
-        assert re.search(r"futures_markets\.id IN \(SELECT futures_markets\.id\s", sql)
+        assert "UNION" in sql
+        assert "JOIN" in sql
         assert "LIMIT 100" in sql
+        # #11931: never combine recent_ids + slate_market_ids with OR(id IN (SELECT ...), id IN (...)),
+        # which forces Postgres to scan all of futures_markets via a hashed SubPlan.
+        assert not re.search(r"futures_markets\.id IN \(SELECT futures_markets\.id\s", sql)
 
     async def test_THE_CONTROL_no_slate_means_the_old_pool_statement_and_the_old_order(self):
         session = _RouteSession([], _pool())

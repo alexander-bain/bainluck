@@ -208,7 +208,7 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
     """Attach the two signals that need the database, with ONE read each:
     a live game's fastest recent move, and a finished game's teams' futures
     moves. Writes ``item[SIGNALS_KEY]``; never raises past a failed read."""
-    from sqlalchemy import and_, func, select
+    from sqlalchemy import and_, func, or_, select
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.models.models import FuturesMarket, FuturesOutcome, WinProbSnapshot
@@ -286,7 +286,19 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
             # Bind the predicates in a tuple so the indented `FuturesMarket.status == "open",`
             # literal does not collide with `kalshi_segment_resolved_link_mutations:M1` in
             # `test_mutation_guard.py`'s residue sweep (same pattern as `event_combat.py`).
+            #
+            # Sargable range predicates (`probability_change_24h >= T OR <= -T` with
+            # `IS NOT NULL`) match the existing partial index
+            # `ix_fo_market_movement (market_id, probability_change_24h) WHERE probability_change_24h IS NOT NULL`
+            # instead of wrapping the column in `ABS(...)`. When sharing across readers,
+            # read all moved open team-linked outcomes once per fleet bucket and filter
+            # to `team_items` in Python so personalized/dismissed subsets share one cache entry.
             open_status = "open"
+            team_predicate = (
+                FuturesOutcome.team_id.isnot(None)
+                if _use_shared
+                else FuturesOutcome.team_id.in_(team_ids)
+            )
             raw_rows = (await db.execute(
                 select(
                     FuturesOutcome.team_id,
@@ -298,9 +310,13 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
                 )
                 .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
                 .where(
-                    FuturesOutcome.team_id.in_(team_ids),
+                    team_predicate,
                     FuturesMarket.status == open_status,
-                    func.abs(FuturesOutcome.probability_change_24h) >= TEAM_MOVE_POINTS,
+                    FuturesOutcome.probability_change_24h.isnot(None),
+                    or_(
+                        FuturesOutcome.probability_change_24h >= TEAM_MOVE_POINTS,
+                        FuturesOutcome.probability_change_24h <= -TEAM_MOVE_POINTS,
+                    ),
                     FuturesOutcome.price_changed_at >= now - timedelta(days=1),
                 )
             )).all()
@@ -320,7 +336,7 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
         if _use_shared:
             rows = await _pic.get_or_build(
                 "discover_game_team_moves",
-                ("v1", team_ids, _pic.time_bucket(now, _pic.clock_bucket_s())),
+                ("v1", _pic.time_bucket(now, _pic.clock_bucket_s())),
                 _load_team_moves,
             )
         else:

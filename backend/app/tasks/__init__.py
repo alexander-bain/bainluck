@@ -3328,12 +3328,32 @@ def create_github_issue_for_bug_report_task(self, report_id: int):
 
             severity = compute_severity(report.description)
             title = format_issue_title(report.description)
+
+            screenshot_summary = None
+            if (report.app_state or {}).get("source") == "testflight" and report.screenshot_base64:
+                from app.services.testflight_feedback import summarize_testflight_screenshot
+                try:
+                    screenshot_summary = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            summarize_testflight_screenshot,
+                            report.screenshot_base64,
+                            report_id=report.id,
+                        ),
+                        timeout=10.0,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "TestFlight screenshot summary timed out or failed for report #%d (filing without it): %s",
+                        report.id, exc,
+                    )
+
             body = format_issue_body(
                 report_id=report.id,
                 description=report.description,
                 category=report.category,
                 app_state=report.app_state,
                 has_screenshot=bool(report.screenshot_base64),
+                screenshot_summary=screenshot_summary,
             )
             labels = build_labels(report.category, severity, is_owner=is_owner)
 
@@ -7962,11 +7982,54 @@ def deliver_activitykit_updates():
     return result
 
 
+@celery_app.task(name="app.tasks.deliver_activitykit_starts", soft_time_limit=60,
+                 time_limit=90, max_retries=0)
+def deliver_activitykit_starts():
+    """One default-off sweep of kickoff Live Activity start pushes (#13052 / 254-A)."""
+    from app.tasks.activitykit_start import run_activitykit_start_dispatch
+
+    result = run_async(run_activitykit_start_dispatch())
+    if result["terminal"] in {"failed", "partial"}:
+        logger.warning("ActivityKit start dispatch incomplete: %s", result)
+        raise RuntimeError("ActivityKit start dispatch incomplete")
+    return result
+
+
+@celery_app.task(name="app.tasks.probe_live_tennis_scores", soft_time_limit=45,
+                 time_limit=60, max_retries=0)
+def probe_live_tennis_scores():
+    """Read-only 15-minute coverage probe of livetennisapi.com (#13000 / 257: B).
+
+    Off when LIVE_TENNIS_API_KEY is unset; never writes DB rows or reader data.
+    """
+    from app.tasks.live_tennis_probe import run_live_tennis_probe
+
+    return run_async(run_live_tennis_probe())
+
+
 celery_app.conf.beat_schedule = {
     "activitykit-runtime": {
+        # #10542 step 5: 15 s beat so pinned Live Activities read ESPN and push
+        # score changes within ~15 s instead of waiting behind the 60 s full-slate
+        # sync + 30 s sweep. When scanned == 0 (no active Live Activities), the
+        # task exits in ~0.2 s with zero ESPN calls.
         "task": "app.tasks.deliver_activitykit_updates",
+        "schedule": 15.0,
+        "options": {"queue": "realtime", "expires": 12},
+    },
+    "activitykit-start-push": {
+        "task": "app.tasks.deliver_activitykit_starts",
         "schedule": 30.0,
         "options": {"queue": "realtime", "expires": 25},
+    },
+    "probe-live-tennis-scores": {
+        # #13000 (Ruling 257: B): read-only coverage probe of livetennisapi.com,
+        # off when LIVE_TENNIS_API_KEY is unset, capped at <=96 requests/day.
+        # Runs on realtime (same `bainluck` app as LIVE_TENNIS_API_KEY, <1 ms
+        # when disabled, 1 read-only GET every 15 min when enabled) at :03/:18/:33/:48.
+        "task": "app.tasks.probe_live_tennis_scores",
+        "schedule": crontab(minute="3,18,33,48"),
+        "options": {"queue": "realtime", "expires": 840},
     },
     "poll-odds-adaptive": {
         "task": "app.tasks.poll_all_odds",

@@ -119,6 +119,16 @@ export function recentTransfers(data: FactoryData, now: string) {
   );
 }
 
+export function onActiveFloor(change: Change) {
+  return (
+    change.station !== "Live" &&
+    !change.side_track &&
+    !change.bot_update &&
+    !change.parked &&
+    !change.held_for_108
+  );
+}
+
 export function crewActivity(
   data: FactoryData,
   now: string,
@@ -129,7 +139,10 @@ export function crewActivity(
   );
   const carrying = changes.find((change) =>
     moves.some(
-      (move) => move.number === change.number && move.to === change.station,
+      (move) =>
+        move.number === change.number &&
+        move.line === change.line &&
+        move.to === change.station,
     ),
   );
   if (carrying) return { pose: "carrying", change: carrying } as const;
@@ -210,8 +223,7 @@ export function beltFlowing(
         change.line === line &&
         change.station === "Test" &&
         change.checks_running &&
-        !change.side_track &&
-        !change.bot_update,
+        onActiveFloor(change),
     )
   )
     return true;

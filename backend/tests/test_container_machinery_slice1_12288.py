@@ -935,15 +935,20 @@ async def test_slice3_all_four_groupings_pass_227a_and_direction_228() -> None:
     jan_sec = next(s for s in fed_page["sections"] if s["class"] == "jan_fomc")
     jan_names = [o["name"] for o in jan_sec["visual_block"]["items"][0]["outcomes"]]
     assert jan_names == [
-        "25 bps decrease",
+        "Quarter-point cut",
         "No change",
-        "25 bps increase",
-        "50+ bps increase",
+        "Quarter-point increase",
+        "Half-point or larger increase",
     ]
     rate_sec = next(s for s in fed_page["sections"] if s["class"] == "rate_path")
     by_mid = {m["market_id"]: [o["name"] for o in m["outcomes"]] for m in rate_sec["visual_block"]["items"]}
     assert by_mid[114367] == ["3.75%", "4.0%", "4.25%", "≥ 4.5%"]
-    assert by_mid[70732744] == ["1 (25 bps)", "2 (50 bps)", "3 (75 bps)", "5+ (125+ bps)"]
+    assert by_mid[70732744] == [
+        "1 hike (quarter point)",
+        "2 hikes (half point)",
+        "3 hikes (three-quarter point)",
+        "5+ hikes (1.25 points or more)",
+    ]
 
     # Negative check: scrambling a numerical-scale market fails direction_228_numerical_scale_order
     tampered = copy.deepcopy(fed_page)
@@ -997,7 +1002,9 @@ async def test_slice4_card_charts_own_headline_flat_line_is_not_picture_and_natu
 
     fed_title = by_slug["machinery-fed-and-macro"]["container"]["container"]["name"]
     assert "End-of-2026 Fed Rate" not in fed_title
-    assert "The January Fed decision prices" in fed_title
+    assert "A quarter-point increase leads the January Fed decision" in fed_title
+    assert "bps" not in fed_title.lower()
+    assert "prices" not in fed_title.lower()
     assert "end-of-2026 Fed rate" in fed_title
 
     # 3. A flat line is not a picture:
@@ -1183,11 +1190,14 @@ async def test_slice5_fable_six_notes_pairs_moving_charts_subject_headings_title
     assert _clean_section_market_label("What will Fed Rate hit before 2027?") == "Fed Rate Highs & Lows Before 2027"
     assert _clean_section_market_label("Fed decision in Apr 2027?") == "April 2027 Fed Decision"
     assert _clean_section_market_label("Oscar Winner: Best Music (Original Score)") == "Best Original Score"
-    assert _clean_outcome_label("Hike 25bps") == "25 bps increase"
-    assert _clean_outcome_label("Hike >25bps") == "50+ bps increase"
-    assert _clean_outcome_label("Cut 25bps") == "25 bps decrease"
-    assert _clean_outcome_label("Cut >25bps") == "50+ bps decrease"
+    assert _clean_outcome_label("Hike 25bps") == "Quarter-point increase"
+    assert _clean_outcome_label("Hike >25bps") == "Half-point or larger increase"
+    assert _clean_outcome_label("Cut 25bps") == "Quarter-point cut"
+    assert _clean_outcome_label("Cut >25bps") == "Half-point or larger cut"
     assert _clean_outcome_label("Fed maintains rate") == "No change"
+    assert _clean_outcome_label("1 (25 bps)") == "1 hike (quarter point)"
+    assert _clean_outcome_label("2 (50 bps)") == "2 hikes (half point)"
+    assert _clean_outcome_label("3 (75 bps)") == "3 hikes (three-quarter point)"
     assert _clean_outcome_label("Exactly 4.1%") == "4.1%"
 
     # 6. Fed's third screen has a real picture (moving chart) and passes 227: A across all screens.

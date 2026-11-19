@@ -102,6 +102,13 @@ async def test_pregame_is_the_blend_of_the_readings_at_the_first_tee(monkeypatch
     assert g["Scottie Scheffler"]["pregame_probability"] == pytest.approx(0.50, abs=1e-3)
     assert g["Rory McIlroy"]["pregame_probability"] == pytest.approx(0.30, abs=1e-3)
     assert g["Scottie Scheffler"]["probability"] == pytest.approx(0.40, abs=1e-3)  # Now untouched
+    assert g["Scottie Scheffler"]["source_mark"]["sources"][0]["probability"] == 0.40
+    mark = g["Scottie Scheffler"]["pregame_source_mark"]
+    assert mark["state"] == "single"
+    assert [(source["key"], source["probability"]) for source in mark["sources"]] == [
+        ("polymarket", 0.50),
+    ]
+    assert mark["sources"][0]["observed_at"] is None
     assert all(x["opening_probability"] != x["pregame_probability"] for x in g.values())
     assert entry["pregame_cutoff_basis"] == "start_date"
     assert entry["pregame_as_of"] == "2031-04-10T00:00:00+00:00"
@@ -119,11 +126,23 @@ async def test_the_recorded_first_round_one_play_is_the_cutoff(monkeypatch):
                  _outcome("Xander Schauffele", 0.25)]),
     ]
     entry = _tournament(markets)
-    db = await _attach(monkeypatch, entry, markets, {field[0].id: _snap(0.5)},
+    snapshots = {
+        **{o.id: _snap(p) for o, p in zip(field, (0.50, 0.30, 0.20), strict=True)},
+        **{o.id: _snap(p) for o, p in zip(markets[1].outcomes, (0.46, 0.30, 0.24), strict=True)},
+    }
+    db = await _attach(monkeypatch, entry, markets, snapshots,
                        redis_values={"bainluck:golf:first_play:pga:14": FIRST_PLAY.isoformat()})
     assert entry["pregame_cutoff_basis"] == "first_play"
     assert entry["pregame_as_of"] == FIRST_PLAY.isoformat()
     assert db.calls[0]["cutoff"] == FIRST_PLAY
+    scheffler = _by_name(entry)["Scottie Scheffler"]
+    assert scheffler["pregame_probability"] == pytest.approx(0.48)
+    mark = scheffler["pregame_source_mark"]
+    assert mark["state"] == "blend"
+    assert [(source["key"], source["probability"]) for source in mark["sources"]] == [
+        ("polymarket", 0.50), ("datagolf", 0.46),
+    ]
+    assert all(source["observed_at"] is None for source in mark["sources"])
 
 
 @pytest.mark.asyncio
@@ -145,6 +164,7 @@ async def test_a_golfer_nobody_priced_before_the_tee_has_no_pregame(monkeypatch)
     await _attach(monkeypatch, entry, markets, {field[0].id: _snap(0.5), field[1].id: _snap(0.3)})
     g = _by_name(entry)
     assert g["Xander Schauffele"]["pregame_probability"] is None
+    assert g["Xander Schauffele"]["pregame_source_mark"] is None
     assert g["Scottie Scheffler"]["pregame_probability"] is not None
 
 

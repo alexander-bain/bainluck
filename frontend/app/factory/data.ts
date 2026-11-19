@@ -101,6 +101,8 @@ function validateSnapshot(payload: FactoryData): FactoryData {
         Number.isSafeInteger(change.number) &&
         change.number > 0 &&
         typeof change.title === "string" &&
+        (change.held_for_108 === undefined ||
+          typeof change.held_for_108 === "boolean") &&
         ["Server", "Website", "Apps"].includes(change.line) &&
         ["Write", "Test", "Review", "Merge line", "Ship", "Live"].includes(
           change.station,

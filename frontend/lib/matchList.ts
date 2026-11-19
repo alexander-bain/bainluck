@@ -718,9 +718,8 @@ export function matchListFromBracket(
           };
         }
         const price = priceFor(slot.entity_key);
-        // Ruling 1: the MATCH number is the primary. Live price when the slate
-        // has one; the pre-match number when the match is over and the live
-        // price has collapsed to 1 or 0; `null` when we simply have neither.
+        // An undecided match uses the slate's current quote. A decided match
+        // can show its pre-match reading beside the result.
         const pre =
           match.top && slot.entity_key === match.top.entity_key
             ? (options.prematch?.[match.id]?.top ?? null)
@@ -732,7 +731,7 @@ export function matchListFromBracket(
           // A draw slot carries no image of its own; like the price, it comes
           // from the slate row this match absorbed.
           image: price?.image ?? null,
-          matchProbability: decided ? pre : (price?.probability ?? pre),
+          matchProbability: decided ? pre : (price?.probability ?? null),
           openingProbability: price?.opening_probability ?? pre,
           move: decided ? null : (price?.move ?? null),
           // The title chance prefers the BOARD, because the board is the

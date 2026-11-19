@@ -26,7 +26,7 @@ import {
 import { usePageTracking } from "@/hooks/usePageTracking";
 import { useScrollDepth } from "@/hooks/useScrollDepth";
 import { useEngagementTime } from "@/hooks/useEngagementTime";
-import type { Builder, Change, FactoryData, Jam, Line } from "./types";
+import type { Builder, Change, FactoryData, Jam, Line, Station } from "./types";
 import styles from "./factory.module.css";
 import Worker from "./Worker";
 import {
@@ -43,6 +43,7 @@ import {
   recentTransfers,
   shownStops,
   knownOrigin,
+  onActiveFloor,
 } from "./activity";
 
 const lines: Line[] = ["Server", "Website", "Apps"];
@@ -87,6 +88,19 @@ function pacificDay(value: string) {
   }).format(new Date(value));
 }
 
+function crateKey(line: Line, number: number) {
+  return `${line}/${number}`;
+}
+
+function uniqueChanges(changes: Change[]) {
+  const seen = new Set<number>();
+  return changes.filter((change) => {
+    if (seen.has(change.number)) return false;
+    seen.add(change.number);
+    return true;
+  });
+}
+
 function jamTitle(jam: Jam) {
   if (jam.kind === "crowd")
     return `${stationNames[jam.station]} held ten or more changes`;
@@ -118,7 +132,7 @@ export default function FactoryFloor({
   useEngagementTime({ pageType: "home" });
   const router = useRouter();
   const [now, setNow] = useState(renderedAt);
-  const [selectedNumber, selectNumber] = useState<number | null>(null);
+  const [selectedCrate, selectCrate] = useState<string | null>(null);
   const [knownGoodAt, setKnownGoodAt] = useState(lastGoodAt);
   const [lastShown, setLastShown] = useState(snapshot);
   // Keep the open page intact if a refresh lands on a server with an empty cache.
@@ -130,7 +144,7 @@ export default function FactoryFloor({
       : lastShown;
   const floor = useRef<HTMLDivElement>(null);
   const oldPositions = useRef(
-    new Map<string, { rect: DOMRect; station: string }>(),
+    new Map<string, { rect: DOMRect; station: Station }>(),
   );
   const detail = useRef<HTMLDialogElement>(null);
   const [tabVisible, setTabVisible] = useState(true);
@@ -162,10 +176,10 @@ export default function FactoryFloor({
   }, [data, lastGoodAt]);
 
   useEffect(() => {
-    if (selectedNumber !== null && detail.current && !detail.current.open) {
+    if (selectedCrate !== null && detail.current && !detail.current.open) {
       detail.current.showModal();
     }
-  }, [selectedNumber]);
+  }, [selectedCrate]);
 
   useEffect(() => {
     const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -194,13 +208,15 @@ export default function FactoryFloor({
   }, [router]);
 
   useLayoutEffect(() => {
-    const nextPositions = new Map<string, { rect: DOMRect; station: string }>();
+    const nextPositions = new Map<string, { rect: DOMRect; station: Station }>();
     floor.current
       ?.querySelectorAll<HTMLButtonElement>("[data-crate]")
       .forEach((button) => {
-        const id = button.dataset.crate!;
+        const number = Number(button.dataset.crate);
+        const line = button.dataset.line as Line;
+        const id = crateKey(line, number);
         const rect = button.getBoundingClientRect();
-        const station = button.dataset.station!;
+        const station = button.dataset.station!.split("/")[1] as Station;
         const previous = oldPositions.current.get(id);
         button.classList.remove(styles.travelling);
         if (
@@ -208,15 +224,12 @@ export default function FactoryFloor({
           previous.station !== station &&
           motion &&
           data &&
-          recentTransfers(data, now).some((t) => t.number === Number(id))
+          recentTransfers(data, now).some(
+            (t) => t.number === number && t.line === line && t.to === station,
+          )
         ) {
-          const line = button.dataset.line as Line;
-          const from = stations.indexOf(
-            previous.station.split("/")[1] as (typeof stations)[number],
-          );
-          const to = stations.indexOf(
-            station.split("/")[1] as (typeof stations)[number],
-          );
+          const from = stations.indexOf(previous.station);
+          const to = stations.indexOf(station);
           const stopped = shownStops(data).some(
             (stop) =>
               stop.level === "red" &&
@@ -311,15 +324,20 @@ export default function FactoryFloor({
   const shipped = data.changes.filter(
     (c) => c.station === "Live" && c.live_at && pacificDay(c.live_at) === today,
   );
-  const open = data.changes.filter((c) => !c.merged_at);
-  const onFloor = data.changes.filter(
-    (c) => c.station !== "Live" && !c.side_track && !c.bot_update && !c.parked,
+  const shippedCount = uniqueChanges(shipped).length;
+  const onFloor = data.changes.filter(onActiveFloor);
+  const held = uniqueChanges(data.changes.filter((c) => c.held_for_108));
+  const sideTrack = uniqueChanges(
+    data.changes.filter(
+      (c) => c.side_track && !c.bot_update && !c.parked && !c.held_for_108,
+    ),
   );
-  const sideTrack = data.changes.filter(
-    (c) => c.side_track && !c.bot_update && !c.parked,
+  const parked = uniqueChanges(
+    data.changes.filter((c) => c.parked && !c.held_for_108),
   );
-  const parked = data.changes.filter((c) => c.parked);
-  const botUpdates = data.changes.filter((c) => c.bot_update && !c.merged_at);
+  const botUpdates = uniqueChanges(
+    data.changes.filter((c) => c.bot_update && !c.merged_at && !c.held_for_108),
+  );
   const stops = shownStops(data);
   const serverHold = stops.find(
     (stop) => stop.kind === "hold" && stop.line === "Server",
@@ -333,7 +351,7 @@ export default function FactoryFloor({
   const visible = [...onFloor, ...shipped];
   const stationCounts = stations.slice(0, -1).map((station) => ({
     station,
-    count: onFloor.filter((c) => c.station === station).length,
+    count: uniqueChanges(onFloor.filter((c) => c.station === station)).length,
   }));
   const busiest = stationCounts.reduce((best, current) =>
     current.count > best.count ? current : best,
@@ -345,24 +363,23 @@ export default function FactoryFloor({
       (!jam.ended_at || pacificDay(jam.ended_at) === today),
   );
   const activeJams = jams.filter((j) => !j.ended_at);
-  const selected = data.changes.find((c) => c.number === selectedNumber);
-
-  function choose(change: Change) {
-    selectNumber(change.number);
-  }
+  const selected = data.changes.find(
+    (c) => crateKey(c.line, c.number) === selectedCrate,
+  );
 
   function crate(change: Change) {
+    const key = crateKey(change.line, change.number);
     return (
       <button
-        key={change.number}
+        key={key}
         type="button"
         className={`${styles.crate} ${styles[`builder${change.builder}`]}`}
         data-crate={change.number}
         data-station={`${change.line}/${change.station}`}
         data-line={change.line}
         aria-label={`${names[change.builder]}, change ${change.number}, ${change.title}${change.testflight_build ? `, TestFlight build ${change.testflight_build}` : ""}${change.sent_back ? ", sent back" : ""}${change.unsure ? ", unsure" : ""}`}
-        aria-pressed={selectedNumber === change.number}
-        onClick={() => choose(change)}
+        aria-pressed={selectedCrate === key}
+        onClick={() => selectCrate(key)}
       >
         <span className={styles.crateLetter}>
           {change.builder === "Other" ? "O" : change.builder}
@@ -446,10 +463,10 @@ export default function FactoryFloor({
             <PackageCheck size={17} /> Shipped today
           </span>
           <strong
-            key={shipped.length}
+            key={shippedCount}
             className={`${styles.shippedNumber} ${shippingLines.length ? styles.numberTick : ""}`}
           >
-            {shipped.length}
+            {shippedCount}
           </strong>
           <span>Changes in your hands</span>
         </div>
@@ -457,7 +474,7 @@ export default function FactoryFloor({
           <span className={styles.numberLabel}>
             <Box size={17} /> On the floor now
           </span>
-          <strong>{onFloor.length}</strong>
+          <strong>{uniqueChanges(onFloor).length}</strong>
           <span>Making their way to live</span>
         </div>
         <div>
@@ -801,7 +818,7 @@ export default function FactoryFloor({
         </div>
         <div className={styles.floorKey}>
           <span>
-            <i className={styles.keyCrate} /> One crate = one change
+            <i className={styles.keyCrate} /> A change can ship on more than one line
           </span>
           <span>
             <i className={styles.keyAmber} /> Ten or more waiting
@@ -815,17 +832,19 @@ export default function FactoryFloor({
             className={styles.detail}
             aria-labelledby="factory-change-title"
             ref={detail}
-            onCancel={() => selectNumber(null)}
+            onCancel={() => selectCrate(null)}
           >
             <div>
               <span className={styles.detailMeta}>
                 Change #{selected.number} · {names[selected.builder]} ·{" "}
                 {selected.line} /{" "}
-                {selected.parked
-                  ? "Parked"
-                  : selected.bot_update
-                    ? "Bot updates"
-                    : stationNames[selected.station]}
+                {selected.held_for_108
+                  ? "Held for 1.0.8"
+                  : selected.parked
+                    ? "Parked"
+                    : selected.bot_update
+                      ? "Bot updates"
+                      : stationNames[selected.station]}
               </span>
               <h3 id="factory-change-title">{selected.title}</h3>
               {selected.sent_back && <p>Sent back by Fable.</p>}
@@ -846,12 +865,20 @@ export default function FactoryFloor({
               aria-label="Close change details"
               onClick={() => {
                 detail.current?.close();
-                selectNumber(null);
+                selectCrate(null);
               }}
             >
               <X size={18} />
             </button>
           </dialog>
+        )}
+        {held.length > 0 && (
+          <section className={styles.parkedShelf} aria-labelledby="held-heading">
+            <h3 id="held-heading">
+              Held for 1.0.8 <span>{held.length}</span>
+            </h3>
+            <div className={styles.shelfCrates}>{held.map(crate)}</div>
+          </section>
         )}
         <section
           className={styles.parkedShelf}
@@ -860,7 +887,7 @@ export default function FactoryFloor({
           <h3 id="parked-heading">
             Parked <span>{parked.length}</span>
           </h3>
-          <p>Passed checks. No activity for 48 hours.</p>
+          <p>Drafts and changes that passed checks sit here after 48 quiet hours.</p>
           {parked.length ? (
             <div className={styles.shelfCrates}>{parked.map(crate)}</div>
           ) : (
@@ -950,7 +977,8 @@ export default function FactoryFloor({
         <div className={styles.sectionHeading}>
           <h2 id="builders-heading">Who is on the floor</h2>
           <span className={styles.sectionNote}>
-            {open.length} open changes across the crew
+            {uniqueChanges(data.changes.filter((c) => !c.merged_at)).length} open
+            changes across the crew
           </span>
         </div>
         <div className={styles.builders}>

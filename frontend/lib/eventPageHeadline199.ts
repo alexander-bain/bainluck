@@ -33,7 +33,11 @@ import {
 } from "@/lib/finalForecastComparison";
 import { formatEventStartLabel } from "@/lib/eventKeyStats";
 import { sportVocab } from "@/lib/marketMapUtils";
-import { projectedFinalFormat } from "@/lib/projectedFinalPair";
+import {
+  projectedFinalFormat,
+  projectedPairConflictsWithChance,
+  type ProjectedChancePair,
+} from "@/lib/projectedFinalPair";
 import {
   ABOVE_NINETY_NINE_PERCENT,
   BELOW_ONE_PERCENT,
@@ -76,6 +80,21 @@ export {
   type HeadlinePhase199,
   type HeadlineRowRole199,
 };
+
+export const NO_LIVE_SCORE_TOURNAMENT_LINE_250A = "No live score for this tournament.";
+export const NO_LIVE_SCORE_GAME_LINE_250A = "No live score for this game.";
+
+export function resolveScoreUnavailableNotice250A(
+  event: Pick<EventDetailResponse, "sport" | "sport_key" | "score_source_unavailable">,
+  isLive: boolean,
+): string | null {
+  if (!isLive || event.score_source_unavailable !== true) return null;
+  const lower = (event.sport ?? event.sport_key ?? "").trim().toLowerCase();
+  if (isTennisSport199(lower) || lower.startsWith("golf")) {
+    return NO_LIVE_SCORE_TOURNAMENT_LINE_250A;
+  }
+  return NO_LIVE_SCORE_GAME_LINE_250A;
+}
 
 export function isSoccerSport199(sport: string | null | undefined): boolean {
   const s = (sport ?? "").trim().toLowerCase();
@@ -289,6 +308,17 @@ export function formatHeadlineProjectedNumber199(
   return value.toFixed(1);
 }
 
+function printedHeadlineProjectedValue199(
+  value: number,
+  sportKey: string | null | undefined,
+): number {
+  const lower = (sportKey ?? "").trim().toLowerCase();
+  if (lower.startsWith("americanfootball") || lower.startsWith("basketball")) {
+    return Math.round(value);
+  }
+  return Math.round(value * 10) / 10;
+}
+
 /**
  * Matches iOS `EventSportHeadlines12472.qualifiedLivePregameProjectionPair`:
  * admits the pregame projection into the single grey pregame line (`200-B`)
@@ -298,6 +328,7 @@ export function formatHeadlineProjectedNumber199(
  */
 function qualifiedLivePregameProjectionPair199(
   event: Pick<EventDetailResponse, "pregame_projection" | "sport" | "commence_time">,
+  chance?: ProjectedChancePair | null,
 ): { away: string; home: string } | null {
   const p = event.pregame_projection;
   if (!p || typeof p !== "object") return null;
@@ -332,10 +363,17 @@ function qualifiedLivePregameProjectionPair199(
   ) {
     return null;
   }
-  const vocab = sportVocab(event.sport ?? undefined);
   const roundedHome = Math.round(p.projected_home_score);
   const roundedAway = Math.round(p.projected_away_score);
-  if (!vocab.canEndInATie && roundedHome === roundedAway) return null;
+  if (
+    projectedPairConflictsWithChance(
+      { home: roundedHome, away: roundedAway },
+      chance,
+      event.sport,
+    )
+  ) {
+    return null;
+  }
   return {
     away: String(roundedAway),
     home: String(roundedHome),
@@ -711,14 +749,24 @@ function buildTennisScoreSlot199(opts: {
   return { columns, awayCells, homeCells, awayEmph, homeEmph };
 }
 
+function isGenericLivePlaceholderClock199(text: string | null | undefined): boolean {
+  if (!text) return true;
+  return /^(?:live|in\s*progress)$/i.test(text.trim());
+}
+
 function normalizeLiveBadgeClock199(opts: {
   event: EventDetailResponse;
   liveClockLabel: string | null | undefined;
 }): string {
+  if (opts.event.score_source_unavailable === true) {
+    return "LIVE";
+  }
   const sport = opts.event.sport;
   if (isTennisSport199(sport)) {
     const rawPeriod = opts.event.espn?.period?.trim();
-    if (rawPeriod) return `LIVE · ${normalizeTennisSetLabel(rawPeriod)}`;
+    if (rawPeriod && !isGenericLivePlaceholderClock199(rawPeriod)) {
+      return `LIVE · ${normalizeTennisSetLabel(rawPeriod)}`;
+    }
     const box = opts.event.box_score_data as
       | { away_period_scores?: unknown[]; home_period_scores?: unknown[] }
       | undefined;
@@ -729,7 +777,11 @@ function normalizeLiveBadgeClock199(opts: {
     );
     if (setCount >= 1) return `LIVE · Set ${setCount}`;
     const trimmed = opts.liveClockLabel?.trim();
-    if (trimmed && !parseTennisGamePoints199(trimmed)) {
+    if (
+      trimmed &&
+      !isGenericLivePlaceholderClock199(trimmed) &&
+      !parseTennisGamePoints199(trimmed)
+    ) {
       return `LIVE · ${trimmed}`;
     }
     return "LIVE";
@@ -739,15 +791,17 @@ function normalizeLiveBadgeClock199(opts: {
     const rawClock = opts.event.espn?.game_clock?.trim();
     if (rawClock && rawClock.includes("'")) return `LIVE · ${rawClock}`;
     const label = opts.liveClockLabel?.trim();
-    if (label) {
+    if (label && !isGenericLivePlaceholderClock199(label)) {
       const cleaned = label.replace(/^(?:1st|2nd)\s*(?:Half)?\s*·\s*/i, "");
-      return `LIVE · ${cleaned}`;
+      if (!isGenericLivePlaceholderClock199(cleaned)) {
+        return `LIVE · ${cleaned}`;
+      }
     }
     return "LIVE";
   }
 
   const rawLabel = opts.liveClockLabel?.trim();
-  if (!rawLabel) return "LIVE";
+  if (!rawLabel || isGenericLivePlaceholderClock199(rawLabel)) return "LIVE";
   const compact = rawLabel
     .replace(/\b1st Quarter\b/gi, "Q1")
     .replace(/\b2nd Quarter\b/gi, "Q2")
@@ -759,7 +813,7 @@ function normalizeLiveBadgeClock199(opts: {
     .replace(/\b1st Half\b/gi, "1H")
     .replace(/\b2nd Half\b/gi, "2H")
     .replace(/\s*·\s*/g, " ");
-  return `LIVE · ${compact}`;
+  return isGenericLivePlaceholderClock199(compact) ? "LIVE" : `LIVE · ${compact}`;
 }
 
 function suppressEmptyColumnHeaders(
@@ -900,12 +954,25 @@ export function resolveEventPageHeadline199(
         ]
       : [{ role: "chance", header: "Chance" }];
 
-    const awayProjCell =
+    const printedBeforePair =
       canGrade && hasProjCol && input.projectedPairAdmitted && input.projectedPairRaw
+        ? {
+            home: printedHeadlineProjectedValue199(
+              input.projectedPairRaw.home_score,
+              event.sport,
+            ),
+            away: printedHeadlineProjectedValue199(
+              input.projectedPairRaw.away_score,
+              event.sport,
+            ),
+          }
+        : null;
+    let awayProjCell =
+      printedBeforePair && input.projectedPairRaw
         ? formatHeadlineProjectedNumber199(input.projectedPairRaw.away_score, event.sport)
         : "";
-    const homeProjCell =
-      canGrade && hasProjCol && input.projectedPairAdmitted && input.projectedPairRaw
+    let homeProjCell =
+      printedBeforePair && input.projectedPairRaw
         ? formatHeadlineProjectedNumber199(input.projectedPairRaw.home_score, event.sport)
         : "";
 
@@ -925,6 +992,17 @@ export function resolveEventPageHeadline199(
         nowMs,
       });
       if (snap.openShares) {
+        if (
+          printedBeforePair &&
+          projectedPairConflictsWithChance(
+            printedBeforePair,
+            { home: snap.openShares.home, away: snap.openShares.away },
+            event.sport,
+          )
+        ) {
+          awayProjCell = "";
+          homeProjCell = "";
+        }
         const texts = formatSoccerThreeWayTexts199(
           snap.openShares.home,
           snap.openShares.draw,
@@ -1021,6 +1099,18 @@ export function resolveEventPageHeadline199(
       }
     }
 
+    if (
+      printedBeforePair &&
+      projectedPairConflictsWithChance(
+        printedBeforePair,
+        { home: homeRaw, away: awayRaw },
+        event.sport,
+      )
+    ) {
+      awayProjCell = "";
+      homeProjCell = "";
+    }
+
     const rows: HeadlineCompetitorRow199[] = [
       {
         role: "away",
@@ -1085,45 +1175,73 @@ export function resolveEventPageHeadline199(
 
     const isTennis = isTennisSport199(event.sport);
     const isScoreless = isMMASport199(event.sport) || isBoxingSport199(event.sport);
-    const hasProjCol = carriesProjectedScoreColumn199(event.sport);
+    const scoreUnavailable = isLiveActive && event.score_source_unavailable === true;
+    const omitsScoreColumn = isScoreless || scoreUnavailable;
+    const noLiveScoreNotice = resolveScoreUnavailableNotice250A(event, isLiveActive);
+    const hasProjCol = carriesProjectedScoreColumn199(event.sport) && !scoreUnavailable;
     const hasValidScore =
-      input.heroScorePairPresent && !input.heroScoreIsStoppageFiller;
+      !scoreUnavailable &&
+      input.heroScorePairPresent &&
+      !input.heroScoreIsStoppageFiller;
 
-    const awayProjCell =
-      isLiveActive && hasProjCol && input.projectedPairAdmitted && input.projectedPairRaw
-        ? formatHeadlineProjectedNumber199(
-            Math.max(input.projectedPairRaw.away_score, input.bestAwayScore ?? 0),
-            event.sport,
-          )
+    const safeLiveAwayRaw =
+      isLiveActive &&
+      !scoreUnavailable &&
+      hasProjCol &&
+      input.projectedPairAdmitted &&
+      input.projectedPairRaw
+        ? Math.max(input.projectedPairRaw.away_score, input.bestAwayScore ?? 0)
+        : null;
+    const safeLiveHomeRaw =
+      isLiveActive &&
+      !scoreUnavailable &&
+      hasProjCol &&
+      input.projectedPairAdmitted &&
+      input.projectedPairRaw
+        ? Math.max(input.projectedPairRaw.home_score, input.bestHomeScore ?? 0)
+        : null;
+    const printedDuringPair =
+      safeLiveAwayRaw !== null && safeLiveHomeRaw !== null
+        ? {
+            home: printedHeadlineProjectedValue199(safeLiveHomeRaw, event.sport),
+            away: printedHeadlineProjectedValue199(safeLiveAwayRaw, event.sport),
+          }
+        : null;
+
+    let awayProjCell =
+      safeLiveAwayRaw !== null
+        ? formatHeadlineProjectedNumber199(safeLiveAwayRaw, event.sport)
         : "";
-    const homeProjCell =
-      isLiveActive && hasProjCol && input.projectedPairAdmitted && input.projectedPairRaw
-        ? formatHeadlineProjectedNumber199(
-            Math.max(input.projectedPairRaw.home_score, input.bestHomeScore ?? 0),
-            event.sport,
-          )
+    let homeProjCell =
+      safeLiveHomeRaw !== null
+        ? formatHeadlineProjectedNumber199(safeLiveHomeRaw, event.sport)
         : "";
 
-    const tennisSlot = isTennis
-      ? buildTennisScoreSlot199({
-          event,
-          awaySetScore: input.bestAwayScore,
-          homeSetScore: input.bestHomeScore,
-          hasScore: hasValidScore,
-          includePoints: isLiveActive,
-        })
-      : null;
+    const tennisSlot =
+      isTennis && !scoreUnavailable
+        ? buildTennisScoreSlot199({
+            event,
+            awaySetScore: input.bestAwayScore,
+            homeSetScore: input.bestHomeScore,
+            hasScore: hasValidScore,
+            includePoints: isLiveActive,
+          })
+        : null;
 
     const baseColumns: HeadlineColumnSpec199[] = tennisSlot
       ? [...tennisSlot.columns, { role: "now", header: "Now" }]
       : [
-          ...(!isScoreless ? [{ role: "score" as const, header: "Score" }] : []),
+          ...(!omitsScoreColumn ? [{ role: "score" as const, header: "Score" }] : []),
           ...(hasProjCol ? [{ role: "projected" as const, header: "Proj." }] : []),
           { role: "now" as const, header: "Now" },
         ];
 
+    const strictPre = isLiveActive ? resolveStrictPrematch199(event) : null;
     const pregameProj = isLiveActive
-      ? qualifiedLivePregameProjectionPair199(event)
+      ? qualifiedLivePregameProjectionPair199(
+          event,
+          strictPre ? { home: strictPre.homeProb, away: strictPre.awayProb } : null,
+        )
       : null;
 
     if (isLiveActive && isSoccerSport199(event.sport)) {
@@ -1135,6 +1253,17 @@ export function resolveEventPageHeadline199(
         nowMs,
       });
       if (snap.openShares) {
+        if (
+          printedDuringPair &&
+          projectedPairConflictsWithChance(
+            printedDuringPair,
+            { home: snap.openShares.home, away: snap.openShares.away },
+            event.sport,
+          )
+        ) {
+          awayProjCell = "";
+          homeProjCell = "";
+        }
         const texts = formatSoccerThreeWayTexts199(
           snap.openShares.home,
           snap.openShares.draw,
@@ -1143,6 +1272,10 @@ export function resolveEventPageHeadline199(
         );
         let liveSummary: HeadlineLivePregameSummary199 | null = null;
         if (snap.pregameShares) {
+          const soccerPregameProj = qualifiedLivePregameProjectionPair199(event, {
+            home: snap.pregameShares.home,
+            away: snap.pregameShares.away,
+          });
           const preTexts = formatSoccerThreeWayTexts199(
             snap.pregameShares.home,
             snap.pregameShares.draw,
@@ -1171,27 +1304,27 @@ export function resolveEventPageHeadline199(
             favSide = "draw";
           }
           const namedText = `${favName} ${favText}`;
-          const firstProjText = pregameProj
+          const firstProjText = soccerPregameProj
             ? favIsHome
-              ? pregameProj.home
-              : pregameProj.away
+              ? soccerPregameProj.home
+              : soccerPregameProj.away
             : null;
-          const secondProjText = pregameProj
+          const secondProjText = soccerPregameProj
             ? favIsHome
-              ? pregameProj.away
-              : pregameProj.home
+              ? soccerPregameProj.away
+              : soccerPregameProj.home
             : null;
-          const firstProjSide: "home" | "away" | null = pregameProj
+          const firstProjSide: "home" | "away" | null = soccerPregameProj
             ? favIsHome
               ? "home"
               : "away"
             : null;
-          const secondProjSide: "home" | "away" | null = pregameProj
+          const secondProjSide: "home" | "away" | null = soccerPregameProj
             ? favIsHome
               ? "away"
               : "home"
             : null;
-          const projHalf = pregameProj
+          const projHalf = soccerPregameProj
             ? ` · projected ${firstProjText}–${secondProjText}`
             : "";
           const bodyText = `${namedText}${projHalf}`;
@@ -1212,6 +1345,21 @@ export function resolveEventPageHeadline199(
           hasValidScore && input.bestHomeScore != null ? String(input.bestHomeScore) : "";
         const awayScoreCell =
           hasValidScore && input.bestAwayScore != null ? String(input.bestAwayScore) : "";
+        const homeSoccerCells = [
+          ...(!omitsScoreColumn ? [homeScoreCell] : []),
+          ...(hasProjCol ? [homeProjCell] : []),
+          texts.home,
+        ];
+        const awaySoccerCells = [
+          ...(!omitsScoreColumn ? [awayScoreCell] : []),
+          ...(hasProjCol ? [awayProjCell] : []),
+          texts.away,
+        ];
+        const drawSoccerCells = [
+          ...(!omitsScoreColumn ? [""] : []),
+          ...(hasProjCol ? [""] : []),
+          texts.draw,
+        ];
 
         const rows: HeadlineCompetitorRow199[] = [
           {
@@ -1220,7 +1368,7 @@ export function resolveEventPageHeadline199(
             opponentFullName: event.away_team,
             shortName: shortNames.home,
             record: null,
-            cells: [homeScoreCell, homeProjCell, texts.home],
+            cells: homeSoccerCells,
             rawProbability: snap.openShares.home,
             won: null,
             emphasizedColumns: [],
@@ -1233,7 +1381,7 @@ export function resolveEventPageHeadline199(
             opponentFullName: event.home_team,
             shortName: shortNames.away,
             record: null,
-            cells: [awayScoreCell, awayProjCell, texts.away],
+            cells: awaySoccerCells,
             rawProbability: snap.openShares.away,
             won: null,
             emphasizedColumns: [],
@@ -1246,7 +1394,7 @@ export function resolveEventPageHeadline199(
             opponentFullName: "",
             shortName: "Draw",
             record: null,
-            cells: ["", "", texts.draw],
+            cells: drawSoccerCells,
             rawProbability: snap.openShares.draw,
             won: null,
             emphasizedColumns: [],
@@ -1275,12 +1423,12 @@ export function resolveEventPageHeadline199(
             awayShare: snap.openShares.away,
           },
           livePregameSummary: liveSummary,
+          scoreUnavailableNotice: noLiveScoreNotice,
           colors,
         };
       }
     }
 
-    const strictPre = isLiveActive ? resolveStrictPrematch199(event) : null;
     const rawSummary = isLiveActive
       ? formatLivePregameSummary(
           {
@@ -1359,8 +1507,20 @@ export function resolveEventPageHeadline199(
       }
     }
 
+    if (
+      printedDuringPair &&
+      projectedPairConflictsWithChance(
+        printedDuringPair,
+        { home: homeRaw, away: awayRaw },
+        event.sport,
+      )
+    ) {
+      awayProjCell = "";
+      homeProjCell = "";
+    }
+
     const canShowScoreSlot =
-      !isScoreless &&
+      !omitsScoreColumn &&
       !input.heroScoreIsStoppageFiller &&
       (isLiveActive || event.status === "suspended");
     const awayScoreCell =
@@ -1375,14 +1535,14 @@ export function resolveEventPageHeadline199(
     const awayCells = tennisSlot
       ? [...tennisSlot.awayCells, awayNow]
       : [
-          ...(!isScoreless ? [awayScoreCell] : []),
+          ...(!omitsScoreColumn ? [awayScoreCell] : []),
           ...(hasProjCol ? [awayProjCell] : []),
           awayNow,
         ];
     const homeCells = tennisSlot
       ? [...tennisSlot.homeCells, homeNow]
       : [
-          ...(!isScoreless ? [homeScoreCell] : []),
+          ...(!omitsScoreColumn ? [homeScoreCell] : []),
           ...(hasProjCol ? [homeProjCell] : []),
           homeNow,
         ];
@@ -1431,6 +1591,7 @@ export function resolveEventPageHeadline199(
       rows,
       bottomBar,
       livePregameSummary,
+      scoreUnavailableNotice: noLiveScoreNotice,
       colors,
     };
   }

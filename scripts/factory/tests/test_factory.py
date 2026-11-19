@@ -20,7 +20,7 @@ from model import (
     classify,
     instant,
     iso,
-    line_for,
+    lines_for,
     public_title,
 )
 from collect import (
@@ -82,7 +82,8 @@ class FactoryRules(unittest.TestCase):
         return pull
 
     def place(self, pull):
-        return classify(pull, self.snapshot["deployments"], self.now)
+        lines, unsure = lines_for(pull)
+        return classify(pull, self.snapshot["deployments"], self.now, lines[0], unsure)
 
     def test_only_green_quiet_changes_park_and_activity_brings_them_back(self):
         pull = self.ready()
@@ -113,11 +114,9 @@ class FactoryRules(unittest.TestCase):
         self.assertEqual(
             current["transitions"][0]["observed_at"], sample["captured_at"]
         )
+        rerouted = build({**sample, "commands": [{**post, "line": "Apps"}]})
         self.assertEqual(
-            build({**sample, "commands": [{**post, "line": "Apps"}]})["changes"][0][
-                "station"
-            ],
-            "Merge line",
+            [(c["line"], c["station"]) for c in rerouted["changes"]], [("Apps", "Ship")]
         )
 
     def test_builder_f_posts_app_build_without_claiming_unverified_delivery(self):
@@ -207,10 +206,10 @@ class FactoryRules(unittest.TestCase):
             {v[0] for v in self.expected["placements"].values()},
             {"Write", "Test", "Review", "Merge line", "Ship", "Live"},
         )
-        results = {c["number"]: c for c in build(self.snapshot)["changes"]}
+        results = {(c["number"], c["line"]): c for c in build(self.snapshot)["changes"]}
         for number, expected in self.expected["placements"].items():
             with self.subTest(change=number):
-                result = results[int(number)]
+                result = results[int(number), expected[1]]
                 self.assertEqual(
                     [result["station"], result["line"], result["unsure"]], expected
                 )
@@ -222,7 +221,10 @@ class FactoryRules(unittest.TestCase):
         receipts = [
             r for r in self.snapshot["deployments"] if instant(r["at"]) <= moment
         ]
-        self.assertEqual(classify(pull, receipts, moment)["station"], "Ship")
+        line, unsure = lines_for(pull)
+        self.assertEqual(
+            classify(pull, receipts, moment, line[0], unsure)["station"], "Ship"
+        )
         self.assertEqual(self.place(pull)["station"], "Live")
 
     def test_draft_precedes_all_other_gates(self):
@@ -311,16 +313,17 @@ class FactoryRules(unittest.TestCase):
 
     def test_file_routing_and_unknown_file_list(self):
         pull = self.ready()
-        for paths, line in [
-            (["ios/Bain Luck/View.swift"], "Apps"),
-            (["frontend/app/a.tsx"], "Website"),
-            (["frontend/a.tsx", "ios/a.swift"], "Server"),
-            (["scripts/a.py"], "Server"),
+        for paths, lines in [
+            (["ios/Bain Luck/View.swift"], ("Apps",)),
+            (["frontend/app/a.tsx"], ("Website",)),
+            (["frontend/a.tsx", "ios/a.swift"], ("Website", "Apps")),
+            (["backend/a.py", "frontend/a.tsx", "docs/a.md"], ("Server", "Website")),
+            (["scripts/a.py"], ("Server",)),
         ]:
             pull["files"] = paths
-            self.assertEqual(line_for(pull), (line, False))
+            self.assertEqual(lines_for(pull), (lines, False))
         pull["files_complete"] = False
-        self.assertEqual(line_for(pull), ("Server", True))
+        self.assertEqual(lines_for(pull), (("Server",), True))
         self.assertEqual(self.place(pull)["station"], "Review")
 
     def test_side_track_uses_latest_activity_and_keeps_original_station(self):
