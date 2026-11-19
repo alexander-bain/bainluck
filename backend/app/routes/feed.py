@@ -5397,6 +5397,11 @@ async def get_feed(
                     if isinstance(_pb_built_at, (int, float))
                     else 0.0
                 )
+                if _shared_origins:
+                    _pb_age_s = max(
+                        _pb_age_s,
+                        _pic.oldest_consumed_artifact_age_s(_shared_origins),
+                    )
                 _pb_fresh_ttl, _pb_stale_ttl = _live_ttls(
                     _base_page, oldest_artifact_age_s=_pb_age_s
                 )

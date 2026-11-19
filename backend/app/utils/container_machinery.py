@@ -1632,6 +1632,121 @@ def _build_history_visual_item(
     }
 
 
+_CATEGORY_LLM_POOL: dict[str, tuple[str, ...]] = {
+    "economics": ("economics", "finance", "business", "macro", "politics", "other"),
+    "politics": ("politics", "geopolitics", "us_politics", "elections", "other"),
+    "entertainment": (
+        "entertainment",
+        "culture",
+        "social_media",
+        "awards",
+        "film",
+        "movies",
+        "pop_culture",
+        "other",
+    ),
+    "football": ("football", "nfl", "americanfootball_nfl", "other"),
+    "basketball": ("basketball", "nba", "basketball_nba", "other"),
+}
+
+
+def _category_llm_pool_for_definition(
+    definition: Mapping[str, Any],
+) -> Optional[tuple[str, ...]]:
+    """Return the scoped ``llm_sport_category`` pool for ``ix_fm_feed_open_sports``."""
+    cat = str(definition.get("category") or "").strip().lower()
+    if cat in _CATEGORY_LLM_POOL:
+        return _CATEGORY_LLM_POOL[cat]
+    sections_cfg = (definition.get("rule") or {}).get("sections") or ()
+    sport_keys = {
+        str(sec["atom_query"].get("sport_key") or "").strip().lower()
+        for sec in sections_cfg
+        if isinstance(sec, Mapping)
+        and isinstance(sec.get("atom_query"), Mapping)
+        and sec["atom_query"].get("kind") == "events"
+    }
+    if any(sk.startswith("americanfootball_") for sk in sport_keys):
+        return _CATEGORY_LLM_POOL["football"]
+    if any(sk.startswith("basketball_") for sk in sport_keys):
+        return _CATEGORY_LLM_POOL["basketball"]
+    return None
+
+
+def _market_title_matches_query(title: str, query: Mapping[str, Any]) -> bool:
+    """Fast pure-Python title token filter matching ``_market_matches_query``."""
+    title_low = str(title or "").lower()
+    if not title_low:
+        return False
+    req_tokens = [
+        str(t).lower() for t in (query.get("title_all_tokens") or ()) if str(t).strip()
+    ]
+    if any(tok not in title_low for tok in req_tokens):
+        return False
+    any_tokens = [
+        str(t).lower() for t in (query.get("any_tokens") or ()) if str(t).strip()
+    ]
+    if any_tokens and not any(tok in title_low for tok in any_tokens):
+        return False
+    excl_tokens = [
+        str(t).lower() for t in (query.get("exclude_tokens") or ()) if str(t).strip()
+    ]
+    explicitly_womens = any("women" in tok for tok in req_tokens + any_tokens)
+    if not explicitly_womens:
+        if "wnba" in excl_tokens:
+            excl_tokens.extend(
+                [
+                    "women's pro basketball",
+                    "womens pro basketball",
+                    "women\u2019s pro basketball",
+                ]
+            )
+        if "lpga" in excl_tokens:
+            excl_tokens.extend(
+                ["women's pro golf", "womens pro golf", "women\u2019s pro golf"]
+            )
+        if "nwsl" in excl_tokens:
+            excl_tokens.extend(
+                ["women's pro soccer", "womens pro soccer", "women\u2019s pro soccer"]
+            )
+    if any(tok in title_low for tok in excl_tokens):
+        return False
+    return True
+
+
+def _build_scoped_open_market_scan_stmt(cat_pool: tuple[str, ...]):
+    """Lightweight (id, name, volume) scan backed by ``ix_fm_feed_open_sports``.
+
+    Uses ``UNION ALL`` over ``llm_sport_category IN cat_pool`` and
+    ``llm_sport_category IS NULL`` (both under ``status = 'open' AND event_id IS NULL``)
+    so PostgreSQL walks the partial B-tree index instead of running multi-clause
+    ``ILIKE`` / ``NOT ILIKE`` text scans across hundreds of thousands of resolved
+    or game-linked rows.
+    """
+    from sqlalchemy import select, union_all
+
+    from app.models.models import FuturesMarket
+
+    arm_cat = select(
+        FuturesMarket.id,
+        FuturesMarket.name,
+        FuturesMarket.volume,
+    ).where(
+        FuturesMarket.status == "open",
+        FuturesMarket.event_id.is_(None),
+        FuturesMarket.llm_sport_category.in_(cat_pool),
+    )
+    arm_null = select(
+        FuturesMarket.id,
+        FuturesMarket.name,
+        FuturesMarket.volume,
+    ).where(
+        FuturesMarket.status == "open",
+        FuturesMarket.event_id.is_(None),
+        FuturesMarket.llm_sport_category.is_(None),
+    )
+    return union_all(arm_cat, arm_null)
+
+
 async def _load_snapshot_from_db(
     db: Any,
     definition: Mapping[str, Any],
@@ -1657,7 +1772,7 @@ async def _load_snapshot_from_db(
         }
 
     from sqlalchemy import and_, func, or_, select
-    from sqlalchemy.orm import joinedload, selectinload
+    from sqlalchemy.orm import joinedload
 
     from app.models.models import Event, FuturesMarket, FuturesOddsSnapshot, Sport
     from app.routes.futures import (
@@ -1668,8 +1783,8 @@ async def _load_snapshot_from_db(
         _game_container_leg_sides,
         _resolve_verified_title,
         _verified_title_market_stmt,
-        _withheld_price_outcome_ids,
         out_legs_by_market,
+        withheld_price_outcome_ids_for_markets,
     )
     from app.services.paired_metric_register import fold_outcome_key, load_live_paired_metric_sets
     from app.utils.hero_probability import resolve_hero
@@ -1799,7 +1914,8 @@ async def _load_snapshot_from_db(
     }
     paired_stage_mids: set[int] = set()
     if ceremonies:
-        all_paired = await load_live_paired_metric_sets(db)
+        paired_prefix = f"{next(iter(ceremonies))}-" if len(ceremonies) == 1 else None
+        all_paired = await load_live_paired_metric_sets(db, prefix=paired_prefix)
         paired_out.update(all_paired)
         for sec in sections_cfg:
             if not isinstance(sec, Mapping) or not isinstance(sec.get("atom_query"), Mapping):
@@ -1827,58 +1943,135 @@ async def _load_snapshot_from_db(
         and sec["atom_query"].get("kind") == "market_history"
     ]
     if needs_markets or paired_stage_mids:
-        m_rows: list[Any] = []
-        seen_mids: set[int] = set()
-        if needs_markets:
-            extra_clauses = []
-            has_unfiltered_market_section = False
-            for sec in sections_cfg:
-                if not isinstance(sec, Mapping) or not isinstance(sec.get("atom_query"), Mapping):
-                    continue
-                aq = sec["atom_query"]
-                if aq.get("kind") not in {"markets", "market_history"}:
-                    continue
-                all_toks = [str(t).strip() for t in (aq.get("title_all_tokens") or ()) if str(t).strip()]
-                any_toks = [str(t).strip() for t in (aq.get("any_tokens") or ()) if str(t).strip()]
-                excl_toks = [str(t).strip() for t in (aq.get("exclude_tokens") or ()) if str(t).strip()]
-                parts = [FuturesMarket.name.ilike(f"%{t}%") for t in all_toks]
-                if any_toks:
-                    parts.append(or_(*(FuturesMarket.name.ilike(f"%{t}%") for t in any_toks)))
-                for ex in excl_toks:
-                    parts.append(~FuturesMarket.name.ilike(f"%{ex}%"))
-                if parts:
-                    extra_clauses.append(and_(*parts))
+        market_sections: list[Mapping[str, Any]] = [
+            sec["atom_query"]
+            for sec in sections_cfg
+            if isinstance(sec, Mapping)
+            and isinstance(sec.get("atom_query"), Mapping)
+            and sec["atom_query"].get("kind") in {"markets", "market_history"}
+        ]
+        # Step 1: Lightweight index-backed candidate ID discovery via
+        # `ix_fm_feed_open_sports` (status='open' AND event_id IS NULL), fetching
+        # ONLY (id, name, volume) and filtering section title tokens in Python.
+        # Avoids multi-clause ILIKE/NOT ILIKE scans over hundreds of thousands of
+        # resolved or game-linked rows and eliminates the double FuturesMarket fetch.
+        title_matched_mids: set[int] = set()
+        title_volume_by_mid: dict[int, float] = {}
+        if needs_markets and market_sections:
+            cat_pool = _category_llm_pool_for_definition(definition)
+            lightweight_rows: list[tuple[int, str, float]] = []
+            if cat_pool is not None:
+                scan_rows = (
+                    await db.execute(_build_scoped_open_market_scan_stmt(cat_pool))
+                ).all()
+                seen_scan: set[int] = set()
+                for mid_val, name_val, vol_val in scan_rows:
+                    mid_i = int(mid_val)
+                    if mid_i in seen_scan:
+                        continue
+                    seen_scan.add(mid_i)
+                    lightweight_rows.append(
+                        (mid_i, str(name_val or ""), float(vol_val or 0.0))
+                    )
+
+            unmatched_sections: list[Mapping[str, Any]] = []
+            for aq in market_sections:
+                has_tokens = bool(
+                    (aq.get("title_all_tokens") or ())
+                    or (aq.get("any_tokens") or ())
+                    or (aq.get("exclude_tokens") or ())
+                )
+                cap_n = (
+                    max(int(aq.get("max_items", 4)) + 3, 6)
+                    if aq.get("kind") == "market_history"
+                    else max(int(aq.get("max_items", 4)) + 2, 4)
+                )
+                fetch_cap = max(cap_n * 3, 12) if has_tokens else 40
+                sec_hits = [
+                    row
+                    for row in lightweight_rows
+                    if (not has_tokens or _market_title_matches_query(row[1], aq))
+                ]
+                if not sec_hits:
+                    unmatched_sections.append(aq)
                 else:
-                    has_unfiltered_market_section = True
+                    sec_hits.sort(key=lambda r: (-r[2], r[0]))
+                    for mid_i, _nm, vol_f in sec_hits[:fetch_cap]:
+                        title_matched_mids.add(mid_i)
+                        title_volume_by_mid[mid_i] = vol_f
 
-            if extra_clauses:
-                targeted_stmt = (
-                    select(FuturesMarket)
-                    .options(selectinload(FuturesMarket.outcomes))
-                    .where(FuturesMarket.status == "open", or_(*extra_clauses))
-                    .order_by(FuturesMarket.volume.desc().nullslast(), FuturesMarket.id.asc())
-                    .limit(120)
+            # Safety fallback only for an uncategorized grouping or a required section
+            # whose target market carried an unexpected llm_sport_category (0 extra
+            # queries in steady state on all registered groupings). Still enforces
+            # `event_id IS NULL` and evaluates exclude_tokens in Python (never NOT ILIKE).
+            if unmatched_sections:
+                pos_clauses = []
+                for aq in unmatched_sections:
+                    all_toks = [
+                        str(t).strip()
+                        for t in (aq.get("title_all_tokens") or ())
+                        if str(t).strip()
+                    ]
+                    any_toks = [
+                        str(t).strip()
+                        for t in (aq.get("any_tokens") or ())
+                        if str(t).strip()
+                    ]
+                    parts = [FuturesMarket.name.ilike(f"%{t}%") for t in all_toks]
+                    if any_toks:
+                        parts.append(
+                            or_(*(FuturesMarket.name.ilike(f"%{t}%") for t in any_toks))
+                        )
+                    if parts:
+                        pos_clauses.append(and_(*parts))
+                fb_stmt = select(
+                    FuturesMarket.id, FuturesMarket.name, FuturesMarket.volume
+                ).where(FuturesMarket.event_id.is_(None), FuturesMarket.status == "open")
+                if pos_clauses:
+                    fb_stmt = fb_stmt.where(or_(*pos_clauses)).limit(80)
+                else:
+                    fb_stmt = fb_stmt.order_by(
+                        FuturesMarket.volume_24h.desc().nullslast()
+                    ).limit(120)
+                fb_rows = [
+                    (int(r[0]), str(r[1] or ""), float(r[2] or 0.0))
+                    for r in (await db.execute(fb_stmt)).all()
+                ]
+                for aq in unmatched_sections:
+                    cap_n = (
+                        max(int(aq.get("max_items", 4)) + 3, 6)
+                        if aq.get("kind") == "market_history"
+                        else max(int(aq.get("max_items", 4)) + 2, 4)
+                    )
+                    hits = [
+                        row for row in fb_rows if _market_title_matches_query(row[1], aq)
+                    ]
+                    hits.sort(key=lambda r: (-r[2], r[0]))
+                    for mid_i, _nm, vol_f in hits[: max(cap_n * 3, 12)]:
+                        title_matched_mids.add(mid_i)
+                        title_volume_by_mid[mid_i] = vol_f
+
+        # Step 2: Single PK fetch via `_verified_title_market_stmt()` for all matched
+        # market IDs + paired-stage market IDs (eliminates the second FuturesMarket fetch).
+        all_fetch_mids = title_matched_mids | paired_stage_mids
+        vt_rows_by_id: dict[int, Any] = {}
+        if all_fetch_mids:
+            fetched_vt_rows = (
+                await db.execute(
+                    _verified_title_market_stmt().where(
+                        FuturesMarket.id.in_(sorted(all_fetch_mids))
+                    )
                 )
-                for fm in (await db.execute(targeted_stmt)).scalars().all():
-                    if fm.id not in seen_mids:
-                        seen_mids.add(fm.id)
-                        m_rows.append(fm)
+            ).unique().scalars().all()
+            vt_rows_by_id = {int(fm.id): fm for fm in fetched_vt_rows}
 
-            if has_unfiltered_market_section or not extra_clauses:
-                m_stmt = (
-                    select(FuturesMarket)
-                    .options(selectinload(FuturesMarket.outcomes))
-                    .where(FuturesMarket.status == "open")
-                    .order_by(FuturesMarket.volume.desc().nullslast())
-                    .limit(400)
-                )
-                for fm in (await db.execute(m_stmt)).scalars().all():
-                    if fm.id not in seen_mids:
-                        seen_mids.add(fm.id)
-                        m_rows.append(fm)
-
+        ordered_title_mids = sorted(
+            (mid for mid in title_matched_mids if mid in vt_rows_by_id),
+            key=lambda mid: (-title_volume_by_mid.get(mid, 0.0), mid),
+        )
         prelim_markets: list[dict[str, Any]] = []
-        for fm in m_rows:
+        for mid in ordered_title_mids:
+            fm = vt_rows_by_id[mid]
             top_outs: list[dict[str, Any]] = []
             for o in fm.outcomes or ():
                 prob_val = getattr(o, "current_probability", None)
@@ -1916,44 +2109,49 @@ async def _load_snapshot_from_db(
         # verified_title detail pipeline as GET /api/futures/{id}?representation=verified_title
         # so every number on a card or page equals the member's own page at the same moment.
         candidate_mids: set[int] = set(paired_stage_mids)
-        for sec in sections_cfg:
-            if not isinstance(sec, Mapping) or not isinstance(sec.get("atom_query"), Mapping):
-                continue
-            aq = sec["atom_query"]
-            if aq.get("kind") in {"markets", "market_history"}:
-                cap_n = (
-                    max(int(aq.get("max_items", 4)) + 3, 6)
-                    if aq.get("kind") == "market_history"
-                    else max(int(aq.get("max_items", 4)) + 2, 4)
-                )
-                matched_sec = [pm for pm in prelim_markets if _market_matches_query(pm, aq)]
-                for pm in matched_sec[:cap_n]:
-                    candidate_mids.add(int(pm["id"]))
+        for aq in market_sections:
+            cap_n = (
+                max(int(aq.get("max_items", 4)) + 3, 6)
+                if aq.get("kind") == "market_history"
+                else max(int(aq.get("max_items", 4)) + 2, 4)
+            )
+            matched_sec = [pm for pm in prelim_markets if _market_matches_query(pm, aq)]
+            for pm in matched_sec[:cap_n]:
+                candidate_mids.add(int(pm["id"]))
 
         detail_by_mid: dict[int, dict[str, Any]] = {}
         mpn_by_mid: dict[int, dict[str, Any]] = {}
-        if candidate_mids:
-            vt_rows = (
-                await db.execute(
-                    _verified_title_market_stmt().where(
-                        FuturesMarket.id.in_(sorted(candidate_mids))
-                    )
-                )
-            ).unique().scalars().all()
-            out_map = await out_legs_by_market(list(vt_rows))
-            for fm in vt_rows:
-                unsupported_ids = await _withheld_price_outcome_ids(db, fm)
+        selected_vt_rows = [
+            vt_rows_by_id[mid] for mid in sorted(candidate_mids) if mid in vt_rows_by_id
+        ]
+        if selected_vt_rows:
+            out_map = await out_legs_by_market(selected_vt_rows)
+            # Constant-query-count batched withhold screen (<= 4 queries total vs N*2-3).
+            withheld_by_mid = await withheld_price_outcome_ids_for_markets(
+                db, selected_vt_rows
+            )
+            fleet_newest_cached: Any = None
+            fleet_newest_queried = False
+            for fm in selected_vt_rows:
+                unsupported_ids = withheld_by_mid.get(fm.id, set())
                 if getattr(fm, "source", None) == "polymarket" and not getattr(fm, "mutually_exclusive", True):
                     leg_sides = await _game_container_leg_sides(db, fm)
                     lead_leg = await _game_container_lead_leg(db, fm, leg_sides)
                 else:
                     leg_sides = {}
                     lead_leg = None
+                if not fleet_newest_queried:
+                    fm_fleet = await _fleet_newest_observation(db, fm)
+                    if fm_fleet is not None:
+                        fleet_newest_cached = fm_fleet
+                        fleet_newest_queried = True
+                else:
+                    fm_fleet = fleet_newest_cached
                 detail = _format_market_detail(
                     fm,
                     None,
                     unsupported_ids,
-                    fleet_newest_observation=await _fleet_newest_observation(db, fm),
+                    fleet_newest_observation=fm_fleet,
                     leg_sides=leg_sides,
                     lead_leg=lead_leg,
                     out_division_labels=out_map.get(fm.id),
@@ -2087,12 +2285,15 @@ async def _load_snapshot_from_db(
             and sec["atom_query"].get("kind") == "markets"
             and ((card_sec_key and str(sec.get("key") or "") == card_sec_key) or (not card_sec_key and idx == 0))
         ]
-        all_hist_queries = list(history_queries) + card_market_queries
+        all_hist_queries = [
+            (hq, max(int(hq.get("max_items", 4)) + 1, 3)) for hq in history_queries
+        ] + [
+            (hq, max(int(hq.get("max_items", 1)), 1)) for hq in card_market_queries
+        ]
         if all_hist_queries and markets_out:
             wanted_oids: set[int] = set()
-            max_hours = max([int(hq.get("hours") or 168) for hq in all_hist_queries] or [168])
-            for hq in all_hist_queries:
-                hist_cap = max(int(hq.get("max_items", 4)) + 2, 5)
+            max_hours = max([int(hq.get("hours") or 168) for hq, _ in all_hist_queries] or [168])
+            for hq, hist_cap in all_hist_queries:
                 matched_for_hq = [m_dict for m_dict in markets_out if _market_matches_query(m_dict, hq)]
                 for m_dict in matched_for_hq[:hist_cap]:
                     outs_sorted = sorted(

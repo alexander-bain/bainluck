@@ -899,6 +899,120 @@ def _is_cacheable_refusal(reasons: Sequence[Any]) -> bool:
     return True
 
 
+ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S = 300.0
+#: Redis hash tracking `machinery-*` slugs that currently hold a live game (or one
+#: starting within `MACHINERY_IMMINENT_START_WINDOW_S`), read by the 30s realtime
+#: republisher (`_prewarm_live_feed_shapes`) so live slates never expire between
+#: 120s host beats. TTL outlives the 120s host beat by 2.5x.
+MACHINERY_LIVE_SLUGS_KEY = "bainluck:roundup:machinery:live_slugs"
+MACHINERY_LIVE_SLUGS_TTL_S = 300
+MACHINERY_IMMINENT_START_WINDOW_S = 180.0
+_TERMINAL_EVENT_STATUSES = frozenset(
+    {"final", "completed", "closed", "cancelled", "canceled", "postponed"}
+)
+
+
+def _roundup_payload_has_live_event(container_payload: Optional[Mapping[str, Any]]) -> bool:
+    if not isinstance(container_payload, Mapping):
+        return False
+    for sec in container_payload.get("sections") or ():
+        if not isinstance(sec, Mapping):
+            continue
+        for m in sec.get("members") or ():
+            if not isinstance(m, Mapping) or m.get("type") != "event":
+                continue
+            card = m.get("card")
+            if isinstance(card, Mapping):
+                st = str(card.get("status") or "").strip().lower()
+                if st in {"live", "in_progress", "halftime"}:
+                    return True
+    return False
+
+
+def _roundup_payload_needs_live_rail(
+    container_payload: Optional[Mapping[str, Any]],
+    *,
+    now_ts: Optional[float] = None,
+) -> bool:
+    """True when a machinery grouping should be refreshed on the 30s live rail.
+
+    Enrolls any slate with a live event OR a non-final event commencing within
+    ``MACHINERY_IMMINENT_START_WINDOW_S`` (3 min) so the slate is already on the
+    30s rail before tipoff/kickoff with zero cold gap at the opening whistle.
+    """
+    if _roundup_payload_has_live_event(container_payload):
+        return True
+    if not isinstance(container_payload, Mapping):
+        return False
+    ref_ts = time.time() if now_ts is None else float(now_ts)
+    for sec in container_payload.get("sections") or ():
+        if not isinstance(sec, Mapping):
+            continue
+        for m in sec.get("members") or ():
+            if not isinstance(m, Mapping) or m.get("type") != "event":
+                continue
+            card = m.get("card")
+            if not isinstance(card, Mapping):
+                continue
+            st = str(card.get("status") or "").strip().lower()
+            if st in _TERMINAL_EVENT_STATUSES:
+                continue
+            raw_ct = card.get("commence_time")
+            if not isinstance(raw_ct, str) or not raw_ct.strip():
+                continue
+            try:
+                ct_dt = datetime.fromisoformat(raw_ct.replace("Z", "+00:00"))
+                if ct_dt.tzinfo is None:
+                    ct_dt = ct_dt.replace(tzinfo=timezone.utc)
+                ct_ts = ct_dt.timestamp()
+            except ValueError:
+                continue
+            if (ref_ts - 21600.0) <= ct_ts <= (ref_ts + MACHINERY_IMMINENT_START_WINDOW_S):
+                return True
+    return False
+
+
+def _record_machinery_live_origin(
+    built_at: float,
+    slug: str,
+    container_payload: Optional[Mapping[str, Any]],
+) -> None:
+    """Feed a cached live machinery grouping's origin into the LAT-P230 age sink."""
+    if not (
+        _is_machinery_producer_slug(slug)
+        and _roundup_payload_has_live_event(container_payload)
+    ):
+        return
+    try:
+        from app.utils.principal_independent_cache import _age_sink_var
+
+        sink = _age_sink_var.get()
+        if sink is not None:
+            sink.append(float(built_at))
+    except Exception:  # noqa: BLE001 — telemetry sink is best-effort
+        pass
+
+
+def _roundup_cache_ttl_seconds(
+    slug: str,
+    container_payload: Optional[Mapping[str, Any]],
+) -> float:
+    """TTL for a cached roundup entry.
+
+    Machinery groupings (`machinery-*`) keep the tight 60s TTL whenever they hold
+    a live game (matching `FEED_RESPONSE_STALE_TTL_LIVE_SECONDS`), and use a 300s
+    TTL for scheduled/futures groupings so the 120s background prewarmer keeps
+    every reader read warm across beat jitter.
+    """
+    if (
+        _is_machinery_producer_slug(slug)
+        and container_payload is not None
+        and not _roundup_payload_has_live_event(container_payload)
+    ):
+        return ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S
+    return ROUNDUP_CACHE_TTL_S
+
+
 async def _store_roundup_cache_entry(
     cache_key: tuple[str, Any],
     slug: str,
@@ -909,6 +1023,7 @@ async def _store_roundup_cache_entry(
 ) -> None:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    ttl_s = _roundup_cache_ttl_seconds(slug, container_payload)
     _roundup_local_cache[cache_key] = (
         ts,
         copy.deepcopy(feed_item),
@@ -921,6 +1036,7 @@ async def _store_roundup_cache_entry(
             encoded = json.dumps(
                 {
                     "built_at": ts,
+                    "ttl_s": ttl_s,
                     "feed_item": feed_item,
                     "container_payload": container_payload,
                 },
@@ -931,10 +1047,27 @@ async def _store_roundup_cache_entry(
                 lambda: client.set(
                     _redis_cache_key(slug),
                     encoded,
-                    ex=int(ROUNDUP_CACHE_TTL_S),
+                    ex=int(ttl_s),
                 ),
                 treat_none_as_miss=False,
             )
+            if _is_machinery_producer_slug(slug) and container_payload is not None:
+                if _roundup_payload_needs_live_rail(container_payload, now_ts=ts):
+                    await bounded_redis_call(
+                        lambda: client.hset(MACHINERY_LIVE_SLUGS_KEY, slug, str(ts)),
+                        treat_none_as_miss=False,
+                    )
+                    await bounded_redis_call(
+                        lambda: client.expire(
+                            MACHINERY_LIVE_SLUGS_KEY, MACHINERY_LIVE_SLUGS_TTL_S
+                        ),
+                        treat_none_as_miss=False,
+                    )
+                else:
+                    await bounded_redis_call(
+                        lambda: client.hdel(MACHINERY_LIVE_SLUGS_KEY, slug),
+                        treat_none_as_miss=False,
+                    )
         except Exception:  # noqa: BLE001 — cache write is best-effort
             logger.debug(
                 "roundup_containers: shared cache write failed for %s",
@@ -991,6 +1124,7 @@ async def evaluate_roundup_producer(
     now: Optional[float | datetime] = None,
     licences_registry: Optional[dict[str, Any]] = None,
     licences_path: Optional[Path | str] = None,
+    force_refresh: bool = False,
 ) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
     """Run ``producer`` once and return ``(feed_item, container_payload)``, cached 60s per slug."""
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -1040,10 +1174,13 @@ async def evaluate_roundup_producer(
         "live" if isinstance(db, AsyncSession) else id(db),
     )
 
-    if use_cache:
+    if use_cache and not force_refresh:
         cached = _roundup_local_cache.get(cache_key)
-        if cached is not None and (ts - cached[0]) < ROUNDUP_CACHE_TTL_S:
-            return copy.deepcopy(cached[1]), copy.deepcopy(cached[2])
+        if cached is not None:
+            local_ttl = _roundup_cache_ttl_seconds(producer.slug, cached[2])
+            if (ts - cached[0]) < local_ttl:
+                _record_machinery_live_origin(cached[0], producer.slug, cached[2])
+                return copy.deepcopy(cached[1]), copy.deepcopy(cached[2])
         if isinstance(db, AsyncSession):
             try:
                 from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
@@ -1058,10 +1195,11 @@ async def evaluate_roundup_producer(
                         if isinstance(res.value, (bytes, bytearray))
                         else res.value
                     )
+                    raw_ttl = float(raw.get("ttl_s") or ROUNDUP_CACHE_TTL_S) if isinstance(raw, dict) else ROUNDUP_CACHE_TTL_S
                     if (
                         isinstance(raw, dict)
                         and isinstance(raw.get("built_at"), (int, float))
-                        and (ts - float(raw["built_at"])) < ROUNDUP_CACHE_TTL_S
+                        and (ts - float(raw["built_at"])) < raw_ttl
                     ):
                         fi = raw.get("feed_item")
                         cp = raw.get("container_payload")
@@ -1069,6 +1207,9 @@ async def evaluate_roundup_producer(
                             float(raw["built_at"]),
                             fi,
                             cp,
+                        )
+                        _record_machinery_live_origin(
+                            float(raw["built_at"]), producer.slug, cp
                         )
                         return copy.deepcopy(fi), copy.deepcopy(cp)
             except Exception:  # noqa: BLE001 — cache read fails open
@@ -1103,6 +1244,17 @@ async def evaluate_roundup_producer(
 
     container_payload = compose_roundup_container(producer, outcome)
     feed_item = compose_roundup_feed_item(producer, outcome)
+    if (
+        _is_machinery_producer_slug(producer.slug)
+        and container_payload is not None
+        and _roundup_payload_has_live_event(container_payload)
+        and isinstance(feed_item, dict)
+        and isinstance(feed_item.get("data"), dict)
+    ):
+        # Stamp `status="live"` so `feed_cache.payload_contains_live_event`
+        # automatically bounds any Discover page carrying a live machinery slate
+        # to the 60s live ceiling (`FEED_RESPONSE_STALE_TTL_LIVE_SECONDS`).
+        feed_item["data"]["status"] = "live"
     if container_payload is None or (
         feed_item is None and not getattr(outcome, "suppress_feed_item", False)
     ):
@@ -2198,7 +2350,10 @@ async def add_roundup_feed_items(
                     await db.rollback()
                 except Exception:  # noqa: BLE001
                     pass
-            if per_timeout >= ROUNDUP_PRODUCER_TIMEOUT_SECONDS:
+            if (
+                per_timeout >= ROUNDUP_PRODUCER_TIMEOUT_SECONDS
+                and not _is_machinery_producer_slug(producer.slug)
+            ):
                 await _cache_roundup_timeout_refusal(producer, db)
             logger.warning(
                 "Discover round-up read failed for %s; keeping ordinary cards",
