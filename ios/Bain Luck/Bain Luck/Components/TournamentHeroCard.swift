@@ -89,19 +89,43 @@ nonisolated struct TournamentHeroCard: View {
                                 .foregroundStyle(movement > 0 ? .green : .red)
                             }
                             Spacer()
-                            Text(golfer.renderedPercent.map { formatProbability(golfer.probability, renderedPercent: $0) } ?? String(format: "%.1f%%", golfer.probability * 100))
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                                .monospacedDigit()
-                                .foregroundStyle(index == 0 ? .blue : .secondary)
+                            let golferPriceText = golfer.renderedPercent.map { formatProbability(golfer.probability, renderedPercent: $0) } ?? String(format: "%.1f%%", golfer.probability * 100)
+                            HStack(spacing: 4) {
+                                Text(golferPriceText)
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .monospacedDigit()
+                                    .foregroundStyle(index == 0 ? .blue : .secondary)
+                                if let mark = SourceMarkButton(
+                                    golfer.sourceMark,
+                                    number: golfer.sourceMark?.state == .settled ? nil : golfer.probability,
+                                    subject: golfer.name,
+                                    numberSize: 15,
+                                    compactRow: true,
+                                    showsTenths: golferPriceText.contains(".")
+                                ) {
+                                    mark.buttonStyle(.borderless)
+                                }
+                            }
                         }
                     }
                     ForEach(tournament.overflowOutcomes) { outcome in
-                        HStack {
+                        let outcomePriceText = outcome.renderedPercent.map { formatProbability(outcome.probability, renderedPercent: $0) } ?? String(format: "%.1f%%", outcome.probability * 100)
+                        HStack(spacing: 4) {
                             Text(outcome.name)
                             Spacer()
-                            Text(outcome.renderedPercent.map { formatProbability(outcome.probability, renderedPercent: $0) } ?? String(format: "%.1f%%", outcome.probability * 100))
+                            Text(outcomePriceText)
                                 .monospacedDigit()
+                            if let mark = SourceMarkButton(
+                                outcome.sourceMark,
+                                number: outcome.sourceMark?.state == .settled ? nil : outcome.probability,
+                                subject: outcome.name,
+                                numberSize: 15,
+                                compactRow: true,
+                                showsTenths: outcomePriceText.contains(".")
+                            ) {
+                                mark.buttonStyle(.borderless)
+                            }
                         }
                         .font(.subheadline)
                         .foregroundStyle(.secondary)

@@ -61,6 +61,7 @@ enum DiscoverGroupRows {
         let label: String?
         let probability: Double?
         let movement: Double?
+        var sourceMark: SourceMark? = nil
     }
 
     enum FullCardStyle: Equatable { case heatmap, distribution, comparison, futures }
@@ -84,11 +85,21 @@ enum DiscoverGroupRows {
                 $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                     == rung.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             }
-            return CompactSummary(label: rung.label, probability: rung.probability, movement: matching?.movement)
+            return CompactSummary(
+                label: rung.label,
+                probability: rung.probability,
+                movement: matching?.movement,
+                sourceMark: data.resolvedSourceMark(for: matching)
+            )
         }
         // Ordinary and all-below-even cards retain their served leader; missing
         // probability stays missing rather than turning into a fabricated zero.
         let leader = data.topOutcomes?.first
-        return CompactSummary(label: leader?.name, probability: leader?.probability, movement: leader?.movement)
+        return CompactSummary(
+            label: leader?.name,
+            probability: leader?.probability,
+            movement: leader?.movement,
+            sourceMark: data.resolvedSourceMark(for: leader)
+        )
     }
 }
