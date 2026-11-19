@@ -524,6 +524,7 @@ async def get_grades(
         RankingGrade.surface != SURFACE_PAIR,
         # 227-A point 6: a whole-screen look is not a card grade either (/screen-grades).
         RankingGrade.surface != SURFACE_SCREENS,
+        RankingGrade.surface != SURFACE_SCREENS_UNDONE,
     )
     if slate_id:
         stmt = stmt.where(RankingGrade.slate_id == slate_id)
@@ -1596,6 +1597,7 @@ async def get_pair_picks(
 # "does a count agree with his grades" is then a table.
 
 SURFACE_SCREENS = "screens"
+SURFACE_SCREENS_UNDONE = "screens_undone"
 SCREENS_PATH = Path(__file__).resolve().parents[1] / "data" / "screen_samples.json"
 SCREEN_GRADES = ("fun", "fine", "wall")
 _SCREEN_TO_DB_GRADE: dict[str, str] = {"fun": "shareable", "fine": "interesting", "wall": "neither"}
@@ -1654,6 +1656,12 @@ class ScreenGradeIn(BaseModel):
     grade: str
 
 
+class ScreenGradeUndoIn(BaseModel):
+    week: str = Field(..., min_length=8, max_length=8)
+    n: int = Field(..., ge=1)
+    grader: str = Field(..., min_length=1, max_length=40)
+
+
 @router.post("/screen-grades")
 async def post_screen_grade(
     body: ScreenGradeIn,
@@ -1698,6 +1706,50 @@ async def post_screen_grade(
     )
     await db.commit()
     return {"status": "ok"}
+
+
+@router.post("/screen-grades/undo")
+async def undo_last_screen_grade(
+    body: ScreenGradeUndoIn,
+    request: Request,
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db_rw),
+) -> dict:
+    """Undo only the grader's single most recent screen grade in this week's deck.
+
+    Fable follow-up on #12984 (Wed Nov 18): lets a phone grader fix an accidental
+    tap before moving on, while keeping "first grade stands" for anything older.
+    """
+    _check_admin_secret(secret, request=request)
+    if not ranking_snapshots_enabled():
+        raise HTTPException(status_code=409, detail="RANKING_SNAPSHOTS is off")
+    grader = " ".join(body.grader.split())
+    if not grader:
+        raise HTTPException(status_code=422, detail="grader needs a name")
+    screens = load_screen_samples().get(body.week)
+    if screens is None or body.n > len(screens):
+        raise HTTPException(status_code=404, detail="no such screen this week")
+    screen_id = str(screens[body.n - 1]["id"])
+    rows = (await db.execute(
+        select(RankingGrade).where(
+            RankingGrade.surface == SURFACE_SCREENS,
+            RankingGrade.slate_id == _screen_slate(body.week),
+            RankingGrade.grader == grader,
+        )
+    )).scalars().all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="no grade to undo")
+    latest = max(rows, key=lambda r: (r.graded_at or datetime.min, r.id or 0))
+    if latest.item_key != f"screen:{screen_id}":
+        raise HTTPException(
+            status_code=409,
+            detail="only the last grade can be undone; earlier grades stand",
+        )
+    # Non-destructive soft retraction: move the single newest row off the
+    # active screen surface so the audit trail stays intact and no row is deleted.
+    latest.surface = SURFACE_SCREENS_UNDONE
+    await db.commit()
+    return {"status": "undone", "n": body.n}
 
 
 @router.get("/screen-grades")
