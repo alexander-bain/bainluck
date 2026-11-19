@@ -153,11 +153,11 @@ final class GameAlertsPreference13083Tests: XCTestCase {
     #if os(iOS)
     func testGameAlertsSwitchRendersAt390PxAcrossLightDarkAndDynamicType() throws {
         let outDir = ProcessInfo.processInfo.environment["EXPORT_GAME_ALERTS_13083_DIR"]
-        let variants: [(name: String, style: UIUserInterfaceStyle, scheme: ColorScheme, size: ContentSizeCategory, uiSize: UIContentSizeCategory)] = [
+        let variants: [(name: String, style: UIUserInterfaceStyle, scheme: ColorScheme, dynamicType: DynamicTypeSize, uiSize: UIContentSizeCategory)] = [
             ("light_default", .light, .light, .large, .large),
             ("dark_default", .dark, .dark, .large, .large),
-            ("light_xxxl", .light, .light, .accessibilityExtraExtraExtraLarge, .accessibilityExtraExtraExtraLarge),
-            ("dark_xxxl", .dark, .dark, .accessibilityExtraExtraExtraLarge, .accessibilityExtraExtraExtraLarge),
+            ("light_xxxl", .light, .light, .accessibility3, .accessibilityExtraExtraExtraLarge),
+            ("dark_xxxl", .dark, .dark, .accessibility3, .accessibilityExtraExtraExtraLarge),
         ]
 
         let signedOutAuth = AuthManager()
@@ -173,10 +173,9 @@ final class GameAlertsPreference13083Tests: XCTestCase {
             .environmentObject(nav)
             .environment(\.horizontalSizeClass, .compact)
             .environment(\.colorScheme, v.scheme)
-            .environment(\.sizeCategory, v.size)
 
-            let height: CGFloat = v.size.isAccessibilityCategory ? 844 : 620
-            let img = Self.renderPhoneView(view, width: 390, height: height, style: v.style, contentSize: v.uiSize)
+            let height: CGFloat = v.dynamicType.isAccessibilitySize ? 844 : 620
+            let img = Self.renderPhoneView(view, width: 390, height: height, style: v.style, dynamicType: v.dynamicType, contentSize: v.uiSize)
             let ocr = try Self.recognizeText(in: XCTUnwrap(img.cgImage))
             let flatOCR = ocr.replacingOccurrences(of: " | ", with: " ")
             XCTAssertTrue(flatOCR.localizedCaseInsensitiveContains("Game alerts"),
@@ -200,8 +199,7 @@ final class GameAlertsPreference13083Tests: XCTestCase {
                 .environmentObject(pins)
                 .environment(\.horizontalSizeClass, .compact)
                 .environment(\.colorScheme, v.scheme)
-                .environment(\.sizeCategory, v.size)
-            let img = Self.renderPhoneView(pinView, width: 390, height: 620, style: v.style, contentSize: v.uiSize)
+            let img = Self.renderPhoneView(pinView, width: 390, height: 620, style: v.style, dynamicType: v.dynamicType, contentSize: v.uiSize)
             let ocr = try Self.recognizeText(in: XCTUnwrap(img.cgImage))
             XCTAssertTrue(ocr.localizedCaseInsensitiveContains("Game alerts"),
                           "\(v.name) PinManagementView must show Game alerts; OCR=\(ocr)")
@@ -218,9 +216,10 @@ final class GameAlertsPreference13083Tests: XCTestCase {
         width: CGFloat,
         height: CGFloat,
         style: UIUserInterfaceStyle,
+        dynamicType: DynamicTypeSize,
         contentSize: UIContentSizeCategory
     ) -> UIImage {
-        let host = UIHostingController(rootView: view)
+        let host = hostForMeasurement(view, at: dynamicType)
         host.safeAreaRegions = []
         host.overrideUserInterfaceStyle = style
         host.traitOverrides.horizontalSizeClass = .compact
