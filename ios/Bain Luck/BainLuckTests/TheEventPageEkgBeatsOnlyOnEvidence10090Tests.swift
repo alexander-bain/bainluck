@@ -328,25 +328,38 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
         }
         func close() {}
         func open() { for handler in callbacks["open"] ?? [] { handler("") } }
+        func heartbeat(at date: Date = Date()) {
+            let stamp = ISO8601DateFormatter().string(from: date)
+            let payload = #"{"t":"hb","activity_at":"\#(stamp)"}"#
+            for handler in callbacks["heartbeat"] ?? [] { handler(payload) }
+        }
     }
 
-    private func model(status: String) async -> EventDetailViewModel {
+    private func model(status: String) async -> (EventDetailViewModel, PageHandle) {
         let handle = PageHandle()
         let vm = EventDetailViewModel(eventId: Self.event, client: PageClient(status: status),
                                       makeStreamHandle: { _ in handle })
         await vm.load(); handle.open()
-        return vm
+        return (vm, handle)
     }
 
     /// A popover needs a window on a foreground-active scene (#11703's mount).
     private func mount<V: View>(_ view: V) async throws -> (UIViewController, UIWindow, UIWindow?) {
+        let activeDeadline = Date().addingTimeInterval(2)
         let deadline = Date().addingTimeInterval(10)
         func activeScene() -> UIWindowScene? {
             UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
                 .first { $0.activationState == .foregroundActive }
         }
-        while activeScene() == nil && Date() < deadline { try await Task.sleep(nanoseconds: 50_000_000) }
-        let scene = try XCTUnwrap(activeScene(), "a popover needs a foreground-active window scene")
+        func usableScene() -> UIWindowScene? {
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            return scenes.first { $0.activationState == .foregroundActive }
+                ?? scenes.first { $0.activationState == .foregroundInactive }
+                ?? scenes.first
+        }
+        while activeScene() == nil && Date() < activeDeadline { try await Task.sleep(nanoseconds: 50_000_000) }
+        while usableScene() == nil && Date() < deadline { try await Task.sleep(nanoseconds: 50_000_000) }
+        let scene = try XCTUnwrap(usableScene(), "a popover needs a foreground window scene")
         let previous = scene.windows.first { $0.isKeyWindow }
         let host = hostForMeasurement(NavigationStack { view }.environmentObject(PinManager())
             .environment(\.scenePhase, .active).environment(\.colorScheme, .light))
@@ -398,10 +411,14 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
     }
 
     func testALiveGameShowsTheHeartbeatByDefaultAndATapOpensTheDetails() async throws {
-        let vm = await model(status: "live")
+        let (vm, handle) = await model(status: "live")
         defer { vm.stopRefresh() }
         let (host, window, previous) = try await mount(EventDetailView(eventId: Self.event, viewModel: vm))
         defer { host.dismiss(animated: false); window.isHidden = true; previous?.makeKey() }
+
+        // Establish baseline on initial render, then deliver a live stream heartbeat (#12742 hides flat grey pre-signal line).
+        await settle(host, timeout: 2) { self.element("Share", in: host.view) != nil || self.element("Dallas", in: host.view) != nil || self.element("Cowboys", in: host.view) != nil }
+        handle.heartbeat(at: Date())
 
         var ekg: NSObject?
         await settle(host, timeout: 5) { ekg = self.element("Markets reporting", in: host.view); return ekg != nil }
@@ -420,14 +437,16 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
     }
 
     func testAFinishedGameShowsNoHeartbeat() async throws {
-        let vm = await model(status: "final")
+        let (vm, handle) = await model(status: "final")
         defer { vm.stopRefresh() }
         let (host, window, previous) = try await mount(EventDetailView(eventId: Self.event, viewModel: vm))
         defer { window.isHidden = true; previous?.makeKey() }
         // Control: the page itself rendered (its share control is always there).
         let rendered = await settle(host, timeout: 5) { self.element("Share", in: host.view) != nil
-            || self.element("Dallas", in: host.view) != nil || self.element("Baltimore", in: host.view) != nil }
+            || self.element("Dallas", in: host.view) != nil || self.element("Baltimore", in: host.view) != nil
+            || self.element("Cowboys", in: host.view) != nil || self.element("Ravens", in: host.view) != nil }
         XCTAssertTrue(rendered, "control: the finished page rendered")
+        handle.heartbeat(at: Date())
         XCTAssertNil(element("Markets reporting", in: host.view))
     }
 }

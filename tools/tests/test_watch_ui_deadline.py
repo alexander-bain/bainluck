@@ -202,18 +202,23 @@ print('only once',flush=True); time.sleep(20)
         job = workflow.split("  watch-ui-journey:", 1)[1].split(
             "  companion-archive:", 1
         )[0]
-        self.assertIn("timeout-minutes: 60", job)
+        self.assertIn("timeout-minutes: 105", job)
         self.assertIn(
             "python3 tools/watch_ui_stage.py execute --output-dir build/watch-ui-journey -- bash tools/watch-ui-journey.sh execute",
             job,
         )
         self.assertIn("if: always()", job)
         harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
-        self.assertIn("-default-test-execution-time-allowance 180", harness)
-        self.assertIn("-maximum-test-execution-time-allowance 300", harness)
+        self.assertIn("-default-test-execution-time-allowance 300", harness)
+        self.assertIn("-maximum-test-execution-time-allowance 540", harness)
         self.assertNotIn("-skip-testing", harness)
-        self.assertNotIn("-only-testing", harness)
-        self.assertLess(MODULE.MAX_SECONDS + 30, 60 * 60 - 5 * 60)
+        # The judged suite is never narrowed. The one uncounted warm-up before it
+        # (tests-warmup.log, test_watch_ui_infra_retry.py) may name its single case.
+        measured = harness.split("run_xctest_suite() {", 1)[1]
+        self.assertNotIn("-only-testing", measured)
+        self.assertEqual(harness.count("-only-testing"), 1)
+        self.assertIn('"-only-testing:$WARMUP_CASE"', harness)
+        self.assertLess(MODULE.MAX_SECONDS + 30, 105 * 60 - 5 * 60)
 
 
 if __name__ == "__main__":
