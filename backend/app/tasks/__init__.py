@@ -8025,9 +8025,11 @@ celery_app.conf.beat_schedule = {
     "probe-live-tennis-scores": {
         # #13000 (Ruling 257: B): read-only coverage probe of livetennisapi.com,
         # off when LIVE_TENNIS_API_KEY is unset, capped at <=96 requests/day.
+        # Runs on realtime (same `bainluck` app as LIVE_TENNIS_API_KEY, <1 ms
+        # when disabled, 1 read-only GET every 15 min when enabled) at :03/:18/:33/:48.
         "task": "app.tasks.probe_live_tennis_scores",
-        "schedule": 900.0,
-        "options": {"queue": "background", "expires": 840},
+        "schedule": crontab(minute="3,18,33,48"),
+        "options": {"queue": "realtime", "expires": 840},
     },
     "poll-odds-adaptive": {
         "task": "app.tasks.poll_all_odds",
