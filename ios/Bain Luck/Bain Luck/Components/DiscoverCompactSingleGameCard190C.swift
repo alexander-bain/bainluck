@@ -219,9 +219,13 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         let pricesDraw = DrawPricedWinner.sportPricesADraw(event.sport)
         let currentAwayWithheld = pricesDraw && !CompactGameCard12616.hasExplicitThreeWayCurrent(event)
         let prematchAwayWithheld = pricesDraw && !CompactGameCard12616.hasExplicitThreeWayPrematch(event)
-        if let resolved = EventCardView.resolvedCardSourceMark(
+        let canGrade = EventState.canStillBeGraded(
+            event.status,
+            commenceTime: event.commenceTime?.asDate
+        )
+        if let resolved = EventCardView.resolvedCardSourceMarkPresentation(
             event: event,
-            canStillBeGraded: !model.isFinished,
+            canStillBeGraded: canGrade,
             currentAwayIsWithheld: currentAwayWithheld,
             prematch: prematch,
             prematchAwayIsWithheld: prematchAwayWithheld
@@ -232,7 +236,8 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
             subject: resolved.subject,
             isPregame: resolved.isPregame,
             numberSize: 15,
-            compactRow: true
+            compactRow: true,
+            showsTenths: resolved.showsTenths
         ) {
             button.buttonStyle(.borderless)
         }

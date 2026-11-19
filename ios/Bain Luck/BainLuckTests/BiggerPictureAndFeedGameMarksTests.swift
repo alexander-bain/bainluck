@@ -408,7 +408,7 @@ final class BiggerPictureAndFeedGameMarksTests: XCTestCase {
             try writeRenderIfEnabled(captureView(card, scheme: .dark, at: .large), name: "12864-discover-game-dark-390")
 
             let pricesDraw = DrawPricedWinner.sportPricesADraw(event.sport)
-            if let resolved = EventCardView.resolvedCardSourceMark(
+            if let resolved = EventCardView.resolvedCardSourceMarkPresentation(
                 event: event,
                 canStillBeGraded: event.status != "completed" && event.status != "closed",
                 currentAwayIsWithheld: pricesDraw && !CompactGameCard12616.hasExplicitThreeWayCurrent(event),
@@ -420,6 +420,7 @@ final class BiggerPictureAndFeedGameMarksTests: XCTestCase {
                     number: resolved.number,
                     subject: resolved.subject,
                     isPregame: resolved.isPregame,
+                    showsTenths: resolved.showsTenths,
                     now: fixedNow
                 )
                 try writeRenderIfEnabled(captureView(sheet, fixedHeight: 480, scheme: .light, at: .large), name: "12864-discover-game-sheet-light-390")
