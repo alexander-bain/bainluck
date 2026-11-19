@@ -2,7 +2,14 @@
  * #11937 (171-A): /grade/pair reads only a slate and an opaque pair name from the
  * link, and asks the server for two unlabelled sides.
  */
-import { PAIR_CHOICES, PAIR_CHOICE_LABELS, gradeDeckHref, pairFromSearch, pairPath } from "@/lib/ranking/pairSession";
+import {
+  PAIR_CHOICES,
+  PAIR_CHOICE_LABELS,
+  gradeDeckHref,
+  pairFromSearch,
+  pairPath,
+  pairTargetFromSearch,
+} from "@/lib/ranking/pairSession";
 
 describe("pairFromSearch", () => {
   it("needs both a slate and a pair, each a safe reference", () => {
@@ -13,9 +20,22 @@ describe("pairFromSearch", () => {
   });
 });
 
+describe("pairTargetFromSearch", () => {
+  it("defaults bare /grade/pair to today's morning slate and pair, and validates explicit params", () => {
+    expect(pairTargetFromSearch("")).toEqual({ slate: null, pair: null });
+    expect(pairTargetFromSearch("?slate=59da9307253a78dc&pair=p1")).toEqual({
+      slate: "59da9307253a78dc",
+      pair: "p1",
+    });
+    expect(pairTargetFromSearch("?slate=59da9307253a78dc")).toBeNull();
+    expect(pairTargetFromSearch("?slate=x&pair=../p")).toBeNull();
+  });
+});
+
 describe("pairPath", () => {
-  it("names only the slate and the pair", () => {
+  it("names only the slate and the pair, or uses the default morning endpoint when omitted", () => {
     expect(pairPath("59da9307253a78dc", "p1")).toBe("/api/admin/ranking/pair?slate=59da9307253a78dc&pair=p1");
+    expect(pairPath(null, null)).toBe("/api/admin/ranking/pair");
   });
 });
 

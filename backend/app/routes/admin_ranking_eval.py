@@ -1353,10 +1353,23 @@ SURFACE_PAIR = "pair"
 PAIRS_PATH = Path(__file__).resolve().parents[1] / "data" / "ranking_pairs.json"
 PAIR_CHOICES = ("left", "right", "none")
 PAIR_SIZE = 10
+DEFAULT_MORNING_PAIR = "p1"
 # Stored through ranking_grades' grade check (shareable/interesting/neither), as
 # the grouping grades are: what a pick MEANS, never which side it was on.
 _PAIR_TO_DB_GRADE: dict[str, str] = {"candidate": "shareable", "none": "interesting", "served": "neither"}
 _DB_TO_PAIR_PICK: dict[str, str] = {v: k for k, v in _PAIR_TO_DB_GRADE.items()}
+
+
+def _frozen_pair_rankers() -> dict[str, Any]:
+    """Server-side frozen candidates for opaque morning pair names (#11937).
+
+    Used only by the admin grading pair routes so Thursday morning works from
+    one bookmarkable link without a daily PR or attended read. Discover itself
+    never calls these while the ranking switch is off.
+    """
+    from app.utils.discover_rank import rank_c1_story, rank_c2_score
+
+    return {"p1": rank_c2_score, "p2": rank_c1_story}
 
 
 def load_pairs(path: Path = PAIRS_PATH) -> dict[str, dict[str, list[str]]]:
@@ -1365,6 +1378,19 @@ def load_pairs(path: Path = PAIRS_PATH) -> dict[str, dict[str, list[str]]]:
     except FileNotFoundError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _resolve_pair_keys(row: Mapping[str, Any], pair: str) -> list[str] | None:
+    """Explicit keys from ``ranking_pairs.json`` first, else the frozen server-side pair."""
+    explicit = load_pairs().get(row["slate_id"], {}).get(pair)
+    if explicit is not None:
+        return list(explicit)
+    ranker = _frozen_pair_rankers().get(pair)
+    if ranker is None:
+        return None
+    ordered = ranker(row.get("candidates") or ())
+    keys = [c.get("item_key") for c in ordered[:PAIR_SIZE] if c.get("item_key")]
+    return keys if len(keys) >= PAIR_SIZE else None
 
 
 def _side_key() -> bytes:
@@ -1394,8 +1420,8 @@ def _pair_sides(row: Mapping[str, Any], keys: list[str]) -> tuple[list[dict], li
 @router.get("/pair")
 async def get_pair(
     request: Request,
-    slate: str = Query(..., max_length=64),
-    pair: str = Query(..., max_length=64),
+    slate: str = Query("latest", max_length=64),
+    pair: str = Query(DEFAULT_MORNING_PAIR, max_length=64),
     surface: str = Query(SURFACE_DISCOVER, max_length=32),
     secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -1403,7 +1429,7 @@ async def get_pair(
     """#11937 (171-A): two first tens for one slate, unlabelled, sides random."""
     _check_admin_secret(secret, request=request)
     row = slate_row_dict(await _slate_row(db, slate, surface))
-    keys = load_pairs().get(row["slate_id"], {}).get(pair)
+    keys = _resolve_pair_keys(row, pair)
     if keys is None:
         raise HTTPException(status_code=404, detail=f"no pair {pair!r} for this slate")
     served, candidate = _pair_sides(row, list(keys))
@@ -1443,7 +1469,12 @@ async def post_pair_pick(
     if not grader:
         raise HTTPException(status_code=422, detail="grader needs a name")
     if load_pairs().get(body.slate_id, {}).get(body.pair) is None:
-        raise HTTPException(status_code=404, detail="no such pair for this slate")
+        if body.pair not in _frozen_pair_rankers():
+            raise HTTPException(status_code=404, detail="no such pair for this slate")
+        # Verify the slate exists before accepting a server-computed morning pair pick.
+        row = slate_row_dict(await _slate_row(db, body.slate_id, SURFACE_DISCOVER))
+        if _resolve_pair_keys(row, body.pair) is None:
+            raise HTTPException(status_code=404, detail="no such pair for this slate")
     # The first saved pick stands: a pick made again after grading that morning's
     # deck is no longer blind.
     earlier = (await db.execute(

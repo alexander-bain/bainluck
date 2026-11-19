@@ -39,7 +39,26 @@ export function pairFromSearch(search: string): { slate: string; pair: string } 
   return slate && pair && REF.test(slate) && REF.test(pair) ? { slate, pair } : null;
 }
 
-export function pairPath(slate: string, pair: string): string {
+/**
+ * #11937: one-link morning target.
+ * - Bare `/grade/pair` (neither `slate` nor `pair` in the query) returns
+ *   `{ slate: null, pair: null }` so the page loads today's newest slate and
+ *   default blind morning pair without needing query parameters.
+ * - Explicit `?slate=&pair=` still works when both pass `REF`.
+ * - Half-specified or unsafe query params return `null`.
+ */
+export function pairTargetFromSearch(
+  search: string,
+): { slate: string | null; pair: string | null } | null {
+  const params = new URLSearchParams(search);
+  const slate = params.get("slate");
+  const pair = params.get("pair");
+  if (!slate && !pair) return { slate: null, pair: null };
+  return slate && pair && REF.test(slate) && REF.test(pair) ? { slate, pair } : null;
+}
+
+export function pairPath(slate: string | null, pair: string | null): string {
+  if (!slate || !pair) return "/api/admin/ranking/pair";
   return `/api/admin/ranking/pair?${new URLSearchParams({ slate, pair }).toString()}`;
 }
 

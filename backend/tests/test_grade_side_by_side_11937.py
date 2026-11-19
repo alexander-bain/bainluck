@@ -189,3 +189,33 @@ def test_the_shipped_pairs_file_is_valid():
     for slate_id, pairs in data.items():
         for name, keys in pairs.items():
             assert isinstance(keys, list) and len(keys) == 10, (slate_id, name)
+
+
+async def test_default_morning_pair_computes_frozen_candidate_without_pairs_file(wired, monkeypatch):
+    """#11937: one link (/grade/pair with no query params) computes today's blind pair
+    from the frozen candidate on the server when ranking_pairs.json has no entry."""
+    monkeypatch.setattr(admin, "load_pairs", lambda path=None: {})
+    out = await admin.get_pair(_request(), slate="latest", pair="p1", surface="discover", secret=None, db=FakeDB())
+    assert set(out) == {"slate_id", "pair", "left", "right"}
+    assert out["slate_id"] == SLATE_ID and out["pair"] == "p1"
+    assert len(out["left"]) == len(out["right"]) == 10
+    assert all(set(c) == {"card"} for c in out["left"] + out["right"])
+    # Pick against the server-computed pair is accepted and stored by meaning.
+    db = FakeDB()
+    body = admin.PairPickIn(
+        slate_id=SLATE_ID, pair="p1", grader="Alex Bain", choice="left", opened_discover_today=False
+    )
+    assert await admin.post_pair_pick(body, _request(), secret=None, db=db) == {"status": "ok"}
+    assert len(db.added) == 1 and db.added[0].item_key == "pair:p1"
+    # Unknown pair names still 404.
+    with pytest.raises(HTTPException) as exc:
+        await admin.get_pair(_request(), slate="latest", pair="unknown", surface="discover", secret=None, db=FakeDB())
+    assert exc.value.status_code == 404
+
+
+def test_frozen_discover_rank_sha256_matches_recorded_freeze():
+    import hashlib
+    from pathlib import Path
+    rank_path = Path(admin.__file__).resolve().parents[1] / "utils" / "discover_rank.py"
+    digest = hashlib.sha256(rank_path.read_bytes()).hexdigest()
+    assert digest == "1c5b8e3685e53a4dc519ec5c188cdc3a76e109bb94edfaf0a698ea6cf30bdb71"

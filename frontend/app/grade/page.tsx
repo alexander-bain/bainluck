@@ -76,6 +76,7 @@ function GradeSession() {
   // #11937: `/grade?slate=<date or id>` grades that saved slate's spread deck.
   // undefined until the URL is read, so the deck isn't fetched twice.
   const [slateRef, setSlateRef] = useState<string | null | undefined>(undefined);
+  const [setRef, setSetRef] = useState<string | null>(null);
   // While a named slate re-deals for the grader, the grade buttons wait, so a
   // quick tap can't grade a card the new deck is about to skip.
   const [dealing, setDealing] = useState(false);
@@ -83,6 +84,7 @@ function GradeSession() {
 
   useEffect(() => {
     setSlateRef(slateFromSearch(window.location.search));
+    setSetRef(setFromSearch(window.location.search));
   }, []);
 
   useEffect(() => {
@@ -197,6 +199,11 @@ function GradeSession() {
 
   const tallyLine = formatTally(tally);
   const leftOut = deck ? leftOutLine(deck) : "";
+  const stepLabel = setRef
+    ? "Step 3 of 3: the extra set"
+    : slateRef
+      ? "Step 2 of 3: the deck"
+      : null;
 
   if (error && !deck) {
     return <Shell><p className="text-sm text-text-secondary">{error}</p></Shell>;
@@ -208,6 +215,16 @@ function GradeSession() {
   if (!grader) {
     return (
       <Shell tally={tallyLine}>
+        {stepLabel ? (
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-accent-brand">{stepLabel}</p>
+        ) : (
+          <p className="mb-2 text-xs text-text-secondary">
+            Morning routine?{" "}
+            <Link href="/grade/pair" className="font-semibold text-accent-brand hover:underline">
+              Start at Step 1 of 3: pick →
+            </Link>
+          </p>
+        )}
         <h1 className="text-xl font-semibold text-text-primary">Who&apos;s grading?</h1>
         <p className="mt-1 text-sm text-text-secondary">{deckHeadline(deck)}</p>
         {leftOut && <p className="mt-1 text-sm text-text-secondary">{leftOut}.</p>}
@@ -239,9 +256,17 @@ function GradeSession() {
   if (index >= deck.items.length) {
     return (
       <Shell tally={tallyLine}>
+        {stepLabel && (
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-accent-brand">{stepLabel}</p>
+        )}
         <h1 className="text-xl font-semibold text-text-primary">
           {deck.items.length ? `All ${deck.items.length} graded. Thanks, ${grader}!` : `Nothing left to grade on this slate, ${grader}.`}
         </h1>
+        {slateRef && !setRef && (
+          <p className="mt-2 text-sm text-text-secondary">
+            Step 3 of 3 (extra set): none needed today — this deck covers every card on the first page. You&apos;re done for the morning.
+          </p>
+        )}
         {leftOut && <p className="mt-1 text-sm text-text-secondary">{leftOut}.</p>}
         <button className="mt-4 text-sm font-semibold text-accent-brand hover:underline" onClick={() => setGrader(null)}>
           Next grader
@@ -253,6 +278,9 @@ function GradeSession() {
   const item = deck.items[index];
   return (
     <Shell tally={tallyLine}>
+      {stepLabel && (
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-accent-brand">{stepLabel}</p>
+      )}
       <div className="flex items-baseline justify-between text-sm text-text-secondary">
         <span>
           {grader}

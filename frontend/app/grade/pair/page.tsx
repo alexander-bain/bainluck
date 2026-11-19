@@ -17,7 +17,7 @@ import { handleGradeDeckReadError, normalizeGraderName, saveWithOneRetry } from 
 import {
   PAIR_CHOICES,
   PAIR_CHOICE_LABELS,
-  pairFromSearch,
+  pairTargetFromSearch,
   gradeDeckHref,
   pairPath,
   type PairChoice,
@@ -60,7 +60,7 @@ function Column({ side, label }: { side: PairSide[]; label: string }) {
 
 function PairSession() {
   const { secret, clearSecret } = useAdminAuth();
-  const [ref, setRef] = useState<{ slate: string; pair: string } | null | undefined>(undefined);
+  const [ref, setRef] = useState<{ slate: string | null; pair: string | null } | null | undefined>(undefined);
   const [deck, setDeck] = useState<PairDeck | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [grader, setGrader] = useState("");
@@ -74,7 +74,7 @@ function PairSession() {
   const [alreadyPicked, setAlreadyPicked] = useState(false);
 
   useEffect(() => {
-    setRef(pairFromSearch(window.location.search));
+    setRef(pairTargetFromSearch(window.location.search));
     try {
       setGrader(localStorage.getItem(GRADER_KEY) || "");
     } catch {
@@ -141,9 +141,12 @@ function PairSession() {
   const canPick = !!normalizeGraderName(grader) && opened !== null && !saved && !alreadyPicked && !saving;
   return (
     <Shell>
-      <h1 className="text-base font-semibold text-text-primary">Which first ten would you rather open Discover to?</h1>
+      <p className="text-xs font-semibold uppercase tracking-wide text-accent-brand">
+        Step 1 of 3: pick
+      </p>
+      <h1 className="mt-1 text-base font-semibold text-text-primary">Which first ten would you rather open Discover to?</h1>
       <p className="mt-1 text-sm text-text-secondary">
-        Two orders of the same morning&apos;s cards. Pick before grading today&apos;s deck.
+        Two orders of this morning&apos;s cards. Pick first, then grade Step 2 (the deck) and Step 3 (extra set, if any).
       </p>
       {!normalizeGraderName(grader) && (
         <input
@@ -212,7 +215,7 @@ function PairSession() {
         <p className="mt-1 text-sm text-text-secondary" role="status">
           Already picked for this morning. The first pick stands.{" "}
           <a className="font-semibold text-accent-brand hover:underline" href={gradeDeckHref(deck.slate_id)}>
-            Now grade this morning&apos;s deck →
+            Continue to Step 2 of 3: the deck →
           </a>
         </p>
       )}
@@ -220,7 +223,7 @@ function PairSession() {
         <p className="mt-1 text-sm text-text-secondary" role="status">
           Saved: {PAIR_CHOICE_LABELS[saved]}.{" "}
           <a className="font-semibold text-accent-brand hover:underline" href={gradeDeckHref(deck.slate_id)}>
-            Now grade this morning&apos;s deck →
+            Continue to Step 2 of 3: the deck →
           </a>
         </p>
       )}
