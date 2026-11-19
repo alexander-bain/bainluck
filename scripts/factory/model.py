@@ -3,9 +3,8 @@
 from datetime import datetime, timedelta, timezone
 import re
 from zoneinfo import ZoneInfo
-from signals import resolve_holds, stopped_rules
+from signals import LINES, on_floor, resolve_holds, stopped_rules
 
-LINES = ("Server", "Website", "Apps")
 STATIONS = ("Write", "Test", "Review", "Merge line", "Ship", "Live")
 BUILDERS = {
     "speed/": "S",
@@ -37,15 +36,16 @@ def public_title(title):
     return title
 
 
-def line_for(pull):
+def lines_for(pull):
     files = pull.get("files", [])
     if not pull.get("files_complete") or not files:
-        return "Server", True
-    if all(path.startswith("ios/") for path in files):
-        return "Apps", False
-    if all(path.startswith("frontend/") for path in files):
-        return "Website", False
-    return "Server", False
+        return ("Server",), True
+    lines = tuple(
+        line
+        for directory, line in zip(("backend/", "frontend/", "ios/"), LINES)
+        if any(path.startswith(directory) for path in files)
+    )
+    return lines or ("Server",), False
 
 
 def latest_checks(pull):
@@ -95,8 +95,7 @@ def unchanged_after(pull, commit_id):
     )
 
 
-def classify(pull, deployments, now):
-    line, uncertain_line = line_for(pull)
+def classify(pull, deployments, now, line, uncertain_line):
     reasons = ["Changed files could not be confirmed."] if uncertain_line else []
     builder = next(
         (value for key, value in BUILDERS.items() if pull["branch"].startswith(key)),
@@ -152,8 +151,17 @@ def classify(pull, deployments, now):
             change["unsure"] = True
             change["reasons"].append("Waiting for deployment evidence on this line.")
         return change
-    if pull["branch"].startswith("dependabot/"):
+    if pull.get("hold_for_108"):
+        change["held_for_108"] = True
+    elif pull["branch"].startswith("dependabot/"):
         change["bot_update"] = True
+    park_when_quiet = (
+        now - instant(last_activity) >= timedelta(hours=48)
+        and not change.get("bot_update")
+        and not change.get("held_for_108")
+    )
+    if pull.get("draft") and park_when_quiet:
+        change["parked"] = True
     fable = max(
         (
             c
@@ -181,9 +189,7 @@ def classify(pull, deployments, now):
             change["reasons"].append("Checks on this version could not be confirmed.")
         return change
     change["station"] = "Review"
-    if not change.get("bot_update") and now - instant(last_activity) >= timedelta(
-        hours=48
-    ):
+    if park_when_quiet:
         change["parked"] = True
     if not pull.get("reviews_complete"):
         change["unsure"] = True
@@ -238,14 +244,9 @@ def advance_jams(changes, master, previous, now, stops=(), holds=None):
     starts = {}
     origins = {}
     previous_keys = {j["key"] for j in previous if j.get("ended_at") is None}
-    active = [
-        c
-        for c in changes
-        if c["station"] != "Live"
-        and not any(c.get(flag) for flag in ("side_track", "bot_update", "parked"))
-    ]
+    active = [c for c in changes if on_floor(c)]
     for station in STATIONS[:-1]:
-        count = sum(c["station"] == station for c in active)
+        count = len({c["number"] for c in active if c["station"] == station})
         if count >= 10:
             conditions[f"crowd:{station}"] = ("crowd", station, None, 1800, count)
     if master.get("tests") == "failing" or (
@@ -319,14 +320,27 @@ def advance_jams(changes, master, previous, now, stops=(), holds=None):
     ]
 
 
-def delivery_posts(commands, now):
-    batches, live, build_post = {}, {}, None
+def delivery_posts(commands, pulls, now):
+    batches, routes, refusals, live, build_post = {}, {}, {}, {}, None
     for post in sorted(commands, key=lambda c: instant(c["at"])):
         if instant(post["at"]) > now:
             continue
         line = post["line"]
         if post["kind"] == "merging":
             batches[line] = {number: post["at"] for number in post["numbers"]}
+            for number in post["numbers"]:
+                merged = pulls.get(number, {}).get("merged_at")
+                if merged and instant(post["at"]) > instant(merged):
+                    continue
+                if number not in routes or routes[number][0] != post["at"]:
+                    routes[number] = post["at"], set()
+                routes[number][1].add(line)
+        elif post["kind"] == "stuck":
+            for number in post["numbers"]:
+                refusals[number] = post["at"]
+                for batch in batches.values():
+                    if number in batch and instant(batch[number]) < instant(post["at"]):
+                        del batch[number]
         elif post["kind"] == "hold" or (
             post["kind"] == "live" and not post.get("numbers")
         ):
@@ -337,29 +351,44 @@ def delivery_posts(commands, now):
                 batches.get(line, {}).pop(number, None)
         if post.get("build"):
             build_post = {"build": post["build"], "at": post["at"]}
-    return batches, live, build_post
+    return batches, routes, refusals, live, build_post
 
 
 def build(snapshot, previous=None):
     previous = previous or {}
     now = instant(snapshot["captured_at"])
-    changes = [
-        classify(p, snapshot["deployments"], now)
-        for p in snapshot["pulls"]
-        if p["state"] == "open" or p.get("merged_at")
-    ]
+    pulls = {p["number"]: p for p in snapshot["pulls"]}
+    commands = snapshot.get("commands", previous.get("signals", {}).get("commands", []))
+    history = snapshot.get("hold_commands", commands)
+    batches, routes, refusals, live_posts, posted_build = delivery_posts(
+        history, pulls, now
+    )
+    changes = []
+    confirmed_routes = set()
+    for pull in pulls.values():
+        if pull["state"] != "open" and not pull.get("merged_at"):
+            continue
+        route = routes.get(pull["number"])
+        lines, uncertain = (
+            (tuple(line for line in LINES if line in route[1]), False)
+            if route
+            else lines_for(pull)
+        )
+        if not uncertain:
+            confirmed_routes.add(pull["number"])
+        for line in lines:
+            changes.append(
+                classify(pull, snapshot["deployments"], now, line, uncertain)
+            )
     # Keep the first observed receipt across updates. Refreshes do not increase
     # merge-to-live time. A source whose evidence disappears stays in Ship.
-    old_changes = {c["number"]: c for c in previous.get("changes", [])}
+    old_changes = {(c["number"], c["line"]): c for c in previous.get("changes", [])}
     for change in changes:
-        old = old_changes.get(change["number"], {})
+        old = old_changes.get((change["number"], change["line"]), {})
         if change["station"] == "Live" and old.get("live_at"):
             change["live_at"] = min(old["live_at"], change["live_at"], key=instant)
             if old["live_at"] == change["live_at"]:
                 change["timing"] = old["timing"]
-    commands = snapshot.get("commands", previous.get("signals", {}).get("commands", []))
-    history = snapshot.get("hold_commands", commands)
-    batches, live_posts, posted_build = delivery_posts(history, now)
     holds = resolve_holds(
         history,
         changes,
@@ -367,14 +396,13 @@ def build(snapshot, previous=None):
         now,
         previous.get("signals", {}).get("holds"),
     )
-    pulls = {p["number"]: p for p in snapshot["pulls"]}
     transitions = [
         t
         for t in previous.get("transitions", [])
         if now - instant(t.get("observed_at", t["at"])) <= timedelta(minutes=15)
     ]
     for change in changes:
-        old = old_changes.get(change["number"], {})
+        old = old_changes.get((change["number"], change["line"]), {})
         pull = pulls[change["number"]]
         authored = [
             c["at"]
@@ -405,6 +433,10 @@ def build(snapshot, previous=None):
                     and c.get("association") in TRUSTED
                     and c["created_at"] >= revision
                 ]
+            route = routes.get(change["number"])
+            refusal = refusals.get(change["number"])
+            if route and refusal and instant(refusal) > instant(route[0]):
+                arrivals.append(refusal)
         arrived = min(max(arrivals), snapshot["captured_at"])
         announced = batches.get(change["line"], {}).get(change["number"])
         hold = holds.get(change["line"])
@@ -412,9 +444,7 @@ def build(snapshot, previous=None):
             change["station"] == "Merge line"
             and announced
             and instant(announced) >= instant(revision)
-            and not any(
-                change.get(flag) for flag in ("parked", "bot_update", "side_track")
-            )
+            and on_floor(change)
             and not (hold and not hold["ended_at"])
         ):
             change.update(station="Ship", merge_announced_at=announced)
@@ -434,7 +464,11 @@ def build(snapshot, previous=None):
                 if same_station and old.get("revision_at", revision) == revision
                 else arrived
             )
-        if old and not same_station:
+        if (
+            old
+            and not same_station
+            and (on_floor(change) or change["station"] == "Live")
+        ):
             transitions.append(
                 {
                     "number": change["number"],
@@ -477,8 +511,19 @@ def build(snapshot, previous=None):
             ).total_seconds()
     observed_since = previous.get("observed_since", snapshot["captured_at"])
     last_merges = dict(previous.get("signals", {}).get("last_merged_at", {}))
+    current_keys = {(c["number"], c["line"]) for c in changes}
+    for key, old in old_changes.items():
+        line = old["line"]
+        # A legacy floor may have attributed a mixed delivery to the wrong line.
+        if (
+            old.get("merged_at")
+            and old["number"] in confirmed_routes
+            and key not in current_keys
+            and last_merges.get(line) == old["merged_at"]
+        ):
+            del last_merges[line]
     for change in changes:
-        if change["merged_at"]:
+        if change["merged_at"] and change["number"] in confirmed_routes:
             line = change["line"]
             last_merges[line] = max(
                 last_merges.get(line, change["merged_at"]), change["merged_at"]

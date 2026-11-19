@@ -43,9 +43,11 @@ HOLD_OVER = re.compile(
 TEST_NAME = re.compile(r"\btest_[A-Za-z0-9_]{1,90}\b", re.ASCII)
 BUILD = re.compile(
     r"\bTestFlight\s+build[\s*`#]+([1-9][0-9]{0,9})\b"
-    r"|\bTestFlight\s+[0-9]+\.[0-9]+\.[0-9]+\s+\(([1-9][0-9]{0,9})\)",
+    r"|\bTestFlight[*`]*\s+[*`]*[0-9]+\.[0-9]+\.[0-9]+\s+\(([1-9][0-9]{0,9})\)",
     re.I,
 )
+CHANGE_NUMBER = re.compile(r"#[1-9][0-9]{0,9}\b")
+SHELF_FLAGS = ("held_for_108", "parked", "bot_update", "side_track")
 
 
 def testflight_number(text):
@@ -55,6 +57,21 @@ def testflight_number(text):
 
 def named_lines(text):
     return [line for line in LINES if re.search(rf"\b{line}\b", text, re.I)]
+
+
+def delivery_lines(text):
+    slots = {slot.strip() for slot in re.split(r"[+,/]|\band\b", text.lower())}
+    labels = {line.lower() for line in LINES}
+    # Workflows can share a turn but have no delivery line on the floor.
+    if not all(slot in labels or slot == "workflows" for slot in slots):
+        return []
+    return [line for line in LINES if line.lower() in slots]
+
+
+def on_floor(change):
+    return change["station"] != "Live" and not any(
+        change.get(flag) for flag in SHELF_FLAGS
+    )
 
 
 def commands_from(comments):
@@ -119,14 +136,7 @@ def commands_from(comments):
             if live:
                 prefix, _, suffix = status[live.end() :].partition("(")
                 delivery, _, _ = suffix.partition(")")
-                explicit = re.fullmatch(
-                    r"(?:server|website|apps)(?:\s*[+,/]\s*(?:server|website|apps))*",
-                    delivery.strip(),
-                    re.I,
-                )
-                targets = (
-                    named_lines(delivery) if explicit else LIVE_LINES.get(author, ())
-                )
+                targets = delivery_lines(delivery) or LIVE_LINES.get(author, ())
                 # The byline can appear before the numbered change on a live post.
                 prefix = re.sub(
                     rf"^\s*[—–]\s*\**(?:{AUTHOR})\**\s*,\s*(?=#)", "", prefix
@@ -135,7 +145,7 @@ def commands_from(comments):
                 numbers = re.split(r"[\s,+]+", prefix.strip())
                 ids = (
                     [int(n[1:]) for n in numbers]
-                    if all(re.fullmatch(r"#[1-9][0-9]{0,9}", n) for n in numbers)
+                    if all(CHANGE_NUMBER.fullmatch(n) for n in numbers)
                     else []
                 )
                 for target in targets:
@@ -150,25 +160,34 @@ def commands_from(comments):
                     {"kind": "build", "line": "Apps", "at": at, "build": build}
                 )
 
-            merging = re.search(r"\bmerging\b", line, re.I)
-            if merging:
-                numbers, separator, target = line[merging.end() :].partition("(")
-                tokens = numbers.replace(",", " ").split()
-                delivery = re.match(r"(server|website|apps)\)", target, re.I)
-                if (
-                    separator
-                    and delivery
-                    and tokens
-                    and all(re.fullmatch(r"#[0-9]{1,10}", token) for token in tokens)
-                ):
+            if re.match(r"^stuck\b", status, re.I) and not clearing:
+                for token in dict.fromkeys(CHANGE_NUMBER.findall(status)):
                     commands.append(
                         {
-                            "kind": "merging",
-                            "line": delivery[1].title(),
-                            "numbers": [int(token[1:]) for token in tokens],
+                            "kind": "stuck",
+                            "line": None,
+                            "numbers": [int(token[1:])],
                             "at": at,
                         }
                     )
+
+            merging = re.match(r"^merging\b", status, re.I)
+            if merging:
+                numbers, _, suffix = status[merging.end() :].partition("(")
+                target, closed, _ = suffix.partition(")")
+                tokens = re.split(r"[\s,+]+", numbers.strip())
+                if closed and all(CHANGE_NUMBER.fullmatch(n) for n in tokens):
+                    for slot in delivery_lines(target):
+                        commands.append(
+                            {
+                                "kind": "merging",
+                                "line": slot,
+                                "numbers": list(
+                                    dict.fromkeys(int(n[1:]) for n in tokens)
+                                ),
+                                "at": at,
+                            }
+                        )
     return sorted(commands, key=lambda command: moment(command["at"]))
 
 
@@ -259,15 +278,17 @@ def stopped_rules(
     commands = sorted(commands, key=lambda command: command["at"])
     stops = []
     merged = {c["number"]: c.get("merged_at") for c in changes}
+    off_floor = {c["number"] for c in changes if any(c.get(f) for f in SHELF_FLAGS)}
+    refused = {
+        number: moment(command["at"])
+        for command in commands
+        if command["kind"] == "stuck" and moment(command["at"]) <= now
+        for number in command["numbers"]
+    }
+    active = [c for c in changes if on_floor(c)]
     for line in LINES:
         waiting = [
-            c
-            for c in changes
-            if c["line"] == line
-            and c["station"] == "Merge line"
-            and not c.get("bot_update")
-            and not c.get("parked")
-            and not c.get("side_track")
+            c for c in active if c["line"] == line and c["station"] == "Merge line"
         ]
         since = last_merges.get(line) or observed_since
         if waiting and now - moment(since) >= timedelta(minutes=30):
@@ -289,20 +310,25 @@ def stopped_rules(
         ]
         if announcements:
             latest = announcements[-1]
-            any_merged = latest.get("resolved", False) or any(
-                merged.get(n) and moment(merged[n]) >= moment(latest["at"])
+            at = moment(latest["at"])
+            standing = [
+                n
                 for n in latest["numbers"]
+                if n not in off_floor and refused.get(n, at) <= at
+            ]
+            any_merged = latest.get("resolved", False) or any(
+                merged.get(n) and moment(merged[n]) >= at for n in latest["numbers"]
             )
-            if not any_merged and now - moment(latest["at"]) >= timedelta(minutes=15):
+            if standing and not any_merged and now - at >= timedelta(minutes=15):
                 stops.append(
                     {
                         "kind": "announced",
                         "line": line,
                         "station": "Merge line",
                         "since": latest["at"],
-                        "count": len(latest["numbers"]),
+                        "count": len(standing),
                         "level": "amber",
-                        "number": latest["numbers"][0],
+                        "number": standing[0],
                     }
                 )
         hold = holds.get(line)
@@ -322,12 +348,9 @@ def stopped_rules(
             )
         reviewing = [
             c
-            for c in changes
+            for c in active
             if c["line"] == line
             and c["station"] == "Review"
-            and not c.get("bot_update")
-            and not c.get("parked")
-            and not c.get("side_track")
             and c.get("station_since")
             and timedelta(0) <= now - moment(c["last_activity"]) <= timedelta(hours=48)
             and now - moment(c["station_since"]) > timedelta(hours=2)
@@ -351,7 +374,7 @@ def stopped_rules(
                 "line": None,
                 "station": "Test",
                 "since": master.get("tests_at") or observed_since,
-                "count": sum(c["station"] == "Test" for c in changes),
+                "count": len({c["number"] for c in active if c["station"] == "Test"}),
                 "level": "amber",
             }
         )
