@@ -432,10 +432,19 @@ private struct DiscoverBundleArtKey12840: EnvironmentKey {
     static let defaultValue = DiscoverBundleArtContext12840()
 }
 
+private struct DiscoverGroupOnOpenCollectionKey13094: EnvironmentKey {
+    nonisolated(unsafe) static let defaultValue: (() -> Void)? = nil
+}
+
 extension EnvironmentValues {
     var discoverGroupBundleArt12840: DiscoverBundleArtContext12840 {
         get { self[DiscoverBundleArtKey12840.self] }
         set { self[DiscoverBundleArtKey12840.self] = newValue }
+    }
+
+    var discoverGroupOnOpenCollection13094: (() -> Void)? {
+        get { self[DiscoverGroupOnOpenCollectionKey13094.self] }
+        set { self[DiscoverGroupOnOpenCollectionKey13094.self] = newValue }
     }
 }
 
