@@ -44,6 +44,7 @@ from app.utils.futures_market_snapshot import (
     reader_change_24h,
 )
 from app.utils.event_completion import served_commence_time
+from app.utils.score_source_availability import event_score_source_unavailable
 from app.utils.event_rails import (
     commence_time_was_never_a_kickoff,
     live_first_order,
@@ -1813,6 +1814,9 @@ def _format_game_brief(
         "status": _served_status,
         "home_score": event.home_score,
         "away_score": event.away_score,
+        "score_source_unavailable": event_score_source_unavailable(
+            event, sport_key=sport_key, status=_served_status
+        ),
         "home_win_probability": home_prob,
     }
 
