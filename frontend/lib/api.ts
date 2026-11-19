@@ -596,6 +596,8 @@ export interface TypeaheadSuggestion {
   venue_settled_result?: string | null;
   // #5811 @see Event.venue_closed_no_winner
   venue_closed_no_winner?: boolean;
+  // #13000 (250: A) @see Event.score_source_unavailable
+  score_source_unavailable?: boolean;
   // #9208: ESPN's word for a called-off match ("Canceled" / "Postponed"),
   // served only on a `suspended` row. Read through authorityStoppageLabel —
   // never printed raw.
@@ -761,6 +763,7 @@ export interface TeamGameBrief {
   away_team: string;
   home_score: number | null;
   away_score: number | null;
+  score_source_unavailable?: boolean;
   // live/056 — was a fifth inline copy of the status union, and it was the copy
   // that had never heard of `suspended`. `EventStatus`' own docstring exists
   // because three payloads carried three copies; this one was outside that
@@ -2170,6 +2173,8 @@ export interface LeagueGameBrief {
   venue_settled_result?: string | null;
   // #5811 @see Event.venue_closed_no_winner
   venue_closed_no_winner?: boolean;
+  // #13000 (250: A) @see Event.score_source_unavailable
+  score_source_unavailable?: boolean;
   // ── #8515 ── the provider's doubleheader flag + game number, same names as
   // `TeamGameBrief` and `Event`. @see Event.doubleheader
   doubleheader?: boolean | null;

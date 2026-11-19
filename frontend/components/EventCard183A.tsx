@@ -77,6 +77,7 @@ export interface UnifiedGameCardData {
   status: string;
   home_score: number | null;
   away_score: number | null;
+  score_source_unavailable?: boolean;
   home_color: string;
   away_color: string;
   away_secondary_color?: string | null;
@@ -843,10 +844,12 @@ function resolveLiveClock(
 ): string | null {
   if (!source || typeof source !== "object") return null;
   const rec = source as {
+    score_source_unavailable?: unknown;
     espn?: { period?: unknown; game_clock?: unknown } | null;
     espn_data?: { period?: unknown; game_clock?: unknown } | null;
     live_clock?: unknown;
   };
+  if (rec.score_source_unavailable === true) return null;
   const fromEspn = formatLiveClockLabel(
     stringOrNull(rec.espn?.period),
     stringOrNull(rec.espn?.game_clock),
@@ -1191,7 +1194,7 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
   const tennis = isTennisSport(event.sport);
   const cardChance: ProjectedChancePair = { home: rawHome, away: rawAway };
   const proj = (() => {
-    if (tennis || isDone) return null;
+    if (tennis || isDone || (isLive && event.score_source_unavailable === true)) return null;
     if ((event.sport ?? "").toLowerCase().startsWith("soccer_")) {
       if (isLive) {
         if (event.home_score == null || event.away_score == null) return null;
@@ -1263,6 +1266,7 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
     status: event.status,
     home_score: event.home_score,
     away_score: event.away_score,
+    score_source_unavailable: event.score_source_unavailable === true ? true : undefined,
     ...(() => {
       const homeKnown = lookupTeamColors(event.home_team);
       const awayKnown = lookupTeamColors(event.away_team);
@@ -1346,7 +1350,7 @@ export function buildUnifiedCardFromFeed(
   const tennis = isTennisSport(data.sport);
   const cardChance: ProjectedChancePair = { home: rawHome, away: rawAway };
   const proj = (() => {
-    if (tennis || isDone) return null;
+    if (tennis || isDone || (isLive && data.score_source_unavailable === true)) return null;
     if ((data.sport ?? "").toLowerCase().startsWith("soccer_")) {
       if (isLive) {
         if (data.home_score == null || data.away_score == null) return null;
@@ -1418,6 +1422,7 @@ export function buildUnifiedCardFromFeed(
     status: data.status,
     home_score: data.home_score,
     away_score: data.away_score,
+    score_source_unavailable: data.score_source_unavailable === true ? true : undefined,
     ...(() => {
       const homeKnown = lookupTeamColors(data.home_team);
       const awayKnown = lookupTeamColors(data.away_team);
@@ -1584,6 +1589,7 @@ export function buildUnifiedCardFromTeamGame(
     status: game.status,
     home_score: game.home_score,
     away_score: game.away_score,
+    score_source_unavailable: game.score_source_unavailable === true ? true : undefined,
     home_color: pair.home || "#1d4ed8",
     away_color: pair.away || "#475569",
     away_secondary_color: awaySecondary,
@@ -1666,7 +1672,9 @@ export default function EventCard183A({
     isLive && inferredDraw != null ? formatSingleLiveTenths(inferredDraw) : null;
   const drawWholePct = inferredDraw != null ? Math.round(inferredDraw * 100) : null;
 
+  const scoreUnavailable = isLive && card.score_source_unavailable === true;
   const hasTennisSetBoxes =
+    !scoreUnavailable &&
     tennis &&
     (isLive || isDone) &&
     Array.isArray(card.tennis_sets) &&
@@ -1675,6 +1683,7 @@ export default function EventCard183A({
     hasTennisSetBoxes && isLive && card.tennis_game_points != null;
 
   const hasScore =
+    !scoreUnavailable &&
     !hasTennisSetBoxes &&
     isLive &&
     card.home_score != null &&
@@ -1946,7 +1955,7 @@ export default function EventCard183A({
           {isLive ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-danger/10 px-2 py-0.5 font-semibold text-accent-danger">
               <span className="h-1.5 w-1.5 rounded-full bg-accent-danger" />
-              {card.live_clock_label || "LIVE"}
+              {(card.score_source_unavailable ? null : card.live_clock_label) || "LIVE"}
             </span>
           ) : isSuspended ? (
             <span className="font-medium text-text-muted">{SUSPENDED_LABEL}</span>
@@ -2056,7 +2065,7 @@ export default function EventCard183A({
                 ✓
               </span>
             )}
-            {tennis && isLive && card.serving === "away" && (
+            {tennis && isLive && !scoreUnavailable && card.serving === "away" && (
               <span
                 className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent-brand"
                 aria-label="Serving"
@@ -2245,7 +2254,7 @@ export default function EventCard183A({
                 ✓
               </span>
             )}
-            {tennis && isLive && card.serving === "home" && (
+            {tennis && isLive && !scoreUnavailable && card.serving === "home" && (
               <span
                 className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent-brand"
                 aria-label="Serving"

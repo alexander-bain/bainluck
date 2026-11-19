@@ -397,6 +397,38 @@ final class ScorelessLiveTennis250ATests: XCTestCase {
             now: fixedNow
         )
 
+        let detailTeamGame: EventDetail = try decodeSnake(EventDetail.self, """
+        {
+          "id": 99801,
+          "sport": "basketball_ncaab",
+          "sport_name": "NCAAB",
+          "away_team": "Furman Paladins",
+          "home_team": "Radford Highlanders",
+          "commence_time": "2026-11-18T22:00:00Z",
+          "status": "live",
+          "score_source_unavailable": true,
+          "current_odds": {
+            "away_probability": 0.489,
+            "home_probability": 0.511,
+            "away_rendered_percent": 49,
+            "home_rendered_percent": 51
+          },
+          "prematch_odds": {
+            "away_probability": 0.46,
+            "home_probability": 0.54
+          }
+        }
+        """)
+        let teamGameHeadline = EventSportHeadlines12472.resolve(
+            event: detailTeamGame,
+            awayFullName: detailTeamGame.awayTeam,
+            homeFullName: detailTeamGame.homeTeam,
+            liveStatusText: nil,
+            hasScore: false,
+            numberStreams: false,
+            now: fixedNow
+        )
+
         func resolvedColors(for detail: EventDetail, scheme: ColorScheme) -> (away: Color, home: Color) {
             let hexes = scheme == .dark
                 ? TeamTextContrast.darkSurfaceColorHexes(
@@ -413,9 +445,12 @@ final class ScorelessLiveTennis250ATests: XCTestCase {
             return (Color(hex: hexes.away), Color(hex: hexes.home))
         }
 
+        let pinManager = PinManager()
+
         @ViewBuilder
         func scorelessSheetView(scheme: ColorScheme) -> some View {
             let boyerColors = resolvedColors(for: detailBoyer, scheme: scheme)
+            let teamColors = resolvedColors(for: detailTeamGame, scheme: scheme)
             let coveredColors = resolvedColors(for: detailCovered, scheme: scheme)
             VStack(alignment: .leading, spacing: 14) {
                 Text("250: A · Match card (no Score column, LIVE + Now only)")
@@ -425,6 +460,7 @@ final class ScorelessLiveTennis250ATests: XCTestCase {
                     .padding(.horizontal, 16)
 
                 EventCardView(event: feedBoyer, reason: nil)
+                    .environmentObject(pinManager)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 4)
                     .background(
@@ -448,6 +484,29 @@ final class ScorelessLiveTennis250ATests: XCTestCase {
                     model: boyerHeadline,
                     colors: boyerColors,
                     ekgTracker: EkgTracker(eventId: detailBoyer.id),
+                    liveUpdateStatus: .hidden,
+                    displayAsOf: fixedNow,
+                    updateStream: LiveUpdateStream(),
+                    showUpdateStream: .constant(false),
+                    showProbabilityDetails: .constant(false),
+                    priceStreamingEligible: false,
+                    lastReceivedAt: nil,
+                    confirmedAt: nil,
+                    revealForecast: nil
+                )
+                .padding(.horizontal, 16)
+
+                Text("250: A · Team-league page (LIVE + Now + game line)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+
+                EventSportHeadlineCard12472(
+                    model: teamGameHeadline,
+                    colors: teamColors,
+                    ekgTracker: EkgTracker(eventId: detailTeamGame.id),
                     liveUpdateStatus: .hidden,
                     displayAsOf: fixedNow,
                     updateStream: LiveUpdateStream(),
@@ -485,7 +544,7 @@ final class ScorelessLiveTennis250ATests: XCTestCase {
             }
         }
 
-        for (tag, dt) in [("default", DynamicTypeSize.large), ("larger-text", DynamicTypeSize.xxxLarge)] {
+        for (tag, dt) in [("default", DynamicTypeSize.large), ("largest-text", DynamicTypeSize.xxxLarge)] {
             let light = captureSheet(scorelessSheetView(scheme: .light), scheme: .light, at: dt)
             let dark = captureSheet(scorelessSheetView(scheme: .dark), scheme: .dark, at: dt)
             let combined = sideBySide(light, dark)
@@ -494,8 +553,47 @@ final class ScorelessLiveTennis250ATests: XCTestCase {
 
             let ocr = try ocrStrings(light).joined(separator: " ")
             XCTAssertTrue(ocr.contains("No live score for this tournament"), "Render \(tag) must print tournament line: \(ocr)")
+            XCTAssertTrue(ocr.contains("No live score for this game"), "Render \(tag) must print game line: \(ocr)")
             XCTAssertTrue(ocr.contains("62.4%") && ocr.contains("37.6%"), "Render \(tag) must print live Now chances: \(ocr)")
             XCTAssertFalse(ocr.contains("Sets"), "Render \(tag) must omit Sets header on Boyer vs Olivieri: \(ocr)")
+        }
+
+        // Optional live Tennis pill verification render (#13021) when staged JSONs are present
+        let atpPath = URL(fileURLWithPath: outDir).appendingPathComponent("live-tennis-atp.json")
+        let wtaPath = URL(fileURLWithPath: outDir).appendingPathComponent("live-tennis-wta.json")
+        if FileManager.default.fileExists(atPath: atpPath.path),
+           FileManager.default.fileExists(atPath: wtaPath.path) {
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let atp = try decoder.decode(LeagueMarketsResponse.self, from: Data(contentsOf: atpPath))
+            let wta = try decoder.decode(LeagueMarketsResponse.self, from: Data(contentsOf: wtaPath))
+            let merged = SportCategoryViewModel.mergeTourLeagueResponses([atp, wta])
+            let upcoming = merged.upcomingGames.filter { $0.status != "live" }
+            let tennisStack = VStack(alignment: .leading, spacing: 10) {
+                Text("Tennis · Upcoming (\(upcoming.count))")
+                    .font(.headline)
+                    .padding(.horizontal, 16)
+                ForEach(upcoming) { game in
+                    EventCardView(event: game, reason: nil)
+                        .environmentObject(pinManager)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(Color.cardBackground)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .stroke(HeadlineStyleTable199.cardBorderInk, lineWidth: 1)
+                        )
+                        .padding(.horizontal, 16)
+                }
+            }
+            let tLight = captureSheet(tennisStack, scheme: .light, at: .large)
+            let tDark = captureSheet(tennisStack, scheme: .dark, at: .large)
+            let tCombined = sideBySide(tLight, tDark)
+            let tURL = URL(fileURLWithPath: outDir).appendingPathComponent("13021-tennis-upcoming-light-dark-390.png")
+            try XCTUnwrap(tCombined.pngData()).write(to: tURL)
         }
     }
 }

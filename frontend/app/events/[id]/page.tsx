@@ -1809,7 +1809,10 @@ export default function EventPage({ params }: EventPageProps) {
   // A PRE-GAME RECORD STAYS. Before kickoff there is no score slot to be
   // mistaken for, and the record is the framing the hero exists to give. This
   // gate removes the record only where it has stopped being legible as one.
-  const heroScorePairPresent = bestHomeScore !== null && bestAwayScore !== null;
+  const heroScorePairPresent =
+    bestHomeScore !== null &&
+    bestAwayScore !== null &&
+    event?.score_source_unavailable !== true;
   const heroUnderway = isLive || isFinished || hasStarted;
 
   // ── #5697 AC2 — A PROJECTION OF THE FINAL NEEDS A GAME THE READER CAN SEE THE
