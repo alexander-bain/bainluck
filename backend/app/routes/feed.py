@@ -6505,9 +6505,12 @@ async def get_feed(
                 ),
                 include_machinery=False,
             )
-            # Keep the single shared page-base 1.0.6-safe (Ruling 252: A).
-            _base_feed_items_without_machinery = list(feed_items)
-            if bool(machinery) and not _prewarm_rebuild:
+            if _include_machinery_feed:
+                # Keep the single shared page-base 1.0.6-safe (Ruling 252: A).
+                # Captured ONLY when machinery=1 actually runs so non-machinery
+                # builds (including edition-pinned builds with switches off) are
+                # byte-for-byte unchanged.
+                _base_feed_items_without_machinery = list(feed_items)
                 feed_items = await add_roundup_feed_items(
                     db,
                     feed_items,
@@ -6750,6 +6753,13 @@ async def get_feed(
             _capture.venue_fields_before(feed_items) if _capture is not None else None
         )
         _venue_branch = await _attach_feed_venue_settlement(db, feed_items, now)
+        if _base_feed_items_without_machinery is not None:
+            _served_item_ids = {id(item) for item in feed_items}
+            _folded_out_base_items = [
+                b for b in _base_feed_items_without_machinery if id(b) not in _served_item_ids
+            ]
+            if _folded_out_base_items:
+                await _attach_feed_venue_settlement(db, _folded_out_base_items, now)
         if _capture is not None:
             _capture.record_venue_settlement(feed_items, _venue_before, _venue_branch)
         _previous_at = _record_feed_timing(
@@ -6766,6 +6776,11 @@ async def get_feed(
         # ``_rank_score`` and friends to every reader of page 2.
         for item in feed_items:
             _publish_feed_item(item)
+        if _base_feed_items_without_machinery is not None:
+            _published_item_ids = {id(item) for item in feed_items}
+            for _b_item in _base_feed_items_without_machinery:
+                if id(_b_item) not in _published_item_ids:
+                    _publish_feed_item(_b_item)
 
         payload = _feed_page_payload(
             _served_items,
@@ -7187,10 +7202,6 @@ async def get_feed(
                     _page_base_body = dict(payload)
                     _page_base_body["items"] = feed_items
                     if _base_feed_items_without_machinery is not None:
-                        for _b_item in _base_feed_items_without_machinery:
-                            _b_item.pop("_rank_score", None)
-                            _b_item.pop("_quality_story_key", None)
-                            _b_item.pop("_debug_meta", None)
                         _page_base_body["items"] = _base_feed_items_without_machinery
                     _page_base_body["total"] = len(_page_base_body["items"])
                     # Per-serve fields. ``render_feed_page_from_base`` sets all

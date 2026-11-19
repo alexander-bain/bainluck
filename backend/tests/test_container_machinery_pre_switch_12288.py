@@ -696,3 +696,131 @@ async def test_member_number_parity_fails_on_44_vs_43_and_missing_current_odds_r
         and m["member_page"] == 43
         for m in missing_p["mismatches"]
     )
+
+
+# ---------------------------------------------------------------------------
+# 5. Fable 9:38 PM PT review fixes on #13039
+# ---------------------------------------------------------------------------
+
+
+def test_252a_fresh_build_stored_base_runs_publish_feed_item_even_on_folded_cards() -> None:
+    """Fable review #1: cards folded out of `feed_items` by machinery groupings must
+    still pass through `_publish_feed_item` (promoting `data.story_key` and stripping
+    internal keys) so the base stored by a `machinery=1` fresh build equals, item for
+    item, the base stored by the same build without `machinery=1`."""
+    import copy
+    import inspect
+
+    from app.routes.feed import _publish_feed_item, get_feed
+
+    src = inspect.getsource(get_feed)
+    # 1. `_base_feed_items_without_machinery` is captured ONLY inside `if _include_machinery_feed:`
+    #    (Fable review #2: non-machinery builds, including edition-pinned builds with switches off,
+    #    never diverge from the existing base-storage path).
+    inc_idx = src.index("if _include_machinery_feed:")
+    cap_idx = src.index("_base_feed_items_without_machinery = list(feed_items)")
+    assert cap_idx > inc_idx
+
+    # 2. The publish loop runs `_publish_feed_item` on folded-out base items (never manual pops).
+    pub_idx = src.index("for item in feed_items:\n            _publish_feed_item(item)")
+    base_pub_idx = src.index("_publish_feed_item(_b_item)")
+    assert base_pub_idx > pub_idx
+    assert '_b_item.pop("_rank_score"' not in src
+
+    # 3. Direct behavioral equivalence: a folded-out card published via the base loop
+    #    equals item-for-item the exact same card published on a non-machinery build.
+    raw_items_no_mach = [
+        {
+            "type": "futures",
+            "_rank_score": 81.2,
+            "_quality_story_key": "nfl:mvp",
+            "_debug_meta": {"tier": 1},
+            "data": {"id": 9101, "name": "NFL MVP"},
+        },
+        {
+            "type": "futures",
+            "_rank_score": 74.5,
+            "_quality_story_key": "nfl:passing_td",
+            "_debug_meta": {"tier": 1},
+            "data": {"id": 9102, "name": "NFL Passing TD Leader"},
+        },
+    ]
+    raw_items_with_mach = copy.deepcopy(raw_items_no_mach)
+
+    # Without machinery=1: every item stays in feed_items and runs _publish_feed_item.
+    for item in raw_items_no_mach:
+        _publish_feed_item(item)
+
+    # With machinery=1: base snapshot taken before machinery folds out item[0].
+    base_without_mach = list(raw_items_with_mach)
+    served_with_mach = [
+        {"type": "bundle", "data": {"id": "roundup:machinery-nfl-week"}},
+        raw_items_with_mach[1],  # item[0] was folded out into the machinery card
+    ]
+    for item in served_with_mach:
+        _publish_feed_item(item)
+    published_ids = {id(item) for item in served_with_mach}
+    for b_item in base_without_mach:
+        if id(b_item) not in published_ids:
+            _publish_feed_item(b_item)
+
+    assert base_without_mach == raw_items_no_mach
+    assert base_without_mach[0]["data"]["story_key"] == "nfl:mvp"
+    assert "_rank_score" not in base_without_mach[0]
+    assert "_quality_story_key" not in base_without_mach[0]
+    assert "_debug_meta" not in base_without_mach[0]
+
+
+@pytest.mark.asyncio
+async def test_closeness_to_50_excludes_started_games_and_never_uses_coin_flip_for_live(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fable review #3: no row may show a started game with only its scheduled time.
+    - When >= min_items unstarted games exist, Coin-Flip Matchups holds ONLY unstarted
+      games, and started games (e.g. live Jazz at Lakers) render under Live & Upcoming
+      Matchups with live status/score.
+    - If fewer than min_items unstarted games exist, choose_section_form forces
+      `matchup_slate` (never `coin_flip_matchups`) so web and iOS 1.0.7 draw LIVE cards."""
+    defn = cm.load_machinery_definition(CANDIDATES_DIR / "machinery-nfl-week.json")
+    events = [
+        _ev(4001, "Utah Jazz", "Los Angeles Lakers", 0.53, 0.47, status="live"),
+        _ev(4002, "New York Knicks", "Minnesota Timberwolves", 0.52, 0.48, status="scheduled"),
+        _ev(4003, "Washington Wizards", "Chicago Bulls", 0.48, 0.52, status="scheduled"),
+        _ev(4004, "Boston Celtics", "Denver Nuggets", 0.17, 0.83, status="live"),
+        _ev(4005, "LA Clippers", "San Antonio Spurs", 0.11, 0.89, status="scheduled"),
+    ]
+    snapshot = {
+        "events": events,
+        "markets": _nfl_aux_markets(),
+        "paired_sets": {},
+        "market_histories": {},
+    }
+    monkeypatch.setattr(cm, "_load_snapshot_from_db", AsyncMock(return_value=snapshot))
+
+    result = await cm.produce_container_machinery(
+        None, defn, now=datetime(2026, 11, 19, 5, 0, tzinfo=timezone.utc)
+    )
+    assert isinstance(result, RoundupMembers)
+    sec0 = result.sections[0]
+    assert sec0["visual_block"]["form_id"] == "coin_flip_matchups"
+    sec0_ids = [it["event_id"] for it in sec0["visual_block"]["items"]]
+    assert 4001 not in sec0_ids
+    assert sec0_ids == [4002, 4003]
+    assert all(it["status"] == "scheduled" for it in sec0["visual_block"]["items"])
+
+    slate_sec = next(s for s in result.sections if s["class"] == "week_slate")
+    assert slate_sec["title"] == "Live & Upcoming Matchups"
+    assert 4001 in [it["event_id"] for it in slate_sec["visual_block"]["items"]]
+
+    # Structural guard: choose_section_form NEVER selects coin_flip_matchups when any game is live
+    assert (
+        cm.choose_section_form(
+            "events",
+            [
+                {"fav_prob": 0.52, "status": "live"},
+                {"fav_prob": 0.51, "status": "scheduled"},
+            ],
+        )
+        == "matchup_slate"
+    )
+

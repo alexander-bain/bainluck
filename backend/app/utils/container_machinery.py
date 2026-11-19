@@ -758,6 +758,13 @@ def choose_section_form(
         return "probability_history_chart"
 
     if atoms_kind == "events":
+        any_started = any(
+            str(it.get("status") or "").strip().lower()
+            in {"live", "in_progress", "halftime"}
+            for it in selected_items
+        )
+        if any_started:
+            return "matchup_slate"
         in_band = sum(1 for it in selected_items if _is_event_toss_up(it))
         if in_band >= TOSS_UP_MIN_SECTION_COUNT and in_band == len(selected_items):
             return "coin_flip_matchups"
@@ -2708,6 +2715,21 @@ async def produce_container_machinery(
                 ev_items.append(hyd)
             order_by = str(aq.get("order_by") or "kickoff_asc")
             if order_by == "closeness_to_50":
+                # Fable 2026-11-18 Rule 3: no row may show a started game with only
+                # its scheduled time. Hold only unstarted games in closest-games /
+                # Coin-Flip Matchups whenever >= min_items unstarted games exist
+                # (live games render with full LIVE + score cards in Live & Upcoming
+                # Matchups). If fewer than min_items unstarted games remain on the
+                # slate, keep the live games and `choose_section_form` forces
+                # `matchup_slate` so both web and iOS 1.0.7 draw full LIVE score cards.
+                unstarted_items = [
+                    it
+                    for it in ev_items
+                    if str(it.get("status") or "").strip().lower()
+                    not in {"live", "in_progress", "halftime"}
+                ]
+                if len(unstarted_items) >= min_items:
+                    ev_items = unstarted_items
                 ev_items.sort(key=lambda x: (x["closeness_to_50"], x["commence_time"]))
                 # Ruling 253: A — "Toss-up" means neither side above 55%.
                 # When >= 2 games are inside the band, feature ONLY those true toss-ups.
