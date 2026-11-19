@@ -29,6 +29,7 @@ import asyncio
 import gc
 import inspect
 import json
+import signal
 import subprocess
 import sys
 import textwrap
@@ -1557,7 +1558,14 @@ def slow_console(monkeypatch):
     keeps each such write as the sink received it, delivered or not, with the
     instant it arrived: a stalled console still shows what the receipt said.
     """
-    state = {"delay": 0.0, "refuse": None, "prefix": "{", "handed": []}
+    state = {
+        "delay": 0.0,
+        "refuse": None,
+        "prefix": "{",
+        "handed": [],
+        "sleep": time.sleep,
+        "now": time.monotonic,
+    }
     original_install = bounds.ConsoleCap.install
 
     class SlowSink:
@@ -1566,10 +1574,10 @@ def slow_console(monkeypatch):
 
         def write(self, s):
             if s.startswith(state["prefix"]):
-                state["handed"].append((time.monotonic(), s))
+                state["handed"].append((state["now"](), s))
                 if state["refuse"] is not None:
                     raise state["refuse"]
-                time.sleep(state["delay"])
+                state["sleep"](state["delay"])
             return self.real.write(s)
 
         def flush(self):
@@ -1586,12 +1594,14 @@ def slow_console(monkeypatch):
     return state
 
 
-def _hanging_apply(tmp_path, deadline):
+def _hanging_apply(tmp_path, deadline, *, entered=None):
     report = asyncio.run(_a_plan())
     plan = tmp_path / "P.json"
     plan.write_text(json.dumps(report))
 
     async def hang():
+        if entered is not None:
+            entered.append(True)
         await asyncio.sleep(60)
 
     argv = [
@@ -1600,6 +1610,96 @@ def _hanging_apply(tmp_path, deadline):
         *_attended_argv(tmp_path, report), "--write", "--output", str(tmp_path / "R.json"),
     ]
     return argv, _factory(_CommitSession(hang))
+
+
+class _VirtualWallClock:
+    """Controllable monotonic clock paired with a deterministic SIGALRM timer.
+
+    Drives ``OperationWall``, ``run_within_wall``, ``run_bounded_loop`` and
+    ``sync_phase`` through their exact production budgeting code without racing
+    the OS scheduler or disk ``fsync`` on a sub-second wall (#12392).
+    """
+
+    def __init__(self, start: float = 1000.0):
+        self.now = start
+        self.handler = None
+        self.armed_seconds = 0.0
+        self.alarm_fired = 0
+        self.walls: list[bounds.OperationWall] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += float(seconds)
+
+    def install(self, monkeypatch) -> None:
+        real_wall = bounds.OperationWall
+        real_run_bounded_loop = bounds.run_bounded_loop
+        real_signal = signal.signal
+        real_setitimer = signal.setitimer
+        real_getitimer = signal.getitimer
+        clock = self
+
+        class VirtualWall(real_wall):
+            def __init__(self, seconds, **kw):
+                kw.setdefault("monotonic", clock.monotonic)
+                super().__init__(seconds, **kw)
+                clock.walls.append(self)
+
+        def virtual_run_bounded_loop(coro, **kw):
+            kw.setdefault("monotonic", clock.monotonic)
+            return real_run_bounded_loop(coro, **kw)
+
+        def fake_signal(sig, handler):
+            if sig == signal.SIGALRM:
+                prev = clock.handler
+                clock.handler = handler
+                return prev
+            return real_signal(sig, handler)
+
+        def fake_setitimer(which, seconds, interval=0.0):
+            if which == signal.ITIMER_REAL:
+                prev = (clock.armed_seconds, 0.0)
+                clock.armed_seconds = float(seconds)
+                return prev
+            return real_setitimer(which, seconds, interval)
+
+        def fake_getitimer(which):
+            if which == signal.ITIMER_REAL:
+                return (clock.armed_seconds, 0.0)
+            return real_getitimer(which)
+
+        async def virtual_wait(fs, *, timeout=None):
+            tasks = set(fs)
+            for _ in range(20):
+                done = {t for t in tasks if t.done()}
+                if done:
+                    return done, tasks - done
+                await asyncio.sleep(0)
+            if timeout is not None and timeout > 0:
+                clock.advance(timeout)
+            done = {t for t in tasks if t.done()}
+            return done, tasks - done
+
+        monkeypatch.setattr(bounds, "OperationWall", VirtualWall)
+        monkeypatch.setattr(bounds, "run_bounded_loop", virtual_run_bounded_loop)
+        monkeypatch.setattr(signal, "signal", fake_signal)
+        monkeypatch.setattr(signal, "setitimer", fake_setitimer)
+        monkeypatch.setattr(signal, "getitimer", fake_getitimer)
+        monkeypatch.setattr(asyncio, "wait", virtual_wait)
+
+    def spend(self, seconds: float) -> None:
+        """Advance virtual time by ``seconds``; fire an armed SIGALRM if it expires first."""
+        if self.armed_seconds > 0 and seconds >= self.armed_seconds:
+            self.advance(self.armed_seconds)
+            handler = self.handler
+            self.armed_seconds = 0.0
+            self.alarm_fired += 1
+            if callable(handler):
+                handler(signal.SIGALRM, None)
+            return
+        self.advance(seconds)
 
 
 @contextmanager
@@ -1653,7 +1753,7 @@ def _slice_named_by_the_receipt(handed, t0):
 class TestConsoleInsideTheWall:
     @pytest.mark.parametrize("deadline,delay", [(0.8, 0.0), (0.8, 0.6), (30.0, 3.0)])
     def test_the_import_receipt_reaches_the_console_inside_the_wall_or_not_at_all(
-        self, tmp_path, capsys, slow_console, deadline, delay
+        self, tmp_path, capsys, monkeypatch, slow_console, deadline, delay
     ):
         """CERT-4175's 683-KEEP-CONSOLE-RECEIPT-WITHIN-THE-OPERATION-WALL, the reviewer's witness.
 
@@ -1662,25 +1762,40 @@ class TestConsoleInsideTheWall:
         uncertain COMMIT. A console slower than the wall (0.8 s and the
         commissioned 30 s) stops AT the wall: no summary, exit 3, and the
         artifact written before it keeps the uncertain COMMIT.
+
+        Uses ``_VirtualWallClock`` so ``OperationWall`` computes the real
+        reserve/artifact/console slices and arms/disarms ``SIGALRM`` on the
+        exact production path without racing the CI runner's scheduler or disk
+        ``fsync`` on a 60 ms slice (#12392). Real-process kernel-SIGALRM proof
+        lives in ``TestConsoleWallInARealProcess``.
         """
-        slow_console["delay"] = delay
-        argv, factory = _hanging_apply(tmp_path, deadline)
-        with _a_collection_scans_only_the_cli():
-            t0 = time.monotonic()
-            code = _load_script("kalshi_archive_import.py").main(argv, session_factory=factory)
-            elapsed = time.monotonic() - t0
+        entered: list[bool] = []
+        argv, factory = _hanging_apply(tmp_path, deadline, entered=entered)
+        clock = _VirtualWallClock()
+        clock.install(monkeypatch)
+        slow_console.update(delay=delay, sleep=clock.spend, now=clock.monotonic)
+        t0 = clock.monotonic()
+        code = _load_script("kalshi_archive_import.py").main(argv, session_factory=factory)
+        elapsed = clock.monotonic() - t0
         out = capsys.readouterr().out
+        assert entered, "hanging COMMIT was never reached before the work slice expired"
         assert (tmp_path / "R.json").exists(), (
             f"no artifact after {elapsed:.3f}s; console {out[-600:]!r}; "
             f"the receipt's own slice {_slice_named_by_the_receipt(slow_console['handed'], t0)}"
         )
         receipt = json.loads((tmp_path / "R.json").read_text())
-        assert code == 3 and elapsed < deadline + 0.15
+        (wall,) = clock.walls
+        assert wall.seconds == deadline and clock.armed_seconds == 0.0
+        assert code == 3 and elapsed <= deadline + 1e-9
         assert receipt["uncertain_commits"][-1]["error"] == "acknowledgement_not_received"
         assert receipt["readback_owed"]["durability"] == "unknown"
+        assert len(slow_console["handed"]) == 1
         if delay:
+            assert clock.alarm_fired == 1
+            assert elapsed == pytest.approx(deadline)
             assert out == ""  # nothing half-sent, nothing claimed
         else:
+            assert clock.alarm_fired == 0
             summary = json.loads(out)
             assert summary["uncertain_commits"] == receipt["uncertain_commits"]
             assert summary["artifact_bytes"] == (tmp_path / "R.json").stat().st_size
@@ -1839,10 +1954,16 @@ class TestConsoleInsideTheWall:
             assert code == 0 and json.loads(capsys.readouterr().out)["artifact"] == str(out)
 
     def test_a_sink_that_refuses_is_unavailable_never_a_traceback(
-        self, tmp_path, capsys, slow_console
+        self, tmp_path, capsys, monkeypatch, slow_console
     ):
-        slow_console["refuse"] = BrokenPipeError("reader went away")
         argv, factory = _hanging_apply(tmp_path, 0.8)
+        clock = _VirtualWallClock()
+        clock.install(monkeypatch)
+        slow_console.update(
+            refuse=BrokenPipeError("reader went away"),
+            sleep=clock.spend,
+            now=clock.monotonic,
+        )
         code = _load_script("kalshi_archive_import.py").main(argv, session_factory=factory)
         out, err = capsys.readouterr()
         assert code == 3 and out == "" and "Traceback" not in err
