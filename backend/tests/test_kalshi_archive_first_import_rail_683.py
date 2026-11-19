@@ -1672,7 +1672,9 @@ class _VirtualWallClock:
 
         async def virtual_wait(fs, *, timeout=None):
             tasks = set(fs)
-            for _ in range(20):
+            # Drain ready event-loop turns generously before advancing virtual
+            # time so extra await hops in production code never race the clock.
+            for _ in range(200):
                 done = {t for t in tasks if t.done()}
                 if done:
                     return done, tasks - done
