@@ -11,6 +11,7 @@ import logging
 import time
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import container_discovery
 from app.utils.container_corrections import PUBLICATION_COLUMN, REVISION_COLUMN
@@ -142,15 +143,30 @@ async def add_feed_collections(
                 None,
             )
         return items
+    timeout_s = min(budget_seconds, COLLECTION_READ_BUDGET_SECONDS)
     try:
-        read = await asyncio.wait_for(
-            container_discovery.discover_collections(db, event_ids=games),
-            timeout=min(budget_seconds, COLLECTION_READ_BUDGET_SECONDS),
-        )
+        if isinstance(db, AsyncSession):
+            # #11931: enforce the collection read budget server-side inside a
+            # SAVEPOINT so Postgres itself cancels at `timeout_ms` instead of
+            # stalling `db.rollback()` for 2-10 s on a cancelled asyncpg query.
+            timeout_ms = max(1, int(timeout_s * 1000))
+            async with db.begin_nested():
+                await db.execute(text(f"SET LOCAL statement_timeout = {timeout_ms}"))
+                read = await asyncio.wait_for(
+                    container_discovery.discover_collections(db, event_ids=games),
+                    timeout=timeout_s + 0.05,
+                )
+        else:
+            read = await asyncio.wait_for(
+                container_discovery.discover_collections(db, event_ids=games),
+                timeout=timeout_s,
+            )
     except Exception:
-        # A cancelled/failed statement can leave the session aborted. Ordinary
-        # cards are already serialized; restore it for subsequent feed reads.
-        await db.rollback()
+        # A cancelled/failed statement can leave the session aborted (on the
+        # non-savepoint path). Ordinary cards are already serialized; restore it
+        # for subsequent feed reads.
+        if not isinstance(db, AsyncSession):
+            await db.rollback()
         logger.warning(
             "Discover collection read failed; keeping ordinary cards", exc_info=True
         )
