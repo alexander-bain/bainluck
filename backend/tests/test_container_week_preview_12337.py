@@ -5,6 +5,7 @@ import json
 from builtins import ExceptionGroup
 from collections import Counter
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
@@ -17,10 +18,16 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.routes import containers as route
 from app.utils import request_cache
+from app.utils.container_read_cache import (
+    CONTAINER_READ_FRESH_TTL_LIVE_SECONDS,
+    container_read_cache_key,
+)
 from app.utils.container_week_preview import (
     MarketSummary,
+    PreparedWeekMarketPreview,
     decode_cursor,
     encode_cursor,
+    prepared_week_preview_key,
     ranked_preview,
 )
 from tests.test_container_hydrated_reader_9636 import (
@@ -365,6 +372,61 @@ async def test_cancelling_while_the_side_connection_closes_holds_the_slot(monkey
             await request
     assert side.closed.is_set()
     assert not route._week_market_read_slot.locked()
+
+
+@pytest.mark.parametrize("copy", ["current", "other_revision", "expired", "expired_live"])
+@pytest.mark.parametrize("parallel", [False, True])
+async def test_response_cache_miss_can_share_a_prepared_preview(monkeypatch, copy, parallel):
+    worker = WeekSession()
+    published = await route.read_published(worker, worker.hub.slug)
+    prepared = await route._prepare_week_market_preview(worker, published)
+    assert prepared is not None and len(worker.descriptors[0]) == 4984
+    expected_session = WeekSession()
+    reader = WeekSession()
+    market_reader = AuxiliaryWeekSession() if parallel else reader
+    if parallel:
+        bind_week_pool(reader, monkeypatch)
+        opened = use_auxiliary_session(reader, market_reader, monkeypatch)
+    revision = published.revision - 1 if copy == "other_revision" else published.revision
+    if copy == "expired":
+        prepared = PreparedWeekMarketPreview(prepared.observed_at - 600, prepared.plan)
+    if copy == "expired_live":
+        prepared = replace(
+            prepared, observed_at=prepared.observed_at - CONTAINER_READ_FRESH_TTL_LIVE_SECONDS
+        )
+        promoted = 3001
+        assert promoted not in prepared.plan.selected
+        for session in (expected_session, market_reader):
+            session.summaries[promoted] = replace(
+                session.summaries[promoted], event_id=None, volume_24h=100_000
+            )
+    expected = json.loads(route._render(await get(expected_session)))
+    if copy == "expired_live":
+        assert promoted in {m["id"] for m in all_members(expected) if m["type"] == "market"}
+    key = prepared_week_preview_key(container_read_cache_key(worker.hub.slug, revision, True, True))
+    store = {key: prepared.encode()}
+
+    async def get_redis():
+        return store
+
+    async def bounded_read(read):
+        return SimpleNamespace(is_ok=True, value=read())
+
+    monkeypatch.setattr(request_cache, "get_shared_async_redis", get_redis)
+    monkeypatch.setattr(request_cache, "bounded_redis_call", bounded_read)
+    monkeypatch.setattr(route, "_store_entry", lambda *args: None)
+    monkeypatch.setattr(route, "_local_entries", {})
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+    response = await get(reader, debug_timing=True)
+
+    assert response.headers["X-Feed-Cache"] == "miss"
+    assert json.loads(response.body) == expected
+    assert len(market_reader.hydrated[0]) == 12
+    assert len(market_reader.descriptors) == (0 if copy == "current" else 1)
+    if parallel:
+        assert opened == [market_reader] and market_reader.closed.is_set()
+        assert not reader.descriptors and not reader.hydrated
+    assert ("market_descriptors=" in response.headers["X-Container-Timing"]) == (copy != "current")
 
 
 async def test_every_remaining_market_is_reachable_once_even_if_activity_changes():

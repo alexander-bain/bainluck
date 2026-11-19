@@ -137,15 +137,17 @@ def _reader_hubs(collections: list[dict]) -> list[tuple[str, bool]]:
 
 async def _warm_container_hubs() -> dict:
     """One pass. Returns a summary whose ``status`` is ``ok`` unless a build failed."""
-    from app.routes.containers import _build_entry
+    from app.routes.containers import _build_entry, _prepare_week_market_preview
     from app.tasks.redis_state import get_redis_client
     from app.services.container_discovery import MAX_COLLECTIONS, discover_collections
     from app.services.database import async_session_maker
     from app.utils.container_corrections import READ_EMPTY, READ_PUBLISHED, read_published
     from app.utils.container_read_cache import (
+        CONTAINER_READ_FRESH_TTL_LIVE_SECONDS,
         container_read_cache_enabled,
         container_read_cache_key,
     )
+    from app.utils.container_week_preview import prepared_week_preview_key
 
     summary: dict = {"status": "ok", "hubs": 0, "built": [], "skipped": [], "failed": []}
     if not container_hub_warmer_enabled() or not container_read_cache_enabled():
@@ -175,7 +177,19 @@ async def _warm_container_hubs() -> dict:
                 if not needs_rebuild(_read_shared(client, key), time.time()):
                     summary["skipped"].append(slug)
                     continue
-                fresh = await _build_entry(session, published, True, compact=compact)
+                preview = await _prepare_week_market_preview(session, published) if compact else None
+                if preview is None:
+                    fresh = await _build_entry(session, published, True, compact=compact)
+                else:
+                    # Publish the few IDs and counts before card hydration. A
+                    # concurrent reader missing the body can reuse this work.
+                    ttl = int(CONTAINER_READ_FRESH_TTL_LIVE_SECONDS - (time.time() - preview.observed_at))
+                    if ttl > 0:
+                        try:
+                            client.set(prepared_week_preview_key(key), preview.encode(), ex=ttl)
+                        except Exception:  # noqa: BLE001 — the warm body can still be built
+                            logger.debug("NFL week: prepared preview write failed", exc_info=True)
+                    fresh = await _build_entry(session, published, True, compact=True, prepared_preview=preview)
             _write_shared(client, key, fresh)
             summary["built"].append(slug)
         except Exception:  # noqa: BLE001 — one hub never stops the others
