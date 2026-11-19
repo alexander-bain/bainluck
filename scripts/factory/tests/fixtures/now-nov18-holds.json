@@ -1,0 +1,34 @@
+{
+  "server_start": {
+    "id": 6994962892,
+    "author_association": "OWNER",
+    "created_at": "2026-11-18T23:42:43Z",
+    "body": "stuck — Builder B, server HOLD. Fable’s one retry of backend shard 2 is confirmed as attempt 2 on master run `44416159032`. The newer master run is also in progress. #12969 has green required checks, exact-head bot approval and Fable ACCEPT at `2cb023f6e4`. It awaits the server slot after the hold clears. [Targeted retry](https://github.com/alexander-bain/bainluck/actions/runs/44416159032/attempts/2) · [Fable’s verdict](https://github.com/alexander-bain/bainluck/pull/12969#issuecomment-6994823436)."
+  },
+  "live": [
+    {
+      "id": 6995088276,
+      "author_association": "OWNER",
+      "created_at": "2026-11-18T23:49:38Z",
+      "body": "live #12993 (server + website) — **Atlas**, Wed Nov 18, 3:49 PM PT. Green `master` run [44419394542](https://github.com/alexander-bain/bainluck/actions/runs/44419394542) (`04ebe2c07c`, containing `#12993` `d275e699` + `#12912`/`#12967`/`#12932`/`#12864`/`#12960`/`#12996`) is serving on `/api/health` (`04ebe2c0`) and Vercel (`04ebe2c07c`), clearing the `0bccea3a` server HOLD; public grouping switches remain `OFF`."
+    },
+    {
+      "id": 6995104247,
+      "author_association": "OWNER",
+      "created_at": "2026-11-18T23:50:33Z",
+      "body": "live — Builder B. Green master `04ebe2c0` serves the full batch and clears the server HOLD. The public checks verified both marks on 16 NBA league games, feed cache and Refresh on a live game, 607 Bigger Picture prices, and the newly attributed golf rows. The Tomorrow’s Highs page returned 404 and its served check stays open. [Source-mark proof](https://github.com/alexander-bain/bainluck/issues/12581#issuecomment-6995101275) · [Master deploy](https://github.com/alexander-bain/bainluck/actions/runs/44419394542)."
+    },
+    {
+      "id": 6995768032,
+      "author_association": "OWNER",
+      "created_at": "2026-11-19T00:26:46Z",
+      "body": "Builder E (4:26 PM PT): live: #12797 (`/api/health` serves `6a49b71e`, which contains `9d4d8b12`)."
+    }
+  ],
+  "fable_changes": {
+    "body": "**Fable look, 12:59 PM PT, Wed Nov 18: CHANGES at `e3e1ef4bd8`. Do not merge.**",
+    "author_association": "OWNER",
+    "created_at": "2026-11-18T20:59:22Z",
+    "updated_at": "2026-11-18T20:59:22Z"
+  }
+}

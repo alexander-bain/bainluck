@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 import re
 from zoneinfo import ZoneInfo
-from signals import stopped_rules
+from signals import resolve_holds, stopped_rules
 
 LINES = ("Server", "Website", "Apps")
 STATIONS = ("Write", "Test", "Review", "Merge line", "Ship", "Live")
@@ -151,6 +151,21 @@ def classify(pull, deployments, now):
             change["unsure"] = True
             change["reasons"].append("Waiting for deployment evidence on this line.")
         return change
+    if pull["branch"].startswith("dependabot/"):
+        change["bot_update"] = True
+    fable = max(
+        (
+            c
+            for c in pull.get("comments", [])
+            if c.get("association") in TRUSTED
+            and (c.get("fable_changes") or c.get("fable_accept"))
+        ),
+        key=lambda c: (instant(c["created_at"]), bool(c.get("fable_changes"))),
+        default={},
+    )
+    if fable.get("fable_changes"):
+        change["sent_back"] = True
+        return change
     if pull.get("draft"):
         return change
     change["station"] = "Test"
@@ -192,12 +207,9 @@ def classify(pull, deployments, now):
         # The API returns commits in topological order. Merge-only syncs do not
         # invalidate an acceptance of the last authored (non-merge) change.
         last_commit = non_merge[-1]["at"]
-        accepted = any(
-            c.get("fable_accept")
-            and c.get("association") in TRUSTED
-            and instant(c["created_at"]) >= instant(last_commit)
-            for c in pull.get("comments", [])
-        )
+        accepted = fable.get("fable_accept") and instant(
+            fable["created_at"]
+        ) >= instant(last_commit)
         if not accepted:
             return change
     if not uncertain_line:
@@ -205,15 +217,23 @@ def classify(pull, deployments, now):
     return change
 
 
-def advance_jams(changes, master, previous, now, stops=()):
+def advance_jams(changes, master, previous, now, stops=(), holds=None):
     # Earlier review jams used the old wait rule and cannot be carried forward.
     previous = [
-        jam for jam in previous if jam["key"] != f"review-waiting:{jam['line']}"
+        jam
+        for jam in previous
+        if jam["key"] != f"review-waiting:{jam['line']}"
+        and (jam["kind"] != "hold" or jam.get("source"))
     ]
     conditions = {}
     starts = {}
+    origins = {}
     previous_keys = {j["key"] for j in previous if j.get("ended_at") is None}
-    active = [c for c in changes if c["station"] != "Live" and not c["side_track"]]
+    active = [
+        c
+        for c in changes
+        if c["station"] != "Live" and not c["side_track"] and not c.get("bot_update")
+    ]
     for station in STATIONS[:-1]:
         count = sum(c["station"] == station for c in active)
         if count >= 10:
@@ -237,6 +257,9 @@ def advance_jams(changes, master, previous, now, stops=()):
         kind = stop["kind"]
         prefix = "review-ready" if kind == "review-waiting" else kind
         key = "master" if kind == "master" else f"{prefix}:{stop['line']}"
+        if kind == "hold":
+            key += f":{stop['source']['id']}"
+            origins[key] = stop["source"]
         threshold = {
             "line-stalled": 1800,
             "announced": 900,
@@ -263,10 +286,18 @@ def advance_jams(changes, master, previous, now, stops=()):
             "ended_at": None,
         }
         jam["count"] = count
+        if key in origins:
+            jam["source"] = origins[key]
         jams.append(jam)
     for jam in old.values():
         if now >= instant(jam["qualifies_at"]):
-            jams.append({**jam, "ended_at": iso(now)})
+            hold = (holds or {}).get(jam["line"], {})
+            ended = (
+                hold.get("ended_at")
+                if jam["kind"] == "hold" and hold.get("source") == jam.get("source")
+                else None
+            )
+            jams.append({**jam, "ended_at": ended or iso(now)})
     midnight = now.astimezone(PACIFIC).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
@@ -376,8 +407,15 @@ def build(snapshot, previous=None):
                 last_merges.get(line, change["merged_at"]), change["merged_at"]
             )
     commands = snapshot.get("commands", previous.get("signals", {}).get("commands", []))
+    holds = resolve_holds(
+        snapshot.get("hold_commands", commands),
+        changes,
+        snapshot["master"],
+        now,
+        previous.get("signals", {}).get("holds"),
+    )
     stops = stopped_rules(
-        changes, commands, snapshot["master"], last_merges, observed_since, now
+        changes, commands, snapshot["master"], last_merges, observed_since, now, holds
     )
     return {
         "schema_version": 1,
@@ -388,12 +426,13 @@ def build(snapshot, previous=None):
         "transitions": transitions,
         "stops": stops,
         "jams": advance_jams(
-            changes, snapshot["master"], previous.get("jams", []), now, stops
+            changes, snapshot["master"], previous.get("jams", []), now, stops, holds
         ),
         "signals": {
             **snapshot["master"],
             "last_merged_at": last_merges,
             "commands": commands,
+            "holds": holds,
         },
         "coverage": snapshot.get("coverage", []),
     }
