@@ -14,6 +14,7 @@ BUILDERS = {
     "atlas/": "D",
     "builder-e/": "E",
     "apple/": "F",
+    "weebey/": "W",
 }
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -171,11 +172,19 @@ def classify(pull, deployments, now):
     change["station"] = "Test"
     green, unknown = checks_green(pull)
     if not green:
+        if pull.get("checks_complete") and any(
+            c.get("ci") and c["state"] == "in_progress" for c in latest_checks(pull)
+        ):
+            change["checks_running"] = True
         change["unsure"] |= unknown
         if unknown:
             change["reasons"].append("Checks on this version could not be confirmed.")
         return change
     change["station"] = "Review"
+    if not change.get("bot_update") and now - instant(last_activity) >= timedelta(
+        hours=48
+    ):
+        change["parked"] = True
     if not pull.get("reviews_complete"):
         change["unsure"] = True
         change["reasons"].append("Review evidence could not be confirmed.")
@@ -232,7 +241,8 @@ def advance_jams(changes, master, previous, now, stops=(), holds=None):
     active = [
         c
         for c in changes
-        if c["station"] != "Live" and not c["side_track"] and not c.get("bot_update")
+        if c["station"] != "Live"
+        and not any(c.get(flag) for flag in ("side_track", "bot_update", "parked"))
     ]
     for station in STATIONS[:-1]:
         count = sum(c["station"] == station for c in active)
@@ -309,6 +319,27 @@ def advance_jams(changes, master, previous, now, stops=(), holds=None):
     ]
 
 
+def delivery_posts(commands, now):
+    batches, live, build_post = {}, {}, None
+    for post in sorted(commands, key=lambda c: instant(c["at"])):
+        if instant(post["at"]) > now:
+            continue
+        line = post["line"]
+        if post["kind"] == "merging":
+            batches[line] = {number: post["at"] for number in post["numbers"]}
+        elif post["kind"] == "hold" or (
+            post["kind"] == "live" and not post.get("numbers")
+        ):
+            batches.pop(line, None)
+        elif post["kind"] == "live":
+            for number in post["numbers"]:
+                live[(line, number)] = post
+                batches.get(line, {}).pop(number, None)
+        if post.get("build"):
+            build_post = {"build": post["build"], "at": post["at"]}
+    return batches, live, build_post
+
+
 def build(snapshot, previous=None):
     previous = previous or {}
     now = instant(snapshot["captured_at"])
@@ -320,11 +351,27 @@ def build(snapshot, previous=None):
     # Keep the first observed receipt across updates. Refreshes do not increase
     # merge-to-live time. A source whose evidence disappears stays in Ship.
     old_changes = {c["number"]: c for c in previous.get("changes", [])}
+    for change in changes:
+        old = old_changes.get(change["number"], {})
+        if change["station"] == "Live" and old.get("live_at"):
+            change["live_at"] = min(old["live_at"], change["live_at"], key=instant)
+            if old["live_at"] == change["live_at"]:
+                change["timing"] = old["timing"]
+    commands = snapshot.get("commands", previous.get("signals", {}).get("commands", []))
+    history = snapshot.get("hold_commands", commands)
+    batches, live_posts, posted_build = delivery_posts(history, now)
+    holds = resolve_holds(
+        history,
+        changes,
+        snapshot["master"],
+        now,
+        previous.get("signals", {}).get("holds"),
+    )
     pulls = {p["number"]: p for p in snapshot["pulls"]}
     transitions = [
         t
         for t in previous.get("transitions", [])
-        if now - instant(t["at"]) <= timedelta(minutes=15)
+        if now - instant(t.get("observed_at", t["at"])) <= timedelta(minutes=15)
     ]
     for change in changes:
         old = old_changes.get(change["number"], {})
@@ -359,6 +406,19 @@ def build(snapshot, previous=None):
                     and c["created_at"] >= revision
                 ]
         arrived = min(max(arrivals), snapshot["captured_at"])
+        announced = batches.get(change["line"], {}).get(change["number"])
+        hold = holds.get(change["line"])
+        if (
+            change["station"] == "Merge line"
+            and announced
+            and instant(announced) >= instant(revision)
+            and not any(
+                change.get(flag) for flag in ("parked", "bot_update", "side_track")
+            )
+            and not (hold and not hold["ended_at"])
+        ):
+            change.update(station="Ship", merge_announced_at=announced)
+            arrived = announced
         same_station = (
             old.get("station") == change["station"]
             and old.get("line") == change["line"]
@@ -382,12 +442,29 @@ def build(snapshot, previous=None):
                     "from": old["station"],
                     "to": change["station"],
                     "at": change.get("live_at") or change.get("merged_at") or arrived,
+                    "observed_at": snapshot["captured_at"],
                 }
             )
-        if change["station"] == "Live" and old.get("live_at"):
-            change["live_at"] = min(old["live_at"], change["live_at"], key=instant)
-            if old["live_at"] == change["live_at"]:
-                change["timing"] = old["timing"]
+        if change["merged_at"] and (
+            change["station"] == "Live" or change["line"] == "Apps"
+        ):
+            post = live_posts.get((change["line"], change["number"]))
+            if post and instant(post["at"]) >= instant(change["merged_at"]):
+                if change["station"] == "Live":
+                    change["live_posted_at"] = post["at"]
+                if post.get("build"):
+                    change["testflight_build"] = post["build"]
+            if old.get("line") == change["line"]:
+                if change["station"] == "Live" and old.get("live_posted_at"):
+                    change.setdefault("live_posted_at", old["live_posted_at"])
+                if old.get("testflight_build"):
+                    change.setdefault("testflight_build", old["testflight_build"])
+            if change.get("live_posted_at"):
+                change["live_post_observed_at"] = (
+                    old.get("live_post_observed_at", old["live_posted_at"])
+                    if old.get("live_posted_at") == change["live_posted_at"]
+                    else snapshot["captured_at"]
+                )
         observed_since = previous.get("observed_since", snapshot["captured_at"])
         change["merge_to_live_seconds"] = None
         if (
@@ -406,14 +483,6 @@ def build(snapshot, previous=None):
             last_merges[line] = max(
                 last_merges.get(line, change["merged_at"]), change["merged_at"]
             )
-    commands = snapshot.get("commands", previous.get("signals", {}).get("commands", []))
-    holds = resolve_holds(
-        snapshot.get("hold_commands", commands),
-        changes,
-        snapshot["master"],
-        now,
-        previous.get("signals", {}).get("holds"),
-    )
     stops = stopped_rules(
         changes, commands, snapshot["master"], last_merges, observed_since, now, holds
     )
@@ -433,6 +502,7 @@ def build(snapshot, previous=None):
             "last_merged_at": last_merges,
             "commands": commands,
             "holds": holds,
+            **({"testflight_post": posted_build} if posted_build else {}),
         },
         "coverage": snapshot.get("coverage", []),
     }
