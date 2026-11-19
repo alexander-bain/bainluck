@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import Response  # noqa: E402
 from sqlalchemy import select, text  # noqa: E402
-from starlette.requests import Request  # noqa: E402
+from starlette.requests import Request as ASGIRequest  # noqa: E402
 
 from app.models.models import FuturesMarket  # noqa: E402
 from app.routes import feed as feed_mod  # noqa: E402
@@ -92,7 +92,7 @@ def _no_cache_side_effects() -> Iterator[None]:
         candidate_base_mod._reset_l0_for_tests()
 
 
-def _fake_request() -> Request:
+def _fake_request() -> ASGIRequest:
     scope = {
         "type": "http",
         "asgi": {"version": "3.0"},
@@ -106,7 +106,7 @@ def _fake_request() -> Request:
         "client": ("127.0.0.1", 0),
         "server": ("api.bainluck.com", 443),
     }
-    return Request(scope)
+    return ASGIRequest(scope)
 
 
 def _summarize_seat(seat: int, item: dict[str, Any]) -> dict[str, Any]:

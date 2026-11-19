@@ -194,7 +194,8 @@ def discover_fun_min_lifetime_volume() -> int:
             if parsed >= 0:
                 return parsed
         except ValueError:
-            pass
+            # Ignore invalid env overrides and fall back to the registry default.
+            return load_fun_markets_registry().default_min_lifetime_volume
     return load_fun_markets_registry().default_min_lifetime_volume
 
 
