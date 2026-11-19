@@ -83,13 +83,15 @@ final class TheRunLineIsNotAProjectedMargin8617Tests: XCTestCase {
 
     // MARK: - The vocab row
 
-    func testOnlyBaseballSaysItsSpreadIsNotAMargin() {
+    func testBaseballAndHockeySayTheirPinnedLinesAreNotAMargin() {
         XCTAssertFalse(SportVocab.forSport("baseball_mlb").sportsbookSpreadIsAMargin)
         XCTAssertFalse(SportVocab.forSport("baseball_npb").sportsbookSpreadIsAMargin)
-        for key in ["americanfootball_nfl", "basketball_nba", "icehockey_nhl",
+        XCTAssertFalse(SportVocab.forSport("icehockey_nhl").sportsbookSpreadIsAMargin)
+        XCTAssertFalse(SportVocab.forSport("icehockey_ahl").sportsbookSpreadIsAMargin)
+        for key in ["americanfootball_nfl", "basketball_nba",
                     "soccer_epl", "tennis_atp_us_open", "mma_mixed_martial_arts"] {
             XCTAssertTrue(SportVocab.forSport(key).sportsbookSpreadIsAMargin,
-                          "\(key) keeps its projection — only the measured sport withholds")
+                          "\(key) keeps its projection — only measured pinned-line sports withhold")
         }
     }
 
@@ -135,7 +137,7 @@ final class TheRunLineIsNotAProjectedMargin8617Tests: XCTestCase {
     /// Before the off the hero prints the projection; baseball withholds it and
     /// the same pair under NFL still prints — so the nil is the sport gate, not
     /// a status or date that #5697's gate already refuses.
-    func testTheHeroWithholdsTheRunLineBeforeTheOff() {
+    func testTheHeroWithholdsTheRunLineAndPuckLineBeforeTheOff() throws {
         XCTAssertNil(EventDetailView.projectionText(
             sport: "baseball_mlb", status: "scheduled", commenceTime: Self.beforeTheOff,
             projectedHome: Self.runLineHome, projectedAway: Self.runLineAway,
@@ -145,6 +147,54 @@ final class TheRunLineIsNotAProjectedMargin8617Tests: XCTestCase {
             sport: "baseball_npb", status: "scheduled", commenceTime: Self.beforeTheOff,
             projectedHome: Self.runLineHome, projectedAway: Self.runLineAway,
             hasScore: false, now: Self.now))
+        XCTAssertNil(EventDetailView.projectionText(
+            sport: "icehockey_nhl", status: "scheduled", commenceTime: Self.beforeTheOff,
+            projectedHome: 4.0, projectedAway: 2.5,
+            hasScore: false, now: Self.now),
+            "the iPhone hero prints the ±1.5 puck line as a projected final (#13007)")
+
+        // Verify EventSportHeadlines12472 also refuses the ±1.5 sportsbook puck line on current_odds
+        // and falls through to Kalshi's multi-rung ladder (or nil when absent).
+        let dec = JSONDecoder()
+        dec.keyDecodingStrategy = .convertFromSnakeCase
+        let nhlDetail = try dec.decode(EventDetail.self, from: Data("""
+        {
+          "id": 15350936,
+          "sport": "icehockey_nhl",
+          "sport_name": "NHL",
+          "status": "scheduled",
+          "away_team": "Philadelphia Flyers",
+          "home_team": "Ottawa Senators",
+          "commence_time": "2026-11-20T00:00:00Z",
+          "current_odds": {
+            "away_probability": 0.415,
+            "home_probability": 0.585,
+            "projected_away_score": 2.5,
+            "projected_home_score": 4.0
+          }
+        }
+        """.utf8))
+        let fixedNow = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-19T19:00:00Z"))
+        XCTAssertNil(
+            EventSportHeadlines12472.admittedPregameProjectedPair(
+                event: nhlDetail,
+                hasScore: false,
+                ladderHome: nil,
+                ladderAway: nil,
+                now: fixedNow
+            ),
+            "Scheduled NHL headline card must never print current_odds' ±1.5 puck-line pair (#13007)"
+        )
+        let ladderAdmitted = EventSportHeadlines12472.admittedPregameProjectedPair(
+            event: nhlDetail,
+            hasScore: false,
+            ladderHome: 3.3,
+            ladderAway: 2.7,
+            now: fixedNow
+        )
+        XCTAssertEqual(ladderAdmitted?.awayNumber, "2.7")
+        XCTAssertEqual(ladderAdmitted?.homeNumber, "3.3")
+
         let control = EventDetailView.projectionText(
             sport: "americanfootball_nfl", status: "scheduled", commenceTime: Self.beforeTheOff,
             projectedHome: Self.runLineHome, projectedAway: Self.runLineAway,
@@ -154,15 +204,20 @@ final class TheRunLineIsNotAProjectedMargin8617Tests: XCTestCase {
     }
 
     /// While live the projection moves to Game Info (#8320) through the same
-    /// function; baseball withholds it there too.
-    func testGameInfoWithholdsTheRunLineWhileLive() {
+    /// function; baseball and hockey withhold it there too.
+    func testGameInfoWithholdsTheRunLineAndPuckLineWhileLive() {
         XCTAssertNil(EventDetailView.projectionText(
             sport: "baseball_mlb", status: "live", commenceTime: Self.underway,
             projectedHome: Self.runLineHome, projectedAway: Self.runLineAway,
             hasScore: true, now: Self.now),
             "Game Info prints the ±1.5 run line as a projected final (#8617)")
-        XCTAssertNotNil(EventDetailView.projectionText(
+        XCTAssertNil(EventDetailView.projectionText(
             sport: "icehockey_nhl", status: "live", commenceTime: Self.underway,
+            projectedHome: 4.0, projectedAway: 2.5,
+            hasScore: true, now: Self.now),
+            "Game Info prints the ±1.5 puck line as a projected final (#13007)")
+        XCTAssertNotNil(EventDetailView.projectionText(
+            sport: "basketball_nba", status: "live", commenceTime: Self.underway,
             projectedHome: Self.runLineHome, projectedAway: Self.runLineAway,
             hasScore: true, now: Self.now),
             "control: a live margin sport with a score keeps its Game Info projection")

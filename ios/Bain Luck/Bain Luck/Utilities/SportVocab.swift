@@ -153,7 +153,7 @@ extension SportVocab {
             winnerMarketPricesADraw: false,
             sportsbookSpreadIsAMargin: false,
             canEndInATie: false)),
-        (["hockey", "nhl"], SportVocab(
+        (["hockey", "nhl", "ahl", "shl", "liiga"], SportVocab(
             marginTitle: "Goal margin map", totalTitle: "Goals map",
             unit: "goals", unitSingular: "goal", marginRange: 5,
             totalRange: 2...9,
@@ -161,7 +161,10 @@ extension SportVocab {
             // A regular-season game that is level after overtime is decided by
             // a shootout, so the winner market has two outcomes.
             winnerMarketPricesADraw: false,
-            sportsbookSpreadIsAMargin: true,
+            // #13007: Hockey's sportsbook puck line is pinned at ±1.5 goals
+            // regardless of price, just like baseball's run line (#8617) and
+            // `projectedFinalFormat` on the website.
+            sportsbookSpreadIsAMargin: false,
             canEndInATie: false)),
         (["soccer", "mls", "epl", "uefa", "fifa"], SportVocab(
             marginTitle: "Goal margin map", totalTitle: "Goals map",
