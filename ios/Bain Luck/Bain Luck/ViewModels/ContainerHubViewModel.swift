@@ -142,8 +142,9 @@ final class ContainerHubViewModel: ObservableObject {
         defer { if pageVersion == version { isLoadingMore = false } }
         do {
             let pageLimit = current.response.page?.limit ?? 50
+            let nextUrl = current.response.page?.nextUrl
             let response = loadWeekMarkets
-                ? try await service.loadMarketPage(slug: slug, cursor: cursor, revision: revision, limit: pageLimit)
+                ? try await service.loadMarketPage(slug: slug, cursor: cursor, revision: revision, limit: pageLimit, nextUrl: nextUrl)
                 : try await service.loadPage(slug: slug, cursor: cursor, revision: revision, limit: pageLimit)
             guard version == pageVersion, admitted(ticket), !Task.isCancelled else { return }
             try validate(response)

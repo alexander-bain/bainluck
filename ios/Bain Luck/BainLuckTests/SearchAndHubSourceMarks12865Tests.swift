@@ -512,7 +512,7 @@ final class SearchAndHubSourceMarks12865Tests: XCTestCase {
             "kind": "nfl_week_markets",
             "limit": 12,
             "next_cursor": "\(initialCursor)",
-            "next_url": "/api/containers/nfl-2026-week-11?market_cursor=\(initialCursor)&market_revision=5&market_limit=50&include_children=false"
+            "next_url": "/api/containers/nfl-2026-week-11?market_cursor=\(initialCursor)&market_revision=5&market_limit=24&include_children=true"
           },
           "sections": [
             {
@@ -598,6 +598,7 @@ final class SearchAndHubSourceMarks12865Tests: XCTestCase {
             var recordedMarketCursor: String?
             var recordedRevision: Int?
             var recordedLimit: Int?
+            var recordedNextUrl: String?
             var calledRegularLoadPage = false
 
             init(first: ContainerHubResponse, second: ContainerHubResponse) {
@@ -612,10 +613,11 @@ final class SearchAndHubSourceMarks12865Tests: XCTestCase {
                 return second
             }
 
-            nonisolated func loadMarketPage(slug: String, cursor: String, revision: Int, limit: Int) async throws -> ContainerHubResponse {
+            nonisolated func loadMarketPage(slug: String, cursor: String, revision: Int, limit: Int, nextUrl: String?) async throws -> ContainerHubResponse {
                 recordedMarketCursor = cursor
                 recordedRevision = revision
                 recordedLimit = limit
+                recordedNextUrl = nextUrl
                 return second
             }
         }
@@ -634,6 +636,10 @@ final class SearchAndHubSourceMarks12865Tests: XCTestCase {
         XCTAssertEqual(loader.recordedMarketCursor, initialCursor)
         XCTAssertEqual(loader.recordedRevision, 5)
         XCTAssertEqual(loader.recordedLimit, 12)
+        XCTAssertEqual(
+            loader.recordedNextUrl,
+            "/api/containers/nfl-2026-week-11?market_cursor=\(initialCursor)&market_revision=5&market_limit=24&include_children=true"
+        )
 
         guard case .loaded(let expandedPresentation) = vm.state else {
             return XCTFail("Expected loaded state after loadMore")
@@ -641,5 +647,34 @@ final class SearchAndHubSourceMarks12865Tests: XCTestCase {
         XCTAssertNil(expandedPresentation.response.page?.nextCursor)
         let allIds = expandedPresentation.sections.flatMap { $0.members.map(\.memberId) }
         XCTAssertEqual(allIds, [501, 502], "Deferred market 502 must append after initial market 501")
+    }
+
+    func testMarketContinuationRequestMatchesServerNextUrlAndFirstPageIncludeChildrenScope() throws {
+        let cursor = "eyJ2IjoxLCJvd24iOmZhbHNlLCJwIjpbMCwxLDUwMV19"
+        let serverNextUrl = "/api/containers/nfl-2026-week-11?market_cursor=\(cursor)&market_revision=5&market_limit=24&include_children=true"
+
+        let fromNextUrl = try ContainerHubService.marketContinuationRequest(
+            slug: "nfl-2026-week-11",
+            cursor: cursor,
+            revision: 5,
+            limit: 4,
+            nextUrl: serverNextUrl
+        )
+        XCTAssertEqual(fromNextUrl.path, "/api/containers/nfl-2026-week-11")
+        XCTAssertEqual(fromNextUrl.query["market_cursor"], cursor)
+        XCTAssertEqual(fromNextUrl.query["market_revision"], "5")
+        XCTAssertEqual(fromNextUrl.query["market_limit"], "24", "Should adopt PAGE_DEFAULT from server next_url rather than PREVIEW_LIMIT")
+        XCTAssertEqual(fromNextUrl.query["include_children"], "true", "Should preserve server next_url include_children=true so own=False cursor never triggers 400 cursor_scope_mismatch")
+
+        let fallback = try ContainerHubService.marketContinuationRequest(
+            slug: "nfl-2026-week-11",
+            cursor: cursor,
+            revision: 5,
+            limit: 24,
+            nextUrl: nil
+        )
+        XCTAssertEqual(fallback.path, "/api/containers/nfl-2026-week-11")
+        XCTAssertNil(fallback.query["include_children"], "Fallback continuation must omit include_children to match fetchContainerHub(slug:)'s backend default (include_children=True)")
+        XCTAssertNotEqual(fallback.query["include_children"], "false")
     }
 }

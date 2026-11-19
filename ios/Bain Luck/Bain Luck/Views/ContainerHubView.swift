@@ -2,22 +2,22 @@ import SwiftUI
 
 private enum ContainerHubThemeTokens {
     static func surface(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color.black : DS.surface
+        scheme == .dark ? Color.groupedBackground : DS.surface
     }
     static func cardBg(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(white: 0.11) : DS.cardBg
+        scheme == .dark ? Color.cardBackground : DS.cardBg
     }
     static func subtleBg(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color.white.opacity(0.08) : DS.surface
+        scheme == .dark ? Color.groupedBackground : DS.surface
     }
     static func border(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color.white.opacity(0.14) : DS.border
+        scheme == .dark ? HeadlineStyleTable199.cardBorderInk : DS.border
     }
     static func textPrimary(_ scheme: ColorScheme) -> Color {
         scheme == .dark ? Color.primary : DS.textPrimary
     }
     static func textSecondary(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color.secondary : DS.textSecondary
+        scheme == .dark ? DS.textSecondaryReadable : DS.textSecondary
     }
 }
 
