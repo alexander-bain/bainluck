@@ -472,7 +472,7 @@ struct TeamDetailView: View {
                             .padding(.vertical, 2)
                             .background(Color.green.opacity(0.12), in: Capsule())
                             .fixedSize()
-                        if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.title, numberSize: 14, compactRow: true) {
+                        if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.title, subtitle: row.caption, numberSize: 14, compactRow: true) {
                             mark.buttonStyle(.borderless)
                         }
                     }
@@ -490,7 +490,7 @@ struct TeamDetailView: View {
                             .padding(.vertical, 2)
                             .background(Color.secondary.opacity(0.12), in: Capsule())
                             .fixedSize()
-                        if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.title, numberSize: 14, compactRow: true) {
+                        if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.title, subtitle: row.caption, numberSize: 14, compactRow: true) {
                             mark.buttonStyle(.borderless)
                         }
                     }
@@ -500,7 +500,7 @@ struct TeamDetailView: View {
                             .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
                             .foregroundStyle(.primary)
                             .fixedSize()
-                        if let mark = SourceMarkButton(row.sourceMark, number: row.probability, subject: row.title, numberSize: 16, compactRow: true) {
+                        if let mark = SourceMarkButton(row.sourceMark, number: row.probability, subject: row.title, subtitle: row.caption, numberSize: 16, compactRow: true) {
                             mark.buttonStyle(.borderless)
                         }
                     }
