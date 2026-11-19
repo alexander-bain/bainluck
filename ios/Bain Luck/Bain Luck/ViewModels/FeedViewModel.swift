@@ -209,7 +209,8 @@ final class FeedViewModel: ObservableObject {
         let now = clock()
         return items.filter {
             guard $0.type == "event" else { return false }
-            return SportsUpcomingCutoff13001.admitsUpcoming($0.event, now: now)
+            return EventState.section(of: $0.event, now: now) == .upcoming
+                && SportsUpcomingCutoff13001.admitsUpcoming($0.event, now: now)
         }
     }
 
@@ -632,7 +633,8 @@ final class FeedViewModel: ObservableObject {
         let now = clock()
         return filteredItems(for: categoryID).filter {
             guard $0.type == "event" else { return false }
-            return SportsUpcomingCutoff13001.admitsUpcoming($0.event, now: now)
+            return EventState.section(of: $0.event, now: now) == .upcoming
+                && SportsUpcomingCutoff13001.admitsUpcoming($0.event, now: now)
         }
     }
 
