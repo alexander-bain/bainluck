@@ -6,9 +6,13 @@ import UserNotifications
 struct PinManagementView: View {
     @EnvironmentObject private var pinManager: PinManager
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     #if os(iOS)
     @State private var gameAlertsEnabled = GameAlertsPreference13083.shared.isEnabled
     @State private var notificationAuthStatus: UNAuthorizationStatus = .notDetermined
+    #if DEBUG
+    @State private var pinGameAlertsStateForTest = false
+    #endif
     #endif
     #if DEBUG
     @StateObject private var vm = PinManagementView.makeViewModel()
@@ -23,6 +27,23 @@ struct PinManagementView: View {
     @StateObject private var vm = PinManagementViewModel()
     #endif
     var focusType: String? = nil
+
+    init(focusType: String? = nil) {
+        self.focusType = focusType
+    }
+
+    #if DEBUG && os(iOS)
+    init(
+        focusType: String? = nil,
+        gameAlertsEnabledForTest: Bool,
+        notificationAuthStatusForTest: UNAuthorizationStatus
+    ) {
+        self.focusType = focusType
+        _gameAlertsEnabled = State(initialValue: gameAlertsEnabledForTest)
+        _notificationAuthStatus = State(initialValue: notificationAuthStatusForTest)
+        _pinGameAlertsStateForTest = State(initialValue: true)
+    }
+    #endif
 
     private var orderedTypes: [String] {
         focusType == "future" ? ["future", "event"] : ["event", "future"]
@@ -76,22 +97,33 @@ struct PinManagementView: View {
                             Text("Game alerts")
                                 .font(.body.weight(.medium))
                                 .fixedSize(horizontal: false, vertical: true)
-                            Text(
-                                gameAlertsEnabled && notificationAuthStatus == .denied
-                                    ? "Notifications are off in iPhone Settings — turn them on to receive game alerts"
-                                    : "Pinned games: start (when no Live Activity runs), close late, and final"
-                            )
-                            .font(.caption)
-                            .foregroundStyle(
-                                gameAlertsEnabled && notificationAuthStatus == .denied
-                                    ? Color.orange
-                                    : Color.secondary
-                            )
-                            .fixedSize(horizontal: false, vertical: true)
+                            Text(GameAlertsPreference13083.subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     .tint(Color.accentColor)
                     .accessibilityIdentifier("pinManagement.gameAlertsToggle")
+
+                    if gameAlertsEnabled && notificationAuthStatus == .denied {
+                        Button {
+                            GameAlertsPreference13083.openAppNotificationSettings()
+                        } label: {
+                            HStack(alignment: .center, spacing: 8) {
+                                Text(GameAlertsPreference13083.settingsOffActionTitle)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(Color.orange)
+                                    .multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 4)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(Color.orange)
+                            }
+                        }
+                        .accessibilityIdentifier("pinManagement.gameAlertsOpenSettings")
+                    }
                 }
                 #endif
             }
@@ -113,13 +145,32 @@ struct PinManagementView: View {
         #endif
         .task {
             #if os(iOS)
+            #if DEBUG
+            if !pinGameAlertsStateForTest {
+                gameAlertsEnabled = GameAlertsPreference13083.shared.isEnabled
+                notificationAuthStatus = await NotificationManager.shared.notificationAuthorizationStatus()
+            }
+            #else
             gameAlertsEnabled = GameAlertsPreference13083.shared.isEnabled
             notificationAuthStatus = await NotificationManager.shared.notificationAuthorizationStatus()
+            #endif
             #endif
             await pinManager.loadPins()
         }
         #if os(iOS)
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            #if DEBUG
+            guard !pinGameAlertsStateForTest else { return }
+            #endif
+            Task {
+                notificationAuthStatus = await NotificationManager.shared.notificationAuthorizationStatus()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .gameAlertsPreferenceDidChange13083)) { _ in
+            #if DEBUG
+            guard !pinGameAlertsStateForTest else { return }
+            #endif
             gameAlertsEnabled = GameAlertsPreference13083.shared.isEnabled
         }
         #endif

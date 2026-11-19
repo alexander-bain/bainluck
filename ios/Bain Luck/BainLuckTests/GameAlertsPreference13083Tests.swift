@@ -151,6 +151,15 @@ final class GameAlertsPreference13083Tests: XCTestCase {
     }
 
     #if os(iOS)
+    func testOpenSettingsHelperOpensBainLuckNotificationSettingsAndCopyIsPlainEnglish() {
+        XCTAssertFalse(GameAlertsPreference13083.subtitle.localizedCaseInsensitiveContains("Live Activity"),
+                       "Reader-facing copy must stay plain English without platform jargon")
+        var opened: URL?
+        GameAlertsPreference13083.openAppNotificationSettings { opened = $0 }
+        XCTAssertNotNil(opened)
+        XCTAssertEqual(opened, GameAlertsPreference13083.appNotificationSettingsURL)
+    }
+
     func testGameAlertsSwitchRendersAt390PxAcrossLightDarkAndDynamicType() throws {
         let outDir = ProcessInfo.processInfo.environment["EXPORT_GAME_ALERTS_13083_DIR"]
         let variants: [(name: String, style: UIUserInterfaceStyle, scheme: ColorScheme, dynamicType: DynamicTypeSize, uiSize: UIContentSizeCategory)] = [
@@ -165,9 +174,9 @@ final class GameAlertsPreference13083Tests: XCTestCase {
         let nav = NavigationCoordinator()
 
         for v in variants {
-            // Signed-out Preferences shows Notifications -> Game alerts cleanly without blocking on /api/preferences.
+            // 1. Default OFF state in Preferences
             let view = NavigationStack {
-                PreferencesView()
+                PreferencesView(gameAlertsEnabledForTest: false, notificationAuthStatusForTest: .notDetermined)
             }
             .environmentObject(signedOutAuth)
             .environmentObject(nav)
@@ -180,6 +189,10 @@ final class GameAlertsPreference13083Tests: XCTestCase {
             let flatOCR = ocr.replacingOccurrences(of: " | ", with: " ")
             XCTAssertTrue(flatOCR.localizedCaseInsensitiveContains("Game alerts"),
                           "\(v.name) PreferencesView must show Game alerts; OCR=\(ocr)")
+            XCTAssertTrue(flatOCR.localizedCaseInsensitiveContains("final score"),
+                          "\(v.name) PreferencesView must show plain-English subtitle; OCR=\(ocr)")
+            XCTAssertFalse(flatOCR.localizedCaseInsensitiveContains("Live Activity"),
+                           "\(v.name) PreferencesView must not contain platform jargon; OCR=\(ocr)")
             XCTAssertFalse(flatOCR.localizedCaseInsensitiveContains("Couldn't Load Preferences"),
                            "\(v.name) signed-out PreferencesView must not block on account load; OCR=\(ocr)")
             XCTAssertFalse(ocr.contains("…") || ocr.contains("..."),
@@ -190,22 +203,50 @@ final class GameAlertsPreference13083Tests: XCTestCase {
                 try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try XCTUnwrap(img.pngData()).write(to: url)
             }
+
+            // 2. Refused iPhone notifications state in Preferences (switch ON + tappable orange Settings row)
+            let deniedPrefs = NavigationStack {
+                PreferencesView(gameAlertsEnabledForTest: true, notificationAuthStatusForTest: .denied)
+            }
+            .environmentObject(signedOutAuth)
+            .environmentObject(nav)
+            .environment(\.horizontalSizeClass, .compact)
+            .environment(\.colorScheme, v.scheme)
+
+            let deniedHeight: CGFloat = v.dynamicType.isAccessibilitySize ? 980 : 620
+            let deniedImg = Self.renderPhoneView(deniedPrefs, width: 390, height: deniedHeight, style: v.style, dynamicType: v.dynamicType, contentSize: v.uiSize)
+            let deniedOCR = try Self.recognizeText(in: XCTUnwrap(deniedImg.cgImage))
+            let flatDenied = deniedOCR.replacingOccurrences(of: " | ", with: " ")
+            XCTAssertTrue(flatDenied.localizedCaseInsensitiveContains("open Settings"),
+                          "\(v.name) denied PreferencesView must show tappable open Settings row; OCR=\(deniedOCR)")
+            XCTAssertFalse(deniedOCR.contains("…") || deniedOCR.contains("..."),
+                           "\(v.name) denied PreferencesView must not truncate text; OCR=\(deniedOCR)")
+
+            if let outDir, !outDir.isEmpty {
+                let url = URL(fileURLWithPath: outDir).appendingPathComponent("prefs_denied_\(v.name).png")
+                try XCTUnwrap(deniedImg.pngData()).write(to: url)
+            }
         }
 
-        // Also capture PinManagementView (Manage pins) on light & dark default so signed-out iPhone path is proven.
+        // 3. Manage pins (signed-out iPhone path): normal + denied at default and xxxLarge
         let pins = PinManager()
-        for v in variants.prefix(2) {
-            let pinView = PinManagementView()
+        for v in variants {
+            let pinView = PinManagementView(gameAlertsEnabledForTest: true, notificationAuthStatusForTest: .denied)
                 .environmentObject(pins)
                 .environment(\.horizontalSizeClass, .compact)
                 .environment(\.colorScheme, v.scheme)
-            let img = Self.renderPhoneView(pinView, width: 390, height: 620, style: v.style, dynamicType: v.dynamicType, contentSize: v.uiSize)
+            let pinHeight: CGFloat = v.dynamicType.isAccessibilitySize ? 1_120 : 640
+            let img = Self.renderPhoneView(pinView, width: 390, height: pinHeight, style: v.style, dynamicType: v.dynamicType, contentSize: v.uiSize)
             let ocr = try Self.recognizeText(in: XCTUnwrap(img.cgImage))
-            XCTAssertTrue(ocr.localizedCaseInsensitiveContains("Game alerts"),
+            let flatOCR = ocr.replacingOccurrences(of: " | ", with: " ")
+            XCTAssertTrue(flatOCR.localizedCaseInsensitiveContains("Game alerts"),
                           "\(v.name) PinManagementView must show Game alerts; OCR=\(ocr)")
+            XCTAssertTrue(flatOCR.localizedCaseInsensitiveContains("open Settings"),
+                          "\(v.name) denied PinManagementView must show tappable open Settings row; OCR=\(ocr)")
+            XCTAssertFalse(ocr.contains("…") || ocr.contains("..."),
+                           "\(v.name) PinManagementView must not truncate text; OCR=\(ocr)")
             if let outDir, !outDir.isEmpty {
-                let url = URL(fileURLWithPath: outDir).appendingPathComponent("pins_\(v.name).png")
-                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let url = URL(fileURLWithPath: outDir).appendingPathComponent("pins_denied_\(v.name).png")
                 try XCTUnwrap(img.pngData()).write(to: url)
             }
         }

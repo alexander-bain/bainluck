@@ -1,9 +1,12 @@
 import Foundation
 import UserNotifications
+#if canImport(UIKit)
+import UIKit
+#endif
 
 extension Notification.Name {
     /// Posted on the main actor whenever the on-device "Game alerts" switch changes
-    /// so device registration (#13082) immediately syncs or clears `notification_token`.
+    /// so device registration (#13082) immediately syncs or clears `push_devices.notification_token`.
     static let gameAlertsPreferenceDidChange13083 = Notification.Name("bainluck.gameAlertsPreferenceDidChange.13083")
 }
 
@@ -16,6 +19,25 @@ final class GameAlertsPreference13083 {
 
     static let enabledKey = "bainluck.gameAlertsEnabled.13083"
     static let pinPromptHandledKey = "bainluck.gameAlertsPinPromptHandled.13083"
+
+    /// Plain-English copy shared by Preferences and Manage pins (zero platform jargon).
+    static let subtitle = "For games you pin: when it starts, when it is close late, and the final score."
+    /// Shown as a tappable link when the switch is on but iPhone Settings notifications are off.
+    static let settingsOffActionTitle = "Notifications are off in iPhone Settings — open Settings"
+
+    #if os(iOS)
+    /// Opens Bain Luck's Notifications settings page in iPhone Settings (iOS 16+),
+    /// falling back to Bain Luck's top-level iPhone Settings page.
+    static var appNotificationSettingsURL: URL? {
+        URL(string: UIApplication.openNotificationSettingsURLString)
+            ?? URL(string: UIApplication.openSettingsURLString)
+    }
+
+    static func openAppNotificationSettings(open: (URL) -> Void = { UIApplication.shared.open($0) }) {
+        guard let url = appNotificationSettingsURL else { return }
+        open(url)
+    }
+    #endif
 
     private let defaults: UserDefaults
     private let center: NotificationCenter
@@ -41,8 +63,9 @@ final class GameAlertsPreference13083 {
         !isEnabled && !hasHandledPinPrompt
     }
 
-    /// Returns the raw APNs token only when "Game alerts" is on, else nil so device sync
-    /// (#13082) clears `notification_token` on `PUT /api/devices/{device_id}` when off.
+    /// Returns the raw APNs token for `PUT /api/devices/{device_id}` (`push_devices.notification_token`)
+    /// only when "Game alerts" is on, else nil. Morning Digest and `push_notifications.py` send via FCM
+    /// to the separate `device_tokens` table (`token_kind = "fcm"`), which is unaffected when this returns nil.
     func effectiveNotificationToken(rawToken: String?) -> String? {
         guard isEnabled, let rawToken, !rawToken.isEmpty else { return nil }
         return rawToken

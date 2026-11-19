@@ -95,6 +95,7 @@ struct PreferencesView: View {
     @StateObject private var viewModel: PreferencesViewModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         _viewModel = StateObject(wrappedValue: PreferencesViewModel())
@@ -103,6 +104,13 @@ struct PreferencesView: View {
     #if DEBUG
     init(loadedPrefsForTest: PreferencesResponse) {
         _viewModel = StateObject(wrappedValue: PreferencesViewModel(loadedPrefs: loadedPrefsForTest))
+    }
+
+    init(gameAlertsEnabledForTest: Bool, notificationAuthStatusForTest: UNAuthorizationStatus) {
+        _viewModel = StateObject(wrappedValue: PreferencesViewModel())
+        _gameAlertsEnabled = State(initialValue: gameAlertsEnabledForTest)
+        _notificationAuthStatus = State(initialValue: notificationAuthStatusForTest)
+        _pinGameAlertsStateForTest = State(initialValue: true)
     }
     #endif
     @State private var showOnboarding = false
@@ -125,6 +133,9 @@ struct PreferencesView: View {
     @State private var groupingMachineryEnabled = false
     @State private var gameAlertsEnabled = GameAlertsPreference13083.shared.isEnabled
     @State private var notificationAuthStatus: UNAuthorizationStatus = .notDetermined
+    #if DEBUG
+    @State private var pinGameAlertsStateForTest = false
+    #endif
 
     var body: some View {
         Group {
@@ -145,14 +156,33 @@ struct PreferencesView: View {
         .navigationBarTitleDisplayMode(preferencesTitleDisplayMode)
         #endif
         .task {
+            #if DEBUG
+            if !pinGameAlertsStateForTest {
+                gameAlertsEnabled = GameAlertsPreference13083.shared.isEnabled
+                notificationAuthStatus = await NotificationManager.shared.notificationAuthorizationStatus()
+            }
+            #else
             gameAlertsEnabled = GameAlertsPreference13083.shared.isEnabled
             notificationAuthStatus = await NotificationManager.shared.notificationAuthorizationStatus()
+            #endif
             if authManager.isAuthenticated {
                 await viewModel.load()
             }
             AnalyticsService.trackScreen(name: "preferences", type: "preferences")
         }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            #if DEBUG
+            guard !pinGameAlertsStateForTest else { return }
+            #endif
+            Task {
+                notificationAuthStatus = await NotificationManager.shared.notificationAuthorizationStatus()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .gameAlertsPreferenceDidChange13083)) { _ in
+            #if DEBUG
+            guard !pinGameAlertsStateForTest else { return }
+            #endif
             gameAlertsEnabled = GameAlertsPreference13083.shared.isEnabled
         }
         #if os(iOS)
@@ -923,58 +953,72 @@ struct PreferencesView: View {
     }
 
     #if os(iOS)
-    private var gameAlertsSubtitle: String {
-        if gameAlertsEnabled && notificationAuthStatus == .denied {
-            return "Notifications are off in iPhone Settings — turn them on to receive game alerts"
-        }
-        return "Pinned games: start (when no Live Activity runs), close late, and final"
-    }
-
     private var gameAlertsRow: some View {
-        Toggle(isOn: Binding(
-            get: { gameAlertsEnabled },
-            set: { enabled in
-                gameAlertsEnabled = enabled
-                if enabled {
-                    Task {
-                        notificationAuthStatus = await GameAlertsPreference13083.shared.optInAndRequestPermission()
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(isOn: Binding(
+                get: { gameAlertsEnabled },
+                set: { enabled in
+                    gameAlertsEnabled = enabled
+                    if enabled {
+                        Task {
+                            notificationAuthStatus = await GameAlertsPreference13083.shared.optInAndRequestPermission()
+                        }
+                    } else {
+                        GameAlertsPreference13083.shared.setEnabled(false)
                     }
-                } else {
-                    GameAlertsPreference13083.shared.setEnabled(false)
+                }
+            )) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "bell.badge.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Game alerts")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(GameAlertsPreference13083.subtitle)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary.opacity(0.75))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
-        )) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "bell.badge.fill")
-                    .font(.system(size: 20))
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 2)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Game alerts")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(gameAlertsSubtitle)
-                        .font(.caption2)
-                        .foregroundStyle(
-                            gameAlertsEnabled && notificationAuthStatus == .denied
-                                ? Color.orange
-                                : Color.secondary.opacity(0.75)
-                        )
-                        .fixedSize(horizontal: false, vertical: true)
+            .toggleStyle(.switch)
+            .tint(Color.accentColor)
+            .accessibilityIdentifier("preferences.gameAlertsToggle")
+
+            if gameAlertsEnabled && notificationAuthStatus == .denied {
+                Divider()
+                Button {
+                    GameAlertsPreference13083.openAppNotificationSettings()
+                } label: {
+                    HStack(alignment: .center, spacing: 8) {
+                        Text(GameAlertsPreference13083.settingsOffActionTitle)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Color.orange)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.orange)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("preferences.gameAlertsOpenSettings")
             }
         }
-        .toggleStyle(.switch)
-        .tint(Color.accentColor)
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.4), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
-        .accessibilityIdentifier("preferences.gameAlertsToggle")
     }
     #endif
 
