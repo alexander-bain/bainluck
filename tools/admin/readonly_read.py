@@ -182,29 +182,72 @@ def format_audit_line(
     return f"admin-read | {time_str} | lane={lane_clean} | GET {address} | issue={issue_tag}"
 
 
-def _validate_api_base(api_base: str) -> str:
+_ALLOWED_PROD_HOST = "api.bainluck.com"
+_ALLOWED_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
+
+
+def _validate_api_base(api_base: str) -> tuple[str, bool]:
+    """Return ``(normalized_base, is_prod)``.
+
+    Production reads are strictly pinned to ``https://api.bainluck.com``.
+    Local ``http://localhost`` / ``http://127.0.0.1`` bases are permitted only
+    for local tests and must never fetch the production Heroku token.
+    """
     parsed = urllib.parse.urlsplit(api_base.strip())
     host = (parsed.hostname or "").lower()
-    if parsed.scheme == "https" and host:
-        return api_base.rstrip("/")
-    if parsed.scheme == "http" and host in ("localhost", "127.0.0.1"):
-        return api_base.rstrip("/")
-    raise ReadOnlyRefusedError(f"Refused BAINLUCK_API base {api_base!r}: https required.")
+    if parsed.username or parsed.password:
+        raise ReadOnlyRefusedError("Refused BAINLUCK_API base with embedded credentials.")
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise ReadOnlyRefusedError("Refused BAINLUCK_API base with path, query, or fragment.")
+    if parsed.scheme == "https" and host == _ALLOWED_PROD_HOST and parsed.port in (None, 443):
+        return f"https://{_ALLOWED_PROD_HOST}", True
+    if parsed.scheme == "http" and host in _ALLOWED_LOCAL_HOSTS:
+        return api_base.strip().rstrip("/"), False
+    raise ReadOnlyRefusedError(
+        f"Refused BAINLUCK_API base {api_base!r}: pinned to https://{_ALLOWED_PROD_HOST} "
+        "(or http://localhost / http://127.0.0.1 for local tests)."
+    )
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse all 3xx redirects so the Authorization header can never leave api.bainluck.com."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(
+            req.full_url,
+            code,
+            f"Refused HTTP {code} redirect (redirects are disabled under Ruling 247: A)",
+            headers,
+            fp,
+        )
+
+
+def _default_no_redirect_urlopen(req, timeout=60):
+    opener = urllib.request.build_opener(_NoRedirectHandler())
+    return opener.open(req, timeout=timeout)
 
 
 def read_admin_token(
     *,
+    allow_heroku: bool = True,
     urlopen: Optional[Callable[..., Any]] = None,
     netrc_loader: Callable[[], netrc.netrc] = netrc.netrc,
 ) -> str:
     """Read ADMIN_TOKEN in memory from env or Heroku Platform API (~/.netrc).
 
     Never opens any local secret file, and never prints, logs, or stores the token.
+    When ``allow_heroku`` is False (any non-production/localhost base), the real
+    Heroku token is never fetched.
     """
     token = os.environ.get("ADMIN_TOKEN")
     if token:
         return token
-    opener = urlopen or urllib.request.urlopen
+    if not allow_heroku:
+        raise ReadOnlyRefusedError(
+            "Refused reading production Heroku ADMIN_TOKEN for a non-production base; "
+            "set ADMIN_TOKEN in the environment for localhost tests."
+        )
+    opener = urlopen or _default_no_redirect_urlopen
     auth = netrc_loader().authenticators("api.heroku.com")
     if not auth:
         raise ReadOnlyRequestError(
@@ -250,9 +293,12 @@ def readonly_get(
     audit_line = format_audit_line(
         lane=lane, address=canonical_address, issue=issue, now=now
     )
-    base = _validate_api_base(api_base or os.environ.get("BAINLUCK_API") or DEFAULT_API)
-    opener = urlopen or urllib.request.urlopen
-    token = (token_provider or (lambda: read_admin_token(urlopen=opener)))()
+    base, is_prod = _validate_api_base(api_base or os.environ.get("BAINLUCK_API") or DEFAULT_API)
+    opener = urlopen or _default_no_redirect_urlopen
+    token = (
+        token_provider
+        or (lambda: read_admin_token(allow_heroku=is_prod, urlopen=opener))
+    )()
 
     req = urllib.request.Request(
         f"{base}{canonical_address}",
@@ -261,16 +307,25 @@ def readonly_get(
     )
     try:
         with opener(req, timeout=60) as resp:
+            status = getattr(resp, "status", None)
+            if isinstance(status, int) and 300 <= status < 400:
+                raise ReadOnlyRequestError(
+                    f"GET {path}: refused HTTP {status} redirect"
+                )
             raw_body = resp.read().decode("utf-8", errors="replace")
+    except ReadOnlyRequestError:
+        raise
     except urllib.error.HTTPError as exc:
         err_body = ""
         try:
-            err_body = exc.read()[:300].decode("utf-8", errors="replace")
+            err_body = exc.read()[:300].decode("utf-8", errors="replace") if exc.fp else ""
         except Exception:
             err_body = ""
         safe_body = scrub_token(err_body, token)
+        safe_reason = scrub_token(str(exc.reason or ""), token)
+        detail = safe_body or safe_reason
         raise ReadOnlyRequestError(
-            f"GET {path}: HTTP {exc.code} {safe_body}".strip()
+            f"GET {path}: HTTP {exc.code} {detail}".strip()
         ) from None
     except Exception as exc:
         safe_err = scrub_token(str(exc), token)
@@ -304,11 +359,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=None,
         help="Optional path to write the JSON response body (audit line prints to stdout).",
     )
-    parser.add_argument(
-        "--allowlist",
-        default=str(DEFAULT_ALLOWLIST_PATH),
-        help="Path to the allowlist JSON file.",
-    )
     args = parser.parse_args(argv)
 
     try:
@@ -317,7 +367,6 @@ def main(argv: Optional[list[str]] = None) -> int:
             lane=args.lane,
             issue=args.issue,
             method=args.method,
-            allowlist_path=Path(args.allowlist),
         )
     except (ReadOnlyRefusedError, ReadOnlyRequestError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

@@ -170,7 +170,7 @@ def test_token_never_appears_in_error_output_on_http_error(capsys, monkeypatch):
         )
 
     monkeypatch.setenv("ADMIN_TOKEN", SECRET_TOKEN)
-    monkeypatch.setattr(rr.urllib.request, "urlopen", fake_open)
+    monkeypatch.setattr(rr, "_default_no_redirect_urlopen", fake_open)
     code = rr.main(["--lane", "Builder E", "--issue", "11937", "/api/admin/ranking/grades?days=2"])
     captured = capsys.readouterr()
     assert code == 2
@@ -184,7 +184,7 @@ def test_token_never_appears_in_error_output_on_url_error(capsys, monkeypatch):
         raise urllib.error.URLError(f"boom with {SECRET_TOKEN} inside")
 
     monkeypatch.setenv("ADMIN_TOKEN", SECRET_TOKEN)
-    monkeypatch.setattr(rr.urllib.request, "urlopen", fake_open)
+    monkeypatch.setattr(rr, "_default_no_redirect_urlopen", fake_open)
     code = rr.main(["--lane", "Builder E", "--issue", "11937", "/api/admin/ranking/slates/latest"])
     captured = capsys.readouterr()
     assert code == 2
@@ -199,7 +199,7 @@ def test_token_never_appears_in_response_or_cli_out(tmp_path, capsys, monkeypatc
 
     out_file = tmp_path / "grades.json"
     monkeypatch.setenv("ADMIN_TOKEN", SECRET_TOKEN)
-    monkeypatch.setattr(rr.urllib.request, "urlopen", fake_open)
+    monkeypatch.setattr(rr, "_default_no_redirect_urlopen", fake_open)
     code = rr.main([
         "--lane", "Builder E",
         "--issue", "11937",
@@ -250,3 +250,115 @@ def test_read_admin_token_uses_heroku_netrc_and_never_leaks_heroku_key(monkeypat
         rr.read_admin_token(urlopen=fail_open, netrc_loader=lambda: fake_netrc)
     assert heroku_key not in str(excinfo.value)
     assert "[REDACTED]" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "bad_base",
+    [
+        "https://attacker.example",
+        "https://api.bainluck.com.evil.example",
+        "https://user:pass@api.bainluck.com",
+        "https://api.bainluck.com:8443",
+        "https://api.bainluck.com/prefix",
+        "http://api.bainluck.com",
+    ],
+)
+def test_non_prod_https_hosts_are_refused_before_token_or_network(bad_base, monkeypatch):
+    monkeypatch.setenv("BAINLUCK_API", bad_base)
+    token_called = False
+
+    def fail_token():
+        nonlocal token_called
+        token_called = True
+        return SECRET_TOKEN
+
+    with pytest.raises(rr.ReadOnlyRefusedError, match="Refused BAINLUCK_API base"):
+        rr.readonly_get(
+            "/api/admin/ranking/grades?days=2",
+            lane="Builder E",
+            issue="11937",
+            token_provider=fail_token,
+        )
+    assert not token_called
+
+
+def test_localhost_base_never_fetches_production_heroku_token(monkeypatch):
+    monkeypatch.delenv("ADMIN_TOKEN", raising=False)
+    monkeypatch.setenv("BAINLUCK_API", "http://127.0.0.1:8000")
+
+    with pytest.raises(rr.ReadOnlyRefusedError, match="non-production base"):
+        rr.readonly_get(
+            "/api/admin/ranking/grades?days=2",
+            lane="Builder E",
+            issue="11937",
+            urlopen=lambda *a, **k: (_ for _ in ()).throw(AssertionError("network must not be called")),
+        )
+
+
+def test_localhost_base_works_with_env_admin_token(monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", SECRET_TOKEN)
+    monkeypatch.setenv("BAINLUCK_API", "http://127.0.0.1:8000")
+    seen = {}
+
+    def fake_open(req, timeout=60):
+        seen["url"] = req.full_url
+        return _FakeResponse(b'{"grades": []}')
+
+    payload, _ = rr.readonly_get(
+        "/api/admin/ranking/grades?days=2",
+        lane="Builder E",
+        issue="11937",
+        urlopen=fake_open,
+    )
+    assert payload == {"grades": []}
+    assert seen["url"] == "http://127.0.0.1:8000/api/admin/ranking/grades?days=2"
+
+
+def test_redirects_are_refused_and_never_followed(monkeypatch):
+    import http.server
+    import threading
+
+    requests_seen = []
+
+    class RedirectHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests_seen.append(self.path)
+            self.send_response(302)
+            self.send_header("Location", "https://attacker.example/steal")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setenv("ADMIN_TOKEN", SECRET_TOKEN)
+        monkeypatch.setenv("BAINLUCK_API", f"http://127.0.0.1:{port}")
+        with pytest.raises(rr.ReadOnlyRequestError) as excinfo:
+            rr.readonly_get(
+                "/api/admin/ranking/grades?days=2",
+                lane="Builder E",
+                issue="11937",
+            )
+        assert "302" in str(excinfo.value)
+        assert SECRET_TOKEN not in str(excinfo.value)
+        assert requests_seen == ["/api/admin/ranking/grades?days=2"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_cli_refuses_allowlist_override_flag(tmp_path):
+    custom = tmp_path / "evil.json"
+    custom.write_text('{"addresses": [{"name": "db", "path": "/api/admin/db-query"}]}')
+    with pytest.raises(SystemExit) as exc:
+        rr.main([
+            "--lane", "Builder E",
+            "--issue", "11937",
+            "--allowlist", str(custom),
+            "/api/admin/db-query",
+        ])
+    assert exc.value.code == 2
