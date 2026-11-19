@@ -98,6 +98,7 @@ struct MyStuffView: View {
                 .frame(maxWidth: authManager.isAuthenticated ? Self.signedInManagePinsMaxWidth : Self.signInMaxWidth)
                 .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("myStuffManagePins")
+                SiriProbabilityTip12315()
                 Group {
                     if authManager.isLoading {
                         ProgressView()

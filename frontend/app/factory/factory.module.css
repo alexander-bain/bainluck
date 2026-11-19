@@ -1066,6 +1066,32 @@
   padding: 12px 16px;
   margin-bottom: 20px;
 }
+
+.stopOrigin {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+}
+.stopOrigin a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.sentBack {
+  margin-top: 2px;
+  font-size: 9px;
+  font-weight: 600;
+}
+.botShelf {
+  border-top: 1px solid var(--edge);
+  padding: 12px 26px;
+}
+.botShelf h3 {
+  margin: 0;
+  font-size: 13px;
+}
+.botShelf .sideCrates {
+  padding: 8px 0 0;
+}
 .readerWarning p {
   margin: 0;
   font-size: 13px;
@@ -1219,4 +1245,185 @@
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* The foreman's clipboard and the shelf share the warm paper of the shop. */
+.foremanNote {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--amber-light) 60%, var(--paper));
+  margin-bottom: 18px;
+  padding: 14px 18px;
+}
+.foremanNote > svg {
+  flex: none;
+  color: var(--amber);
+}
+.foremanNote strong { font-size: 13px; }
+.foremanNote p {
+  margin: 3px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.foremanNote small,
+.stationNote small {
+  color: var(--secondary);
+  font-size: 10px;
+}
+.stationNote {
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px solid var(--edge);
+  overflow-wrap: anywhere;
+}
+.stationNote p {
+  color: var(--ink);
+  margin: 0 0 3px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.inspectionDesk {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.inspectionDesk > .worker {
+  width: 54px;
+  height: 42px;
+}
+.bayWorker {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  color: #e6edf3;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.bayWorker .worker { margin-left: -6px; }
+.stationObject {
+  margin: 12px 4px;
+  color: #a8b9c7;
+}
+.builderW { background: #496246; }
+.worker[data-identity="S"] { --worker-cloth: #81aaf6; --cap: #9bbcff; }
+.worker[data-identity="B"] { --worker-cloth: #ad88ef; --cap: #cbb9fa; }
+.worker[data-identity="C"] { --worker-cloth: #75c9b7; --cap: #9ad8c9; }
+.worker[data-identity="D"] { --worker-cloth: #e3ac68; --cap: #fbc75f; }
+.worker[data-identity="E"] { --worker-cloth: #e695b4; --cap: #f2aac3; }
+.worker[data-identity="F"] { --worker-cloth: #9db1c9; --cap: #aac4df; }
+.worker[data-identity="W"] { --worker-cloth: #a8b790; --cap: #becb99; }
+.worker[data-identity="Fable"] { --worker-cloth: #87aeb8; --cap: #bd976c; }
+.workerHat { fill: var(--cap, #d7a869); }
+.worker[data-worker="asleep"] .workerBody {
+  transform: rotate(7deg);
+  transform-origin: 49px 65px;
+}
+.builderCard .sleepText { fill: var(--secondary); }
+.dockCrew {
+  display: flex;
+  flex-wrap: wrap;
+  margin: -5px 0 5px;
+  padding: 0;
+  border-bottom: 1px solid #849aaa54;
+  list-style: none;
+}
+.dockCrew .worker {
+  display: block;
+  width: 29px;
+  height: 37px;
+}
+.dockSign {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: #dce6ef;
+  border: 1px solid #8296a95c;
+  border-radius: 4px;
+  padding: 5px 6px;
+  margin-bottom: 7px;
+  font-size: 10px;
+  line-height: 1.45;
+}
+.dockSign[data-held="true"] {
+  border-color: #be5360;
+  color: #ffcbc9;
+}
+.dockLight {
+  width: 9px;
+  height: 9px;
+  margin-top: 2px;
+  flex: none;
+  background: #728698;
+  border-radius: 50%;
+}
+.dockSign[data-held="true"] .dockLight {
+  background: #fa5f69;
+  box-shadow: 0 0 0 3px #fa5f6935;
+}
+.dockSign code {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.buildPlate {
+  color: #183530;
+  background: #bce3d6;
+  border-radius: 3px;
+  padding: 2px 4px;
+  margin-top: 2px;
+  font-size: 9px;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+.lineName > .buildPlate {
+  color: #183530;
+}
+.parkedShelf {
+  border-top: 1px solid var(--edge);
+  padding: 14px 26px 18px;
+  background: color-mix(in srgb, var(--amber-light) 37%, var(--paper));
+}
+.parkedShelf h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.parkedShelf h3 span {
+  margin-left: 4px;
+  color: var(--amber);
+  font-size: 11px;
+}
+.parkedShelf p {
+  margin: 3px 0 0;
+  color: var(--secondary);
+  font-size: 11px;
+}
+.shelfCrates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 9px 0 5px;
+  border-bottom: 3px solid color-mix(in srgb, var(--amber) 30%, var(--edge));
+}
+.builderCard > small {
+  margin-top: -5px;
+  color: var(--secondary);
+  font-size: 9px;
+}
+.builderCard > span { text-align: center; }
+.factory[data-motion="running"] .machine[data-flashing="true"] {
+  animation: liveFlash 0.85s ease-out;
+}
+@keyframes liveFlash {
+  35% { box-shadow: inset 0 0 0 2px #74dfb1, inset 0 0 20px #74dfb145; }
+}
+@media (max-width: 640px) {
+  .parkedShelf { padding-right: 17px; padding-left: 17px; }
+  .builderCard > .worker { width: 60px; height: 49px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .factory .dispatch { display: none; }
 }

@@ -1195,6 +1195,7 @@ async def serve_roundup(
         read_published,
     )
 
+    ensure_optional_roundup_candidates()
     producer = ROUNDUP_PRODUCERS.get(slug)
     if producer is None:
         raise HTTPException(
@@ -1287,7 +1288,7 @@ def roundup_feed_enabled(
     """Whether Discover should place registered round-up cards on the canonical feed."""
     from app.routes.containers import containers_read_enabled
 
-    return (
+    if not (
         (mode or "discover").lower() == "discover"
         and bool(include_events)
         and bool(include_futures)
@@ -1296,9 +1297,11 @@ def roundup_feed_enabled(
         and not category
         and not sport
         and containers_read_enabled()
-        and any(
-            p.enabled is None or p.enabled() for p in ROUNDUP_PRODUCERS.values()
-        )
+    ):
+        return False
+    ensure_optional_roundup_candidates()
+    return any(
+        p.enabled is None or p.enabled() for p in ROUNDUP_PRODUCERS.values()
     )
 
 
@@ -2111,6 +2114,10 @@ def insert_roundup_feed_items(
     return result
 
 
+def _is_machinery_producer_slug(slug: Any) -> bool:
+    return isinstance(slug, str) and slug.strip().lower().startswith("machinery-")
+
+
 async def add_roundup_feed_items(
     db: Any,
     items: list[dict[str, Any]],
@@ -2125,8 +2132,16 @@ async def add_roundup_feed_items(
     seen_futures_ids: Optional[Sequence[int] | set[int]] = None,
     seen_event_ids: Optional[Sequence[int] | set[int]] = None,
     novelty_seat_cap: int = ROUNDUP_NOVELTY_SEAT_CAP,
+    include_machinery: bool = False,
+    machinery_only: bool = False,
 ) -> list[dict[str, Any]]:
-    """Evaluate registered round-up producers and place their cards on Discover."""
+    """Evaluate registered round-up producers and place their cards on Discover.
+
+    Under Ruling 252: A (#12288), ``machinery-*`` candidate groupings are only
+    included when ``include_machinery=True`` (sent by website and iOS 1.0.7+
+    via ``machinery=1``), so older App Store versions (1.0.6) never receive
+    machinery cards on the Discover feed.
+    """
     if not items or len(items) < seat_floor:
         return items
     if budget_seconds <= 0:
@@ -2142,8 +2157,20 @@ async def add_roundup_feed_items(
         else ROUNDUP_READ_BUDGET_SECONDS
     )
     stage_budget = min(float(budget_seconds), stage_cap)
+    ensure_optional_roundup_candidates()
     started = time.perf_counter()
-    producers = list(ROUNDUP_PRODUCERS.values())
+    if machinery_only:
+        producers = [
+            p for p in ROUNDUP_PRODUCERS.values() if _is_machinery_producer_slug(p.slug)
+        ]
+    elif include_machinery:
+        producers = list(ROUNDUP_PRODUCERS.values())
+    else:
+        producers = [
+            p for p in ROUNDUP_PRODUCERS.values() if not _is_machinery_producer_slug(p.slug)
+        ]
+    if not producers:
+        return items
     produced: list[dict[str, Any]] = []
     for idx, producer in enumerate(producers):
         elapsed = time.perf_counter() - started

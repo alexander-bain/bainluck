@@ -269,3 +269,32 @@ test('a bare `not needed` keeps the 119-A path check exactly', () => {
   assert.equal(verdict(pr('Fable: not needed'), APPROVED, files('backend/app/routes/feed.py')).conclusion, 'failure');
   assert.equal(verdict(pr('Fable: not needed'), APPROVED, files('backend/tests/test_x.py')).conclusion, 'success');
 });
+
+test('blend files always need Fable under every 235: A category, and the brief spells out loosening a gate', () => {
+  const {verdict} = policy();
+  const blend = [
+    'backend/app/utils/aggregation.py',
+    'backend/app/utils/live_blend.py',
+    'backend/app/utils/book_consensus.py',
+    'backend/app/utils/futures_source_merge.py',
+    'backend/app/utils/pregame_projection.py',
+    'backend/app/utils/binary_spread.py',
+    'backend/app/config/win_prob_sources.py',
+  ];
+  for (const body of ['Fable: not needed (tests)', 'Fable: not needed (switched off: BLEND_V2)', 'Fable: not needed (server fields)']) {
+    for (const name of blend) {
+      const result = verdict(pr(body), CONFIRMED, files(name));
+      assert.equal(result.conclusion, 'failure', `${body} / ${name}`);
+      assert.match(result.summary, /the blend/);
+    }
+    for (const gateFile of ['backend/tests/timing_quarantine.json', 'tools/admin/readonly_allowlist.json']) {
+      const result = verdict(pr(body), CONFIRMED, files(gateFile));
+      assert.equal(result.conclusion, 'failure', `${body} / ${gateFile}`);
+      assert.match(result.summary, /still need Fable under 235: A/);
+    }
+  }
+  const brief = fs.readFileSync(path.join(repoRoot, 'docs/release-loop/tier-b-review-brief.md'), 'utf8');
+  for (const phrase of ['removes or skips a required check', 'lowers a threshold', 'narrows what a gate reads or when it runs', 'continue-on-error', 'what a merge or a deploy waits for']) {
+    assert.match(brief, new RegExp(phrase));
+  }
+});

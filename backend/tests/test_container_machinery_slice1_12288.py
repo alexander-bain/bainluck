@@ -577,9 +577,14 @@ def test_slice1_candidates_are_switched_off_and_contain_zero_hand_placed_ids() -
 
 def test_choose_section_form_is_purely_data_shape_driven() -> None:
     assert choose_section_form("paired_stage", [{}, {}, {}]) == "paired_stage_bars"
+    # Ruling 253: A — coin_flip_matchups requires >= 2 games with neither side above 55%.
     assert (
-        choose_section_form("events", [{"fav_prob": 0.52}, {"fav_prob": 0.58}])
+        choose_section_form("events", [{"fav_prob": 0.52}, {"fav_prob": 0.55}])
         == "coin_flip_matchups"
+    )
+    assert (
+        choose_section_form("events", [{"fav_prob": 0.52}, {"fav_prob": 0.56}])
+        == "matchup_slate"
     )
     assert (
         choose_section_form("events", [{"fav_prob": 0.85}, {"fav_prob": 0.79}])

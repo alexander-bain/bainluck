@@ -77,8 +77,12 @@ def test_the_line_is_the_stuck_shape_fable_asked_for():
     line = _line()
     first = line.splitlines()[0]
     assert first.startswith("stuck: master red, HOLD (server), `tests/test_ci_shard.py::")
-    assert "HOLD ends at the first of: the next server \"live\" line" in line
+    assert "HOLD ends at the first of: the re-run passing; the next server \"live\" line" in line
     assert "`/api/health` serves" in line and "Fable or Alex" in line
+    assert "Ruling 241: A — This alarm re-ran the failed jobs once automatically" in line
+    assert "when the re-run passes, the HOLD ends immediately" in line
+    assert "Builder E moves it within the hour to `flaky-canary`" in line
+    assert "7 days to repair or delete it" in line
     assert first.endswith("[run 43797011147](https://github.com/o/r/actions/runs/43797011147)")
     assert "`0e3c5e4aa5`" in line and "#12687" in line
     assert line.rstrip().endswith(alarm.marker(43797011147, 1))
@@ -91,6 +95,7 @@ def test_a_red_job_outside_deploys_needs_reports_without_holding_the_server():
     first = line.splitlines()[0]
     assert first.startswith("stuck: master red, `tests/test_ci_shard.py::")
     assert "HOLD" not in line
+    assert "Ruling 241: A" not in line
     assert "`deploy` job still succeeded, so the server slot is not held" in line
     held = _line(deployed=False)
     assert "HOLD (server)" in held.splitlines()[0]
@@ -102,9 +107,12 @@ def test_main_reads_deploy_from_the_runs_own_jobs(monkeypatch, capsys):
     monkeypatch.setenv("NOW_LINES_ISSUE", "12779")
     monkeypatch.setenv("RUN_ID", "1")
     """`deployed` comes from the run's jobs list: a failed shard with deploy skipped holds,
-    a failed canary with deploy green does not."""
+    a failed canary with deploy green does not. Dry-run never triggers a re-run."""
+    calls = []
+
     def fake_gh(jobs):
         def _gh(path, *rest, body=None):
+            calls.append((path, rest, body))
             if path.endswith("/jobs?filter=latest&per_page=100"):
                 return json.dumps({"jobs": jobs})
             if "/logs" in path:
@@ -115,18 +123,85 @@ def test_main_reads_deploy_from_the_runs_own_jobs(monkeypatch, capsys):
                 "html_url": "https://github.com/o/r/actions/runs/1",
             })
         return _gh
+
     monkeypatch.setattr(alarm, "_gh", fake_gh([
         {"id": 7, "name": "backend-tests (6)", "conclusion": "failure"},
         {"id": 8, "name": "deploy", "conclusion": "skipped"},
     ]))
     assert alarm.main(["--dry-run"]) == 0
-    assert "HOLD (server)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "HOLD (server)" in out and "dry-run: not triggered" in out
+    assert not any("rerun-failed-jobs" in p for p, _, _ in calls)
+
     monkeypatch.setattr(alarm, "_gh", fake_gh([
         {"id": 7, "name": "flaky-canary", "conclusion": "failure"},
         {"id": 8, "name": "deploy", "conclusion": "success"},
     ]))
     assert alarm.main(["--dry-run"]) == 0
     assert "HOLD" not in capsys.readouterr().out
+
+
+def test_main_reruns_failed_jobs_once_on_attempt_1_and_never_on_attempt_2(monkeypatch):
+    """Ruling 241: A: attempt 1 triggers rerun-failed-jobs once and says so in the stuck line;
+    attempt 2 never re-runs again, and a duplicate alarm never double-triggers."""
+    monkeypatch.setenv("REPO", "o/r")
+    monkeypatch.setenv("NOW_LINES_ISSUE", "12779")
+    monkeypatch.setenv("RUN_ID", "99")
+
+    def run_once(attempt, *, comments=(), rerun_error=None, deployed=False):
+        posted = []
+        reruns = []
+
+        def fake_gh(path, *rest, body=None):
+            if path.endswith("/jobs?filter=latest&per_page=100"):
+                return json.dumps({"jobs": [
+                    {"id": 7, "name": "backend-tests (2)", "conclusion": "failure"},
+                    {"id": 8, "name": "deploy", "conclusion": "success" if deployed else "skipped"},
+                ]})
+            if "/logs" in path:
+                return "FAILED tests/test_x.py::test_t - AssertionError\n"
+            if "/issues/12779/comments?per_page=100" in path:
+                return "\n".join(json.dumps(c) for c in comments)
+            if path.endswith("/rerun-failed-jobs"):
+                reruns.append((path, rest))
+                if rerun_error:
+                    raise RuntimeError(rerun_error)
+                return ""
+            if path.endswith("/issues/12779/comments"):
+                posted.append(body["body"])
+                return "{}"
+            return json.dumps({
+                "id": 99, "run_attempt": attempt, "event": "push", "head_branch": "master",
+                "conclusion": "failure", "head_sha": "b" * 40, "display_title": "fix (#1)",
+                "html_url": "https://github.com/o/r/actions/runs/99",
+            })
+
+        monkeypatch.setattr(alarm, "_gh", fake_gh)
+        assert alarm.main([]) == 0
+        return reruns, posted
+
+    reruns, posted = run_once(1)
+    assert reruns == [("repos/o/r/actions/runs/99/rerun-failed-jobs", ("--method", "POST"))]
+    assert len(posted) == 1
+    assert "re-ran the failed jobs once automatically" in posted[0]
+
+    # Already posted for attempt 1: neither re-runs nor posts again.
+    reruns2, posted2 = run_once(1, comments=[posted[0]])
+    assert reruns2 == [] and posted2 == []
+
+    # Attempt 2 failed too: posts, never triggers a second automatic re-run.
+    reruns3, posted3 = run_once(2, comments=[posted[0]])
+    assert reruns3 == [] and len(posted3) == 1
+    assert "no further auto-rerun" in posted3[0] and "(attempt 2)" in posted3[0]
+
+    # Deploy succeeded (non-blocking job red): no HOLD and no re-run.
+    reruns4, posted4 = run_once(1, deployed=True)
+    assert reruns4 == [] and len(posted4) == 1 and "HOLD" not in posted4[0]
+
+    # Rerun API failure still posts the stuck line so nobody is blind.
+    reruns5, posted5 = run_once(1, rerun_error="gh api exited 403")
+    assert len(reruns5) == 1 and len(posted5) == 1
+    assert "Automatic re-run failed" in posted5[0]
 
 
 def test_no_test_line_names_the_failed_jobs_and_long_lists_are_capped():
@@ -166,5 +241,5 @@ def test_the_workflow_fires_only_on_a_red_push_to_master_and_posts_to_one_issue(
         assert clause in cond
     assert "cancelled" not in cond
     assert wf["env"]["NOW_LINES_ISSUE"] == "12779"
-    assert wf["permissions"] == {"actions": "read", "contents": "read", "issues": "write"}
+    assert wf["permissions"] == {"actions": "write", "contents": "read", "issues": "write"}
     assert alarm.RED_CONCLUSIONS == ("failure", "timed_out")

@@ -136,11 +136,11 @@ function PairedDualBarRow({
       />
       <div className="min-w-0 flex-1">
         <div className="min-w-0">
-          <span className="block truncate text-sm font-semibold text-text-primary">
+          <span className="block break-words text-sm font-semibold leading-snug text-text-primary">
             {entry.subject}
           </span>
           {entry.detail && (
-            <span className="block truncate text-xs text-text-muted">
+            <span className="block break-words text-xs leading-snug text-text-muted">
               {entry.detail}
             </span>
           )}

@@ -5,6 +5,8 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
+from app.utils.event_completion import served_commence_time
+from app.utils.score_source_availability import score_source_unavailable_fields
 from app.utils.event_rails import (
     commence_time_was_never_a_kickoff,
     live_first_order,
@@ -546,6 +548,7 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     upcoming_events, recent_events = await _folded_briefs(
         db, team, upcoming_rows, recent_rows, club_ids=club_ids, club_names=club_names
     )
+    upcoming_events = _order_upcoming_team_briefs(upcoming_events)
     _mark("events")
 
     # #1197 / #1239: the team page is Priority #3 and must NEVER hard-500 on a
@@ -875,6 +878,27 @@ async def _folded_briefs(
     ]
 
 
+def _order_upcoming_team_briefs(briefs: list[dict]) -> list[dict]:
+    """Keep live cards in SQL `live_first_order`, sort non-live by served start (#13000)."""
+    live = [g for g in briefs if g.get("status") == "live"]
+    scheduled = [g for g in briefs if g.get("status") != "live"]
+
+    def _start_ts(card: dict) -> float:
+        raw = card.get("commence_time")
+        if not isinstance(raw, str) or not raw:
+            return float("inf")
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except ValueError:
+            return float("inf")
+
+    scheduled.sort(key=_start_ts)
+    return live + scheduled
+
+
 def _format_event_brief(
     event: Event, team: Team, club_ids=None, club_names=None, prematch=None
 ) -> dict:
@@ -996,15 +1020,24 @@ def _format_event_brief(
         else no_source_mark("no_probability")
     )
 
+    _served_start = served_commence_time(
+        status,
+        event.commence_time,
+        getattr(event, "win_probability_sources", None),
+        now,
+    )
     return {
         "id": event.id,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
         "home_score": event.home_score,
         "away_score": event.away_score,
+        **score_source_unavailable_fields(
+            event, sport_key=sport.key if sport else None, status=status
+        ),
         # #1779 family: never render live before the row's own start time.
         "status": status,
-        "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+        "commence_time": _served_start.isoformat() if _served_start else None,
         # #8841: a placeholder start the venue has not announced yet.
         "start_is_tbd": start_is_tbd(
             getattr(event, "event_tags", None), event.commence_time, event.status
