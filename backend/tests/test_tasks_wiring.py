@@ -178,6 +178,8 @@ class TestBeatScheduleCompleteness:
     EXPECTED_ENTRIES = {
         "activitykit-runtime",
         "activitykit-start-push",
+        "game-alerts-push",
+        "purge-expired-appclip-devices",
         "probe-live-tennis-scores",
         "poll-odds-adaptive",
         "poll-mlb-pregame",
