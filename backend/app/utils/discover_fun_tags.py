@@ -327,6 +327,15 @@ def fun_tags_for_market(market_id: int) -> tuple[str, ...]:
     return entry.sub_tags if entry is not None else ()
 
 
+def fun_entry_allows_extreme_odds(entry: Optional[FunMarketEntry]) -> bool:
+    """Only ``long-shot`` fun markets bypass extreme-odds suppression (#13097).
+
+    Non-long-shot markets at 97%+ (e.g. a nearly-decided release or award)
+    stay subject to the normal locked-market / near-certain filters.
+    """
+    return entry is not None and "long-shot" in entry.sub_tags
+
+
 def fun_market_ids_for_sub_tag(sub_tag: str) -> tuple[int, ...]:
     """Selector helper: return tagged market IDs carrying ``sub_tag``."""
     target = (sub_tag or "").strip().lower()

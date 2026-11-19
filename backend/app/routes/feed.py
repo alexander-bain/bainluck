@@ -15809,6 +15809,7 @@ async def _score_futures(
             # and keep curated longshots from being dropped purely for extreme
             # odds while still enforcing every liveness/staleness/book gate.
             _admitted_fun_entry = None
+            _allow_fun_extreme_odds = False
             if (
                 not price_refresh
                 and not category_filter
@@ -15820,6 +15821,7 @@ async def _score_futures(
                 from app.utils.discover_fun_tags import (
                     check_fun_still_ahead,
                     check_fun_taste_guard,
+                    fun_entry_allows_extreme_odds,
                     get_fun_market_entry,
                 )
 
@@ -15837,6 +15839,9 @@ async def _score_futures(
                     )
                     if _fun_taste_ok and _fun_ahead_ok:
                         _admitted_fun_entry = _candidate_fun_entry
+                        _allow_fun_extreme_odds = fun_entry_allows_extreme_odds(
+                            _admitted_fun_entry
+                        )
 
             effective_sport_category = (
                 _admitted_fun_entry.discover_category
@@ -15859,7 +15864,7 @@ async def _score_futures(
                 no_resolution_stale_days=_gate_no_resolution_days,
                 strict_no_movement_days=_strict_no_movement_days,
                 strict_no_resolution_stale_days=_strict_no_resolution_days,
-                allow_extreme_odds=_admitted_fun_entry is not None,
+                allow_extreme_odds=_allow_fun_extreme_odds,
             )
             if not price_refresh and not runtime_filters["eligible"]:
                 continue
@@ -15893,7 +15898,7 @@ async def _score_futures(
             # or a high-volume market stays eligible.
             _locked_near_certain = bool(
                 not price_refresh
-                and _admitted_fun_entry is None
+                and not _allow_fun_extreme_odds
                 and market.outcomes
                 and is_locked_near_certain(
                     leader_prob,
