@@ -144,6 +144,7 @@ async def test_grades_come_back_beside_each_screens_counts(wired):
 def test_the_card_grade_read_leaves_out_screen_grades():
     src = inspect.getsource(admin.get_grades)
     assert "RankingGrade.surface != SURFACE_SCREENS" in src
+    assert "RankingGrade.surface != SURFACE_SCREENS_UNDONE" in src
 
 
 def test_a_malformed_week_is_left_out(tmp_path):
@@ -167,13 +168,15 @@ async def test_undo_removes_only_the_last_grade_and_keeps_older_grades_locked(wi
         await admin.undo_last_screen_grade(
             admin.ScreenGradeUndoIn(week=WEEK, n=1, grader="Alex"), _request(), secret=None, db=db)
     assert err.value.status_code == 409
-    assert db.deleted == [] and len(db.rows) == 2
+    assert r1.surface == admin.SURFACE_SCREENS and r2.surface == admin.SURFACE_SCREENS
 
-    # Most recent screen #2 CAN be undone.
+    # Most recent screen #2 CAN be undone (non-destructive soft retraction off SURFACE_SCREENS).
     out = await admin.undo_last_screen_grade(
         admin.ScreenGradeUndoIn(week=WEEK, n=2, grader="Alex"), _request(), secret=None, db=db)
     assert out == {"status": "undone", "n": 2}
-    assert db.deleted == [r2] and db.rows == [r1]
+    assert r1.surface == admin.SURFACE_SCREENS
+    assert r2.surface == admin.SURFACE_SCREENS_UNDONE
+    assert db.deleted == []
 
 
 async def test_undo_with_no_prior_grade_returns_404(wired):

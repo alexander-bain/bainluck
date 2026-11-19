@@ -496,6 +496,7 @@ async def get_grades(
         RankingGrade.surface != SURFACE_PAIR,
         # 227-A point 6: a whole-screen look is not a card grade either (/screen-grades).
         RankingGrade.surface != SURFACE_SCREENS,
+        RankingGrade.surface != SURFACE_SCREENS_UNDONE,
     )
     if slate_id:
         stmt = stmt.where(RankingGrade.slate_id == slate_id)
@@ -1526,6 +1527,7 @@ async def get_pair_picks(
 # "does a count agree with his grades" is then a table.
 
 SURFACE_SCREENS = "screens"
+SURFACE_SCREENS_UNDONE = "screens_undone"
 SCREENS_PATH = Path(__file__).resolve().parents[1] / "data" / "screen_samples.json"
 SCREEN_GRADES = ("fun", "fine", "wall")
 _SCREEN_TO_DB_GRADE: dict[str, str] = {"fun": "shareable", "fine": "interesting", "wall": "neither"}
@@ -1673,7 +1675,9 @@ async def undo_last_screen_grade(
             status_code=409,
             detail="only the last grade can be undone; earlier grades stand",
         )
-    await db.delete(latest)
+    # Non-destructive soft retraction: move the single newest row off the
+    # active screen surface so the audit trail stays intact and no row is deleted.
+    latest.surface = SURFACE_SCREENS_UNDONE
     await db.commit()
     return {"status": "undone", "n": body.n}
 
