@@ -376,12 +376,16 @@ final class FinalForecastComparison11296Tests: XCTestCase {
         XCTAssertEqual(c?.away, 20)
     }
 
-    /// Web's `cardProjectedFinal` refuses a level pair only where the sport
-    /// cannot end level (#8156). Basketball cannot; the NFL can (a tie after
-    /// one overtime), so a level NFL pair prints on web and prints here.
-    func testALevelPairIsRefusedOnlyWhereTheSportCannotEndLevel() {
+    /// Ruling 240: A (#12992): a level rounded pair prints in every sport
+    /// (#8156's hide is removed), while a pair that names a different winner
+    /// than the card's chance is withheld.
+    func testALevelPairPrintsInEverySportUnder240A() {
         let level = projection(home: 110.4, away: 110.2)
-        XCTAssertNil(resolve(level, sport: "basketball_nba", home: 112, away: 118))
+        XCTAssertEqual(
+            resolve(level, sport: "basketball_nba", home: 112, away: 118),
+            F.Comparison(label: F.label, away: 110, home: 110, bookmakerCount: 21),
+            "240: A — level rounded NBA pair prints"
+        )
         XCTAssertEqual(
             resolve(projection(home: 118.6, away: 112.2), sport: "basketball_nba", home: 112, away: 118),
             F.Comparison(label: F.label, away: 112, home: 119, bookmakerCount: 21),

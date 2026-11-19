@@ -78,6 +78,7 @@ on:
       - 'ios/Bain Luck/Bain Luck/Services/AnalyticsPrivacy.swift'
       - 'ios/Bain Luck/Bain Luck/Services/AnalyticsService.swift'
       - 'tools/tests/watch-selected-game/**'
+      - '.github/scripts/watch-mvp-scope.py'
       - '.github/workflows/watch-mvp.yml'
   push:
     branches: [master]
@@ -151,17 +152,58 @@ on:
       - 'ios/Bain Luck/Bain Luck/Services/AnalyticsPrivacy.swift'
       - 'ios/Bain Luck/Bain Luck/Services/AnalyticsService.swift'
       - 'tools/tests/watch-selected-game/**'
+      - '.github/scripts/watch-mvp-scope.py'
       - '.github/workflows/watch-mvp.yml'
 
 permissions:
   contents: read
 
+# #13027 (251: A): cancel superseded PR and master Watch runs so stale heads
+# stop holding the 5-slot macOS runner pool. Previously watch-ui-products had
+# no concurrency group, iphone-compatibility set cancel-in-progress: false,
+# and master pushes fell back to github.run_id. The latest head of every PR
+# and master still runs all nine Watch jobs intact.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('watch-mvp-pr-{0}', github.event.pull_request.number) || format('watch-mvp-{0}', github.ref) }}
+  cancel-in-progress: true
+
 jobs:
+  # #13027 (251: A): verify the true 3-dot PR diff touches a Watch/app path
+  # before allocating any macOS runner. GitHub's `on: pull_request: paths:`
+  # filter admits server-only PRs (#12962, #12970) after a merge from master
+  # hits the 300-file cap. Fails closed toward relevant=true on any error.
+  watch-scope:
+    name: Check Watch/app diff scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.decide.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Classify Watch/app diff scope
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE='${{ github.event.pull_request.base.sha }}'
+            HEAD='${{ github.event.pull_request.head.sha }}'
+          else
+            BASE='${{ github.event.before }}'
+            HEAD='${{ github.sha }}'
+          fi
+          python3 .github/scripts/watch-mvp-scope.py \
+            --event '${{ github.event_name }}' \
+            --base "$BASE" \
+            --head "$HEAD" \
+            --github-output "$GITHUB_OUTPUT"
+
   watch-mvp:
     name: Watch behavior and unsigned builds
-    concurrency:
-      group: watch-build-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-      cancel-in-progress: true
+    needs: watch-scope
+    if: needs.watch-scope.outputs.relevant == 'true'
     runs-on: macos-15
     timeout-minutes: 20
     env:
@@ -201,10 +243,6 @@ jobs:
 
   iphone-compatibility:
     name: Watch change iPhone compatibility
-    concurrency:
-      # Preserve full-suite evidence without blocking independent Watch UI work.
-      group: watch-iphone-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-      cancel-in-progress: false
     needs: watch-mvp
     runs-on: xcode-27
     # #12513: the full suite on Xcode 27.2 ran 62 min and was cut at 60.
@@ -311,9 +349,6 @@ jobs:
       fail-fast: false
       matrix:
         shard: [corner, readings, navigation, controls, widgets]
-    concurrency:
-      group: watch-ui-${{ matrix.shard }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-      cancel-in-progress: true
     needs: watch-ui-products
     runs-on: xcode-27
     # Reduced selected-game scope: exact101 cases across five isolated pairs.
@@ -410,8 +445,8 @@ jobs:
 
   watch-ui-complete:
     name: Watch full UI coverage from isolated pairs
-    needs: watch-ui-journey
-    if: always()
+    needs: [watch-scope, watch-ui-journey]
+    if: always() && needs.watch-scope.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -463,9 +498,6 @@ jobs:
     needs: watch-mvp
     runs-on: xcode-27
     timeout-minutes: 45
-    concurrency:
-      group: watch-companion-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-      cancel-in-progress: true
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:

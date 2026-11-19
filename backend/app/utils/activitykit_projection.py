@@ -8,11 +8,93 @@ may substitute for the clock of the selected reading. Delivery is a separate own
 from collections.abc import Mapping
 from datetime import datetime, timezone
 import math
+import re
 
-from app.utils.activitykit_payload import GameActivitySnapshot, Lifecycle
+from app.utils.activitykit_payload import GameActivitySnapshot, Lifecycle, Result
 from app.utils.draw_priced_winner import sport_prices_a_draw
 from app.utils.graded_card import rendered_duel_percents, rendered_percent
 from app.utils.settled_hero import is_finished_status
+
+_HEX_RE = re.compile(r"^#?[0-9A-Fa-f]{6}$")
+_SPORT_RE = re.compile(r"^[A-Za-z0-9_]{1,64}$")
+_RESULTS: set[str] = {"home", "away", "draw"}
+
+
+def _clean_sport(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text if _SPORT_RE.match(text) else None
+
+
+def _clean_badge(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text if 1 <= len(text) <= 6 else None
+
+
+def _clean_hex(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not _HEX_RE.match(text):
+        return None
+    return (text if text.startswith("#") else f"#{text}").upper()
+
+
+def _clean_period(detail: Mapping[str, object], lifecycle: Lifecycle) -> str | None:
+    if lifecycle not in {"live", "suspended"}:
+        return None
+    espn = detail.get("espn")
+    raw = espn.get("period") if isinstance(espn, Mapping) else None
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not 1 <= len(text) <= 24 or ":" in text or "'" in text:
+        return None
+    return text
+
+
+def _headline_tenths(home: float | None, away: float | None) -> int | None:
+    """Match Swift EventHeadlineTenths10090.tenths(home / (home + away))."""
+    if home is None or away is None:
+        return None
+    total = home + away
+    if not 0.99 <= total <= 1.01:
+        return None
+    p_home = home / total
+    scaled = round(p_home * 1000.0, 6)
+    return int(math.floor(scaled + 0.5))
+
+
+def _pregame_percents(
+    detail: Mapping[str, object], sport: str | None
+) -> tuple[int | None, int | None]:
+    """Strict prematch_odds pair (never opening_odds) for two-way games (ruling 209)."""
+    if sport is None or sport_prices_a_draw(sport):
+        return (None, None)
+    prematch = detail.get("prematch_odds")
+    if not isinstance(prematch, Mapping):
+        return (None, None)
+    away_p = _probability(prematch.get("away_probability"))
+    home_p = _probability(prematch.get("home_probability"))
+    if away_p is None or home_p is None:
+        return (None, None)
+    served = prematch.get("rendered_percents")
+    if (
+        isinstance(served, (list, tuple))
+        and len(served) > 1
+        and type(served[0]) is int
+        and type(served[1]) is int
+        and 0 <= served[0] <= 100
+        and 0 <= served[1] <= 100
+    ):
+        return (served[0], served[1])
+    duel = rendered_duel_percents(away_p, home_p)
+    if duel[0] is None or duel[1] is None:
+        return (None, None)
+    return (duel[0], duel[1])
 
 
 def _probability(value: object) -> float | None:
@@ -55,7 +137,10 @@ def project_activitykit_snapshot(detail: Mapping[str, object]) -> GameActivitySn
     Terminal status never follows probability extremes or score comparisons.
     """
     lifecycle = _lifecycle(detail.get("status"))
+    sport = _clean_sport(detail.get("sport"))
     percent = None
+    away_percent = None
+    headline_tenths = None
     probability_clock = None
     if lifecycle in {"scheduled", "live"} and detail.get("hero_probability_source") != "opening":
         hero = _probability(detail.get("hero_probability"))
@@ -66,19 +151,20 @@ def project_activitykit_snapshot(detail: Mapping[str, object]) -> GameActivitySn
         home = current if current is not None else hero
         raw_away = odds.get("away_probability") if current is not None else raw_hero_away
         away = _probability(raw_away)
-        sport = detail.get("sport")
-        if (
-            not isinstance(sport, str)
-            or not sport.strip()
-            or sport_prices_a_draw(sport)
-        ):
+        if sport is None or sport_prices_a_draw(sport):
             percent = rendered_percent(home)
         else:
-            percent = rendered_duel_percents(away, home)[1]
+            duel = rendered_duel_percents(away, home)
+            percent = duel[1]
+            away_percent = duel[0] if percent is not None else None
+            if away_percent is not None:
+                headline_tenths = _headline_tenths(home, away)
         if percent is not None and home == hero and raw_away == raw_hero_away:
             probability_clock = _clock(detail.get("hero_probability_observed_at"))
         if probability_clock is None:
             percent = None
+            away_percent = None
+            headline_tenths = None
     home_score = detail.get("home_score")
     away_score = detail.get("away_score")
     home_score = home_score if type(home_score) is int and home_score >= 0 else None
@@ -93,6 +179,27 @@ def project_activitykit_snapshot(detail: Mapping[str, object]) -> GameActivitySn
         and bool(score_source.strip())
         else None
     )
+    home_team_data = detail.get("home_team_data")
+    away_team_data = detail.get("away_team_data")
+    home_team_data = home_team_data if isinstance(home_team_data, Mapping) else {}
+    away_team_data = away_team_data if isinstance(away_team_data, Mapping) else {}
+    raw_result = detail.get("hero_settled_result")
+    result: Result | None = (
+        raw_result
+        if lifecycle == "final" and isinstance(raw_result, str) and raw_result in _RESULTS
+        else None
+    )
+    pregame_away, pregame_home = _pregame_percents(detail, sport)
+    score_source_unavailable: bool | None = (
+        True
+        if (
+            lifecycle == "live"
+            and home_score is None
+            and away_score is None
+            and detail.get("score_source_unavailable") is True
+        )
+        else None
+    )
     return GameActivitySnapshot(
         event_id=detail.get("id"),
         home_team=detail.get("home_team"),
@@ -103,4 +210,17 @@ def project_activitykit_snapshot(detail: Mapping[str, object]) -> GameActivitySn
         home_rendered_percent=percent,
         score_observed_at=score_clock,
         probability_observed_at=probability_clock,
+        away_rendered_percent=away_percent,
+        home_headline_tenths=headline_tenths,
+        sport=sport,
+        home_abbreviation=_clean_badge(home_team_data.get("abbreviation")),
+        away_abbreviation=_clean_badge(away_team_data.get("abbreviation")),
+        home_color_hex=_clean_hex(home_team_data.get("primary_color")),
+        away_color_hex=_clean_hex(away_team_data.get("primary_color")),
+        away_secondary_color_hex=_clean_hex(away_team_data.get("secondary_color")),
+        period_label=_clean_period(detail, lifecycle),
+        result=result,
+        pregame_away_percent=pregame_away,
+        pregame_home_percent=pregame_home,
+        score_source_unavailable=score_source_unavailable,
     )

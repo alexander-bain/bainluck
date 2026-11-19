@@ -418,9 +418,18 @@ describe("a broken or impossible in-play pair prints nothing", () => {
     expect(liveCardProjectedFinal({ live_projection: UGA_IN_PLAY }, UGA.sport, UGA.commence_time, { home: 38, away: 11 })).toBeNull();
   });
 
-  it("a level pair in a sport that cannot end level (#8156)", () => {
+  it("a level pair prints in basketball and an opposing chance-winner pair is refused (Ruling 240: A / #12992)", () => {
     const nba = { ...UGA_IN_PLAY, projected_home_score: 110.4, projected_away_score: 110.2 };
-    expect(liveCardProjectedFinal({ live_projection: nba }, "basketball_nba", UGA.commence_time, { home: 100, away: 100 })).toBeNull();
+    expect(liveCardProjectedFinal({ live_projection: nba }, "basketball_nba", UGA.commence_time, { home: 100, away: 100 })).toEqual({ home: 110, away: 110 });
+    expect(
+      liveCardProjectedFinal(
+        { live_projection: { ...nba, projected_home_score: 79.0, projected_away_score: 80.4 } },
+        "basketball_nba",
+        UGA.commence_time,
+        { home: 60, away: 62 },
+        { home: 0.511, away: 0.489 },
+      ),
+    ).toBeNull();
     expect(liveCardProjectedFinal({ live_projection: { ...nba, projected_away_score: 104.1 } }, "basketball_nba", UGA.commence_time, { home: 100, away: 100 })).toEqual({ home: 110, away: 104 });
   });
 });

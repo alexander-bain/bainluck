@@ -121,6 +121,7 @@ nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
     let status: String?
     let homeScore: Int?
     let awayScore: Int?
+    var scoreSourceUnavailable: Bool? = nil
     let metadata: EventMetadata?
     let espn: ESPNData?
     let winProbabilitySources: [String: WinProbSource]?

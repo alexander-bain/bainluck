@@ -334,6 +334,7 @@ from app.utils.outcome_display import (
     drop_incoherent_ladder_outcomes,
     ladder_treatment_collapsed,
 )
+from app.utils.not_trading import market_not_trading
 from app.utils.discover_game_reason import (
     annotate_game_signals,
     apply_game_reasons,
@@ -5396,6 +5397,11 @@ async def get_feed(
                     if isinstance(_pb_built_at, (int, float))
                     else 0.0
                 )
+                if _shared_origins:
+                    _pb_age_s = max(
+                        _pb_age_s,
+                        _pic.oldest_consumed_artifact_age_s(_shared_origins),
+                    )
                 _pb_fresh_ttl, _pb_stale_ttl = _live_ttls(
                     _base_page, oldest_artifact_age_s=_pb_age_s
                 )
@@ -15171,6 +15177,10 @@ async def _score_futures(
     for market in markets:
         try:
             is_recycled = False
+            # Ruling 188 (#11937): a market nobody is trading never takes a seat.
+            # Its number is one the venue's book no longer stands behind.
+            if not price_refresh and market_not_trading(market, now):
+                continue
             if not my_teams_only and not price_refresh:
                 if market.id in ctx.recent_dismissed_futures_ids:
                     continue

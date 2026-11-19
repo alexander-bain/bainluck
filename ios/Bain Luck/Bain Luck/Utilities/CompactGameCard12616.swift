@@ -421,10 +421,25 @@ enum ScheduledCardProjectedFinal12616 {
     }
 
     nonisolated static func card(_ event: FeedEventData) -> Pair? {
-        resolve(odds: event.currentOdds, sportKey: event.sport)
+        let cardOdds = CompactGameCard12616.currentOddsForCard(event)
+        let canGrade = EventState.canStillBeGraded(
+            event.status,
+            commenceTime: event.commenceTime?.asDate
+        )
+        return resolve(
+            odds: event.currentOdds,
+            sportKey: event.sport,
+            homeChance: canGrade ? cardOdds?.homeProbability : nil,
+            awayChance: canGrade ? cardOdds?.awayProbability : nil
+        )
     }
 
-    nonisolated static func resolve(odds: CurrentOdds?, sportKey: String?) -> Pair? {
+    nonisolated static func resolve(
+        odds: CurrentOdds?,
+        sportKey: String?,
+        homeChance: Double? = nil,
+        awayChance: Double? = nil
+    ) -> Pair? {
         guard FinalForecastComparison11296.unit(forSport: sportKey) != nil else { return nil }
         let vocab = SportVocab.forSport(sportKey)
         guard vocab.sportsbookSpreadIsAMargin else { return nil }
@@ -435,7 +450,15 @@ enum ScheduledCardProjectedFinal12616 {
               home > 0, away > 0 else { return nil }
         guard let roundedHome = Int(exactly: home.rounded()),
               let roundedAway = Int(exactly: away.rounded()) else { return nil }
-        guard roundedHome != roundedAway || vocab.canEndInATie else { return nil }
+        if ProjectedFinalChanceGuard240A.conflicts(
+            projectedHome: Double(roundedHome),
+            projectedAway: Double(roundedAway),
+            homeChance: homeChance,
+            awayChance: awayChance,
+            sportKey: sportKey
+        ) {
+            return nil
+        }
         return Pair(away: roundedAway, home: roundedHome)
     }
 }
