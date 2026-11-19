@@ -881,7 +881,36 @@ actor APIClient {
            let str = String(data: data, encoding: .utf8) {
             q["tags"] = str
         }
+        Self.addDiscoverMachinery252A(
+            mode: mode,
+            sport: sport,
+            myTeamsOnly: myTeamsOnly,
+            includeFutures: includeFutures,
+            tags: tags,
+            to: &q
+        )
         return try await fetch("/api/feed", query: q, cacheTTL: cacheTTL, trace: trace)
+    }
+
+    /// #12288 (`252: A`) — 1.0.7 opts into the five machinery-built groupings on
+    /// Discover (`machinery=1`), while 1.0.6 and older app versions never send
+    /// `machinery=1` and keep receiving standalone markets untouched.
+    static func addDiscoverMachinery252A(
+        mode: String? = nil,
+        sport: String? = nil,
+        myTeamsOnly: Bool = false,
+        includeFutures: Bool = true,
+        tags: [String]? = nil,
+        to q: inout [String: String]
+    ) {
+        let normalizedMode = mode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalizedMode == nil || normalizedMode?.isEmpty == true || normalizedMode == "discover",
+              sport == nil,
+              !myTeamsOnly,
+              includeFutures,
+              tags == nil || tags?.isEmpty == true
+        else { return }
+        q["machinery"] = "1"
     }
 
     /// #5102/#5105: an accepted edition token rides the query ONLY when there is
@@ -924,6 +953,7 @@ actor APIClient {
         // accepted edition must ride here too or background revalidation of an
         // accepted deck silently asks for a fresh, unpinned order.
         Self.addEdition(edition, to: &q)
+        Self.addDiscoverMachinery252A(to: &q)
 
         // Capture the identity at fetch time so a mid-flight account switch cannot
         // cause this response to be written under the WRONG namespace (L2-206 Item 2),
@@ -1376,13 +1406,10 @@ actor APIClient {
 
     // MARK: - Tournament hubs
 
-    /// #9652: publication state/revision and cards come from one fresh read.
-    /// Never reuse a slug-only cached publication after a withdrawal.
+    /// #9652 / #12288 (`252: A`): publication state/revision and cards come from one
+    /// fresh read; in 1.0.7 the client owner-only gate on `machinery-*` pages is removed
+    /// so any 1.0.7 reader can open served machinery groupings.
     func fetchContainerHub(slug: String) async throws -> ContainerHubResponse {
-        if GroupingMachineryGate12288.isMachineryCandidateSlug(slug),
-           !GroupingMachineryGate12288.canAccessMachineryCurrentUser() {
-            throw APIError.httpError(statusCode: 404, body: nil)
-        }
         return try await fetch(ContainerHubService.path(for: slug), requiresNetwork: true)
     }
 
@@ -1405,6 +1432,25 @@ actor APIClient {
         guard revision > 0, ContainerHubPage.validCursor(cursor), (1...100).contains(limit) else { throw APIError.invalidURL }
         return try await fetch(ContainerHubService.path(for: slug),
             query: ["cursor": cursor, "revision": String(revision), "limit": String(limit)], requiresNetwork: true)
+    }
+
+    /// #12901: Compact NFL week deferred-market continuation (`market_cursor` / `market_revision` / `market_limit`),
+    /// honouring `page.nextUrl` (and matching `fetchContainerHub(slug:)`'s `include_children` scope).
+    func fetchContainerHubMarketPage(
+        slug: String,
+        cursor: String,
+        revision: Int,
+        limit: Int,
+        nextUrl: String? = nil
+    ) async throws -> ContainerHubResponse {
+        let req = try ContainerHubService.marketContinuationRequest(
+            slug: slug,
+            cursor: cursor,
+            revision: revision,
+            limit: limit,
+            nextUrl: nextUrl
+        )
+        return try await fetch(req.path, query: req.query, requiresNetwork: true)
     }
 
     /// #9653: optional Browse discovery always revalidates publication/flags.

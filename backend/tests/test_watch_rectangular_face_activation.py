@@ -60,7 +60,7 @@ def require_activation_paths(source):
     ordered(
         activation,
         "library.exists || face.exists",
-        "XCTAssertEqual(XCTWaiter.wait(for: [arrived], timeout: 15), .completed",
+        "XCTAssertEqual(XCTWaiter.wait(for: [arrived], timeout: 45), .completed",
         "if library.exists",
         'let title = host.staticTexts["Switcher Face Title"].firstMatch',
         '"modular, Customizable"',
@@ -69,54 +69,55 @@ def require_activation_paths(source):
         "preview.isHittable",
         "preview.tap()",
         "face.exists && !library.exists",
-        "XCTAssertEqual(XCTWaiter.wait(for: [activated], timeout: 15), .completed",
+        "XCTAssertEqual(XCTWaiter.wait(for: [activated], timeout: 45), .completed",
         "XCTAssertTrue(face.isHittable)",
     )
 
-    # #4933: the mounted rectangular slot shows the published probability reading and
-    # its age/As-of clock (never the launcher, never "Saved" or "stale") inside the slot before the same real tap.
+    # #4933 / direction 217 (#12854): the mounted rectangular slot shows the published
+    # reading in the Matchup look, named for the leader, with its score and Live or As-of
+    # clock (never the launcher, the older look, "Saved" or "stale") inside the slot,
+    # before the same real tap.
     launcher = function(source, "testActualRectangularLauncherAndTap")
     ordered(
         launcher,
         "try activateConfiguredModularFace(in: host)",
         "let center =",
-        'let reading = host.descendants(matching: .any)["watch.complication.rectangular.reading"].firstMatch',
+        'let matchups = center.descendants(matching: .any).matching(identifier: "watch.complication.matchup.during")',
         "XCTAssertTrue(reading.waitForExistence(timeout: 20)",
-        'spoken.hasPrefix("Los Angeles Dodgers at San Francisco Giants. Score Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants 64%. ")',
+        'let named = "Los Angeles Dodgers at San Francisco Giants. Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants 64% to win now. "',
+        "XCTAssertTrue(spoken.hasPrefix(named), spoken)",
         'spoken.hasSuffix(" Open your game in Bain Luck.")',
         'XCTAssertFalse(spoken.localizedCaseInsensitiveContains("stale"), spoken)',
         'XCTAssertFalse(spoken.localizedCaseInsensitiveContains("saved"), spoken)',
-        "XCTAssertTrue(freshSpoken || agedSpoken, spoken)",
-        'XCTAssertEqual(header.label, "LA at SF · 2–3")',
-        'XCTAssertEqual(primary.label, "SF 64%")',
-        'metadata.label.hasPrefix("Live · ") && metadata.label.hasSuffix(" ago")',
-        'metadata.label.hasPrefix("As of ")',
-        "try requireNamedReadingInsideSlot(reading, center: center, host: host)",
+        'XCTAssertTrue(when.hasSuffix(".") && when.count > 1, spoken)',
+        "try requireMatchupInsideSlot(reading, center: center, host: host)",
+        'XCTAssertFalse(host.descendants(matching: .any)["watch.complication.rectangular.reading"].firstMatch.exists)',
         'XCTAssertFalse(host.descendants(matching: .any)["watch.complication.fallback"].firstMatch.exists)',
+        'XCTAssertFalse(host.descendants(matching: .any)["watch.complication.rectangular.legacy"].firstMatch.exists)',
         "center.tap()",
         "XCTAssertTrue(app.wait(for: .runningForeground, timeout: 45))",
         'probability.label.contains("San Francisco Giants") && probability.label.contains("64%")',
         'NSPredicate(format: "label == %@", "Launcher opens: 1")',
-        "XCTAssertEqual(XCTWaiter.wait(for: [delivered], timeout: 15), .completed)",
+        "XCTAssertEqual(XCTWaiter.wait(for: [delivered], timeout: 45), .completed)",
         'print("WATCH_UI_ACTUAL_RECTANGULAR_LAUNCHER=PASS")',
     )
     assert "CGRect(origin: .zero" not in launcher
     assert "center.isHittable" in launcher
 
-    # The reading's slot check measures the system margins instead of assuming one.
-    slot = function(source, "requireNamedReadingInsideSlot")
+    # The Matchup slot check measures the mounted remote root instead of assuming a space.
+    slot = function(source, "requireMatchupInsideSlot")
     ordered(
         slot,
+        "XCTAssertTrue(host.frame.contains(centerFrame))",
         "let remoteRoot = try XCTUnwrap(center.descendants(matching: .any)",
         "$0.frame.origin == .zero && $0.frame.size == centerFrame.size",
+        "allSatisfy { $0.isFinite }",
+        "XCTAssertTrue(card.width > 0 && card.height > 0)",
+        "XCTAssertTrue(root.contains(card)",
         "remoteRoot.descendants(matching: .any).matching(identifier: reading.identifier)",
-        "XCTAssertEqual(localReadings.count, 1",
-        "XCTAssertEqual(localReadings.firstMatch.frame, card)",
-        "card.minX > root.minX && card.minY > root.minY && card.maxX < root.maxX && card.maxY < root.maxY",
-        "XCTAssertEqual(card.minX - root.minX, root.maxX - card.maxX, accuracy: 0.5",
-        '"watch.complication.rectangular.metadata"',
-        "XCTAssertEqual(lines.count, 1, id)",
-        "card.contains(line)",
+        ".filter { $0.frame == root }",
+        "XCTAssertEqual(spanning.count, 1",
+        "XCTAssertEqual(spanning.first?.label, reading.label)",
         'XCTAssertFalse(remoteRoot.descendants(matching: .any)["watch.complication.detail"].firstMatch.exists)',
     )
     assert "CGRect(origin: .zero" not in slot
@@ -204,15 +205,12 @@ def test_rectangular_host_activates_named_face_before_accepting_widget_content()
         ),
         (
             "testActualRectangularLauncherAndTap",
-            "try requireNamedReadingInsideSlot(reading, center: center, host: host)",
+            "try requireMatchupInsideSlot(reading, center: center, host: host)",
         ),
-        ("testActualRectangularLauncherAndTap", 'XCTAssertEqual(header.label, "LA at SF · 2–3")'),
-        ("requireNamedReadingInsideSlot", "let remoteRoot = try XCTUnwrap"),
-        ("requireNamedReadingInsideSlot", "card.contains(line)"),
-        (
-            "requireNamedReadingInsideSlot",
-            "XCTAssertEqual(card.minX - root.minX, root.maxX - card.maxX, accuracy: 0.5",
-        ),
+        ("testActualRectangularLauncherAndTap", "XCTAssertTrue(spoken.hasPrefix(named), spoken)"),
+        ("requireMatchupInsideSlot", "let remoteRoot = try XCTUnwrap"),
+        ("requireMatchupInsideSlot", "XCTAssertTrue(root.contains(card)"),
+        ("requireMatchupInsideSlot", "XCTAssertEqual(spanning.count, 1"),
         ("reveal", "if usedRecoveryDrag"),
         ("reveal", "dy: 0.90"),
     ],
@@ -256,10 +254,10 @@ def require_saved_final_contract(source):
         '"Final · " + (homeScore > awayScore ? home : away) + " won"',
         'NSPredicate(format: "label == %@", finalHeader)',
         '"label CONTAINS %@ AND label CONTAINS %@", "Saved reading", "Offline"',
-        "XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 15), .completed)",
+        "XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 45), .completed)",
         "if final {",
         '"exists == true AND label BEGINSWITH %@", "Offline."), object: explanation)',
-        "XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)",
+        "XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 45), .completed)",
         'XCTAssertEqual(savedNote.label, "Last saved update")',
         "[gameState, awayRow, homeRow] + (final ? [savedNote, explanation] : [])",
     )

@@ -75,12 +75,10 @@ final class APregameForecastFinalReadsTheLadders9496Tests: XCTestCase {
 
     // MARK: - The specimen and its control
 
-    /// `3.2 – 3.0` rounds to `3-3`: a baseball final that cannot happen.
-    func testTheSpecimenStaysSilentBecauseBaseballCannotEndLevel() {
-        XCTAssertNil(text("baseball_mlb", ladder: (3.2, 3.0)),
-                     "the hero prints a level baseball final (#8156)")
-        // Control: the same page with a pair the sport can produce prints it,
-        // so the nil above is the tie gate and not a dead ladder arm.
+    /// Ruling 240: A (#12992): `3.2 – 3.0` rounds to `3-3` and prints (`#8156` removed).
+    func testTheSpecimenPrintsLevelPairUnder240A() {
+        XCTAssertEqual(text("baseball_mlb", ladder: (3.2, 3.0)), "Proj. 3-3",
+                       "240: A — level rounded baseball pair prints")
         XCTAssertEqual(text("baseball_mlb", ladder: (4.1, 2.9)), "Proj. 3-4")
     }
 
@@ -127,15 +125,13 @@ final class APregameForecastFinalReadsTheLadders9496Tests: XCTestCase {
         XCTAssertNil(text("mma_mixed_martial_arts", ladder: (2.4, 1.1)))
     }
 
-    // MARK: - #8156 on whichever pair is chosen
+    // MARK: - Ruling 240: A (#12992) on whichever pair is chosen
 
-    func testALevelFinalIsWithheldOnlyWhereTheSportCannotTie() {
-        XCTAssertNil(text("basketball_nba", books: (110.2, 109.8)))
-        XCTAssertNil(text("icehockey_nhl", books: (3.1, 2.8)))
-        XCTAssertEqual(text("americanfootball_nfl", books: (24.2, 23.9)), "Proj. 24-24",
-                       "an NFL tie is a legal result")
-        XCTAssertEqual(text("soccer_epl", books: (1.2, 1.3)), "Proj. 1-1",
-                       "a league draw is a legal result")
+    func testALevelFinalPrintsInEverySportUnder240A() {
+        XCTAssertEqual(text("basketball_nba", books: (110.2, 109.8)), "Proj. 110-110")
+        XCTAssertEqual(text("icehockey_nhl", books: (3.1, 2.8)), "Proj. 3-3")
+        XCTAssertEqual(text("americanfootball_nfl", books: (24.2, 23.9)), "Proj. 24-24")
+        XCTAssertEqual(text("soccer_epl", books: (1.2, 1.3)), "Proj. 1-1")
     }
 
     /// Web asks the RAW halves to be positive, so a low soccer half prints `0`.

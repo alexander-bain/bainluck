@@ -3328,12 +3328,32 @@ def create_github_issue_for_bug_report_task(self, report_id: int):
 
             severity = compute_severity(report.description)
             title = format_issue_title(report.description)
+
+            screenshot_summary = None
+            if (report.app_state or {}).get("source") == "testflight" and report.screenshot_base64:
+                from app.services.testflight_feedback import summarize_testflight_screenshot
+                try:
+                    screenshot_summary = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            summarize_testflight_screenshot,
+                            report.screenshot_base64,
+                            report_id=report.id,
+                        ),
+                        timeout=10.0,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "TestFlight screenshot summary timed out or failed for report #%d (filing without it): %s",
+                        report.id, exc,
+                    )
+
             body = format_issue_body(
                 report_id=report.id,
                 description=report.description,
                 category=report.category,
                 app_state=report.app_state,
                 has_screenshot=bool(report.screenshot_base64),
+                screenshot_summary=screenshot_summary,
             )
             labels = build_labels(report.category, severity, is_owner=is_owner)
 
@@ -4234,6 +4254,14 @@ def update_max_movement(self, heavy: bool = True):
     would have left them ranked exactly as they are today.
     """
     async def _impl():
+        import time as _phase_time
+        _phase_t0 = _phase_time.monotonic()
+
+        def _mark(label):
+            # Where a run is when its 120 s soft limit hits: the traceback only
+            # shows the event loop waiting on the database (Nov 16, 6 of 6 runs).
+            logger.info("update_max_movement phase %s at %.1fs", label, _phase_time.monotonic() - _phase_t0)
+
         from decimal import Decimal
 
         from app.tasks.base import get_task_session
@@ -4319,6 +4347,7 @@ def update_max_movement(self, heavy: bool = True):
         # quote blocking. Release market locks here as well: carrying them
         # into the outcome sweeps would reverse the existing lock order.
         async with get_task_session() as session:
+            _mark("A10")
             # A10. LIST THE OPENINGS THAT WERE NEVER A PRICE (#8612).
             #
             #     A8's rule, applied to the lifetime baseline. A card says
@@ -4660,6 +4689,7 @@ def update_max_movement(self, heavy: bool = True):
                 "window_hours": MOVEMENT_WINDOW_HOURS,
                 "batch": STALE_DELTA_BATCH,
             }
+            _mark("A1")
             a_prepared_ids = await prepare("A", a_predicate, a_order, a_params)
             expired_rows = await retire_prepared(
                 """
@@ -4678,6 +4708,7 @@ def update_max_movement(self, heavy: bool = True):
                 "A",
             )
 
+            _mark("A2")
             # A2. Retire deltas on GRADED outcomes, whatever their stamp says.
             #
             #     A alone cannot reach these, and the reason is the whole defect
@@ -4746,6 +4777,7 @@ def update_max_movement(self, heavy: bool = True):
                 "A2",
             )
 
+            _mark("A3")
             # A3. Retire deltas that REFUTE THEMSELVES — the row's own two
             #     columns cannot both describe the same instant (#6536).
             #
@@ -4837,6 +4869,7 @@ def update_max_movement(self, heavy: bool = True):
                 {"batch": IMPOSSIBLE_PRIOR_BATCH},
             )
 
+            _mark("A4")
             # A4. Retire deltas claiming a move THE OUTCOME'S OWN SERIES CANNOT
             #     SUPPORT (#4079).
             #
@@ -4982,6 +5015,7 @@ def update_max_movement(self, heavy: bool = True):
                 "A4",
             )
 
+            _mark("A5")
             # A5. Retire the RANK claim on rows nothing has written inside the
             #     window — A's predicate, applied to A's forgotten twin.
             #
@@ -5033,6 +5067,7 @@ def update_max_movement(self, heavy: bool = True):
                 "A5",
             )
 
+            _mark("A6")
             # A6. Retire the RANK claim on GRADED outcomes — A2's predicate,
             #     applied to the same forgotten twin, and immune to A5 for
             #     precisely A2's reason: `backfill_winners` re-stamps
@@ -5078,6 +5113,7 @@ def update_max_movement(self, heavy: bool = True):
                 "A6",
             )
 
+            _mark("A7")
             # A7. Retire deltas whose DIRECTION a dated comparison contradicts
             #     (#4079). A4's sibling, lettered after A5/A6 to keep the list
             #     monotonic; it is a DELTA statement and runs before B like
@@ -5283,6 +5319,7 @@ def update_max_movement(self, heavy: bool = True):
                 # A8's carrier key, shared by A8-DG / A9-DG below.
                 bank_key = DATED_BASIS_METADATA_KEY
 
+                _mark("A8-DG")
                 # A8-DG. THE DATAGOLF BANK (#10248, D3).
                 #
                 #     DataGolf polls every 90 s in play and hourly before it, and
@@ -5410,6 +5447,7 @@ def update_max_movement(self, heavy: bool = True):
                     },
                 )
 
+                _mark("A9-DG")
                 # A9-DG. A DataGolf market that has left A8-DG's scope (closed, or
                 #     no priced leg with a previous price) loses its bank and mark.
                 #     A9's job for the arm A9 no longer covers.
@@ -5442,6 +5480,7 @@ def update_max_movement(self, heavy: bool = True):
                     """),
                 )
 
+                _mark("A8")
                 # A8. PUBLISH THE DATED EVIDENCE A "TODAY" CLAIM NEEDS.
                 #
                 #     Every statement above this one DELETES, except #10248's
@@ -5667,6 +5706,7 @@ def update_max_movement(self, heavy: bool = True):
                     },
                 )
 
+                _mark("A9")
                 # A9. A market that has left claim scope loses its bank.
                 #
                 #     The reader already fails closed on a bank nobody refreshes —
@@ -5730,6 +5770,7 @@ def update_max_movement(self, heavy: bool = True):
             # passes over locked eligible rows), so the flag reads `None`, not
             # `True`. Without them the only signal would be the strip quietly
             # getting better.
+            _mark("done")
             return {
                 "updated": updated,
                 "expired": expired_rows,
@@ -7941,9 +7982,31 @@ def deliver_activitykit_updates():
     return result
 
 
+@celery_app.task(name="app.tasks.deliver_activitykit_starts", soft_time_limit=60,
+                 time_limit=90, max_retries=0)
+def deliver_activitykit_starts():
+    """One default-off sweep of kickoff Live Activity start pushes (#13052 / 254-A)."""
+    from app.tasks.activitykit_start import run_activitykit_start_dispatch
+
+    result = run_async(run_activitykit_start_dispatch())
+    if result["terminal"] in {"failed", "partial"}:
+        logger.warning("ActivityKit start dispatch incomplete: %s", result)
+        raise RuntimeError("ActivityKit start dispatch incomplete")
+    return result
+
+
 celery_app.conf.beat_schedule = {
     "activitykit-runtime": {
+        # #10542 step 5: 15 s beat so pinned Live Activities read ESPN and push
+        # score changes within ~15 s instead of waiting behind the 60 s full-slate
+        # sync + 30 s sweep. When scanned == 0 (no active Live Activities), the
+        # task exits in ~0.2 s with zero ESPN calls.
         "task": "app.tasks.deliver_activitykit_updates",
+        "schedule": 15.0,
+        "options": {"queue": "realtime", "expires": 12},
+    },
+    "activitykit-start-push": {
+        "task": "app.tasks.deliver_activitykit_starts",
         "schedule": 30.0,
         "options": {"queue": "realtime", "expires": 25},
     },
@@ -10379,7 +10442,13 @@ celery_app.conf.beat_schedule = {
     },
     "precompute-calibration-main": {
         "task": "app.tasks.precompute_calibration_main",
-        "schedule": crontab(minute=15),  # Every 1 hour at :15
+        # 215-B (Fable, Nov 16 2026): admin precomputes give way to readers'
+        # price refreshes on heavy. Hourly :15 -> daily 10:15 UTC (3:15 AM PT).
+        # One run held a heavy slot 21 min (11:30-11:51 AM Nov 16) while the
+        # 15-minute price pass queued. The main key lives 50 h
+        # (`_MAIN_CACHE_TTL`) so one missed night still serves; every
+        # cadence-derived constant moved with it.
+        "schedule": crontab(minute=15, hour=10),
         "options": {"queue": "heavy"},
     },
     "calibration-beat-gauge-sampler": {

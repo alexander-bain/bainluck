@@ -13,6 +13,19 @@ struct DistributionCardView: View {
 
     /// #6343 — the price-age reveal, open or closed. See `PriceAgeMarkView`.
     @State private var revealedPriceAge: String?
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var primaryInk: Color {
+        colorScheme == .dark ? Color.primary : DS.textPrimary
+    }
+
+    private var mutedInk: Color {
+        colorScheme == .dark ? Color(hex: "#94A3B8") : DS.textMuted
+    }
+
+    private var trackInk: Color {
+        colorScheme == .dark ? Color.white.opacity(0.10) : DS.trackBg
+    }
 
     // MARK: - Derived data
 
@@ -200,7 +213,7 @@ struct DistributionCardView: View {
             if showsRanks {
                 Text("\(rank)")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(mutedInk)
                     .frame(width: 20, alignment: .leading)
             }
 
@@ -209,7 +222,7 @@ struct DistributionCardView: View {
                 HStack(spacing: 4) {
                     Text(outcome.label)
                         .font(.system(size: 13, weight: isLeader ? .bold : .semibold))
-                        .foregroundStyle(DS.textPrimary)
+                        .foregroundStyle(primaryInk)
                         .lineLimit(1)
 
                     if let movement = outcome.movement, abs(movement) >= 0.01 {
@@ -221,20 +234,36 @@ struct DistributionCardView: View {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         RoundedRectangle(cornerRadius: 999)
-                            .fill(DS.border)
+                            .fill(trackInk)
                         RoundedRectangle(cornerRadius: 999)
-                            .fill(isLeader ? DS.emerald : DS.textMuted.opacity(0.35))
+                            .fill(isLeader ? DS.emerald : mutedInk.opacity(0.45))
                             .frame(width: max(2, geo.size.width * barWidth / 100))
                     }
                 }
                 .frame(height: 6)
             }
 
-            // Percentage
-            Text(probability > 0 ? "\(pct)%" : "\u{2014}")
-                .font(.system(size: 13, weight: .bold, design: .monospaced))
-                .foregroundStyle(DS.textPrimary)
-                .frame(width: 40, alignment: .trailing)
+            // Percentage + optional served source mark (#12887)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(probability > 0 ? "\(pct)%" : "\u{2014}")
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundStyle(primaryInk)
+                    .frame(width: 40, alignment: .trailing)
+
+                if shownOutcomes.contains(where: { $0.sourceMark?.draws == true }) {
+                    if let srcMark = SourceMarkButton(
+                        outcome.sourceMark,
+                        number: outcome.sourceMark?.state == .settled ? nil : outcome.probability,
+                        subject: outcome.label,
+                        numberSize: 13,
+                        compactRow: true
+                    ) {
+                        srcMark.buttonStyle(.borderless)
+                    } else {
+                        Color.clear.frame(width: 22, height: 1)
+                    }
+                }
+            }
         }
         .padding(.vertical, 6)
     }

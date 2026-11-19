@@ -9,6 +9,7 @@
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { AwardCategoryPairedCard } from "@/components/discover/forms/AwardCategoryPairedCard";
 import MachinerySectionRenderer, {
   MachineryDiscoverCard,
   resolveDistinctChartSeries,
@@ -417,5 +418,157 @@ describe("#12288 Slice 6 — Website parity, error states, and non-repeating fir
     );
     expect(strokes).toHaveLength(3);
     expect(new Set(strokes).size).toBe(3);
+  });
+
+  it("wraps contender_spotlight podium subtitles without line-clamp-1 truncation", () => {
+    const spotlightBlock: MachineryVisualBlock = {
+      form_id: "contender_spotlight",
+      initial_visible_limit: 3,
+      items: [
+        {
+          market_id: 8103,
+          title: "MVP",
+          href: "/futures/8103",
+          outcomes: [
+            {
+              outcome_id: 1,
+              name: "Victor Wembanyama",
+              probability: 0.43,
+              rendered_percent: 43,
+              art: {
+                url: "https://a.espncdn.com/i/headshots/nba/players/full/5104157.png",
+                kind: "person",
+                detail: "Center · San Antonio",
+                accent_color: "#111827",
+                initials: "VW",
+              },
+            },
+            {
+              outcome_id: 2,
+              name: "Luka Dončić",
+              probability: 0.38,
+              rendered_percent: 38,
+              art: {
+                url: "https://a.espncdn.com/i/headshots/nba/players/full/3945274.png",
+                kind: "person",
+                detail: "Guard · LA Lakers",
+                accent_color: "#552583",
+                initials: "LD",
+              },
+            },
+            {
+              outcome_id: 3,
+              name: "Shai Gilgeous-Alexander",
+              probability: 0.19,
+              rendered_percent: 19,
+              art: {
+                url: "https://a.espncdn.com/i/headshots/nba/players/full/4278073.png",
+                kind: "person",
+                detail: "Guard · Oklahoma City",
+                accent_color: "#007AC1",
+                initials: "SG",
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <MachinerySectionRenderer visualBlock={spotlightBlock} members={[]} />,
+    );
+    expect(html).toContain("Center · San Antonio");
+    expect(html).toContain("Guard · Oklahoma City");
+    expect(html).not.toContain("line-clamp-1");
+  });
+
+  it("wraps paired_stage_bars subject and studio credit detail without truncate ellipsis", () => {
+    const html = renderToStaticMarkup(
+      <AwardCategoryPairedCard
+        set={{
+          set_id: "oscars-2027-best-picture",
+          title: "Best Picture",
+          kicker: "OSCARS 2027",
+          subtitle: "99th Academy Awards",
+          category: "entertainment",
+          stage_1_label: "Nominated",
+          stage_2_label: "Wins",
+          stage_1_settled_yes_label: "Nominated",
+          stage_1_settled_no_label: "Not nominated",
+          never_blend: true,
+          as_of: "2026-11-18T00:00:00Z",
+          stage_1_market: { id: 5165726, source: "kalshi", name: "Best Picture Nominees" },
+          stage_2_market: { id: 6173044, source: "kalshi", name: "Best Picture Winner" },
+          entries: [
+            {
+              subject_key: "film:you-can-see-everything",
+              subject: "You Can See Everything",
+              detail: "Nathan Fielder & Lance Oppenheim · Blow Out Productions",
+              stage_1_market_id: 5165726,
+              stage_1_outcome: "You Can See Everything",
+              stage_1_probability: 0.89,
+              stage_1_settled_state: null,
+              stage_2_market_id: 6173044,
+              stage_2_outcome: "You Can See Everything",
+              stage_2_probability: 0.21,
+              art: {
+                url: "https://image.tmdb.org/t/p/w185/sample.jpg",
+                kind: "tmdb_poster",
+                adult: false,
+                kid_safe_vetted: true,
+              },
+            },
+          ],
+        }}
+        surface="collection"
+        showHeader={false}
+      />,
+    );
+    expect(html).toContain("Nathan Fielder &amp; Lance Oppenheim · Blow Out Productions");
+    expect(html).not.toContain("block truncate text-xs text-text-muted");
+    expect(html).not.toContain("block truncate text-sm font-semibold");
+  });
+
+  it("253: A: omits Toss-up badge when show_toss_up_tag is false", () => {
+    const vb: MachineryVisualBlock = {
+      form_id: "coin_flip_matchups",
+      initial_visible_limit: 3,
+      items: [
+        {
+          event_id: 14969890,
+          away_short: "Ravens",
+          home_short: "Panthers",
+          away_pct: 43,
+          home_pct: 57,
+          commence_time: "2026-11-22T18:00:00+00:00",
+          is_toss_up: false,
+          show_toss_up_tag: false,
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <MachinerySectionRenderer visualBlock={vb} members={[]} />,
+    );
+    expect(html).toContain("Ravens");
+    expect(html).toContain("43%");
+    expect(html).toContain("57%");
+    expect(html).not.toContain("Toss-up");
+  });
+
+  it("252: A: bootFeedPath appends machinery=1 only when NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 is true", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { bootFeedPath } = require("@/lib/discover/feedBoot");
+    const prev = process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1;
+    try {
+      delete process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1;
+      expect(bootFeedPath()).not.toContain("machinery=1");
+      process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 = "true";
+      expect(bootFeedPath()).toContain("machinery=1");
+    } finally {
+      if (prev === undefined) {
+        delete process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1;
+      } else {
+        process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 = prev;
+      }
+    }
   });
 });

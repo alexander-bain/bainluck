@@ -24,19 +24,15 @@ const spaceGrotesk = Space_Grotesk({
   display: "swap",
   variable: "--factory-heading",
 });
-const loadFactory = unstable_cache(createFactoryReader(), ["factory-live-v3"], {
-  revalidate: 60,
-});
+const loadFactory = createFactoryReader(undefined, (load) =>
+  unstable_cache(load, ["factory-live-v4"], { revalidate: 60 }),
+);
 
 export default async function FactoryPage() {
-  const { data, lastGoodAt } = await loadFactory();
+  const read = await loadFactory();
   return (
     <div className={`${inter.variable} ${spaceGrotesk.variable}`}>
-      <FactoryFloor
-        data={data}
-        lastGoodAt={lastGoodAt}
-        renderedAt={new Date().toISOString()}
-      />
+      <FactoryFloor {...read} renderedAt={new Date().toISOString()} />
     </div>
   );
 }

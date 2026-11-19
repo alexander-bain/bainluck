@@ -6411,6 +6411,8 @@ final class FieldPhaseHeadline10868Tests: XCTestCase {
                         XCTAssertEqual(bounds.midY, size.height / 2, accuracy: 1e-9)
                         XCTAssertTrue(canvas.contains(bounds), "\(shape)")
                         // The drawn fill is exactly the shape's extent.
+                        // #12513 — `Path` keeps its points as `Float`: 35.4 reads back as
+                        // 35.400002, so `1e-6` failed on every run. `1e-4` pt is still exact.
                         let drawn = plan.fill.boundingRect
                         XCTAssertEqual(drawn.minX, bounds.minX, accuracy: 1e-4)
                         XCTAssertEqual(drawn.maxX, bounds.maxX, accuracy: 1e-4)
@@ -6421,18 +6423,17 @@ final class FieldPhaseHeadline10868Tests: XCTestCase {
                             XCTAssertEqual(outline.minX, bounds.minX + inset, accuracy: 1e-9)
                             XCTAssertEqual(outline.width, bounds.width - 2 * inset, accuracy: 1e-9)
                             XCTAssertEqual(outline.midY, bounds.midY, accuracy: 1e-9)
-                            // The outline's outer edge, as the view strokes it, stays inside the shape's own bounds:
-                            // circle and square match `bounds`, while the 45° diamond's `inset = lineWidth/2 * √2`
-                            // expands by `lineWidth/2` per axis under default StrokeStyle (`outline.insetBy(-lw/2)`).
-                            let edge = stroke.strokedPath(StrokeStyle(lineWidth: plan.lineWidth)).boundingRect
-                            let expectedEdge = shape == .diamond
-                                ? outline.insetBy(dx: -plan.lineWidth / 2, dy: -plan.lineWidth / 2)
-                                : bounds
-                            XCTAssertEqual(edge.minX, expectedEdge.minX, accuracy: 0.01, "\(shape)")
-                            XCTAssertEqual(edge.maxX, expectedEdge.maxX, accuracy: 0.01, "\(shape)")
-                            XCTAssertEqual(edge.minY, expectedEdge.minY, accuracy: 0.01, "\(shape)")
-                            XCTAssertEqual(edge.maxY, expectedEdge.maxY, accuracy: 0.01, "\(shape)")
-                            XCTAssertTrue(bounds.insetBy(dx: -0.01, dy: -0.01).contains(edge), "\(shape)")
+                            // The outline's outer edge, as the view strokes it, is the shape's own edge: never outside it.
+                            // #12513 — measured on Core Graphics' stroke, which is what draws it.
+                            // SwiftUI's `strokedPath(_:).boundingRect` leaves the miter points out
+                            // on iOS 27 (a diamond reads √2 − 1 short whatever the join), while the
+                            // drawn miter reaches the shape's edge exactly.
+                            let edge = stroke.cgPath.copy(strokingWithWidth: plan.lineWidth, lineCap: .butt,
+                                                          lineJoin: .miter, miterLimit: 10).boundingBoxOfPath
+                            XCTAssertEqual(edge.minX, bounds.minX, accuracy: 0.01, "\(shape)")
+                            XCTAssertEqual(edge.maxX, bounds.maxX, accuracy: 0.01, "\(shape)")
+                            XCTAssertEqual(edge.minY, bounds.minY, accuracy: 0.01, "\(shape)")
+                            XCTAssertEqual(edge.maxY, bounds.maxY, accuracy: 0.01, "\(shape)")
                         } else {
                             XCTAssertFalse(hollow, "\(shape)")
                             XCTAssertNil(plan.outline)
@@ -6470,9 +6471,14 @@ final class FieldPhaseHeadline10868Tests: XCTestCase {
                 XCTAssertNil(FieldHeadlineGeometry10868.keyFrameSide(diameter: bad), "\(bad)")
                 XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: false, in: frame, diameter: bad, lineWidth: 2), "\(shape) \(bad)")
                 XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: true, in: frame, diameter: 10, lineWidth: bad), "\(shape) \(bad)")
-            }
-            for nonPositiveOrNonFinite: CGFloat in [0, -10, .nan, .infinity, -.infinity] {
-                XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: false, in: frame, diameter: 10, lineWidth: nonPositiveOrNonFinite), "\(shape) \(nonPositiveOrNonFinite)")
+                // #12513 — a filled key never strokes, so the largest FINITE width is
+                // drawable there; only a width that isn't a width is refused. The hollow
+                // line above, and the "too wide to inset" loop below, keep the finite limit.
+                if bad.isFinite && bad > 0 {
+                    XCTAssertNotNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: false, in: frame, diameter: 10, lineWidth: bad), "\(shape) \(bad)")
+                } else {
+                    XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: false, in: frame, diameter: 10, lineWidth: bad), "\(shape) \(bad)")
+                }
             }
             // A frame that cannot hold the widest shape draws none — never a clipped or shrunken key.
             for size in [CGSize(width: 11.9, height: 12), CGSize(width: 12, height: 11.9), .zero,

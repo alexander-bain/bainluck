@@ -232,34 +232,39 @@ final class CrestBadgeNamesAPerson4624Tests: XCTestCase {
     /// from a test — and the defect here is an OMISSION, which a ban could not
     /// see.
     func testTheEventHeroPassesItsSport() throws {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()   // BainLuckTests
-            .deletingLastPathComponent()   // Bain Luck (project dir)
-        let detailSource = try String(
-            contentsOf: root.appendingPathComponent("Bain Luck/Views/EventDetailView.swift"),
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()   // BainLuckTests
+                .deletingLastPathComponent()   // Bain Luck (project dir)
+                .appendingPathComponent("Bain Luck/Views/EventDetailView.swift"),
             encoding: .utf8
         )
-        let headlineSource = try String(
-            contentsOf: root.appendingPathComponent("Bain Luck/Components/EventSportHeadlineCard12472.swift"),
-            encoding: .utf8
-        )
-        XCTAssertFalse(detailSource.isEmpty, "EventDetailView.swift is not where this test thinks it is")
-        XCTAssertFalse(headlineSource.isEmpty, "EventSportHeadlineCard12472.swift is not where this test thinks it is")
-
-        let detailCircles = detailSource.components(separatedBy: "TeamLogoView(").dropFirst()
-        let headlineCircles = headlineSource.components(separatedBy: "TeamLogoView(").dropFirst()
-        // Direction 199 moved the unified event-page hero crests into EventSportHeadlineCard12472
-        // (`sportKey: model.sportKey`), while EventDetailView retains its remaining hero circle (`sportKey: event.sport`).
-        XCTAssertGreaterThanOrEqual(detailCircles.count + headlineCircles.count, 2, "hero crest calls disappeared")
-        for (index, circle) in detailCircles.enumerated() {
+        // Stated separately so a moved file reads as "the path is wrong" rather
+        // than as the hero having dropped its sport.
+        XCTAssertFalse(source.isEmpty, "EventDetailView.swift is not where this test thinks it is")
+        let circles = source.components(separatedBy: "TeamLogoView(").dropFirst()
+        // #12771 — the legacy hero's two circles retired into the unified
+        // `EventSportHeadlineCard12472`, leaving one `TeamLogoView` in `EventDetailView`
+        // and one in `EventSportHeadlineCard12472`, both passing `sportKey:`.
+        XCTAssertEqual(circles.count, 1, "the hero's circle count moved; re-read this guard")
+        for (index, circle) in circles.enumerated() {
             let call = circle.prefix(while: { $0 != ")" })
             XCTAssertTrue(call.contains("sportKey: event.sport"),
-                          "EventDetailView circle \(index) draws a badge without telling it the sport")
+                          "hero circle \(index) draws a badge without telling it the sport")
         }
+        let headlineSource = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Bain Luck/Components/EventSportHeadlineCard12472.swift"),
+            encoding: .utf8
+        )
+        let headlineCircles = headlineSource.components(separatedBy: "TeamLogoView(").dropFirst()
+        XCTAssertEqual(headlineCircles.count, 1, "the unified headline's circle count moved; re-read this guard")
         for (index, circle) in headlineCircles.enumerated() {
             let call = circle.prefix(while: { $0 != ")" })
             XCTAssertTrue(call.contains("sportKey: model.sportKey"),
-                          "EventSportHeadlineCard12472 circle \(index) draws a badge without telling it the sport")
+                          "unified headline circle \(index) draws a badge without telling it the sport")
         }
     }
 

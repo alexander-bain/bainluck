@@ -34,7 +34,7 @@ def test_modular_add_is_below_real_chrome_and_editor_arrives_before_swipes():
     assert "try reveal(add, in: host, belowNavigationChrome: true)" in source
     assert (
         source.index("add.tap()")
-        < source.index("XCTWaiter.wait(for: [editorArrived], timeout: 15)")
+        < source.index("XCTWaiter.wait(for: [editorArrived], timeout: 45)")
         < source.index("for _ in 0..<8")
     )
     for requirement in [

@@ -98,6 +98,7 @@ struct MyStuffView: View {
                 .frame(maxWidth: authManager.isAuthenticated ? Self.signedInManagePinsMaxWidth : Self.signInMaxWidth)
                 .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("myStuffManagePins")
+                SiriProbabilityTip12315()
                 Group {
                     if authManager.isLoading {
                         ProgressView()
@@ -795,6 +796,13 @@ struct MyStuffView: View {
 
     // MARK: - Context Menu Pin (iPad)
 
+    static func eventCopyProbabilityText(_ event: FeedEventData) -> String? {
+        guard let probability = CompactGameCard12616.currentOddsForCard(event)?.homeProbability else {
+            return nil
+        }
+        return "\(event.homeTeam): \(Int(probability * 100))%"
+    }
+
     @ViewBuilder
     private func pinContextMenu(_ item: FeedItem) -> some View {
         if let pinInfo = pinInfo(for: item) {
@@ -806,9 +814,8 @@ struct MyStuffView: View {
             }
         }
         if let event = item.event {
-            if let prob = event.currentOdds?.homeProbability {
+            if let text = Self.eventCopyProbabilityText(event) {
                 Button {
-                    let text = "\(event.homeTeam): \(Int(prob * 100))%"
                     copyToClipboard(text)
                 } label: {
                     Label("Copy Probability", systemImage: "doc.on.doc")

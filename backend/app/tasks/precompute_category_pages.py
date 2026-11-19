@@ -1316,6 +1316,7 @@ async def _prewarm_feed_shape(
                     exclude_reviewed=False,
                     reviewer=None,
                     reviewed_surface=None,
+                    machinery=None,
                     secret=None,
                     db=db,
                     user=None,

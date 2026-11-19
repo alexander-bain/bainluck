@@ -187,14 +187,14 @@ describe("refusals of the baseline itself", () => {
     expect(livePregameComparison(withBaseline(patch))).toBeNull();
   });
 
-  it("a no-tie sport's level baseline is refused, as the card refuses it", () => {
+  it("a no-tie sport's level baseline prints, as the card prints it (Ruling 240: A / #12992)", () => {
     const nba = input({
       sportKey: "basketball_nba",
       odds: { live_projection: { ...CURRENT, projected_home_score: 118.2, projected_away_score: 111.6 } },
       heroProjected: { home: 118, away: 112 },
       projection: { ...BASELINE, projected_home_score: 110.4, projected_away_score: 110.2 },
     });
-    expect(livePregameComparison(nba)).toBeNull();
+    expect(livePregameComparison(nba)?.baseline).toEqual({ home: 110, away: 110 });
   });
 });
 

@@ -28,6 +28,31 @@ struct MachineryRenderedPictureFramesKey12288: PreferenceKey {
     }
 }
 
+enum MachineryColorContrast12288 {
+    static func pairHexes(awayHex: String?, homeHex: String?, scheme: ColorScheme) -> (away: String, home: String) {
+        if scheme == .dark {
+            return TeamTextContrast.darkSurfaceColorHexes(
+                awayHex: awayHex,
+                homeHex: homeHex,
+                checkHueFamily: true
+            )
+        }
+        return TeamTextContrast.cardColorHexes(
+            awayHex: awayHex,
+            homeHex: homeHex,
+            checkHueFamily: true
+        )
+    }
+
+    static func singleAccent(_ hex: String?, scheme: ColorScheme) -> Color {
+        guard let hex, !hex.isEmpty else { return DS.emerald }
+        if scheme == .dark {
+            return Color(hex: TeamTextContrast.usableOnDarkSurface(primaryHex: hex) ?? hex)
+        }
+        return Color(hex: TeamTextContrast.usableForText(hex) ?? hex)
+    }
+}
+
 enum MachineryDateFormatting12288 {
     private static let isoFractional: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -632,9 +657,10 @@ private struct MachineryCoinFlipSectionView: View {
         let shown = expanded ? items : Array(items.prefix(limit))
         VStack(alignment: .leading, spacing: 10) {
             ForEach(shown) { item in
-                let colors = ProbabilityBarPalette.pair(
+                let colors = MachineryColorContrast12288.pairHexes(
                     awayHex: item.awayArt?.accentColor,
-                    homeHex: item.homeArt?.accentColor
+                    homeHex: item.homeArt?.accentColor,
+                    scheme: colorScheme
                 )
                 let when = MachineryDateFormatting12288.shortKickoff(item.commenceTime)
                 NavigationLink(value: Route.eventDetail(id: item.eventId)) {
@@ -834,9 +860,10 @@ private struct MachineryDuelBarSectionView: View {
         if let lead = items.first, lead.outcomes.count >= 2 {
             let left = lead.outcomes[0]
             let right = lead.outcomes[1]
-            let colors = ProbabilityBarPalette.pair(
+            let colors = MachineryColorContrast12288.pairHexes(
                 awayHex: left.art?.accentColor,
-                homeHex: right.art?.accentColor
+                homeHex: right.art?.accentColor,
+                scheme: colorScheme
             )
             let leftColor = Color(hex: colors.away)
             let rightColor = Color(hex: colors.home)
@@ -1120,9 +1147,7 @@ private struct MachineryContenderSpotlightSectionView: View {
     }
 
     private func columnSpotlightTile(rank: Int, outcome: MachineryOutcomeVisual) -> some View {
-        let barColor = (outcome.art?.accentColor.isEmpty == false)
-            ? Color(hex: outcome.art!.accentColor)
-            : DS.emerald
+        let barColor = MachineryColorContrast12288.singleAccent(outcome.art?.accentColor, scheme: colorScheme)
         return VStack(spacing: 6) {
             HStack {
                 Text("#\(rank)")
@@ -1273,10 +1298,7 @@ private struct MachinerySiblingFieldsSectionView: View {
                                     if scaleOrd {
                                         return isFav ? DS.emerald : Color.gray.opacity(0.6)
                                     }
-                                    if let hex = o.art?.accentColor, !hex.isEmpty {
-                                        return Color(hex: hex)
-                                    }
-                                    return DS.emerald
+                                    return MachineryColorContrast12288.singleAccent(o.art?.accentColor, scheme: colorScheme)
                                 }()
 
                                 HStack(alignment: .center, spacing: 10) {
@@ -1652,10 +1674,7 @@ struct MachineryDiscoverCardView: View {
                     if card.scaleOrdered {
                         return isFav ? DS.emerald : Color.gray.opacity(0.6)
                     }
-                    if let hex = o.art?.accentColor, !hex.isEmpty {
-                        return Color(hex: hex)
-                    }
-                    return DS.emerald
+                    return MachineryColorContrast12288.singleAccent(o.art?.accentColor, scheme: colorScheme)
                 }()
 
                 HStack(alignment: .center, spacing: 10) {

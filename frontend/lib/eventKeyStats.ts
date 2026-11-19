@@ -23,6 +23,7 @@ import {
 } from "@/lib/chartTimeline";
 import {
   hasProbabilitySourceReading,
+  isStoredOpeningChance,
   readProbabilitySourceValues,
   shouldWithholdProbability,
 } from "@/lib/probabilityEvidence";
@@ -1036,7 +1037,14 @@ export function resolveProbability(
   /** Opt in to selection provenance without changing legacy result shapes. */
   includeSelection = false,
 ): ResolvedProbability {
-  const odds = event.current_odds;
+  const snapshot = event.current_odds;
+  // Older detail responses can carry the opening under either an aggregate
+  // fallback or a raw book snapshot captured before kickoff.
+  const repeatsOpening =
+    isLive && isStoredOpeningChance(event) &&
+    (snapshot?.source === "aggregate" ||
+      Date.parse(snapshot?.captured_at ?? "") < Date.parse(event.commence_time));
+  const odds = repeatsOpening ? undefined : snapshot;
   const opening = event.opening_odds;
 
   let homeProb: number | null = null;

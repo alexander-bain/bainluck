@@ -68,6 +68,8 @@ final class WatchMarqueeTests: XCTestCase {
     func testUnsupportedTournamentFirstFallsThroughToUsableEvent() throws {
         let feed = try items("{ \"items\": [ \(tournamentItem), \(usableEvent) ] }")
         let story = try XCTUnwrap(WatchMarquee.marquee(from: feed))
+        // No team-data abbreviations in the fixture → abbrev falls back to
+        // `TeamShortName.abbreviation` (#12737 Ruling 194-A: "LA Lakers" → "LAK", "Boston Celtics" → "CEL").
         XCTAssertEqual(story.title, "LAK @ CEL")
     }
 
@@ -109,6 +111,7 @@ final class WatchMarqueeTests: XCTestCase {
         // Futures is first in rank order, but a live event exists later — live wins.
         let feed = try items("{ \"items\": [ \(usableFutures), \(liveEvent) ] }")
         let story = try XCTUnwrap(WatchMarquee.marquee(from: feed))
+        // "NY Knicks" → "KNI", "Miami Heat" → "HEA" (`TeamShortName.abbreviation` fallback, #12737).
         XCTAssertEqual(story.title, "KNI @ HEA", "the live event is the marquee, not the earlier futures")
         XCTAssertEqual(story.badge, .live)
     }

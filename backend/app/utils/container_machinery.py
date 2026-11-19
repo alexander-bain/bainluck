@@ -15,15 +15,20 @@ and ``container_machinery_enabled()`` defaults to ``False`` until turned on by F
 from __future__ import annotations
 
 import copy
+import inspect
 import json
+import logging
 import math
 import os
 import re
-from datetime import datetime, timedelta, timezone
+import time
+import unicodedata
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
+from zoneinfo import ZoneInfo
 
 from app.utils.container_presentation import (
     MEMBER_EVENT,
@@ -31,7 +36,12 @@ from app.utils.container_presentation import (
     event_destination,
     market_destination,
 )
+from app.utils.draw_priced_winner import printable_away
 from app.utils.graded_card import rendered_card_percents, rendered_duel_percents
+
+# Ruling 253: A (#12288): "toss-up" means neither side above 55% (45%–55%).
+TOSS_UP_MAX_SIDE_PROB = 0.55
+TOSS_UP_MIN_SECTION_COUNT = 2
 
 __all__ = [
     "CANDIDATE_2028_PRESIDENTIAL_PATH",
@@ -58,6 +68,8 @@ __all__ = [
 ]
 
 PRODUCER_KIND_CONTAINER_MACHINERY = "container_machinery"
+
+logger = logging.getLogger(__name__)
 
 MACHINERY_FORM_IDS: frozenset[str] = frozenset(
     {
@@ -233,6 +245,72 @@ def _scale_skeleton(raw: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+_PLAIN_RATE_MOVE_RE = re.compile(
+    r"^(quarter|half|three-quarter|full|\d+(?:\.\d+)?)-point(?:\s+(or\s+(?:larger|more|greater)))?\s+(cut|decrease|increase|hike)$",
+    re.IGNORECASE,
+)
+
+_COUNT_BPS_PAREN_RE = re.compile(
+    r"^(\d+)(\+)?\s*\(\s*(\d+(?:\.\d+)?)(\+)?\s*(?:bps|basis\s+points?)\s*\)$",
+    re.IGNORECASE,
+)
+
+_PLAIN_MAGNITUDE_BPS: dict[str, float] = {
+    "quarter": 25.0,
+    "half": 50.0,
+    "three-quarter": 75.0,
+    "full": 100.0,
+}
+
+
+def _plain_rate_move_label(val_bps: float, direction: int, is_open: bool) -> str:
+    """Ruling 244: A — format Fed/central-bank rate moves in plain English, never 'bps'."""
+    word = "cut" if direction < 0 else "increase"
+    rounded = round(val_bps, 4)
+    if abs(rounded - 25.0) < 1e-6:
+        mag = "Quarter-point"
+    elif abs(rounded - 50.0) < 1e-6:
+        mag = "Half-point"
+    elif abs(rounded - 75.0) < 1e-6:
+        mag = "Three-quarter-point"
+    elif abs(rounded - 100.0) < 1e-6:
+        mag = "Full-point"
+    else:
+        pts = val_bps / 100.0
+        mag = f"{pts:g}-point"
+    if is_open:
+        return f"{mag} or larger {word}"
+    return f"{mag} {word}"
+
+
+def _plain_bps_step_words(val_bps: float) -> str:
+    rounded = round(val_bps, 4)
+    if abs(rounded - 25.0) < 1e-6:
+        return "quarter point"
+    if abs(rounded - 50.0) < 1e-6:
+        return "half point"
+    if abs(rounded - 75.0) < 1e-6:
+        return "three-quarter point"
+    if abs(rounded - 100.0) < 1e-6:
+        return "full point"
+    return f"{val_bps / 100.0:g} points"
+
+
+def _prose_rate_outcome(label: str, *, capitalize_first: bool = False) -> str:
+    """Format a cleaned outcome label naturally inside a sentence (Ruling 244: A)."""
+    s = str(label or "").strip()
+    if not s:
+        return s
+    low = s.lower()
+    if _PLAIN_RATE_MOVE_RE.match(s):
+        phrase = f"a {low}"
+    else:
+        phrase = _prose_outcome_name(s)
+    if capitalize_first and phrase:
+        return phrase[0].upper() + phrase[1:]
+    return phrase
+
+
 def parse_numerical_scale_key(raw_label: Optional[str]) -> Optional[dict[str, Any]]:
     """Parse one outcome label into a numerical-scale sort key, or ``None`` if not a numeric scale."""
     full = (raw_label or "").strip()
@@ -250,6 +328,24 @@ def parse_numerical_scale_key(raw_label: Optional[str]) -> Optional[dict[str, An
 
     if _HOLD_MOVE_RE.match(stripped):
         return {"kind": "signed_move", "primary": 0.0, "bound_rank": 0, "secondary": 0.0, "skeleton": "signed_move"}
+
+    m_plain = _PLAIN_RATE_MOVE_RE.match(stripped)
+    if m_plain:
+        mag_tok = m_plain.group(1).lower()
+        val = (
+            _PLAIN_MAGNITUDE_BPS[mag_tok]
+            if mag_tok in _PLAIN_MAGNITUDE_BPS
+            else _parse_float(mag_tok) * 100.0
+        )
+        is_open = bool(m_plain.group(2))
+        direction = -1.0 if m_plain.group(3).lower() in {"cut", "decrease"} else 1.0
+        return {
+            "kind": "signed_move",
+            "primary": direction * val,
+            "bound_rank": (-1 if direction < 0 else 1) if is_open else 0,
+            "secondary": direction * val,
+            "skeleton": "signed_move",
+        }
 
     m = _SIGNED_PREFIX_MOVE_RE.match(stripped)
     if m:
@@ -410,9 +506,24 @@ def _clean_outcome_label(label: str) -> str:
     if re.match(r"^exactly\s+[-+$€£\d]", trimmed, re.IGNORECASE):
         trimmed = re.sub(r"^exactly\s+", "", trimmed, flags=re.IGNORECASE).strip()
 
-    # Unify FOMC / rate-move outcomes onto house style ('25 bps decrease', 'No change', '25 bps increase', '50+ bps increase').
+    # Ruling 244: A — plain-English Fed/rate-move labels (never 'bps').
     if _HOLD_MOVE_RE.match(trimmed):
         return "No change"
+
+    m_cnt = _COUNT_BPS_PAREN_RE.match(trimmed)
+    if m_cnt:
+        cnt = int(m_cnt.group(1))
+        cnt_plus = "+" if m_cnt.group(2) else ""
+        bps_v = _parse_float(m_cnt.group(3))
+        bps_plus = bool(m_cnt.group(4))
+        if math.isfinite(bps_v):
+            if cnt == 0 and not cnt_plus:
+                return "0 hikes"
+            noun = "hike" if (cnt == 1 and not cnt_plus) else "hikes"
+            step_txt = _plain_bps_step_words(bps_v)
+            if bps_plus:
+                step_txt = f"{step_txt} or more"
+            return f"{cnt}{cnt_plus} {noun} ({step_txt})"
 
     m_pre = _SIGNED_PREFIX_MOVE_RE.match(trimmed)
     if m_pre and re.search(r"bps|basis\s+points?", trimmed, re.IGNORECASE):
@@ -427,8 +538,7 @@ def _clean_outcome_label(label: str) -> str:
                 is_open = True
             else:
                 is_open = bool(op_tok or plus_tok)
-            word = "decrease" if direction < 0 else "increase"
-            return f"{_format_bps_number(val)}{'+' if is_open else ''} bps {word}"
+            return _plain_rate_move_label(val, direction, is_open)
 
     m_suf = _SIGNED_SUFFIX_MOVE_RE.match(trimmed)
     if m_suf and re.search(r"bps|basis\s+points?", trimmed, re.IGNORECASE):
@@ -443,8 +553,7 @@ def _clean_outcome_label(label: str) -> str:
                 is_open = True
             else:
                 is_open = bool(op_tok or plus_tok or or_more)
-            word = "decrease" if direction < 0 else "increase"
-            return f"{_format_bps_number(val)}{'+' if is_open else ''} bps {word}"
+            return _plain_rate_move_label(val, direction, is_open)
 
     return _proper_case_outcome_label(trimmed)
 
@@ -489,6 +598,51 @@ def _norm_key(text: str | None) -> str:
     return _NON_ALNUM_RE.sub(" ", text.lower()).strip()
 
 
+_DOTTED_INITIALS_RE = re.compile(r"\b(?:[A-Za-z]\.\s*){2,}(?=\s|$)")
+
+
+def _ascii_fold_key(text: str | None) -> str:
+    """NFKD ASCII-folded + dotted-initial key so equivalent spellings
+    ('Luka Dončić' / 'Luka Doncic', 'JD Vance' / 'J.D. Vance') share one identity key.
+    """
+    if not text:
+        return ""
+    decomposed = unicodedata.normalize("NFKD", str(text))
+    ascii_only = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    collapsed = _DOTTED_INITIALS_RE.sub(lambda m: re.sub(r"[\.\s]+", "", m.group(0)), ascii_only)
+    return _NON_ALNUM_RE.sub(" ", collapsed.lower()).strip()
+
+
+def _diacritic_letter_count(text: str) -> int:
+    return sum(1 for ch in text if ord(ch) > 127 and ch.isalpha())
+
+
+def _pick_preferred_subject_spelling(
+    variants: Sequence[str],
+    *,
+    primary_display: Optional[str] = None,
+) -> Optional[str]:
+    """When variants share the exact same ``_ascii_fold_key``:
+    1. Prefer properly accented orthography ('Luka Dončić' over 'Luka Doncic').
+    2. Otherwise prefer the registered primary display alias ('JD Vance') or cleaner undotted form
+       ('JD Vance' over 'J.D. Vance') so one person never prints two ways in one grouping.
+    """
+    cleaned = [re.sub(r"\s+", " ", str(v).strip()) for v in variants if str(v).strip()]
+    if not cleaned:
+        return None
+    best_diacritic = max(cleaned, key=lambda s: (_diacritic_letter_count(s), -len(s)))
+    if _diacritic_letter_count(best_diacritic) > 0:
+        return best_diacritic
+    if primary_display:
+        prim = re.sub(r"\s+", " ", str(primary_display).strip())
+        if prim and any(c.isupper() for c in prim):
+            return prim
+    titled = [s for s in cleaned if any(c.isupper() for c in s)]
+    if len(set(titled)) > 1:
+        return min(titled, key=lambda s: (s.count("."), len(s), s))
+    return None
+
+
 def _initials(label: str) -> str:
     words = [w for w in re.split(r"\s+", label.strip()) if w]
     if not words:
@@ -515,11 +669,35 @@ class SubjectArtResolver:
         self._by_norm: dict[str, dict[str, Any]] = {}
         self._load_catalogs()
 
-    def _register(self, aliases: Sequence[str], record: dict[str, Any]) -> None:
+    def _register(
+        self,
+        aliases: Sequence[str],
+        record: dict[str, Any],
+        *,
+        display_aliases: Optional[Sequence[str]] = None,
+    ) -> None:
+        disp_list = [str(a) for a in (display_aliases if display_aliases is not None else aliases) if str(a).strip()]
+        primary_disp = disp_list[0] if disp_list else None
+        by_fold: dict[str, list[str]] = {}
+        for raw in disp_list:
+            fk = _ascii_fold_key(raw)
+            if fk:
+                by_fold.setdefault(fk, []).append(str(raw))
         for raw in aliases:
-            nk = _norm_key(raw)
-            if nk and nk not in self._by_norm:
-                self._by_norm[nk] = record
+            fk = _ascii_fold_key(raw)
+            rec_for_alias = record
+            if fk and len(by_fold.get(fk, ())) > 1 and "canonical_name" not in record:
+                prim_for_fold = (
+                    primary_disp
+                    if primary_disp and _ascii_fold_key(primary_disp) == fk
+                    else None
+                )
+                pref = _pick_preferred_subject_spelling(by_fold[fk], primary_display=prim_for_fold)
+                if pref:
+                    rec_for_alias = {**record, "canonical_name": pref}
+            for nk in (_norm_key(raw), fk):
+                if nk and nk not in self._by_norm:
+                    self._by_norm[nk] = rec_for_alias
 
     def _load_catalogs(self) -> None:
         # 1. Dedicated machinery subject art (ESPN headshots, NFL crests, verified Commons portraits)
@@ -537,7 +715,12 @@ class SubjectArtResolver:
                     "license": item.get("license"),
                     "source_page": item.get("source_page"),
                 }
-                self._register(list(item.get("aliases") or ()) + [str(item.get("key") or "")], rec)
+                disp_aliases = [str(a) for a in (item.get("aliases") or ()) if a]
+                self._register(
+                    disp_aliases + [str(item.get("key") or "")],
+                    rec,
+                    display_aliases=disp_aliases,
+                )
             for team_name, meta in (raw.get("nfl_teams") or {}).items():
                 if not isinstance(meta, Mapping):
                     continue
@@ -597,10 +780,11 @@ class SubjectArtResolver:
                 if not isinstance(entry, Mapping) or not entry.get("url"):
                     continue
                 aliases = [str(a) for a in (entry.get("aliases") or ()) if a]
+                all_aliases = list(aliases)
                 if entry.get("entity_key"):
-                    aliases.append(str(entry["entity_key"]))
+                    all_aliases.append(str(entry["entity_key"]))
                 self._register(
-                    aliases,
+                    all_aliases,
                     {
                         "url": str(entry["url"]),
                         "kind": str(entry.get("kind") or "person"),
@@ -610,6 +794,7 @@ class SubjectArtResolver:
                         "license": entry.get("license"),
                         "source_page": entry.get("source_page"),
                     },
+                    display_aliases=aliases,
                 )
 
     def resolve(
@@ -621,21 +806,41 @@ class SubjectArtResolver:
     ) -> dict[str, Any]:
         clean_subj = _OUTCOME_PROP_SUFFIX_RE.sub("", subject.strip())
         nk = _norm_key(clean_subj) or _norm_key(subject)
-        hit = self._by_norm.get(nk)
+        fk = _ascii_fold_key(clean_subj) or _ascii_fold_key(subject)
+        hit = self._by_norm.get(nk) or (self._by_norm.get(fk) if fk else None)
         url = explicit_url or (hit["url"] if hit else None)
         color = explicit_color or (hit.get("accent_color") if hit else None) or _fallback_color(clean_subj or subject)
-        return {
+        out: dict[str, Any] = {
             "url": url,
             "kind": (hit.get("kind") if hit else ("explicit" if url else "monogram")),
             "detail": (hit.get("detail") if hit else "") or "",
             "accent_color": color,
             "initials": _initials(clean_subj or subject),
         }
+        if hit and hit.get("canonical_name"):
+            out["canonical_name"] = str(hit["canonical_name"])
+        return out
 
 
 @lru_cache(maxsize=1)
 def _default_art_resolver() -> SubjectArtResolver:
     return SubjectArtResolver()
+
+
+def _is_event_toss_up(item: Mapping[str, Any]) -> bool:
+    """Ruling 253: A — a game is a toss-up iff neither side is above 55%."""
+    if isinstance(item.get("is_toss_up"), bool):
+        return bool(item["is_toss_up"])
+    ap_pct = item.get("away_pct")
+    hp_pct = item.get("home_pct")
+    if isinstance(ap_pct, int) and isinstance(hp_pct, int):
+        return max(ap_pct, hp_pct) <= int(round(TOSS_UP_MAX_SIDE_PROB * 100))
+    fav = item.get("fav_prob")
+    if isinstance(fav, (int, float)):
+        return float(fav) <= (TOSS_UP_MAX_SIDE_PROB + 1e-9)
+    ap = float(item.get("away_prob") or 0.5)
+    hp = float(item.get("home_prob") or 0.5)
+    return max(ap, hp) <= (TOSS_UP_MAX_SIDE_PROB + 1e-9)
 
 
 def choose_section_form(
@@ -650,9 +855,15 @@ def choose_section_form(
         return "probability_history_chart"
 
     if atoms_kind == "events":
-        if len(selected_items) >= 2 and all(
-            0.34 <= float(it.get("fav_prob") or 0.5) <= 0.66 for it in selected_items
-        ):
+        any_started = any(
+            str(it.get("status") or "").strip().lower()
+            in {"live", "in_progress", "halftime"}
+            for it in selected_items
+        )
+        if any_started:
+            return "matchup_slate"
+        in_band = sum(1 for it in selected_items if _is_event_toss_up(it))
+        if in_band >= TOSS_UP_MIN_SECTION_COUNT and in_band == len(selected_items):
             return "coin_flip_matchups"
         return "matchup_slate"
 
@@ -848,7 +1059,14 @@ def _clean_section_market_label(name: str) -> str:
     # ── Sports / Awards / General cleanup ────────────────────────────────
     is_oscar_nom = bool(re.match(r"^oscar\s+nominees?:", cleaned, re.IGNORECASE))
     cleaned = re.sub(
-        r"^(?:NFL:\s*|Pro\s+Football:?\s*|NFL\s+(?=(?:Passing|Rushing|Receiving)\b)|Oscar\s+Winners?:\s*|Oscar\s+nominees?:\s*|Oscars?\s+\d{4}:\s*|2028\s+U\.S\.\s*|2028\s+)",
+        r"^(?:(?:NFL|NBA|MLB|NHL|WNBA|MLS|PGA|NCAA|CFB):\s*|Pro\s+(?:Football|Basketball|Baseball|Hockey|Soccer|Golf|Tennis|MMA|Boxing):?\s*|(?:NFL|NBA|MLB|NHL|WNBA|MLS|PGA)\s+(?=(?:Passing|Rushing|Receiving|Points|Rebounds|Assists|Steals|Blocks|Three-Pointers|Home\s+Runs|Strikeouts|Batting|Hits|Runs|RBIs?|Goals|Saves|MVP|Most\s+Valuable|Defensive\s+Player|Offensive\s+Player|Rookie|Sixth\s+Man|Most\s+Improved|Clutch\s+Player|Coach|Comeback\s+Player|Cy\s+Young|Hart|Norris|Vezina|Selke|Calder|Heisman)\b)|Oscar\s+Winners?:\s*|Oscar\s+nominees?:\s*|Oscars?\s+\d{4}:\s*|2028\s+U\.S\.\s*|2028\s+)",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    # Strip redundant parenthetical stat abbreviations after spelled-out stat names ('Points Per Game (PPG) Leader' -> 'Points Per Game Leader')
+    cleaned = re.sub(
+        r"\s*\((?:PPG|RPG|APG|SPG|BPG|TDs?|YPG|ERA|HR|RBIs?|3PM)\)",
         "",
         cleaned,
         flags=re.IGNORECASE,
@@ -866,6 +1084,13 @@ def _clean_section_market_label(name: str) -> str:
         cleaned = re.sub(r"\s+film\s+winner$", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\s+film(?=\s+nominations$|$)", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\s+winner$", "", cleaned, flags=re.IGNORECASE)
+    # Strip redundant trailing 'Winner' on individual awards ('Defensive Player of the Year Winner' -> 'Defensive Player of the Year')
+    cleaned = re.sub(
+        r"((?:MVP|Most\s+Valuable\s+Player|Player\s+of\s+the\s+Year|Rookie\s+of\s+the\s+Year|Sixth\s+Man\s+of\s+the\s+Year|Coach\s+of\s+the\s+Year|Most\s+Improved\s+Player|Comeback\s+Player\s+of\s+the\s+Year|Clutch\s+Player\s+of\s+the\s+Year|Cy\s+Young(?:\s+Award)?|Heisman(?:\s+Trophy)?))\s+winner\??$",
+        r"\1",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
 
     # Strip venue trailing '? (2028)', '(2028)', '?', and conversational prefixes
     cleaned = re.sub(r"\?\s*\(\d{4}\)\s*$", "", cleaned)
@@ -903,6 +1128,14 @@ def _market_matches_query(market: Mapping[str, Any], query: Mapping[str, Any]) -
         return False
 
     excl_tokens = [str(t).lower() for t in (query.get("exclude_tokens") or ()) if str(t).strip()]
+    explicitly_womens = any("women" in tok for tok in req_tokens + any_tokens)
+    if not explicitly_womens:
+        if "wnba" in excl_tokens:
+            excl_tokens.extend(["women's pro basketball", "womens pro basketball", "women\u2019s pro basketball"])
+        if "lpga" in excl_tokens:
+            excl_tokens.extend(["women's pro golf", "womens pro golf", "women\u2019s pro golf"])
+        if "nwsl" in excl_tokens:
+            excl_tokens.extend(["women's pro soccer", "womens pro soccer", "women\u2019s pro soccer"])
     if any(tok in title_low for tok in excl_tokens):
         return False
 
@@ -1084,7 +1317,13 @@ def _hydrate_market_visual_item(
                 o_name,
                 explicit_url=(str(o["image_url"]) if o.get("image_url") else None),
             )
+            canon_subj = art.get("canonical_name")
+            if canon_subj and _ascii_fold_key(canon_subj) == _ascii_fold_key(o_name):
+                o_name = str(canon_subj)
             pct_val = int(o.get("rendered_percent") or _half_up_pct(p))
+            for fk_alias in (_norm_key(o_name), _ascii_fold_key(o_name)):
+                if fk_alias and fk_alias not in canon_by_key:
+                    canon_by_key[fk_alias] = pct_val
             outcomes_out.append(
                 {
                     "outcome_id": oid,
@@ -1181,10 +1420,20 @@ def _hydrate_event_visual_item(
         explicit_color=away_td.get("primary_color"),
     )
 
-    # Slice 5 Note 1: send two-way game pairs through rendered_duel_percents so away_pct + home_pct == 100.
-    away_pct_raw, home_pct_raw = rendered_duel_percents(ap, hp)
-    away_pct = int(away_pct_raw) if away_pct_raw is not None else _half_up_pct(ap)
-    home_pct = int(home_pct_raw) if home_pct_raw is not None else _half_up_pct(hp)
+    # Ruling 253: A & Fable 8:35 PM Rule 1: print the exact pair the game's own
+    # page serves (`current_odds.away_rendered_percent`, `home_rendered_percent`),
+    # never a second independent rounding.
+    sport_key_str = str(event.get("sport") or "").strip().lower()
+    served_away_pct = odds.get("away_rendered_percent")
+    served_home_pct = odds.get("home_rendered_percent")
+    if isinstance(served_away_pct, int) and isinstance(served_home_pct, int):
+        away_pct = int(served_away_pct)
+        home_pct = int(served_home_pct)
+    else:
+        canonical_away_p = printable_away(ap, hp, sport_key_str)
+        away_pct_raw, home_pct_raw = rendered_duel_percents(canonical_away_p, hp)
+        away_pct = int(away_pct_raw) if away_pct_raw is not None else _half_up_pct(ap)
+        home_pct = int(home_pct_raw) if home_pct_raw is not None else _half_up_pct(hp)
 
     explicit_mpn = event.get("member_page_numbers")
     if isinstance(explicit_mpn, Mapping):
@@ -1198,6 +1447,12 @@ def _hydrate_event_visual_item(
     card_ev = dict(event)
     card_ev["hero_probability"] = hp
     card_ev["hero_probability_away"] = ap
+    card_odds = dict(odds) if isinstance(odds, Mapping) else {}
+    card_odds.setdefault("home_probability", hp)
+    card_odds.setdefault("away_probability", ap)
+    card_odds["away_rendered_percent"] = away_pct
+    card_odds["home_rendered_percent"] = home_pct
+    card_ev["current_odds"] = card_odds
     if not isinstance(card_ev.get("home_team_data"), Mapping) and (home_art.get("url") or home_art.get("accent_color")):
         card_ev["home_team_data"] = {
             "logo_small": home_art.get("url"),
@@ -1213,6 +1468,7 @@ def _hydrate_event_visual_item(
     card_ev["member_page_numbers"] = ev_mpn
 
     fav_prob = max(hp, ap)
+    is_toss_up = max(away_pct, home_pct) <= int(round(TOSS_UP_MAX_SIDE_PROB * 100))
     return {
         "event_id": eid,
         "href": f"/events/{eid}",
@@ -1232,6 +1488,8 @@ def _hydrate_event_visual_item(
         "home_art": home_art,
         "away_art": away_art,
         "fav_prob": fav_prob,
+        "is_toss_up": is_toss_up,
+        "show_toss_up_tag": is_toss_up,
         "closeness_to_50": abs(hp - 0.5),
         "member_page_numbers": ev_mpn,
         "card": card_ev,
@@ -1399,9 +1657,9 @@ async def _load_snapshot_from_db(
         }
 
     from sqlalchemy import and_, func, or_, select
-    from sqlalchemy.orm import selectinload
+    from sqlalchemy.orm import joinedload, selectinload
 
-    from app.models.models import Event, FuturesMarket, FuturesOddsSnapshot
+    from app.models.models import Event, FuturesMarket, FuturesOddsSnapshot, Sport
     from app.routes.futures import (
         _apply_verified_title_to_detail,
         _fleet_newest_observation,
@@ -1435,8 +1693,14 @@ async def _load_snapshot_from_db(
         recent_floor = now_dt - timedelta(hours=6)
         stmt = (
             select(Event)
+            .join(Sport, Event.sport_id == Sport.id)
+            .options(
+                joinedload(Event.sport),
+                joinedload(Event.home_team),
+                joinedload(Event.away_team),
+            )
             .where(
-                Event.sport.in_(sorted(sport_keys)),
+                Sport.key.in_(sorted(sport_keys)),
                 Event.commence_time >= recent_floor,
                 Event.commence_time <= horizon,
             )
@@ -1451,33 +1715,79 @@ async def _load_snapshot_from_db(
                 continue
             hp = float(hero.home_probability)
             ap = float(hero.away_probability)
-            away_pct_raw, home_pct_raw = rendered_duel_percents(ap, hp)
+            sport_obj = getattr(ev, "sport", None)
+            if isinstance(sport_obj, str):
+                sport_key_val = sport_obj
+                sport_name_val = sport_obj.upper()
+            elif sport_obj is not None:
+                sport_key_val = str(getattr(sport_obj, "key", "") or "")
+                sport_name_val = str(getattr(sport_obj, "name", "") or sport_key_val.upper())
+            else:
+                sport_key_val = ""
+                sport_name_val = ""
+            # Exact same two lines as GET /api/events/{id} (`routes/events.py:20829-20837`).
+            canonical_ap = printable_away(ap, hp, sport_key_val)
+            away_pct_raw, home_pct_raw = rendered_duel_percents(canonical_ap, hp)
             away_pct = int(away_pct_raw) if away_pct_raw is not None else _half_up_pct(ap)
             home_pct = int(home_pct_raw) if home_pct_raw is not None else _half_up_pct(hp)
-            events_out.append(
-                {
-                    "id": ev.id,
-                    "sport": ev.sport,
-                    "sport_name": ev.sport.upper(),
-                    "home_team": ev.home_team,
-                    "away_team": ev.away_team,
-                    "commence_time": ev.commence_time.isoformat() if ev.commence_time else "",
-                    "status": ev.status or "scheduled",
-                    "home_score": ev.home_score,
-                    "away_score": ev.away_score,
-                    "hero_probability": hp,
-                    "hero_probability_away": ap,
-                    "hero_source": hero.source,
-                    "current_odds": {
-                        "home_probability": hp,
-                        "away_probability": ap,
-                    },
-                    "member_page_numbers": {
-                        "away_pct": away_pct,
-                        "home_pct": home_pct,
-                    },
-                }
+            home_team_obj = getattr(ev, "home_team", None)
+            away_team_obj = getattr(ev, "away_team", None)
+            home_team_str = str(
+                getattr(ev, "home_team_name", None)
+                or (
+                    home_team_obj
+                    if isinstance(home_team_obj, str)
+                    else getattr(home_team_obj, "name", "")
+                )
+                or ""
             )
+            away_team_str = str(
+                getattr(ev, "away_team_name", None)
+                or (
+                    away_team_obj
+                    if isinstance(away_team_obj, str)
+                    else getattr(away_team_obj, "name", "")
+                )
+                or ""
+            )
+            ev_dict: dict[str, Any] = {
+                "id": ev.id,
+                "sport": sport_key_val,
+                "sport_name": sport_name_val,
+                "home_team": home_team_str,
+                "away_team": away_team_str,
+                "commence_time": ev.commence_time.isoformat() if ev.commence_time else "",
+                "status": ev.status or "scheduled",
+                "home_score": ev.home_score,
+                "away_score": ev.away_score,
+                "hero_probability": hp,
+                "hero_probability_away": ap,
+                "hero_source": hero.source,
+                "current_odds": {
+                    "home_probability": hp,
+                    "away_probability": ap,
+                    "away_rendered_percent": away_pct,
+                    "home_rendered_percent": home_pct,
+                },
+                "member_page_numbers": {
+                    "away_pct": away_pct,
+                    "home_pct": home_pct,
+                },
+            }
+            for td_key, team_obj in (("home_team_data", home_team_obj), ("away_team_data", away_team_obj)):
+                if team_obj is not None and not isinstance(team_obj, str):
+                    logo_sm = getattr(team_obj, "logo_url_small", None) or getattr(team_obj, "logo_url", None)
+                    logo_lg = getattr(team_obj, "logo_url_large", None) or getattr(team_obj, "logo_url", None)
+                    p_col = getattr(team_obj, "primary_color", None)
+                    s_col = getattr(team_obj, "secondary_color", None)
+                    if any((logo_sm, logo_lg, p_col, s_col)):
+                        ev_dict[td_key] = {
+                            "logo_small": logo_sm,
+                            "logo_large": logo_lg,
+                            "primary_color": p_col,
+                            "secondary_color": s_col,
+                        }
+            events_out.append(ev_dict)
 
     ceremonies = {
         str(sec["atom_query"].get("ceremony") or "").lower()
@@ -1520,16 +1830,8 @@ async def _load_snapshot_from_db(
         m_rows: list[Any] = []
         seen_mids: set[int] = set()
         if needs_markets:
-            m_stmt = (
-                select(FuturesMarket)
-                .options(selectinload(FuturesMarket.outcomes))
-                .where(FuturesMarket.status == "open")
-                .order_by(FuturesMarket.volume.desc().nullslast())
-                .limit(800)
-            )
-            m_rows = list((await db.execute(m_stmt)).scalars().all())
-            seen_mids = {fm.id for fm in m_rows}
             extra_clauses = []
+            has_unfiltered_market_section = False
             for sec in sections_cfg:
                 if not isinstance(sec, Mapping) or not isinstance(sec.get("atom_query"), Mapping):
                     continue
@@ -1546,15 +1848,31 @@ async def _load_snapshot_from_db(
                     parts.append(~FuturesMarket.name.ilike(f"%{ex}%"))
                 if parts:
                     extra_clauses.append(and_(*parts))
+                else:
+                    has_unfiltered_market_section = True
+
             if extra_clauses:
                 targeted_stmt = (
                     select(FuturesMarket)
                     .options(selectinload(FuturesMarket.outcomes))
                     .where(FuturesMarket.status == "open", or_(*extra_clauses))
                     .order_by(FuturesMarket.volume.desc().nullslast(), FuturesMarket.id.asc())
-                    .limit(200)
+                    .limit(120)
                 )
                 for fm in (await db.execute(targeted_stmt)).scalars().all():
+                    if fm.id not in seen_mids:
+                        seen_mids.add(fm.id)
+                        m_rows.append(fm)
+
+            if has_unfiltered_market_section or not extra_clauses:
+                m_stmt = (
+                    select(FuturesMarket)
+                    .options(selectinload(FuturesMarket.outcomes))
+                    .where(FuturesMarket.status == "open")
+                    .order_by(FuturesMarket.volume.desc().nullslast())
+                    .limit(400)
+                )
+                for fm in (await db.execute(m_stmt)).scalars().all():
                     if fm.id not in seen_mids:
                         seen_mids.add(fm.id)
                         m_rows.append(fm)
@@ -1603,7 +1921,11 @@ async def _load_snapshot_from_db(
                 continue
             aq = sec["atom_query"]
             if aq.get("kind") in {"markets", "market_history"}:
-                cap_n = max(int(aq.get("max_items", 6)) + 4, 8)
+                cap_n = (
+                    max(int(aq.get("max_items", 4)) + 3, 6)
+                    if aq.get("kind") == "market_history"
+                    else max(int(aq.get("max_items", 4)) + 2, 4)
+                )
                 matched_sec = [pm for pm in prelim_markets if _market_matches_query(pm, aq)]
                 for pm in matched_sec[:cap_n]:
                     candidate_mids.add(int(pm["id"]))
@@ -1621,8 +1943,12 @@ async def _load_snapshot_from_db(
             out_map = await out_legs_by_market(list(vt_rows))
             for fm in vt_rows:
                 unsupported_ids = await _withheld_price_outcome_ids(db, fm)
-                leg_sides = await _game_container_leg_sides(db, fm)
-                lead_leg = await _game_container_lead_leg(db, fm, leg_sides)
+                if getattr(fm, "source", None) == "polymarket" and not getattr(fm, "mutually_exclusive", True):
+                    leg_sides = await _game_container_leg_sides(db, fm)
+                    lead_leg = await _game_container_lead_leg(db, fm, leg_sides)
+                else:
+                    leg_sides = {}
+                    lead_leg = None
                 detail = _format_market_detail(
                     fm,
                     None,
@@ -1657,7 +1983,12 @@ async def _load_snapshot_from_db(
                     pct_int = max(1, min(99, int(rp))) if 0.0 < p_f < 1.0 else int(rp)
                     by_oid[oid] = pct_int
                     r_name = str(row.get("name") or "")
-                    for nk in (_norm_key(_clean_outcome_label(r_name)), _norm_key(r_name)):
+                    for nk in (
+                        _norm_key(_clean_outcome_label(r_name)),
+                        _norm_key(r_name),
+                        _ascii_fold_key(_clean_outcome_label(r_name)),
+                        _ascii_fold_key(r_name),
+                    ):
                         if nk and nk not in by_key:
                             by_key[nk] = pct_int
                     fk = fold_outcome_key(r_name)
@@ -1761,13 +2092,14 @@ async def _load_snapshot_from_db(
             wanted_oids: set[int] = set()
             max_hours = max([int(hq.get("hours") or 168) for hq in all_hist_queries] or [168])
             for hq in all_hist_queries:
+                hist_cap = max(int(hq.get("max_items", 4)) + 2, 5)
                 matched_for_hq = [m_dict for m_dict in markets_out if _market_matches_query(m_dict, hq)]
-                for m_dict in matched_for_hq[:12]:
+                for m_dict in matched_for_hq[:hist_cap]:
                     outs_sorted = sorted(
                         m_dict["top_outcomes"],
                         key=lambda x: -float(x.get("probability") or 0.0),
                     )
-                    for o_d in outs_sorted[:4]:
+                    for o_d in outs_sorted[:3]:
                         wanted_oids.add(int(o_d["id"]))
             if wanted_oids:
                 cutoff = now_dt - timedelta(hours=max_hours)
@@ -1929,23 +2261,62 @@ def _resolve_section_heading(
     return raw_title, raw_note
 
 
+_US_SPORT_TZ = ZoneInfo("America/New_York")
+_EUROPE_SPORT_TZ = ZoneInfo("Europe/London")
+_AUSTRALIA_SPORT_TZ = ZoneInfo("Australia/Sydney")
+
+_EUROPEAN_SPORT_PREFIXES = (
+    "soccer_epl",
+    "soccer_england_",
+    "soccer_efl",
+    "soccer_fa_cup",
+    "soccer_uefa_",
+    "soccer_spain_",
+    "soccer_italy_",
+    "soccer_germany_",
+    "soccer_france_",
+    "soccer_netherlands_",
+    "soccer_portugal_",
+    "soccer_scotland_",
+    "rugby",
+    "cricket",
+)
+_AUSTRALIAN_SPORT_PREFIXES = ("aussierules_", "rugbyleague_nrl")
+
+
+def _sport_play_timezone(sport_key: str) -> ZoneInfo:
+    """Resolve the local game-day timezone for a sport/league so slate date ranges reflect
+    the calendar days games are played locally rather than UTC rollovers.
+    """
+    low = (sport_key or "").strip().lower()
+    if low.startswith(_AUSTRALIAN_SPORT_PREFIXES):
+        return _AUSTRALIA_SPORT_TZ
+    if low.startswith(_EUROPEAN_SPORT_PREFIXES):
+        return _EUROPE_SPORT_TZ
+    return _US_SPORT_TZ
+
+
 def _format_event_date_span(events: Sequence[Mapping[str, Any]]) -> str:
-    dts: list[datetime] = []
+    local_dates: list[date] = []
     for ev in events:
         raw = str(ev.get("commence_time") or "").strip()
         if not raw:
             continue
         try:
-            dts.append(datetime.fromisoformat(raw.replace("Z", "+00:00")))
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         except ValueError:
             continue
-    if not dts:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        tz = _sport_play_timezone(str(ev.get("sport") or ""))
+        local_dates.append(dt.astimezone(tz).date())
+    if not local_dates:
         return ""
-    lo = min(dts)
-    hi = max(dts)
-    if lo.month == hi.month and lo.day == hi.day:
+    lo = min(local_dates)
+    hi = max(local_dates)
+    if lo == hi:
         return f"{lo.strftime('%b')} {lo.day}"
-    if lo.month == hi.month:
+    if lo.year == hi.year and lo.month == hi.month:
         return f"{lo.strftime('%b')} {lo.day}–{hi.day}"
     return f"{lo.strftime('%b')} {lo.day}–{hi.strftime('%b')} {hi.day}"
 
@@ -2120,22 +2491,31 @@ def _build_dynamic_title_from_set(
                     return f"{leader_name} leads {cat_label} at {win_pct}%, with {strong_nom} contenders at 75%+ to be nominated"
                 return f"{leader_name} leads {cat_label} at {win_pct}%"
 
-    # 2. Event-led slate (e.g. NFL slate — named by biggest/closest game & dates, never week number)
+    # 2. Event-led slate (e.g. NFL/NBA slate — named by biggest/closest game & dates, never week number)
+    # Ruling 253: A: count ONLY games inside the <=55% toss-up band across the slate;
+    # with fewer than 2 toss-ups, drop the ", with N toss-up games" clause entirely.
     event_items: list[Mapping[str, Any]] = []
+    seen_event_ids: set[int] = set()
     tossup_count = 0
     for sec in built_sections:
         vb = sec.get("visual_block") or {}
         if vb.get("form_id") in {"coin_flip_matchups", "matchup_slate"}:
             its = [it for it in (vb.get("items") or ()) if isinstance(it, Mapping)]
-            if vb.get("form_id") == "coin_flip_matchups":
-                tossup_count = max(tossup_count, len(its))
+            for it in its:
+                eid = int(it.get("event_id") or 0)
+                if eid > 0 and eid in seen_event_ids:
+                    continue
+                if eid > 0:
+                    seen_event_ids.add(eid)
+                if _is_event_toss_up(it):
+                    tossup_count += 1
             event_items.extend(its)
     if event_items:
         lead_ev = event_items[0]
         matchup = f"{lead_ev.get('away_short') or lead_ev.get('away_team')} at {lead_ev.get('home_short') or lead_ev.get('home_team')}"
         span = _format_event_date_span(event_items)
         span_clause = f" the {span} slate" if span else " this slate"
-        if tossup_count >= 2:
+        if tossup_count >= TOSS_UP_MIN_SECTION_COUNT:
             return f"{matchup} headlines{span_clause}, with {tossup_count} toss-up games"
         return f"{matchup} headlines{span_clause}"
 
@@ -2176,17 +2556,78 @@ def _build_dynamic_title_from_set(
         if sp_fav and sibling_items:
             sib_fav = _fav_outcome(sibling_items[0])
             if sib_fav:
-                lead_subj = _prose_market_phrase(str(spotlight_item["title"]), capitalize_first=True)
+                sp_phrase = _prose_market_phrase(str(spotlight_item["title"]))
                 sib_phrase = _prose_market_phrase(str(sibling_items[0]["title"]))
+                lead_outcome = _prose_rate_outcome(str(sp_fav["name"]), capitalize_first=True)
+                sib_outcome = _prose_rate_outcome(str(sib_fav["name"]), capitalize_first=False)
                 return (
-                    f"{lead_subj} prices {sp_fav['name']} at {sp_fav['rendered_percent']}%, "
-                    f"with {sib_fav['name']} leading {sib_phrase} at {sib_fav['rendered_percent']}%"
+                    f"{lead_outcome} leads {sp_phrase} at {sp_fav['rendered_percent']}%, "
+                    f"with {sib_outcome} leading {sib_phrase} at {sib_fav['rendered_percent']}%"
                 )
         if sp_fav:
             sp_phrase = _prose_market_phrase(str(spotlight_item["title"]))
-            return f"{_prose_outcome_name(str(sp_fav['name']))} leads {sp_phrase} at {sp_fav['rendered_percent']}%"
+            return f"{_prose_rate_outcome(str(sp_fav['name']), capitalize_first=True)} leads {sp_phrase} at {sp_fav['rendered_percent']}%"
 
     return str(definition.get("name") or definition.get("slug") or "Round-Up")
+
+
+def _unify_grouping_diacritic_names(sections: Sequence[Mapping[str, Any]]) -> None:
+    """Ensure a subject never appears under two diacritic/ASCII spellings within one grouping
+    (e.g. 'Luka Dončić' in stat leaders vs 'Luka Doncic' in MVP tiles).
+    """
+    variants_by_fold: dict[str, list[str]] = {}
+    for sec in sections:
+        vb = sec.get("visual_block") if isinstance(sec, Mapping) else None
+        if not isinstance(vb, Mapping):
+            continue
+        for item in vb.get("items") or ():
+            if not isinstance(item, Mapping):
+                continue
+            if "subject" in item and isinstance(item.get("subject"), str):
+                fk = _ascii_fold_key(item["subject"])
+                if fk:
+                    variants_by_fold.setdefault(fk, []).append(item["subject"])
+            for o in item.get("outcomes") or ():
+                if isinstance(o, Mapping) and isinstance(o.get("name"), str):
+                    fk = _ascii_fold_key(o["name"])
+                    if fk:
+                        variants_by_fold.setdefault(fk, []).append(o["name"])
+            for s in item.get("series") or ():
+                if isinstance(s, Mapping) and isinstance(s.get("name"), str):
+                    fk = _ascii_fold_key(s["name"])
+                    if fk:
+                        variants_by_fold.setdefault(fk, []).append(s["name"])
+
+    preferred_by_fold: dict[str, str] = {}
+    for fk, names in variants_by_fold.items():
+        if len(set(names)) > 1:
+            pref = _pick_preferred_subject_spelling(names)
+            if pref:
+                preferred_by_fold[fk] = pref
+    if not preferred_by_fold:
+        return
+
+    for sec in sections:
+        vb = sec.get("visual_block") if isinstance(sec, Mapping) else None
+        if not isinstance(vb, Mapping):
+            continue
+        for item in vb.get("items") or ():
+            if not isinstance(item, dict):
+                continue
+            if isinstance(item.get("subject"), str):
+                fk = _ascii_fold_key(item["subject"])
+                if fk in preferred_by_fold:
+                    item["subject"] = preferred_by_fold[fk]
+            for o in item.get("outcomes") or ():
+                if isinstance(o, dict) and isinstance(o.get("name"), str):
+                    fk = _ascii_fold_key(o["name"])
+                    if fk in preferred_by_fold:
+                        o["name"] = preferred_by_fold[fk]
+            for s in item.get("series") or ():
+                if isinstance(s, dict) and isinstance(s.get("name"), str):
+                    fk = _ascii_fold_key(s["name"])
+                    if fk in preferred_by_fold:
+                        s["name"] = preferred_by_fold[fk]
 
 
 async def produce_container_machinery(
@@ -2373,12 +2814,57 @@ async def produce_container_machinery(
                 ev_items.append(hyd)
             order_by = str(aq.get("order_by") or "kickoff_asc")
             if order_by == "closeness_to_50":
+                # Fable 2026-11-18 Rule 3: no row may show a started game with only
+                # its scheduled time. Hold only unstarted games in closest-games /
+                # Coin-Flip Matchups whenever >= min_items unstarted games exist
+                # (live games render with full LIVE + score cards in Live & Upcoming
+                # Matchups). If fewer than min_items unstarted games remain on the
+                # slate, keep the live games and `choose_section_form` forces
+                # `matchup_slate` so both web and iOS 1.0.7 draw full LIVE score cards.
+                unstarted_items = [
+                    it
+                    for it in ev_items
+                    if str(it.get("status") or "").strip().lower()
+                    not in {"live", "in_progress", "halftime"}
+                ]
+                if len(unstarted_items) >= min_items:
+                    ev_items = unstarted_items
                 ev_items.sort(key=lambda x: (x["closeness_to_50"], x["commence_time"]))
+                # Ruling 253: A — "Toss-up" means neither side above 55%.
+                # When >= 2 games are inside the band, feature ONLY those true toss-ups.
+                # With fewer than 2, rename the section to "Closest games", strip all
+                # TOSS-UP tags, and choose the non-toss-up slate form (so iOS 1.0.7 and
+                # web both show clean matchup rows with zero TOSS-UP badges).
+                in_band_items = [it for it in ev_items if _is_event_toss_up(it)]
+                if len(in_band_items) >= TOSS_UP_MIN_SECTION_COUNT:
+                    ev_items = in_band_items[:max_items]
+                    for it in ev_items:
+                        it["show_toss_up_tag"] = True
+                else:
+                    ev_items = ev_items[:max_items]
+                    sec_title = "Closest games"
+                    sec_note = "Closest matchups on this slate."
+                    for it in ev_items:
+                        it["show_toss_up_tag"] = False
             else:
                 ev_items.sort(key=lambda x: x["commence_time"])
-            ev_items = ev_items[:max_items]
+                ev_items = ev_items[:max_items]
             if len(ev_items) < min_items:
                 return RoundupRefusal((("container_machinery", f"too_few_events:{sec_key}"),))
+            # Games-in-play dynamic heading rule (Fable 2026-11-18):
+            # Never show live games under "Upcoming Matchups".
+            if sec_title.strip().lower().startswith("upcoming"):
+                live_count = sum(
+                    1
+                    for it in ev_items
+                    if str(it.get("status") or "").strip().lower() == "live"
+                )
+                if live_count > 0 and live_count == len(ev_items):
+                    sec_title = "Live Now"
+                    sec_note = "Live scores and win chances."
+                elif live_count > 0:
+                    sec_title = "Live & Upcoming Matchups"
+                    sec_note = "Live scores and upcoming games in start-time order."
             form_id = choose_section_form("events", ev_items)
             sec_members = []
             for it in ev_items:
@@ -2586,6 +3072,7 @@ async def produce_container_machinery(
         }
 
     built_sections = [built_by_idx[idx] for idx in sorted(built_by_idx)]
+    _unify_grouping_diacritic_names(built_sections)
 
     # Slice 6 Item 2c: all-or-nothing across configured sections — never emit an empty or shorter grouping.
     if (
@@ -3031,7 +3518,7 @@ def _lookup_market_member_pct(
         if str(outcome_id) in by_oid:
             return int(by_oid[str(outcome_id)])
     by_key = mpn.get("by_outcome_key") or {}
-    for nk in (_norm_key(_clean_outcome_label(label)), _norm_key(label)):
+    for nk in (_norm_key(_clean_outcome_label(label)), _norm_key(label), _ascii_fold_key(label)):
         if nk and nk in by_key:
             return int(by_key[nk])
     by_fold = mpn.get("by_fold_key") or {}
@@ -3057,7 +3544,13 @@ def _compute_member_number_parity(
     event_truth: dict[int, dict[str, int]] = {}
     market_truth: dict[int, dict[str, Any]] = {}
 
+    card_checked = 0
+    card_mismatches: list[dict[str, Any]] = []
+    page_checked = 0
+    page_mismatches: list[dict[str, Any]] = []
+
     for sec in sections:
+        sec_cls = str(sec.get("class") or "")
         for m in sec.get("members") or ():
             if not isinstance(m, Mapping):
                 continue
@@ -3066,18 +3559,63 @@ def _compute_member_number_parity(
             card_obj = m.get("card") if isinstance(m.get("card"), Mapping) else {}
             mpn = card_obj.get("member_page_numbers")
             if m_type == "event":
-                if isinstance(mpn, Mapping):
+                # Fable 2026-11-18 strict game-page parity rule:
+                # Never self-compare against a copied member_page_numbers dict.
+                # Verify that card.current_odds carries the exact canonical game-page
+                # rendered pair (`away_rendered_percent`, `home_rendered_percent`)
+                # produced by `printable_away` + `rendered_duel_percents` — the same
+                # function `/api/events/{id}` serves — and fail parity immediately if
+                # `current_odds` omits those integers or disagrees with the game page.
+                co = (
+                    card_obj.get("current_odds")
+                    if isinstance(card_obj.get("current_odds"), Mapping)
+                    else {}
+                )
+                ap_raw = co.get("away_probability")
+                if ap_raw is None:
+                    ap_raw = card_obj.get("hero_probability_away")
+                hp_raw = co.get("home_probability")
+                if hp_raw is None:
+                    hp_raw = card_obj.get("hero_probability")
+                sport_s = str(card_obj.get("sport") or "").strip().lower()
+                canonical_away: Optional[int] = None
+                canonical_home: Optional[int] = None
+                if isinstance(ap_raw, (int, float)) and isinstance(hp_raw, (int, float)):
+                    c_ap = printable_away(float(ap_raw), float(hp_raw), sport_s)
+                    c_a_pct, c_h_pct = rendered_duel_percents(c_ap, float(hp_raw))
+                    if c_a_pct is not None and c_h_pct is not None:
+                        canonical_away = int(c_a_pct)
+                        canonical_home = int(c_h_pct)
+                served_away = co.get("away_rendered_percent")
+                served_home = co.get("home_rendered_percent")
+                if canonical_away is not None and canonical_home is not None:
                     event_truth[mid] = {
-                        "away_pct": int(mpn["away_pct"]),
-                        "home_pct": int(mpn["home_pct"]),
+                        "away_pct": canonical_away,
+                        "home_pct": canonical_home,
                     }
-                elif (
-                    isinstance(card_obj.get("rendered_away_percent"), int)
-                    and isinstance(card_obj.get("rendered_home_percent"), int)
-                ):
+                    page_checked += 2
+                    if not isinstance(served_away, int) or int(served_away) != canonical_away:
+                        page_mismatches.append(
+                            {
+                                "location": f"{sec_cls}:member_card_current_odds:{mid}:away_rendered_percent",
+                                "event_id": mid,
+                                "shown": served_away,
+                                "member_page": canonical_away,
+                            }
+                        )
+                    if not isinstance(served_home, int) or int(served_home) != canonical_home:
+                        page_mismatches.append(
+                            {
+                                "location": f"{sec_cls}:member_card_current_odds:{mid}:home_rendered_percent",
+                                "event_id": mid,
+                                "shown": served_home,
+                                "member_page": canonical_home,
+                            }
+                        )
+                elif isinstance(served_away, int) and isinstance(served_home, int):
                     event_truth[mid] = {
-                        "away_pct": int(card_obj["rendered_away_percent"]),
-                        "home_pct": int(card_obj["rendered_home_percent"]),
+                        "away_pct": int(served_away),
+                        "home_pct": int(served_home),
                     }
             elif m_type == "market":
                 if isinstance(mpn, Mapping):
@@ -3091,8 +3629,6 @@ def _compute_member_number_parity(
                     market_truth[mid] = {"by_outcome_id": by_oid, "by_outcome_key": by_key}
 
     # 1. Discover card numbers
-    card_checked = 0
-    card_mismatches: list[dict[str, Any]] = []
     fi_data = (feed_item or {}).get("data") if isinstance((feed_item or {}).get("data"), Mapping) else {}
     rc = fi_data.get("roundup") or (feed_item or {}).get("roundup_contract") or {}
     if not isinstance(rc, Mapping):
@@ -3177,8 +3713,6 @@ def _compute_member_number_parity(
                     )
 
     # 2. Container page section numbers
-    page_checked = 0
-    page_mismatches: list[dict[str, Any]] = []
     for sec in sections:
         sec_cls = str(sec.get("class") or "")
         vb = sec.get("visual_block")
@@ -3544,34 +4078,45 @@ def compute_visual_diversity_report(
 
 
 def _machinery_preview_error_response(
-    slug: str,
     defn: Mapping[str, Any],
     *,
     error_code: str,
+    exc_class: str,
     allow_error_envelope: bool,
 ) -> dict[str, Any]:
-    """Slice 6 Item 2c: a failed read surfaces an explicit error state, never an empty or shorter grouping."""
+    """Slice 6 Item 2c + #12288 Ask 3: a failed read surfaces an explicit error state
+    (never an empty or shorter grouping) and logs one line naming the slug and exception class.
+    """
     from fastapi import HTTPException
 
+    canonical_slug = str(defn.get("slug") or "unknown").replace("\r", "").replace("\n", "")
+    safe_exc = str(exc_class or "Exception").replace("\r", "").replace("\n", "")
+    safe_code = str(error_code or "read_failed").replace("\r", "").replace("\n", "")
+    logger.warning(
+        "machinery_preview_error slug=%s exception_class=%s error_code=%s",
+        canonical_slug,
+        safe_exc,
+        safe_code,
+    )
     msg = "Couldn't load this grouping right now. Please try again."
     if not allow_error_envelope:
         raise HTTPException(
             status_code=503,
             detail={
                 "state": "unavailable",
-                "slug": slug,
-                "error_code": error_code,
+                "slug": canonical_slug,
+                "error_code": safe_code,
                 "message": msg,
             },
         )
     return {
-        "slug": slug,
+        "slug": canonical_slug,
         "status": "error",
         "error": msg,
-        "error_code": error_code,
+        "error_code": safe_code,
         "definition": {
-            "slug": str(defn.get("slug") or slug),
-            "name": str(defn.get("name") or slug),
+            "slug": canonical_slug,
+            "name": str(defn.get("name") or canonical_slug),
             "category": str(defn.get("category") or ""),
             "kicker": str(defn.get("kicker") or ""),
             "footer": str(defn.get("footer") or ""),
@@ -3580,6 +4125,19 @@ def _machinery_preview_error_response(
         "container": None,
         "diversity_report": None,
     }
+
+
+_MACHINERY_PREVIEW_CACHE_TTL_S = 60.0
+_machinery_preview_local_cache: dict[tuple[str, bool], tuple[float, dict[str, Any]]] = {}
+
+
+def reset_machinery_preview_cache_for_tests() -> None:
+    _machinery_preview_local_cache.clear()
+
+
+def _preview_redis_key(slug: str, include_children: bool) -> str:
+    suffix = "children" if include_children else "nochildren"
+    return f"machinery:preview:v1:{slug}:{suffix}"
 
 
 async def serve_machinery_candidate_preview(
@@ -3597,7 +4155,13 @@ async def serve_machinery_candidate_preview(
     never return ``None`` (which would fall through to an empty unpublished page or silently
     drop the grouping from the preview list). Instead raise HTTP 503 for direct container
     reads or return an explicit ``status='error'`` envelope for preview-list reads.
+
+    Preview cache (60s per slug, ok responses only): avoids repeated full snapshot rebuilds
+    when opening or refreshing ``/admin/groupings-preview`` while never caching errors.
     """
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.container_read_cache import container_read_cache_enabled
     from app.utils.roundup_containers import (
         RoundupRefusal,
         compose_roundup_container,
@@ -3612,6 +4176,60 @@ async def serve_machinery_candidate_preview(
     if target_path is None:
         return None
     defn = load_machinery_definition(target_path)
+    canon_slug = str(defn.get("slug") or target_path.stem).replace("\r", "").replace("\n", "")
+    use_preview_cache = (
+        isinstance(db, AsyncSession)
+        and now is None
+        and container_read_cache_enabled()
+    )
+    t_start = time.monotonic()
+    cache_key = (canon_slug, bool(include_children))
+    if use_preview_cache:
+        now_ts = time.time()
+        local_hit = _machinery_preview_local_cache.get(cache_key)
+        if local_hit is not None and (now_ts - local_hit[0]) < _MACHINERY_PREVIEW_CACHE_TTL_S:
+            elapsed_ms = int((time.monotonic() - t_start) * 1000)
+            logger.info(
+                "machinery_preview_built slug=%s elapsed_ms=%d cache_hit=local",
+                canon_slug,
+                elapsed_ms,
+            )
+            return copy.deepcopy(local_hit[1])
+        try:
+            from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+            redis_client = await get_shared_async_redis()
+            r_res = await bounded_redis_call(
+                lambda: redis_client.get(_preview_redis_key(canon_slug, bool(include_children)))
+            )
+            if r_res.is_ok and r_res.value:
+                raw_env = json.loads(
+                    r_res.value.decode("utf-8")
+                    if isinstance(r_res.value, (bytes, bytearray))
+                    else r_res.value
+                )
+                if (
+                    isinstance(raw_env, dict)
+                    and raw_env.get("status") == "ok"
+                    and isinstance(raw_env.get("cached_at"), (int, float))
+                    and (now_ts - float(raw_env["cached_at"])) < _MACHINERY_PREVIEW_CACHE_TTL_S
+                    and isinstance(raw_env.get("payload"), dict)
+                ):
+                    payload_hit = raw_env["payload"]
+                    _machinery_preview_local_cache[cache_key] = (
+                        float(raw_env["cached_at"]),
+                        payload_hit,
+                    )
+                    elapsed_ms = int((time.monotonic() - t_start) * 1000)
+                    logger.info(
+                        "machinery_preview_built slug=%s elapsed_ms=%d cache_hit=redis",
+                        canon_slug,
+                        elapsed_ms,
+                    )
+                    return copy.deepcopy(payload_hit)
+        except Exception:  # noqa: BLE001 — preview cache fails open
+            logger.debug("machinery preview redis read failed for %s", canon_slug, exc_info=True)
+
     expected_sections = len(
         [
             s
@@ -3630,15 +4248,31 @@ async def serve_machinery_candidate_preview(
                     else "read_refused"
                 )
                 return _machinery_preview_error_response(
-                    slug, defn, error_code=str(code), allow_error_envelope=allow_error_envelope
+                    defn,
+                    error_code=str(code),
+                    exc_class=type(outcome).__name__ if outcome is not None else "RoundupRefusal",
+                    allow_error_envelope=allow_error_envelope,
                 )
             payload = compose_roundup_container(producer, outcome)
             feed_item = compose_roundup_feed_item(producer, outcome)
         else:
             feed_item, payload = await evaluate_roundup_producer(producer, db, now=now)
-    except Exception:
+    except Exception as exc:
+        exc_name = type(exc).__name__
+        rollback_fn = getattr(db, "rollback", None)
+        if callable(rollback_fn):
+            try:
+                rb = rollback_fn()
+                if inspect.isawaitable(rb):
+                    await rb
+            except Exception:
+                # Best-effort rollback on an aborted DB session; return the primary read error below.
+                logger.debug("machinery preview session rollback failed", exc_info=True)
         return _machinery_preview_error_response(
-            slug, defn, error_code="read_failed", allow_error_envelope=allow_error_envelope
+            defn,
+            error_code="read_failed",
+            exc_class=exc_name,
+            allow_error_envelope=allow_error_envelope,
         )
 
     if (
@@ -3648,15 +4282,18 @@ async def serve_machinery_candidate_preview(
         or int(payload.get("member_count") or 0) <= 0
     ):
         return _machinery_preview_error_response(
-            slug, defn, error_code="incomplete_read", allow_error_envelope=allow_error_envelope
+            defn,
+            error_code="incomplete_read",
+            exc_class="RoundupRefusal",
+            allow_error_envelope=allow_error_envelope,
         )
 
     out = copy.deepcopy(payload)
     if not include_children:
         out["children"] = []
     report = compute_visual_diversity_report(defn, feed_item, out)
-    return {
-        "slug": slug,
+    envelope = {
+        "slug": canon_slug,
         "status": "ok",
         "definition": {
             "slug": defn["slug"],
@@ -3669,6 +4306,30 @@ async def serve_machinery_candidate_preview(
         "container": out,
         "diversity_report": report,
     }
+    if use_preview_cache:
+        stored_at = time.time()
+        _machinery_preview_local_cache[cache_key] = (stored_at, copy.deepcopy(envelope))
+        try:
+            from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+            redis_client = await get_shared_async_redis()
+            blob = json.dumps({"status": "ok", "cached_at": stored_at, "payload": envelope})
+            await bounded_redis_call(
+                lambda: redis_client.set(
+                    _preview_redis_key(canon_slug, bool(include_children)),
+                    blob,
+                    ex=int(_MACHINERY_PREVIEW_CACHE_TTL_S),
+                )
+            )
+        except Exception:  # noqa: BLE001 — preview cache write fails open
+            logger.debug("machinery preview redis write failed for %s", canon_slug, exc_info=True)
+    elapsed_ms = int((time.monotonic() - t_start) * 1000)
+    logger.info(
+        "machinery_preview_built slug=%s elapsed_ms=%d cache_hit=miss",
+        canon_slug,
+        elapsed_ms,
+    )
+    return envelope
 
 
 async def evaluate_machinery_candidates_preview(

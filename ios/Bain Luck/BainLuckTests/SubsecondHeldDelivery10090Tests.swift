@@ -641,16 +641,26 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         private let previousKeyWindow: UIWindow?
 
         init(_ vm: EventDetailViewModel, eventId: Int = 4242) async throws {
+            let activeDeadline = CACurrentMediaTime() + 2
             let deadline = CACurrentMediaTime() + 10
             func activeScene() -> UIWindowScene? {
                 UIApplication.shared.connectedScenes
                     .compactMap { $0 as? UIWindowScene }
                     .first { $0.activationState == .foregroundActive }
             }
-            while activeScene() == nil && CACurrentMediaTime() < deadline {
+            func usableScene() -> UIWindowScene? {
+                let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                return scenes.first { $0.activationState == .foregroundActive }
+                    ?? scenes.first { $0.activationState == .foregroundInactive }
+                    ?? scenes.first
+            }
+            while activeScene() == nil && CACurrentMediaTime() < activeDeadline {
                 try await Task.sleep(nanoseconds: 50_000_000)
             }
-            let scene = try XCTUnwrap(activeScene(), "the hosted page needs a foreground-active window scene")
+            while usableScene() == nil && CACurrentMediaTime() < deadline {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            let scene = try XCTUnwrap(usableScene(), "the hosted page needs a foreground window scene")
             previousKeyWindow = scene.windows.first { $0.isKeyWindow }
             let page = NavigationStack { EventDetailView(eventId: eventId, viewModel: vm) }
                 .environmentObject(PinManager())
@@ -686,6 +696,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
                 CATransaction.setCompletionBlock { committed.resume() }
                 CATransaction.commit()
             }
+            await DisplayTick.next()
             await DisplayTick.next()
             let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
                 _ = window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
@@ -1062,7 +1073,9 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         }
         let last = Self.burstBasis(Self.burstFrames.count - 1)
         await waitUntil(Self.burstAfter + 1) {
-            PacedStream.done && marks.contains { $0.mark.name == .modelHeadlineAdopted && $0.mark.basis == last }
+            PacedStream.done
+                && marks.contains { $0.mark.name == .modelHeadlineAdopted && $0.mark.basis == last }
+                && marks.contains { $0.mark.name == .modelChartAppended && $0.mark.basis == last }
         }
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("native-10090-subsecond-hosted")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

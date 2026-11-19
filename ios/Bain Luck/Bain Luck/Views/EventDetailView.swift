@@ -1216,7 +1216,7 @@ struct EventDetailView: View {
                     showUpdateStream = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showProbabilityDetails = true }
                 })
-                    .frame(idealWidth: 280, maxWidth: 300)
+                    .frame(minWidth: 320, idealWidth: 340, maxWidth: 358)
                     #if os(iOS)
                     .presentationCompactAdaptation(.popover)
                     #endif
@@ -1523,6 +1523,9 @@ struct EventDetailView: View {
         } else {
             score = nil
         }
+        let isOpening = event.heroProbabilitySource == OpeningLineHero.openingSource
+        let homeChance = isOpening ? nil : (event.heroProbability ?? event.currentOdds?.homeProbability)
+        let awayChance = isOpening ? nil : (event.heroProbabilityAway ?? event.currentOdds?.awayProbability)
         let text = EventDetailView.projectionText(
             sport: event.sport, status: event.status,
             commenceTime: event.commenceTime?.asDate,
@@ -1533,6 +1536,8 @@ struct EventDetailView: View {
             ladderWhileLive: live == .absent,
             hasScore: hasScore,
             score: score,
+            homeChance: homeChance,
+            awayChance: awayChance,
             now: now)
         // Soccer's lines settle on 90 minutes; the line says so, as web's
         // label does.
@@ -1582,6 +1587,8 @@ struct EventDetailView: View {
         ladderWhileLive: Bool = false,
         hasScore: Bool,
         score: (home: Int, away: Int)? = nil,
+        homeChance: Double? = nil,
+        awayChance: Double? = nil,
         now: Date = Date()
     ) -> String? {
         let vocab = SportVocab.forSport(sport)
@@ -1603,9 +1610,20 @@ struct EventDetailView: View {
             return nil
         }
         // Raw halves above zero, as web asks — a soccer `0.4` still prints `0`.
-        let home = Int(pair.home.rounded()), away = Int(pair.away.rounded())
+        // Ruling 240: A: level rounded pairs print in every sport (#8156 removed),
+        // and pairs that name a different winner than the page's chance withhold.
         guard pair.home > 0, pair.away > 0,
-              vocab.canEndInATie || home != away else { return nil }
+              let home = Int(exactly: pair.home.rounded()),
+              let away = Int(exactly: pair.away.rounded()) else { return nil }
+        if ProjectedFinalChanceGuard240A.conflicts(
+            projectedHome: Double(home),
+            projectedAway: Double(away),
+            homeChance: homeChance,
+            awayChance: awayChance,
+            sportKey: sport
+        ) {
+            return nil
+        }
         if let score, home < score.home || away < score.away { return nil }
         let text = "\(away)-\(home)"
         return "Proj. \(vocab.scoreboardCountsTheUnit ? text : vocab.withUnit(text))"

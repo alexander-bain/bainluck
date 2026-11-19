@@ -21,7 +21,10 @@ import {
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { matrixForStat, type DuringPlayerProps } from "@/lib/duringPlayerPropsMatrixSelection";
 import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
-import { eventPageProjectedPair } from "@/lib/projectedFinalPair";
+import {
+  eventPageProjectedPair,
+  projectedPairConflictsWithChance,
+} from "@/lib/projectedFinalPair";
 import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastComparison";
 import { livePregameComparison } from "@/lib/livePregameComparison";
 import { effectiveAwaySecondaryColor, lookupTeamColors, resolveMatchupTeamColors } from "@/lib/teamColors";
@@ -1889,11 +1892,26 @@ export default function EventPage({ params }: EventPageProps) {
     isLive,
     ladderPair: historyData?.pm_spread_data?.projected_final,
   });
+  // Ruling 240: A (#12992):
+  //   1. A level rounded pair prints in every sport (#8156's tie hide is removed).
+  //   2. A projected pair that names a different winner than the page's chance is withheld.
+  const heroChanceForProjection =
+    event && !isStoredOpeningChance(event)
+      ? {
+          home: event.hero_probability ?? event.current_odds?.home_probability ?? null,
+          away: event.hero_probability_away ?? event.current_odds?.away_probability ?? null,
+        }
+      : null;
   const projectedPairIsAPossibleResult =
     projectedFinalPair == null ||
-    sportVocab(event?.sport || undefined).canEndInATie ||
-    Math.round(projectedFinalPair.home_score) !==
-      Math.round(projectedFinalPair.away_score);
+    !projectedPairConflictsWithChance(
+      {
+        home: Math.round(projectedFinalPair.home_score),
+        away: Math.round(projectedFinalPair.away_score),
+      },
+      heroChanceForProjection,
+      event?.sport,
+    );
 
   // ── #4885 — A PROJECTED FINAL CANNOT BE BELOW THE SCORE ALREADY ON THE BOARD ─
   //
@@ -2165,7 +2183,8 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }
 
-  const currentWinOdds = isStoredOpeningChance(event) ? undefined : event.current_odds;
+  const isOpeningChance = isStoredOpeningChance(event);
+  const currentWinOdds = isOpeningChance ? undefined : event.current_odds;
   const currentHomeWinChance = currentWinOdds?.home_probability;
 
   // Resolve display probability based on game status (see eventKeyStats.ts)
@@ -2665,8 +2684,10 @@ export default function EventPage({ params }: EventPageProps) {
     acceptedPriceClock,
     confirmedAtShown,
     freshestSourceStamp,
-    currentOddsCapturedAt: event.current_odds?.captured_at,
+    currentOddsCapturedAt: currentWinOdds?.captured_at,
   });
+  const atlasHasLastReading =
+    !isFinished && (!isOpeningChance || resolvedProbability?.selectedProbabilitySource != null);
   const atlasPregameBaseline =
     atlasOptIn && !isFinished && (isLive || hasStarted || isSuspended)
       ? resolveEventHeadlineBaseline({
@@ -2829,14 +2850,17 @@ export default function EventPage({ params }: EventPageProps) {
     homeColor: nflStrokes.home,
   };
   const nflScored = (isLive || isFinished) && !heroScoreIsStoppageFiller && bestHomeScore != null && bestAwayScore != null;
+  // #12824 — a cached opening reading can outlive the scheduled state.
+  const readerShowsChance = probSourceLabel !== "Opening line" &&
+    (event.status !== "scheduled" || !isOpeningChance);
   const nflReaderHeader = readerHeader({
     awayShort: heroShortNames.away,
     homeShort: heroShortNames.home,
     awayScore: nflScored ? bestAwayScore : null,
     homeScore: nflScored ? bestHomeScore : null,
     stateLabel: stoppageLabel ?? (isFinished ? "Final" : effectivelyLive ? liveClockLabel || "Live" : isLive ? "Live" : "Pregame"),
-    awayChance: awayProb != null ? formatProbability(awayProb, { rendered: awayPct }) : null,
-    homeChance: homeProb != null ? formatProbability(homeProb, { rendered: homePct }) : null,
+    awayChance: readerShowsChance && awayProb != null ? formatProbability(awayProb, { rendered: awayPct }) : null,
+    homeChance: readerShowsChance && homeProb != null ? formatProbability(homeProb, { rendered: homePct }) : null,
     finished: isFinished,
   });
   // Back returns focus to the card the reader was opened on, or the nearest
@@ -3134,9 +3158,9 @@ export default function EventPage({ params }: EventPageProps) {
               : atlasPregameBaseline?.homePercent ?? openingHomePct
           }
           openingObservedAt={null}
-          lastProbability={!isFinished ? homeProb : null}
-          renderedLast={!isFinished ? homePct : null}
-          lastObservedAt={!isFinished ? atlasObservedAt : null}
+          lastProbability={atlasHasLastReading ? homeProb : null}
+          renderedLast={atlasHasLastReading ? homePct : null}
+          lastObservedAt={atlasHasLastReading ? atlasObservedAt : null}
           resolutionDate={event.commence_time}
           source={
             isFinished

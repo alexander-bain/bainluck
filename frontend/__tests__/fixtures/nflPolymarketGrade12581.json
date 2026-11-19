@@ -16,7 +16,7 @@
           "state": "settled",
           "sources": [],
           "settled": {
-            "source": null,
+            "source": "api_settlement",
             "result": "Lost",
             "at": null
           }
@@ -52,7 +52,7 @@
           "state": "settled",
           "sources": [],
           "settled": {
-            "source": null,
+            "source": "api_settlement",
             "result": "Lost",
             "at": null
           }
@@ -89,7 +89,7 @@
           "state": "settled",
           "sources": [],
           "settled": {
-            "source": null,
+            "source": "api_settlement",
             "result": "Won",
             "at": null
           }
@@ -126,7 +126,7 @@
           "state": "settled",
           "sources": [],
           "settled": {
-            "source": null,
+            "source": "api_settlement",
             "result": "Lost",
             "at": null
           }
@@ -161,7 +161,7 @@
           "state": "settled",
           "sources": [],
           "settled": {
-            "source": null,
+            "source": "api_settlement",
             "result": "Lost",
             "at": null
           }
@@ -197,7 +197,7 @@
           "state": "settled",
           "sources": [],
           "settled": {
-            "source": null,
+            "source": "api_settlement",
             "result": "Won",
             "at": null
           }
@@ -233,7 +233,7 @@
           "state": "settled",
           "sources": [],
           "settled": {
-            "source": null,
+            "source": "api_settlement",
             "result": "Won",
             "at": null
           }
@@ -269,7 +269,7 @@
           "state": "settled",
           "sources": [],
           "settled": {
-            "source": null,
+            "source": "api_settlement",
             "result": "Lost",
             "at": null
           }
@@ -306,7 +306,7 @@
           "state": "settled",
           "sources": [],
           "settled": {
-            "source": null,
+            "source": "api_settlement",
             "result": "Won",
             "at": null
           }
@@ -343,7 +343,7 @@
           "state": "settled",
           "sources": [],
           "settled": {
-            "source": null,
+            "source": "api_settlement",
             "result": "Won",
             "at": null
           }
@@ -378,7 +378,7 @@
           "state": "settled",
           "sources": [],
           "settled": {
-            "source": null,
+            "source": "api_settlement",
             "result": "Lost",
             "at": null
           }
@@ -414,7 +414,7 @@
           "state": "settled",
           "sources": [],
           "settled": {
-            "source": null,
+            "source": "api_settlement",
             "result": "Won",
             "at": null
           }

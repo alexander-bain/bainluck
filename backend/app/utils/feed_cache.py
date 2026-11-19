@@ -958,6 +958,7 @@ def feed_response_cache_key(
     edition: Optional[str] = None,
     collections: Optional[str] = None,
     opening_seating: bool = False,
+    machinery: bool = False,
 ) -> str:
     """Build the Redis response-cache key for one ``GET /api/feed`` shape.
 
@@ -1028,6 +1029,11 @@ def feed_response_cache_key(
         # #5105. A page cut from a seated deck is not the legacy page at the
         # same offset. Same `if` as `edition` above: legacy keys are unchanged.
         parts = f"{FEED_OPENING_SEATING_KEY_MARKER}|{parts}"
+    if machinery:
+        # #12288 / Ruling 252: A. Website and iOS 1.0.7+ opt in via `machinery=1`;
+        # older app versions (1.0.6) omit it and hash the byte-identical key they
+        # always did, hitting the single 1.0.6-safe prewarmed base feed.
+        parts = f"mach=1|{parts}"
     return f"{FEED_RESPONSE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
 
 

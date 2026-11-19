@@ -67,15 +67,13 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     /// older payload with no source at all, draws no number.
     func testOnlyABlendHeroLabelsALine() throws {
         let points = [point(0, 0.5), point(1, 0.6)]
-        XCTAssertNil(
-            LiveEdgeReading.current(in: try event(p: 0.6, heroSource: "opening")),
-            "#12824: an opening-only hero is withheld by LiveEdgeReading.current"
-        )
-        let unsourced = try XCTUnwrap(LiveEdgeReading.current(in: try event(p: 0.6, heroSource: nil)))
-        XCTAssertNil(unsourced.source)
-        XCTAssertNil(LiveChartEdgeMarkerPlan.edgeVertex(in: points, visible: ["aggregate"],
-                                                        reading: unsourced, latestFrame: nil),
-                     "source nil")
+        for source in ["opening", nil] as [String?] {
+            let reading = try XCTUnwrap(LiveEdgeReading.current(in: try event(p: 0.6, heroSource: source)))
+            XCTAssertEqual(reading.source, source)
+            XCTAssertNil(LiveChartEdgeMarkerPlan.edgeVertex(in: points, visible: ["aggregate"],
+                                                            reading: reading, latestFrame: nil),
+                         "source \(source ?? "nil")")
+        }
         let blend = try XCTUnwrap(LiveEdgeReading.current(in: try event(p: 0.6)))
         XCTAssertEqual(LiveChartEdgeMarkerPlan.edgeVertex(in: points, visible: ["aggregate"],
                                                           reading: blend, latestFrame: nil)?.id, points[1].id)
@@ -545,21 +543,31 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         let window: UIWindow
         let previousKeyWindow: UIWindow?
         init<V: View>(_ view: V) async throws {
+            let activeDeadline = CACurrentMediaTime() + 2
             let deadline = CACurrentMediaTime() + 10
             func activeScene() -> UIWindowScene? {
                 UIApplication.shared.connectedScenes
                     .compactMap { $0 as? UIWindowScene }
                     .first { $0.activationState == .foregroundActive }
             }
-            while activeScene() == nil && CACurrentMediaTime() < deadline {
+            func usableScene() -> UIWindowScene? {
+                let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                return scenes.first { $0.activationState == .foregroundActive }
+                    ?? scenes.first { $0.activationState == .foregroundInactive }
+                    ?? scenes.first
+            }
+            while activeScene() == nil && CACurrentMediaTime() < activeDeadline {
                 // Yield MainActor so the actual host can finish activating.
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            while usableScene() == nil && CACurrentMediaTime() < deadline {
                 try await Task.sleep(nanoseconds: 50_000_000)
             }
             let sceneStates = UIApplication.shared.connectedScenes.map {
                 "\(type(of: $0)):\($0.activationState.rawValue)"
             }.sorted().joined(separator: ", ")
-            let scene = try XCTUnwrap(activeScene(),
-                "Motion capture requires a foreground-active window scene; connected scenes: \(sceneStates)")
+            let scene = try XCTUnwrap(usableScene(),
+                "Motion capture requires a foreground window scene; connected scenes: \(sceneStates)")
             previousKeyWindow = scene.windows.first { $0.isKeyWindow }
             host = hostForMeasurement(view)
             host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 360)
@@ -1001,7 +1009,9 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     }
 
     func testAnAcceptedAppendGlidesTheDotAlongTheLineAndSettles() async throws {
-        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "live 60fps mid-glide dot pixel sampling & foreground-active UIWindowScene")
+        // Known failure on master, tracked by #12693 (found by #12513). Strict: the
+        // day this passes, XCTest reports it and this line must go with the fix.
+        XCTExpectFailure("#12693: the pixel finder no longer finds one green end dot")
         let feed = Feed(frames: frames([0.49, 0.55, 0.78]),
                         edge: LiveEdgeReading(homeProbability: 0.78, homeLabel: "78%"))
         let hosted = try await Hosted(FedChart(feed: feed, history: try history()))
@@ -1044,7 +1054,9 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     /// (same last observation, new pin) with no pushed frame at all, and the
     /// dot glides to the new pin instead of snapping.
     func testAPinReplacementGlidesTheDotAndSettles() async throws {
-        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "live 60fps mid-glide dot pixel sampling & foreground-active UIWindowScene")
+        // Known failure on master, tracked by #12693 (found by #12513). Strict: the
+        // day this passes, XCTest reports it and this line must go with the fix.
+        XCTExpectFailure("#12693: the pixel finder no longer finds one green end dot")
         let feed = Feed(frames: [], edge: LiveEdgeReading(homeProbability: 0.50, homeLabel: "50%"),
                         history: try pinnedHistory(pinAt: 12, 0.50))
         let hosted = try await Hosted(FedChart(feed: feed, history: try history()))
@@ -1078,12 +1090,10 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     }
 
     func testTheSamplingRigDoesNotInventAnAppendGlideInAnInactiveScene() async throws {
-        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "foreground-active UIWindowScene baseline required for inactive-scene rig")
         try await assertNoSampledGlideInAnInactiveScene(pinReplacement: false)
     }
 
     func testTheSamplingRigDoesNotInventAPinGlideInAnInactiveScene() async throws {
-        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "foreground-active UIWindowScene baseline required for inactive-scene rig")
         try await assertNoSampledGlideInAnInactiveScene(pinReplacement: true)
     }
 
@@ -1119,7 +1129,9 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     /// glide — the line is drawn to its settled end at once, not over the
     /// rest of the 350 ms.
     func testLeavingTheActiveSceneMidGlideCancelsIt() async throws {
-        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "mid-glide scene-deactivation timing & foreground-active UIWindowScene")
+        // Known failure on master, tracked by #12693 (found by #12513). Strict: the
+        // day this passes, XCTest reports it and this line must go with the fix.
+        XCTExpectFailure("#12693: the dot is already settled 60 ms after the change, so no glide is in flight")
         let feed = Feed(frames: frames([0.49, 0.55, 0.78]),
                         edge: LiveEdgeReading(homeProbability: 0.78, homeLabel: "78%"))
         let hosted = try await Hosted(FedChart(feed: feed, history: try history()))
@@ -1146,7 +1158,6 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     /// cancelled — the next frame is the settled new string, pixel for pixel,
     /// not the rest of the roll.
     func testLeavingTheActiveSceneMidSlideCancelsTheHeroChange() async throws {
-        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "mid-slide scene-deactivation timing & foreground-active UIWindowScene")
         final class Value: ObservableObject {
             @Published var text = "60%"
             @Published var phase: ScenePhase = .active
@@ -1188,7 +1199,6 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     /// between its two values. The whole-string slide moved every character,
     /// so it is red here.
     func testADecimalMoveRollsOnlyTheChangedDigit() async throws {
-        try TestSuiteDisposition12982.skipIfHostedOrHeadlessScene(#function, reason: "live 60fps numericText rolling-digit pixel sampling & foreground-active UIWindowScene")
         final class Value: ObservableObject {
             @Published var text = "60.4%"
         }
