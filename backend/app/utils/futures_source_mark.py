@@ -42,8 +42,14 @@ def describe_field_normalization(
     )
 
 
-def futures_outcome_source_mark(market: Any, outcome: Any, row: dict) -> dict:
-    """Retain the venue input before field normalization; never reprice it."""
+def futures_outcome_source_mark(
+    market: Any, outcome: Any, row: dict, *, served_settled: bool | None = None
+) -> dict:
+    """Retain the venue input before field normalization; never reprice it.
+
+    A caller with its own settlement display decision can constrain the mark
+    to that decision. An official result still requires an authoritative grade.
+    """
     settlement = row.get("settlement_display")
     if isinstance(settlement, dict) and settlement.get("verdict") == "unknown":
         return no_source_mark("result_unknown")
@@ -51,13 +57,19 @@ def futures_outcome_source_mark(market: Any, outcome: Any, row: dict) -> dict:
     authority = getattr(outcome, "resolution_source", None)
     # The sheet calls this an official result. Price/clock guesses and a
     # retracted grade cannot supply it, even when the stored flag is boolean.
-    if type(grade) is bool and authority in _RESULT_SOURCES:
+    if (
+        served_settled is not False
+        and type(grade) is bool
+        and authority in _RESULT_SOURCES
+    ):
         return settled_source_mark(authority, "Won" if grade else "Lost")
     status = getattr(market, "status", None)
     # Retracting a grade leaves an open venue quote eligible. A closed result
     # or a contradictory stored win has no such pricing basis.
-    if status == "resolved" or (
-        authority == RETRACTED_SOURCE and (status != "open" or grade is True)
+    if (
+        served_settled is True
+        or status == "resolved"
+        or (authority == RETRACTED_SOURCE and (status != "open" or grade is True))
     ):
         return no_source_mark("result_unknown")
     if row.get("probability") is None:
