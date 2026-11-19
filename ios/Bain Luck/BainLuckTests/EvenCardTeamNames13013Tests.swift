@@ -155,9 +155,13 @@ final class EvenCardTeamNames13013Tests: XCTestCase {
             }
             XCTAssertFalse(recognizedText.contains("…"), "No ellipsis allowed at \(typeSize): \(recognizedText)")
 
-            let heightChiefs = try XCTUnwrap(wordHeightPt(of: "Chiefs", in: observations))
-            let heightBucs = try XCTUnwrap(wordHeightPt(of: "Buccaneers", in: observations))
-            let heightWolves = try XCTUnwrap(wordHeightPt(of: "Timberwolves", in: observations, excludingLineContaining: "Pregame"))
+            // Measure pure rendered glyph cap-heights inside the team-name column (x = 70..225 pt,
+            // past the 20pt outer margin + 16pt card inset + 28pt crest so crest letters like "KC"
+            // never inflate the Vision line box).
+            let nameStripObservations = try ocrNameColumnObservations(img)
+            let heightChiefs = try XCTUnwrap(wordHeightPt(of: "Chiefs", in: nameStripObservations))
+            let heightBucs = try XCTUnwrap(wordHeightPt(of: "Buccaneers", in: nameStripObservations))
+            let heightWolves = try XCTUnwrap(wordHeightPt(of: "Timberwolves", in: nameStripObservations, excludingLineContaining: "Pregame"))
 
             XCTAssertLessThanOrEqual(
                 abs(heightBucs - heightChiefs),
@@ -209,6 +213,20 @@ final class EvenCardTeamNames13013Tests: XCTestCase {
             }
         }
         return nil
+    }
+
+    private func ocrNameColumnObservations(_ image: UIImage) throws -> [OCRObs] {
+        let cg = try XCTUnwrap(image.cgImage)
+        let scale = image.scale
+        let cropRect = CGRect(
+            x: 68 * scale,
+            y: 0,
+            width: 156 * scale,
+            height: CGFloat(cg.height)
+        )
+        let cropped = try XCTUnwrap(cg.cropping(to: cropRect))
+        let croppedImage = UIImage(cgImage: cropped, scale: scale, orientation: .up)
+        return try ocrObservations(croppedImage)
     }
 
     private func ocrObservations(_ image: UIImage) throws -> [OCRObs] {
