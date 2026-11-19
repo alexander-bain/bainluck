@@ -8,8 +8,15 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_sqlite(_type, _compiler, **_kw):
+    return "JSON"
 
 import app.routes.feed as feed_mod
 from app.models.models import Event, FuturesMarket, Sport
@@ -72,6 +79,38 @@ class TestCategoryCandidateUnionSQL:
 
     def test_empty_active_specs_returns_none(self):
         assert build_category_candidate_union_query([], []) is None
+
+    def test_every_discover_candidate_pool_ends_with_deterministic_id_tiebreaker(self):
+        _id_filters, specs = feed_mod._discover_candidate_pool_specs(NOW)
+        assert len(specs) == 8
+        for name, query, _lim in specs:
+            clauses = list(query._order_by_clauses)
+            assert clauses, f"pool {name!r} has no ORDER BY"
+            last_sql = _pg_sql(clauses[-1])
+            assert last_sql == "futures_markets.id asc", (
+                f"pool {name!r} last ORDER BY key is {last_sql!r}, expected 'futures_markets.id asc'"
+            )
+
+    @pytest.mark.asyncio
+    async def test_sports_mode_futures_uses_id_tiebreaker_and_records_timing(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=[FuturesMarket.__table__])
+        with Session(engine) as sync_db:
+            db = _SyncBackedAsyncSession(sync_db)
+            timings: list[dict[str, float | str]] = []
+            res = await feed_mod._score_sports_mode_futures(
+                db,
+                NOW,
+                "football",
+                feed_mod.PersonalizationContext(),
+                timing_records=timings,
+                timing_started_at=0.0,
+            )
+            assert res == []
+            assert db.executed_pg_sql
+            assert "futures_markets.id asc" in db.executed_pg_sql[0]
+            assert any(entry.get("stage") == "sports_futures.id_query" for entry in timings)
+        engine.dispose()
 
 
 @pytest.mark.asyncio
