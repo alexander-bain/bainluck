@@ -1500,13 +1500,18 @@ private struct TeamFuturesSection: View {
                     .lineLimit(1)
                     .frame(minWidth: 44, alignment: .trailing)
             } else if let prob = displayProb {
-                Text(formatProbability(prob))
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
-                    .foregroundStyle(Color(hex: MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor)))
-                    .lineLimit(1)
-                    .frame(minWidth: 44, alignment: .trailing)
+                HStack(spacing: 4) {
+                    Text(formatProbability(prob))
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
+                        .foregroundStyle(Color(hex: MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor)))
+                        .lineLimit(1)
+                    if let mark = SourceMarkButton(item.sourceMark, number: prob, subject: item.outcomeName, numberSize: 15, compactRow: true) {
+                        mark.buttonStyle(.borderless)
+                    }
+                }
+                .frame(minWidth: 44, alignment: .trailing)
             }
         }
         .padding(.vertical, 6)
