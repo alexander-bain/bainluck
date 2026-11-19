@@ -48,16 +48,17 @@ _REDIS_DAILY_TTL_SECONDS = 90_000
 _LIVE_EVENT_STATUS = "live"
 
 # In-process fallback budget state if Redis is momentarily unavailable.
-_fallback_day: str | None = None
-_fallback_count: int = 0
-_fallback_last_mono: float = 0.0
+_FALLBACK_BUDGET: dict[str, Any] = {
+    "day": None,
+    "count": 0,
+    "last_mono": 0.0,
+}
 
 
 def _reset_fallback_budget_for_tests() -> None:
-    global _fallback_day, _fallback_count, _fallback_last_mono
-    _fallback_day = None
-    _fallback_count = 0
-    _fallback_last_mono = 0.0
+    _FALLBACK_BUDGET["day"] = None
+    _FALLBACK_BUDGET["count"] = 0
+    _FALLBACK_BUDGET["last_mono"] = 0.0
 
 
 def _api_key() -> str:
@@ -379,8 +380,6 @@ def _redis_client():
 
 def _reserve_daily_budget(now: datetime) -> tuple[bool, int, str]:
     """Reserve 1 slot under DAILY_REQUEST_CAP (96/day) and MIN_INTERVAL_SECONDS (15m)."""
-    global _fallback_day, _fallback_count, _fallback_last_mono
-
     day = now.astimezone(timezone.utc).strftime("%Y-%m-%d")
     daily_key = f"{REDIS_DAILY_KEY_PREFIX}{day}"
     try:
@@ -412,16 +411,17 @@ def _reserve_daily_budget(now: datetime) -> tuple[bool, int, str]:
 
     # In-process fallback when Redis is unavailable.
     now_mono = time.monotonic()
-    if _fallback_day != day:
-        _fallback_day = day
-        _fallback_count = 0
-    if _fallback_count >= DAILY_REQUEST_CAP:
-        return False, _fallback_count, "daily_cap_reached"
-    if _fallback_last_mono and (now_mono - _fallback_last_mono) < _MIN_INTERVAL_GUARD_SECONDS:
-        return False, _fallback_count, "min_interval_guard"
-    _fallback_last_mono = now_mono
-    _fallback_count += 1
-    return True, _fallback_count, "ok"
+    if _FALLBACK_BUDGET["day"] != day:
+        _FALLBACK_BUDGET["day"] = day
+        _FALLBACK_BUDGET["count"] = 0
+    if _FALLBACK_BUDGET["count"] >= DAILY_REQUEST_CAP:
+        return False, int(_FALLBACK_BUDGET["count"]), "daily_cap_reached"
+    last_mono = float(_FALLBACK_BUDGET["last_mono"])
+    if last_mono and (now_mono - last_mono) < _MIN_INTERVAL_GUARD_SECONDS:
+        return False, int(_FALLBACK_BUDGET["count"]), "min_interval_guard"
+    _FALLBACK_BUDGET["last_mono"] = now_mono
+    _FALLBACK_BUDGET["count"] = int(_FALLBACK_BUDGET["count"]) + 1
+    return True, int(_FALLBACK_BUDGET["count"]), "ok"
 
 
 async def _load_live_tennis_events() -> list[dict[str, Any]]:
