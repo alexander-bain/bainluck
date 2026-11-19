@@ -47,14 +47,6 @@ final class ContainerHubViewModel: ObservableObject {
 
     @MainActor
     func load() async {
-        if GroupingMachineryGate12288.isMachineryCandidateSlug(slug),
-           !GroupingMachineryGate12288.canAccessMachineryCurrentUser() {
-            closeReads()
-            context = ContainerHubReadingContext()
-            heldPages = []
-            state = .unavailable
-            return
-        }
         issued += 1
         let ticket = issued
         refreshVersion += 1

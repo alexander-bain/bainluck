@@ -199,9 +199,14 @@ def test_a_frontend_scope_runs_only_the_marker_and_anything_else_runs_everything
 
 def test_deploy_still_waits_on_the_sibling_gates_that_skip_on_frontend():
     jobs = _jobs()
-    assert {"backend-tests", "shard-completeness", "search-recall"} <= set(
+    # Fable, Wed Nov 18: deploy reads every database integration group itself and
+    # requires `needs.database-integration.result == 'success'` (a skipped group is not
+    # success), instead of waiting for `search-recall`'s runner to re-check it.
+    # `search-recall` stays the required pull-request context, so its shape is still pinned.
+    assert {"backend-tests", "shard-completeness", "database-integration"} <= set(
         jobs["deploy"]["needs"]
     )
+    assert "needs.database-integration.result == 'success'" in jobs["deploy"]["if"]
     for name in ("shard-completeness", "search-recall"):
         job = jobs[name]
         assert not (job.get("strategy") or {}).get(
@@ -232,7 +237,7 @@ def test_reuse_never_removes_matrix_contexts_and_missing_decision_runs_tests(reu
         assert bool(any(s.get("if") == REUSED for s in ran)) == (reuse == "true")
     assert jobs["frontend-build"]["if"] == f"{LIVE} && needs.change-scope.outputs.scope != 'native'"
     assert jobs["frontend-build"]["needs"] == ["change-scope", "fast-gate"]
-    assert len(jobs["database-integration"]["strategy"]["matrix"]["group"]) == 5
+    assert len(jobs["database-integration"]["strategy"]["matrix"]["group"]) == 6  # + shared-tail-2 (Nov 18)
 
 @pytest.mark.parametrize("scope", ["frontend", "native", "full", "", None])
 def test_a_live_candidate_defers_all_full_shard_steps_but_keeps_contexts(scope):

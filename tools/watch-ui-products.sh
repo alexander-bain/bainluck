@@ -43,7 +43,7 @@ xcrun simctl list --json > "$OUT/simulators.json" 2>> "$OUT/preflight.log"
 SDK_VERSION="$(xcrun --sdk watchsimulator --show-sdk-version 2>> "$OUT/preflight.log")"
 printf '%s\n' "$SDK_VERSION" > "$OUT/sdk-version.txt"
 python3 - "$OUT/simulators.json" "$SDK_VERSION" > "$OUT/destination-spec.txt" 2>> "$OUT/preflight.log" <<'PY'
-import json, sys
+import json, re, sys
 from pathlib import Path
 info = json.loads(Path(sys.argv[1]).read_text())
 runtimes = sorted((r for r in info['runtimes']
@@ -53,11 +53,17 @@ runtimes = sorted((r for r in info['runtimes']
 phone_runtimes = sorted((r for r in info['runtimes']
                          if r.get('isAvailable') and '.iOS-' in r['identifier']
                          and r['version'].split('.')[:2] == sys.argv[2].split('.')[:2]),
-                        key=lambda r: tuple(int(v) for v in r['version'].split('.')), reverse=True)
-phones = [(device['deviceTypeIdentifier'], runtime['identifier'])
-          for runtime in phone_runtimes
-          for device in info['devices'].get(runtime['identifier'], [])
-          if device.get('isAvailable') and 'iPhone' in device.get('deviceTypeIdentifier', '')]
+                        key=lambda r: (
+                            tuple(int(v) for v in r['version'].split('.')),
+                            1 if re.fullmatch(r'.*\.iOS-\d+-\d+', r['identifier']) else 0,
+                        ), reverse=True)
+phones = sorted(
+    [(device['deviceTypeIdentifier'], runtime['identifier'])
+     for runtime in phone_runtimes
+     for device in info['devices'].get(runtime['identifier'], [])
+     if device.get('isAvailable') and 'iPhone' in device.get('deviceTypeIdentifier', '')],
+    key=lambda pair: 1 if 'Duo' in pair[0] else 0
+)
 if not phones:
     raise SystemExit(f'No available iPhone/runtime matching SDK {sys.argv[2]}; paired Watch gate unpaid')
 for runtime in runtimes:
@@ -122,12 +128,34 @@ if pair['watch']['udid'] != watch or pair['phone']['udid'] != phone or not pair[
 PAIR
 # bootstatus -b starts an unbooted device and waits for it. Prepare each new
 # member serially; the pair-wide boot RPC timed out before reaching readiness.
+boot_until_ready() {
+  local udid="$1"
+  local attempt
+  for attempt in 1 2 3; do
+    xcrun simctl bootstatus "$udid" -b >> "$OUT/preflight.log" 2>&1
+    if xcrun simctl list devices --json 2>> "$OUT/preflight.log" | python3 -c '
+import json, sys
+target = sys.argv[1]
+for devs in json.load(sys.stdin).get("devices", {}).values():
+    for d in devs:
+        if d.get("udid") == target and d.get("state") == "Booted":
+            raise SystemExit(0)
+raise SystemExit(1)
+' "$udid"; then
+      return 0
+    fi
+    echo "bootstatus exited 0 with $udid not Booted (attempt $attempt); retrying..." >> "$OUT/preflight.log"
+    sleep 2
+  done
+  return 1
+}
 PHASE='boot and await only the new disposable companion phone'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
-xcrun simctl bootstatus "$PHONE_UDID" -b >> "$OUT/preflight.log" 2>&1
+boot_until_ready "$PHONE_UDID"
 PHASE='boot and await only the new disposable Watch'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
-xcrun simctl bootstatus "$TEST_UDID" -b >> "$OUT/preflight.log" 2>&1
+boot_until_ready "$TEST_UDID"
+boot_until_ready "$PHONE_UDID"
 # watchOS Simulator rejects simctl content_size (POSIX45). The suite separately
 # verifies default layout and a DEBUG-only accessibility5 layout stress override.
 printf '%s\n' 'Default layout plus forced accessibility5 layout stress; system preference unsupported' > "$OUT/text-size.txt"
@@ -155,7 +183,7 @@ XCODE_ARGS=(
   -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj"
   -scheme BainLuckWatchUITests -configuration Debug
   -destination "platform=watchOS Simulator,id=$TEST_UDID"
-  -derivedDataPath "$DERIVED" -parallel-testing-enabled NO -jobs 2
+  -derivedDataPath "$DERIVED" -parallel-testing-enabled NO -jobs 4
   -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution
   "ARCHS=$SIM_ARCH"
   CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES
@@ -171,7 +199,7 @@ python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHAS
 xcodebuild build -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
   -scheme 'Bain Luck' -configuration Debug \
   -destination "platform=iOS Simulator,id=$PHONE_UDID" \
-  -derivedDataPath "$PHONE_DERIVED" -jobs 2 \
+  -derivedDataPath "$PHONE_DERIVED" -jobs 4 \
   -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution \
   "ARCHS=$SIM_ARCH" \
   CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \

@@ -8,7 +8,8 @@ dated Todo under #10090.
 
 Pinned here, each one a way the retry silently becomes a waiver:
 
-* the retry count is exactly 1, and it applies to the shared tail ONLY;
+* the retry count is exactly 1, and it applies to the shared tail ONLY (two runners
+  since Nov 18: shared-tail and shared-tail-2);
 * the plugin is the pinned wheel, checked by sha256, installed without deps;
 * a retry prints a `::warning::` annotation, so a pass-on-retry is never a
   clean green.
@@ -35,20 +36,42 @@ def _worker() -> dict:
     return yaml.safe_load(CI.read_text())["jobs"]["database-integration"]
 
 
+#: Fable, Nov 18: the shared tail runs on two runners, split at #4586's full schema reset.
+#: Both halves are the shared tail; no other group retries.
+TAIL_GROUPS = ("shared-tail", "shared-tail-2")
+
+
 def _addopts_for(group: str) -> str:
     expr = _worker()["env"]["PYTEST_ADDOPTS"]
     m = re.fullmatch(
-        r"\$\{\{ matrix\.group == '([\w-]+)' && '([^']*)' \|\| '' \}\}", expr
+        r"\$\{\{ \(matrix\.group == '([\w-]+)' \|\| matrix\.group == '([\w-]+)'\) && '([^']*)' \|\| '' \}\}",
+        expr,
     )
-    assert m, f"PYTEST_ADDOPTS is not the reviewed one-group expression: {expr!r}"
-    return m.group(2) if group == m.group(1) else ""
+    assert m, f"PYTEST_ADDOPTS is not the reviewed shared-tail expression: {expr!r}"
+    assert (m.group(1), m.group(2)) == TAIL_GROUPS, expr
+    return m.group(3) if group in TAIL_GROUPS else ""
 
 
 def test_only_the_shared_tail_retries_and_only_once():
-    assert _addopts_for("shared-tail") == "--reruns 1 -rR"
+    for group in TAIL_GROUPS:
+        assert _addopts_for(group) == "--reruns 1 -rR"
     for group in _worker()["strategy"]["matrix"]["group"]:
-        if group != "shared-tail":
+        if group not in TAIL_GROUPS:
             assert _addopts_for(group) == "", group
+
+
+def test_each_tail_runner_installs_the_same_pinned_plugin_before_its_first_test():
+    """Both tail runners retry, so each installs the identical pinned wheel before its tests."""
+    steps = _worker()["steps"]
+    names = [s.get("name") for s in steps]
+    for group, plugin in (("shared-tail", PLUGIN_STEP),
+                          ("shared-tail-2", PLUGIN_STEP.replace("shared tail ", "shared tail 2 "))):
+        step = next(s for s in steps if s.get("name") == plugin)
+        assert f"matrix.group == '{group}' " in step["if"]
+        assert step["run"] == next(s for s in steps if s.get("name") == PLUGIN_STEP)["run"]
+        first = next(i for i, s in enumerate(steps)
+                     if f"matrix.group == '{group}' " in str(s.get("if")) and "python -m pytest" in str(s.get("run")))
+        assert names.index("Install dependencies") < names.index(plugin) < first, group
 
 
 def test_the_plugin_is_the_pinned_wheel_checked_by_hash_without_deps():

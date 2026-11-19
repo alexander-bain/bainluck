@@ -11,7 +11,7 @@ from typing import Any
 from app.utils.aggregation import parse_source_entry
 from app.utils.game_state import authority_stoppage_label, normalize_live_game_state
 from app.utils.graded_card import rendered_duel_percents
-from app.utils.prematch_reading import resolve_prematch_reading
+from app.utils.prematch_reading import serialize_prematch_odds
 from app.utils.scheduled_start import start_is_from_schedule
 from app.utils.start_placeholder import start_is_tbd
 
@@ -578,7 +578,7 @@ def format_event_data(
     # "Opened X/Y" and does not read this key; the reason to send it anyway is
     # that a status is a moment and the payload is cached, so a card that turns
     # FINAL between two feed pulls must not lose its prior in the process.
-    prematch = resolve_prematch_reading(
+    prematch = serialize_prematch_odds(
         by_source=prematch_by_source,
         books_home=opening_home_prob,
         books_away=opening_away_prob,
@@ -589,20 +589,7 @@ def format_event_data(
         sport=sport_key,
     )
     if prematch is not None:
-        # UX-P114's rule, third instance: the settled card prints BOTH of these
-        # in fixed positions beside the two team names, so they are one duel and
-        # they are rounded once, here, rather than independently on each of the
-        # surfaces that draw them.
-        pre_away_pct, pre_home_pct = rendered_duel_percents(
-            prematch["away_probability"], prematch["home_probability"]
-        )
-        data["prematch_odds"] = {
-            "home_probability": prematch["home_probability"],
-            "away_probability": prematch["away_probability"],
-            "home_rendered_percent": pre_home_pct,
-            "away_rendered_percent": pre_away_pct,
-            "source": prematch["source"],
-        }
+        data["prematch_odds"] = prematch
 
     if ended_at:
         data["ended_at"] = ended_at.isoformat()

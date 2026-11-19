@@ -411,6 +411,47 @@ class RuntimeSupportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "External absolute"):
             gate.check_layout(self.payload)
 
+    def test_host_macos_minor_triple_normalized_while_toolchain_and_arch_fail_closed(self):
+        base = {
+            "xcode": "Xcode 27.2\nBuild version 27B52",
+            "swift": (
+                "Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\n"
+                "Target: arm64-apple-macosx27.0.0"
+            ),
+            "watch_sdk": "27.0",
+            "phone_sdk": "27.0",
+            "watch_sdk_build": "24R52",
+            "phone_sdk_build": "24B52",
+        }
+        self.environment = dict(base)
+        self.manifest["toolchain"] = dict(base)
+        self.save()
+        same_pool_minor = dict(
+            base,
+            swift=(
+                "Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\n"
+                "Target: arm64-apple-macosx27.2.0"
+            ),
+        )
+        gate.verify_manifest(
+            self.root, "a" * 40, same_pool_minor, "c" * 64, "b" * 64
+        )
+        for bad_swift in [
+            "Apple Swift version 6.4.1 (swiftlang-6.4.1.1.1 clang-2100.4.1.1)\nTarget: arm64-apple-macosx27.2.0",
+            "Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\nTarget: x86_64-apple-macosx27.0.0",
+            "Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\nTarget: arm64-apple-macosx26.5.0",
+        ]:
+            with self.subTest(bad_swift=bad_swift), self.assertRaisesRegex(
+                ValueError, "toolchain/SDK mismatch"
+            ):
+                gate.verify_manifest(
+                    self.root,
+                    "a" * 40,
+                    dict(base, swift=bad_swift),
+                    "c" * 64,
+                    "b" * 64,
+                )
+
 
 class CarrierStubTests(unittest.TestCase):
     setUp = ProductContractTests.setUp

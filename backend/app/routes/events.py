@@ -40,6 +40,7 @@ from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
 from app.utils.start_placeholder import start_is_tbd
 from app.utils.feed_snapshot_fallback import WITHDRAWAL_MARKER_KEY
 from app.utils.scheduled_start import (
+    loaded_price_admission_kickoff,
     loaded_commence_time_source,
     served_start_is_from_schedule,
 )
@@ -105,7 +106,7 @@ from app.utils.prematch_reading import (
     opening_consensus_has_frozen,
     prematch_prior_binds,
     prematch_row_to_reading,
-    resolve_prematch_reading,
+    serialize_prematch_odds,
 )
 from app.utils.closed_period_markets import closed_period_markets
 from app.utils.period_window_grade import grade_period_window, window_outcome_label
@@ -20325,7 +20326,7 @@ async def _settled_prematch_odds(
                 type(exc).__name__,
             )
 
-    reading = resolve_prematch_reading(
+    return serialize_prematch_odds(
         by_source=by_source,
         books_home=(
             float(event.opening_home_probability)
@@ -20339,18 +20340,6 @@ async def _settled_prematch_odds(
         ),
         sport=sport_key or "",
     )
-    if reading is None:
-        return None
-    away_pct, home_pct = rendered_duel_percents(
-        reading["away_probability"], reading["home_probability"]
-    )
-    return {
-        "home_probability": reading["home_probability"],
-        "away_probability": reading["away_probability"],
-        "home_rendered_percent": home_pct,
-        "away_rendered_percent": away_pct,
-        "source": reading["source"],
-    }
 
 
 @router.get("/{event_id}")
@@ -20373,6 +20362,7 @@ async def get_event(
     _cached_resp = None if fresh else _cached_detail_payload(event_id, _now)
     if _cached_resp is not None:
         return _cached_resp
+    request_started_at = datetime.now(timezone.utc)
 
     result = await db.execute(
         select(Event)
@@ -21187,6 +21177,21 @@ async def get_event(
     # #10090: the entry is marked cached — every later reader of it gets a
     # window read before it asked — and this request's own copy fresh.
     if not _detail_skip_cache_publish.get():
+        if event.status == "live":
+            from app.utils.aggregation import has_dated_price_source
+
+            kickoff = loaded_price_admission_kickoff(event)
+            if (
+                (kickoff is None or kickoff > request_started_at)
+                and has_dated_price_source(folded_sources, now=datetime.now(timezone.utc))
+            ):
+                # Until kickoff can qualify this quote, the next request must
+                # see the row again. Apply the rule to both public cache keys.
+                for key in {requested_event_id, event_id}:
+                    old = _event_detail_cache.get(key)
+                    if old is not None and old[0] <= _now:
+                        del _event_detail_cache[key]
+                return _with_state_read_fresh(response, True)
         _published = _with_state_read_fresh(response, False)
         for _cache_key in {requested_event_id, event_id}:
             if len(_event_detail_cache) >= _EVENT_DETAIL_MAX_SIZE:
@@ -22830,15 +22835,9 @@ def _squeeze_exclusive_field_markets(other_rows: list, markets: list) -> list:
     rule can reach it (#4724's measurement: DATA +4.00 pts, ROUNDING +0.00).
 
     THE RULE. For a market the venue declares one-winner, with every one of its
-    three or more served legs priced and attributed to it alone, whose legs sum
-    past 1.0: divide each by the sum. Nothing else moves.
-
-    * **Only DOWN.** A subset of a one-winner field can never legitimately sum
-      past 1, so dividing by its own sum moves every leg toward the true share
-      and never past it — even when legs are missing, the true divisor is at
-      least this one. A field summing UNDER 1 is left alone: a partial field is
-      honest as it stands, and inflating it would invent weight for legs nobody
-      priced.
+    three or more served legs priced and attributed to it alone, apply the
+    shared field normalization. A scaled row's mark explains the display
+    transformation using the original quote.
     * **`mutually_exclusive` is the structure; a sum is not** (#7641). The flag
       is what `normalize_display_probs` already trusts (#199: Kalshi flags
       make-cut / top-N / player-prop fields False). A Receptions field summing
@@ -22856,14 +22855,6 @@ def _squeeze_exclusive_field_markets(other_rows: list, markets: list) -> list:
     * **Merged rows abstain.** A row carrying several `_market_ids` speaks for
       more than one market; a market seen through one is never squeezed, the
       same caution `_withhold_partial_field_markets` takes.
-
-    WHY NOT `normalize_display_probs`: its squeeze fires only past 105%
-    (`politics._normalize_outcome_probs`), which leaves Race to 14 printing
-    52 + 42 + 10 = 104 and the Zverev–Khachanov ladder at 104 — the exact
-    readings #4724 was filed on. #6583 records the same threshold leaving
-    102/103 on Discover. The guards above are that function's guards; only
-    the threshold differs, and it differs because a reader of a three-row card
-    adds the rows.
 
     Rows are copied, never mutated, so a caller holding the list it passed in
     keeps the raw prices.
@@ -22893,7 +22884,21 @@ def _squeeze_exclusive_field_markets(other_rows: list, markets: list) -> list:
         if market_id in merged or len(rows) < 3:
             continue
         copies = [dict(row) for row in rows]
-        normalize_display_probs(copies)
+        if normalize_display_probs(copies) and len(copies) == len(rows):
+            for row, copy in zip(rows, copies):
+                mark = row.get("source_mark") or {}
+                sources = mark.get("sources", [])
+                raw = float(row["probability"])
+                if (
+                    mark.get("state") == "single"
+                    and len(sources) == 1
+                    and sources[0]["probability"] == round(raw, 6)
+                    and abs(raw - copy["probability"]) >= 1e-8
+                ):
+                    copy["source_mark"] = {
+                        **mark,
+                        "method": "Bain Luck field · scaled with the other outcomes to total 100%",
+                    }
         normalized.update({id(row): copy for row, copy in zip(rows, copies)})
     return [normalized.get(id(row), row) for row in other_rows]
 
@@ -25956,15 +25961,22 @@ def _build_props_script(player_props):
         # classification, so this never re-derives orientation from the label —
         # the two would drift the moment either list of prefixes changed.
         inverted = bool(pp.get("_inverted"))
+        mark = pp.get("source_mark")
+        if hit is not None:
+            evidence = mark.get("settled") if mark else None
+            mark = settled_source_mark(
+                evidence.get("source") if evidence is not None else pp.get("resolution_source"),
+                "Won" if hit else "Lost",
+                evidence.get("at") if evidence is not None else None,
+            )
+        else:
+            mark = source_mark_on_axis(mark, inverted=inverted)
         script.append({
             "key": f"{pp.get('market_name', '')}|{pp.get('outcome_name', '')}",
             "label": label,
             "pregame_mark": _own_axis(pp.get("pregame_mark"), inverted),
             "current": _own_axis(pp.get("over_probability"), inverted),
-            "source_mark": (
-                settled_source_mark(pp.get("resolution_source"), "Won" if hit else "Lost")
-                if hit is not None else source_mark_on_axis(pp.get("source_mark"), inverted=inverted)
-            ),
+            "source_mark": mark,
             "graded_result": graded_result,
             "graded_label": graded_label,
             # #5088 — THE ROW SAYS WHETHER IT IS SETTLED; THE SECTION SAYS WHAT
@@ -27962,9 +27974,12 @@ async def _build_game_markets(
         hit = row.get("hit")
         if hit is not None:
             won = not hit if row.get("_inverted") else hit
-            return settled_source_mark(
-                getattr(event, "score_source", None), "Won" if won else "Lost",
-            )
+            # The prop grader needs both an actual and a threshold to grade
+            # from the box score. A typed hit can also come from the venue.
+            grade_source = row.get("resolution_source")
+            if row.get("actual") is not None and row.get("threshold") is not None:
+                grade_source = getattr(event, "score_source", None)
+            return settled_source_mark(grade_source, "Won" if won else "Lost")
         if _verdict_is_provable(row, row.get("_market_id") in markets_with_a_winner):
             return settled_source_mark(
                 row.get("resolution_source"),
@@ -35249,6 +35264,21 @@ async def get_event_odds_history(
         # an older process-local hero. Recompute value AND revision together;
         # ordinary history requests retain their existing cached-hero parity.
         _served = None if fresh else _cached_detail_payload(event_id, _time.time())
+        admission_kickoff = loaded_price_admission_kickoff(event) if event.status == "live" else None
+        if (
+            _served is not None
+            and _served.get("hero_probability_source") == _PINNABLE_HERO_SOURCE
+            and admission_kickoff is not None
+            and admission_kickoff <= now
+        ):
+            # A newer date for the same price cannot redate a cached input.
+            cached_sources = (_served.get("source_mark") or {}).get("sources", ())
+            if any(
+                observed_at < admission_kickoff
+                for source in cached_sources
+                if (observed_at := _coerce_utc_datetime(source.get("observed_at"))) is not None
+            ):
+                _served = None
         if (
             _served is not None
             and _served.get("hero_probability_source") == _PINNABLE_HERO_SOURCE
@@ -35828,6 +35858,49 @@ async def get_event_odds_history(
     }
 
 
+_LINE_MOVEMENT_DISAGREEMENT_BASIS = "admitted-source-pair-v2"
+
+
+def _line_movement_disagreement(event: Event) -> Optional[dict[str, float | str]]:
+    """Compare two current inputs admitted by the shared blend rules."""
+    from app.utils.aggregation import effective_source_weights_detailed, parse_source_entry
+
+    source_entries = event.win_probability_sources
+    if not isinstance(source_entries, dict):
+        return None
+    sources, probabilities, weights, floored = effective_source_weights_detailed(event)
+    admitted = {
+        source: probability
+        for source, probability, weight in zip(sources, probabilities, weights)
+        if weight > 0 and source not in floored
+    }
+    sportsbook_prob = admitted.get("betting")
+    if sportsbook_prob is None:
+        return None
+
+    # Snapshot history can contain an opening quote long after the venue stopped
+    # pricing the event. Choose among current inputs, with dated readings first
+    # and a stable venue order when their timestamps tie or are both absent.
+    undated = datetime.min.replace(tzinfo=timezone.utc)
+    venue = max(
+        (source for source in ("kalshi", "polymarket") if source in admitted),
+        key=lambda source: parse_source_entry(source_entries[source])[1] or undated,
+        default=None,
+    )
+    if venue is None:
+        return None
+    venue_prob = admitted[venue]
+    divergence = abs(venue_prob - sportsbook_prob)
+    if divergence >= 0.05:
+        return {
+            "sportsbook_home_prob": round(sportsbook_prob, 4),
+            "prediction_market_home_prob": round(venue_prob, 4),
+            "source": venue,
+            "divergence": round(divergence, 4),
+        }
+    return None
+
+
 @router.get("/{event_id}/line-movement")
 async def get_line_movement_analysis(
     event_id: int,
@@ -35860,6 +35933,7 @@ async def get_line_movement_analysis(
         raise HTTPException(status_code=404, detail="Event not found")
 
     now = datetime.now(timezone.utc)
+    disagreement_data = _line_movement_disagreement(event)
 
     # Check for cached analysis
     cached = await db.execute(
@@ -35879,15 +35953,25 @@ async def get_line_movement_analysis(
             # Extract stored context metadata if available
             stored_movement_data = cached_analysis.movement_data or []
             stored_context = None
+            disagreement_basis = None
             if isinstance(stored_movement_data, dict):
                 stored_context = stored_movement_data.get("context")
+                disagreement_basis = stored_movement_data.get("disagreement_basis")
                 stored_movement_data = stored_movement_data.get("movements", [])
+            disagreement = cached_analysis.disagreement_data
+            # Reuse a comparison only while both admitted inputs still
+            # support it. Movement history and its explanation have their own TTL.
+            if (
+                disagreement_basis != _LINE_MOVEMENT_DISAGREEMENT_BASIS
+                or disagreement != disagreement_data
+            ):
+                disagreement = None
             return {
                 "event_id": event_id,
                 "movements": stored_movement_data,
                 "explanation": cached_analysis.explanation,
-                "disagreement_explanation": cached_analysis.disagreement_explanation,
-                "disagreement_data": cached_analysis.disagreement_data,
+                "disagreement_explanation": cached_analysis.disagreement_explanation if disagreement else None,
+                "disagreement_data": disagreement,
                 "context": stored_context,
                 "cached": True,
                 "created_at": cached_analysis.created_at.isoformat(),
@@ -36108,58 +36192,8 @@ async def get_line_movement_analysis(
         if attribution.surfaced:
             explanation = attribution.primary_cause
 
-    # Check for prediction market disagreement
+    # No synchronous LLM call for the comparison (latency/133).
     disagreement_explanation = None
-    disagreement_data = None
-
-    # Look for prediction market win_prob_snapshots
-    try:
-        from app.models.models import WinProbSnapshot
-        pm_result = await db.execute(
-            select(WinProbSnapshot)
-            .where(
-                WinProbSnapshot.event_id == event_id,
-                WinProbSnapshot.source.in_(["kalshi", "polymarket"]),
-            )
-            .order_by(WinProbSnapshot.captured_at.desc())
-            .limit(2)
-        )
-        pm_snapshots = pm_result.scalars().all()
-
-        if pm_snapshots and opening_home_prob is not None:
-            # Compare latest prediction market price to sportsbook consensus
-            pm_snap = pm_snapshots[0]
-            pm_prob = float(pm_snap.home_probability) if pm_snap.home_probability is not None else None
-            sportsbook_prob = opening_home_prob
-
-            # Use latest aggregated odds if available
-            if aggregated_snapshots:
-                sportsbook_prob = aggregated_snapshots[-1]["home_probability"]
-
-            if pm_prob is not None and sportsbook_prob is not None:
-                divergence = abs(pm_prob - sportsbook_prob)
-                if divergence >= 0.05:  # 5% disagreement threshold
-                    disagreement_data = {
-                        "sportsbook_home_prob": round(sportsbook_prob, 4),
-                        "prediction_market_home_prob": round(pm_prob, 4),
-                        "source": pm_snap.source,
-                        "divergence": round(divergence, 4),
-                    }
-
-                    # NO LLM CALL HERE (latency/133). This used to call the
-                    # SYNCHRONOUS generate_market_disagreement_explanation()
-                    # from inside an async handler — a blocking OpenAI request
-                    # with a 30s client timeout, which parks the whole event
-                    # loop (and so both workers' worth of concurrency on the
-                    # dyno), not just this request. It fired on every cache
-                    # miss: disagreement_data is set on 264/264 rows ever
-                    # written to line_movement_analyses, and
-                    # disagreement_explanation on 0 of those 264. Measured
-                    # payout: zero, for an unbounded block. The numbers below
-                    # are deterministic and are the part clients render;
-                    # disagreement_explanation stays in the response as null.
-    except Exception:
-        pass  # win_prob_snapshots table may not exist or other DB issue
 
     # Cache the analysis
     ttl = None
@@ -36184,6 +36218,7 @@ async def get_line_movement_analysis(
     cache_data = {
         "movements": movements_data,
         "context": context_meta,
+        "disagreement_basis": _LINE_MOVEMENT_DISAGREEMENT_BASIS,
     }
 
     # Upsert cached analysis
@@ -37317,6 +37352,15 @@ def _format_event(
         if probability_sources is not None
         else getattr(event, "win_probability_sources", None)
     )
+    if event.status == "live" and isinstance(_wps, dict) and _wps:
+        from app.utils.aggregation import witnessed_pregame_price_sources
+
+        # The native source disclosure and web models view print these as
+        # current. Historical reads still carry their original evidence.
+        price_view = FoldedBlendView(event, _wps) if probability_sources is not None else event
+        pregame_sources = witnessed_pregame_price_sources(price_view, now=_served_now)
+        if pregame_sources:
+            _wps = {key: entry for key, entry in _wps.items() if key not in pregame_sources}
     response = {
         "id": event.id,
         "external_id": event.external_id,

@@ -7,7 +7,13 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from model import build, instant, unchanged_after
-from signals import commands_from, reader_behind, stopped_rules, test_file
+from signals import (
+    commands_from,
+    reader_behind,
+    resolve_holds,
+    stopped_rules,
+    test_file,
+)
 
 
 class FactoryStops(unittest.TestCase):
@@ -57,7 +63,12 @@ class FactoryStops(unittest.TestCase):
         )
 
     def test_c_hold_lasts_until_a_later_live_line_for_that_line(self):
-        hold = {"kind": "hold", "line": "Server", "at": "2026-11-18T17:00:00Z"}
+        hold = {
+            "kind": "hold",
+            "line": "Server",
+            "at": "2026-11-18T17:00:00Z",
+            "source": {"id": 10, "author": "Fable"},
+        }
         self.assertEqual(self.stops(commands=[hold])[0]["kind"], "hold")
         live = {"kind": "live", "line": "Server", "at": "2026-11-18T17:30:00Z"}
         self.assertEqual(self.stops(commands=[hold, live]), [])
@@ -74,6 +85,141 @@ class FactoryStops(unittest.TestCase):
             ("master", "Test", "2026-11-18T17:20:00Z"),
         )
         self.assertEqual(self.stops(master={"tests": "passing"}), [])
+
+    def test_november_18_live_posts_clear_holds_with_or_without_named_slots(self):
+        fixture = json.loads(
+            (Path(__file__).parent / "fixtures/now-nov18-holds.json").read_text()
+        )
+        now = instant("2026-11-19T00:35:00Z")
+        origin = fixture["server_start"]
+        self.assertEqual(commands_from([origin])[0]["source"]["id"], 6994962892)
+        expected = [["Server", "Website"], ["Server"], ["Server"]]
+        for post, slots in zip(fixture["live"], expected):
+            with self.subTest(at=post["created_at"]):
+                commands = commands_from([post])
+                self.assertEqual(
+                    [(c["kind"], c["line"]) for c in commands],
+                    [("live", slot) for slot in slots],
+                )
+                holds = resolve_holds(commands_from([origin, post]), [], {}, now)
+                self.assertEqual(holds["Server"]["ended_at"], post["created_at"])
+        website = {**origin, "id": 1, "body": "stuck: HOLD (website)"}
+        commands = commands_from([origin, website, *fixture["live"]])
+        holds = resolve_holds(commands, [], {}, now)
+        self.assertEqual(holds["Server"]["ended_at"], fixture["live"][0]["created_at"])
+        self.assertEqual(holds["Website"]["ended_at"], fixture["live"][0]["created_at"])
+        stops = stopped_rules([], commands, {}, {}, origin["created_at"], now)
+        self.assertFalse(any(stop["kind"] == "hold" for stop in stops))
+
+    def test_only_stuck_and_uppercase_hold_with_provenance_starts_a_hold(self):
+        post = {
+            "id": 1,
+            "author_association": "OWNER",
+            "created_at": "2026-11-18T17:00:00Z",
+        }
+        for body in (
+            "Server HOLD",
+            "stuck on server hold",
+            "stuck: Server HOLD is over",
+            "stuck: Server HOLD lifted",
+            "stuck: Server HOLD is cleared",
+            "The server is stuck with HOLD",
+            "stuck: HOLD",
+        ):
+            self.assertFalse(
+                any(
+                    c["kind"] == "hold" for c in commands_from([{**post, "body": body}])
+                ),
+                body,
+            )
+        self.assertEqual(
+            commands_from([{**post, "body": "stuck: HOLD (server), Website can go"}])[
+                0
+            ]["line"],
+            "Server",
+        )
+        self.assertEqual(
+            commands_from(
+                [{**post, "body": "stuck: HOLD (server)", "author_association": "NONE"}]
+            ),
+            [],
+        )
+
+    def test_a_delivery_new_green_master_run_or_coordinator_can_end_a_hold(self):
+        start = {
+            "kind": "hold",
+            "line": "Server",
+            "at": "2026-11-18T17:00:00Z",
+            "source": {"id": 10, "author": "Fable"},
+        }
+        done = "2026-11-18T17:40:00Z"
+        before = {
+            "successful_runs": [
+                {"started_at": "2026-11-18T16:59:00Z", "finished_at": done}
+            ]
+        }
+        after = {
+            "successful_runs": [
+                {"started_at": "2026-11-18T17:01:00Z", "finished_at": done}
+            ]
+        }
+        delivery = {
+            "line": "Server",
+            "station": "Live",
+            "merged_at": "2026-11-18T17:05:00Z",
+            "live_at": done,
+        }
+        self.assertIsNone(
+            resolve_holds([start], [], before, self.now)["Server"]["ended_at"]
+        )
+        self.assertEqual(
+            resolve_holds([start], [], after, self.now)["Server"]["ended_at"], done
+        )
+        self.assertEqual(
+            resolve_holds([start], [delivery], {}, self.now)["Server"]["ended_at"], done
+        )
+        for name in ("Fable", "Alex"):
+            comment = {
+                "body": f"{name}: Server HOLD is over.",
+                "author_association": "OWNER",
+                "created_at": "2026-11-18T17:25:00Z",
+            }
+            holds = resolve_holds(
+                [start, *commands_from([comment])], [delivery], after, self.now
+            )
+            self.assertEqual(holds["Server"]["ended_at"], comment["created_at"])
+            self.assertEqual(resolve_holds([start], [], {}, self.now, holds), holds)
+        other_lane = {
+            "body": "live — Apple. The server HOLD is over.",
+            "author_association": "OWNER",
+            "created_at": done,
+        }
+        self.assertIsNone(
+            resolve_holds([start, *commands_from([other_lane])], [], {}, self.now)[
+                "Server"
+            ]["ended_at"]
+        )
+
+    def test_repeat_hold_keeps_original_now_line_and_starts_again_after_clearance(self):
+        a = {
+            "kind": "hold",
+            "line": "Server",
+            "at": "2026-11-18T17:00:00Z",
+            "source": {"id": 10, "author": "Fable"},
+        }
+        b = {
+            **a,
+            "at": "2026-11-18T17:30:00Z",
+            "source": {"id": 11, "author": "Builder B"},
+        }
+        clear = {"kind": "resume", "line": "Server", "at": "2026-11-18T17:20:00Z"}
+        self.assertEqual(
+            resolve_holds([a, b], [], {}, self.now)["Server"]["source"], a["source"]
+        )
+        self.assertEqual(
+            resolve_holds([a, clear, b], [], {}, self.now)["Server"]["source"],
+            b["source"],
+        )
 
     def test_e_review_wait_over_two_hours_is_amber(self):
         review = {
@@ -171,6 +317,8 @@ class FactoryStops(unittest.TestCase):
                     "since": ready,
                     "count": 1,
                     "level": "amber",
+                    "number": 12002,
+                    "waiting_since": ready,
                 }
             ],
         )

@@ -230,6 +230,17 @@ jobs:
             # able to fail a job — the opposite polarity to the guards above it.
             HEAVY_AGE_MIN="$(python3 scripts/heavy_sync_decision.py age --app bainluck-heavy)"
             echo "heavy release age: ${HEAVY_AGE_MIN:-<unreadable>} min"
+
+            # 234: A — the cycle floor does not apply to a diff that touches what
+            # heavy schedules or runs; the band and a daily cap of 12 still do.
+            # Both readers print the value alone and exit 0; empty means
+            # unreadable, and unreadable grants NO exemption (the floor stands).
+            FLOOR_EXEMPT=""
+            if [ "$ANCESTOR" = true ]; then
+              FLOOR_EXEMPT="$(python3 scripts/heavy_sync_decision.py floor-exempt --from "$HEAVY_LIVE" --to "$MAIN_LIVE")"
+            fi
+            HEAVY_RELEASES_24H="$(python3 scripts/heavy_sync_decision.py releases-24h --app bainluck-heavy)"
+            echo "floor exempt: ${FLOOR_EXEMPT:-<no>}; heavy releases in 24 h: ${HEAVY_RELEASES_24H:-<unreadable>}"
           }
 
           read_facts
@@ -293,6 +304,8 @@ jobs:
             --heavy-live "${HEAVY_LIVE:-}" \
             --heavy-is-ancestor "$ANCESTOR" \
             --heavy-release-age-min "${HEAVY_AGE_MIN:-}" \
+            --floor-exempt "${FLOOR_EXEMPT:-}" \
+            --heavy-releases-24h "${HEAVY_RELEASES_24H:-}" \
             $DISPATCH_FLAG)"
           # A wait that did not parse is not a licence to sleep (gotcha #54: the
           # VALUE, not the exit code) — anything but digits becomes 0, and 0 is
@@ -311,6 +324,8 @@ jobs:
             --heavy-live "${HEAVY_LIVE:-}" \
             --heavy-is-ancestor "$ANCESTOR" \
             --heavy-release-age-min "${HEAVY_AGE_MIN:-}" \
+            --floor-exempt "${FLOOR_EXEMPT:-}" \
+            --heavy-releases-24h "${HEAVY_RELEASES_24H:-}" \
             $DISPATCH_FLAG
           DECISION=$?
           set -e
@@ -606,6 +621,8 @@ jobs:
               --heavy-live "${HEAVY_LIVE:-}" \
               --heavy-is-ancestor "$ANCESTOR" \
               --heavy-release-age-min "${HEAVY_AGE_MIN:-}" \
+              --floor-exempt "${FLOOR_EXEMPT:-}" \
+              --heavy-releases-24h "${HEAVY_RELEASES_24H:-}" \
               $DISPATCH_FLAG
             REDECISION=$?
             set -e

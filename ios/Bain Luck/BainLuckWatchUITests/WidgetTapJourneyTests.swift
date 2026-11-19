@@ -4,6 +4,7 @@ import XCTest
 final class WidgetTapJourneyTests: XCTestCase {
     @MainActor
     func testColdActualWidgetTapRetainsOfflineReading() throws {
+        executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
         defer { app.terminate() }
@@ -57,6 +58,7 @@ final class WidgetTapJourneyTests: XCTestCase {
 
     @MainActor
     func testColdActualWidgetTapOffersPickerWithoutSelection() throws {
+        executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
         defer { app.terminate() }
@@ -97,6 +99,7 @@ final class WidgetTapJourneyTests: XCTestCase {
 
     @MainActor
     func testFreshConfiguredFaceIsActiveBeforeActualLauncherTap() throws {
+        executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
         defer { app.terminate() }
@@ -127,6 +130,7 @@ final class WidgetTapJourneyTests: XCTestCase {
 
     @MainActor
     func testActualCornerLauncherAndTap() throws {
+        executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
         let originalObservation = Date().addingTimeInterval(-120)
@@ -158,6 +162,7 @@ final class WidgetTapJourneyTests: XCTestCase {
 
     @MainActor
     func testActualCircularLauncherAndTap() throws {
+        executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchEnvironment = [
@@ -192,6 +197,7 @@ final class WidgetTapJourneyTests: XCTestCase {
 
     @MainActor
     func testActualComplicationHost() throws {
+        executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchEnvironment = [
@@ -332,7 +338,11 @@ extension WidgetTapJourneyTests {
         try widgetWarmRequire(process.label == baseline.processUUID,
                               "Real host tap cold-relaunched the app instead of preserving its process UUID", app: app)
         for overlay in dismissedOverlays {
-            try widgetWarmWait(NSPredicate(format: "exists == false"), on: overlay, timeout: 15,
+            // 45 s, not 15: right after the tap brings the app forward, one hosted
+            // accessibility snapshot can take 14 s (run 43963455417, widgets: the
+            // first check of the picker's Cancel took 14.4 s, the picker was gone
+            // in the failure capture, and the 15 s wait had expired).
+            try widgetWarmWait(NSPredicate(format: "exists == false"), on: overlay, timeout: 45,
                                message: "Real host tap did not dismiss the previously observed overlay", app: app)
         }
         try widgetWarmRequire(!app.buttons["watch.picker-cancel"].firstMatch.exists && !app.otherElements["Continue on iPhone"].firstMatch.exists,
@@ -470,12 +480,16 @@ extension WidgetTapJourneyTests {
         try freshFaceRequire(slot.exists && slot.isHittable && host.frame.contains(slot.frame),
                              "Fresh face editor did not expose Bottom Left complication", host: host)
         slot.tap()
-        let choice = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host) { name in
-            freshFaceCapture(host, name: name)
+        let choice = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host, reopenSlot: {
+            try self.freshFaceRequire(slot.waitForExistence(timeout: 15) && slot.isHittable && host.frame.contains(slot.frame),
+                                 "Fresh face editor lost Bottom Left complication after gallery close", host: host)
+            slot.tap()
+        }) { name in
+            self.freshFaceCapture(host, name: name)
         }
         choice.tap()
         try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { name in
-            freshFaceCapture(host, name: name)
+            self.freshFaceCapture(host, name: name)
         }
         let installed = host.cells["ComplicationListCell -- Your game"].firstMatch
         try freshFaceRequire(installed.waitForExistence(timeout: 15) && installed.isHittable,
@@ -544,9 +558,13 @@ extension WidgetTapJourneyTests {
         try freshFaceRequire(choices.count == 1,
                              "CORNER_FACE_DEPENDENCY: no unambiguous visible Exactograph upper-left complication", host: host)
         choices[0].tap()
-        let appRow = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host) { freshFaceCapture(host, name: $0) }
+        let appRow = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host, reopenSlot: {
+            try self.freshFaceRequire(choices[0].waitForExistence(timeout: 15) && choices[0].isHittable && host.frame.contains(choices[0].frame),
+                                 "CORNER_FACE_DEPENDENCY: Exactograph lost upper-left complication after gallery close", host: host)
+            choices[0].tap()
+        }) { self.freshFaceCapture(host, name: $0) }
         appRow.tap()
-        try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { freshFaceCapture(host, name: $0) }
+        try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { self.freshFaceCapture(host, name: $0) }
         let installed = host.cells["ComplicationListCell -- Your game"].firstMatch
         try freshFaceRequire(installed.waitForExistence(timeout: 15) && installed.isHittable,
                              "CORNER_FACE_DEPENDENCY: Your game unavailable for observed corner slot", host: host)
@@ -569,8 +587,15 @@ extension WidgetTapJourneyTests {
         try freshFaceRequire(XCTWaiter.wait(for: [activated], timeout: 15) == .completed,
                              "Configured Exactograph did not become active", host: host)
         let reading = host.descendants(matching: .any)["watch.complication.corner.fallback"].firstMatch
-        try freshFaceRequire(reading.waitForExistence(timeout: 15) && reading.isHittable && host.frame.contains(reading.frame),
-                             "Actual configured Exactograph has no fitting explicit launcher", host: host)
+        // Run 44397980828 (corner): the launcher appeared after 13 s still drawn as
+        // WidgetKit's placeholder (private-use glyphs, no letters). Wait for the real
+        // entry to replace it; the caller still requires the exact label.
+        let drawn = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            reading.exists && reading.label.unicodeScalars.contains { $0.properties.isAlphabetic }
+        }, object: host)
+        let arrivedDrawn = XCTWaiter.wait(for: [drawn], timeout: 45) == .completed
+        try freshFaceRequire(arrivedDrawn && reading.isHittable && host.frame.contains(reading.frame),
+                             "Actual configured Exactograph has no fitting, drawn explicit launcher", host: host)
         return reading
     }
 
@@ -673,13 +698,15 @@ extension WidgetTapJourneyTests {
 /// Normalize its observed page roles before searching the exact Bain Luck row.
 @MainActor
 enum WatchComplicationGalleryNavigation {
-    static func bainLuckAppRow(in host: XCUIApplication, capture: (String) -> Void) throws -> XCUIElement {
+    static func bainLuckAppRow(in host: XCUIApplication, reopenSlot: (() throws -> Void)? = nil, capture: (String) -> Void) throws -> XCUIElement {
         let appRows = host.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@ OR identifier BEGINSWITH %@",
                                                      "AppGroupCell -- ", "FeaturedWidgetCell -- "))
         let details = host.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "ComplicationListCell -- "))
         let back = host.buttons["BackButton"].firstMatch
         let detailPage = host.otherElements["ComplicationPickerDetailView"].firstMatch
         let parentPage = host.navigationBars["NTKStarbearPickerView"].firstMatch
+        var syncAttempt = 0
+        while true {
         // The slot tap can return before Carousel publishes either destination.
         // Normalize only a complete observed page, never the transition between them.
         var arrivalChecks = 0
@@ -712,6 +739,7 @@ enum WatchComplicationGalleryNavigation {
         // Virtualized rows may disappear between large drags. Use the actual
         // visible alphabetical app rows to choose direction and move by at most
         // half a row, rather than sweeping past the target on a fixed schedule.
+        var needsDescriptorResync = false
         var visits: [String: Int] = [:]
         for step in 0..<48 {
             let exists = choice.exists
@@ -735,6 +763,10 @@ enum WatchComplicationGalleryNavigation {
             print("WATCH_GALLERY_STEP=\(step) earlier=\(earlier) targetExists=\(exists) rows=\(position)")
             if !position.isEmpty {
                 visits[position, default: 0] += 1
+                if visits[position, default: 0] > 3 && earlier && !exists && syncAttempt < 4 && reopenSlot != nil {
+                    needsDescriptorResync = true
+                    break
+                }
                 try require(visits[position, default: 0] <= 3,
                             "App-gallery search repeated visible rows without finding exact Bain Luck: \(position)", capture: capture)
             }
@@ -746,17 +778,31 @@ enum WatchComplicationGalleryNavigation {
             try require(parentPage.exists && !detailPage.exists && !back.exists,
                         "App-gallery search unexpectedly left NTKStarbearPickerView", capture: capture)
         }
+        if needsDescriptorResync, let reopenSlot {
+            syncAttempt += 1
+            let close = parentPage.buttons["Close"].firstMatch
+            try require(close.exists && close.isHittable,
+                        "Cannot dismiss NTKStarbearPickerView while awaiting complication descriptor sync", capture: capture)
+            close.tap()
+            let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: parentPage)
+            try require(XCTWaiter.wait(for: [dismissed], timeout: 15) == .completed,
+                        "NTKStarbearPickerView did not dismiss before complication descriptor resync", capture: capture)
+            _ = XCTWaiter.wait(for: [XCTestExpectation(description: "nanotimekitd post-reinstall complication descriptor sync")], timeout: 10)
+            try reopenSlot()
+            continue
+        }
         try require(choice.exists && choice.isHittable && host.frame.contains(choice.frame)
                     && choice.frame.minY > chromeBottom,
                     "Exact Bain Luck app row unreachable after bounded row-guided search", capture: capture)
         return choice
+        }
     }
 
     static func requireBainLuckDetail(in host: XCUIApplication, capture: (String) -> Void) throws {
         let detailPage = host.otherElements["ComplicationPickerDetailView"].firstMatch
         let title = host.navigationBars["Bain Luck"].firstMatch
         let game = host.cells["ComplicationListCell -- Your game"].firstMatch
-        try require(detailPage.waitForExistence(timeout: 15) && title.exists && game.exists,
+        try require(detailPage.waitForExistence(timeout: 15) && title.waitForExistence(timeout: 15) && game.waitForExistence(timeout: 15),
                     "Exact Bain Luck detail and Your game required after selecting app row", capture: capture)
         capture("Actual Bain Luck complication detail after exact app selection")
     }

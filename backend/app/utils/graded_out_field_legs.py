@@ -33,12 +33,15 @@ to the size-capped artifact.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Iterable
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import FuturesOutcome
+from app.utils import principal_independent_cache as _pic
 from app.utils.market_shape import SHAPE_FIELD
 from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
 
@@ -83,19 +86,40 @@ async def graded_out_leg_ids_by_market(
         candidates = candidate_leg_ids(markets)
         if not candidates:
             return {}
-        ids = list(candidates)
-        out: dict[int, set[int]] = {}
-        for start in range(0, len(ids), CHUNK):
-            rows = await db.execute(
-                select(FuturesOutcome.id).where(
-                    FuturesOutcome.id.in_(ids[start : start + CHUNK]),
-                    FuturesOutcome.is_winner.is_(False),
-                    FuturesOutcome.resolution_source.in_(AUTHORITATIVE_SOURCES),
+        ids = sorted(candidates)
+
+        async def _query_graded_out() -> list[int]:
+            found: list[int] = []
+            for start in range(0, len(ids), CHUNK):
+                rows = await db.execute(
+                    select(FuturesOutcome.id).where(
+                        FuturesOutcome.id.in_(ids[start : start + CHUNK]),
+                        FuturesOutcome.is_winner.is_(False),
+                        FuturesOutcome.resolution_source.in_(AUTHORITATIVE_SOURCES),
+                    )
                 )
+                for (outcome_id,) in rows.all():
+                    found.append(int(outcome_id))
+            return found
+
+        if isinstance(db, AsyncSession):
+            digest = hashlib.sha256(
+                ",".join(str(i) for i in ids).encode()
+            ).hexdigest()[:24]
+            graded_ids = await _pic.get_or_build(
+                "graded_out_field_legs",
+                ("v1", len(ids), digest),
+                _query_graded_out,
             )
-            for (outcome_id,) in rows.all():
-                out.setdefault(candidates[outcome_id], set()).add(outcome_id)
-        return {market_id: frozenset(ids) for market_id, ids in out.items()}
+        else:
+            graded_ids = await _query_graded_out()
+
+        out: dict[int, set[int]] = {}
+        for outcome_id in graded_ids:
+            market_id = candidates.get(outcome_id)
+            if market_id is not None:
+                out.setdefault(market_id, set()).add(outcome_id)
+        return {market_id: frozenset(m_ids) for market_id, m_ids in out.items()}
     except Exception:
         logger.warning("graded-out legs read failed; every leg stays", exc_info=True)
         return {}

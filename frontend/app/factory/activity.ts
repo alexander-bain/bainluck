@@ -9,6 +9,15 @@ export const stations: Station[] = [
   "Live",
 ];
 
+export const stationNames: Record<Station, string> = {
+  Write: "Bench",
+  Test: "Checks",
+  Review: "Inspection",
+  "Merge line": "Loading dock",
+  Ship: "Truck",
+  Live: "Live",
+};
+
 export function time(value: string) {
   return new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Los_Angeles",
@@ -23,7 +32,38 @@ export function duration(seconds: number) {
   if (minutes < 60) return `${minutes} min`;
   if (minutes < 1440)
     return `${Math.floor(minutes / 60)} hr ${minutes % 60} min`;
-  return `${Math.floor(minutes / 1440)} days`;
+  const days = Math.floor(minutes / 1440);
+  return `${days} ${days === 1 ? "day" : "days"}`;
+}
+
+const nowAuthors = [
+  "Repository owner",
+  "Alex",
+  "Fable",
+  "Speed",
+  "Builder B",
+  "Builder C",
+  "Atlas",
+  "Builder E",
+  "Builder F",
+  "Apple",
+  "Wee-Bey",
+];
+
+export function knownOrigin(source: Stop["source"]) {
+  return Boolean(
+    source &&
+      Number.isSafeInteger(source.id) &&
+      source.id > 0 &&
+      nowAuthors.includes(source.author),
+  );
+}
+
+export function shownStops(data: FactoryData) {
+  return (data.stops ?? []).flatMap((stop): Stop[] => {
+    if (stop.kind === "hold") return knownOrigin(stop.source) ? [stop] : [];
+    return [{ ...stop, level: "amber" }];
+  });
 }
 
 export function readerBehind(data: FactoryData, now: string) {
@@ -35,15 +75,36 @@ export function readerBehind(data: FactoryData, now: string) {
 
 export function stopText(stop: Stop, now: string) {
   const age = duration((Date.parse(now) - Date.parse(stop.since)) / 1000);
+  const minutes = stop.waiting_since
+    ? Math.max(
+        0,
+        Math.floor((Date.parse(now) - Date.parse(stop.waiting_since)) / 60_000),
+      )
+    : null;
+  const waited =
+    stop.number && minutes !== null
+      ? `#${stop.number} has waited ${minutes < 60 ? `${minutes} ${minutes === 1 ? "minute" : "minutes"}` : duration(minutes * 60)} for ${stop.station === "Review" ? "inspection" : "a turn at the loading dock"}.`
+      : null;
   if (stop.kind === "line-stalled")
-    return `${stop.line}: nothing merged for ${age}, ${stop.count} waiting.`;
+    return waited
+      ? `${stop.line}: nothing merged for ${age}. ${waited}`
+      : `${stop.line} loading dock has stalled.`;
   if (stop.kind === "announced")
-    return `Announced at ${time(stop.since)}, not merged.`;
+    return stop.number
+      ? `#${stop.number} was announced for a merge at ${time(stop.since)} PT and is still waiting.`
+      : `${stop.line} announced a merge at ${time(stop.since)} PT.`;
   if (stop.kind === "hold")
-    return `${stop.line} on HOLD since ${time(stop.since)} PT, ${stop.count} waiting.`;
+    return `${stop.line} on HOLD since ${time(stop.since)} PT.${waited ? ` ${waited}` : ""}`;
   if (stop.kind === "master")
-    return `Shared tests failed at ${time(stop.since)} PT, ${stop.count} waiting.`;
-  return `${stop.line} review waiting for ${age}, ${stop.count} waiting.`;
+    return `Shared checks failed at ${time(stop.since)} PT.`;
+  return waited ?? `${stop.line} inspection needs attention.`;
+}
+
+export function machineText(queue: Stop["machines"]) {
+  return (
+    queue &&
+    `Waiting for GitHub’s test machines. ${queue.running} jobs running, ${queue.waiting} waiting in this repo.`
+  );
 }
 
 function recentlyActive(at: string, now: string) {
@@ -53,7 +114,32 @@ function recentlyActive(at: string, now: string) {
 
 export function recentTransfers(data: FactoryData, now: string) {
   if (readerBehind(data, now)) return [];
-  return (data.transitions ?? []).filter((t) => recentlyActive(t.at, now));
+  return (data.transitions ?? []).filter((t) =>
+    recentlyActive(t.observed_at ?? t.at, now),
+  );
+}
+
+export function crewActivity(
+  data: FactoryData,
+  now: string,
+  changes: Change[],
+) {
+  const moves = recentTransfers(data, now).filter(
+    (move) => (move.observed_at ?? move.at) === data.generated_at,
+  );
+  const carrying = changes.find((change) =>
+    moves.some(
+      (move) => move.number === change.number && move.to === change.station,
+    ),
+  );
+  if (carrying) return { pose: "carrying", change: carrying } as const;
+  const waiting = changes.find((change) => change.station === "Merge line");
+  if (waiting) return { pose: "waiting", change: waiting } as const;
+  const working = changes.find((change) =>
+    recentlyActive(change.last_activity, now),
+  );
+  if (working) return { pose: "working", change: working } as const;
+  return { pose: "asleep", change: null } as const;
 }
 
 export function bayActivity(
@@ -63,12 +149,12 @@ export function bayActivity(
   now: string,
   changes: Change[],
 ) {
-  const stops = (data.stops ?? []).filter(
+  const stops = shownStops(data).filter(
     (s) => (s.line === null || s.line === line) && s.station === station,
   );
   const stop =
-    stops.find((s) => s.kind === "announced") ??
     stops.find((s) => s.level === "red") ??
+    stops.find((s) => s.kind === "announced") ??
     stops[0];
   const flowing =
     !stop &&
@@ -79,12 +165,12 @@ export function bayActivity(
     recentlyActive(change.last_activity, now),
   );
   const working = changes.length > 0 && (activeCrate || flowing);
+  const checking =
+    station === "Test" && changes.some((change) => change.checks_running);
   const waiting = changes.length > 0 && station !== "Live";
   const worker =
     stop?.level === "red"
-      ? stop.kind === "announced" && !activeCrate
-        ? "asleep"
-        : "alarmed"
+      ? "alarmed"
       : working
         ? "working"
         : waiting
@@ -100,11 +186,13 @@ export function bayActivity(
         : "Long wait"
       : flowing
         ? "Flowing"
-        : working
-          ? "Working"
-          : waiting
-            ? "Waiting"
-            : "Idle",
+        : checking
+          ? "Checks running"
+          : working
+            ? "Working"
+            : waiting
+              ? "Waiting"
+              : "Idle",
   } as const;
 }
 
@@ -114,7 +202,20 @@ export function beltFlowing(
   segment: number,
   now: string,
 ) {
-  const blocked = (data.stops ?? []).some(
+  if (readerBehind(data, now)) return false;
+  if (
+    segment < 2 &&
+    data.changes.some(
+      (change) =>
+        change.line === line &&
+        change.station === "Test" &&
+        change.checks_running &&
+        !change.side_track &&
+        !change.bot_update,
+    )
+  )
+    return true;
+  const blocked = shownStops(data).some(
     (s) =>
       s.level === "red" &&
       (s.line === null || s.line === line) &&

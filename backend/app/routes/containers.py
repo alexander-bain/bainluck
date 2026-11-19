@@ -769,9 +769,12 @@ async def _get_container(
         return await serve_roundup(slug, db, include_children=include_children)
 
     edition = edition_for_slug(slug)
+    compact = compact and (edition or {}).get("kind") == EDITION_NFL_WEEK
     with _time_stage("published_read"):
         if slug == MIDTERMS_SLUG or _is_theme_edition(edition):
             published = await read_published(db, slug)
+        elif compact:
+            published = await read_published(db, slug, include_headers=True, inline_schema=True)
         else:
             published = await read_published(db, slug, include_headers=True)
     if published.state == READ_UNAVAILABLE:
@@ -816,7 +819,6 @@ async def _get_container(
         result["discover_pin"] = midterms_pin(result)
         return result
 
-    compact = compact and (edition or {}).get("kind") == EDITION_NFL_WEEK
     if (edition or {}).get("kind") == EDITION_NFL_WEEK and any(
         value is not None for value in (market_revision, market_cursor, market_limit)
     ):

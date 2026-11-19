@@ -1560,6 +1560,22 @@ export async function fetchFeed(
   if (params?.category) searchParams.set("category", params.category);
   if (params?.edition) searchParams.set("edition", params.edition);
 
+  // #12095 — the Discover deck's own shape (no mode, filter or narrowing)
+  // names the slate its events carry; any other feed CLEARS it, so a swipe on
+  // a category page never carries the Discover slate.
+  const isDiscoverDeck =
+    !params?.mode && !params?.category && !params?.sport && !params?.tags?.length &&
+    !params?.my_teams_only && params?.include_futures !== false && params?.include_events !== false;
+
+  // #12288 / Ruling 252: A — website opts in via `machinery=1` only when the
+  // public website switch is on; older iOS (1.0.6) omits it and receives none.
+  if (
+    isDiscoverDeck &&
+    process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 === "true"
+  ) {
+    searchParams.set("machinery", "1");
+  }
+
   const query = searchParams.toString();
   // A suppressed request must NOT read-through-mint a session id; only the
   // session-scoped path calls the minting getter.
@@ -1572,12 +1588,6 @@ export async function fetchFeed(
   const headers = sessionId ? { "x-session-id": sessionId } : undefined;
 
   const endpoint = `/api/feed${query ? `?${query}` : ""}`;
-  // #12095 — the Discover deck's own shape (no mode, filter or narrowing)
-  // names the slate its events carry; any other feed CLEARS it, so a swipe on
-  // a category page never carries the Discover slate.
-  const isDiscoverDeck =
-    !params?.mode && !params?.category && !params?.sport && !params?.tags?.length &&
-    !params?.my_teams_only && params?.include_futures !== false && params?.include_events !== false;
 
   // L2-189: measure client time-to-response and emit bounded, non-PII latency
   // telemetry from the exposed feed headers. All best-effort — never affects

@@ -413,6 +413,7 @@ def nfl_polymarket_finished_page(
     kalshi_control=False,
     kalshi_won=None,
     kalshi_finished=None,
+    score_source=None,
 ):
     """Synthetic venue-resolved NFL prop through the real assembly path."""
     from app.routes.events import _build_game_markets
@@ -424,6 +425,7 @@ def nfl_polymarket_finished_page(
     fixture.sport.key = "americanfootball_nfl"
     fixture.home_team_name, fixture.away_team_name = "Houston Texans", "Buffalo Bills"
     fixture.home_score, fixture.away_score = 21, 24
+    fixture.score_source = score_source
     fixture.completed_at = now - timedelta(hours=2) if finished else None
     fixture.period = None if finished else "Q3"
     market = _market(
@@ -534,6 +536,59 @@ class TestServedPropSelection:
             / "frontend/__tests__/fixtures/nflPolymarketGrade12581.json"
         )
         assert json.loads(path.read_text()) == finished_polymarket_reader_fixture()
+
+    def test_venue_grade_names_venue_evidence_when_the_box_has_no_grade(self):
+        page = nfl_polymarket_finished_page(finished=True, score_source="espn")
+
+        (row,) = page["player_props"]
+        (script,) = page["props_script"]
+        assert row["actual"] is None
+        assert row["source_mark"]["settled"] == {
+            "source": "api_settlement", "result": "Won", "at": None,
+        }
+        assert script["source_mark"] == row["source_mark"]
+
+    def test_capped_prop_keeps_its_proved_box_score_result(self):
+        from app.routes.events import _build_game_markets
+        from tests.test_event_props_matrix_10236 import _db, _event, _market, _outcome
+
+        now = datetime.now(timezone.utc)
+        commence = now - timedelta(hours=6)
+        fixture = _event(status="completed", commence=commence)
+        fixture.sport.key = "americanfootball_nfl"
+        fixture.home_team_name, fixture.away_team_name = "Detroit Lions", "New England Patriots"
+        fixture.score_source = "espn"
+        fixture.completed_at = now - timedelta(hours=2)
+        fixture.box_score_data = {"players": {"Sam LaPorta": {"receptions": 1}}}
+        market = _market(
+            id=71, name="New England Patriots vs Detroit Lions: Receptions",
+            source="kalshi", commence=commence,
+        )
+        market.external_id = "KXNFLREC-26NOV15NEDET"
+        market.llm_sport_category = "americanfootball"
+        outcomes = [
+            _outcome(id=711, market_id=71, name="Sam LaPorta: 5+", prob=0.095),
+            _outcome(id=712, market_id=71, name="Sam LaPorta: 6+", prob=0.21),
+        ]
+        for leg in outcomes:
+            leg.current_yes_bid = leg.current_yes_ask = None
+        page, _, _ = asyncio.run(
+            _build_game_markets(
+                fixture.id,
+                _db(fixture, [market], outcomes, {leg.id: commence for leg in outcomes}),
+            )
+        )
+        row = next(row for row in page["player_props"] if row["threshold"] == 6)
+        script = next(
+            item for item in page["props_script"] if item["label"] == row["outcome_name"]
+        )
+        assert row["observed_at_basis"] == "capped_to_sibling"
+        assert row["over_probability"] == script["current"] == 0.095
+        assert row["actual"] == 1 and script["graded_result"] == "miss"
+        assert row["source_mark"]["settled"] == {
+            "source": "espn", "result": "Lost", "at": None,
+        }
+        assert script["source_mark"] == row["source_mark"]
 
     @pytest.mark.parametrize(
         "kwargs", [{"void": True}, {"grade_source": "clean_resolution"}]

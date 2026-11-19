@@ -101,9 +101,8 @@ read inside its window are taken out before the cap, not after it.
 THREE ARMS, BECAUSE THERE ARE THREE KINDS OF WORTH REFRESHING
 --------------------------------------------------------------
 The sweep selects on **value** (volume above a floor at any tier, or tier 1
-where no volume was recorded), on **curation** (any market a committed
-tournament register renders —
-:func:`app.utils.tournament_register.registered_market_ids`), and since
+where no volume was recorded), on **curation** (the tournament and Midterms
+price registries, :func:`app.utils.futures_quote_freshness.registered_price_refresh_market_ids`), and since
 2026-09-05 on **what page one is actually showing**
 (:func:`app.utils.feed_served_markets.served_market_ids`).
 
@@ -240,7 +239,10 @@ from app.utils.futures_liveness import (
     venue_answered,
 )
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598 / CERT-3182
-from app.utils.futures_quote_freshness import price_refresh_due_sql
+from app.utils.futures_quote_freshness import (
+    price_refresh_due_sql,
+    registered_price_refresh_market_ids,
+)
 from app.utils.kalshi_resolution_window import derive_resolution_window  # #8871
 from app.utils.kalshi_threshold_label import (  # #9543
     THRESHOLD_LABEL_KEY,
@@ -1329,7 +1331,7 @@ async def _scan_candidates(
 async def _scan_registered_candidates(
     session, *, market_ids: list[int], stale_minutes: int
 ) -> list[dict]:
-    """Stale markets a committed tournament register renders, at any tier or volume."""
+    """Stale markets in the curated price registries, at any tier or volume."""
     if not market_ids:
         return []
     rows = (
@@ -3555,7 +3557,6 @@ async def _refresh_stale_futures_prices(
         served_signal,
     )
     from app.utils.category_served_markets import category_served_market_ids
-    from app.utils.tournament_register import registered_market_ids
 
     started = time.monotonic()
     stats: dict = {
@@ -3854,7 +3855,7 @@ async def _refresh_stale_futures_prices(
                 stats["errors"].append(f"served reachability census: {exc}")
         registered_scan = await _scan_registered_candidates(
             session,
-            market_ids=sorted(registered_market_ids()),
+            market_ids=sorted(registered_price_refresh_market_ids()),
             stale_minutes=registered_refresh_minutes,
         )
         in_play_scan = await _scan_in_play_candidates(
