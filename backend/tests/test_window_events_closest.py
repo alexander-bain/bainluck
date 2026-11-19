@@ -380,7 +380,7 @@ async def test_row_probability_equals_event_page_hero_through_hydrate_event_card
         (404, "Denver Nuggets", "Nuggets", "Minnesota Timberwolves", "Timberwolves", 0.60, 0.75, "scheduled", None),
         # Event 405 has NO win_probability_sources and no opening -> resolve_hero is None (absent):
         (405, "Golden State Warriors", "Warriors", "Sacramento Kings", "Kings", None, 0.505, "scheduled", None),
-        # Event 406 has NO win_probability_sources and an opening line -> hero_probability_source == "opening":
+        # Event 406 has an opening line but no admitted current source:
         (406, "Dallas Mavericks", "Mavericks", "Houston Rockets", "Rockets", None, 0.501, "scheduled", 0.502),
         # Event 407 has a finished status with no scores and a blend -> hero_probability_source == "final_unresolved":
         (407, "Cleveland Cavaliers", "Cavaliers", "Orlando Magic", "Magic", 0.503, 0.503, "completed", None),
@@ -470,21 +470,19 @@ async def test_row_probability_equals_event_page_hero_through_hydrate_event_card
             fake_db, [401, 402, 403, 404, 405, 406, 407]
         )
         assert failed == {}
-        # Event 405 has books-only current_odds (0.505) and no hero_probability:
-        assert hydrated_cards[405]["current_odds"]["home_probability"] == pytest.approx(0.505)
+        # #12824: a raw book and historical opening cannot supply a current chance.
+        assert hydrated_cards[405]["current_odds"]["home_probability"] is None
         assert "hero_probability" not in hydrated_cards[405]
-        # Event 406 has hero_probability_source == "opening" (0.502):
-        assert hydrated_cards[406]["hero_probability_source"] == "opening"
-        assert hydrated_cards[406]["hero_probability"] == pytest.approx(0.502)
+        assert "hero_probability" not in hydrated_cards[406]
         assert _extract_blended_leader(hydrated_cards[406]) is None
-        # Event 407 has hero_probability_source == "final_unresolved" (0.503):
+        # A real blend on an unresolved finished game keeps its honest label.
         assert hydrated_cards[407]["hero_probability_source"] == "final_unresolved"
         assert hydrated_cards[407]["hero_probability"] == pytest.approx(0.503)
         assert _extract_blended_leader(hydrated_cards[407]) is None
 
         outcome = await produce_window_events_closest(defn, fake_db, now=now)
         assert not isinstance(outcome, RoundupRefusal)
-        # Events 405 (absent), 406 (opening), and 407 (final_unresolved) are all refused
+        # Events 405 (raw book), 406 (opening), and 407 (final_unresolved) are refused
         # while the 4 blended siblings [404, 403, 401, 402] survive:
         assert outcome.footer == "The 4 closest of 4 games tonight"
         assert [r["event_id"] for r in outcome.rows] == [404, 403, 401, 402]

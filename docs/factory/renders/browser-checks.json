@@ -1,0 +1,149 @@
+{
+  "scenarios": {
+    "flowing": {
+      "clock": "2026-11-18T18:08:30Z",
+      "source_generated_at": "2026-11-18T18:08:19.706197Z",
+      "captures": [
+        {
+          "file": "flowing-light-390.png",
+          "width": 390,
+          "theme": "light",
+          "documentWidth": 390,
+          "pageErrors": []
+        },
+        {
+          "file": "flowing-light-1280.png",
+          "width": 1280,
+          "theme": "light",
+          "documentWidth": 1280,
+          "pageErrors": []
+        },
+        {
+          "file": "flowing-dark-390.png",
+          "width": 390,
+          "theme": "dark",
+          "documentWidth": 390,
+          "pageErrors": []
+        },
+        {
+          "file": "flowing-dark-1280.png",
+          "width": 1280,
+          "theme": "dark",
+          "documentWidth": 1280,
+          "pageErrors": []
+        }
+      ]
+    },
+    "stopped": {
+      "clock": "2026-11-18T18:10:00Z",
+      "source_generated_at": "2026-11-18T18:10:00Z",
+      "captures": [
+        {
+          "file": "stopped-light-390.png",
+          "width": 390,
+          "theme": "light",
+          "documentWidth": 390,
+          "pageErrors": []
+        },
+        {
+          "file": "stopped-light-1280.png",
+          "width": 1280,
+          "theme": "light",
+          "documentWidth": 1280,
+          "pageErrors": []
+        },
+        {
+          "file": "stopped-dark-390.png",
+          "width": 390,
+          "theme": "dark",
+          "documentWidth": 390,
+          "pageErrors": []
+        },
+        {
+          "file": "stopped-dark-1280.png",
+          "width": 1280,
+          "theme": "dark",
+          "documentWidth": 1280,
+          "pageErrors": []
+        }
+      ]
+    },
+    "behind": {
+      "clock": "2026-11-18T18:12:00Z",
+      "source_generated_at": "2026-11-18T15:58:32.664542Z",
+      "captures": [
+        {
+          "file": "behind-light-390.png",
+          "width": 390,
+          "theme": "light",
+          "documentWidth": 390,
+          "pageErrors": []
+        },
+        {
+          "file": "behind-light-1280.png",
+          "width": 1280,
+          "theme": "light",
+          "documentWidth": 1280,
+          "pageErrors": []
+        },
+        {
+          "file": "behind-dark-390.png",
+          "width": 390,
+          "theme": "dark",
+          "documentWidth": 390,
+          "pageErrors": []
+        },
+        {
+          "file": "behind-dark-1280.png",
+          "width": 1280,
+          "theme": "dark",
+          "documentWidth": 1280,
+          "pageErrors": []
+        }
+      ]
+    },
+    "unreadable": {
+      "clock": "2026-11-18T18:14:00Z",
+      "captures": [
+        {
+          "file": "unreadable-light-390.png",
+          "width": 390,
+          "theme": "light",
+          "documentWidth": 390,
+          "pageErrors": []
+        },
+        {
+          "file": "unreadable-light-1280.png",
+          "width": 1280,
+          "theme": "light",
+          "documentWidth": 1280,
+          "pageErrors": []
+        },
+        {
+          "file": "unreadable-dark-390.png",
+          "width": 390,
+          "theme": "dark",
+          "documentWidth": 390,
+          "pageErrors": []
+        },
+        {
+          "file": "unreadable-dark-1280.png",
+          "width": 1280,
+          "theme": "dark",
+          "documentWidth": 1280,
+          "pageErrors": []
+        }
+      ]
+    }
+  },
+  "interactions": {
+    "crateDialog": true,
+    "escape": true,
+    "phoneScroll": {
+      "left": 618,
+      "max": 618
+    },
+    "reducedMotion": true,
+    "hiddenTabPaused": true
+  }
+}

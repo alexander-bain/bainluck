@@ -105,6 +105,18 @@ function hasTrendBadge(html: string): boolean {
   return html.includes('data-trend-placement');
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#5766 — the trend badge on a settled Discover event card", () => {
   it("is gone from the MLB final the bus counted dead, EI 100 and all", () => {
     expect(isTrending(CUBS_FINAL)).toBe(false);

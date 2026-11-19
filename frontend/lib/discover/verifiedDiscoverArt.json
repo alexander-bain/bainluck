@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Verified non-stock entity and landmark artwork for Discover cards (#12659). A person, team, film, or song never gets a stock photo.",
+  "description": "Verified non-stock entity, series, and landmark artwork for Discover cards (#12659). A person, team, film, series, or song never gets a stock photo.",
   "allowed_hosts": [
     "upload.wikimedia.org",
     "thumb.wikimedia.org",
@@ -1479,6 +1479,132 @@
       "author": "Haruhi8",
       "license": "CC0",
       "source_page": "https://commons.wikimedia.org/wiki/File:Championship-Soccer-Stadium-SE-Field-View-2024-08-03.jpg"
+    },
+    {
+      "entity_key": "black-doves-tv",
+      "aliases": [
+        "Black Doves"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "Black Doves espionage drama television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/642/1607270.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/68407/black-doves"
+    },
+    {
+      "entity_key": "nobody-wants-this-tv",
+      "aliases": [
+        "Nobody Wants This"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "Nobody Wants This comedy television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/646/1615448.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/77060/nobody-wants-this"
+    },
+    {
+      "entity_key": "squid-game-tv",
+      "aliases": [
+        "Squid Game"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "Squid Game television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/576/1440521.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/43687/squid-game"
+    },
+    {
+      "entity_key": "wednesday-tv",
+      "aliases": [
+        "Wednesday"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "Wednesday television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/586/1466410.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/53647/wednesday"
+    },
+    {
+      "entity_key": "the-night-agent-tv",
+      "aliases": [
+        "The Night Agent"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "The Night Agent thriller television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/614/1536331.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/56512/the-night-agent"
+    },
+    {
+      "entity_key": "bridgerton-tv",
+      "aliases": [
+        "Bridgerton"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "Bridgerton drama television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/614/1535959.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/42966/bridgerton"
+    },
+    {
+      "entity_key": "survivor-tv",
+      "aliases": [
+        "Survivor"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "Survivor competition television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/641/1603530.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/114/survivor"
+    },
+    {
+      "entity_key": "the-white-lotus-tv",
+      "aliases": [
+        "The White Lotus"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "The White Lotus anthology television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/557/1393876.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/51394/the-white-lotus"
+    },
+    {
+      "entity_key": "severance-tv",
+      "aliases": [
+        "Severance"
+      ],
+      "kind": "film",
+      "presentation": "portrait",
+      "verified_subject": "Severance science-fiction drama television series poster",
+      "url": "https://static.tvmaze.com/uploads/images/original_untouched/548/1371406.jpg",
+      "credit": "TVMaze contributors (CC BY-SA 4.0, TVMaze)",
+      "author": "TVMaze contributors",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://www.tvmaze.com/shows/44933/severance"
     }
   ]
 }

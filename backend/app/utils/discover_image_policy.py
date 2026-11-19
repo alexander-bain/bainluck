@@ -29,6 +29,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from app.utils.music_image_guard import sanitize_market_image_fields
+
 from app.utils.nation_flags import flag_url as nation_flag_url
 
 logger = logging.getLogger(__name__)
@@ -1006,6 +1008,12 @@ def _lookup_domain_fallback_entry(
     return (entry, False) if entry else None
 
 
+_SEASON_SUFFIX_RE = re.compile(
+    r"\s*(?:[:·\-–—]\s*|\(\s*)season\s+\d+\s*\)?\s*$",
+    re.IGNORECASE,
+)
+
+
 def _append_candidate_with_song_parts(candidates: list[str], value: str | None) -> None:
     if not value:
         return
@@ -1014,6 +1022,9 @@ def _append_candidate_with_song_parts(candidates: list[str], value: str | None) 
         return
     if cleaned not in candidates:
         candidates.append(cleaned)
+    season_stripped = _SEASON_SUFFIX_RE.sub("", cleaned).strip()
+    if season_stripped and season_stripped != cleaned and season_stripped not in candidates:
+        candidates.append(season_stripped)
     if " - " in cleaned:
         song_part, artist_part = cleaned.split(" - ", 1)
         for part in (song_part.strip(), artist_part.strip()):
@@ -1061,6 +1072,8 @@ def _presentation_for_url(url: str, fallback: str = "photo") -> str:
         return "logo"
     if _url_host_matches(url, "espncdn.com") and "/headshots/" in url:
         return "portrait"
+    if _url_host_matches(url, "tvmaze.com"):
+        return "portrait"
     if _url_host_matches(url, "archive.org", "coverartarchive.org"):
         return "cover"
     return fallback
@@ -1085,6 +1098,9 @@ def resolve_discover_market_image(
     """Return resolved `{image_url, image_width, image_height, image_presentation, image_monogram, image_credit}`."""
     subject = classify_market_visual_subject(name, category, top_outcomes)
     existing = normalize_archive_image_url((image_url or "").strip() or None)
+    existing, image_width, image_height = sanitize_market_image_fields(
+        existing, image_width, image_height, name
+    )
 
     # 1. Keep existing real non-stock art if valid for this subject
     if existing and not is_pexels_url(existing):
@@ -1099,6 +1115,8 @@ def resolve_discover_market_image(
             credit = (
                 "TMDB"
                 if is_tmdb_url(existing)
+                else "TVMaze (CC BY-SA 4.0)"
+                if _url_host_matches(existing, "tvmaze.com")
                 else "Cover Art Archive"
                 if _url_host_matches(existing, "coverartarchive.org", "archive.org")
                 else None

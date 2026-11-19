@@ -266,19 +266,13 @@ class TestPushNotificationTaskImport:
         assert "app.tasks.send_daily_challenge_push" in registered
         assert "app.tasks.send_big_move_alerts" in registered
 
-    def test_beat_schedule_includes_push_tasks(self):
+    def test_beat_schedule_no_longer_runs_the_old_push_tasks(self):
+        # Ruling 179-A switched both jobs off; the full guard is
+        # tests/test_old_push_jobs_off_179a.py.
         from app.tasks import celery_app
         schedule = celery_app.conf.beat_schedule
-        assert "daily-challenge-push" in schedule
-        assert "big-move-alerts" in schedule
-
-        # Verify daily challenge runs at 2 PM UTC
-        dc = schedule["daily-challenge-push"]
-        assert dc["task"] == "app.tasks.send_daily_challenge_push"
-
-        # Verify big moves runs every 30 min
-        bm = schedule["big-move-alerts"]
-        assert bm["task"] == "app.tasks.send_big_move_alerts"
+        assert "daily-challenge-push" not in schedule
+        assert "big-move-alerts" not in schedule
 
 
 class TestPushPreferencesDefaults:

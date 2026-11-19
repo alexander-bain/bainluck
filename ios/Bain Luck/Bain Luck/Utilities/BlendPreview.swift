@@ -1103,10 +1103,25 @@ nonisolated enum BlendPreview {
         return carried.subtracting(real)
     }
 
-    /// `event` with the provisional hero overlaid, or `event` itself when no
-    /// preview applies — so a page without previews renders unchanged. The
-    /// committed clock and revision stay: a preview has neither.
+    /// The detail headline's presentation copy. An older live response may
+    /// carry the tagged opening line in both price fields. Chart history and
+    /// the held quote used by reconciliation keep their own evidence.
     static func overlay(_ event: EventDetail, _ state: BlendPreviewState?, now: TimeInterval) -> EventDetail {
+        if event.status == "live", event.heroProbabilitySource == OpeningLineHero.openingSource {
+            var shown = event
+            shown.currentOdds?.homeProbability = nil
+            shown.currentOdds?.awayProbability = nil
+            shown.currentOdds?.drawProbability = nil
+            shown.currentOdds?.homeRenderedPercent = nil
+            shown.currentOdds?.awayRenderedPercent = nil
+            shown.heroProbability = nil
+            shown.heroProbabilityAway = nil
+            shown.heroProbabilityObservedAt = nil
+            shown.sourceMark = nil
+            shown.awaySourceMark = nil
+            return shown
+        }
+        // A preview has no committed clock or revision of its own.
         guard let p = displayed(state, held: event, now: now), let odds = event.currentOdds else { return event }
         var shown = event
         shown.currentOdds = overlaid(odds, p: p, state: state)

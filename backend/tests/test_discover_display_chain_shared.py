@@ -25,6 +25,15 @@ import app.routes.admin_feed_config as cfg_module
 import app.routes.feed as feed_module
 from app.routes.feed import PersonalizationContext, apply_discover_display_chain
 
+
+@pytest.fixture(autouse=True)
+def _pre_190_game_admission(monkeypatch):
+    """These cases are about caching and page assembly, not about which games
+    earn a seat; their fixtures seat ordinary games as furniture. Ruling 190
+    (#11937) would remove those games, so the pre-190 admission is pinned here.
+    The 190 rule is guarded in `test_discover_game_reason_190.py`."""
+    monkeypatch.setenv("DISCOVER_GAME_NEEDS_REASON", "false")
+
 # Every stage that lives INSIDE the chain. If one of these names appears in a
 # caller's own body, that caller has started keeping its own copy.
 _CHAIN_STAGES = (

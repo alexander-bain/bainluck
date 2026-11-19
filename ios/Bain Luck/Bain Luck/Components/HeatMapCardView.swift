@@ -172,8 +172,12 @@ struct HeatMapCardView: View {
                 ) {
                     mark
                 }
-                // #4351: named, or not drawn.
-                if let src = SourceLabels.label(for: data.source) {
+                // #4351: named, or not drawn. Card faces omit Kalshi/Polymarket.
+                if let src = SourceLabels.cardFaceLabel(
+                    for: data.source,
+                    sources: data.sources,
+                    sourceCount: data.sourceCount
+                ) {
                     Text(src)
                         .font(.system(size: 9, weight: .heavy))
                         .foregroundStyle(.blue)

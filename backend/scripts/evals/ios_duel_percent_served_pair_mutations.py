@@ -197,20 +197,20 @@ MUTANTS: list[tuple[str, str, Path, str, str]] = [
     ),
     (
         "M6",
-        "the menu bar drops the source gate — current_odds' rounding beside opening_odds' probability",
+        "the menu bar displays an opening-tagged pair as the current chance",
         MENU_BAR,
-        """                    servedAway: fromCurrentOdds ? odds?.awayRenderedPercent : nil,
-                    servedHome: fromCurrentOdds ? odds?.homeRenderedPercent : nil""",
-        """                    servedAway: odds?.awayRenderedPercent,
-                    servedHome: odds?.homeRenderedPercent""",
+        """        guard heroSource != OpeningLineHero.openingSource,
+              let odds, let home = odds.homeProbability, (0...1).contains(home) else {""",
+        "        guard let odds, let home = odds.homeProbability, (0...1).contains(home) else {",
     ),
     (
         "M7",
         "the menu bar re-grows its third-tier naive rounding — a fourth unshared copy",
         MENU_BAR,
-        "                guard let awayPct = duel[0], let homePct = duel[1] else { return nil }",
-        "                let awayPct = duel[0] ?? Int((awayProbability * 100).rounded())\n"
-        "                let homePct = duel[1] ?? Int((homeProbability * 100).rounded())",
+        """        let awayPct = duel[0]
+        let homePct = duel[1]""",
+        """        let awayPct = duel[0] ?? Int((away * 100).rounded())
+        let homePct = duel[1] ?? Int((home * 100).rounded())""",
     ),
     (
         "M8",
@@ -267,15 +267,15 @@ MUTANTS: list[tuple[str, str, Path, str, str]] = [
         """  const [awayPct, homePct] = servedDuelPercents(
     displayAwayProb,
     displayHomeProb,
-    data.current_odds?.away_rendered_percent,
-    data.current_odds?.home_rendered_percent,
+    forecastOdds?.away_rendered_percent,
+    forecastOdds?.home_rendered_percent,
   );""",
         """  const [fallbackAwayPct, fallbackHomePct] = renderedDuelPercents(
     displayAwayProb,
     displayHomeProb,
   );
-  const awayPct = data.current_odds?.away_rendered_percent ?? fallbackAwayPct;
-  const homePct = data.current_odds?.home_rendered_percent ?? fallbackHomePct;""",
+  const awayPct = forecastOdds?.away_rendered_percent ?? fallbackAwayPct;
+  const homePct = forecastOdds?.home_rendered_percent ?? fallbackHomePct;""",
     ),
     (
         "M15",

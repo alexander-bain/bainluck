@@ -206,9 +206,11 @@ final class FeedViewModel: ObservableObject {
     }
 
     var upcoming: [FeedItem] {
-        items.filter {
+        let now = clock()
+        return items.filter {
             guard $0.type == "event" else { return false }
-            return EventState.section(of: $0.event) == .upcoming
+            return EventState.section(of: $0.event, now: now) == .upcoming
+                && SportsUpcomingCutoff13001.admitsUpcoming($0.event, now: now)
         }
     }
 
@@ -628,9 +630,11 @@ final class FeedViewModel: ObservableObject {
     }
 
     func filteredUpcoming(for categoryID: String) -> [FeedItem] {
-        filteredItems(for: categoryID).filter {
+        let now = clock()
+        return filteredItems(for: categoryID).filter {
             guard $0.type == "event" else { return false }
-            return EventState.section(of: $0.event) == .upcoming
+            return EventState.section(of: $0.event, now: now) == .upcoming
+                && SportsUpcomingCutoff13001.admitsUpcoming($0.event, now: now)
         }
     }
 

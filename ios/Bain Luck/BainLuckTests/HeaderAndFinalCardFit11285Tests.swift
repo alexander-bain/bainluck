@@ -294,29 +294,13 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
         return (found, seen)
     }
 
-    func testAFinalCardsStatCategoryWrapsBesideItsActualOnThePage() async throws {
-        // 393 is the r2 specimen; 375 the narrower control phone.
-        for (width, size) in [(CGFloat(393), DynamicTypeSize.accessibility3), (393, .accessibility5),
-                              (375, .accessibility3)] {
-            let name = "page-\(Int(width))-\(size)"
-            let (found, seen) = try await pageHeader(width: width, size: size, name: name)
-            assertCategory(found, name, seen: seen)
-            assertIdentity(found, name)
-        }
-    }
-
-    /// Default sizes keep the existing row: the name under the category and
-    /// beside the final figure, never moved under it.
-    func testTheDefaultSizeKeepsTheStoryCardRow() async throws {
-        let name = "page-393-large"
-        let (found, seen) = try await pageHeader(width: 393, size: .large, name: name)
-        assertCategory(found, name, seen: seen)
-        guard let found else { return }
-        let all = found.all.map(\.text).joined(separator: " | ")
-        XCTAssertTrue(found.name.text.hasPrefix("DeVonta Smith"), "\(name): the name read \"\(found.name.text)\" — \(all)")
-        XCTAssertLessThan(found.name.box.minY, found.figure.box.maxY,
-                          "\(name): the name left the figure's row at the default size — \(all)")
-    }
+    // Note (#12693): `testAFinalCardsStatCategoryWrapsBesideItsActualOnThePage`
+    // and `testTheDefaultSizeKeepsTheStoryCardRow` were retired because Decision
+    // 85-A replaced the on-page NFL player milestone story-card deck on
+    // `EventDetailView` with `EventPropsMatrix` ("Player Props"). Player
+    // milestone cards remain mounted in `NFLCardReader9483` below, where
+    // #12409 (`PlayerMilestoneComparison9483`) moved the player's final actual
+    // figure ("Final actual · 65") into the comparison block under the header.
 
     func testAFinalCardsStatCategoryWrapsInTheReader() throws {
         let (_, markets) = try finalPage()
@@ -329,8 +313,6 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
         let smith = try XCTUnwrap(cards.firstIndex { $0.player.contains("Smith") }, "control: the fixture's Smith card")
         XCTAssertEqual(cards[smith].actual, 65, "control: his final figure")
         XCTAssertEqual(cards[smith].stat, "Receiving Yards", "control: the specimen's category")
-        // The reader's card is wider than the deck's and wrapped the category
-        // even before the fix; this keeps it whole there, it does not pin the fix.
         for size in [DynamicTypeSize.accessibility3, .accessibility5] {
             let name = "reader-393-\(size)"
             let state = NFLCardDeckState9483()
@@ -347,10 +329,47 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             window.isHidden = false
             defer { window.isHidden = true }
             settle(host, 0.8)
-            let read = try lines(host, name: name)
-            let found = header(in: read, player: "DeVon", actual: "65")
-            assertCategory(found, name, seen: near(read, player: "DeVon"))
-            assertIdentity(found, name)
+            let read = try lines(host, name: name).sorted { $0.box.minY < $1.box.minY }
+            let all = read.map(\.text).joined(separator: " | ")
+            let playerLine = try XCTUnwrap(read.first { $0.text.contains("DeVon") },
+                                           "\(name): DeVonta Smith was not read — \(all)")
+            XCTAssertTrue(playerLine.text.hasPrefix("DeVonta"),
+                          "\(name): the name's first line read \"\(playerLine.text)\" — \(all)")
+            XCTAssertFalse(read.contains { $0.text.contains("DeVon-") },
+                           "\(name): the name broke mid-word — \(all)")
+            let categoryLines = read.filter {
+                $0.box.maxY <= playerLine.box.minY + 4
+                    && $0.box.minY >= playerLine.box.minY - 120
+                    && abs($0.box.minX - playerLine.box.minX) < 24
+            }
+            let category = categoryLines.map(\.text).joined(separator: " ")
+            XCTAssertTrue(category.contains("Receiving"), "\(name): category read \"\(category)\" — \(all)")
+            XCTAssertTrue(category.contains("Yards"), "\(name): category is truncated: \"\(category)\" — \(all)")
+            XCTAssertFalse(category.contains("…") || category.contains("..."),
+                           "\(name): an ellipsis is drawn in category: \"\(category)\"")
+
+            // #12409 (`PlayerMilestoneComparison9483`): settled means settled —
+            // the reader's comparison block beneath the header prints "Final actual" and "65".
+            let cardScroller = try XCTUnwrap(Self.visibleCardScroller(host.view), "\(name): open card scrolls")
+            var sawFinalActual = false
+            var saw65 = false
+            var offsetY: CGFloat = 0
+            while !(sawFinalActual && saw65), offsetY <= max(0, cardScroller.contentSize.height - cardScroller.bounds.height) + 240 {
+                cardScroller.setContentOffset(CGPoint(x: 0, y: offsetY), animated: false)
+                settle(host, 0.3)
+                let slice = try lines(host, name: "\(name)-y\(Int(offsetY))")
+                if slice.contains(where: { $0.text.localizedCaseInsensitiveContains("Final") && $0.text.localizedCaseInsensitiveContains("actual") })
+                    || (slice.contains(where: { $0.text.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare("Final") == .orderedSame })
+                        && slice.contains(where: { $0.text.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare("actual") == .orderedSame })) {
+                    sawFinalActual = true
+                }
+                if slice.contains(where: { $0.text.trimmingCharacters(in: .whitespaces) == "65" }) {
+                    saw65 = true
+                }
+                offsetY += 260
+            }
+            XCTAssertTrue(sawFinalActual && saw65,
+                          "\(name): expected settled 'Final actual' + '65' in reader comparison (sawFinalActual=\(sawFinalActual), saw65=\(saw65))")
         }
     }
 
@@ -425,7 +444,7 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             settle(host, 0.8)
             // The finish card only: the neighbour starts past its right edge.
             let cardRight = 16 + NFLEventCardDeckView9483.cardWidth(width - 32, count: 2, accessibility: true)
-            let read = try tiledLines(host, name: name).filter { $0.box.minX < cardRight }
+            let read = try tiledLines(host, name: name, xRange: 0...cardRight)
                 .sorted { $0.box.minY < $1.box.minY }
             assertFinishCardReadsWhole(read, rows: [(away, "21.5", "13.5"), (home, "29.5", "33")], name)
         }
@@ -582,7 +601,7 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             // The last card ends at the shelf's trailing edge; the margin
             // ladder before it is left of its leading edge.
             let cardLeft = width - 16 - NFLEventCardDeckView9483.cardWidth(width - 32, count: 2, accessibility: true)
-            let read = try tiledLines(host, name: name).filter { $0.box.minX >= cardLeft - 1 }
+            let read = try tiledLines(host, name: name, xRange: cardLeft...width)
                 .sorted { $0.box.minY < $1.box.minY }
             assertFinishCardReadsWhole(read, rows: [(away, "108.5", "101"), (home, "112.5", "118")], name)
         }
@@ -646,16 +665,19 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
                              band: CGRect(x: 0, y: 0, width: bounds.width, height: min(height, bounds.height)))
     }
 
-    /// The whole window in two overlapping halves, each read at full scale.
-    /// Each line is kept from exactly one half, split by its centre at the
-    /// middle of the overlap, which is wider than any line is tall.
-    private func tiledLines(_ host: UIViewController, name: String) throws -> [Line] {
+    /// The whole window in two overlapping bands split at `min(900, height/2)`
+    /// (inside the chart plot area on tall 2400pt deck frames so team numbers
+    /// and bottom legends are never cut across a crop seam), each read at full scale.
+    private func tiledLines(_ host: UIViewController, name: String, xRange: ClosedRange<CGFloat>? = nil) throws -> [Line] {
         let (image, bounds) = try frame(host, name: name)
-        let mid = bounds.height / 2, overlap: CGFloat = 200
+        let minX = max(0, xRange?.lowerBound ?? 0)
+        let maxX = min(bounds.width, xRange?.upperBound ?? bounds.width)
+        let cropWidth = max(1, maxX - minX)
+        let mid = min(900, bounds.height / 2), overlap: CGFloat = 200
         let upper = try bandLines(image, bounds: bounds,
-                                  band: CGRect(x: 0, y: 0, width: bounds.width, height: mid + overlap / 2))
+                                  band: CGRect(x: minX, y: 0, width: cropWidth, height: mid + overlap / 2))
         let lower = try bandLines(image, bounds: bounds,
-                                  band: CGRect(x: 0, y: mid - overlap / 2, width: bounds.width,
+                                  band: CGRect(x: minX, y: mid - overlap / 2, width: cropWidth,
                                                height: bounds.height - mid + overlap / 2))
         return upper.filter { $0.box.midY < mid } + lower.filter { $0.box.midY >= mid }
     }
@@ -1086,8 +1108,8 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             // the digits and the count are still the open card's "1 of 2".
             // After the band's asserts, so an unrelated footer read cannot
             // hide a band failure.
-            let count = try XCTUnwrap(read.last { $0.text.range(of: #"(?<![0-9])1\s*of\s*2(?![0-9])"#,
-                                                                options: .regularExpression) != nil },
+            let count = try XCTUnwrap(read.last { $0.text.range(of: #"(?<![0-9])1\s*[o0]f\s*2(?![0-9])"#,
+                                                                options: [.regularExpression, .caseInsensitive]) != nil },
                                       "\(name): no footer count — \(all)")
             XCTAssertGreaterThanOrEqual(count.box.minY - read[kicker].box.minY, 160,
                                         "\(name): the card has no room to read — \(all)")
@@ -1106,6 +1128,25 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
         }
         find(view)
         return found
+    }
+
+    /// The open card's vertical scroller on screen inside `NFLCardReader9483`.
+    private static func visibleCardScroller(_ view: UIView) -> UIScrollView? {
+        var best: UIScrollView?
+        func find(_ v: UIView) {
+            if let s = v as? UIScrollView,
+               s.contentSize.height > s.bounds.height + 20,
+               s.contentSize.width <= s.bounds.width + 1 {
+                let inRoot = s.convert(s.bounds, to: view)
+                let currentBest = best?.contentSize.height ?? 0
+                if inRoot.minX >= 0 && inRoot.minX < 80 && s.contentSize.height > currentBest {
+                    best = s
+                }
+            }
+            v.subviews.forEach(find)
+        }
+        find(view)
+        return best
     }
 
     /// The page's own vertical scroller: the tallest-content one in the window.

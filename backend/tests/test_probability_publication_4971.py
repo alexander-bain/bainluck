@@ -93,12 +93,14 @@ def test_removed_lists_only_sources_still_absent_at_commit():
     assert pub["removed_sources"] == ["stat_model"]
 
 
-def test_non_bag_inputs_reach_the_blend_and_the_hash():
+def test_historical_opening_remains_in_the_record_and_hash_but_not_the_blend():
     a = _build({}, [_obs("betting", None, {})], opening_home_probability=Decimal("0.55"))
-    assert (a["blend_probability"], a["blend_tier"]) == (0.55, "opening")
+    assert (a["blend_probability"], a["blend_tier"]) == (None, None)
     assert a["blend_inputs"]["opening_home_probability"] == 0.55
     b = _build({}, [_obs("betting", None, {})], opening_home_probability=Decimal("0.56"))
     c = _build({}, [_obs("betting", None, {})], opening_home_probability=Decimal("0.55"))
+    assert (b["blend_probability"], b["blend_tier"]) == (None, None)
+    assert (c["blend_probability"], c["blend_tier"]) == (None, None)
     assert a["payload_sha256"] != b["payload_sha256"]
     assert a["payload_sha256"] == c["payload_sha256"]
 

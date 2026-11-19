@@ -111,18 +111,15 @@ SKIP_CALL_RE = re.compile(r"pytest\.mark\.skipif\(|pytest\.skip\(")
 
 #: #12612's debt list for ``tests/``: gated files no ci.yml step names, read
 #: one by one on Nov 11. Wiring each is its owner's change (a first CI run can
-#: go red), so the list can only shrink. Two of their gates,
-#: ``CALIBRATION_TEST_DATABASE_URL`` and ``START_PLACEHOLDER_DATABASE_URL``, are
-#: set by no CI job at all. Nothing in these files is evidence while listed.
+#: go red), so the list can only shrink. The calibration files' gate,
+#: ``CALIBRATION_TEST_DATABASE_URL``, is set by no CI job at all (the four
+#: start-placeholder files were wired with their own step, #12612). Nothing in
+#: these files is evidence while listed.
 KNOWN_UNWIRED_ROOT = {
     "test_calibration_canonical_pg.py",
     "test_calibration_examples_canonical_262.py",
     "test_calibration_horizon_honest_263.py",
     "test_calibration_horizon_population_262.py",
-    "test_espn_announced_start_retires_placeholder_8841.py",
-    "test_espn_start_placeholder_is_tbd_8981.py",
-    "test_placeholder_equal_instant_statpal_mark_retired_8841.py",
-    "test_start_placeholder_is_tbd_8841.py",
     "test_polymarket_container_sibling_5821.py",
     "test_repair_10520_keeper_current_anchor.py",
 }

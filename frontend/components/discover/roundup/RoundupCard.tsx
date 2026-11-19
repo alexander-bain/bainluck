@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useState } from "react";
 import { PriceAgeMark } from "@/components/event/PriceAgeMark";
 import AwardCategoryPairedCard from "@/components/discover/forms/AwardCategoryPairedCard";
+import {
+  MachineryDiscoverCard,
+  isMachinerySlice1Enabled,
+} from "@/components/collections/MachinerySectionRenderer";
 import { buildRoundupCardModel } from "@/lib/discover/roundupCard";
 import type { FeedItem, FeedRoundupContract, FeedThemeCollectionRef } from "@/lib/types";
 import { BundleActionBar } from "../BundleActionBar";
@@ -61,12 +65,41 @@ export function RoundupCard({
           set={contract.paired_metric_set}
           surface="discover"
         />
+        {isMachinerySlice1Enabled() && destination && contract?.machinery_card && (
+          <Link
+            href={destination.href}
+            className="mt-2 flex items-center justify-between rounded-card border border-surface-border bg-surface-card px-3.5 py-2 text-xs font-semibold text-accent-brand transition-colors hover:bg-surface-elevated"
+          >
+            <span className="text-text-secondary">{destination.name}</span>
+            <span>Open all {contract.machinery_card.section_count} sections ›</span>
+          </Link>
+        )}
         {!previewOnly && (
           <div className="mt-[10px]">
             <BundleActionBar
               items={items}
               title={contract.paired_metric_set.title || model.title}
               sharedQuestion={contract.paired_metric_set.title || model.title}
+              storyKey={storyKey ?? bundleId}
+              positionIndex={positionIndex}
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // #12288 Direction 223 / Decision 224: topic-free container machinery visual Discover card
+  if (isMachinerySlice1Enabled() && contract?.machinery_card) {
+    return (
+      <div data-testid="roundup-card-slot">
+        <MachineryDiscoverCard card={contract.machinery_card} />
+        {!previewOnly && (
+          <div className="mt-[10px]">
+            <BundleActionBar
+              items={items}
+              title={contract.machinery_card.title || model.title}
+              sharedQuestion={contract.machinery_card.title || model.title}
               storyKey={storyKey ?? bundleId}
               positionIndex={positionIndex}
             />

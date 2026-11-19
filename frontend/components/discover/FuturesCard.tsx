@@ -433,7 +433,8 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   const board = futuresDistributionBoard(data);
   // #10374 — a board listed by date has no podium either: beside `Oct 12 · Oct 14`
   // the digits `1 2` read as ranks the rows do not hold.
-  const drawsRankDigits = board != null && board.fieldIsARace && !board.chronological;
+  const drawsRankDigits =
+    board != null && board.fieldIsARace && !board.chronological && !board.scaleOrdered;
   // The rank cell is a column, not a decoration: dropping its content would slide
   // every label one track left and misalign the remainder row against the rows
   // above it. So the template loses the track rather than the cell losing its

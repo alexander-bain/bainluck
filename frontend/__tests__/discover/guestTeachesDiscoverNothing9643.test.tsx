@@ -433,7 +433,13 @@ describe("every writer call site sits under the page that registers the gate", (
         .sort();
     // #12095 Phase 2 — /grade draws the real card for graders, under a gate
     // closed for the whole time it is mounted (asserted below).
-    expect(importers(/from "[^"]*\/DiscoverCard"/)).toEqual(["app/discover/page.tsx", "app/grade/page.tsx"]);
+    // #11937 (171-A) — /grade/pair draws two first tens for the blind side-by-side,
+    // under the same closed gate (asserted below).
+    expect(importers(/from "[^"]*\/DiscoverCard"/)).toEqual([
+      "app/discover/page.tsx",
+      "app/grade/page.tsx",
+      "app/grade/pair/page.tsx",
+    ]);
     expect(importers(/from "[^"]*\/(GroupCard|ThemeBundleCard)"/)).toEqual(["components/DiscoverCard.tsx"]);
     // #10357 — the round-up card carries the bundle actions too; it mounts only
     // under DiscoverCard and /grade/groupings (whose gate is closed below), so
@@ -452,7 +458,7 @@ describe("every writer call site sits under the page that registers the gate", (
   });
 
   it("the grading page closes the writers' gate while it is mounted", () => {
-    for (const rel of ["app/grade/page.tsx", "app/grade/groupings/page.tsx"]) {
+    for (const rel of ["app/grade/page.tsx", "app/grade/groupings/page.tsx", "app/grade/pair/page.tsx"]) {
       const page = strip(readFileSync(join(root, rel), "utf8"));
       expect(page).toContain("setDiscoverLearningGate(() => false);");
       expect(page).toContain("return () => setDiscoverLearningGate(null);");

@@ -10,7 +10,8 @@ from app.services.activitykit_worker import (
     reserve_state,
     rebind_token,
 )
-from app.utils.activitykit_delivery_state import RetryPolicy
+from app.utils.activitykit_delivery_state import QUIET_REFRESH_SECONDS, RetryPolicy
+from app.utils.activitykit_push_record import activity_ref, push_record
 from tests.test_activitykit_delivery_state import NOW, snapshot, state
 
 
@@ -172,3 +173,113 @@ def test_true_token_replacement_resets_exhaustion_but_not_configuration_halt():
     assert rebind_token(exhausted, token_changed=True).halted is None
     configuration = replace(exhausted, halted="permanent")
     assert rebind_token(configuration, token_changed=True) == configuration
+
+
+def test_a_new_token_gets_the_current_reading_at_once_not_after_the_quiet_wait():
+    """#10542 step 3: the phone re-registered, so it has shown nothing; its first
+    update goes now at priority 10, not held as a same-screen refresh."""
+    sent, attempt = state().observe(snapshot(), revision=1).dispatch(now=NOW)
+    done = sent.complete(attempt.attempt_id, now=NOW)
+    t30 = NOW + timedelta(seconds=30)
+    again = done.observe(snapshot(score_observed_at=t30, probability_observed_at=t30), revision=2)
+    assert again.dispatch(now=t30)[1] is None  # same token: held for the refresh
+    _, fresh = rebind_token(again, token_changed=True).dispatch(now=t30)
+    assert fresh.push.headers["apns-priority"] == "10"
+
+
+# #10542 step 1: the per-push age record.
+
+
+def _fields(line):
+    return dict(part.split("=", 1) for part in line.split() if "=" in part)
+
+
+def test_push_record_says_how_old_the_numbers_were_when_the_push_left():
+    reading = snapshot(
+        home_score=77,
+        away_score=75,
+        home_rendered_percent=65,
+        score_observed_at=NOW - timedelta(seconds=20),
+        probability_observed_at=NOW - timedelta(seconds=45),
+    )
+    _, attempt = state().observe(reading, revision=1).dispatch(now=NOW)
+    sent = NOW + timedelta(seconds=2)
+    line = push_record(
+        attempt,
+        activity_id="registered-activity",
+        sent_at=sent,
+        answered_at=sent + timedelta(milliseconds=84),
+        outcome="accepted",
+        reason="apns_accepted",
+    )
+    fields = _fields(line)
+    assert line.startswith("activitykit push: ")
+    assert "screen=[live 75-77 65%]" in line  # away-home, as Apple Sports prints it
+    assert fields["event"] == "42"
+    assert fields["kind"] == "update"
+    assert fields["priority"] == "10"  # first send: the screen is new
+    assert fields["score_age"] == "22.0"
+    assert fields["chance_age"] == "47.0"
+    assert fields["outcome"] == "accepted"
+    assert fields["reason"] == "apns_accepted"
+    assert fields["apple_ms"] == "84"
+    assert fields["attempt"] == "1"
+    assert fields["activity"] == activity_ref("registered-activity")
+    assert "registered-activity" not in line
+
+
+def test_push_record_marks_a_refresh_of_the_same_screen_at_priority_5():
+    first = state().observe(snapshot(), revision=1)
+    sent, attempt = first.dispatch(now=NOW)
+    done = sent.complete(attempt.attempt_id, now=NOW)
+    # #10542 step 3 holds a same-screen refresh for QUIET_REFRESH_SECONDS; send it after the wait.
+    later = NOW + timedelta(seconds=QUIET_REFRESH_SECONDS + 30)
+    _, refresh = done.observe(
+        snapshot(score_observed_at=later, probability_observed_at=later), revision=2
+    ).dispatch(now=later)
+    line = push_record(
+        refresh,
+        activity_id="registered-activity",
+        sent_at=later,
+        answered_at=later,
+        outcome="accepted",
+        reason="apns_accepted",
+    )
+    assert _fields(line)["priority"] == "5"
+    assert _fields(line)["score_age"] == "0.0"
+
+
+def test_push_record_prints_a_dash_for_a_clock_the_push_does_not_carry():
+    reading = snapshot(
+        lifecycle="suspended", home_rendered_percent=None, probability_observed_at=None
+    )
+    _, attempt = state().observe(reading, revision=1).dispatch(now=NOW)
+    line = push_record(
+        attempt,
+        activity_id="registered-activity",
+        sent_at=NOW,
+        answered_at=NOW - timedelta(seconds=1),  # a clock step never goes negative
+        outcome="retry",
+        reason="transport_unavailable",
+    )
+    assert _fields(line)["chance_age"] == "-"
+    assert "screen=[suspended 2-1 -]" in line
+    assert _fields(line)["apple_ms"] == "0"
+
+
+def test_push_record_never_raises_on_an_odd_body():
+    _, attempt = state().observe(snapshot(), revision=1).dispatch(now=NOW)
+    odd = replace(
+        attempt,
+        command=replace(attempt.command, push=replace(attempt.push, body=b"not json")),
+    )
+    line = push_record(
+        odd,
+        activity_id="x",
+        sent_at=NOW,
+        answered_at=NOW,
+        outcome="rejected",
+        reason="invalid_command",
+    )
+    assert _fields(line)["score_age"] == "-"
+    assert _fields(line)["event"] == "-"

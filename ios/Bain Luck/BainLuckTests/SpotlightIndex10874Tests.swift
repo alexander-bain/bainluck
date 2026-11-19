@@ -100,7 +100,7 @@ final class SpotlightIndex10874Tests: XCTestCase {
             return name.isEmpty ? nil : String(name)
         })
         // #12315: `associateAppEntity` names the entry's own game or market,
-        // built only from its title and detail (SiriTipAndSpotlight12315Tests).
+        // built only from its title and detail (SpotlightAbbreviations12315Tests).
         XCTAssertEqual(written, ["title", "contentDescription", "keywords", "associateAppEntity"],
                        "the system item gained a field (a rating, imagery, a value, a start clock) beyond the stable description")
     }

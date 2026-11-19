@@ -170,6 +170,18 @@ const COLLIDED: Array<[string, string]> = [
   ["icehockey_sweden_allsvenskan", "HockeyAllsvenskan"],
 ];
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#2621(a) — the chip stops naming more than one competition", () => {
   it("no two of the fourteen keys that collided render the same chip", () => {
     // Asserted on the WORDS, not on `chipText`. Two of these pairs sit in

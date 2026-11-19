@@ -157,7 +157,7 @@ test('an undisplayed error/loading interval contributes no observations or high-
 test('equal numbers do not turn history or opening selection into hero delivery', () => {
   const event = { id: 1, status: 'live', hero_probability: .6, hero_probability_source: 'blend',
     hero_probability_away: .4, opening_odds: { home_probability: .6, away_probability: .4 } } as EventDetailResponse;
-  const history = { aggregate_line: [{ timestamp: at(100), home_probability: .6 }] } as EventHistoryResponse;
+  const history = { blend_edge_pinned: true, aggregate_line: [{ timestamp: at(100), home_probability: .6 }] } as EventHistoryResponse;
   const hero = resolveProbability(event, history, null, true, false, false, false, true);
   const historical = resolveProbability({ ...event, hero_probability_source: 'opening' }, history, null, true, false, false, false, true);
   const opening = resolveProbability({ ...event, status: 'completed' }, history, null, false, true, false, false, true);
