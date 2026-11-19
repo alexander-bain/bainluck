@@ -68,9 +68,9 @@ final class WatchMarqueeTests: XCTestCase {
     func testUnsupportedTournamentFirstFallsThroughToUsableEvent() throws {
         let feed = try items("{ \"items\": [ \(tournamentItem), \(usableEvent) ] }")
         let story = try XCTUnwrap(WatchMarquee.marquee(from: feed))
-        // No team-data abbreviations in the fixture → abbrev falls back to the last
-        // name token ("LA Lakers" → "Lakers", "Boston Celtics" → "Celtics").
-        XCTAssertEqual(story.title, "Lakers @ Celtics")
+        // No team-data abbreviations in the fixture → abbrev falls back to
+        // `TeamShortName.abbreviation` (#12737 Ruling 194-A: "LA Lakers" → "LAK", "Boston Celtics" → "CEL").
+        XCTAssertEqual(story.title, "LAK @ CEL")
     }
 
     // MARK: - Event without probability is skipped for a later usable item
@@ -88,7 +88,7 @@ final class WatchMarqueeTests: XCTestCase {
         let feed = try items(
             "{ \"items\": [ \(conceptItem), \(tournamentItem), \(eventNoProb), \(usableEvent) ] }")
         let story = try XCTUnwrap(WatchMarquee.marquee(from: feed))
-        XCTAssertEqual(story.title, "Lakers @ Celtics")
+        XCTAssertEqual(story.title, "LAK @ CEL")
     }
 
     // MARK: - No usable story → explicit nil (stable empty state upstream)
@@ -111,8 +111,8 @@ final class WatchMarqueeTests: XCTestCase {
         // Futures is first in rank order, but a live event exists later — live wins.
         let feed = try items("{ \"items\": [ \(usableFutures), \(liveEvent) ] }")
         let story = try XCTUnwrap(WatchMarquee.marquee(from: feed))
-        // "NY Knicks" → "Knicks", "Miami Heat" → "Heat" (last-token abbrev fallback).
-        XCTAssertEqual(story.title, "Knicks @ Heat", "the live event is the marquee, not the earlier futures")
+        // "NY Knicks" → "KNI", "Miami Heat" → "HEA" (`TeamShortName.abbreviation` fallback, #12737).
+        XCTAssertEqual(story.title, "KNI @ HEA", "the live event is the marquee, not the earlier futures")
         XCTAssertEqual(story.badge, .live)
     }
 

@@ -19,6 +19,8 @@ struct SourceMarkButton: View {
     let numberSize: CGFloat
     /// Compact dense-list mode keeps row height tight while expanding hit area via `.contentShape`.
     var compactRow: Bool = false
+    /// True when the row prints one decimal place ("4.6%"), so the sheet's headline and source prices print tenths too.
+    var showsTenths: Bool = false
 
     @State private var open = false
 
@@ -31,7 +33,8 @@ struct SourceMarkButton: View {
         subject: String? = nil,
         isPregame: Bool = false,
         numberSize: CGFloat,
-        compactRow: Bool = false
+        compactRow: Bool = false,
+        showsTenths: Bool = false
     ) {
         guard let mark, mark.draws else { return nil }
         self.mark = mark
@@ -40,6 +43,7 @@ struct SourceMarkButton: View {
         self.isPregame = isPregame
         self.numberSize = numberSize
         self.compactRow = compactRow
+        self.showsTenths = showsTenths
     }
 
     var body: some View {
@@ -56,25 +60,43 @@ struct SourceMarkButton: View {
         .accessibilityLabel("Where this number comes from")
         .accessibilityIdentifier("source-mark-12581")
         .sheet(isPresented: $open) {
-            SourceMarkSheet(mark: mark, number: number, subject: subject, isPregame: isPregame)
-                .presentationDetents([.medium, .large])
+            SourceMarkSheet(
+                mark: mark,
+                number: number,
+                subject: subject,
+                isPregame: isPregame,
+                showsTenths: showsTenths
+            )
+            .presentationDetents([.medium, .large])
         }
     }
 }
 
-/// The sheet: the number the reader tapped, large and whole; one row per source
-/// the server listed, in its order, with the source's name, its price as a whole
-/// number and how old that price is (no age when the server sent no observation
-/// time); then one line of method. A settled number says "Official result" first.
+/// The sheet: the number the reader tapped, large and whole (or with tenths when the
+/// row prints tenths); one row per source the server listed, in its order, with the
+/// source's name, its price at matching precision and how old that price is (no age
+/// when the server sent no observation time); then one line of method. A settled
+/// number says "Official result" first.
 struct SourceMarkSheet: View {
     let mark: SourceMark
     var number: Double? = nil
     var subject: String? = nil
     var isPregame: Bool = false
+    var showsTenths: Bool = false
     var now: Date = Date()
     @Environment(\.dismiss) private var dismiss
 
     static let title = "Where this number comes from"
+
+    static func formatSheetProbability(_ probability: Double, showsTenths: Bool) -> String {
+        guard showsTenths else {
+            return formatProbability(probability)
+        }
+        let pct = probability * 100
+        if pct > 0 && pct < 0.05 { return "<0.1%" }
+        if pct > 99.95 && pct < 100 { return ">99.9%" }
+        return String(format: "%.1f%%", pct)
+    }
 
     static func contextLine(subject: String?, isPregame: Bool) -> String? {
         let trimmed = subject?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -91,6 +113,7 @@ struct SourceMarkSheet: View {
     static func singleUnscaledAttribution(
         _ mark: SourceMark,
         headline: String?,
+        showsTenths: Bool = false,
         now: Date = Date()
     ) -> String? {
         guard (mark.state == .single || mark.state == .blend),
@@ -98,7 +121,7 @@ struct SourceMarkSheet: View {
               Self.settledLine(mark, now: now) == nil,
               mark.method?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
               let headline,
-              let only = Self.lines(mark, now: now).first,
+              let only = Self.lines(mark, showsTenths: showsTenths, now: now).first,
               only.price == headline else {
             return nil
         }
@@ -115,17 +138,17 @@ struct SourceMarkSheet: View {
         let age: String?
     }
 
-    static func lines(_ mark: SourceMark, now: Date = Date()) -> [Line] {
+    static func lines(_ mark: SourceMark, showsTenths: Bool = false, now: Date = Date()) -> [Line] {
         mark.sources.map { source in
             Line(name: source.count.map { "\(source.name) (\($0))" } ?? source.name,
-                 price: source.probability.map { formatProbability($0) },
+                 price: source.probability.map { formatSheetProbability($0, showsTenths: showsTenths) },
                  age: SourceAge.format(source.observedAt, now: now))
         }
     }
 
-    /// The tapped number, clamped like the row (`formatProbability`: "<1%" / ">99%").
-    static func headline(_ number: Double?) -> String? {
-        number.map { formatProbability($0) }
+    /// The tapped number, matching the row's precision.
+    static func headline(_ number: Double?, showsTenths: Bool = false) -> String? {
+        number.map { formatSheetProbability($0, showsTenths: showsTenths) }
     }
 
     /// One line of method under the rows. Multi-source blends and scaled
@@ -159,9 +182,9 @@ struct SourceMarkSheet: View {
     }
 
     var body: some View {
-        let headlineText = Self.headline(number)
+        let headlineText = Self.headline(number, showsTenths: showsTenths)
         let contextText = Self.contextLine(subject: subject, isPregame: isPregame)
-        let singleAttribution = Self.singleUnscaledAttribution(mark, headline: headlineText, now: now)
+        let singleAttribution = Self.singleUnscaledAttribution(mark, headline: headlineText, showsTenths: showsTenths, now: now)
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -219,7 +242,7 @@ struct SourceMarkSheet: View {
     /// The sheet's rows, the settled line first. Plain stacks rather than a
     /// `List`, so the rows are one view a fixture render can photograph.
     var rows: some View {
-        let lines = (Self.settledLine(mark, now: now).map { [$0] } ?? []) + Self.lines(mark, now: now)
+        let lines = (Self.settledLine(mark, now: now).map { [$0] } ?? []) + Self.lines(mark, showsTenths: showsTenths, now: now)
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
                 if index > 0 { Divider() }

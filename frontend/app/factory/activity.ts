@@ -23,7 +23,37 @@ export function duration(seconds: number) {
   if (minutes < 60) return `${minutes} min`;
   if (minutes < 1440)
     return `${Math.floor(minutes / 60)} hr ${minutes % 60} min`;
-  return `${Math.floor(minutes / 1440)} days`;
+  const days = Math.floor(minutes / 1440);
+  return `${days} ${days === 1 ? "day" : "days"}`;
+}
+
+const nowAuthors = [
+  "Repository owner",
+  "Alex",
+  "Fable",
+  "Speed",
+  "Builder B",
+  "Builder C",
+  "Atlas",
+  "Builder E",
+  "Apple",
+  "Wee-Bey",
+];
+
+export function knownOrigin(source: Stop["source"]) {
+  return Boolean(
+    source &&
+      Number.isSafeInteger(source.id) &&
+      source.id > 0 &&
+      nowAuthors.includes(source.author),
+  );
+}
+
+export function shownStops(data: FactoryData) {
+  return (data.stops ?? []).flatMap((stop): Stop[] => {
+    if (stop.kind === "hold") return knownOrigin(stop.source) ? [stop] : [];
+    return [{ ...stop, level: "amber" }];
+  });
 }
 
 export function readerBehind(data: FactoryData, now: string) {
@@ -63,12 +93,12 @@ export function bayActivity(
   now: string,
   changes: Change[],
 ) {
-  const stops = (data.stops ?? []).filter(
+  const stops = shownStops(data).filter(
     (s) => (s.line === null || s.line === line) && s.station === station,
   );
   const stop =
-    stops.find((s) => s.kind === "announced") ??
     stops.find((s) => s.level === "red") ??
+    stops.find((s) => s.kind === "announced") ??
     stops[0];
   const flowing =
     !stop &&
@@ -82,9 +112,7 @@ export function bayActivity(
   const waiting = changes.length > 0 && station !== "Live";
   const worker =
     stop?.level === "red"
-      ? stop.kind === "announced" && !activeCrate
-        ? "asleep"
-        : "alarmed"
+      ? "alarmed"
       : working
         ? "working"
         : waiting
@@ -114,7 +142,7 @@ export function beltFlowing(
   segment: number,
   now: string,
 ) {
-  const blocked = (data.stops ?? []).some(
+  const blocked = shownStops(data).some(
     (s) =>
       s.level === "red" &&
       (s.line === null || s.line === line) &&

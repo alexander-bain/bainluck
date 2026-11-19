@@ -33,6 +33,8 @@ import {
   bayActivity,
   beltFlowing,
   recentTransfers,
+  shownStops,
+  knownOrigin,
 } from "./activity";
 
 const lines: Line[] = ["Server", "Website", "Apps"];
@@ -192,7 +194,7 @@ export default function FactoryFloor({
           const to = stations.indexOf(
             station.split("/")[1] as (typeof stations)[number],
           );
-          const stopped = (data?.stops ?? []).some(
+          const stopped = shownStops(data).some(
             (stop) =>
               stop.level === "red" &&
               (stop.line === null || stop.line === line) &&
@@ -261,9 +263,11 @@ export default function FactoryFloor({
   );
   const open = data.changes.filter((c) => !c.merged_at);
   const onFloor = data.changes.filter(
-    (c) => c.station !== "Live" && !c.side_track,
+    (c) => c.station !== "Live" && !c.side_track && !c.bot_update,
   );
-  const sideTrack = data.changes.filter((c) => c.side_track);
+  const sideTrack = data.changes.filter((c) => c.side_track && !c.bot_update);
+  const botUpdates = data.changes.filter((c) => c.bot_update && !c.merged_at);
+  const stops = shownStops(data);
   const visible = [...onFloor, ...shipped];
   const stationCounts = stations.slice(0, -1).map((station) => ({
     station,
@@ -275,6 +279,7 @@ export default function FactoryFloor({
   const jams = data.jams.filter(
     (jam) =>
       Date.parse(jam.qualifies_at) <= Date.parse(now) &&
+      (jam.kind !== "hold" || knownOrigin(jam.source)) &&
       (!jam.ended_at || pacificDay(jam.ended_at) === today),
   );
   const activeJams = jams.filter((j) => !j.ended_at);
@@ -293,7 +298,7 @@ export default function FactoryFloor({
         data-crate={change.number}
         data-station={`${change.line}/${change.station}`}
         data-line={change.line}
-        aria-label={`${builders.find((b) => b.key === change.builder)?.name}, change ${change.number}, ${change.title}${change.unsure ? ", unsure" : ""}`}
+        aria-label={`${builders.find((b) => b.key === change.builder)?.name}, change ${change.number}, ${change.title}${change.sent_back ? ", sent back" : ""}${change.unsure ? ", unsure" : ""}`}
         aria-pressed={selectedNumber === change.number}
         onClick={() => choose(change)}
       >
@@ -301,6 +306,7 @@ export default function FactoryFloor({
           {change.builder === "Other" ? "O" : change.builder}
         </span>
         <span className={styles.crateNumber}>#{change.number}</span>
+        {change.sent_back && <span className={styles.sentBack}>Sent back</span>}
         {change.unsure && change.station !== "Ship" && (
           <span className={styles.unsureMark} aria-hidden="true">
             ?
@@ -399,14 +405,24 @@ export default function FactoryFloor({
             Tap a crate to see the change <ArrowDown size={14} />
           </span>
         </div>
-        {!!data.stops?.length && (
+        {stops.length > 0 && (
           <div className={styles.stopNotices} role="status">
-            {data.stops.map((stop) => (
+            {stops.map((stop) => (
               <p key={`${stop.kind}-${stop.line}`} data-level={stop.level}>
                 <span aria-hidden="true">
                   {stop.level === "red" ? "■" : "▲"}
                 </span>{" "}
                 {stopText(stop, now)}
+                {stop.level === "red" && stop.source && (
+                  <small className={styles.stopOrigin}>
+                    <a
+                      href={`https://github.com/alexander-bain/bainluck/issues/12779#issuecomment-${stop.source.id}`}
+                    >
+                      NOW · stuck
+                    </a>
+                    {` · ${time(stop.since)} PT · ${stop.source.author}`}
+                  </small>
+                )}
               </p>
             ))}
           </div>
@@ -531,7 +547,7 @@ export default function FactoryFloor({
                                 <circle cx="36" cy="23" r="4" />
                               </svg>
                             )}
-                          {activity.stop && (
+                          {activity.stop && activity.stop.kind !== "hold" && (
                             <span className={styles.bayReason}>
                               {stopText(activity.stop, now)}
                             </span>
@@ -600,6 +616,7 @@ export default function FactoryFloor({
                 {selected.line} / {selected.station}
               </span>
               <h3 id="factory-change-title">{selected.title}</h3>
+              {selected.sent_back && <p>Sent back by Fable.</p>}
               {selected.unsure && <p>Unsure. {selected.reasons.join(" ")}</p>}
               <a
                 href={`https://github.com/alexander-bain/bainluck/pull/${selected.number}`}
@@ -620,6 +637,15 @@ export default function FactoryFloor({
               <X size={18} />
             </button>
           </dialog>
+        )}
+        {botUpdates.length > 0 && (
+          <section
+            className={styles.botShelf}
+            aria-labelledby="bot-updates-heading"
+          >
+            <h3 id="bot-updates-heading">Bot updates</h3>
+            <div className={styles.sideCrates}>{botUpdates.map(crate)}</div>
+          </section>
         )}
         <details className={styles.sideTrack}>
           <summary>

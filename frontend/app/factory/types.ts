@@ -1,6 +1,11 @@
 export type Line = "Server" | "Website" | "Apps";
 export type Station =
-  "Write" | "Test" | "Review" | "Merge line" | "Ship" | "Live";
+  | "Write"
+  | "Test"
+  | "Review"
+  | "Merge line"
+  | "Ship"
+  | "Live";
 export type Builder = "S" | "B" | "C" | "D" | "E" | "F" | "Other";
 
 export interface Change {
@@ -19,6 +24,8 @@ export interface Change {
   merge_to_live_seconds?: number | null;
   station_since?: string;
   revision_at?: string;
+  sent_back?: boolean;
+  bot_update?: boolean;
 }
 
 export interface Transfer {
@@ -36,6 +43,8 @@ export interface Stop {
   since: string;
   count: number;
   level: "red" | "amber";
+  source?: { id: number; author: string };
+  test?: string;
 }
 
 export interface Jam {
@@ -55,6 +64,7 @@ export interface Jam {
   qualifies_at: string;
   ended_at: string | null;
   count: number | null;
+  source?: Stop["source"];
 }
 
 export interface FactoryData {
