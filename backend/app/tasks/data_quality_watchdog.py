@@ -357,7 +357,8 @@ CHECKS: list[dict[str, Any]] = [
     # it as having run. The ruling this encodes: **watch output freshness
     # directly, never infer it from process health.**
     #
-    # Two beats, not one: the precompute is hourly, so a single miss is a blip
+    # Two beats, not one: the precompute is daily (215-B, Nov 16 2026; it was
+    # hourly when this was written), so a single miss is a blip
     # (a deploy, a lock, one slow run) and firing on it would train the reader to
     # ignore the alarm. Two consecutive misses is a pattern.
     #
@@ -425,7 +426,7 @@ CHECKS: list[dict[str, Any]] = [
             " ORDER BY ord, cost DESC"
             " LIMIT 10"
         ),
-        "threshold": 2,
+        "threshold": 49,  # hours: two daily beats + 1 h (215-B; was 2 at hourly)
         "comparison": "lte",
         "severity": "P1",
         # Queue 324: the second half of this sentence used to promise a 503 the

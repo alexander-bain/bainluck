@@ -206,15 +206,15 @@ describe("#7612 — the page does not promise a refresh it is not delivering", (
     // The banner the reader actually saw, so the contradiction's other half is
     // pinned rather than assumed.
     expect(hasBanner(html)).toBe(true);
-    expect(html).toContain("130 hourly rebuilds have come and gone without a new snapshot.");
+    expect(html).toContain("130 daily rebuilds have come and gone without a new snapshot.");
 
-    expect(whatsIncluded(html)).not.toContain("Data refreshes hourly");
+    expect(whatsIncluded(html)).not.toContain("Data refreshes daily");
   });
 
   test("fresh: the sentence is a gate, not a deletion", () => {
     const html = render(FRESH_ENVELOPE);
     expect(hasBanner(html)).toBe(false);
-    expect(whatsIncluded(html)).toContain("Data refreshes hourly.");
+    expect(whatsIncluded(html)).toContain("Data refreshes daily.");
   });
 
   test("the relation, not the string: a banner and a refresh promise never co-render", () => {
@@ -223,7 +223,8 @@ describe("#7612 — the page does not promise a refresh it is not delivering", (
     // banner's own `stalenessScheduleClause` sentence is allowed to name the
     // cadence while describing its failure ("130 hourly rebuilds …"), and a
     // page-wide ban would red on that correct copy.
-    const PROMISES_A_REFRESH = /refreshe?s?\s+(?:hourly|every hour)|rebuild(?:s|ed)?\s+hourly|updated?\s+(?:hourly|every hour)/i;
+    // Any cadence word: the schedule became daily under 215-B (Nov 16 2026).
+    const PROMISES_A_REFRESH = /refreshe?s?\s+(?:hourly|daily|every hour|every day)|rebuild(?:s|ed)?\s+(?:hourly|daily)|updated?\s+(?:hourly|daily|every hour|every day)/i;
 
     for (const envelope of [STALE_ENVELOPE, FRESH_ENVELOPE]) {
       const html = render(envelope);

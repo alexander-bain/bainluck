@@ -110,11 +110,11 @@ export interface CalibrationStalenessNotice {
   unitsDriftUnknown: number | null;
   unitsBanked: number | null;
   /**
-   * The server's verdict on the hourly beat. `null` means the payload did not
+   * The server's verdict on the daily beat (hourly until 215-B, Nov 16 2026). `null` means the payload did not
    * carry one — which is NOT "healthy", and no caller may read it as such.
    */
   producerStalled: boolean | null;
-  /** Hourly beats that came and went without a newer artifact. `null` = unread. */
+  /** Daily beats (hourly until 215-B) that came and went without a newer artifact. `null` = unread. */
   beatsMissed: number | null;
   /**
    * Did the producer PROVE the served artifact is current — `stalled === false`
@@ -464,7 +464,7 @@ export function stalenessScheduleClause(notice: CalibrationStalenessNotice): str
     // a failure it has not measured. Saying nothing costs a reader a true
     // sentence; saying it anyway costs them the reason they are reading a
     // staleness banner at all.
-    return notice.beatsMissed === 0 ? "The curve rebuilds hourly." : null;
+    return notice.beatsMissed === 0 ? "The curve rebuilds daily." : null;
   }
   if (notice.producerStalled !== true) return null;
   // Stalled. Report the measured count when we have one; the count is the whole
@@ -490,10 +490,10 @@ export function stalenessScheduleClause(notice: CalibrationStalenessNotice): str
   // claim about the runs, which it is not. Still a description, never a
   // prediction — the rule this function's docstring ends on is untouched.
   if (notice.beatsMissed === null || notice.beatsMissed <= 0) {
-    return "Hourly rebuilds have not produced a new snapshot.";
+    return "Daily rebuilds have not produced a new snapshot.";
   }
   const beats = notice.beatsMissed.toLocaleString();
-  const rebuild = notice.beatsMissed === 1 ? "hourly rebuild has" : "hourly rebuilds have";
+  const rebuild = notice.beatsMissed === 1 ? "daily rebuild has" : "daily rebuilds have";
   return `${beats} ${rebuild} come and gone without a new snapshot.`;
 }
 
@@ -533,7 +533,7 @@ export function stalenessScheduleClause(notice: CalibrationStalenessNotice): str
 export function methodologyRefreshClause(
   notice: CalibrationStalenessNotice | null | undefined,
 ): string | null {
-  return notice ? null : "Data refreshes hourly.";
+  return notice ? null : "Data refreshes daily.";
 }
 
 /**

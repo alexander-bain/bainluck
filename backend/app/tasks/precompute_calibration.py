@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 _CACHE_TTL = 86400
 
 # Main calibration cache TTL: 2 hours (refreshed every 1h by beat)
-_MAIN_CACHE_TTL = 7200
+_MAIN_CACHE_TTL = 50 * 3600  # 215-B: the beat is daily; one missed night still serves
 
 # Queue 272 (#1459): the DURABLE last-good key. The main key (`bainluck:
 # calibration:main`, 2h TTL) is the FRESH surface; this parallel key is the

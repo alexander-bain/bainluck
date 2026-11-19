@@ -138,7 +138,7 @@ describe("#5185 the page's empty-bank state", () => {
     for (const env of [EMPTY_BANK, UNDATED_BANK]) {
       const el = banner(render(env));
       expect(attr(el, "data-staleness-kind")).toBe("undisclosed");
-      expect(el).toContain("138 hourly rebuilds have come and gone without a new snapshot.");
+      expect(el).toContain("138 daily rebuilds have come and gone without a new snapshot.");
     }
   });
 

@@ -362,25 +362,28 @@ SERVE_MAX_AGE_S = 7 * 86400
 COHORT_MIN_N = 1000
 
 #: The producer's beat cadence: ``precompute-calibration-main`` is
-#: ``crontab(minute=15)`` in ``app.tasks.__init__``. Named here because every
+#: ``crontab(minute=15, hour=10)`` (daily since 215-B, Nov 16 2026; hourly
+#: before) in ``app.tasks.__init__``. Named here because every
 #: age judgement about this artifact is really a count of missed publishes, and
 #: a bare number of seconds hides that.
-PUBLISH_INTERVAL_S = 3600
+PUBLISH_INTERVAL_S = 86400
 
 #: How many consecutive missed publishes make **the producer** the story rather
 #: than the cache. Derived, not picked:
 #:
-#: * The ``main`` Redis key carries ``_MAIN_CACHE_TTL`` = 2h, so a copy served by
-#:   a perfectly HEALTHY producer can legitimately be two beats old. A threshold
-#:   at or below that would call working days stalled.
-#: * One further beat for a slow build, one for margin.
+#: * The ``main`` Redis key carries ``_MAIN_CACHE_TTL`` = 50 h (215-B: daily
+#:   beat; it was 2 h at hourly), so a copy served by a perfectly HEALTHY
+#:   producer can legitimately be two beats old. A threshold at or below that
+#:   would call working days stalled.
+#: * One further beat for margin. (At hourly this was +2: a slow build was a
+#:   whole beat then; at daily it is a fraction of one.)
 #:
 #: The result is deliberately LOOSER than the data-quality watchdog's
 #: ``calibration_publish_age`` alarm (2 beats): the watchdog pages an operator on
 #: suspicion, this states a fact to every anonymous reader, and the response must
-#: never be the one crying wolf. Four hours still catches #1680 — a four-DAY
-#: outage — roughly twenty-four times over.
-PRODUCER_STALL_BEATS = 4
+#: never be the one crying wolf. Three days still catches #1680, a four-DAY
+#: outage (it was four hours while the beat was hourly).
+PRODUCER_STALL_BEATS = 3
 
 #: The threshold, as a named constant rather than an inline multiplication.
 #: Past this the payload is not merely "a cache copy that lapsed" — nothing has

@@ -10400,7 +10400,13 @@ celery_app.conf.beat_schedule = {
     },
     "precompute-calibration-main": {
         "task": "app.tasks.precompute_calibration_main",
-        "schedule": crontab(minute=15),  # Every 1 hour at :15
+        # 215-B (Fable, Nov 16 2026): admin precomputes give way to readers'
+        # price refreshes on heavy. Hourly :15 -> daily 10:15 UTC (3:15 AM PT).
+        # One run held a heavy slot 21 min (11:30-11:51 AM Nov 16) while the
+        # 15-minute price pass queued. The main key lives 50 h
+        # (`_MAIN_CACHE_TTL`) so one missed night still serves; every
+        # cadence-derived constant moved with it.
+        "schedule": crontab(minute=15, hour=10),
         "options": {"queue": "heavy"},
     },
     "calibration-beat-gauge-sampler": {

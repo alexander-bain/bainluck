@@ -34,7 +34,8 @@ class TestThePublishAgeHeartbeatExists:
         check = _check("calibration_publish_age")
         assert check["severity"] == "P1"
         assert check["comparison"] == "lte"
-        assert check["threshold"] == 2, "two beats of an hourly precompute"
+        # 215-B (Nov 16 2026): the precompute is daily, so two beats + 1 h (was 2 at hourly).
+        assert check["threshold"] == 49, "two beats of a daily precompute, plus an hour"
         # The witness must be the PUBLISHED artifact, not a task-run counter:
         # the failing task ran on schedule for eight days.
         assert "durable_state_snapshots" in check["query"]
@@ -43,8 +44,9 @@ class TestThePublishAgeHeartbeatExists:
     def test_a_fresh_publish_passes_and_a_stale_one_fails(self):
         check = _check("calibration_publish_age")
         assert passes_threshold(0.1, check), "just published"
-        assert passes_threshold(2.0, check), "exactly two beats is still fine"
-        assert not passes_threshold(2.5, check), "past two beats must fire"
+        assert passes_threshold(25.0, check), "one daily beat late is a blip"
+        assert passes_threshold(49.0, check), "exactly two beats (+1 h) is still fine"
+        assert not passes_threshold(49.5, check), "past two beats must fire"
         # The real incident, in the units the check reads.
         assert not passes_threshold(7 * 24.0, check)
 
