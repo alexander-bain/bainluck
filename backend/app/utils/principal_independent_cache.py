@@ -185,7 +185,13 @@ MAX_ENTRIES_PER_NAMESPACE = 64
 #: set changes. Undershooting costs a rebuild, which is exactly today's
 #: behaviour; overshooting costs resident memory on the flagship route, which is
 #: not recoverable by failing open.
-MAX_ENTRIES_BY_NAMESPACE: dict[str, int] = {"market_load": 6, "sports_metadata": 6}
+MAX_ENTRIES_BY_NAMESPACE: dict[str, int] = {
+    "market_load": 6,
+    "sports_metadata": 6,
+    "events_scored": 6,
+    "sports_futures_scored": 6,
+    "review_decisions": 4,
+}
 
 #: Default staleness bound. The concept build embeds `now`-derived text and pin
 #: state, so the TTL is what bounds how wrong that can be. 60s is far below the
