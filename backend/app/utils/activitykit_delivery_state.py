@@ -87,17 +87,17 @@ class Attempt:
 
 
 def reader_view(snapshot: GameActivitySnapshot) -> tuple:
-    """The parts of a reading a reader sees change on the Lock Screen: the game
-    state, both scores, the printed chances (including tenths), period label,
-    settled result and pregame pair. Clocks are not in it: a reading that only
-    re-dates the same numbers is a refresh, not news."""
+    """The parts of a reading that earn a priority-10 push: the game state,
+    both scores, whole-percent chances, period label, settled result and
+    pregame pair. Clocks and tenths-only moves (``home_headline_tenths``) are
+    kept out so tenths jitter flows on the priority-5 quiet refresh instead of
+    consuming priority-10 budget (#10542 / #12999)."""
     return (
         snapshot.lifecycle,
         snapshot.home_score,
         snapshot.away_score,
         snapshot.home_rendered_percent,
         snapshot.away_rendered_percent,
-        snapshot.home_headline_tenths,
         snapshot.period_label,
         snapshot.result,
         snapshot.pregame_away_percent,
