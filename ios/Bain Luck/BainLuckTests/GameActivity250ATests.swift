@@ -118,4 +118,27 @@ final class GameActivity250ATests: XCTestCase {
         ))
         XCTAssertNil(finalSnap.scoreSourceUnavailable)
     }
+
+    func testScorelessFinalOmitsScoreColumnAndCompactDashes250A() throws {
+        // #13000 (250-A) — when a scoreless match reaches Final, stripping scoreSourceUnavailable
+        // must not print two "–" dashes under "Final" or "BOY –" / "– OLI" in the compact Island.
+        let src = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("BainLuckWidget/GameLiveActivity.swift"), encoding: .utf8)
+        XCTAssertTrue(src.contains("if phase == .after { return false }"),
+                      "showsScore must return false for a final match with nil scores")
+        XCTAssertTrue(src.contains("else if reading.snapshot.isTerminal && !reading.showsScore"),
+                      "compact Dynamic Island must handle scoreless finals without printing dashes")
+        XCTAssertTrue(src.contains("if reading.showsScore || reading.pair != nil || (reading.phase == .after && reading.hasPregame)"),
+                      "Lock Screen must still render the Pregame header on a scoreless final")
+
+        let demo = try XCTUnwrap(GameActivityDemo10864.snapshot("tennis250afinal"))
+        XCTAssertEqual(demo.lifecycle, .final)
+        XCTAssertNil(demo.homeScore)
+        XCTAssertNil(demo.awayScore)
+        XCTAssertNil(demo.scoreSourceUnavailable)
+        XCTAssertEqual(demo.result, .home)
+        XCTAssertEqual(demo.pregameHomePercent, 56)
+        XCTAssertEqual(demo.pregameAwayPercent, 44)
+    }
 }
