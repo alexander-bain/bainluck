@@ -39,8 +39,6 @@ DEFAULT_API = "https://api.bainluck.com"
 HEROKU_APP = "bainluck"
 PT = ZoneInfo("America/Los_Angeles")
 
-# Safe single path segment for template parameters such as {ref}.
-_SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _ISSUE_RE = re.compile(r"^#?([1-9][0-9]*)$")
 _TEMPLATE_PARAM_RE = re.compile(r"\{[a-z_][a-z0-9_]*\}")
 

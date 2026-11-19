@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import json
-import sys
 import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,10 +14,19 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TOOLS_ADMIN = REPO_ROOT / "tools" / "admin"
-if str(TOOLS_ADMIN) not in sys.path:
-    sys.path.insert(0, str(TOOLS_ADMIN))
 
-import readonly_read as rr  # noqa: E402
+
+def _load_readonly_read():
+    spec = importlib.util.spec_from_file_location(
+        "bainluck_readonly_read_247a", TOOLS_ADMIN / "readonly_read.py"
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+rr = _load_readonly_read()
 
 SECRET_TOKEN = "test-secret-admin-token-9f8e7d6c5b4a"
 
