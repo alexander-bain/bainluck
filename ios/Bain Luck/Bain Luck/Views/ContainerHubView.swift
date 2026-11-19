@@ -64,17 +64,19 @@ struct ContainerHubView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                ShareLink(
-                    item: shareURL,
-                    subject: Text(effectiveShareTitle)
-                ) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 14))
+            if isPubliclyShareable {
+                ToolbarItem(placement: .confirmationAction) {
+                    ShareLink(
+                        item: shareURL,
+                        subject: Text(effectiveShareTitle)
+                    ) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 14))
+                    }
+                    .accessibilityLabel("Share")
+                    .accessibilityIdentifier("hub.shareButton")
+                    .recordsShareOpened { recordShareOpened() }
                 }
-                .accessibilityLabel("Share")
-                .accessibilityIdentifier("hub.shareButton")
-                .recordsShareOpened { recordShareOpened() }
             }
         }
         .task {
@@ -113,25 +115,39 @@ struct ContainerHubView: View {
         )
     }
 
+    private var isPubliclyShareable: Bool {
+        guard case .loaded(let presentation) = vm.state,
+              presentation.response.state == .published else {
+            return false
+        }
+        return true
+    }
+
+    static func resolvedNavigationTitle(displayName: String, slug: String, loadedTitle: String?) -> String {
+        if let loaded = loadedTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !loaded.isEmpty {
+            if loaded.count > 24 || (GroupingMachineryGate12288.isMachineryCandidateSlug(slug) && loaded.count > 28) {
+                return ""
+            }
+            return loaded
+        }
+        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "Collection" {
+            return ""
+        }
+        if GroupingMachineryGate12288.isMachineryCandidateSlug(slug), trimmed.count > 28 {
+            return ""
+        }
+        return trimmed
+    }
+
     private var effectiveNavigationTitle: String {
-        let candidate: String
-        let showsBodyHeading: Bool
-        if case .loaded(let presentation) = vm.state, let loadedTitle = presentation.title, !loadedTitle.isEmpty {
-            candidate = (displayName.isEmpty || displayName == "Collection") ? loadedTitle : displayName
-            showsBodyHeading = true
+        let loadedTitle: String?
+        if case .loaded(let presentation) = vm.state {
+            loadedTitle = presentation.title
         } else {
-            candidate = displayName == "Collection" ? "" : displayName
-            showsBodyHeading = false
+            loadedTitle = nil
         }
-        // Long titles already render in full as the bold body heading; keeping the
-        // inline nav bar clear avoids mid-word "…" truncation on 390 px iPhones.
-        if showsBodyHeading, candidate.count > 24 {
-            return ""
-        }
-        if GroupingMachineryGate12288.isMachineryCandidateSlug(vm.slug), candidate.count > 28 {
-            return ""
-        }
-        return candidate
+        return Self.resolvedNavigationTitle(displayName: displayName, slug: vm.slug, loadedTitle: loadedTitle)
     }
 
     private func hub(_ presentation: ContainerHubPresentation) -> some View {
@@ -148,11 +164,12 @@ struct ContainerHubView: View {
                         .foregroundStyle(hubTextPrimary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if let subtitle = presentation.subtitle {
-                    Text(subtitle)
+                if let reasonLine = presentation.headerReasonLine {
+                    Text(reasonLine)
                         .font(.subheadline)
                         .foregroundStyle(hubTextSecondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("hub.reasonLine")
                 }
                 if let note = presentation.note {
                     Text(note)
@@ -163,10 +180,6 @@ struct ContainerHubView: View {
                 if presentation.response.edition?.isTheme == true, presentation.isPartial {
                     Button("Retry unavailable markets") { Task { await vm.load() } }
                         .disabled(vm.isRefreshing)
-                }
-                if let counts = presentation.countLabel {
-                    Text(counts).font(.subheadline).foregroundStyle(hubTextSecondary)
-                        .accessibilityIdentifier("hub.loadedCount")
                 }
                 if vm.refreshError != nil {
                     Text("Couldn’t refresh. Showing the last loaded collection.")
@@ -272,6 +285,13 @@ struct ContainerHubView: View {
                             }
                         }
                     }
+                }
+                if let pagerCount = presentation.pagerCountLabel {
+                    Text(pagerCount)
+                        .font(.subheadline)
+                        .foregroundStyle(hubTextSecondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .accessibilityIdentifier("hub.loadedCount")
                 }
                 if vm.pageError != nil {
                     Text("Couldn’t load more markets. Try again.").font(.subheadline).foregroundStyle(hubTextSecondary)

@@ -2578,20 +2578,6 @@ struct DiscoverView: View {
                                         navigationPath.append(Route.futuresDetail(id: marketId))
                                     }
                                 )
-                                .contextMenu {
-                                    CollectionContextMenuItems(
-                                        slug: card.slug,
-                                        onShare: {
-                                            ShareInstrumentation.recordShareOpened(
-                                                itemType: "collection",
-                                                itemId: card.slug,
-                                                itemName: entry.displayName,
-                                                category: nil,
-                                                surface: .discoverCard
-                                            )
-                                        }
-                                    )
-                                }
                             }
                         }
                     }
