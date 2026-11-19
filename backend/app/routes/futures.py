@@ -4650,6 +4650,13 @@ async def _newest_kalshi_trades(db: AsyncSession, outcome_ids: list[int]) -> dic
     return {outcome_id: price for outcome_id, price in rows.all()}
 
 
+_KALSHI_MULTI_SELECTION_AWARD_SERIES = frozenset({
+    "KXNBAROOKIE1STTEAM",
+    "KXNBAROOKIE2NDTEAM",
+    "KXNBAAWARDFIN",
+})
+
+
 def _unsupported_price_verdicts(
     market: FuturesMarket, candidates: list, latest_trade: dict
 ) -> set[int]:
@@ -4664,6 +4671,8 @@ def _unsupported_price_verdicts(
         getattr(market, "market_type", None),
         getattr(market, "market_metadata", None),
     )
+    series = (getattr(market, "external_id", None) or "").partition("-")[0]
+    multi_selection_award = series in _KALSHI_MULTI_SELECTION_AWARD_SERIES
     return {
         o.id
         for o in candidates
@@ -4714,6 +4723,7 @@ def _unsupported_price_verdicts(
             has_trade_evidence=o.id in latest_trade
             and latest_trade[o.id] is not None,
             in_exclusive_field=in_exclusive_field,
+            multi_selection_award=multi_selection_award,
             volume_24h=getattr(o, "volume_24h", None),
             volume_24h_at=getattr(o, "volume_24h_at", None),
             last_seen_at=getattr(o, "last_updated", None),
