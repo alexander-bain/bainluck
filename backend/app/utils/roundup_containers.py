@@ -2104,6 +2104,7 @@ def insert_roundup_feed_items(
     seen_futures_ids: Optional[Sequence[int] | set[int]] = None,
     seen_event_ids: Optional[Sequence[int] | set[int]] = None,
     novelty_seat_cap: int = ROUNDUP_NOVELTY_SEAT_CAP,
+    preserve_existing_roundups: bool = False,
 ) -> list[dict[str, Any]]:
     """Place served round-up cards on Discover in page one's back half without changing scores.
 
@@ -2154,6 +2155,33 @@ def insert_roundup_feed_items(
 
     raw_items = list(items)
     initial_floor_idx = _opening_eligible_floor_index(raw_items, seat_floor, now=now)
+
+    # #12288 (Fable 2:41 PM PT): when splicing machinery groupings onto a base feed
+    # that already has standing round-ups seated, never extract or shift any non-replaced
+    # standing round-up. Replace each target card IN-PLACE at its exact seat, and place
+    # non-replacing groupings strictly after the last standing round-up.
+    use_in_place_splice = preserve_existing_roundups or (
+        bool(valid_roundups)
+        and all(_is_machinery_roundup_item(r) for r in valid_roundups)
+        and any(_is_roundup_bundle_card(it) for it in raw_items)
+    )
+    if use_in_place_splice:
+        return _splice_machinery_in_place(
+            raw_items,
+            valid_roundups,
+            replaces_by_rid=replaces_by_rid,
+            reg_order=reg_order,
+            initial_floor_idx=initial_floor_idx,
+            seat_floor=seat_floor,
+            page_window=page_window,
+            now=now,
+            returning_reader=returning_reader,
+            seen_card_keys=seen_card_keys,
+            seen_futures_ids=seen_futures_ids,
+            seen_event_ids=seen_event_ids,
+            novelty_seat_cap=novelty_seat_cap,
+        )
+
     preexisting_post_opening_roundups: list[Mapping[str, Any]] = []
     preexisting_target_by_id: dict[Any, int] = {}
     opening_takeover_seat_by_id: dict[Any, int] = {}
@@ -2599,7 +2627,211 @@ async def add_roundup_feed_items(
         seen_futures_ids=seen_futures_ids,
         seen_event_ids=seen_event_ids,
         novelty_seat_cap=novelty_seat_cap,
+        preserve_existing_roundups=machinery_only,
     )
+
+
+def _splice_machinery_in_place(
+    raw_items: list[dict[str, Any]],
+    valid_roundups: Sequence[Mapping[str, Any]],
+    *,
+    replaces_by_rid: Mapping[Any, tuple[set[str], set[str]]],
+    reg_order: Mapping[str, int],
+    initial_floor_idx: int,
+    seat_floor: int,
+    page_window: int,
+    now: Optional[datetime],
+    returning_reader: bool,
+    seen_card_keys: Optional[Sequence[str] | set[str]],
+    seen_futures_ids: Optional[Sequence[int] | set[int]],
+    seen_event_ids: Optional[Sequence[int] | set[int]],
+    novelty_seat_cap: int,
+) -> list[dict[str, Any]]:
+    """Splice machinery groupings onto a seated Discover deck without moving standing round-ups.
+
+    * Every non-replaced standing round-up keeps its exact index from ``raw_items``.
+    * Each replacing machinery grouping overwrites its replaced card (standing round-up,
+      dissolved theme bundle, or first covered standalone market) IN-PLACE at that exact seat.
+    * Non-replacing machinery groupings (e.g. NBA Night, NFL Week) seat strictly after the
+      last standing round-up with non-adjacent spacing so zero standing round-ups shift.
+    """
+    result: list[dict[str, Any]] = list(raw_items)
+    existing_ids = {
+        it.get("data", {}).get("id")
+        for it in result
+        if isinstance(it, Mapping)
+        and it.get("type") == "bundle"
+        and isinstance(it.get("data"), Mapping)
+    }
+
+    def _reg_key(pair: tuple[int, Mapping[str, Any]]) -> tuple[int, int]:
+        idx_in, item = pair
+        slug = _roundup_item_slug(item)
+        return (reg_order.get(slug, 10_000 + idx_in), idx_in)
+
+    ordered_roundups: list[Mapping[str, Any]] = []
+    seen_rids: set[Any] = set()
+    for _, r_item in sorted(enumerate(valid_roundups), key=_reg_key):
+        r_id = r_item["data"].get("id")
+        if r_id in existing_ids or r_id in seen_rids:
+            continue
+        seen_rids.add(r_id)
+        ordered_roundups.append(r_item)
+
+    if not ordered_roundups:
+        return raw_items
+
+    def _hydrate_at(r_item: Mapping[str, Any], target_idx: int) -> dict[str, Any]:
+        card = copy.deepcopy(dict(r_item))
+        if result:
+            anchor = result[target_idx] if target_idx < len(result) else result[-1]
+            if not card.get("score"):
+                card["score"] = float(anchor.get("score", 0.0) or 0.0)
+            if "_rank_score" in anchor and "_rank_score" not in card:
+                card["_rank_score"] = anchor["_rank_score"]
+            if "_sort_time" in anchor and "_sort_time" not in card:
+                card["_sort_time"] = anchor["_sort_time"]
+            for child in card.get("data", {}).get("items") or ():
+                if isinstance(child, dict) and not child.get("score"):
+                    child["score"] = card["score"]
+        return card
+
+    placed_rids: set[Any] = set()
+    remove_indices: set[int] = set()
+    changed = False
+
+    # Pass 1: Explicit `replaces` / `replaces_themes` -> exact in-place replacement.
+    by_rid = {r["data"].get("id"): r for r in ordered_roundups}
+    for idx, existing in enumerate(result):
+        matched_rid: Any = None
+        for r_id, (r_themes, r_roundups) in replaces_by_rid.items():
+            if r_id in by_rid and _item_replaced_by_spec(existing, r_themes, r_roundups):
+                matched_rid = r_id
+                break
+        if matched_rid is None:
+            continue
+        changed = True
+        if matched_rid not in placed_rids:
+            card = _hydrate_at(by_rid[matched_rid], idx)
+            if idx < initial_floor_idx:
+                card["data"]["inherited_opening_seat"] = True
+            result[idx] = card
+            placed_rids.add(matched_rid)
+        else:
+            remove_indices.add(idx)
+
+    # Pass 2: Covered standalone futures and theme bundles -> in-place takeover on dissolution
+    # or first covered standalone card; prune extra duplicates only.
+    for r_item in ordered_roundups:
+        r_id = r_item["data"].get("id")
+        covered_ids = _roundup_covered_market_ids(r_item)
+        if not covered_ids:
+            continue
+        for idx, existing in enumerate(result):
+            if idx in remove_indices or not isinstance(existing, Mapping):
+                continue
+            if _is_roundup_bundle_card(existing):
+                continue
+            if (
+                existing.get("type") == "futures"
+                and isinstance(existing.get("data"), Mapping)
+                and existing["data"].get("id") in covered_ids
+            ):
+                changed = True
+                if r_id not in placed_rids:
+                    card = _hydrate_at(r_item, idx)
+                    if idx < initial_floor_idx:
+                        card["data"]["inherited_opening_seat"] = True
+                    result[idx] = card
+                    placed_rids.add(r_id)
+                else:
+                    remove_indices.add(idx)
+                continue
+            if (
+                existing.get("type") == "bundle"
+                and isinstance(existing.get("data"), Mapping)
+                and existing["data"].get("kind") != "roundup"
+                and isinstance(existing["data"].get("items"), list)
+            ):
+                orig_children = existing["data"]["items"]
+                kept_children = [
+                    ch
+                    for ch in orig_children
+                    if not (
+                        isinstance(ch, Mapping)
+                        and ch.get("type") == "futures"
+                        and isinstance(ch.get("data"), Mapping)
+                        and ch["data"].get("id") in covered_ids
+                    )
+                ]
+                if len(kept_children) != len(orig_children):
+                    changed = True
+                    if len(kept_children) < 2:
+                        if r_id not in placed_rids:
+                            card = _hydrate_at(r_item, idx)
+                            if idx < initial_floor_idx:
+                                card["data"]["inherited_opening_seat"] = True
+                            result[idx] = card
+                            placed_rids.add(r_id)
+                        else:
+                            remove_indices.add(idx)
+                    else:
+                        updated_existing = copy.deepcopy(dict(existing))
+                        updated_existing["data"]["items"] = kept_children
+                        updated_existing["data"]["item_count"] = len(kept_children)
+                        if isinstance(updated_existing["data"].get("member_ids"), list):
+                            updated_existing["data"]["member_ids"] = [
+                                mid
+                                for mid in updated_existing["data"]["member_ids"]
+                                if mid not in covered_ids
+                            ]
+                        result[idx] = updated_existing
+
+    if remove_indices:
+        for idx in sorted(remove_indices, reverse=True):
+            result.pop(idx)
+
+    # Pass 3: Non-replacing machinery groupings seat strictly after the last standing
+    # round-up with non-adjacent spacing so zero standing round-ups shift.
+    unplaced = [r for r in ordered_roundups if r["data"].get("id") not in placed_rids]
+    if unplaced:
+        floor_idx = _opening_eligible_floor_index(result, seat_floor, now=now)
+        last_standing_idx = max(
+            (i for i, it in enumerate(result) if _is_roundup_bundle_card(it)),
+            default=-1,
+        )
+        next_desired = max(floor_idx, last_standing_idx + 2)
+        for r_item in unplaced:
+            desired_idx = min(next_desired, len(result))
+            non_adj = _find_non_adjacent_roundup_seat(
+                result,
+                desired_idx,
+                floor_idx=desired_idx,
+                candidate_item=r_item,
+                page_window=page_window,
+            )
+            target_idx = non_adj if non_adj is not None else len(result)
+            card = _hydrate_at(r_item, target_idx)
+            result.insert(target_idx, card)
+            next_desired = target_idx + 2
+            changed = True
+
+    if not changed:
+        return raw_items
+
+    if returning_reader and novelty_seat_cap > 0:
+        result = apply_novelty_seats(
+            result,
+            returning_reader=returning_reader,
+            seen_card_keys=seen_card_keys,
+            seen_futures_ids=seen_futures_ids,
+            seen_event_ids=seen_event_ids,
+            seat_floor=seat_floor,
+            novelty_seat_cap=novelty_seat_cap,
+            now=now,
+        )
+
+    return result
 
 
 ROUNDUP_PRODUCERS: dict[str, RoundupProducer] = {}
