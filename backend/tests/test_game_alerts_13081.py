@@ -39,6 +39,7 @@ from app.services.game_alerts_dispatch import (
     is_close_late,
     is_final_period,
     is_just_started,
+    parse_soccer_clock,
 )
 from app.services.push_audience import (
     AlertTarget,
@@ -712,6 +713,171 @@ class TestTaskGuardsAndAppClipPurge:
             == "app.tasks.purge_expired_appclip_devices"
         )
         assert beat["purge-expired-appclip-devices"]["options"]["queue"] == "realtime"
+
+
+def _soccer_detail(
+    *,
+    clock: str | None = "78'",
+    period: str | None = "2nd Half",
+    home_prob: float | None = 0.28,
+    away_prob: float | None = 0.20,
+    draw_prob: float | None = 0.52,
+    prob_age: timedelta = timedelta(seconds=30),
+) -> dict:
+    obs_iso = (NOW - prob_age).isoformat()
+    espn: dict[str, object] = {}
+    if period is not None:
+        espn["period"] = period
+    if clock is not None:
+        espn["game_clock"] = clock
+    odds: dict[str, object] = {}
+    if home_prob is not None:
+        odds["home_probability"] = home_prob
+    if away_prob is not None:
+        odds["away_probability"] = away_prob
+    if draw_prob is not None:
+        odds["draw_probability"] = draw_prob
+    return {
+        "id": 9876,
+        "sport": "soccer_epl",
+        "status": "live",
+        "home_team": "Arsenal",
+        "away_team": "Chelsea",
+        "home_score": 1,
+        "away_score": 1,
+        "espn": espn,
+        "current_odds": odds,
+        "hero_probability": home_prob,
+        "hero_probability_away": away_prob,
+        "hero_probability_draw": draw_prob,
+        "hero_probability_observed_at": obs_iso,
+        "hero_probability_source": "blend",
+    }
+
+
+class TestSoccerCloseLate271A:
+    @pytest.mark.parametrize(
+        "raw_clock,period,expected",
+        [
+            ("75'", "2nd Half", (75, "75'")),
+            ("78'", "2nd Half", (78, "78'")),
+            ("90'+2'", "2nd Half", (90, "90+2'")),
+            ("90+3'", "2nd Half", (90, "90+3'")),
+            ("82:15", "2nd Half", (82, "82'")),
+            ("105'", "Extra Time", (105, "105'")),
+            ("74'", "2nd Half", (74, "74'")),
+            ("45'+3'", "1st Half", None),
+            ("78'", "1st Half", None),
+            ("78'", "Halftime", None),
+            ("90'", "FT", None),
+            ("HT", "2nd Half", None),
+            ("FT", "2nd Half", None),
+            (None, "2nd Half", None),
+            ("", "2nd Half", None),
+        ],
+    )
+    def test_parse_soccer_clock(self, raw_clock, period, expected):
+        assert parse_soccer_clock(raw_clock, period=period) == expected
+
+    def test_soccer_75th_minute_threshold_and_missing_clock_refusal(self):
+        # 74' -> too early
+        assert is_close_late(_soccer_detail(clock="74'"), now=NOW) is False
+        # 75' -> inclusive threshold -> buzzes
+        assert is_close_late(_soccer_detail(clock="75'"), now=NOW) is True
+        # 90'+2' stoppage -> buzzes
+        assert is_close_late(_soccer_detail(clock="90'+2'"), now=NOW) is True
+        # No game clock on the feed -> no buzz even in 2nd Half
+        assert is_close_late(_soccer_detail(clock=None, period="2nd Half"), now=NOW) is False
+        assert is_close_late(_soccer_detail(clock="", period="2nd Half"), now=NOW) is False
+
+    def test_soccer_three_way_max_65_percent_rule(self):
+        # Draw 52%, home 28%, away 20% -> max 52% <= 65% -> buzzes
+        assert is_close_late(
+            _soccer_detail(home_prob=0.28, away_prob=0.20, draw_prob=0.52), now=NOW
+        ) is True
+        # Draw 65% -> boundary inclusive -> buzzes
+        assert is_close_late(
+            _soccer_detail(home_prob=0.20, away_prob=0.15, draw_prob=0.65), now=NOW
+        ) is True
+        # Draw 66% -> > 65% -> no buzz
+        assert is_close_late(
+            _soccer_detail(home_prob=0.20, away_prob=0.14, draw_prob=0.66), now=NOW
+        ) is False
+        # Home 66% -> > 65% -> no buzz
+        assert is_close_late(
+            _soccer_detail(home_prob=0.66, away_prob=0.10, draw_prob=0.24), now=NOW
+        ) is False
+        # Away 66% -> > 65% -> no buzz
+        assert is_close_late(
+            _soccer_detail(home_prob=0.10, away_prob=0.66, draw_prob=0.24), now=NOW
+        ) is False
+        # Missing draw probability -> never guesses 2-way -> no buzz
+        assert is_close_late(
+            _soccer_detail(home_prob=0.50, away_prob=0.50, draw_prob=None), now=NOW
+        ) is False
+        # Stale observation (> 6 min) -> no buzz
+        assert is_close_late(
+            _soccer_detail(prob_age=OBSERVATION_MAX_AGE + timedelta(seconds=1)),
+            now=NOW,
+        ) is False
+
+    def test_soccer_draw_in_play_wording_never_prints_lower_side_as_leader(self):
+        # Draw is likeliest (52%) -> prints "Close late (78') — draw 52%"
+        push_draw = build_game_alert_payload(
+            _soccer_detail(clock="78'", home_prob=0.28, away_prob=0.20, draw_prob=0.52),
+            trigger_kind="close_late",
+            device_id=uuid4(),
+            now=NOW,
+        )
+        assert push_draw is not None
+        assert push_draw.title == "Chelsea 1–1 Arsenal"
+        assert push_draw.body == "Close late (78') — draw 52%"
+
+        # Home leads (54%) -> prints "Close late (78') — Arsenal 54%"
+        push_home = build_game_alert_payload(
+            _soccer_detail(clock="78'", home_prob=0.54, away_prob=0.18, draw_prob=0.28),
+            trigger_kind="close_late",
+            device_id=uuid4(),
+            now=NOW,
+        )
+        assert push_home is not None
+        assert push_home.body == "Close late (78') — Arsenal 54%"
+
+        # Away leads (58%) in stoppage time -> prints "Close late (90+2') — Chelsea 58%"
+        push_away = build_game_alert_payload(
+            _soccer_detail(clock="90'+2'", home_prob=0.18, away_prob=0.58, draw_prob=0.24),
+            trigger_kind="close_late",
+            device_id=uuid4(),
+            now=NOW,
+        )
+        assert push_away is not None
+        assert push_away.body == "Close late (90+2') — Chelsea 58%"
+
+    def test_mens_college_basketball_2nd_half_unchanged_without_clock(self):
+        # Ruling 271: A — men's college half is 20 minutes (same as a hockey period),
+        # so it stays as built from 259: A.
+        obs_iso = (NOW - timedelta(seconds=30)).isoformat()
+        ncaab = {
+            "id": 5555,
+            "sport": "basketball_ncaab",
+            "status": "live",
+            "home_team": "Duke",
+            "away_team": "UNC",
+            "home_score": 68,
+            "away_score": 66,
+            "espn": {"period": "2nd Half"},
+            "current_odds": {"home_probability": 0.56, "away_probability": 0.44},
+            "hero_probability": 0.56,
+            "hero_probability_away": 0.44,
+            "hero_probability_observed_at": obs_iso,
+            "hero_probability_source": "blend",
+        }
+        assert is_close_late(ncaab, now=NOW) is True
+        push = build_game_alert_payload(
+            ncaab, trigger_kind="close_late", device_id=uuid4(), now=NOW
+        )
+        assert push is not None
+        assert push.body == "Close late (2nd Half) · Duke 56%"
 
 
 async def _const(value):

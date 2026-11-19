@@ -1,4 +1,4 @@
-"""1.0.8 plain APNs game-alerts dispatcher (#13081, #13079, Rulings 258-261: A).
+"""1.0.8 plain APNs game-alerts dispatcher (#13081, #13079, Rulings 258-261: A, 271: A).
 
 Triggers for pinned games (default-off behind ``GAME_ALERTS_PUSH_ENABLED=true``):
 
@@ -6,10 +6,13 @@ Triggers for pinned games (default-off behind ``GAME_ALERTS_PUSH_ENABLED=true``)
    that cannot start a Live Activity (``kickoff_plan(...).alert`` — no
    ``la_start_token``, older app, or App Clip), and never to a phone that
    already holds an active Live Activity for that game.
-2. **Close late (259: A, 260: A):** final period (or OT/extra time) with blended
-   win probability between 35% and 65% inclusive, at most once per game per phone.
-   Suppressed on any phone already showing that game's Live Activity (260: A),
-   and skipped for ephemeral App Clip rows (which opt in for final-score only).
+2. **Close late (259: A, 260: A, 271: A):** final period (or OT/extra time)
+   with blended win probability between 35% and 65% inclusive; for **soccer
+   (271: A)**, from the 75th minute on (clock required on the feed) when no
+   result (home, away, or draw) is above 65%, naming ``draw`` when the draw is
+   the likeliest result. At most once per game per phone. Suppressed on any
+   phone already showing that game's Live Activity (260: A), and skipped for
+   ephemeral App Clip rows (which opt in for final-score only).
 3. **Final (260: A, #13079):** completed/closed game — sent to every opted-in
    phone, including phones showing that game's Live Activity and valid (< 8 h)
    App Clip rows.
@@ -26,6 +29,7 @@ import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import math
 import re
 from typing import Awaitable, Callable, Protocol
 from uuid import UUID
@@ -53,6 +57,8 @@ from app.services.push_audience import (
 from app.utils.activitykit_payload import OBSERVATION_MAX_AGE
 from app.utils.activitykit_projection import project_activitykit_snapshot
 from app.utils.activitykit_start_payload import build_activitykit_start_alert
+from app.utils.draw_priced_winner import sport_prices_a_draw
+from app.utils.graded_card import rendered_percent
 
 _DEVICES = PushDevice.__table__
 _PINS = UserPin.__table__
@@ -75,6 +81,16 @@ MAX_EVENTS_PER_BEAT = 50
 #: Close-late probability window (Ruling 259: A, inclusive).
 CLOSE_LATE_MIN_PERCENT = 35
 CLOSE_LATE_MAX_PERCENT = 65
+#: Soccer close-late minute threshold (Ruling 271: A, inclusive; clock required).
+SOCCER_CLOSE_LATE_MIN_MINUTE = 75
+
+_SOCCER_STOPPAGE_CLOCK_RE = re.compile(
+    r"^\s*(\d{1,3})\s*'?\s*\+\s*(\d{1,2})\s*'?\s*$"
+)
+_SOCCER_MMSS_CLOCK_RE = re.compile(r"^\s*(\d{1,3})\s*:\s*(\d{2})\s*$")
+_SOCCER_MINUTE_CLOCK_RE = re.compile(
+    r"^\s*(\d{1,3})\s*(?:'|th|st|nd|rd|min)?\s*$", re.IGNORECASE
+)
 
 # Period parsing for Starts ("first period") and Ruling 259: A ("final period").
 _FIRST_PERIOD_RE = re.compile(
@@ -165,6 +181,111 @@ def _raw_period(detail: Mapping[str, object]) -> str | None:
     return None
 
 
+def _raw_game_clock(detail: Mapping[str, object]) -> str | None:
+    espn = detail.get("espn")
+    if isinstance(espn, Mapping):
+        for key in ("game_clock", "clock"):
+            val = espn.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+    for key in ("game_clock", "clock"):
+        val = detail.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return None
+
+
+def _is_soccer_sport(sport_key: str | None) -> bool:
+    return (sport_key or "").strip().lower().startswith("soccer_")
+
+
+def parse_soccer_clock(
+    raw_clock: str | None, *, period: str | None = None
+) -> tuple[int, str] | None:
+    """Parse a live soccer game clock into ``(minute, display_label)`` (Ruling 271: A).
+
+    Returns ``None`` when no clock is present on the feed, when the period is
+    terminal/halftime/1st half, or when the clock string cannot be parsed as a
+    valid match minute (conservative: no clock -> no buzz).
+    """
+    if isinstance(period, str) and period.strip():
+        p = period.strip()
+        if (
+            _TERMINAL_PERIOD_RE.search(p)
+            or _END_OF_PERIOD_RE.search(p)
+            or is_first_period(p)
+        ):
+            return None
+    if not isinstance(raw_clock, str):
+        return None
+    text = raw_clock.strip()
+    if not text or _TERMINAL_PERIOD_RE.search(text):
+        return None
+
+    m = _SOCCER_STOPPAGE_CLOCK_RE.match(text)
+    if m:
+        base_min = int(m.group(1))
+        added = int(m.group(2))
+        if 0 <= base_min <= 150:
+            return (base_min, f"{base_min}+{added}'")
+        return None
+
+    m = _SOCCER_MMSS_CLOCK_RE.match(text)
+    if m:
+        minute = int(m.group(1))
+        if 0 <= minute <= 150:
+            return (minute, f"{minute}'")
+        return None
+
+    m = _SOCCER_MINUTE_CLOCK_RE.match(text)
+    if m:
+        minute = int(m.group(1))
+        if 0 <= minute <= 150:
+            return (minute, f"{minute}'")
+        return None
+
+    return None
+
+
+def _valid_probability(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    v = float(value)
+    return v if math.isfinite(v) and 0.0 <= v <= 1.0 else None
+
+
+def _three_way_rendered_percents(
+    detail: Mapping[str, object],
+) -> tuple[int, int, int] | None:
+    """Return ``(home_pct, away_pct, draw_pct)`` for a 3-way match, or ``None``.
+
+    Refuses opening-tagged readings and returns ``None`` if any of the three
+    outcomes is missing, so draw-priced matches never misread a 2-way pair.
+    """
+    if detail.get("hero_probability_source") == "opening":
+        return None
+    odds = detail.get("current_odds")
+    odds_map = odds if isinstance(odds, Mapping) else {}
+    cur_home = _valid_probability(odds_map.get("home_probability"))
+    if cur_home is not None:
+        home_p = cur_home
+        away_p = _valid_probability(odds_map.get("away_probability"))
+        draw_p = _valid_probability(odds_map.get("draw_probability"))
+    else:
+        home_p = _valid_probability(detail.get("hero_probability"))
+        away_p = _valid_probability(detail.get("hero_probability_away"))
+        draw_p = _valid_probability(detail.get("hero_probability_draw"))
+
+    if home_p is None or away_p is None or draw_p is None:
+        return None
+    home_pct = rendered_percent(home_p)
+    away_pct = rendered_percent(away_p)
+    draw_pct = rendered_percent(draw_p)
+    if home_pct is None or away_pct is None or draw_pct is None:
+        return None
+    return (home_pct, away_pct, draw_pct)
+
+
 def _parse_commence_time(value: object) -> datetime | None:
     if isinstance(value, datetime):
         if value.utcoffset() is None:
@@ -234,14 +355,32 @@ def is_close_late(
     now: datetime | None = None,
     freshness_window: timedelta = OBSERVATION_MAX_AGE,
 ) -> bool:
-    """Ruling 259: A — live game in its final period with a fresh chance in 35%-65%."""
+    """Rulings 259: A & 271: A — close-late trigger with fresh observation.
+
+    - **Soccer (271: A):** from the 75th minute on (clock required on the feed;
+      no clock -> no buzz), when no result (home, away, or draw) is above 65%.
+    - **All other sports (259: A):** final period (or OT) with blended win
+      probability between 35% and 65% inclusive.
+    """
     snapshot = project_activitykit_snapshot(detail)
     if snapshot.lifecycle != "live":
         return False
-    if snapshot.home_rendered_percent is None:
-        return False
     clock = now if now is not None else datetime.now(timezone.utc)
     if not _probability_is_fresh(snapshot, now=clock, max_age=freshness_window):
+        return False
+
+    if _is_soccer_sport(snapshot.sport):
+        parsed = parse_soccer_clock(
+            _raw_game_clock(detail), period=_raw_period(detail)
+        )
+        if parsed is None or parsed[0] < SOCCER_CLOSE_LATE_MIN_MINUTE:
+            return False
+        three_way = _three_way_rendered_percents(detail)
+        if three_way is None:
+            return False
+        return max(three_way) <= CLOSE_LATE_MAX_PERCENT
+
+    if snapshot.home_rendered_percent is None:
         return False
     if not (CLOSE_LATE_MIN_PERCENT <= snapshot.home_rendered_percent <= CLOSE_LATE_MAX_PERCENT):
         return False
@@ -254,7 +393,18 @@ def _matchup_title(away: str, home: str, sport: str | None) -> str:
     return f"{away}{sep}{home}"
 
 
-def _leader_summary(snapshot) -> str | None:
+def _leader_summary(snapshot, detail: Mapping[str, object] | None = None) -> str | None:
+    if snapshot.sport and sport_prices_a_draw(snapshot.sport):
+        three_way = _three_way_rendered_percents(detail) if detail is not None else None
+        if three_way is None:
+            return None
+        home_pct, away_pct, draw_pct = three_way
+        if draw_pct >= home_pct and draw_pct >= away_pct:
+            return f"draw {draw_pct}%"
+        if home_pct >= away_pct:
+            return f"{snapshot.home_team} {home_pct}%"
+        return f"{snapshot.away_team} {away_pct}%"
+
     home_pct = snapshot.home_rendered_percent
     if home_pct is None:
         return None
@@ -310,14 +460,26 @@ def build_game_alert_payload(
             title = f"{away} {snapshot.away_score}–{snapshot.home_score} {home}"
         else:
             title = _matchup_title(away, home, snapshot.sport)
-        period = snapshot.period_label or _raw_period(detail)
-        leader = _leader_summary(snapshot)
-        if period and leader:
-            body = f"Close late ({period}) · {leader}"
-        elif leader:
-            body = f"Close late · {leader}"
+        leader = _leader_summary(snapshot, detail)
+        if _is_soccer_sport(snapshot.sport):
+            parsed_clock = parse_soccer_clock(
+                _raw_game_clock(detail), period=_raw_period(detail)
+            )
+            clock_label = parsed_clock[1] if parsed_clock is not None else None
+            if clock_label and leader:
+                body = f"Close late ({clock_label}) — {leader}"
+            elif clock_label:
+                body = f"Close late ({clock_label})"
+            else:
+                body = "Close late"
         else:
-            body = "Close late"
+            period = snapshot.period_label or _raw_period(detail)
+            if period and leader:
+                body = f"Close late ({period}) · {leader}"
+            elif leader:
+                body = f"Close late · {leader}"
+            else:
+                body = "Close late"
         return GameAlertPush(
             event_id=snapshot.event_id,
             trigger_kind="close_late",
