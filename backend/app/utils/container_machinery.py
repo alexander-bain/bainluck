@@ -2381,14 +2381,24 @@ def _twin_market_key(title: str) -> str:
 
 
 def _dedupe_twin_markets(markets: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep the highest-liquidity canonical market when two venues list the same cleaned title."""
-    seen_titles: set[str] = set()
+    """Keep the highest-liquidity canonical market when two venues list the same cleaned title.
+
+    Every deduplicated twin's ``market_id`` is recorded on the kept item under
+    ``_twin_market_ids`` so Discover pruning treats unlinked cross-venue twins as
+    covered members of the grouping instead of showing the same race twice (#12288).
+    """
+    by_key: dict[str, dict[str, Any]] = {}
     out: list[dict[str, Any]] = []
     for m in markets:
         norm_t = _twin_market_key(str(m["title"]))
-        if norm_t in seen_titles:
+        existing = by_key.get(norm_t)
+        if existing is not None:
+            twins = existing.setdefault("_twin_market_ids", [])
+            mid = m.get("market_id")
+            if isinstance(mid, int) and not isinstance(mid, bool) and mid not in twins:
+                twins.append(mid)
             continue
-        seen_titles.add(norm_t)
+        by_key[norm_t] = m
         out.append(m)
     return out
 
@@ -2856,7 +2866,17 @@ async def produce_container_machinery(
     built_by_idx: dict[int, dict[str, Any]] = {}
     all_member_envelopes: list[dict[str, Any]] = []
     seen_member_keys: set[tuple[str, int]] = set()
+    covered_twin_market_ids: list[int] = []
     lead_paired_set: Optional[dict[str, Any]] = None
+
+    def _record_covered_twins(item: Mapping[str, Any]) -> None:
+        for twin_mid in item.get("_twin_market_ids") or ():
+            if (
+                isinstance(twin_mid, int)
+                and not isinstance(twin_mid, bool)
+                and twin_mid not in covered_twin_market_ids
+            ):
+                covered_twin_market_ids.append(twin_mid)
 
     indexed_cfg = [
         (idx, sec_cfg)
@@ -3114,10 +3134,12 @@ async def produce_container_machinery(
                 matched_h.sort(key=lambda x: (-x["lead_prob"], x["title"].casefold()))
             if len(matched_h) < min_items:
                 return RoundupRefusal((("container_machinery", f"too_few_history_markets:{sec_key}"),))
-            all_chart_items = [
-                _build_history_visual_item(hm, market_histories, now_dt=now_dt, hours=hours)
-                for hm in matched_h
-            ]
+            all_chart_items = []
+            for hm in matched_h:
+                ci = _build_history_visual_item(hm, market_histories, now_dt=now_dt, hours=hours)
+                if hm.get("_twin_market_ids"):
+                    ci["_twin_market_ids"] = list(hm["_twin_market_ids"])
+                all_chart_items.append(ci)
             moving_charts = [ci for ci in all_chart_items if _history_chart_moved(ci)]
             if order_by == "movement_desc":
                 moving_charts.sort(
@@ -3137,6 +3159,7 @@ async def produce_container_machinery(
                 sec_members = []
                 for ci in chart_items:
                     mid = int(ci["market_id"])
+                    _record_covered_twins(ci)
                     env = {
                         "type": MEMBER_MARKET,
                         "id": mid,
@@ -3157,7 +3180,7 @@ async def produce_container_machinery(
                         "form_id": form_id,
                         "initial_visible_limit": initial_visible,
                         "items": [
-                            {k: v for k, v in ci.items() if k != "card"}
+                            {k: v for k, v in ci.items() if k not in ("card", "_twin_market_ids")}
                             for ci in chart_items
                         ],
                     },
@@ -3183,6 +3206,7 @@ async def produce_container_machinery(
                 sec_members = []
                 for fm_it in fallback_matched:
                     mid = int(fm_it["market_id"])
+                    _record_covered_twins(fm_it)
                     env = {
                         "type": MEMBER_MARKET,
                         "id": mid,
@@ -3203,7 +3227,7 @@ async def produce_container_machinery(
                         "form_id": form_id,
                         "initial_visible_limit": initial_visible,
                         "items": [
-                            {k: v for k, v in fm_it.items() if k != "card"}
+                            {k: v for k, v in fm_it.items() if k not in ("card", "_twin_market_ids")}
                             for fm_it in fallback_matched
                         ],
                     },
@@ -3245,6 +3269,7 @@ async def produce_container_machinery(
         sec_members = []
         for it in matched:
             mid = it["market_id"]
+            _record_covered_twins(it)
             env = {
                 "type": MEMBER_MARKET,
                 "id": mid,
@@ -3266,7 +3291,7 @@ async def produce_container_machinery(
                 "form_id": form_id,
                 "initial_visible_limit": initial_visible,
                 "items": [
-                    {k: v for k, v in it.items() if k != "card"}
+                    {k: v for k, v in it.items() if k not in ("card", "_twin_market_ids")}
                     for it in matched
                 ],
             },
@@ -3440,6 +3465,7 @@ async def produce_container_machinery(
         parent_name=definition.get("parent_name"),
         paired_metric_set=card_paired_set,
         machinery_card=machinery_card,
+        covered_market_ids=covered_twin_market_ids,
     )
 
 

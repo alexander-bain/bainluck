@@ -1121,3 +1121,362 @@ async def test_scoped_scan_parity_with_legacy_ilike_across_all_five_definitions_
         _FallbackSession(), def_min0, datetime(2026, 11, 19, 12, 0, 0, tzinfo=timezone.utc)
     )
     assert [m["id"] for m in snap["markets"]] == [777]
+
+
+def test_machinery_replaces_same_race_at_old_seat_and_leaves_non_replacers_in_registry_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#12288 (Fable 9:57 AM PT direction):
+      1. General `replaces` line: `machinery-oscars-best-picture` replaces
+         `roundup-oscars-best-picture` and inherits its registry turn & seat
+         (no artificial lift above older roundups for non-replacers).
+      2. Fed & Rates (`theme:story:macro_rates`) dissolves naturally when
+         `machinery-fed-and-macro` covers `57574250` ("Fed Decision in December?"),
+         leaving `< 2` children on the old 2-market theme card.
+      3. Broad `Oscars 2027` (`theme:story:oscars`) stays by default (`replaces_themes: []`)
+         and toggles off with one line of JSON data (`replaces_themes: ["story:oscars"]`).
+      4. Fail-safe: when `machinery-oscars-best-picture` is NOT served,
+         `roundup-oscars-best-picture` remains untouched at its original seat.
+      5. `1.0.6` (no machinery cards) is byte-for-byte identical before and after.
+    """
+    from app.utils.container_machinery import register_machinery_slice1_candidates
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        RoundupProducer,
+        insert_roundup_feed_items,
+    )
+
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+    saved_producers = dict(ROUNDUP_PRODUCERS)
+    try:
+        register_machinery_slice1_candidates()
+        _run_machinery_replace_assertions(
+            ROUNDUP_PRODUCERS, RoundupProducer, insert_roundup_feed_items
+        )
+    finally:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS.update(saved_producers)
+
+
+def _run_machinery_replace_assertions(
+    ROUNDUP_PRODUCERS, RoundupProducer, insert_roundup_feed_items
+) -> None:
+    mach_slugs = [
+        "machinery-nfl-week",
+        "machinery-nba-night",
+        "machinery-oscars-best-picture",
+        "machinery-2028-presidential",
+        "machinery-fed-and-macro",
+    ]
+    for s in mach_slugs:
+        assert s in ROUNDUP_PRODUCERS, f"Missing registered machinery producer {s}"
+
+    def _theme_card(theme_id: str, name: str, mids: list[int], slug: str | None = None) -> dict:
+        data: dict = {
+            "id": theme_id,
+            "kind": "theme",
+            "name": name,
+            "items": [
+                {"type": "futures", "data": {"id": mid, "name": f"M{mid}", "status": "open"}}
+                for mid in mids
+            ],
+        }
+        if slug:
+            data["collection_ref"] = {"slug": slug, "href": f"/collections/{slug}", "name": name}
+        return {"type": "bundle", "score": 90.0, "data": data}
+
+    def _legacy_roundup_card(slug: str, name: str, *, sibling: bool = False) -> dict:
+        return {
+            "type": "bundle",
+            "score": 60.0,
+            "data": {
+                "id": f"roundup:{slug.removeprefix('roundup-')}",
+                "kind": "roundup",
+                "name": name,
+                "collection_ref": {"slug": slug, "href": f"/collections/{slug}", "name": name},
+                "roundup": {
+                    "kicker": "ROUND-UP",
+                    "relations": ["sibling"] if sibling else ["same_subject"],
+                    "rows": [],
+                },
+                "items": [],
+            },
+        }
+
+    def _single_card(idx: int) -> dict:
+        return {
+            "type": "futures",
+            "score": 80.0 - idx * 0.5,
+            "data": {"id": 90000 + idx, "name": f"Standalone {idx}", "status": "open"},
+        }
+
+    def _mach_card(
+        slug: str,
+        mids: list[int] | None = None,
+        covered: list[int] | None = None,
+    ) -> dict:
+        prod = ROUNDUP_PRODUCERS[slug]
+        mids = list(mids or [])
+        all_mids = list(dict.fromkeys([*mids, *(covered or [])]))
+        return {
+            "type": "bundle",
+            "score": 75.0,
+            "data": {
+                "id": f"roundup:{slug}",
+                "kind": "roundup",
+                "name": prod.name,
+                "collection_ref": {"slug": slug, "href": f"/collections/{slug}", "name": prod.name},
+                "roundup": {
+                    "kicker": prod.kicker,
+                    "relations": list(prod.relations),
+                    "rows": [],
+                },
+                "items": [{"type": "futures", "data": {"id": mid, "status": "open"}} for mid in mids],
+                "member_ids": all_mids,
+            },
+        }
+
+    base: list[dict] = [
+        _theme_card("theme:story:oscars:6173044-58492234-58492236", "Oscars 2027", [6173044, 58492234, 58492236], slug="oscars-2027"),
+        _theme_card("theme:story:grammys:70208645-58492243", "Grammys", [70208645, 58492243]),
+        _theme_card("theme:story:middle_east_conflict:69603905-113232", "Middle East", [69603905, 113232]),
+        _single_card(4),
+        _theme_card("theme:story:macro_rates:57574250-56995847", "Fed & Rates", [57574250, 56995847]),
+        _single_card(6),
+        _single_card(7),
+        _theme_card("theme:story:russia_ukraine:20569379-112896", "Russia-Ukraine", [20569379, 112896]),
+        _single_card(9),
+        _single_card(10),
+        _single_card(11),
+        _single_card(12),
+    ]
+    legacy_slugs = [
+        "roundup-cfp-picture",
+        "by-november-30",
+        "liga-profesional-relegation-2026",
+        "by-december-31",
+        "nhl-playoffs-2026-27",
+        "golf-this-week",
+        "gta-vi-album-features",
+        "for-scale-snow-in-dc",
+        "celtics-next-3-games",
+        "lakers-next-3-games",
+        "roundup-oscars-best-picture",
+        "roundup-nfl-division-front-runners",
+    ]
+    sib_legacy = {
+        "liga-profesional-relegation-2026",
+        "nhl-playoffs-2026-27",
+        "gta-vi-album-features",
+    }
+    for i, lslug in enumerate(legacy_slugs):
+        base.append(_legacy_roundup_card(lslug, f"Legacy {lslug}", sibling=(lslug in sib_legacy)))
+        base.append(_single_card(100 + i))
+    # Standalone unlinked Kalshi 2028 market (`108326`) sitting beside the 2028 grouping
+    base.insert(
+        28,
+        {
+            "type": "futures",
+            "score": 61.0,
+            "data": {
+                "id": 108326,
+                "name": "2028 U.S. Presidential Election winner?",
+                "status": "open",
+            },
+        },
+    )
+    for extra in range(20):
+        base.append(_single_card(200 + extra))
+
+    def _slug_of(it: dict) -> str:
+        d = it.get("data") or {}
+        return str((d.get("collection_ref") or {}).get("slug") or d.get("id") or "")
+
+    # 1.0.6 (no machinery cards): top 40 untouched
+    assert insert_roundup_feed_items(base, [], page_window=20)[:40] == base[:40]
+
+    # Verify `_dedupe_twin_markets` records unlinked cross-venue twin `108326` on `112897`
+    # and `build_roundup_feed_item` propagates it into `data["member_ids"]`.
+    from datetime import datetime, timezone
+
+    from app.utils.container_machinery import _clean_section_market_label, _dedupe_twin_markets
+    from app.utils.discover_opening_seating import seat_opening
+    from app.utils.roundup_containers import RoundupMembers, compose_roundup_feed_item
+
+    deduped_2028 = _dedupe_twin_markets(
+        [
+            {"market_id": 112897, "title": _clean_section_market_label("Presidential Election Winner 2028")},
+            {"market_id": 108326, "title": _clean_section_market_label("2028 U.S. Presidential Election winner?")},
+        ]
+    )
+    assert len(deduped_2028) == 1
+    assert deduped_2028[0]["market_id"] == 112897
+    assert deduped_2028[0]["_twin_market_ids"] == [108326]
+    built_2028 = compose_roundup_feed_item(
+        ROUNDUP_PRODUCERS["machinery-2028-presidential"],
+        RoundupMembers(
+            [{"type": "market", "id": 112897, "card": {"id": 112897, "status": "open"}}],
+            covered_market_ids=deduped_2028[0]["_twin_market_ids"],
+        ),
+    )
+    assert built_2028 is not None
+    assert built_2028["data"]["item_count"] == 1
+    assert built_2028["data"]["member_ids"] == [112897, 108326]
+
+    fed_orig_idx = next(
+        i for i, it in enumerate(base)
+        if str((it.get("data") or {}).get("id") or "").startswith("theme:story:macro_rates:")
+    )
+
+    cards = [
+        _mach_card("machinery-nfl-week"),
+        _mach_card("machinery-nba-night"),
+        _mach_card("machinery-oscars-best-picture", [6173044, 5165726]),
+        _mach_card("machinery-2028-presidential", [112897], covered=[108326]),
+        _mach_card("machinery-fed-and-macro", [57574217, 57574250]),
+    ]
+    now_dt = datetime(2026, 11, 19, 18, 0, tzinfo=timezone.utc)
+    spliced = insert_roundup_feed_items(base, cards, page_window=20, now=now_dt)
+    all_ids = [str((it.get("data") or {}).get("id") or "") for it in spliced]
+    all_slugs = [_slug_of(it) for it in spliced]
+
+    # All five present once
+    for s in mach_slugs:
+        assert all_slugs.count(s) == 1
+
+    # Fed & U.S. Macro absorbed `Fed & Rates` (dissolving it to < 2 children)
+    # and inherited its exact opening seat — surviving `seat_opening` in place.
+    assert not any(i.startswith("theme:story:macro_rates:") for i in all_ids)
+    assert all_slugs[fed_orig_idx] == "machinery-fed-and-macro"
+    assert spliced[fed_orig_idx]["data"].get("inherited_opening_seat") is True
+    opening_outcome = seat_opening(spliced, now=now_dt)
+    assert opening_outcome.status == "compliant"
+    assert _slug_of(opening_outcome.items[fed_orig_idx]) == "machinery-fed-and-macro"
+
+    # Unlinked Kalshi 2028 twin (`108326`) is pruned so only ONE 2028 card appears
+    assert "108326" not in all_ids
+    assert all_slugs.count("machinery-2028-presidential") == 1
+
+    # Same race (`roundup-oscars-best-picture`) replaced in-place between lakers and nfl-division
+    assert "roundup-oscars-best-picture" not in all_slugs
+    assert all_slugs.index("lakers-next-3-games") < all_slugs.index("machinery-oscars-best-picture")
+    assert all_slugs.index("machinery-oscars-best-picture") < all_slugs.index("roundup-nfl-division-front-runners")
+
+    # Non-replacers are NOT artificially lifted above older roundups in their
+    # respective sibling / non-sibling queues (existing 1:1 interleaver order).
+    assert all_slugs.index("gta-vi-album-features") < all_slugs.index("machinery-2028-presidential")
+    assert all_slugs.index("roundup-nfl-division-front-runners") < all_slugs.index("machinery-nba-night")
+    assert all_slugs.index("machinery-nba-night") < all_slugs.index("machinery-nfl-week")
+
+    # Broad Oscars 2027 at Seat 1 STAYS by default (Ruling 270: A, `replaces_themes: []`)
+    assert all_ids[0].startswith("theme:story:oscars:")
+
+    # One-line data toggle (`replaces_themes: ["story:oscars"]`) removes Seat 1 Oscars 2027 cleanly
+    orig_osc = ROUNDUP_PRODUCERS["machinery-oscars-best-picture"]
+    ROUNDUP_PRODUCERS["machinery-oscars-best-picture"] = RoundupProducer(
+        slug=orig_osc.slug,
+        name=orig_osc.name,
+        kind=orig_osc.kind,
+        category=orig_osc.category,
+        section_title=orig_osc.section_title,
+        footer=orig_osc.footer,
+        produce=orig_osc.produce,
+        membership=orig_osc.membership,
+        relations=orig_osc.relations,
+        level=orig_osc.level,
+        rule={**(orig_osc.rule or {}), "replaces_themes": ["story:oscars"]},
+        tag=orig_osc.tag,
+        kicker=orig_osc.kicker,
+        enabled=orig_osc.enabled,
+    )
+    toggled = insert_roundup_feed_items(base, cards, page_window=20)
+    toggled_ids = [str((it.get("data") or {}).get("id") or "") for it in toggled]
+    assert not any(i.startswith("theme:story:oscars:") for i in toggled_ids)
+    ROUNDUP_PRODUCERS["machinery-oscars-best-picture"] = orig_osc
+
+    # Fail-safe: when Oscars machinery is NOT served, legacy roundup stays
+    partial = insert_roundup_feed_items(base, [_mach_card("machinery-nba-night")], page_window=20)
+    partial_slugs = [_slug_of(it) for it in partial]
+    assert "roundup-oscars-best-picture" in partial_slugs
+
+
+def test_standing_roundup_seats_unchanged_and_machinery_never_moves_later_on_deep_takeover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fable 12:16 PM PT probe on #13077:
+      1. A standing round-up absorbing a 2-market theme card at seats 4, 15, or 41
+         seats identically to master (11, 15, 11) and is never marked `inherited_opening_seat`.
+      2. A machinery grouping absorbing a 2-market theme card at seat 4 takes seat 4,
+         at seat 15 takes seat 15, and at seat 41 (later than its own seat 11) stays at 11.
+    """
+    from app.utils.container_machinery import register_machinery_slice1_candidates
+    from app.utils.roundup_containers import ROUNDUP_PRODUCERS, insert_roundup_feed_items
+
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+    saved_producers = dict(ROUNDUP_PRODUCERS)
+    try:
+        register_machinery_slice1_candidates()
+
+        def _single(i: int) -> dict:
+            return {
+                "type": "futures",
+                "score": 80.0 - i * 0.5,
+                "data": {"id": 90000 + i, "name": f"S{i}", "status": "open"},
+            }
+
+        def _theme(tid: str, mids: list[int]) -> dict:
+            return {
+                "type": "bundle",
+                "score": 90.0,
+                "data": {
+                    "id": tid,
+                    "kind": "theme",
+                    "name": "Two-market theme",
+                    "items": [
+                        {"type": "futures", "data": {"id": m, "name": f"M{m}", "status": "open"}}
+                        for m in mids
+                    ],
+                },
+            }
+
+        def _roundup(slug: str, mids: list[int]) -> dict:
+            prod = ROUNDUP_PRODUCERS.get(slug)
+            return {
+                "type": "bundle",
+                "score": 60.0,
+                "data": {
+                    "id": f"roundup:{slug.removeprefix('roundup-')}",
+                    "kind": "roundup",
+                    "name": getattr(prod, "name", slug),
+                    "collection_ref": {"slug": slug, "href": f"/collections/{slug}", "name": slug},
+                    "roundup": {"kicker": "ROUND-UP", "relations": ["same_subject"], "rows": []},
+                    "items": [{"type": "futures", "data": {"id": m, "status": "open"}} for m in mids],
+                    "member_ids": list(mids),
+                },
+            }
+
+        standing_slug = next(s for s in ROUNDUP_PRODUCERS if not s.startswith("machinery-"))
+        for theme_idx, expected_seat in ((3, 11), (14, 15), (40, 11)):
+            feed = [_single(i) for i in range(60)]
+            feed[theme_idx] = _theme("theme:story:x:1-2", [777001, 777002])
+            card = _roundup(standing_slug, [777001, 555001, 555002])
+            out = insert_roundup_feed_items(feed, [card], page_window=20)
+            ids = [str((it.get("data") or {}).get("id") or "") for it in out]
+            rid = card["data"]["id"]
+            assert ids.index(rid) + 1 == expected_seat
+            assert not any(i.startswith("theme:story:x") for i in ids)
+            assert out[ids.index(rid)]["data"].get("inherited_opening_seat") is None
+
+        for theme_idx, expected_seat, expected_flag in ((3, 4, True), (14, 15, None), (40, 11, None)):
+            feed = [_single(i) for i in range(60)]
+            feed[theme_idx] = _theme("theme:story:y:1-2", [888001, 888002])
+            card = _roundup("machinery-2028-presidential", [888001, 555001, 555002])
+            out = insert_roundup_feed_items(feed, [card], page_window=20)
+            ids = [str((it.get("data") or {}).get("id") or "") for it in out]
+            rid = card["data"]["id"]
+            assert ids.index(rid) + 1 == expected_seat
+            assert not any(i.startswith("theme:story:y") for i in ids)
+            assert out[ids.index(rid)]["data"].get("inherited_opening_seat") is expected_flag
+    finally:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS.update(saved_producers)
