@@ -30,7 +30,7 @@ from fastapi import Response  # noqa: E402
 from sqlalchemy import select, text  # noqa: E402
 from starlette.requests import Request as ASGIRequest  # noqa: E402
 
-from app.models.models import FuturesMarket  # noqa: E402
+from app.models.models import FuturesMarket, FuturesOutcome  # noqa: E402
 from app.routes import feed as feed_mod  # noqa: E402
 from app.tasks.base import get_task_session  # noqa: E402
 from app.utils import candidate_base as candidate_base_mod  # noqa: E402
@@ -216,6 +216,7 @@ async def _run_comparison(
                 "seed_count": len(registry.ordered_market_ids),
                 "missing_from_db": missing,
                 "passed_count": len(passed),
+                "passed_ids": [r["id"] for r in passed],
                 "dropped_real_trading_count": len(dropped_trading),
                 "dropped_taste_count": len(dropped_taste),
                 "dropped_still_ahead_count": len(dropped_ahead),
@@ -226,6 +227,19 @@ async def _run_comparison(
 
         audit_primary = _audit_at_bar(min_lifetime_volume)
         audit_5k = _audit_at_bar(5_000)
+
+        passed_ids = audit_primary["passed_ids"]
+        outcomes_by_market: dict[int, list[Any]] = {}
+        if passed_ids:
+            out_res = await db.execute(
+                select(
+                    FuturesOutcome.market_id,
+                    FuturesOutcome.name,
+                    FuturesOutcome.current_probability,
+                ).where(FuturesOutcome.market_id.in_(passed_ids))
+            )
+            for out_row in out_res.all():
+                outcomes_by_market.setdefault(int(out_row.market_id), []).append(out_row)
 
         excluded_wedding_audit = []
         for mid in EXCLUDED_ORIGINAL_SEED_IDS:
@@ -297,7 +311,7 @@ async def _run_comparison(
                 after_resp = await feed_mod.get_feed(
                     response=Response(),
                     request=_fake_request(),
-                    limit=max(50, seats),
+                    limit=max(200, seats),
                     offset=0,
                     sport=None,
                     category=None,
@@ -340,6 +354,62 @@ async def _run_comparison(
         and (item.get("data") or {}).get("id") in registry.markets
     ]
 
+    after_cards_by_id: dict[int, tuple[int, dict[str, Any]]] = {}
+    for idx, item in enumerate(after_resp.get("items") or [], start=1):
+        if item.get("type") == "futures":
+            mid = (item.get("data") or {}).get("id")
+            if mid is not None:
+                after_cards_by_id[int(mid)] = (idx, item)
+
+    admitted_row_checks = []
+    for mid in passed_ids:
+        row = rows_by_id.get(mid)
+        entry = registry.markets[mid]
+        outs = outcomes_by_market.get(mid) or []
+        sorted_outs = sorted(
+            outs,
+            key=lambda o: float(o.current_probability)
+            if o.current_probability is not None
+            else -1.0,
+            reverse=True,
+        )
+        page_leader_name = sorted_outs[0].name if sorted_outs else None
+        page_leader_prob = (
+            float(sorted_outs[0].current_probability)
+            if sorted_outs and sorted_outs[0].current_probability is not None
+            else None
+        )
+        page_pct = round(page_leader_prob * 100, 1) if page_leader_prob is not None else None
+        near_certain_97 = bool(page_leader_prob is not None and page_leader_prob >= 0.97)
+
+        seat_and_card = after_cards_by_id.get(mid)
+        discover_seat = seat_and_card[0] if seat_and_card else None
+        discover_leader_name = None
+        discover_pct = None
+        if seat_and_card:
+            top_outs = (seat_and_card[1].get("data") or {}).get("top_outcomes") or []
+            if top_outs:
+                discover_leader_name = top_outs[0].get("name")
+                rp = top_outs[0].get("rendered_percent")
+                if rp is not None:
+                    discover_pct = float(rp)
+                elif top_outs[0].get("probability") is not None:
+                    discover_pct = round(float(top_outs[0]["probability"]) * 100, 1)
+
+        admitted_row_checks.append(
+            {
+                "id": mid,
+                "title": row.name if row is not None else entry.title,
+                "sub_tags": list(entry.sub_tags),
+                "discover_seat": discover_seat,
+                "discover_leader": discover_leader_name,
+                "discover_pct": discover_pct,
+                "page_leader": page_leader_name,
+                "page_pct": page_pct,
+                "leader_ge_97": near_certain_97,
+            }
+        )
+
     report = {
         "generated_at_utc": now.isoformat(),
         "min_lifetime_volume": min_lifetime_volume,
@@ -359,6 +429,7 @@ async def _run_comparison(
         "after_top_seats": after_seats,
         "before_fun_in_feed": before_all_fun,
         "after_fun_in_feed": after_all_fun,
+        "admitted_row_checks": admitted_row_checks,
     }
     if as_json:
         print(json.dumps(report, indent=2, default=str))
@@ -396,6 +467,34 @@ async def _run_comparison(
                 else ""
             )
             print(f"{idx + 1:>4} | {b_txt:<52} | {a_txt:<52}")
+
+        ge97_count = sum(1 for r in admitted_row_checks if r["leader_ge_97"])
+        print(
+            f"\n=== Admitted Fun Markets ({len(admitted_row_checks)} total; "
+            f"{ge97_count} with leader >=97%) ==="
+        )
+        print(
+            f"{'ID':>8} | {'Seat':>4} | {'Flag':<6} | {'Title':<42} | "
+            f"{'Discover card':<26} | {'Own page':<26}"
+        )
+        print("-" * 128)
+        for r in admitted_row_checks:
+            seat_txt = str(r["discover_seat"]) if r["discover_seat"] is not None else "-"
+            flag = ">=97%" if r["leader_ge_97"] else ""
+            d_txt = (
+                f"{r['discover_leader']} {r['discover_pct']}%"
+                if r["discover_leader"] is not None and r["discover_pct"] is not None
+                else "(not in returned page)"
+            )[:26]
+            p_txt = (
+                f"{r['page_leader']} {r['page_pct']}%"
+                if r["page_leader"] is not None and r["page_pct"] is not None
+                else "(no price)"
+            )[:26]
+            print(
+                f"{r['id']:>8} | {seat_txt:>4} | {flag:<6} | {r['title'][:42]:<42} | "
+                f"{d_txt:<26} | {p_txt:<26}"
+            )
     return report
 
 
