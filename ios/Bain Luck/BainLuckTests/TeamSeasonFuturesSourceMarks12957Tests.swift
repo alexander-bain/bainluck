@@ -80,10 +80,13 @@ final class TeamSeasonFuturesSourceMarks12957Tests: XCTestCase {
         XCTAssertEqual(row.sourceMark?.state, SourceMark.State.single)
 
         let btn = try XCTUnwrap(
-            SourceMarkButton(row.sourceMark, number: row.probability, subject: row.title, numberSize: 16, compactRow: true)
+            SourceMarkButton(row.sourceMark, number: row.probability, subject: row.title, subtitle: row.caption, numberSize: 16, compactRow: true)
         )
         XCTAssertEqual(try XCTUnwrap(btn.number), 0.184, accuracy: 0.0001)
         XCTAssertEqual(btn.subject, "Jayson Tatum")
+        XCTAssertEqual(btn.subtitle, "Regular Season MVP")
+        XCTAssertEqual(SourceMarkSheet.subtitleLine(btn.subtitle), "Regular Season MVP")
+        XCTAssertEqual(SourceMarkSheet.subtitleLine("   "), nil)
         XCTAssertEqual(SourceMarkSheet.headline(btn.number), "18%")
     }
 
@@ -162,14 +165,14 @@ final class TeamSeasonFuturesSourceMarks12957Tests: XCTestCase {
             .appendingPathComponent("Bain Luck")
 
         let teamDetail = try String(contentsOf: appRoot.appendingPathComponent("Views/TeamDetailView.swift"), encoding: .utf8)
-        XCTAssertTrue(teamDetail.contains("SourceMarkButton(row.sourceMark, number: row.probability, subject: row.title"))
-        XCTAssertTrue(teamDetail.contains("SourceMarkButton(row.sourceMark, number: nil, subject: row.title"))
+        XCTAssertTrue(teamDetail.contains("SourceMarkButton(row.sourceMark, number: row.probability, subject: row.title, subtitle: row.caption"))
+        XCTAssertTrue(teamDetail.contains("SourceMarkButton(row.sourceMark, number: nil, subject: row.title, subtitle: row.caption"))
 
         let myStuff = try String(contentsOf: appRoot.appendingPathComponent("Views/MyStuffView.swift"), encoding: .utf8)
         let start = try XCTUnwrap(myStuff.range(of: "private func mergedFutureRow("))
         let end = try XCTUnwrap(myStuff.range(of: "private func cleanMarketName(", range: start.upperBound..<myStuff.endIndex))
         let fn = String(myStuff[start.lowerBound..<end.lowerBound])
-        XCTAssertTrue(fn.contains("SourceMarkButton(item.sourceMark, number: prob, subject: item.outcomeName"))
+        XCTAssertTrue(fn.contains("SourceMarkButton(item.sourceMark, number: prob, subject: item.outcomeName, subtitle: cleanMarketName(item.marketName)"))
         // `isMultiSource` branch uses `merged.avgProbability` and must NOT attach `item.sourceMark`.
         let multiBranchEnd = try XCTUnwrap(fn.range(of: "} else if let prob = displayProb {"))
         let multiBranch = String(fn[..<multiBranchEnd.lowerBound])
@@ -290,14 +293,16 @@ final class TeamSeasonFuturesSourceMarks12957Tests: XCTestCase {
             to: URL(fileURLWithPath: "\(outDir)/12957-team-season-futures-390.png")
         )
 
+        let markedRow = TeamFutureRowPresentation.fastCutRow12823(markedFuture, team: page.team)
         let sheetView = SourceMarkSheet(
             mark: mark,
             number: (markedFuture.isWinner == true || markedFuture.gridVerdict != nil) ? nil : markedFuture.probability,
-            subject: markedFuture.outcomeName
+            subject: markedRow?.title ?? markedFuture.outcomeName,
+            subtitle: markedRow?.caption
         )
         let sheetImg = try await captureWindowSnapshot(sheetView, scheme: .light, width: 390, fixedHeight: 420)
         try XCTUnwrap(sheetImg.pngData()).write(
-            to: URL(fileURLWithPath: "\(outDir)/12957-team-season-futures-sheet-390.png")
+            to: URL(fileURLWithPath: "\(outDir)/12957-team-season-futures-sheet-caption-390.png")
         )
     }
 }

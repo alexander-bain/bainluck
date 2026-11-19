@@ -1507,7 +1507,7 @@ private struct TeamFuturesSection: View {
                         .monospacedDigit()
                         .foregroundStyle(Color(hex: MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor)))
                         .lineLimit(1)
-                    if let mark = SourceMarkButton(item.sourceMark, number: prob, subject: item.outcomeName, numberSize: 15, compactRow: true) {
+                    if let mark = SourceMarkButton(item.sourceMark, number: prob, subject: item.outcomeName, subtitle: cleanMarketName(item.marketName), numberSize: 15, compactRow: true) {
                         mark.buttonStyle(.borderless)
                     }
                 }
