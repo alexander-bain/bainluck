@@ -11867,6 +11867,7 @@ async def _score_events(
         and not my_teams_only
         and price_refresh_events is None
         and not defer_personalization
+        and _pic.shared_build_ttl_s("events_scored") > 0
     ):
         _events_cache_key = (
             "v1",
@@ -13223,7 +13224,12 @@ async def _score_sports_mode_futures(
     """
     _defer_pers = defer_personalization and not my_teams_only
     _from_shared_cache = False
-    if share_inputs and not my_teams_only and not defer_personalization:
+    if (
+        share_inputs
+        and not my_teams_only
+        and not defer_personalization
+        and _pic.shared_build_ttl_s("sports_futures_scored") > 0
+    ):
         _sports_fut_key = (
             "v1",
             sport_filter or "all",

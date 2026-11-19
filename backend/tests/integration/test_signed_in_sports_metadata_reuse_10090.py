@@ -225,6 +225,10 @@ async def rig(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", DB_URL)
     monkeypatch.setenv("BYPASS_RATE_LIMITS", "1")
     # Response lookup is blocked in the fake; do not disable artifact sharing.
+    # #11931: this suite tests the inner `sports_market_metadata_reuse` layer
+    # on a sports-futures cache miss, so bypass the outer scored-futures cache
+    # here so every `rig.read()` reaches `load_sports_markets`.
+    monkeypatch.setenv("FEED_SHARED_BUILD_TTL_S_SPORTS_FUTURES_SCORED", "0")
     from app.dependencies import auth
     from app.main import app
     from app.models import models as m
