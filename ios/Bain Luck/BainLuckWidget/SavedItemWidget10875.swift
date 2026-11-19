@@ -26,6 +26,13 @@ struct SavedItemWidgetEntry10875: TimelineEntry {
         return false
     }
 
+    /// #12316 / 254: A — promote a pinned/selected game in the iPhone Smart Stack
+    /// shortly before kickoff and while it is on, then drop back once it ends.
+    var relevance: TimelineEntryRelevance? {
+        let spec = SavedWidgetTimeline10875.relevance(content, selection: selection, at: date)
+        return TimelineEntryRelevance(score: spec.score, duration: spec.duration)
+    }
+
     /// Where a tap goes: the chosen item's own detail whenever it is the
     /// reader's saved item, otherwise My Stuff, where saved items are managed.
     var url: URL? {
@@ -56,7 +63,10 @@ struct SavedItemWidgetProvider10875: AppIntentTimelineProvider {
         let now = Date()
         let selection = configuration.selection
         let first = await entry(for: selection, look: configuration.look12466, at: now)
-        let entries = SavedWidgetTimeline10875.entryDates(first.content, selection: selection, now: now)
+        let baseDates = SavedWidgetTimeline10875.entryDates(first.content, selection: selection, now: now)
+        let relevanceDates = SavedWidgetTimeline10875.relevanceBoundaryDates(first.content, selection: selection, now: now)
+        let allDates = Array(Set(baseDates + relevanceDates)).sorted()
+        let entries = allDates
             .map { SavedItemWidgetEntry10875(date: $0, selection: selection, content: first.content,
                                              art: first.art, logos: first.logos, look: first.look) }
         let next = SavedWidgetTimeline10875.nextRequest(first.content, selection: selection, now: now)

@@ -253,6 +253,46 @@ enum SavedWidgetTimeline10875 {
         }
         return now.addingTimeInterval(minutes * 60)
     }
+
+    /// #12316 / 254: A — map a saved-item widget's content to its Smart Stack relevance state.
+    static func relevanceState(_ content: SavedWidgetContent10875,
+                               selection: SavedWidgetSelection10875?,
+                               at date: Date) -> GameRelevanceState254A {
+        guard case .detail(.game(let event), _) = content, let selection else { return .other }
+        let read = reading(.game(event), selection: selection, at: date)
+        if read.phase == .result || read.phase == .noResult {
+            // Finals deliberately omit `read.observedAt` so no price clock is printed;
+            // fall back to the event's observation stamp for the 1-hour post-final cooldown.
+            let finalObserved = read.observedAt ?? SavedWidgetDetailDecoding10875.date(event.heroProbabilityObservedAt)
+            return .finalResult(observedAt: finalObserved)
+        }
+        let status = event.status?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if status == "live" || status == "in_progress" {
+            return .live
+        }
+        let commence = SavedWidgetDetailDecoding10875.date(event.commenceTime)
+        if EventState.isSuspendedAndStarted(event.status, commenceTime: commence, now: date) {
+            return .other
+        }
+        if status == nil || status == "scheduled" || status == "upcoming" || status == "pregame" || status == "not_started" {
+            return .scheduled(commenceTime: commence, startIsTbd: event.startIsTbd == true)
+        }
+        return .other
+    }
+
+    /// #12316 / 254: A — Smart Stack relevance score and duration at `date`.
+    static func relevance(_ content: SavedWidgetContent10875,
+                          selection: SavedWidgetSelection10875?,
+                          at date: Date) -> WidgetRelevanceSpec254A {
+        WidgetRelevanceRule254A.spec(for: relevanceState(content, selection: selection, at: date), at: date)
+    }
+
+    /// #12316 / 254: A — future relevance-tier transition dates to merge into the widget timeline.
+    static func relevanceBoundaryDates(_ content: SavedWidgetContent10875,
+                                       selection: SavedWidgetSelection10875?,
+                                       now: Date) -> [Date] {
+        WidgetRelevanceRule254A.boundaryDates(for: relevanceState(content, selection: selection, at: now), now: now)
+    }
 }
 
 /// What a widget says when it has no reading to show.
