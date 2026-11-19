@@ -458,6 +458,7 @@ struct EventAtlasStoryCardMarkKeyView11666: View {
             Text(item.label)
                 .font(.caption2)
                 .foregroundStyle(item.glyph == .wonCheck ? DS.greenReadable : DS.textSecondaryReadable)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

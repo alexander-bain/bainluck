@@ -13,6 +13,19 @@ struct DistributionCardView: View {
 
     /// #6343 — the price-age reveal, open or closed. See `PriceAgeMarkView`.
     @State private var revealedPriceAge: String?
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var primaryInk: Color {
+        colorScheme == .dark ? Color.primary : DS.textPrimary
+    }
+
+    private var mutedInk: Color {
+        colorScheme == .dark ? Color(hex: "#94A3B8") : DS.textMuted
+    }
+
+    private var trackInk: Color {
+        colorScheme == .dark ? Color.white.opacity(0.10) : DS.trackBg
+    }
 
     // MARK: - Derived data
 
@@ -31,10 +44,12 @@ struct DistributionCardView: View {
         DistributionBoardOrder.listedRows(outcomes, order: data.discoverCard?.distributionOrder)
     }
 
-    /// #10374 — rank digits beside dates read as ranks ("1 October 12"), so a
-    /// chronological board draws none.
+    /// #10374 & #12885 — rank digits beside dates or numerical scales read as
+    /// ranks ("1 October 12", "1 3.75%"), so chronological and numerical boards
+    /// draw none.
     private var showsRanks: Bool {
         !DistributionBoardOrder.isChronological(data.discoverCard?.distributionOrder)
+            && !DistributionBoardOrder.isNumerical(outcomes, order: data.discoverCard?.distributionOrder)
     }
 
     private var remainingCount: Int {
@@ -141,8 +156,12 @@ struct DistributionCardView: View {
                     mark
                 }
                 // #4351: named, or not drawn — was `src.uppercased()`, which is
-                // how this card printed `ODDS_API`.
-                if let src = SourceLabels.label(for: data.source) {
+                // how this card printed `ODDS_API`. Card faces omit Kalshi/Polymarket.
+                if let src = SourceLabels.cardFaceLabel(
+                    for: data.source,
+                    sources: data.sources,
+                    sourceCount: data.sourceCount
+                ) {
                     Text(src)
                         .font(.system(size: 9, weight: .heavy))
                         .foregroundStyle(.blue)
@@ -194,7 +213,7 @@ struct DistributionCardView: View {
             if showsRanks {
                 Text("\(rank)")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(mutedInk)
                     .frame(width: 20, alignment: .leading)
             }
 
@@ -203,7 +222,7 @@ struct DistributionCardView: View {
                 HStack(spacing: 4) {
                     Text(outcome.label)
                         .font(.system(size: 13, weight: isLeader ? .bold : .semibold))
-                        .foregroundStyle(DS.textPrimary)
+                        .foregroundStyle(primaryInk)
                         .lineLimit(1)
 
                     if let movement = outcome.movement, abs(movement) >= 0.01 {
@@ -215,20 +234,36 @@ struct DistributionCardView: View {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         RoundedRectangle(cornerRadius: 999)
-                            .fill(DS.border)
+                            .fill(trackInk)
                         RoundedRectangle(cornerRadius: 999)
-                            .fill(isLeader ? DS.emerald : DS.textMuted.opacity(0.35))
+                            .fill(isLeader ? DS.emerald : mutedInk.opacity(0.45))
                             .frame(width: max(2, geo.size.width * barWidth / 100))
                     }
                 }
                 .frame(height: 6)
             }
 
-            // Percentage
-            Text(probability > 0 ? "\(pct)%" : "\u{2014}")
-                .font(.system(size: 13, weight: .bold, design: .monospaced))
-                .foregroundStyle(DS.textPrimary)
-                .frame(width: 40, alignment: .trailing)
+            // Percentage + optional served source mark (#12887)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(probability > 0 ? "\(pct)%" : "\u{2014}")
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundStyle(primaryInk)
+                    .frame(width: 40, alignment: .trailing)
+
+                if shownOutcomes.contains(where: { $0.sourceMark?.draws == true }) {
+                    if let srcMark = SourceMarkButton(
+                        outcome.sourceMark,
+                        number: outcome.sourceMark?.state == .settled ? nil : outcome.probability,
+                        subject: outcome.label,
+                        numberSize: 13,
+                        compactRow: true
+                    ) {
+                        srcMark.buttonStyle(.borderless)
+                    } else {
+                        Color.clear.frame(width: 22, height: 1)
+                    }
+                }
+            }
         }
         .padding(.vertical, 6)
     }

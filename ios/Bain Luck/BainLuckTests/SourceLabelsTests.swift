@@ -64,7 +64,30 @@ final class SourceLabelsTests: XCTestCase {
     func testNoMarketSourceCanEverRenderABannedSupplierWord() {
         for key in ["books", "book", "bookmaker", "bookmakers", "odds_api_bookmaker"] {
             XCTAssertNil(SourceLabels.label(for: key))
+            XCTAssertNil(SourceLabels.cardFaceLabel(for: key))
         }
+    }
+
+    func testCardFaceLabelDropsKalshiAndPolymarketAndCountsMultiSource() {
+        XCTAssertNil(SourceLabels.cardFaceLabel(for: "kalshi"))
+        XCTAssertNil(SourceLabels.cardFaceLabel(for: "polymarket"))
+        XCTAssertNil(SourceLabels.cardFaceLabel(for: "KALSHI"))
+        XCTAssertNil(SourceLabels.cardFaceLabel(for: "Polymarket"))
+        XCTAssertEqual(SourceLabels.cardFaceLabel(for: "both"), "2 sources")
+        XCTAssertEqual(SourceLabels.cardFaceLabel(for: "cross"), "2 sources")
+        XCTAssertEqual(SourceLabels.cardFaceLabel(for: "merged"), "2 sources")
+        XCTAssertEqual(
+            SourceLabels.cardFaceLabel(for: "kalshi", sources: ["kalshi", "polymarket"], sourceCount: 2),
+            "2 sources"
+        )
+        XCTAssertEqual(
+            SourceLabels.cardFaceLabel(for: "kalshi", sources: ["kalshi", "polymarket", "odds_api"]),
+            "3 sources"
+        )
+        XCTAssertEqual(SourceLabels.cardFaceLabel(for: "odds_api"), "Sportsbooks")
+        XCTAssertEqual(SourceLabels.cardFaceLabel(for: "datagolf"), "DataGolf")
+        XCTAssertNil(SourceLabels.cardFaceLabel(for: "unknown_key"))
+        XCTAssertNil(SourceLabels.cardFaceLabel(for: nil))
     }
 
     // MARK: - Contributor brands (#4284)

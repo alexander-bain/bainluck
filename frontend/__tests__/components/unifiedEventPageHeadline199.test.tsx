@@ -11,13 +11,14 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import EventPageHeadline199 from "@/components/event/EventPageHeadline199";
+import { computeLastChartPoint, resolveProbability } from "@/lib/eventKeyStats";
 import {
   HEADLINE_STYLE_199,
   resolveEventPageHeadline199,
   resolveHeadlineTeamHexes199,
   type HeadlineModel199,
 } from "@/lib/eventPageHeadline199";
-import type { EventDetailResponse } from "@/lib/types";
+import type { EventDetailResponse, EventHistoryResponse } from "@/lib/types";
 
 type ResolveInput199 = Parameters<typeof resolveEventPageHeadline199>[0];
 
@@ -32,6 +33,84 @@ const FIXED_NOW_MS = Date.parse("2026-11-16T19:15:00Z");
 const FUTURE_START = "2026-11-16T22:00:00Z";
 const LIVE_START = "2026-11-16T18:00:00Z";
 const PAST_START = "2026-11-16T01:00:00Z";
+
+describe("a historical opening reading is kept off the live headline", () => {
+  const opening = "2026-11-16T16:00:00Z";
+  const inPlay = "2026-11-16T19:14:00Z";
+  const live = baseEvent({
+    status: "live", commence_time: LIVE_START, away_score: 68, home_score: 72,
+    hero_probability_source: undefined, hero_probability: undefined, current_odds: undefined,
+  });
+
+  it.each([
+    ["a real pregame quote", opening, opening, "recorded", false, "", ""],
+    ["a pregame quote carried to a live timestamp", opening, inPlay, "synthetic", false, "", ""],
+    ["an unpinned blend ending at the opening", opening, opening, "recorded", true, "", ""],
+    ["a recorded live quote", inPlay, inPlay, "recorded", false, "42.0%", "58.0%"],
+  ])("%s", (_case, observed, stamp, kind, oldBlend, away, home) => {
+    const history = {
+      blend_edge_pinned: false,
+      aggregate_line: oldBlend ? [{ timestamp: opening, home_probability: 0.58 }] : [],
+      history: [{ timestamp: stamp, home_probability: 0.58, away_probability: 0.42, bookmaker_count: 1 }],
+      bookmaker_history: {
+        book: [{ timestamp: stamp, home_probability: 0.58, kind, observed_at: observed }],
+      },
+    } as unknown as EventHistoryResponse;
+    const tail = computeLastChartPoint(history, null, null);
+    const picked = resolveProbability(live, history, tail, true, false);
+    const { model } = resolveSpecimen(live, {
+      homeProb: picked.homeProb,
+      servedAwayProb: picked.awayProb,
+      homePct: picked.homePct,
+      servedAwayPct: picked.awayPct,
+      probSourceLabel: picked.probSourceLabel,
+      tenthsOptIn: true,
+    });
+
+    expect(tail?.homeProb).toBe(0.58);
+    expect(model.rows.find(row => row.role === "away")?.cells.at(-1)).toBe(away);
+    expect(model.rows.find(row => row.role === "home")?.cells.at(-1)).toBe(home);
+  });
+
+  it.each([
+    ["an opening aggregate copied into current odds", "aggregate", 0, false, "", ""],
+    ["an independent in-play quote alongside the opening pair", "aggregate", 0, true, "38.0%", "62.0%"],
+    ["a separate sportsbook consensus at the same price as the opening", undefined, 9, false, "42.0%", "58.0%"],
+  ])("handles %s", (_case, source, count, hasInPlayQuote, away, home) => {
+    const cached: EventDetailResponse = {
+      ...live,
+      hero_probability_source: "opening",
+      hero_probability: 0.58,
+      hero_probability_away: 0.42,
+      current_odds: {
+        home_probability: 0.58,
+        away_probability: 0.42,
+        source,
+        bookmaker_count: count,
+      } as EventDetailResponse["current_odds"],
+    };
+    const history = hasInPlayQuote ? {
+      history: [{ timestamp: inPlay, home_probability: 0.62, away_probability: 0.38, bookmaker_count: 4 }],
+      bookmaker_history: {
+        book: [{ timestamp: inPlay, home_probability: 0.62, kind: "recorded", observed_at: inPlay }],
+      },
+    } as unknown as EventHistoryResponse : undefined;
+    const picked = resolveProbability(cached, history, computeLastChartPoint(history, null, null), true, false);
+    const { model, html } = resolveSpecimen(cached, {
+      homeProb: picked.homeProb,
+      servedAwayProb: picked.awayProb,
+      homePct: picked.homePct,
+      servedAwayPct: picked.awayPct,
+      probSourceLabel: picked.probSourceLabel,
+    });
+    expect(model.rows.find(row => row.role === "away")?.cells.at(-1)).toBe(away);
+    expect(model.rows.find(row => row.role === "home")?.cells.at(-1)).toBe(home);
+    expect(model.columns.find(column => column.role === "now")?.header).toBe(home ? "Now" : "");
+    expect(html).toContain(">68<");
+    expect(html).toContain(">72<");
+    expect(html).toContain("headline-12472-pregame-summary");
+  });
+});
 
 function baseEvent(overrides: Partial<EventDetailResponse> = {}): EventDetailResponse {
   return {

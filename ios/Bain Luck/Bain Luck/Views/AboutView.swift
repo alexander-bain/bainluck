@@ -189,6 +189,18 @@ struct AboutView: View {
                     domainRoutePill("Economics", route: .economics)
                 }
             }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    sportsDomainButton
+                    domainRoutePill("Politics", route: .politics)
+                }
+                HStack(spacing: 8) {
+                    domainRoutePill("Entertainment", route: .entertainment)
+                    domainRoutePill("Weather", route: .weather)
+                }
+                domainRoutePill("Economics", route: .economics)
+            }
         }
     }
 
@@ -213,6 +225,8 @@ struct AboutView: View {
         Text(title)
             .font(.caption.weight(.semibold))
             .foregroundStyle(DS.textSecondaryReadable)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(DS.trackBg, in: Capsule())
@@ -237,30 +251,34 @@ struct AboutView: View {
 
             Spacer(minLength: 0)
 
-            HStack(spacing: 8) {
-                HStack(spacing: 5) {
-                    Text("Prediction markets")
-                    Text("+")
-                        .foregroundStyle(DS.textMuted)
-                    Text("Sportsbooks")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    HStack(spacing: 5) {
+                        Text("Prediction markets")
+                        Text("+")
+                            .foregroundStyle(DS.textMuted)
+                        Text("Sportsbooks")
+                    }
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+
+                    Spacer(minLength: 4)
+
+                    oneNumberExampleBadge
                 }
-                .font(.caption.weight(.medium))
-                .foregroundStyle(DS.textSecondaryReadable)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
 
-                Spacer(minLength: 4)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Prediction markets + Sportsbooks")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: 6) {
-                    Text("\u{2192}")
-                        .font(.caption)
-                        .foregroundStyle(DS.textMuted)
-                    Text(AboutCopy12672.examplePercent)
-                        .font(.caption.weight(.bold).monospacedDigit())
-                        .foregroundStyle(DS.greenReadable)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(DS.emerald.opacity(0.14), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    HStack {
+                        Spacer(minLength: 0)
+                        oneNumberExampleBadge
+                    }
                 }
             }
             .padding(.horizontal, 12)
@@ -279,6 +297,20 @@ struct AboutView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(DS.border, lineWidth: 1)
         )
+    }
+
+    private var oneNumberExampleBadge: some View {
+        HStack(spacing: 6) {
+            Text("\u{2192}")
+                .font(.caption)
+                .foregroundStyle(DS.textMuted)
+            Text(AboutCopy12672.examplePercent)
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(DS.greenReadable)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(DS.emerald.opacity(0.14), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
     }
 
     private var howToReadCard: some View {

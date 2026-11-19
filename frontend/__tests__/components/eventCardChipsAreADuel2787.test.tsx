@@ -100,6 +100,18 @@ function printedPercents(html: string): number[] {
   );
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the shared EventCard's headline chips print one question", () => {
   it("prints both chips at all (the control every sum below depends on)", () => {
     // If the chips were not reaching the DOM, a "they sum to 100" assertion over

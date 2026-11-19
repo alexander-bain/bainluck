@@ -154,6 +154,16 @@ MAJOR_TEAM_QUERY_ALIASES = {
     for sport, name, nickname, spelling in MAJOR_TEAM_SEARCH_CASES
 }
 
+# #12290: additional exact queries missed by the public ten-case audit.
+# Keep these in search evidence, not the aliases used to rescue fixture links.
+for _sport, _name, _identity, _typed in (
+    ("basketball_nba", "Boston Celtics", "celtics", "celtcs"),
+    ("baseball_mlb", "New York Yankees", "yankees", "pinstripes"),
+    ("icehockey_nhl", "Toronto Maple Leafs", "maple leafs", "maple laefs"),
+):
+    _SPELLINGS[_typed] = _identity
+    MAJOR_TEAM_QUERY_ALIASES[(_sport, _name)] += (_typed,)
+
 
 def normalize_major_team_query(query: str) -> str:
     return _SPELLINGS.get(" ".join(query.casefold().split()), query)

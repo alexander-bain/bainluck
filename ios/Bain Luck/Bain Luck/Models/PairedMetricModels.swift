@@ -162,6 +162,26 @@ nonisolated struct PairedSubjectEntry: Decodable, Equatable, Identifiable, Senda
     }
 }
 
+/// Source-market metadata on a paired-metric set (`stage_1_market` / `stage_2_market` in #12849).
+nonisolated struct PairedStageMarketRef: Decodable, Equatable, Sendable {
+    let id: Int
+    let companionPolymarketId: Int?
+
+    init(id: Int, companionPolymarketId: Int? = nil) {
+        self.id = id
+        self.companionPolymarketId = companionPolymarketId
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: PairedCodingKey.self)
+        guard let id = c.decodeFirst(Int.self, keys: ["id"]), id > 0 else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Missing stage market id"))
+        }
+        self.id = id
+        self.companionPolymarketId = c.decodeFirst(Int.self, keys: ["companionPolymarketId", "companion_polymarket_id"])
+    }
+}
+
 /// Complete paired-metric grouped card payload (#12642 / #12577).
 nonisolated struct PairedMetricSet: Decodable, Equatable, Identifiable, Sendable {
     let setId: String
@@ -175,8 +195,33 @@ nonisolated struct PairedMetricSet: Decodable, Equatable, Identifiable, Sendable
     let stage1SettledNoLabel: String
     let entries: [PairedSubjectEntry]
     let preferredVisualForm: String?
+    let stage1Market: PairedStageMarketRef?
+    let stage2Market: PairedStageMarketRef?
+    let stage1Settled: Bool
 
     var id: String { setId }
+
+    var primaryStage1MarketId: Int? {
+        if let mid = stage1Market?.id, mid > 0 { return mid }
+        return entries.first(where: { $0.stage1MarketId > 0 })?.stage1MarketId
+    }
+
+    var primaryStage2MarketId: Int? {
+        if let mid = stage2Market?.id, mid > 0 { return mid }
+        return entries.first(where: { $0.stage2MarketId > 0 })?.stage2MarketId
+    }
+
+    var coveredMarketIds: Set<Int> {
+        var ids = Set<Int>()
+        if let s1 = stage1Market?.id, s1 > 0 { ids.insert(s1) }
+        if let comp = stage1Market?.companionPolymarketId, comp > 0 { ids.insert(comp) }
+        if let s2 = stage2Market?.id, s2 > 0 { ids.insert(s2) }
+        for entry in entries {
+            if entry.stage1MarketId > 0 { ids.insert(entry.stage1MarketId) }
+            if entry.stage2MarketId > 0 { ids.insert(entry.stage2MarketId) }
+        }
+        return ids
+    }
 
     var usesTMDBArt: Bool {
         entries.contains { entry in
@@ -196,7 +241,10 @@ nonisolated struct PairedMetricSet: Decodable, Equatable, Identifiable, Sendable
         stage1SettledYesLabel: String,
         stage1SettledNoLabel: String,
         entries: [PairedSubjectEntry],
-        preferredVisualForm: String? = nil
+        preferredVisualForm: String? = nil,
+        stage1Market: PairedStageMarketRef? = nil,
+        stage2Market: PairedStageMarketRef? = nil,
+        stage1Settled: Bool = false
     ) {
         self.setId = setId
         self.category = category
@@ -209,6 +257,9 @@ nonisolated struct PairedMetricSet: Decodable, Equatable, Identifiable, Sendable
         self.stage1SettledNoLabel = stage1SettledNoLabel
         self.entries = entries
         self.preferredVisualForm = preferredVisualForm
+        self.stage1Market = stage1Market
+        self.stage2Market = stage2Market
+        self.stage1Settled = stage1Settled
     }
 
     init(from decoder: Decoder) throws {
@@ -228,5 +279,8 @@ nonisolated struct PairedMetricSet: Decodable, Equatable, Identifiable, Sendable
         self.stage1SettledNoLabel = c.decodeFirst(String.self, keys: ["stage1SettledNoLabel", "stage_1_settled_no_label"]) ?? "Eliminated"
         self.entries = c.decodeFirst([PairedSubjectEntry].self, keys: ["entries"]) ?? []
         self.preferredVisualForm = c.decodeFirst(String.self, keys: ["visualForm", "visual_form", "preferredVisualForm", "preferred_visual_form"])
+        self.stage1Market = c.decodeFirst(PairedStageMarketRef.self, keys: ["stage1Market", "stage_1_market"])
+        self.stage2Market = c.decodeFirst(PairedStageMarketRef.self, keys: ["stage2Market", "stage_2_market"])
+        self.stage1Settled = c.decodeFirst(Bool.self, keys: ["stage1Settled", "stage_1_settled"]) ?? false
     }
 }

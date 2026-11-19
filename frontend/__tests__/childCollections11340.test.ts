@@ -188,4 +188,207 @@ describe("child collections from an event hub (#11340)", () => {
       expanded: [],
     });
   });
+
+  test("parses automatically discovered Oscars Nominations and The Odyssey child hubs with clean Back restoration", () => {
+    const oscarsParentPayload = {
+      state: "published",
+      slug: "oscars-2027",
+      revision: 120,
+      reason: null,
+      edition: { kind: "theme_edition", subject: "oscars", edition: 2027 },
+      container: {
+        id: 9901,
+        slug: "oscars-2027",
+        name: "Oscars 2027",
+        kind: "theme",
+        category: "entertainment",
+        status: "open",
+      },
+      children: [
+        {
+          id: 101,
+          slug: "oscars-2027-nominations",
+          name: "Oscars 2027 · Nominations (73 markets)",
+          kind: "roundup",
+          category: "entertainment",
+          status: "open",
+          publication_state: "published",
+          member_count: 73,
+          cross_listed_in_parent: true,
+          destination: {
+            kind: "container",
+            slug: "oscars-2027-nominations",
+            web: "/collections/oscars-2027-nominations",
+            api: "/api/containers/oscars-2027-nominations",
+          },
+        },
+        {
+          id: 102,
+          slug: "oscars-2027-subject-the-odyssey",
+          name: "The Odyssey (23 markets)",
+          kind: "roundup",
+          category: "entertainment",
+          status: "open",
+          publication_state: "published",
+          member_count: 23,
+          cross_listed_in_parent: true,
+          destination: {
+            kind: "container",
+            slug: "oscars-2027-subject-the-odyssey",
+            web: "/collections/oscars-2027-subject-the-odyssey",
+            api: "/api/containers/oscars-2027-subject-the-odyssey",
+          },
+        },
+      ],
+      sections: [
+        {
+          class: "title",
+          count: 1,
+          members: [
+            {
+              type: "market",
+              id: 6173044,
+              destination: {
+                kind: "market",
+                id: 6173044,
+                web: "/futures/6173044",
+                api: "/api/futures/6173044",
+              },
+              card: {
+                id: 6173044,
+                name: "Oscar Winner: Best Picture",
+                status: "open",
+                top_outcomes: [{ name: "The Odyssey", probability: 0.54 }],
+              },
+            },
+          ],
+        },
+      ],
+      member_count: 1,
+      withheld: [],
+      withheld_count: 0,
+      counts: { shown_count: 419, inventory_complete: true },
+      page: { limit: 100, next_cursor: null },
+    };
+
+    const odysseyChildPayload = {
+      state: "published",
+      slug: "oscars-2027-subject-the-odyssey",
+      revision: 88,
+      reason: null,
+      edition: null,
+      container: {
+        id: 102,
+        slug: "oscars-2027-subject-the-odyssey",
+        name: "The Odyssey · Oscars 2027",
+        kind: "roundup",
+        category: "entertainment",
+        status: "open",
+        parent_container_id: 9901,
+      },
+      parent: {
+        slug: "oscars-2027",
+        name: "Oscars 2027",
+        destination: {
+          kind: "container",
+          slug: "oscars-2027",
+          web: "/collections/oscars-2027",
+          api: "/api/containers/oscars-2027",
+        },
+      },
+      subtitle: "Cross-listed from Oscars 2027 · 2 open markets",
+      children: [],
+      sections: [
+        {
+          class: "title",
+          title: "Award Winner Markets",
+          layout: "field",
+          count: 1,
+          members: [
+            {
+              type: "market",
+              id: 6173044,
+              destination: {
+                kind: "market",
+                id: 6173044,
+                web: "/futures/6173044",
+                api: "/api/futures/6173044",
+              },
+              card: {
+                id: 6173044,
+                name: "Oscar Winner: Best Picture",
+                status: "open",
+                top_outcomes: [{ name: "The Odyssey", probability: 0.54 }],
+              },
+            },
+          ],
+        },
+        {
+          class: "advancement",
+          title: "Nomination Markets",
+          layout: "field",
+          count: 1,
+          members: [
+            {
+              type: "market",
+              id: 5165726,
+              destination: {
+                kind: "market",
+                id: 5165726,
+                web: "/futures/5165726",
+                api: "/api/futures/5165726",
+              },
+              card: {
+                id: 5165726,
+                name: "Oscar Nominees: Best Picture",
+                status: "open",
+                top_outcomes: [{ name: "The Odyssey", probability: 0.98 }],
+              },
+            },
+          ],
+        },
+      ],
+      member_count: 2,
+      withheld: [],
+      withheld_count: 0,
+      assembled: true,
+    };
+
+    const oscarsHub = parseCollection(oscarsParentPayload, "oscars-2027");
+    expect(oscarsHub.note).toBeNull();
+    expect(oscarsHub.children.map((c) => c.href)).toEqual([
+      "/collections/oscars-2027-nominations",
+      "/collections/oscars-2027-subject-the-odyssey",
+    ]);
+
+    const odysseyHub = parseCollection(odysseyChildPayload, "oscars-2027-subject-the-odyssey");
+    expect(odysseyHub.note).toBeNull();
+    expect(odysseyHub.title).toBe("The Odyssey · Oscars 2027");
+    expect(odysseyHub.subtitle).toBe("Cross-listed from Oscars 2027 · 2 open markets");
+    expect(odysseyHub.parent).toEqual({
+      slug: "oscars-2027",
+      name: "Oscars 2027",
+      href: "/collections/oscars-2027",
+    });
+    expect(odysseyHub.sections.map((s) => s.title)).toEqual([
+      "Award Winner Markets",
+      "Nomination Markets",
+    ]);
+
+    const restored = reconcileCollectionContext(
+      {
+        slug: "oscars-2027",
+        memberKey: "container:oscars-2027-subject-the-odyssey",
+        offset: 312,
+        expanded: [],
+      },
+      oscarsHub,
+    );
+    expect(restored).toEqual({
+      slug: "oscars-2027",
+      memberKey: "container:oscars-2027-subject-the-odyssey",
+      offset: 312,
+      expanded: [],
+    });
+  });
 });

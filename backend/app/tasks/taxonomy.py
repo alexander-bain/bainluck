@@ -432,6 +432,12 @@ def _tag_event(event: Event) -> list[str]:
         if event.opening_home_probability is not None
         else None
     )
+    # #12824 (226: A): an ESPN-only pregame number is never diffed against the
+    # opening line; see `pregame_blend_rests_on_espn_alone`.
+    from app.utils.aggregation import pregame_blend_rests_on_espn_alone
+
+    if pregame_blend_rests_on_espn_alone(event):
+        opening_home_prob = None
 
     # Compute current away probability
     current_away_prob = (1.0 - current_home_prob) if current_home_prob is not None else None

@@ -38,10 +38,39 @@ struct NativeEventDiscoverCard: View {
     /// Optional preloaded `/history` response for deterministic snapshot/unit tests.
     var chartHistory: EventHistoryResponse? = nil
 
+    init(
+        event: FeedEventData,
+        feedContext: String?,
+        expandedContext: String?,
+        navigationPath: Binding<NavigationPath>,
+        onOpen: (() -> Void)? = nil,
+        onContextExpand: (() -> Void)? = nil,
+        onContextCollapse: (() -> Void)? = nil,
+        onShare: (() -> Void)? = nil,
+        pictureVariant191Adopted: Bool = DiscoverSingleGameCard190C.defaultPictureVariant191Adopted,
+        chartHistory: EventHistoryResponse? = nil
+    ) {
+        var reading = event
+        reading.currentOdds = OpeningLineHero.currentOddsForCard(
+            event.currentOdds, heroSource: event.heroProbabilitySource
+        )
+        self.event = reading
+        self.feedContext = feedContext
+        self.expandedContext = expandedContext
+        self._navigationPath = navigationPath
+        self.onOpen = onOpen
+        self.onContextExpand = onContextExpand
+        self.onContextCollapse = onContextCollapse
+        self.onShare = onShare
+        self.pictureVariant191Adopted = pictureVariant191Adopted
+        self.chartHistory = chartHistory
+    }
+
     /// #8144 — the status column between the crests is sized against the strings
     /// THIS card draws at THIS text size, so both of these are inputs to a layout
     /// decision rather than decoration. See `GameCardStatusColumn`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var clock = MinuteClock.shared
     @State private var heroContentWidth: Double = 0
 
@@ -66,7 +95,19 @@ struct NativeEventDiscoverCard: View {
     /// `ProbabilityBarPalette.colors(awayHex:homeHex:)` compiles, renders and
     /// leaves every contrast test green. A test drives this on a real payload.
     var barColorHexes: (away: String, home: String) {
-        TeamTextContrast.cardColorHexes(
+        barColorHexes(for: .light)
+    }
+
+    func barColorHexes(for scheme: ColorScheme) -> (away: String, home: String) {
+        if scheme == .dark {
+            return TeamTextContrast.darkSurfaceColorHexes(
+                awayHex: event.awayTeamData?.primaryColor,
+                homeHex: event.homeTeamData?.primaryColor,
+                awaySecondaryHex: event.awayTeamData?.secondaryColor,
+                homeSecondaryHex: event.homeTeamData?.secondaryColor
+            )
+        }
+        return TeamTextContrast.cardColorHexes(
             awayHex: event.awayTeamData?.primaryColor,
             homeHex: event.homeTeamData?.primaryColor,
             awaySecondaryHex: event.awayTeamData?.secondaryColor
@@ -74,7 +115,7 @@ struct NativeEventDiscoverCard: View {
     }
 
     private var barColors: (away: Color, home: Color) {
-        let hexes = barColorHexes
+        let hexes = barColorHexes(for: colorScheme)
         return (Color(hex: hexes.away), Color(hex: hexes.home))
     }
 

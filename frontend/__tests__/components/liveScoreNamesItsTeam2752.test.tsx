@@ -171,6 +171,18 @@ function chipOrder(html: string): string[] {
 // The fixture is capable of failing
 // ---------------------------------------------------------------------------
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the fixture can express the defect", () => {
   it("gives the two sides different scores and different prices", () => {
     // Without this, an inverted card and a correct one render identically and

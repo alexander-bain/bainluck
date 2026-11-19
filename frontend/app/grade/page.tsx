@@ -33,6 +33,7 @@ import {
   leftOutLine,
   normalizeGraderName,
   saveWithOneRetry,
+  setFromSearch,
   slateFromSearch,
   type Grade,
   type GradeDeck,
@@ -111,7 +112,7 @@ function GradeSession() {
   useEffect(() => {
     if (slateRef === undefined) return;
     let cancelled = false;
-    adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef), secret)
+    adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef, setFromSearch(window.location.search)), secret)
       .then((d) => {
         if (cancelled) return;
         setDeck(drawnOnly(d));
@@ -144,7 +145,7 @@ function GradeSession() {
     // A named slate re-deals for this grader, skipping cards they already graded.
     if (slateRef) {
       setDealing(true);
-      adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef), secret, gradeDeckInit(name))
+      adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef, setFromSearch(window.location.search)), secret, gradeDeckInit(name))
         .then((d) => setDeck(drawnOnly(d)))
         .catch((e: unknown) => setError(e instanceof Error ? e.message : "Could not load the cards"))
         .finally(() => setDealing(false));

@@ -16,6 +16,7 @@ templates:
 from __future__ import annotations
 
 import re
+from app.utils.team_short_name import school_label
 from typing import Optional
 
 NUMBER_WORDS: dict[int, str] = {
@@ -153,22 +154,11 @@ def short_team_name(team: str, sport: Optional[str] = None) -> str:
     stripped = re.sub(r"^(?:UD|CD|FC|AC|AS|SC)\s+|\s+(?:FC|AFC|CF|IK|IF|BK|SK)$", "", cleaned)
     if stripped != cleaned and stripped:
         return stripped
-    # College sports (194-A): print the school, never the mascot
+    # College sports (194-A): print the school, never the mascot. One mascot
+    # list for the whole server (`team_short_name.COLLEGE_MASCOTS`).
     sp_low = str(sport or "").lower()
     if any(tok in sp_low for tok in ("ncaab", "ncaaf", "ncaaw", "college")):
-        school = re.sub(
-            r"\s+(?:Blue\s+Devils|Crimson\s+Tide|Tar\s+Heels|Fighting\s+Irish|"
-            r"Golden\s+Eagles|Red\s+Raiders|Nittany\s+Lions|Horned\s+Frogs|"
-            r"Yellow\s+Jackets|Sun\s+Devils|Demon\s+Deacons|Scarlet\s+Knights|"
-            r"Bulldogs|Rebels|Wildcats|Tigers|Eagles|Bears|Cougars|Huskies|"
-            r"Spartans|Wolverines|Buckeyes|Hoosiers|Boilermakers|Illini|Hawkeyes|"
-            r"Badgers|Gators|Volunteers|Commodores|Razorbacks|Aggies|Longhorns|"
-            r"Sooners|Jayhawks|Cyclones|Mountaineers|Bruins|Trojans|Ducks|"
-            r"Beavers|Cardinals|Cavaliers|Hokies|Seminoles|Hurricanes|Orangemen|Orange)$",
-            "",
-            cleaned,
-            flags=re.IGNORECASE,
-        ).strip()
+        school = school_label(cleaned)
         if school:
             return school
     # Standard US pro leagues (NBA/NFL/NHL/MLB): use mascot word when 2+ words

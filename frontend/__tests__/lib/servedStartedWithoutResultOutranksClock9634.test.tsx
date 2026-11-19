@@ -50,6 +50,18 @@ const NOW = Date.parse("2026-09-29T15:50:00Z");
 const STAMP = new Date(NOW - 13 * HOUR).toISOString();
 const INSIDE_GRACE = new Date(NOW - (UPCOMING_GRACE_MS - 10 * 60_000)).toISOString();
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#9634 · startedWithoutResult prefers the served key", () => {
   it("served false wins over a run-out clock; absent falls back to the clock", () => {
     expect(startedWithoutResult("scheduled", STAMP, NOW, false)).toBe(false);

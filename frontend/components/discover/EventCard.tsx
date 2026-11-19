@@ -11,7 +11,7 @@ import { feedContextSnippet, feedExpandedContext, pregameSlotLabel } from "./uti
 import { DismissBtn, TrendBadge, ActionBar, ExpandableContextText, SignalBars, ForYouChip } from "./shared";
 import { forYouCue } from "@/lib/discover/forYouCue";
 import type { CardActionCallbacks } from "./types";
-import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
+import { isStoredOpeningChance, shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { authorityStoppageLabel, formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import { probabilityAuthorityClass } from "@/lib/confidence";
 import { getSportLabel } from "@/lib/sportCategories";
@@ -135,7 +135,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   const isSuspended = isSuspendedStatus(data.status);
   // UX-P042 (#1640) — withhold a probability manufactured from an untraded
   // Polymarket midpoint; `current_odds` presents it as a confident 0.5/0.5.
-  const probWithheld = shouldWithholdProbability(data);
+  const probWithheld = isStoredOpeningChance(data) || shouldWithholdProbability(data);
   const homeProb = probWithheld ? null : data.current_odds?.home_probability;
   const awayProb = probWithheld ? null : data.current_odds?.away_probability;
   // #6238 — and the away figure is not printable at all on a sport whose winner

@@ -141,7 +141,9 @@ import XCTest
             .appendingPathComponent("Bain Luck/Views/SearchView.swift")
         let source = try String(contentsOf: root, encoding: .utf8)
         XCTAssertTrue(source.contains("market.dateLadderAnswer ?? SearchGrouping.leaderOutcome(market)"))
-        XCTAssertTrue(source.contains("market.dateLadderAnswer ?? market.topOutcomes?.first"))
+        XCTAssertTrue(source.contains(
+            "market.dateLadderAnswer ?? market.numericalLadderAnswer ?? market.topOutcomes?.first"
+        ))
         XCTAssertEqual(source.components(separatedBy: ".verdict(in: market)").count - 1, 2)
     }
 }

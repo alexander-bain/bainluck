@@ -47,6 +47,38 @@ _OUTPUT_COST_PER_1M_USD = 0.60
 REQUIRED_EXAMPLE_CARDS_PER_KIND = 5
 MIN_ROWS_PER_EXAMPLE_CARD = 3
 MIN_GRADED_CARDS_FOR_CATALOG = 6
+MIN_STAT_LEADER_ROW_PROBABILITY = 0.10
+MIN_STAT_LEADER_TOP5_PLAYER_POOL = 8
+BUBBLE_50_MIN_PROBABILITY = 0.25
+BUBBLE_50_MAX_PROBABILITY = 0.75
+
+DEFAULT_NEW_KINDS_EXAM_GRADES_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "evals"
+    / "ranking"
+    / "grades"
+    / "2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json"
+)
+DOCS_NEW_KINDS_EXAM_RECEIPT_MD_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "docs"
+    / "discover"
+    / "new-kinds-exam-2026-11.md"
+)
+
+_PLAYER_SUBJECT_UNITS: frozenset[str] = frozenset(
+    {
+        "players",
+        "quarterbacks",
+        "pitchers",
+        "skaters",
+        "batters",
+        "drivers",
+        "golfers",
+        "fighters",
+        "contenders",
+    }
+)
 
 ALLOWED_CARD_FORMS: frozenset[str] = frozenset(
     {
@@ -211,6 +243,8 @@ def compute_selection_carrying_title(
     selection_type: str = "top_5",
     bubble_title: Optional[str] = None,
     unnumbered_count: int = 0,
+    league_team_count: Optional[int] = None,
+    market_qualifier: Optional[str] = None,
 ) -> Dict[str, Optional[str]]:
     """Compute selection-carrying title, subtitle, and count_line from the card's rows (#9937).
 
@@ -221,7 +255,9 @@ def compute_selection_carrying_title(
     2. Clear leader or race (``selection_type == "top_5"`` with ``race_name``):
        - When #1 leads #2 by more than 1 percentage point: ``"<#1> lead(s) the <race_name> at <pct1>%"``.
        - When #1 and #2 are within 1 percentage point: ``"<#1> and <#2> top the <race_name> at <pct1>%"``.
-       - ``subtitle`` is ``question_subtitle`` and ``count_line`` is ``Showing K of N <unit>``.
+       - ``subtitle`` is ``question_subtitle`` and ``count_line`` is ``Showing K of N <unit>`` (or
+         ``Showing K of N <unit> with <market_qualifier>`` when ``league_team_count`` exceeds ``N``
+         so a venue subset never implies the league itself has ``N`` teams).
     3. Bubble / cutline slice (``selection_type == "bubble_50"``):
        - ``title`` is ``bubble_title`` (e.g. ``"Five NHL teams on the 2026–27 playoff bubble"``).
        - ``subtitle`` is ``"Closest to 50% · N <unit>"`` and ``count_line`` is ``Showing K of N <unit>``.
@@ -235,12 +271,24 @@ def compute_selection_carrying_title(
     q_sub = str(question_subtitle or "").strip()
     r_name = str(race_name or "").strip()
     sel = str(selection_type or "top_5").strip()
+    qual = str(market_qualifier or "").strip()
+
+    subset_qualifier = ""
+    if sel != "complete_group":
+        if (
+            unit in ("teams", "clubs")
+            and league_team_count is not None
+            and int(league_team_count) > n
+        ):
+            subset_qualifier = f" with {qual}" if qual else " with an open market"
+        elif qual and unit in _PLAYER_SUBJECT_UNITS and n < MIN_STAT_LEADER_TOP5_PLAYER_POOL:
+            subset_qualifier = f" with {qual}"
 
     unnumbered_suffix = ""
     if int(unnumbered_count or 0) > 4:
         unnumbered_suffix = f" · No number yet for {int(unnumbered_count)} {unit}"
 
-    if sel == "complete_group" or (n <= 8 and k == n and sel != "bubble_50"):
+    if sel == "complete_group" or (n <= 8 and k == n and sel != "bubble_50" and not subset_qualifier):
         return {
             "title": q_sub,
             "subtitle": None,
@@ -251,8 +299,8 @@ def compute_selection_carrying_title(
     if sel == "bubble_50" and bubble_title:
         return {
             "title": str(bubble_title).strip(),
-            "subtitle": f"Closest to 50% · {n} {unit}",
-            "count_line": f"Showing {k} of {n} {unit}{unnumbered_suffix}",
+            "subtitle": f"Closest to 50% · {n} {unit}{subset_qualifier}",
+            "count_line": f"Showing {k} of {n} {unit}{subset_qualifier}{unnumbered_suffix}",
             "selection_type": "bubble_50",
         }
 
@@ -271,15 +319,156 @@ def compute_selection_carrying_title(
         return {
             "title": headline,
             "subtitle": q_sub or None,
-            "count_line": f"Showing {k} of {n} {unit}{unnumbered_suffix}",
+            "count_line": f"Showing {k} of {n} {unit}{subset_qualifier}{unnumbered_suffix}",
             "selection_type": "top_5",
         }
 
     return {
         "title": q_sub,
         "subtitle": None,
-        "count_line": f"Top {k} by chance · {n} {unit}{unnumbered_suffix}",
+        "count_line": f"Top {k} by chance · {n} {unit}{subset_qualifier}{unnumbered_suffix}",
         "selection_type": "fallback",
+    }
+
+
+def select_bubble_50_rows(
+    pool_rows: Sequence[Mapping[str, Any]],
+    *,
+    max_rows: int = 5,
+    min_rows: int = MIN_ROWS_PER_EXAMPLE_CARD,
+    min_prob: float = BUBBLE_50_MIN_PROBABILITY,
+    max_prob: float = BUBBLE_50_MAX_PROBABILITY,
+) -> Dict[str, Any]:
+    """Select the ``max_rows`` contenders closest to 50% within ``[min_prob, max_prob]`` (#9937).
+
+    Returns ``{"ok": True, "rows": [...], "reason": None}`` ordered highest-probability-first
+    for display when ``>= min_rows`` contenders sit in the bubble band, else refuses cleanly.
+    """
+    in_band: List[Dict[str, Any]] = []
+    for raw in pool_rows or ():
+        if not isinstance(raw, Mapping):
+            continue
+        p = raw.get("probability")
+        if not isinstance(p, (int, float)) or isinstance(p, bool):
+            continue
+        fp = float(p)
+        if min_prob <= fp <= max_prob:
+            in_band.append(dict(raw))
+
+    if len(in_band) < min_rows:
+        return {
+            "ok": False,
+            "rows": [],
+            "reason": f"fewer_than_{min_rows}_in_bubble_band",
+        }
+
+    # Closest to 50% first (ties broken by higher probability, then label), then display highest first
+    chosen = sorted(
+        in_band,
+        key=lambda r: (
+            abs(float(r["probability"]) - 0.50),
+            -float(r["probability"]),
+            str(r.get("label") or ""),
+        ),
+    )[: max(min_rows, int(max_rows))]
+    chosen_display = sorted(
+        chosen,
+        key=lambda r: (-float(r["probability"]), str(r.get("label") or "")),
+    )
+    return {"ok": True, "rows": chosen_display, "reason": None}
+
+
+def apply_stat_leader_selection_guards(
+    pool_rows: Sequence[Mapping[str, Any]],
+    *,
+    total_member_count: int,
+    subject_unit: str = "players",
+    race_name: Optional[str] = None,
+    question_subtitle: str = "",
+    selection_type: str = "top_5",
+    max_rows: int = 5,
+    min_row_probability: float = MIN_STAT_LEADER_ROW_PROBABILITY,
+    min_player_pool_for_top5: int = MIN_STAT_LEADER_TOP5_PLAYER_POOL,
+    league_team_count: Optional[int] = None,
+    market_qualifier: Optional[str] = None,
+    unnumbered_count: int = 0,
+) -> Dict[str, Any]:
+    """Apply pre-licensing selection guards for ``season_stat_leaders`` (#9937).
+
+    Directly addresses Alex's exam feedback on positions #08, #09, and #10:
+    1. Drops cliff-drop tail rows below ``min_row_probability`` (10%) on ``top_5`` / ``complete_group``
+       cards (e.g. ``De'Von Achane 3%`` in #08, ``Jalen Hurts 2%`` in #09), refusing when fewer than
+       ``MIN_ROWS_PER_EXAMPLE_CARD`` (3) contenders clear the 10% floor.
+    2. For ``top_5`` player stat leaders when ``total_member_count < min_player_pool_for_top5`` (8),
+       requires ``market_qualifier`` so a small venue subset explains how its contenders were chosen
+       (or refuses ``player_pool_below_8_without_qualifier``).
+    3. For league team stat pools smaller than ``league_team_count`` (e.g. 21 of 32 NFL teams with a
+       9+ win market in #10), emits an explicit subset ``count_line``
+       (``"Showing 5 of 21 teams with a 9+ win market"``).
+    """
+    unit = str(subject_unit or "players").strip() or "players"
+    n_pool = max(len(pool_rows), int(total_member_count or len(pool_rows)))
+    sel = str(selection_type or "top_5").strip()
+
+    if sel == "bubble_50":
+        bub = select_bubble_50_rows(pool_rows, max_rows=max_rows)
+        if not bub["ok"]:
+            return {"ok": False, "reason": bub["reason"], "rows": [], "meta": None}
+        chosen = bub["rows"]
+    else:
+        eligible = [
+            dict(r)
+            for r in (pool_rows or ())
+            if isinstance(r, Mapping)
+            and isinstance(r.get("probability"), (int, float))
+            and not isinstance(r.get("probability"), bool)
+            and float(r["probability"]) >= float(min_row_probability)
+        ]
+        eligible.sort(
+            key=lambda r: (-float(r["probability"]), str(r.get("label") or ""))
+        )
+        if len(eligible) < MIN_ROWS_PER_EXAMPLE_CARD:
+            return {
+                "ok": False,
+                "reason": "fewer_than_3_rows_above_10pct",
+                "rows": [],
+                "meta": None,
+            }
+        chosen = eligible[: max(MIN_ROWS_PER_EXAMPLE_CARD, int(max_rows))]
+
+        if (
+            sel == "top_5"
+            and unit in _PLAYER_SUBJECT_UNITS
+            and n_pool < int(min_player_pool_for_top5)
+            and not str(market_qualifier or "").strip()
+        ):
+            return {
+                "ok": False,
+                "reason": "player_pool_below_8_without_qualifier",
+                "rows": [],
+                "meta": None,
+            }
+        # When a small complete_group trims a <10% tail row (e.g. 4 of 5 QBs in #09),
+        # switch selection_type from complete_group to top_5/fallback so it never claims completeness.
+        if sel == "complete_group" and len(chosen) < n_pool:
+            sel = "top_5" if race_name else "fallback"
+
+    meta = compute_selection_carrying_title(
+        chosen,
+        total_member_count=n_pool,
+        subject_unit=unit,
+        race_name=race_name,
+        question_subtitle=question_subtitle,
+        selection_type=sel,
+        unnumbered_count=unnumbered_count,
+        league_team_count=league_team_count,
+        market_qualifier=market_qualifier,
+    )
+    return {
+        "ok": True,
+        "reason": None,
+        "rows": chosen,
+        "meta": meta,
     }
 
 
@@ -929,3 +1118,102 @@ def load_new_kinds_exam_cards(
         "cards": verified,
         "refused": refused,
     }
+
+
+def score_new_kinds_exam(
+    *,
+    grades_path: Optional[Path | str] = None,
+    exam_path: Optional[Path | str] = None,
+    licences_path: Optional[Path | str] = None,
+) -> Dict[str, Any]:
+    """Score Alex's 20-card held-out exam slate for ``season_stat_leaders`` & ``qualification_stage_board`` (#9937)."""
+    exam_data = load_new_kinds_exam_cards(path=exam_path)
+    cards = exam_data["cards"]
+    by_slug = {str(c["slug"]): c for c in cards}
+
+    g_path = Path(grades_path) if grades_path is not None else DEFAULT_NEW_KINDS_EXAM_GRADES_PATH
+    if not g_path.exists():
+        raise FileNotFoundError(f"New-kinds exam grades file not found: {g_path}")
+    raw_grades = json.loads(g_path.read_text(encoding="utf-8"))
+    grade_items = raw_grades.get("items") or []
+
+    per_kind: Dict[str, Dict[str, Any]] = {}
+    bubble_counts = {"graded": 0, "amazing": 0, "fine": 0, "no": 0}
+
+    for kind_name in ("season_stat_leaders", "qualification_stage_board"):
+        per_kind[kind_name] = {
+            "kind": kind_name,
+            "graded": 0,
+            "amazing": 0,
+            "fine": 0,
+            "yes": 0,
+            "no": 0,
+        }
+
+    for item in grade_items:
+        if not isinstance(item, Mapping):
+            continue
+        slug = str(item.get("item_key") or item.get("slug") or "").strip()
+        card = by_slug.get(slug)
+        if card is None:
+            continue
+        k_name = str(card["kind"])
+        grade_val = str(item.get("grade") or "").strip().lower()
+        bucket = per_kind.setdefault(
+            k_name,
+            {"kind": k_name, "graded": 0, "amazing": 0, "fine": 0, "yes": 0, "no": 0},
+        )
+        if grade_val == "amazing":
+            bucket["graded"] += 1
+            bucket["amazing"] += 1
+            bucket["yes"] += 1
+        elif grade_val == "fine":
+            bucket["graded"] += 1
+            bucket["fine"] += 1
+            bucket["yes"] += 1
+        elif grade_val == "no":
+            bucket["graded"] += 1
+            bucket["no"] += 1
+
+        if str(card.get("selection_type") or "") == "bubble_50" and grade_val in ("amazing", "fine", "no"):
+            bubble_counts["graded"] += 1
+            bubble_counts[grade_val] += 1
+
+    for k_name, bucket in per_kind.items():
+        graded = int(bucket["graded"])
+        yes = int(bucket["yes"])
+        no = int(bucket["no"])
+        yes_pct = round((yes / graded) * 100.0, 1) if graded > 0 else 0.0
+        passes_80pct_bar = graded >= 8 and (yes / graded) >= 0.80
+        passes_catalog_bar = graded >= MIN_GRADED_CARDS_FOR_CATALOG and no == 0
+        licensed = (
+            is_kind_licensed(k_name, path=licences_path)
+            if licences_path is not None
+            else is_kind_licensed(k_name)
+        )
+        bucket["yes_pct"] = yes_pct
+        bucket["passes_80pct_bar"] = passes_80pct_bar
+        bucket["passes_catalog_bar"] = passes_catalog_bar
+        bucket["is_licensed"] = licensed
+        bucket["can_reach_readers"] = bool(passes_80pct_bar and passes_catalog_bar and licensed)
+
+    total_graded = sum(int(b["graded"]) for b in per_kind.values())
+    total_yes = sum(int(b["yes"]) for b in per_kind.values())
+    total_no = sum(int(b["no"]) for b in per_kind.values())
+
+    return {
+        "slate_id": str(raw_grades.get("slate_id") or exam_data["slate_id"]),
+        "grader": str(raw_grades.get("grader") or "alex bain"),
+        "date": str(raw_grades.get("date") or ""),
+        "graded_on": str(raw_grades.get("graded_on") or ""),
+        "total_graded": total_graded,
+        "total_yes": total_yes,
+        "total_no": total_no,
+        "kinds": per_kind,
+        "bubble_50": {
+            **bubble_counts,
+            "yes": bubble_counts["amazing"] + bubble_counts["fine"],
+            "verdict": "PASS" if bubble_counts["graded"] >= 3 and bubble_counts["no"] == 0 else "HELD",
+        },
+    }
+

@@ -174,12 +174,18 @@ struct DeltaBadge: View {
 
 struct SourceChip: View {
     let source: String
+    var onCardFace: Bool = false
 
     /// nil when the app cannot name the source — the chip renders nothing rather
     /// than title-casing a raw key onto the screen (#4135). "cross"/"merged" are
     /// this chip's own pseudo-sources for the comparison surfaces, not market
-    /// sources, so they stay local to it.
+    /// sources, so they stay local to it. On card faces (`onCardFace == true`),
+    /// single-venue Kalshi / Polymarket are omitted and multi-source says "2 sources".
     private var config: (color: Color, label: String, bg: Color)? {
+        if onCardFace {
+            guard let label = SourceLabels.cardFaceLabel(for: source) else { return nil }
+            return (DS.textSecondary, label, DS.trackBg)
+        }
         switch source.lowercased() {
         case "kalshi": return (DS.kalshiGreen, "Kalshi", DS.kalshiGreen.opacity(0.08))
         case "polymarket": return (DS.blue, "Polymarket", DS.blue.opacity(0.08))
@@ -241,7 +247,7 @@ struct DSMarketCard: View {
                     DeltaBadge(value: delta)
                 }
                 Spacer()
-                SourceChip(source: source)
+                SourceChip(source: source, onCardFace: true)
             }
         }
         .padding(14)

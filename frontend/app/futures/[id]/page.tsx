@@ -110,6 +110,7 @@ import { historyFillPending } from "@/lib/futuresHistoryFill";
 import { useFuturesHistoryFillRetry } from "@/hooks/useFuturesHistoryFillRetry";
 import { PinButton } from "@/components/PinButton";
 import { resolveShape, SHAPE_DUEL, SHAPE_QUANTITY } from "@/lib/marketShape";
+import { numericalScaleOrderIndices, orderByNumericalScale } from "@/lib/numericalScaleOrder";
 import {
   buildOutcomeLadderRungs,
   buildSettledOutcomeLadderRungs,
@@ -179,6 +180,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
 
   const [sortField, setSortField] = useState<SortField>("probability");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [userChoseSort, setUserChoseSort] = useState(false);
   const [selectedOutcomes, setSelectedOutcomes] = useState<Set<number>>(new Set());
   const [showAllOutcomes, setShowAllOutcomes] = useState(false);
   const [trendView, setTrendView] = useState<"evolution" | "progression">("evolution");
@@ -561,14 +563,24 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   );
   const sortedOutcomes = useMemo(() => {
     if (!market?.outcomes) return [];
+    const resolved = market.status === "resolved";
+    if (
+      !userChoseSort &&
+      !resolved &&
+      sortField === "probability" &&
+      sortDirection === "desc" &&
+      numericalScaleOrderIndices(market.outcomes, { marketType: market.market_type }) !== null
+    ) {
+      return orderByNumericalScale(market.outcomes, { marketType: market.market_type });
+    }
     return sortFuturesOutcomes(
       market.outcomes,
       sortField,
       sortDirection,
-      market.status === "resolved",
+      resolved,
       tieRanks,
     );
-  }, [market?.outcomes, market?.status, tieRanks, sortField, sortDirection]);
+  }, [market?.outcomes, market?.status, market?.market_type, tieRanks, sortField, sortDirection, userChoseSort]);
 
   // #2831: a two-outcome market prints both sides of one question, so the pair is
   // decided ONCE — here, over `market.outcomes` — and looked up per row by id.
@@ -883,6 +895,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     : pricedOutcomes.slice(0, 25);
 
   const toggleSort = (field: SortField) => {
+    setUserChoseSort(true);
     if (sortField === field) {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
     } else {

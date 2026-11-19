@@ -1,0 +1,70 @@
+{
+  "revision": "Factory alive, November 18",
+  "python_rules": {
+    "passed": 38,
+    "real_change_fixtures": 18
+  },
+  "stopped_rules": [
+    "line-stalled",
+    "announced",
+    "hold",
+    "master",
+    "review-waiting",
+    "reader-behind"
+  ],
+  "frontend_tests": {
+    "passed": 11
+  },
+  "build": {
+    "exit_code": 0,
+    "route": "/factory",
+    "rendering": "server-rendered, cached for 60 seconds"
+  },
+  "typecheck": {
+    "exit_code": 0,
+    "errors": 65,
+    "baseline": 65
+  },
+  "startup": {
+    "passed": 4
+  },
+  "collection": {
+    "legacy_cache_api_calls": 101,
+    "legacy_cache_seconds": 61.6,
+    "legacy_cache_budget_left": 3644,
+    "warm_api_calls": 29,
+    "warm_seconds": 34.56,
+    "warm_budget_left": 3932
+  },
+  "estimated_publication_api_calls": [
+    30,
+    38
+  ],
+  "recorded_hour": {
+    "pacific": "November 18, 7 to 8 AM",
+    "ci_completions": 6,
+    "master_pushes": 0,
+    "expected_collector_runs": 18,
+    "expected_api_calls": [
+      540,
+      684
+    ]
+  },
+  "capture_provenance": "Built page with read-only GitHub snapshots. Scenario clocks and stops are controlled to show each state. The shipment recording adds a test-only live receipt.",
+  "images_branch": "factory/alive-renders",
+  "images_commit": "895f688fd98a33af5271bc01c54f83d468c4b9a8",
+  "videos": {
+    "crateTravel": true,
+    "flowing": {
+      "elapsed_ms": 6696,
+      "file": "flowing.webm",
+      "duration_seconds": 7.4
+    },
+    "stoppedBelts": 0,
+    "stopped": {
+      "elapsed_ms": 6738,
+      "file": "stopped.webm",
+      "duration_seconds": 7.4
+    }
+  }
+}

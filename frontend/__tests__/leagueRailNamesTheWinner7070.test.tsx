@@ -125,6 +125,18 @@ function dayOfMonth(iso: string): string {
 // 1. THE CARD
 // ───────────────────────────────────────────────────────────────────────────
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the league rail card, rendered through its own mapper", () => {
   it("CONTROL — today's payload, which carries neither key, still denies", () => {
     // The BEFORE, and the reason every absence assertion below means anything.

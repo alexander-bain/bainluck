@@ -77,7 +77,7 @@ struct MenuBarView: View {
                 Text(game.awayAbbrev)
                     .font(.system(size: 12, weight: .bold))
                     .frame(width: 36, alignment: .leading)
-                Text("\(game.awayScore ?? 0)")
+                Text(game.awayScore.map(String.init) ?? "—")
                     .font(.system(size: 13, weight: .heavy, design: .rounded).monospacedDigit())
                     .frame(width: 24, alignment: .trailing)
 
@@ -85,7 +85,7 @@ struct MenuBarView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
 
-                Text("\(game.homeScore ?? 0)")
+                Text(game.homeScore.map(String.init) ?? "—")
                     .font(.system(size: 13, weight: .heavy, design: .rounded).monospacedDigit())
                     .frame(width: 24, alignment: .leading)
                 Text(game.homeAbbrev)
@@ -99,12 +99,10 @@ struct MenuBarView: View {
                 // this row NAMES its survivor instead of holding the slot. The
                 // abbreviation is already on the row, so the name costs nothing
                 // a reader has not already read.
-                if let awayProb = game.awayProb {
-                    Text("\(awayProb)–\(game.homeProb)")
-                        .font(.system(size: 10, weight: .medium).monospacedDigit())
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("\(game.homeAbbrev) \(game.homeProb)")
+                if let homeProb = game.homeProb {
+                    let chance = game.awayProb.map { "\($0)–\(homeProb)" }
+                        ?? "\(game.homeAbbrev) \(homeProb)"
+                    Text(chance)
                         .font(.system(size: 10, weight: .medium).monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
@@ -126,49 +124,11 @@ struct MenuBarView: View {
             liveGames = feed.items.compactMap { item -> MenuBarGame? in
                 guard let event = item.event,
                       (event.status == "live" || event.status == "scheduled") else { return nil }
-                // #2279 — WHICH SOURCE THE PROBABILITY CAME FROM DECIDES WHETHER
-                // THE SERVED PERCENTS APPLY. The guard below falls back to
-                // `openingOdds`, and the served percents describe `currentOdds`
-                // and nothing else, so reading them on that branch would print
-                // the current pair's rounding beside the OPENING pair's
-                // probability. It still sums to 100, so no sum guard could see
-                // it. Recorded at the branch that knows, not inferred afterwards.
-                let odds = event.currentOdds
-                let fromCurrentOdds = odds?.homeProbability != nil
-                guard let homeProbability = odds?.homeProbability ?? event.openingOdds?.homeProbability else { return nil }
-                // #5363 — this was the family's most literal copy of the defect:
-                // the away number was not even served here, it was DERIVED as
-                // `1 − home` one line down. On soccer that is *away win or
-                // draw*. The rule decides whether it may be printed; the row
-                // above draws the withheld case by naming the home side.
-                let printable = DrawPricedWinner.printablePair(
-                    away: 1.0 - homeProbability,
-                    home: homeProbability,
+                let chance = Self.currentChancePercents(
+                    odds: event.currentOdds,
+                    heroSource: event.heroProbabilitySource,
                     sport: event.sport
                 )
-                let awayProbability = 1.0 - homeProbability
-                // UX-P114 — the menu bar prints both sides, and derives away from
-                // home right above, so it had the same 101. Prefer the server's
-                // card-level percents; `renderedDuelPercents` covers a cached or
-                // pre-deploy payload, and the openingOdds fallback in the guard
-                // above, which the server does not decide percents for.
-                //
-                // #2279 — BOTH SERVED OR NEITHER. This site coalesced per side,
-                // and it also carried a THIRD tier — `?? Int((p * 100).rounded())`
-                // — that was a fourth, unshared implementation of the same
-                // rounding, reachable only when the contract rule declines to
-                // answer, and `Int(_:)` TRAPS on a non-finite Double. The pair
-                // rule is now the last word: if it declines, the row is dropped
-                // rather than re-derived by a copy nobody tests.
-                let duel = duelPercents(
-                    away: awayProbability,
-                    home: homeProbability,
-                    servedAway: fromCurrentOdds ? odds?.awayRenderedPercent : nil,
-                    servedHome: fromCurrentOdds ? odds?.homeRenderedPercent : nil
-                )
-                guard let awayPct = duel[0], let homePct = duel[1] else { return nil }
-                // Withheld, not missing: the row still renders, on its home number.
-                let printableAwayPct: Int? = printable?.away == nil ? nil : awayPct
                 // #3430 — both competitors of one matchup on one menu row, in
                 // the least room any surface gives them.
                 let menuSides = TeamShortName.shortPair(
@@ -183,8 +143,8 @@ struct MenuBarView: View {
                     awayAbbrev: menuSides.away,
                     homeScore: event.homeScore,
                     awayScore: event.awayScore,
-                    homeProb: homePct,
-                    awayProb: printableAwayPct,
+                    homeProb: chance.home,
+                    awayProb: chance.away,
                     // #4880 — see `PeriodLabel.liveStatusText`.
                     period: PeriodLabel.liveStatusText(
                         period: event.espn?.period, gameClock: event.espn?.gameClock) ?? "",
@@ -194,6 +154,27 @@ struct MenuBarView: View {
         } catch {}
         loading = false
     }
+
+    /// A score row can survive a missing current chance or an older opening-only payload.
+    static func currentChancePercents(
+        odds: CurrentOdds?, heroSource: String?, sport: String?
+    ) -> (home: Int?, away: Int?) {
+        guard heroSource != OpeningLineHero.openingSource,
+              let odds, let home = odds.homeProbability, (0...1).contains(home) else {
+            return (nil, nil)
+        }
+        let away = 1 - home
+        let printable = DrawPricedWinner.printablePair(away: away, home: home, sport: sport)
+        let duel = duelPercents(
+            away: away,
+            home: home,
+            servedAway: odds.awayRenderedPercent,
+            servedHome: odds.homeRenderedPercent
+        )
+        let awayPct = duel[0]
+        let homePct = duel[1]
+        return (homePct, printable?.away == nil ? nil : awayPct)
+    }
 }
 
 private struct MenuBarGame: Identifiable {
@@ -202,7 +183,7 @@ private struct MenuBarGame: Identifiable {
     let awayAbbrev: String
     let homeScore: Int?
     let awayScore: Int?
-    let homeProb: Int
+    let homeProb: Int?
     /// #5363 — nil where the sport prices a draw and the complement is withheld.
     let awayProb: Int?
     let period: String?
