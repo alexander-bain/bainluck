@@ -1492,6 +1492,9 @@ class TestTheReadContract:
 
         before = await read_published(reader, root.slug, include_headers=True)
         assert (await read_published(reader, root.slug)).as_dict() == before.as_dict()
+        inline = await read_published(reader, root.slug, include_headers=True, inline_schema=True)
+        assert inline.as_dict() == before.as_dict()
+        assert inline.header_rows == before.header_rows
         assert [row[0] for row in before.header_rows] == [root.id, child.id]
         assert before.header_rows[1][6].isoformat() == "2026-11-17T17:15:30.250000+00:00"
         assert {row["container_id"] for row in before.members} == {child.id}
@@ -1503,10 +1506,38 @@ class TestTheReadContract:
             await writer.commit()
 
         after = await read_published(reader, root.slug, include_headers=True)
+        inline = await read_published(reader, root.slug, include_headers=True, inline_schema=True)
+        assert inline.as_dict() == after.as_dict()
+        assert inline.header_rows == after.header_rows
         assert after.state == "empty" and after.members == []
         assert after.revision > before.revision
         assert [row[0] for row in after.header_rows] == [root.id]
         assert [row[0] for row in before.header_rows] == [root.id, child.id]
+
+    @pytest.mark.parametrize("missing_column", ["publication_state", "membership_revision"])
+    async def test_inline_schema_read_keeps_incomplete_publication_private(
+        self, corrected_session, missing_column
+    ):
+        from app.utils.container_corrections import read_published
+
+        session = corrected_session
+        root, market_ids = await _seed(session)
+        await assemble_container(session, _plain(root), _candidates(market_ids))
+        await session.execute(text("UPDATE containers SET publication_state = 'published'"))
+        await session.execute(text(f"ALTER TABLE containers DROP COLUMN {missing_column}"))
+
+        hidden = await read_published(
+            session, root.slug, include_headers=True, inline_schema=True
+        )
+        assert hidden.state == "unpublished"
+        assert hidden.reason == "publication_schema_absent"
+        assert hidden.revision is None and hidden.container_id is None
+        assert hidden.members == [] and hidden.header_rows == []
+        missing = await read_published(
+            session, "missing-hub", include_headers=True, inline_schema=True
+        )
+        assert missing.state == "unavailable"
+        await session.rollback()
 
     async def test_the_upgrade_is_rerunnable(self, corrected_session):
         from app.utils.container_corrections import UPGRADE_STATEMENTS
