@@ -1,6 +1,14 @@
 """The refresh task and its guard must agree when a field needs a real read."""
 
 
+def registered_price_refresh_market_ids() -> set[int]:
+    """Read the explicit tournament and Midterms price registries."""
+    from app.utils.midterms_collection import MARKET_IDS, REGISTERED_POLYMARKET_TWIN_IDS
+    from app.utils.tournament_register import registered_market_ids
+
+    return registered_market_ids().union(MARKET_IDS, REGISTERED_POLYMARKET_TWIN_IDS)
+
+
 def price_refresh_due_sql(cutoff: str) -> str:
     """Compose against market alias ``fm`` and a caller-owned SQL cutoff.
 

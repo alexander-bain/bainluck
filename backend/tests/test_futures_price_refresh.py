@@ -823,6 +823,31 @@ class TestRegisteredMarketsAreReachable:
         assert "resolution_date > NOW()" in sql
         assert "NOT EXISTS" in sql
 
+    async def test_the_run_scans_midterms_even_when_they_are_absent_from_the_feed(self, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        from app.tasks import SHOWN_REFRESH_MINUTES, _shown_refresh_windows
+        from app.utils.feed_served_markets import SERVED_EMPTY, ServedSignal
+        from app.utils.midterms_collection import MARKET_IDS, REGISTERED_POLYMARKET_TWIN_IDS
+
+        tournament_id = 59172808
+        harness = _RunHarness(
+            signal=ServedSignal(state=SERVED_EMPTY, ids=[]),
+            class_rows=[],
+            registered_ids={tournament_id, 112905},
+        )
+        scan = AsyncMock(wraps=fpr._scan_registered_candidates)
+        monkeypatch.setattr(fpr, "_scan_registered_candidates", scan)
+
+        await harness.run(monkeypatch, **_shown_refresh_windows())
+
+        assert scan.await_count == 1
+        ids = scan.await_args.kwargs["market_ids"]
+        assert ids == sorted({tournament_id, *MARKET_IDS, *REGISTERED_POLYMARKET_TWIN_IDS})
+        assert 108629 in ids
+        assert 64546265 not in ids
+        assert scan.await_args.kwargs["stale_minutes"] == SHOWN_REFRESH_MINUTES
+
     def test_the_committed_us_open_register_reaches_its_curated_props(self):
         """Behavioural, against the real committed file — not a shape assertion.
 
@@ -1352,9 +1377,10 @@ class _RunHarness:
     classifies is the one production returns.
     """
 
-    def __init__(self, *, signal, class_rows):
+    def __init__(self, *, signal, class_rows, registered_ids=()):
         self.signal = signal
         self.class_rows = class_rows
+        self.registered_ids = set(registered_ids)
         self.snapshot_probabilities: list[float] = []
         self.marker_written = False
 
@@ -1419,7 +1445,7 @@ class _RunHarness:
 
         return CategoryServed(ids=[])
 
-    async def run(self, monkeypatch):
+    async def run(self, monkeypatch, **refresh_windows):
         import contextlib
 
         from app.tasks import futures_price_refresh as mod
@@ -1434,7 +1460,7 @@ class _RunHarness:
 
         monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
         monkeypatch.setattr(
-            "app.utils.tournament_register.registered_market_ids", lambda: set()
+            "app.utils.tournament_register.registered_market_ids", lambda: self.registered_ids
         )
         monkeypatch.setattr(
             "app.utils.feed_served_markets.served_signal", lambda: self.signal
@@ -1486,7 +1512,7 @@ class _RunHarness:
             )
 
         monkeypatch.setattr(mod, "_fetch_polymarket_prices", _priced)
-        return await mod._refresh_stale_futures_prices()
+        return await mod._refresh_stale_futures_prices(**refresh_windows)
 
 
 def _brazil_class_row():
