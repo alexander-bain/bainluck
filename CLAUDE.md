@@ -31,18 +31,16 @@ Architecture work may only ride an already queued user-visible ship.
 
 ## Product rules
 
-- Refer to markets, futures markets, props and events by their appropriate names.
-  Reserve "question" for an actual interrogative sentence.
+- Refer to markets, futures markets, props and events by name; reserve "question" for an interrogative sentence.
 - **never run LLM calls inside `GET /api/feed`**; enrichment is async, bounded and cached.
   Deterministic explanations are first-class; page-one comprehension must not depend on LLM hooks.
 - Personalization is bounded and latency-safe: left-swipe is a soft downrank, never a hard dismissal.
-- Equivalent markets across sources produce one blended probability per outcome.
 - Calibration uses `COALESCE(calibration_probability, opening_probability)`.
-  Settled heroes show winners, cards show results, props show grades, charts show the completed journey.
-- Anonymous submission must keep working for bug reports.
-- No fresh matching measurement means no accuracy claim. **RED means REAL.**
-- Credentials NEVER go in tracked files (gitleaks; leaks need rotation). Never open `.env`
-  files; an admin-token read needs Alex's yes (142-A), never printed or stored.
+- Anonymous bug-report submission must keep working. No fresh matching measurement = no accuracy claim. **RED means REAL.**
+- Never commit credentials (gitleaks) or open `.env` files; never print, log or store tokens.
+  Read-only admin reads on `tools/admin/readonly_allowlist.json` (via `tools/admin/readonly_read.py`,
+  posting its one-line log on the issue) need no ask; a new address needs Alex's yes once; anything
+  that writes, deletes or changes a setting goes to Alex every time (142-A / 247-A).
 
 ## Code Style
 
