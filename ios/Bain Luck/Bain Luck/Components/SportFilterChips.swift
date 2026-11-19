@@ -29,9 +29,6 @@ struct SportCategory: Identifiable, Hashable {
         if let event = item.event, let sport = event.sport {
             if sportPrefixes.contains(where: { sport.hasPrefix($0) }) { return true }
         }
-        if item.tournament != nil, id == "golf" {
-            return true
-        }
         if let futures = item.futures, let cat = futures.llmSportCategory?.lowercased() {
             if futuresCategories.contains(cat) { return true }
         }
@@ -75,7 +72,7 @@ enum SportPillSeason13013 {
         case "ncaaf":
             return inWindow(md, start: .init(month: 8, day: 22), end: .init(month: 1, day: 25))
         case "basketball":
-            return inWindow(md, start: .init(month: 10, day: 18), end: .init(month: 6, day: 25))
+            return inWindow(md, start: .init(month: 10, day: 20), end: .init(month: 6, day: 25))
         case "ncaab":
             return inWindow(md, start: .init(month: 11, day: 2), end: .init(month: 4, day: 10))
         case "hockey":
@@ -172,8 +169,8 @@ struct SportFilterChips: View {
             var liveCount = 0
             var todayCount = 0
 
-            for item in items where category.matches(item) {
-                if let event = item.event {
+            for item in items {
+                if let event = item.event, category.matches(item) {
                     guard seenEventIds.insert(event.id).inserted else { continue }
                     if event.status == "live" {
                         liveCount += 1

@@ -97,6 +97,38 @@ final class SportsTabPillOrder13013Tests: XCTestCase {
         XCTAssertEqual(ordered.last, "MLB")
     }
 
+    func testLiveGolfTournamentLiftsGolfPillWithoutChangingCategoryMatches() throws {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-19T19:00:00Z"))
+
+        let tournamentItem = try decodeItem("""
+        {
+          "type": "tournament",
+          "score": 88,
+          "data": {
+            "key": "pga_rsm_classic_2026",
+            "name": "The RSM Classic",
+            "schedule_status": "live",
+            "commence_time": "2026-11-19T12:00:00Z",
+            "golfers": []
+          }
+        }
+        """)
+        let golf = try XCTUnwrap(sportCategories.first { $0.id == "golf" })
+        // SportCategory.matches stays unchanged so FeedViewModel.filteredItems(for: "golf") does not alter list membership.
+        XCTAssertFalse(golf.matches(tournamentItem))
+
+        let items: [FeedItem] = [
+            tournamentItem,
+            try eventItem(id: 801, sport: "basketball_nba", status: "scheduled", commenceISO: "2026-11-20T00:30:00Z"),
+        ]
+        let ordered = SportFilterChips.orderedCategories(items: items, now: now, calendar: utc).map(\.name)
+        // Golf (1 live tournament -> tier 0) sits immediately after All, ahead of scheduled NBA (tier 1), with offseason MLB last.
+        XCTAssertEqual(ordered.prefix(3), ["All", "Golf", "NBA"])
+        XCTAssertEqual(ordered.last, "MLB")
+    }
+
     func testRenders390PtLightAndDarkLooksWhenRequested() throws {
         guard let outDir = ProcessInfo.processInfo.environment["RENDER_13013_PILLS_DIR"],
               !outDir.isEmpty else { return }
