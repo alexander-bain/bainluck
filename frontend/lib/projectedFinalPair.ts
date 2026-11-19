@@ -31,6 +31,73 @@ export interface ProjectedScorePair {
   away: number;
 }
 
+export interface ProjectedChancePair {
+  home?: number | null;
+  away?: number | null;
+}
+
+const CHANCE_TIE_EPSILON = 1e-9;
+
+/**
+ * Ruling 240: A (Rule 2) — Never two winners on one card.
+ * When a printed projected pair has one team ahead and the card's chance
+ * favours the other team, the projected pair is withheld so the card shows
+ * the chance only. A level pair never conflicts, and neither does a chance
+ * of exactly 50% (or equal two-team win shares in a three-way market).
+ */
+export function projectedPairConflictsWithChance(
+  pair: ProjectedScorePair,
+  chance: ProjectedChancePair | null | undefined,
+  sportKey?: string | null,
+): boolean {
+  if (!Number.isFinite(pair.home) || !Number.isFinite(pair.away)) return false;
+  if (Math.abs(pair.home - pair.away) <= CHANCE_TIE_EPSILON) return false;
+  if (!chance) return false;
+
+  const pricesADraw = sportVocab(sportKey ?? undefined).winnerMarketPricesADraw;
+  const validHome =
+    typeof chance.home === "number" &&
+    Number.isFinite(chance.home) &&
+    chance.home > 0 &&
+    chance.home < 1
+      ? chance.home
+      : null;
+  const validAway =
+    typeof chance.away === "number" &&
+    Number.isFinite(chance.away) &&
+    chance.away > 0 &&
+    chance.away < 1
+      ? chance.away
+      : null;
+
+  if (validHome !== null && validAway !== null) {
+    if (Math.abs(validHome - validAway) <= CHANCE_TIE_EPSILON) return false;
+    const chanceFavoursHome = validHome > validAway;
+    const pairFavoursHome = pair.home > pair.away;
+    return chanceFavoursHome !== pairFavoursHome;
+  }
+
+  if (!pricesADraw && validHome !== null) {
+    if (Math.abs(validHome - 0.5) <= CHANCE_TIE_EPSILON) return false;
+    const chanceFavoursHome = validHome > 0.5;
+    const pairFavoursHome = pair.home > pair.away;
+    return chanceFavoursHome !== pairFavoursHome;
+  }
+
+  if (!pricesADraw && validAway !== null) {
+    if (Math.abs(validAway - 0.5) <= CHANCE_TIE_EPSILON) return false;
+    const chanceFavoursHome = validAway < 0.5;
+    const pairFavoursHome = pair.home > pair.away;
+    return chanceFavoursHome !== pairFavoursHome;
+  }
+
+  if (pricesADraw && validHome !== null && validHome > 0.5 + CHANCE_TIE_EPSILON) {
+    return pair.away > pair.home;
+  }
+
+  return false;
+}
+
 /**
  * The sportsbooks' projected pair off `current_odds`, or null when it is not a
  * scoreline for this sport.
@@ -127,20 +194,24 @@ export function projectedFinalLabel(sportKey: string | null | undefined): string
 
 /**
  * The sportsbook pair as a CARD prints it: rounded per side exactly as the event
- * page rounds it, and refused where the page refuses it before kickoff — a half
- * at zero, or a level scoreline in a sport that cannot end level (#8156). The
- * page's live-only gates (#4885, #5697) have nothing to test on a pre-game card.
+ * page rounds it. Ruling 240: A:
+ *   1. A level rounded pair prints in every sport ("111" and "111").
+ *   2. When `chance` favours the opposite winner from the rounded pair, the
+ *      projected pair is withheld so the card shows the chance only.
  */
 export function cardProjectedFinal(
   odds: SportsbookProjectionFields | null | undefined,
   sportKey: string | null | undefined,
+  chance?: ProjectedChancePair | null,
 ): ProjectedScorePair | null {
   const pair = sportsbookProjectedPair(odds, sportKey);
   if (!pair || pair.home <= 0 || pair.away <= 0) return null;
-  const home = Math.round(pair.home);
-  const away = Math.round(pair.away);
-  if (home === away && !sportVocab(sportKey ?? undefined).canEndInATie) return null;
-  return { home, away };
+  const rounded = {
+    home: Math.round(pair.home),
+    away: Math.round(pair.away),
+  };
+  if (projectedPairConflictsWithChance(rounded, chance, sportKey)) return null;
+  return rounded;
 }
 
 /**
@@ -272,6 +343,7 @@ export function liveCardProjectedFinal(
   sportKey: string | null | undefined,
   commenceTime: string | null | undefined,
   actual: { home: number | null | undefined; away: number | null | undefined },
+  chance?: ProjectedChancePair | null,
 ): ProjectedScorePair | null {
   const { home, away } = actual;
   if (typeof home !== "number" || !Number.isFinite(home) || home < 0) return null;
@@ -281,6 +353,7 @@ export function liveCardProjectedFinal(
   const pair = cardProjectedFinal(
     { projected_home_score: raw.home, projected_away_score: raw.away },
     sportKey,
+    chance,
   );
   if (!pair || pair.home < home || pair.away < away) return null;
   return pair;
