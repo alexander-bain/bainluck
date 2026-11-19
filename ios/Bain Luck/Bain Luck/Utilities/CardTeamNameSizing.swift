@@ -71,6 +71,34 @@ nonisolated enum CardTeamNameSizing {
         return max(floor(clampedBase * floorScale * 2) / 2, floor(clampedBase * smallestScale * 2) / 2)
     }
 
+    /// Returns one shared font size for accessibility rows with unbounded vertical lines,
+    /// scaling down only when an individual word exceeds `availableWidth` so no team word
+    /// breaks mid-word ("Washing- / ton", #12693) on narrow 320pt phones.
+    static func sharedUnboundedWordSafeFontSize(
+        names: [String],
+        baseSize: CGFloat,
+        weight: Font.Weight = .bold,
+        availableWidth: CGFloat,
+        minimumScale: CGFloat = 0.55
+    ) -> CGFloat {
+        let clampedBase = max(baseSize, 10)
+        let widthBudget = max(availableWidth - 4, 36)
+        let floorScale = min(max(minimumScale, 0.35), 1.0)
+
+        var smallestScale: CGFloat = 1.0
+        for raw in names {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let words = trimmed.split(whereSeparator: \.isWhitespace).map(String.init)
+            let maxWord = words.map { singleLineWidth($0, fontSize: clampedBase, weight: weight) }.max() ?? 0
+            if maxWord > widthBudget, maxWord > 0 {
+                let scale = max(floorScale, widthBudget / ceil(maxWord))
+                smallestScale = min(smallestScale, scale)
+            }
+        }
+        return max(floor(clampedBase * floorScale * 2) / 2, floor(clampedBase * smallestScale * 2) / 2)
+    }
+
     /// Guarantees a team's record / subline is strictly smaller than its name.
     static func cappedRecordFontSize(
         baseRecordSize: CGFloat,

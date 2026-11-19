@@ -137,6 +137,7 @@ nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable, Equatable 
     let americanOdds: Int?
     var isWinner: Bool? = nil
     var won: Bool? = nil
+    var sourceMark: SourceMark? = nil
 
     var id: String { name }
 
@@ -149,7 +150,8 @@ nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable, Equatable 
         openingProbability: Double? = nil,
         americanOdds: Int? = nil,
         isWinner: Bool? = nil,
-        won: Bool? = nil
+        won: Bool? = nil,
+        sourceMark: SourceMark? = nil
     ) {
         self.name = name
         self.probability = probability
@@ -160,6 +162,7 @@ nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable, Equatable 
         self.americanOdds = americanOdds
         self.isWinner = isWinner
         self.won = won
+        self.sourceMark = sourceMark
     }
 
     init(from decoder: Decoder) throws {
@@ -175,13 +178,14 @@ nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable, Equatable 
         americanOdds = try container.decodeIfPresent(Int.self, forKey: .americanOdds)
         isWinner = try? container.decodeIfPresent(Bool.self, forKey: .isWinner)
         won = try? container.decodeIfPresent(Bool.self, forKey: .won)
+        sourceMark = try? container.decodeIfPresent(SourceMark.self, forKey: .sourceMark)
     }
 
     private enum CodingKeys: String, CodingKey {
         // `movement_24h` converts to the key `movement24H`, not `movement24h` —
         // the previous raw value here matched nothing. See `TolerantNumeric`.
         case name, probability, renderedPercent, rank, movement24h = "movement24H", openingProbability, americanOdds
-        case isWinner, won
+        case isWinner, won, sourceMark
     }
 }
 

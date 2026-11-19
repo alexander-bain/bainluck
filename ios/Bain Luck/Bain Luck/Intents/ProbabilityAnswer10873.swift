@@ -241,6 +241,9 @@ extension ProbabilityAnswer10873 {
 
     /// The pair exactly as the hero resolves it; nil when it has none.
     private static func pricePair(_ event: EventDetail, now: Date) -> PricePair? {
+        if event.status == "live", event.heroProbabilitySource == OpeningLineHero.openingSource {
+            return nil
+        }
         guard let odds = event.currentOdds else { return nil }
         let shown = OpeningLineHero.resolve(odds, for: event)
         guard let pair = DrawPricedWinner.printablePair(

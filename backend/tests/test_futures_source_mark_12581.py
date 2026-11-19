@@ -120,6 +120,54 @@ async def test_real_zero_remains_a_source_quote():
     assert row["source_mark"]["state"] == "single"
 
 
+@pytest.mark.parametrize("stored_price", [Decimal("0.705"), None])
+async def test_an_open_quote_survives_retraction_of_an_earlier_grade(stored_price):
+    market = kalshi_market(
+        rows=[(643833, "Buffalo", "KXSB-27-BUF", stored_price)], me=False
+    )
+    outcome = market.outcomes[0]
+    outcome.is_winner = False
+    outcome.resolution_source = "ungradeable_result"
+    payload, db = await detail(KALSHI_ID, [market])
+    row = payload["outcomes"][0]
+    if stored_price is None:
+        assert row["probability"] is None
+        assert row["source_mark"] == {
+            "state": "none",
+            "sources": [],
+            "reason": "no_probability",
+        }
+    else:
+        assert float(row["probability"]) == float(stored_price)
+        assert row["source_mark"] == {
+            "state": "single",
+            "sources": [
+                {
+                    "key": "kalshi",
+                    "name": "Kalshi",
+                    "probability": 0.705,
+                    "observed_at": None,
+                    "reason": "observation_unknown",
+                }
+            ],
+        }
+    assert db.kinds == ["market"]
+
+
+@pytest.mark.parametrize("status,grade", [("closed", False), ("open", True)])
+def test_retracted_closed_or_contradictory_outcomes_have_no_source_mark(status, grade):
+    mark = futures_outcome_source_mark(
+        SimpleNamespace(status=status, source="kalshi"),
+        SimpleNamespace(
+            is_winner=grade,
+            resolution_source="ungradeable_result",
+            current_probability=0.705,
+        ),
+        {"probability": 0.705},
+    )
+    assert mark == {"state": "none", "sources": [], "reason": "result_unknown"}
+
+
 @pytest.mark.parametrize(
     "authority,grade,result",
     [

@@ -72,8 +72,10 @@ final class ProjectedFinalPointsLeagues10549Tests: XCTestCase {
             // Orientation: the served home pair is the home team's line.
             XCTAssertEqual(series.latest.home, 115.0)
             XCTAssertEqual(series.latest.away, 108.5)
-            // Units: twenty-point gridlines, not eighteen touchdown steps to 119.
-            XCTAssertEqual(series.yTicks, [0, 20, 40, 60, 80, 100, 120], sport)
+            // #12889: before tip-off, 108.5..115.0 fits to [105, 110, 115, 120] so both lines separate.
+            XCTAssertEqual(series.yMin, 105, sport)
+            XCTAssertEqual(series.yMax, 120, sport)
+            XCTAssertEqual(series.yTicks, [105, 110, 115, 120], sport)
         }
     }
 

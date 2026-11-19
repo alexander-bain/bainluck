@@ -335,6 +335,68 @@ describe("#11974 Step E1 — SettledOutcomeHero atlasMode", () => {
 });
 
 describe("#11974 Step E1 — EventPage headline wiring behind ?atlas=1", () => {
+  it.each(["opening", "blend"] as const)(
+    "keeps the Opening row separate from a %s reading at the same price",
+    (source) => {
+      const base = F.detail_14966179 as Event;
+      const isOpening = source === "opening";
+      const readingAgeMs = isOpening ? 48 * 3600_000 : 45_000;
+      const readingStamp = new Date(Date.now() - readingAgeMs).toISOString();
+      const scheduledEvent = buildDetailEvent({
+        status: "scheduled",
+        commence_time: new Date(Date.now() + 2 * 3600_000).toISOString(),
+        completed_at: null,
+        home_score: null,
+        away_score: null,
+        hero_probability: 0.58,
+        hero_probability_away: 0.42,
+        hero_probability_source: source,
+        hero_probability_observed_at: isOpening ? null : readingStamp,
+        win_probability_sources: isOpening ? {} : {
+          kalshi: {
+            value: 0.58,
+            type: "market",
+            display_name: "Kalshi",
+            color: "#22c55e",
+            updated_at: readingStamp,
+          },
+        },
+        opening_odds: {
+          ...base.opening_odds,
+          home_probability: 0.58,
+          away_probability: 0.42,
+        },
+        current_odds: {
+          ...base.current_odds,
+          home_probability: 0.58,
+          away_probability: 0.42,
+          captured_at: readingStamp,
+          source: "aggregate",
+        },
+      } as Partial<Event>);
+
+      const { container, unmount } = mountEventPage(scheduledEvent);
+      const infoBtn = container.querySelector<HTMLButtonElement>(
+        '[data-testid="event-atlas-headline-info-button"]',
+      );
+      expect(infoBtn).not.toBeNull();
+      act(() => infoBtn!.click());
+
+      expect(
+        container.querySelector('[data-testid="atlas-details-opening"]')?.textContent,
+      ).toContain("58%");
+      const lastReading = container.querySelector(
+        '[data-testid="atlas-details-last-observation"]',
+      );
+      if (isOpening) {
+        expect(lastReading).toBeNull();
+      } else {
+        expect(lastReading?.textContent).toContain("58%");
+      }
+      unmount();
+    },
+  );
+
   it("during play: renders 'Current win chance' with pregame chance beside it and opens AtlasDetailsSheet from routine info", () => {
     const freshStamp = new Date(Date.now() - 45_000).toISOString();
     const base = F.detail_14966179 as Event;

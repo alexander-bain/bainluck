@@ -19,8 +19,12 @@ _TERMINAL_LIFECYCLES = {"final", "closed"}
 _SWIFT_REFERENCE = datetime(2001, 1, 1, tzinfo=timezone.utc)
 _MAX_SWIFT_INT = (1 << 63) - 1
 MAX_PAYLOAD_BYTES = 4096
-# Same observation-age policy as W3.1 GameActivityController, not a fetch TTL.
-OBSERVATION_MAX_AGE = timedelta(seconds=120)
+# #10542 step 4: the activity turns stale only when the score has gone unconfirmed
+# this long (the chance's clock is used only while there is no score). It was the
+# older of both clocks + 120 s, so two minutes of Apple's priority-5 delay turned
+# a 20-second-old score orange (Magic at Celtics, Nov 16). Not a fetch TTL. The
+# app's GameActivityController.staleDate(for:) applies the same rule while open.
+OBSERVATION_MAX_AGE = timedelta(seconds=360)
 
 
 class ActivityKitPayloadError(ValueError):
@@ -197,17 +201,24 @@ def build_activitykit_update(
         raise ActivityKitPayloadError(
             "Authoritative terminal lifecycle requires an end push"
         )
-    clocks = []
-    if snapshot.home_score is not None or snapshot.away_score is not None:
-        clocks.append(snapshot.score_observed_at)
-    if snapshot.home_rendered_percent is not None:
-        clocks.append(snapshot.probability_observed_at)
-    if not clocks or any(clock is None for clock in clocks):
+    has_score = snapshot.home_score is not None or snapshot.away_score is not None
+    has_chance = snapshot.home_rendered_percent is not None
+    # A displayed number with no clock is stale now. Otherwise the score's clock
+    # decides; the chance prints its own age and decides only when there is no score.
+    unknown = (has_score and snapshot.score_observed_at is None) or (
+        has_chance and snapshot.probability_observed_at is None
+    )
+    clock = (
+        snapshot.score_observed_at
+        if has_score
+        else snapshot.probability_observed_at if has_chance else None
+    )
+    if unknown or clock is None:
         aps["stale-date"] = aps["timestamp"]
     else:
-        oldest = min(_date(clock, "observation") for clock in clocks)
         aps["stale-date"] = max(
-            0, math.floor((oldest + OBSERVATION_MAX_AGE).timestamp())
+            0,
+            math.floor((_date(clock, "observation") + OBSERVATION_MAX_AGE).timestamp()),
         )
     return _encode(aps, priority)
 

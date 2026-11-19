@@ -56,7 +56,30 @@ def test_current_reading_borrows_hero_clock_only_for_exact_pair(pair, clock):
         )
     )
     assert snapshot.probability_observed_at == clock
-    assert snapshot.home_rendered_percent == (80 if pair[0] == 0.8 else 57)
+    assert snapshot.home_rendered_percent == (57 if clock is not None else None)
+
+
+@pytest.mark.parametrize("current_home", [None, 0.565])
+@pytest.mark.parametrize("opening_clock", [None, CLOCK.isoformat()])
+def test_cached_opening_pair_cannot_become_a_live_activity_chance(current_home, opening_clock):
+    detail = reading(
+        hero_probability_source="opening",
+        hero_probability_observed_at=opening_clock,
+        current_odds={"home_probability": current_home, "away_probability": 0.435},
+    )
+    snapshot = project_activitykit_snapshot(detail)
+
+    assert snapshot.lifecycle == "live"
+    assert (snapshot.home_score, snapshot.away_score) == (0, 1)
+    assert snapshot.score_observed_at == CLOCK
+    assert snapshot.home_rendered_percent is None
+    assert snapshot.probability_observed_at is None
+
+    detail["hero_probability_source"] = "blend"
+    detail["hero_probability_observed_at"] = CLOCK.isoformat()
+    current = project_activitykit_snapshot(detail)
+    assert current.home_rendered_percent == 57
+    assert current.probability_observed_at == CLOCK
 
 
 @pytest.mark.parametrize(
@@ -132,9 +155,21 @@ def test_missing_or_naive_clock_never_borrows_receipt_or_row_time(clock):
             timestamp=CLOCK.isoformat(),
         )
     )
-    assert snapshot.home_rendered_percent == 57
+    assert snapshot.home_rendered_percent is None
     assert snapshot.probability_observed_at is None
     assert snapshot.score_observed_at is None
+
+
+def test_undated_projection_sends_score_without_a_chance():
+    snapshot = project_activitykit_snapshot(
+        reading(hero_probability_source="blend", hero_probability_observed_at=None)
+    )
+    wire = snapshot.content_state()["snapshot"]
+
+    assert (wire["homeScore"], wire["awayScore"]) == (0, 1)
+    assert "scoreObservedAt" in wire
+    assert "homeRenderedPercent" not in wire
+    assert "probabilityObservedAt" not in wire
 
 
 def test_partial_score_and_missing_forecast_discard_orphan_clocks():
@@ -155,7 +190,7 @@ def test_different_malformed_away_readings_do_not_borrow_hero_clock():
             current_odds={"home_probability": 0.565, "away_probability": 1.2},
         )
     )
-    assert snapshot.home_rendered_percent == 57
+    assert snapshot.home_rendered_percent is None
     assert snapshot.probability_observed_at is None
 
 

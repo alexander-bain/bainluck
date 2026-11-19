@@ -53,29 +53,17 @@
   "verdicts": {
     "data-quality-watchdog": {
       "run": {
-        "quote": "Watchdog re-observed **kalshi_winner_coverage** at 2026-11-06T12:47:47+00:00 — value `97.3`, threshold `99.0` (gte), severity P1 (fingerprint `3e16f3bfeca7`).",
-        "from": "https://github.com/alexander-bain/bainluck/issues/4057#issuecomment-6685169500",
-        "posted_at": "2026-11-06T12:47:48Z",
+        "quote": "## Data Quality Alert",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12833",
+        "posted_at": "2026-11-17T01:10:36Z",
         "kind": "reported"
       }
     },
     "matching-reconciliation": {
       "run": {
-        "quote": "Still RED: 1 adjudicated pairs regressed, 2 negative pairs attached to an event no outside provider corroborates (2 idless), and 22 attached to a provider-anchored event nobody has adjudicated them onto, of 709 pairs (0 sit on one of the 5 adjudicated-accepted fixtures that did not exist at capture — baseline stale, not a regression; 24 recovered, 0 markets no longer exist) (fingerprint `e6ec282d2e28`).",
-        "from": "https://github.com/alexander-bain/bainluck/issues/12144#issuecomment-6686664159",
-        "posted_at": "2026-11-06T14:03:23Z",
-        "kind": "reported"
-      },
-      "post2": {
-        "quote": "Still RED: 3 near-term event/source pair(s) have an open linked market with a stored price but no win-prob snapshot for that event and source — a priced source the curve writer has not drawn (fingerprint `c1da0eff8f8a`).",
-        "from": "https://github.com/alexander-bain/bainluck/issues/10523#issuecomment-6686664958",
-        "posted_at": "2026-11-06T14:03:25Z",
-        "kind": "reported"
-      },
-      "post3": {
-        "quote": "Still RED: 200 receipt(s) disagree with the database about where their market sits, and 134 were caught by the write-time guard as link_not_durable — either way the matcher is losing links a sibling market's failure rolled back (fingerprint `6ca84e786d1d`).",
-        "from": "https://github.com/alexander-bain/bainluck/issues/12145#issuecomment-6686665865",
-        "posted_at": "2026-11-06T14:03:27Z",
+        "quote": "Still RED: 1 near-term event/source pair(s) have an open linked market with a stored price but no win-prob snapshot for that event and source — a priced source the curve writer has not drawn (fingerprint `c1da0eff8f8a`).",
+        "from": "https://github.com/alexander-bain/bainluck/issues/10523#issuecomment-6949418976",
+        "posted_at": "2026-11-17T13:28:08Z",
         "kind": "reported"
       },
       "earlier": {
@@ -85,36 +73,30 @@
     },
     "anchor-schedule-sentinel-daily": {
       "run": {
-        "quote": "Still drifting as of 2026-11-06T06:40:49.429337+00:00 — `plan_only: examined=512/512 pages=6 drift=4 placeholders_applied=0 · agrees=433 authority_moves_us=4 teams_disagree=6 no_answer=69 refused_completed=0 refused_settled=0 refused_outranked=0`",
-        "from": "https://github.com/alexander-bain/bainluck/issues/2978#issuecomment-6678966061",
-        "posted_at": "2026-11-06T06:44:52Z",
+        "quote": "Still drifting as of 2026-11-17T06:41:01.626063+00:00 — `plan_only: examined=402/402 pages=5 drift=3 placeholders_applied=0 · agrees=386 authority_moves_us=3 teams_disagree=5 no_answer=8 refused_completed=0 refused_settled=0 refused_outranked=0`",
+        "from": "https://github.com/alexander-bain/bainluck/issues/2978#issuecomment-6940896254",
+        "posted_at": "2026-11-17T06:44:35Z",
         "kind": "reported"
       }
     },
     "flow-sentinel-daily": {
       "run": {
         "quote": "Flow Sentinel re-observed this failure: **1 failing, 5 checked** (fingerprint `10bf3ba1fe1b`). Still open.",
-        "from": "https://github.com/alexander-bain/bainluck/issues/12071#issuecomment-6679506737",
-        "posted_at": "2026-11-06T07:19:52Z",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12635#issuecomment-6941564131",
+        "posted_at": "2026-11-17T07:22:17Z",
         "kind": "reported"
       },
       "post2": {
-        "quote": "Flow Sentinel re-observed this failure: **9 failing, 2000 checked** (fingerprint `6a31e44ac345`). Still open.",
-        "from": "https://github.com/alexander-bain/bainluck/issues/12072#issuecomment-6679507192",
-        "posted_at": "2026-11-06T07:19:54Z",
+        "quote": "## Flow Sentinel finding",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12853",
+        "posted_at": "2026-11-17T07:22:19Z",
         "kind": "reported"
       },
       "post3": {
         "quote": "Flow Sentinel re-observed this failure: **1 failing, 2 checked** (fingerprint `bbbe68ed999f`). Still open.",
-        "from": "https://github.com/alexander-bain/bainluck/issues/1511#issuecomment-6679507609",
-        "posted_at": "2026-11-06T07:19:55Z",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12749#issuecomment-6941565271",
+        "posted_at": "2026-11-17T07:22:20Z",
         "kind": "reported"
-      },
-      "post4": {
-        "quote": "Flow Sentinel re-checked GREEN — `espn_id_linkage_drift` now passes (31 checked, 0 failing; fingerprint `32d4d6a9dd94`). Auto-closing; a future recurrence opens a fresh episode.",
-        "from": "https://github.com/alexander-bain/bainluck/issues/12073#issuecomment-6679508069",
-        "posted_at": "2026-11-06T07:19:57Z",
-        "kind": "closed"
       },
       "earlier": {
         "quote": "the Flow Sentinel's ordinary scheduled run on Nov 4 at 11:10 PM PT filed **#12071, #12072, #12073** and commented on **#1511**",
@@ -136,93 +118,39 @@
     "tournament-register-sentinel-daily": {
       "run": {
         "quote": "Sentinel re-observed this failure (fingerprint `b8db9f7579cb4896`). Still open.",
-        "from": "https://github.com/alexander-bain/bainluck/issues/4231#issuecomment-6680051792",
-        "posted_at": "2026-11-06T07:53:52Z",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12429#issuecomment-6942013906",
+        "posted_at": "2026-11-17T07:46:59Z",
         "kind": "reported"
       }
     },
     "horizon-sentinel-daily": {
       "run": {
-        "quote": "[Horizon] F1 Season Finale 2026 (Abu Dhabi GP) — T-30 candidate",
-        "from": "https://github.com/alexander-bain/bainluck/issues/12135",
-        "posted_at": "2026-11-06T07:54:07Z",
+        "quote": "Horizon Sentinel re-observed: **grammy-awards** still has no edition after 2027-02-07 (82 day(s) left) — fingerprint `ee014ceefc3a`.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12430#issuecomment-6942016608",
+        "posted_at": "2026-11-17T07:47:08Z",
         "kind": "reported"
       },
       "post2": {
-        "quote": "[Horizon] Calendar runs out for mlb-all-star-game",
-        "from": "https://github.com/alexander-bain/bainluck/issues/12136",
-        "posted_at": "2026-11-06T07:54:08Z",
-        "kind": "reported"
-      },
-      "post3": {
-        "quote": "[Horizon] Calendar runs out for the-open-championship",
-        "from": "https://github.com/alexander-bain/bainluck/issues/12137",
-        "posted_at": "2026-11-06T07:54:09Z",
-        "kind": "reported"
-      },
-      "post4": {
-        "quote": "[Horizon] Calendar runs out for nfl-kickoff-game",
-        "from": "https://github.com/alexander-bain/bainluck/issues/12138",
-        "posted_at": "2026-11-06T07:54:10Z",
-        "kind": "reported"
-      },
-      "post5": {
-        "quote": "[Horizon] Calendar runs out for us-open-tennis",
-        "from": "https://github.com/alexander-bain/bainluck/issues/12139",
-        "posted_at": "2026-11-06T07:54:11Z",
-        "kind": "reported"
-      },
-      "post6": {
-        "quote": "[Horizon] Calendar runs out for vuelta-a-espana",
-        "from": "https://github.com/alexander-bain/bainluck/issues/12140",
-        "posted_at": "2026-11-06T07:54:12Z",
-        "kind": "reported"
-      },
-      "post7": {
-        "quote": "[Horizon] Calendar runs out for emmy-awards",
-        "from": "https://github.com/alexander-bain/bainluck/issues/12141",
-        "posted_at": "2026-11-06T07:54:13Z",
-        "kind": "reported"
-      },
-      "post8": {
-        "quote": "[Horizon] Calendar runs out for abu-dhabi-grand-prix",
-        "from": "https://github.com/alexander-bain/bainluck/issues/12142",
-        "posted_at": "2026-11-06T07:54:14Z",
+        "quote": "Horizon Sentinel re-observed: **super-bowl** still has no edition after 2027-02-07 (82 day(s) left) — fingerprint `97fc510dbdce`.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12431#issuecomment-6942016930",
+        "posted_at": "2026-11-17T07:47:09Z",
         "kind": "reported"
       }
     },
     "board-sentinel-daily": {
       "run": {
-        "quote": "Board Sentinel re-observed 402 board-hygiene defect(s) (fingerprint `4571dcf6fd3e`). Still open.",
-        "from": "https://github.com/alexander-bain/bainluck/issues/1449#issuecomment-6680233836",
-        "posted_at": "2026-11-06T08:05:09Z",
+        "quote": "Board Sentinel re-observed 204 board-hygiene defect(s) (fingerprint `4571dcf6fd3e`). Still open.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/1449#issuecomment-6942244191",
+        "posted_at": "2026-11-17T07:59:39Z",
         "kind": "reported"
       }
     },
     "schedule-sentinel-daily": {
       "run": {
-        "quote": "Schedule Sentinel re-observed 1 real defect(s) on the NCAAF schedule over 2026-11-05..2026-11-07 (fingerprint `d183720e8e7b`). Still open.",
-        "from": "https://github.com/alexander-bain/bainluck/issues/10783#issuecomment-6680257276",
-        "posted_at": "2026-11-06T08:06:35Z",
+        "quote": "Schedule Sentinel re-observed 1 real defect(s) on the NCAAB schedule over 2026-11-16..2026-11-18 (fingerprint `4cffe73322e6`). Still open.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12083#issuecomment-6942263296",
+        "posted_at": "2026-11-17T08:00:40Z",
         "kind": "reported"
-      },
-      "post2": {
-        "quote": "Schedule Sentinel re-observed 1 real defect(s) on the EPL schedule over 2026-11-05..2026-11-07 (fingerprint `f0c0a0533ae5`). Still open.",
-        "from": "https://github.com/alexander-bain/bainluck/issues/10782#issuecomment-6680257018",
-        "posted_at": "2026-11-06T08:06:35Z",
-        "kind": "reported"
-      },
-      "post3": {
-        "quote": "Schedule Sentinel re-observed 36 real defect(s) on the NCAAB schedule over 2026-11-05..2026-11-07 (fingerprint `4cffe73322e6`). Still open.",
-        "from": "https://github.com/alexander-bain/bainluck/issues/12083#issuecomment-6680257544",
-        "posted_at": "2026-11-06T08:06:36Z",
-        "kind": "reported"
-      },
-      "post4": {
-        "quote": "Schedule Sentinel re-checked GREEN — the UCL schedule reconciles against its authority with 0 real defects over 2026-11-05..2026-11-07 (fingerprint `2fc686d59fc7`). Auto-closing; a future recurrence opens a fresh episode.",
-        "from": "https://github.com/alexander-bain/bainluck/issues/12082#issuecomment-6680257856",
-        "posted_at": "2026-11-06T08:06:37Z",
-        "kind": "closed"
       }
     }
   }

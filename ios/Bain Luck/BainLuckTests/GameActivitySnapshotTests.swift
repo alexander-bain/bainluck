@@ -250,4 +250,30 @@ final class GameActivitySnapshotTests: XCTestCase {
         XCTAssertNil(bad.pregameAwayPercent)
         XCTAssertNil(bad.pregameHomePercent)
     }
+
+    /// #12999 — a server APNs push carrying the full headline fields decodes
+    /// identically to the app's own foreground snapshot (schools via sport,
+    /// both sides' chances + tenths, colours, period, pregame, result).
+    func testFullServerPushDecodesEveryHeadlineField() throws {
+        let now = Date(timeIntervalSinceReferenceDate: 816_742_800)
+        let json = """
+        {"eventID":42,"homeTeam":"Florida Gators","awayTeam":"Houston Cougars",\
+        "lifecycle":"live","homeScore":54,"awayScore":58,"homeRenderedPercent":39,\
+        "awayRenderedPercent":61,"homeHeadlineTenths":386,"sport":"basketball_ncaab",\
+        "homeAbbreviation":"FLA","awayAbbreviation":"HOU","homeColorHex":"#0021A5",\
+        "awayColorHex":"#C8102E","awaySecondaryColorHex":"#960C22","periodLabel":"2nd Half",\
+        "scoreObservedAt":\(now.addingTimeInterval(-120).timeIntervalSinceReferenceDate),\
+        "probabilityObservedAt":\(now.timeIntervalSinceReferenceDate)}
+        """
+        let decoded = try JSONDecoder().decode(GameActivitySnapshot.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.sport, "basketball_ncaab")
+        XCTAssertEqual(decoded.homeRenderedPercent, 39)
+        XCTAssertEqual(decoded.awayRenderedPercent, 61)
+        XCTAssertEqual(decoded.headlineNowText(home: true), "38.6%")
+        XCTAssertEqual(decoded.headlineNowText(home: false), "61.4%")
+        XCTAssertEqual(decoded.periodLabel, "2nd Half")
+        let names = TeamShortName.shortPair(away: decoded.awayTeam, home: decoded.homeTeam, sportKey: decoded.sport)
+        XCTAssertEqual(names.away, "Houston")
+        XCTAssertEqual(names.home, "Florida")
+    }
 }

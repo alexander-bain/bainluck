@@ -458,7 +458,8 @@ async def _seed(session):
     # rather than guessed, against the 0.25 threshold the route pins with
     # `SET LOCAL pg_trgm.similarity_threshold`. The margin is real but thin: if
     # this team's NAME changes, re-measure instead of assuming the test still
-    # exercises the path.
+    # exercises the path. #12290 now handles `celtcs` directly; the generic
+    # fallback controls use the uncurated `celticcs` spelling instead.
     session.add(Team(sport_id=nba.id, name="Boston Celtics", abbreviation="BOS"))
 
     # LAT-P046 — the POOL specimen, transcribed from production 2026-08-13.
@@ -541,7 +542,7 @@ async def _seed(session):
     # The fallback resolves its correction against `teams`, so the Miners need a
     # team row for the `niners` path to be reachable at all — without it the
     # suppression test would pass vacuously. The fallback is proven ALIVE in this
-    # fixture by `celtcs` -> Boston Celtics above (similarity 0.294, measured).
+    # fixture by the uncurated `celticcs` -> Boston Celtics correction below.
     session.add(Team(sport_id=ncaaf.id, name="UTEP Miners", abbreviation="UTEP"))
 
     # #8250 — the reported pair, verbatim names. For `red socks`, plain
@@ -794,11 +795,19 @@ async def team_first_rows(seeded_db):
         cricket = (await session.execute(
             select(Sport).where(Sport.key == "cricket_cpl")
         )).scalar_one()
+        mlb = (await session.execute(
+            select(Sport).where(Sport.key == "baseball_mlb")
+        )).scalar_one()
+        nhl = (await session.execute(
+            select(Sport).where(Sport.key == "icehockey_nhl")
+        )).scalar_one()
         session.add_all([
             Team(sport_id=nfl.id, name="Kansas City Chiefs", abbreviation="KC"),
             Team(sport_id=nfl.id, name="New England Patriots", abbreviation="NE"),
             Team(sport_id=nfl.id, name="San Francisco 49ers", abbreviation="SF"),
             Team(sport_id=cricket.id, name="St Kitts and Nevis Patriots", abbreviation="SKN"),
+            Team(sport_id=mlb.id, name="New York Yankees", abbreviation="NYY"),
+            Team(sport_id=nhl.id, name="Toronto Maple Leafs", abbreviation="TOR"),
         ])
         await session.commit()
 
@@ -808,6 +817,9 @@ async def team_first_rows(seeded_db):
     ("chiefs", "Kansas City Chiefs"),
     ("patroits", "New England Patriots"),
     ("niners", "San Francisco 49ers"),
+    ("celtcs", "Boston Celtics"),
+    ("pinstripes", "New York Yankees"),
+    ("maple laefs", "Toronto Maple Leafs"),
 ])
 async def test_team_name_query_carries_its_owned_name_to_the_reader(
     team_first_rows, search, typeahead, surface, query, expected
@@ -821,6 +833,7 @@ async def test_team_name_query_carries_its_owned_name_to_the_reader(
     assert teams[0][name_key] == expected
     assert teams[0]["query_names_team"] is True
     assert all("_aliases" not in row for row in teams)
+    assert payload.get("did_you_mean") is None
     assert not any(row[name_key] == "St Kitts and Nevis Patriots" for row in teams)
     if query == "patroits" and surface == "search":
         pairings = _event_pairings(payload)
@@ -1490,14 +1503,15 @@ async def test_a_filtered_bucket_does_not_trigger_a_did_you_mean(search):
 async def test_a_genuinely_unmatched_query_still_gets_its_correction(search):
     """The guard must not disable did-you-mean wholesale.
 
-    `celtcs` matches no event by substring at all, so the fallback SHOULD run —
-    that is the case it was written for. Asserting only the suppression direction
-    would let a change that kills the feature entirely pass.
+    `celticcs` is not a curated spelling and matches no event by substring, so
+    the fallback SHOULD run. The observed `celtcs` now has a direct search alias.
+    Asserting only the suppression direction would let a change that kills
+    the fallback entirely pass.
     """
-    payload = await search("celtcs")
+    payload = await search("celticcs")
     assert payload.get("did_you_mean") == "Boston Celtics", (
         f"expected a correction to 'Boston Celtics', got "
-        f"{payload.get('did_you_mean')!r}. `%celtcs%` matches no event by "
+        f"{payload.get('did_you_mean')!r}. `%celticcs%` matches no event by "
         "substring, so the guard must let the fallback run — otherwise "
         "did-you-mean is dead for every query, not just the filtered ones."
     )
@@ -1512,7 +1526,7 @@ async def test_a_two_word_misspelling_gets_the_same_rescue_as_a_one_word_one(sea
     says no results"*.
 
     Seeded analogue, so this runs on the contract fixture rather than production:
-    `boston celtcs` is the two-word shape of the `celtcs` case directly above.
+    `boston celtcs` remains an uncurated two-word correction, unlike bare `celtcs`.
     Measured `word_similarity('boston celtcs', 'Boston Celtics')` = **0.786**,
     against **0.500** for the nearest decoy `Boston Bruins` — so this asserts the
     right club, not merely that something came back.
@@ -1556,13 +1570,13 @@ async def test_the_multi_term_correction_refuses_a_near_miss_that_clears_the_pre
 #: #8250 — the multi-term population both twins must answer identically. The
 #: first two are the reported class, the third is #8155's own seeded analogue,
 #: the fourth is a real club plus an ordinary word (the floor must refuse it),
-#: and `celtcs` pins that the single-term arm did not move.
+#: and uncurated `celticcs` pins that the single-term arm still works.
 _TWIN_CORRECTION_CASES = (
     ("red socks", "Boston Red Sox"),
     ("boston red socks", "Boston Red Sox"),
     ("boston celtcs", "Boston Celtics"),
     ("celtics roster", None),
-    ("celtcs", "Boston Celtics"),
+    ("celticcs", "Boston Celtics"),
 )
 
 
@@ -1868,7 +1882,7 @@ async def test_a_resolved_nickname_is_never_corrected_to_a_spelling_neighbour(se
     We KNOW what `niners` names — the map is curated, franchise-anchored and
     sport-keyed — so an honest empty rail beats a guess, and the team and market
     rails still answer. The fallback itself is proven ALIVE in this fixture by
-    the `celtcs` -> Boston Celtics correction (similarity 0.294, measured), so
+    the uncurated `celticcs` -> Boston Celtics correction, so
     this assertion is not passing vacuously.
     """
     pairings = _event_pairings(await search("niners"))

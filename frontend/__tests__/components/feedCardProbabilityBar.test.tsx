@@ -162,6 +162,18 @@ const bySide = (html: string) =>
 
 // ── 1. THE DEFECT, AS THE READER MET IT ──────────────────────────────────────
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the bar is drawn at all", () => {
   it("a card with no team colours paints two real colours, not a var()", () => {
     // The whole bug in one assertion. On master both of these read

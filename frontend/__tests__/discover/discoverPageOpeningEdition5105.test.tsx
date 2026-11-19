@@ -16,10 +16,22 @@ import { createRoot, type Root } from "react-dom/client";
 import { SWRConfig, useSWRConfig } from "swr";
 
 let mockOptionOn = true;
+let mockChallengeEnabled = false;
+jest.mock("@/lib/launchSurfaces", () => ({
+  get CHALLENGE_SURFACES_ENABLED() {
+    return mockChallengeEnabled;
+  },
+}));
 jest.mock("@/lib/discover/openingEditionOption", () => ({
   get DISCOVER_OPENING_EDITION_ENABLED() {
     return mockOptionOn;
   },
+}));
+// The predictions header link appears only when the challenge switch is on.
+// The minimal DOM has no Next router, so keep links as ordinary anchors.
+jest.mock("next/link", () => ({
+  __esModule: true,
+  default: (props: React.ComponentProps<"a">) => <a {...props} />,
 }));
 jest.mock("@/lib/api", () => ({
   ...jest.requireActual("@/lib/api"),
@@ -67,7 +79,6 @@ jest.mock("@/components/discover/utils", () => ({
   ...jest.requireActual("@/components/discover/utils"),
   feedItemHasRenderableContent: (item: { data: { hide?: boolean } }) => !item.data.hide,
   collectSuppressedEnvelopes: () => [],
-  feedItemCanBeGuessed: () => false,
 }));
 jest.mock("@/components/DiscoverCard", () => {
   const card = ({ groupedItem, positionIndex }: { groupedItem: { item: { data: { id: number; prob: number } } }; positionIndex: number }) => (
@@ -75,7 +86,7 @@ jest.mock("@/components/DiscoverCard", () => {
       {`c${groupedItem.item.data.id}:${groupedItem.item.data.prob}`}
     </div>
   );
-  return { __esModule: true, default: card, GuessCard: () => null, DailyChallengeCard: () => null, ResolutionCard: () => null, ResolutionGroup: () => null };
+  return { __esModule: true, default: card, GuessCard: jest.requireActual("@/components/discover/GuessCard").GuessCard, DailyChallengeCard: () => null, ResolutionCard: () => null, ResolutionGroup: () => null };
 });
 jest.mock("@/components/discover/DiscoverCollectionCard", () => ({
   __esModule: true,
@@ -172,7 +183,20 @@ doc.visibilityState = "visible";
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 
-type Card = { type: "event"; data: { id: number; sport: string; prob: number; hide?: boolean }; score: number };
+type Card = {
+  type: "event";
+  data: {
+    id: number;
+    sport: string;
+    prob: number;
+    hide?: boolean;
+    away_team?: string;
+    home_team?: string;
+    hero_probability_source?: "opening" | "blend";
+    current_odds?: { home_probability: number };
+  };
+  score: number;
+};
 const card = (id: number, prob = 0.5, extra: Partial<Card["data"]> = {}): Card => ({
   type: "event",
   data: { id, sport: "politics", prob, ...extra },
@@ -302,6 +326,7 @@ const storedSnapshot = () => JSON.parse(session.getItem(FEED_SNAPSHOT_KEY) ?? "n
 
 beforeEach(() => {
   mockOptionOn = true;
+  mockChallengeEnabled = false;
   calls.length = 0;
   observers.length = 0;
   local.clear();
@@ -315,6 +340,29 @@ afterEach(async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+it("#12824 keeps the game card when an unlocked guess slot has only an opening reading", async () => {
+  mockChallengeEnabled = true;
+  local.setItem("discover_games_unlocked", "1");
+  const deck = list(30);
+  deck[4] = card(4, 0.58, {
+    away_team: "Buffalo Bills",
+    home_team: "New England Patriots",
+    hero_probability_source: "opening",
+    current_odds: { home_probability: 0.58 },
+  });
+  deck[9] = card(9, 0.58, {
+    away_team: "Buffalo Bills",
+    home_team: "New England Patriots",
+    hero_probability_source: "blend",
+    current_odds: { home_probability: 0.58 },
+  });
+  const page = await mount();
+  await answer(calls[0], reply(deck, 0, { boundary: 3 }));
+  expect(cardsOf(page)).toEqual(ids(0, 20).filter((id) => id !== "c9"));
+  expect(walk(page).filter((n) => n["data-guess-card"] !== undefined)
+    .map((n) => Number(n["data-market-id"]))).toEqual([9]);
+});
 
 describe("#5105 option OFF (the rollback value): today's page exactly", () => {
   it("the local switch-on release candidate ships the option true", () => {

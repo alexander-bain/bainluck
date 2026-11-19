@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -29,12 +30,15 @@ from app.utils.tournament_register import SCHEMA_VERSION, load_register
 from app.utils.tournament_slate import (
     MATCH_STALE_AFTER_HOURS,
     MAX_PAIR_DEVIATION,
+    apply_event_blend_slate,
+    apply_event_blend_to_linked_rows,
     build_bracket,
     build_props,
     build_results,
     CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS,
     build_slate,
     espn_competition_id,
+    event_blend_view,
     normalize_pair,
 )
 
@@ -2618,6 +2622,179 @@ def test_a_match_in_progress_outlives_the_elapsed_time_window():
     row = slate["matches"][0]
     assert row["live_state"] == "in_progress"
     assert row["status_detail"] == "5th Set"
+
+
+@pytest.mark.parametrize(
+    ("raw", "displayed", "scaled"),
+    [
+        ((0.55, 0.50), (0.52381, 0.47619), True),
+        ((0.72, 0.28), (0.72, 0.28), False),
+    ],
+)
+def test_live_registered_slate_mark_uses_each_selected_quote(raw, displayed, scaled):
+    matchup = _drawn_matchup()
+    other_source = _drawn_matchup()["sources"][0]
+    other_source.update(source="kalshi", market_id=59481743, outcome_id=900003)
+    other_source["sides"]["clara-burel"]["outcome_id"] = 900003
+    other_source["sides"]["yexin-ma"]["outcome_id"] = 900004
+    matchup["sources"].append(other_source)
+    prices = _prices(*raw)
+    prices.update({
+        900003: {"probability": 0.6},
+        900004: {"probability": 0.4},
+    })
+    row, = build_slate(
+        _register(matchups=[matchup]),
+        prices=prices,
+        now=NOW,
+        order_of_play=_listed(state="in_progress", start_at=NOW.isoformat()),
+    )["matches"]
+
+    assert row["price_basis"] == "venue"
+    assert row["source_count"] == 1
+    assert row["probability_is_live"] is True
+    for side, quote, chance, opening in zip(row["sides"], raw, displayed, (0.65, 0.35)):
+        assert side["probability"] == chance
+        assert side["opening_probability"] == opening
+        assert side["observed_at"] == prices[900001]["observed_at"]
+        mark = side["source_mark"]
+        assert mark["state"] == "single"
+        assert mark["sources"] == [{
+            "key": "polymarket",
+            "name": "Polymarket",
+            "probability": quote,
+            "observed_at": None,
+            "reason": "observation_unknown",
+        }]
+        if scaled:
+            assert mark["method"] == "Bain Luck field · scaled with the other outcomes to total 100%"
+        else:
+            assert "method" not in mark
+
+
+@pytest.mark.parametrize(
+    ("state", "raw", "coherent"),
+    [
+        ("upcoming", (0.72, 0.28), True),
+        ("in_progress", (0.90, 0.60), False),
+    ],
+)
+def test_slate_does_not_mark_an_upcoming_or_incoherent_venue_pair(state, raw, coherent):
+    row, = build_slate(
+        _register(matchups=[_drawn_matchup()]),
+        prices=_prices(*raw),
+        now=NOW,
+        order_of_play=_listed(state=state),
+    )["matches"]
+
+    assert row["coherent"] is coherent
+    assert all("source_mark" not in side for side in row["sides"])
+
+
+def test_live_slate_refuses_malformed_source_evidence_without_changing_the_pair():
+    matchup = _drawn_matchup()
+    matchup["sources"][0]["source"] = {"unexpected": "object"}
+    row, = build_slate(
+        _register(matchups=[matchup]),
+        prices=_prices(),
+        now=NOW,
+        order_of_play=_listed(state="in_progress", start_at=NOW.isoformat()),
+    )["matches"]
+
+    assert [side["probability"] for side in row["sides"]] == [0.72, 0.28]
+    for side in row["sides"]:
+        assert side["source_mark"] == {
+            "state": "none", "sources": [], "reason": "source_evidence_incomplete",
+        }
+
+
+def test_slate_keeps_venue_marks_until_the_linked_event_replaces_the_pair():
+    slate_args = {
+        "prices": _prices(),
+        "now": NOW,
+        "order_of_play": _listed(state="in_progress", start_at=NOW.isoformat()),
+    }
+    register = _register(matchups=[_drawn_matchup(event_id=42)])
+    event_blend = {
+        "home_name": "Yexin Ma",
+        "away_name": "Clara Burel",
+        "home_probability": 0.44,
+        "away_probability": 0.56,
+    }
+    slate = build_slate(register, **slate_args)
+    row, = slate["matches"]
+    marks = [side["source_mark"] for side in row["sides"]]
+
+    assert apply_event_blend_to_linked_rows(
+        slate, blends={42: {**event_blend, "home_name": "Another Player"}}
+    ) == 0
+    assert row["blend_refusal"] == "BLEND_ORIENTATION_UNCLEAR"
+    assert [side["source_mark"] for side in row["sides"]] == marks
+    assert apply_event_blend_to_linked_rows(slate, blends={42: event_blend}) == 1
+
+    inline_row, = build_slate(register, blends={42: event_blend}, **slate_args)["matches"]
+    for blended_row in (row, inline_row):
+        assert blended_row["price_basis"] == "blend"
+        assert blended_row["blend_refusal"] == "BLEND_HAS_NO_OPEN"
+        assert [side["probability"] for side in blended_row["sides"]] == [0.56, 0.44]
+        for side in blended_row["sides"]:
+            assert side["source_mark"] == {
+                "state": "none", "sources": [], "reason": "source_evidence_incomplete",
+            }
+
+
+@pytest.mark.parametrize("has_trace", [False, True])
+def test_slate_blank_row_fallback_describes_the_input_that_priced_it(has_trace):
+    slate = build_slate(
+        _register(matchups=[_drawn_matchup(event_id=42, sources=[])]),
+        prices={},
+        now=NOW,
+        order_of_play=_listed(state="in_progress", start_at=NOW.isoformat()),
+    )
+    row, = slate["matches"]
+    assert row["priced"] is False
+    for side in row["sides"]:
+        side["source_mark"] = {"state": "none", "sources": [], "reason": "no_probability"}
+
+    event = SimpleNamespace(
+        home_team_name="Yexin Ma",
+        away_team_name="Clara Burel",
+        status="scheduled",
+        win_probability_sources={
+            "betting": {"value": 0.44, "updated_at": NOW.isoformat()},
+            "kalshi": {"value": 0.9, "updated_at": NOW.isoformat()},
+            "betting_book_count": 5,
+        },
+    )
+    event_row = event_blend_view(event) if has_trace else {
+        "home_team_name": event.home_team_name,
+        "away_team_name": event.away_team_name,
+        "blend_home_probability": 0.44,
+        "blend_sources": ["betting"],
+    }
+    assert apply_event_blend_slate(
+        slate,
+        rows_by_event={42: event_row},
+        now=NOW,
+    ) == 1
+    assert [side["probability"] for side in row["sides"]] == [0.56, 0.44]
+    for side in row["sides"]:
+        if has_trace:
+            assert side["source_mark"] == {
+                "state": "single",
+                "sources": [{
+                    "key": "betting",
+                    "name": "Sportsbooks",
+                    "probability": side["probability"],
+                    "observed_at": None,
+                    "reason": "observation_unknown",
+                    "count": 5,
+                }],
+            }
+        else:
+            assert side["source_mark"] == {
+                "state": "none", "sources": [], "reason": "source_evidence_incomplete",
+            }
 
 
 def test_a_decided_match_leaves_because_espn_says_the_word_not_because_it_is_absent():

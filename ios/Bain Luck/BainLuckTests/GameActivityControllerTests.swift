@@ -149,11 +149,25 @@ final class GameActivityControllerTests: XCTestCase {
         let service = FakeGameActivityService()
         let controller = GameActivityController(service: service, isForeground: { true }, now: { self.clock })
         controller.start(snapshot: try snapshot(clock: clock.addingTimeInterval(-30)))
-        XCTAssertEqual(service.updates.last?.2, clock.addingTimeInterval(90))
+        XCTAssertEqual(service.updates.last?.2, clock.addingTimeInterval(330), "Pregame: the chance's clock + 360 s")
         await controller.update(snapshot: try snapshot(clock: clock, scores: true))
         XCTAssertEqual(service.updates.last?.2, clock, "An unknown score clock cannot be dated by a probability")
         await controller.markStale(eventID: 1)
         XCTAssertEqual(service.updates.last?.2, clock)
+    }
+
+    /// #10542 (Magic at Celtics, Nov 16): a 20-second-old score turned stale behind an
+    /// older chance. The score's clock decides; the chance's age never makes it stale.
+    @MainActor func testLiveScoreClockDecidesStaleDateNotAnOlderChance() async throws {
+        let service = FakeGameActivityService()
+        let controller = GameActivityController(service: service, isForeground: { true }, now: { self.clock })
+        controller.start(snapshot: try snapshot(clock: clock.addingTimeInterval(-300),
+                                                scoreClock: clock.addingTimeInterval(-20), scores: true))
+        XCTAssertEqual(service.updates.last?.2, clock.addingTimeInterval(340))
+        XCTAssertEqual(GameActivityController.observationMaxAge, 360, "Same number as the server (#12860)")
+        await controller.update(snapshot: try snapshot(clock: clock, scoreClock: clock.addingTimeInterval(60),
+                                                       scores: true))
+        XCTAssertEqual(service.updates.last?.2, clock, "A score clock from the future is stale now")
     }
 
     @MainActor func testOlderObservationIsRejectedAndAuthoritativeFinalEndsActivity() async throws {
@@ -318,6 +332,25 @@ final class GameActivityControllerTests: XCTestCase {
             XCTAssertEqual(controller.activeEventIDs, [2])
             XCTAssertNil(controller.status(for: 2), "#12827: a started activity prints no sentence")
         }
+    }
+
+    /// #12999 — leaving the app must not immediately force a push-registered
+    /// Live Activity stale; its real observation staleDate stays in force.
+    @MainActor func testLeavingAppDoesNotMarkPushBackedActivityStaleImmediately() async throws {
+        let service = FakeGameActivityService()
+        let controller = GameActivityController(
+            service: service,
+            isForeground: { true },
+            hasPushUpdates: { true },
+            now: { self.clock }
+        )
+        controller.start(snapshot: try snapshot(clock: clock, scoreClock: clock, scores: true))
+        let countBefore = service.updates.count
+        let staleBefore = service.updates.last?.2
+        controller.endViewing(eventID: 1)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(service.updates.count, countBefore, "push-backed activity must not write staleDate = now() on departure")
+        XCTAssertEqual(service.updates.last?.2, staleBefore)
     }
 
 }

@@ -9,6 +9,7 @@ import SwiftUI
 // MARK: - Sort
 
 private enum FuturesSortField: String, CaseIterable {
+    case value = "Value"
     case probability = "Probability"
     case change = "24h Change"
     case name = "Name"
@@ -114,9 +115,11 @@ struct FuturesDetailView: View {
     @StateObject private var viewModel: FuturesDetailViewModel
     @State private var sortField: FuturesSortField = .probability
     @State private var sortAscending = false
+    @State private var userSelectedSort = false
     @State private var showAllOutcomes = false
     #if DEBUG
     private var preloadedTimelineForTest: ProbabilityTimelineResponse? = nil
+    private var preloadedPairedImagesForTest: [String: PairedPlatformImage] = [:]
     #endif
 
     private var chartPreloadedTimeline: ProbabilityTimelineResponse? {
@@ -124,6 +127,14 @@ struct FuturesDetailView: View {
         return preloadedTimelineForTest
         #else
         return nil
+        #endif
+    }
+
+    private var pairedPreloadedImages: [String: PairedPlatformImage] {
+        #if DEBUG
+        return preloadedPairedImagesForTest
+        #else
+        return [:]
         #endif
     }
 
@@ -136,11 +147,13 @@ struct FuturesDetailView: View {
     init(
         marketId: Int,
         viewModelForTest: FuturesDetailViewModel,
-        preloadedTimelineForTest: ProbabilityTimelineResponse? = nil
+        preloadedTimelineForTest: ProbabilityTimelineResponse? = nil,
+        preloadedPairedImagesForTest: [String: PairedPlatformImage] = [:]
     ) {
         self.marketId = marketId
         _viewModel = StateObject(wrappedValue: viewModelForTest)
         self.preloadedTimelineForTest = preloadedTimelineForTest
+        self.preloadedPairedImagesForTest = preloadedPairedImagesForTest
     }
     #endif
 
@@ -202,6 +215,8 @@ struct FuturesDetailView: View {
                                 golfTournamentEnd: golfTournamentEnd(market),
                                 chartRefreshToken: viewModel.chartRefreshToken,
                                 representation: viewModel.representation,
+                                pairedMetricSet: viewModel.pairedMetricSet,
+                                preloadedPairedImages: pairedPreloadedImages,
                                 preloadedTimeline: chartPreloadedTimeline
                             )
                             .padding(.bottom, Self.bottomClearance(horizontalSizeClass: horizontalSizeClass))
@@ -214,6 +229,16 @@ struct FuturesDetailView: View {
                                     .contextualTipHero10876(type: "future", id: marketId, scrollSpace: Self.scrollSpace)
 
                                 VStack(spacing: 20) {
+                                    if let pairedSet = viewModel.pairedMetricSet, !pairedSet.entries.isEmpty {
+                                        DiscoverPairedMetricCardView(
+                                            set: pairedSet,
+                                            form: .pairedBarsTop5Expandable,
+                                            initialExpanded: true,
+                                            currentMarketId: marketId,
+                                            allowsRouteLinks: true,
+                                            preloadedImages: pairedPreloadedImages
+                                        )
+                                    }
                                     // Hook description (journalist-style blurb)
                                     if let hook = market.hookDescription, !hook.isEmpty {
                                         Text(hook)
@@ -701,12 +726,30 @@ struct FuturesDetailView: View {
 
     private func outcomesSection(_ market: FuturesMarketDetail) -> some View {
         let color = categoryColor(market)
-        let sorted = sortedOutcomes(market.outcomes)
+        let isNumerical = NumericalMarketScaleOrder228.isNumericalScale(
+            labels: market.outcomes.map(\.name),
+            explicitSortKeys: market.outcomes.map(\.sortKey),
+            marketType: market.marketType,
+            totalOutcomeCount: market.outcomes.count
+        )
+        let activeSortField: FuturesSortField = (!userSelectedSort && isNumerical) ? .value : sortField
+        let activeAscending: Bool = (!userSelectedSort && isNumerical) ? true : sortAscending
+        let sorted = sortedOutcomes(
+            market.outcomes,
+            marketType: market.marketType,
+            field: activeSortField,
+            ascending: activeAscending
+        )
         // Decided over the SERVED field, not `sorted` — re-sorting the table must
         // move rows without repricing them (#8097).
         let percents = futuresDetailRenderedPercents(market.outcomes)
         let displayed = showAllOutcomes ? sorted : Array(sorted.prefix(25))
         let hasMore = sorted.count > 25
+        let availableSortFields: [FuturesSortField] = isNumerical
+            ? [.value, .probability, .change, .name]
+            : [.probability, .change, .name]
+        let showsRank = !(isNumerical && activeSortField == .value)
+        let modalLeaderId = isNumerical ? futuresDetailHeroOutcome(market)?.id : sorted.first?.id
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
@@ -731,8 +774,8 @@ struct FuturesDetailView: View {
             // Sort controls
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(FuturesSortField.allCases, id: \.self) { field in
-                        sortChip(field)
+                    ForEach(availableSortFields, id: \.self) { field in
+                        sortChip(field, activeField: activeSortField, activeAscending: activeAscending)
                     }
                 }
             }
@@ -741,8 +784,9 @@ struct FuturesDetailView: View {
                 outcomeRow(
                     outcome,
                     rank: index + 1,
+                    showsRank: showsRank,
                     color: color,
-                    leaderId: sorted.first?.id,
+                    leaderId: modalLeaderId,
                     percent: percents[outcome.id],
                     marketStatus: market.status,
                     marketSource: market.source
@@ -777,21 +821,23 @@ struct FuturesDetailView: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.border, lineWidth: 0.5))
     }
 
-    private func sortChip(_ field: FuturesSortField) -> some View {
-        let isActive = sortField == field
+    private func sortChip(_ field: FuturesSortField, activeField: FuturesSortField, activeAscending: Bool) -> some View {
+        let isActive = activeField == field
         return Button {
-            if sortField == field {
-                sortAscending.toggle()
+            userSelectedSort = true
+            if activeField == field {
+                sortField = field
+                sortAscending = !activeAscending
             } else {
                 sortField = field
-                sortAscending = field == .name
+                sortAscending = (field == .name || field == .value)
             }
         } label: {
             HStack(spacing: 3) {
                 Text(field.rawValue)
                     .font(.system(size: 11, weight: .medium))
                 if isActive {
-                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                    Image(systemName: activeAscending ? "chevron.up" : "chevron.down")
                         .font(.system(size: 8, weight: .bold))
                 }
             }
@@ -803,11 +849,31 @@ struct FuturesDetailView: View {
         }
     }
 
-    private func sortedOutcomes(_ outcomes: [FuturesOutcome]) -> [FuturesOutcome] {
-        outcomes.sorted { a, b in
+    private func sortedOutcomes(
+        _ outcomes: [FuturesOutcome],
+        marketType: String?,
+        field: FuturesSortField,
+        ascending: Bool
+    ) -> [FuturesOutcome] {
+        if field == .value,
+           let keys = NumericalMarketScaleOrder228.scaleKeys(
+               for: outcomes.map(\.name),
+               explicitSortKeys: outcomes.map(\.sortKey),
+               marketType: marketType,
+               totalOutcomeCount: outcomes.count
+           ) {
+            let ordered = outcomes.indices.sorted { lhs, rhs in
+                if keys[lhs] != keys[rhs] {
+                    return ascending ? (keys[lhs] < keys[rhs]) : (keys[lhs] > keys[rhs])
+                }
+                return lhs < rhs
+            }
+            return ordered.map { outcomes[$0] }
+        }
+        return outcomes.sorted { a, b in
             let comparison: ComparisonResult
-            switch sortField {
-            case .probability:
+            switch field {
+            case .value, .probability:
                 comparison = compareOptionalDoubles(a.probability, b.probability)
             case .change:
                 comparison = compareOptionalDoubles(a.probabilityChange24h, b.probabilityChange24h)
@@ -816,7 +882,7 @@ struct FuturesDetailView: View {
             }
 
             if comparison != .orderedSame {
-                return sortAscending ? comparison == .orderedAscending : comparison == .orderedDescending
+                return ascending ? comparison == .orderedAscending : comparison == .orderedDescending
             }
 
             let nameComparison = a.name.localizedCompare(b.name)
@@ -849,6 +915,7 @@ struct FuturesDetailView: View {
     private func outcomeRow(
         _ outcome: FuturesOutcome,
         rank: Int,
+        showsRank: Bool = true,
         color: Color,
         leaderId: Int?,
         percent: Int?,
@@ -862,24 +929,26 @@ struct FuturesDetailView: View {
 
         return VStack(spacing: 6) {
             HStack(alignment: .top) {
-                // Rank number
-                Text("#\(rank)")
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(isLeader ? DS.amber : DS.textMuted)
-                    .frame(width: 30, alignment: .leading)
+                if showsRank {
+                    // Rank number
+                    Text("#\(rank)")
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(isLeader ? DS.amber : DS.textMuted)
+                        .frame(width: 30, alignment: .leading)
 
-                // Rank change indicator
-                if let rankChange = outcome.rankChange24h, rankChange != 0 {
-                    HStack(spacing: 1) {
-                        Image(systemName: rankChange < 0 ? "arrow.up" : "arrow.down")
-                            .font(.system(size: 7))
-                        Text("\(abs(rankChange))")
-                            .font(.system(size: 9, weight: .medium))
+                    // Rank change indicator
+                    if let rankChange = outcome.rankChange24h, rankChange != 0 {
+                        HStack(spacing: 1) {
+                            Image(systemName: rankChange < 0 ? "arrow.up" : "arrow.down")
+                                .font(.system(size: 7))
+                            Text("\(abs(rankChange))")
+                                .font(.system(size: 9, weight: .medium))
+                        }
+                        .foregroundStyle(rankChange < 0 ? DS.emerald : DS.danger)
+                        .frame(width: 24, alignment: .leading)
+                    } else {
+                        Spacer().frame(width: 24)
                     }
-                    .foregroundStyle(rankChange < 0 ? DS.emerald : DS.danger)
-                    .frame(width: 24, alignment: .leading)
-                } else {
-                    Spacer().frame(width: 24)
                 }
 
                 VStack(alignment: .leading, spacing: 3) {

@@ -140,7 +140,9 @@ final class DailyChallengeViewModel: ObservableObject {
             // `suspended` is deliberately NOT refused: it is non-terminal, no
             // result was ever reported, and the answer is not fixed.
             guard !EventState.isFinished(eventData.status) else { return nil }
-            probability = eventData.currentOdds?.homeProbability
+            probability = eventData.heroProbabilitySource == OpeningLineHero.openingSource
+                ? nil
+                : eventData.currentOdds?.homeProbability
             // #3869 — AWAY-HOME, the order every other surface already uses. This
             // screen was the only place in the app that read home-first, so the
             // same fixture was "Milwaukee Brewers vs Chicago Cubs" on the phone

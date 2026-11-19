@@ -17,8 +17,11 @@ All timestamps are explicit and the clock is injected; nothing is seeded off
 """
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
-from app.utils.related_futures import dedup_by_merge_group
+import pytest
+
+from app.utils.related_futures import dedup_by_merge_group, related_futures_quote_mark
 
 NOW = datetime(2026, 8, 8, 20, 0, 0, tzinfo=timezone.utc)
 
@@ -138,3 +141,24 @@ class TestTimestampRobustness:
         fresh = entry("kalshi", 0.90, books=1, last_updated=naive)
         stale = entry("odds_api", 0.63, books=99, age_hours=24 * 30)
         assert only([fresh, stale])["probability"] == 0.90
+
+
+@pytest.mark.parametrize(
+    ("status", "grade", "winner", "state"),
+    [
+        ("open", None, False, "single"),
+        ("open", "ungradeable_result", False, "single"),
+        ("open", "api_settlement", True, "none"),
+        ("closed", None, False, "none"),
+    ],
+)
+def test_direct_mark_only_claims_current_quote_evidence(status, grade, winner, state):
+    market = SimpleNamespace(status=status, source="kalshi")
+    outcome = SimpleNamespace(resolution_source=grade, is_winner=winner)
+    mark = related_futures_quote_mark(market, outcome, 0.25)
+    assert mark["state"] == state
+    if state == "single":
+        assert mark["sources"][0]["probability"] == 0.25
+        assert mark["sources"][0]["observed_at"] is None
+    else:
+        assert mark["reason"] == "result_unknown"

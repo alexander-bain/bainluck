@@ -191,6 +191,19 @@ final class NFLLiveHeadline199Tests: XCTestCase {
         """)
     }
 
+    private func storedOpeningLiveFixture() throws -> EventDetail {
+        var event = try patriotsLionsLiveFixture()
+        event.heroProbabilitySource = OpeningLineHero.openingSource
+        event.heroProbability = event.openingOdds?.homeProbability
+        event.heroProbabilityAway = event.openingOdds?.awayProbability
+        event.heroProbabilityObservedAt = nil
+        event.currentOdds?.homeProbability = event.heroProbability
+        event.currentOdds?.awayProbability = event.heroProbabilityAway
+        event.currentOdds?.homeRenderedPercent = 54
+        event.currentOdds?.awayRenderedPercent = 46
+        return event
+    }
+
     private func makeHistory(event: EventDetail) throws -> EventHistoryResponse {
         try decodeHistory("""
         {
@@ -280,6 +293,50 @@ final class NFLLiveHeadline199Tests: XCTestCase {
             )
         )
         XCTAssertEqual(awayFavModel.livePregameSummary?.fullText, "Pregame  Patriots 58% · projected 27–24")
+    }
+
+    func testLiveAtlasHeadlineWithholdsTaggedOpeningAndKeepsAnObservedPair() async throws {
+        let opening = try storedOpeningLiveFixture()
+        let history = try makeHistory(event: opening)
+        let vm = EventDetailViewModel(
+            eventId: opening.id,
+            client: StubEventDetailProvider(detail: opening, history: history)
+        )
+        await vm.load()
+        defer { vm.stopRefresh() }
+
+        func resolve(_ event: EventDetail) throws -> EventSportHeadlines12472.Model {
+            let shown = vm.headline(event)
+            return try XCTUnwrap(EventSportHeadlines12472.resolve(
+                event: shown, awayFullName: shown.awayTeam, homeFullName: shown.homeTeam,
+                liveStatusText: "Q3 · 8:14", hasScore: true, numberStreams: false, now: fixedNow
+            ))
+        }
+
+        let committed = try XCTUnwrap(vm.event)
+        XCTAssertEqual(committed.currentOdds?.homeProbability, 0.54)
+        XCTAssertEqual(vm.history, history)
+        let model = try resolve(committed)
+        XCTAssertEqual(model.kind, .nflDuringGame)
+        XCTAssertEqual(model.away.liveScore, 17)
+        XCTAssertEqual(model.home.liveScore, 21)
+        XCTAssertEqual(model.away.winChanceText, "")
+        XCTAssertEqual(model.home.winChanceText, "")
+        XCTAssertNil(model.bottomBar)
+        XCTAssertNil(model.sourceMark)
+        XCTAssertEqual(model.livePregameSummary?.fullText, "Pregame  Lions 58% · projected 27–24")
+        XCTAssertNil(LiveEdgeReading.current(in: vm.headline(committed)))
+
+        let observed = try patriotsLionsLiveFixture()
+        let current = try resolve(observed)
+        XCTAssertEqual(current.away.winChanceText, "33.8%")
+        XCTAssertEqual(current.home.winChanceText, "66.2%")
+        XCTAssertEqual(vm.headline(observed).heroProbabilityObservedAt, "2026-11-15T19:14:00Z")
+
+        var settled = observed
+        settled.status = "completed"
+        settled.heroProbabilitySource = "settled"
+        XCTAssertEqual(try resolve(settled).kind, .nflAfterGame)
     }
 
     func testLivePregameSummaryMissingHalvesAndNeverPassesOpeningAsPregame() throws {
@@ -545,6 +602,28 @@ final class NFLLiveHeadline199Tests: XCTestCase {
                 fullPage,
                 size: CGSize(width: 390, height: 852),
                 to: dirURL.appendingPathComponent("199-nfl-live-patriots-lions-page-390x852.png")
+            )
+
+            let opening = try storedOpeningLiveFixture()
+            let openingVM = EventDetailViewModel(
+                eventId: opening.id,
+                client: StubEventDetailProvider(detail: opening, history: hist)
+            )
+            await openingVM.load()
+            openingVM.stopRefresh()
+            let openingPage = NavigationStack {
+                EventDetailView(eventId: opening.id)
+                    .withLoadedEventForTest12278(opening, viewModel: openingVM)
+            }
+            .environmentObject(PinManager())
+            .environmentObject(NavigationCoordinator())
+            .frame(width: 390, height: 852)
+            .background(Color(uiColor: .systemGroupedBackground))
+
+            try await writeHostedPNG(
+                openingPage,
+                size: CGSize(width: 390, height: 852),
+                to: dirURL.appendingPathComponent("12824-nfl-live-opening-only-page-390x852.png")
             )
 
             let statesSheet = VStack(alignment: .leading, spacing: 14) {

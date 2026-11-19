@@ -572,6 +572,10 @@ struct EventAtlasChartOverlay11666: View {
     var servedSettledResult: String? = nil
     var gameStart: Date? = nil
     var settledResult: EventAtlasSettledResult11666? = nil
+    /// When `LiveChartEdgeMarker` owns the live endpoint (`liveSplit.tail.to`),
+    /// suppress drawing a static 6pt dot at `tail.to` so no premature dot snaps
+    /// into empty space ahead of the gliding line (#12693).
+    var liveTailVertex: LiveEdgeVertex? = nil
 
     var body: some View {
         let baseRows = EventAtlasChartMarks11666.observationRows(
@@ -614,7 +618,7 @@ struct EventAtlasChartOverlay11666: View {
                             )
                             .frame(width: 8, height: 8)
                             .position(x: screenX, y: screenY)
-                    } else if row.isVisibleSolid {
+                    } else if row.isVisibleSolid, !isOwnedByLiveEdge(row) {
                         Circle()
                             .fill(primaryColor)
                             .frame(width: 6, height: 6)
@@ -658,6 +662,12 @@ struct EventAtlasChartOverlay11666: View {
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+
+    private func isOwnedByLiveEdge(_ row: EventAtlasObservationRow11666) -> Bool {
+        guard let liveTailVertex else { return false }
+        return abs(row.date.timeIntervalSince(liveTailVertex.date)) < 1e-6
+            && abs(row.probability - liveTailVertex.probability) < 1e-9
     }
 }
 

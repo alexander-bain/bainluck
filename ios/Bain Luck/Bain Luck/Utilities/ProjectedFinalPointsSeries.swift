@@ -84,6 +84,10 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
     ]
 
     static let maxCaptureGap: TimeInterval = 3600
+    /// #12889 — before kickoff, full-game spreads and totals are polled hourly
+    /// (rulings 138-A / 152-A) and land ~55–65 minutes apart, so pregame lines
+    /// hold across up to two hours while live/finished games keep `maxCaptureGap`.
+    static let pregameMaxCaptureGap: TimeInterval = 2 * 3600
     static let cutoffRestampSlack: TimeInterval = 120
     let sourceKey: String
     let sourceName: String
@@ -102,9 +106,10 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
     var kickoffProjection: Point? = nil
     /// #12578 — the score line opens at the floor (``Input/openingScore``).
     var scoreOpensAtFloor = false
+    var yMin: Double = 0
     let yMax: Double
     let tickStep: Double
-    var yTicks: [Double] { Array(stride(from: 0, through: yMax, by: tickStep)) }
+    var yTicks: [Double] { Array(stride(from: yMin, through: yMax, by: tickStep)) }
 
     private static func isPoints(_ value: Double) -> Bool { value.isFinite && value >= 0 }
     private static func validTime(_ date: Date) -> Bool { date.timeIntervalSince1970.isFinite }
@@ -179,8 +184,15 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
             $0.element.at <= end
         }
         // Explicit final filter avoids confusing the capture and completion clocks.
+        // #12889 / 138-A / 152-A — pregame moneyline-only (`h2h`) polls do not
+        // request spreads or totals, so a nil/nil row before kickoff is an unpolled
+        // market on that tick rather than an incomplete pair.
         let ordered = rows.filter { row in
-            input.finalAt.map { row.element.at < $0 } ?? true
+            guard input.finalAt.map({ row.element.at < $0 }) ?? true else { return false }
+            if phase == .before && row.element.home == nil && row.element.away == nil {
+                return false
+            }
+            return true
         }.sorted { lhs, rhs in
             lhs.element.at == rhs.element.at ? lhs.offset < rhs.offset : lhs.element.at < rhs.element.at
         }.map(\.element)
@@ -192,6 +204,7 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
             }
             return nil
         }
+        let captureGap = phase == .before ? pregameMaxCaptureGap : maxCaptureGap
         var points: [Point] = []
         var withheld: [Withheld] = []
         for (index, row) in ordered.enumerated() {
@@ -201,7 +214,7 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
             }
             guard let home = row.home, let away = row.away else { continue }
             let next = index + 1 < ordered.count ? ordered[index + 1] : nil
-            let continues = next.map { reason($0) == nil && $0.at.timeIntervalSince(row.at) <= maxCaptureGap } ?? false
+            let continues = next.map { reason($0) == nil && $0.at.timeIntervalSince(row.at) <= captureGap } ?? false
             points.append(Point(at: row.at, home: home, away: away, holdEnd: continues ? next!.at : row.at))
         }
         let segments: [[Point]] = points.isEmpty ? [] : [points]
@@ -213,15 +226,38 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
             kickoffPoint = Point(at: floor, home: held.home, away: held.away, holdEnd: held.holdEnd)
         }
         guard let latest = segments.last?.last else { return nil }
-        let unavailable = ordered.last.map { reason($0) != nil } == true || end.timeIntervalSince(latest.at) > maxCaptureGap
-        let forecastHigh = segments.flatMap { $0 }.map { max($0.home, $0.away) }.max() ?? 0
+        let unavailable = ordered.last.map { reason($0) != nil } == true || end.timeIntervalSince(latest.at) > captureGap
+        let allPoints = segments.flatMap { $0 }
+        let forecastLow = allPoints.map { min($0.home, $0.away) }.min()
+        let forecastHigh = allPoints.map { max($0.home, $0.away) }.max() ?? 0
         let actualHigh = actuals.map { max($0.home, $0.away) }.max() ?? 0
-        let step = league.tickStep
-        let yMax = max(step, ceil((max(forecastHigh, actualHigh) + step / 4) / step) * step)
+        let yMin: Double
+        let yMax: Double
+        let step: Double
+        if phase == .before, let low = forecastLow, low.isFinite {
+            // #12889 — before kickoff there is no score line climbing from 0, so fit
+            // the axis to the projections with breathing room (e.g. 105..120 for
+            // 111..115.5) while keeping 0..yMax during and after the game.
+            let rawSpan = max(0, forecastHigh - low)
+            let pStep: Double = rawSpan > 15 ? 10 : 5
+            let pad = max(pStep * 0.6, rawSpan * 0.25)
+            let computedMin = max(0, ((low - pad) / pStep).rounded(.down) * pStep)
+            var computedMax = ((forecastHigh + pad) / pStep).rounded(.up) * pStep
+            if computedMax - computedMin < 3 * pStep {
+                computedMax = computedMin + 3 * pStep
+            }
+            yMin = computedMin
+            yMax = computedMax
+            step = pStep
+        } else {
+            step = league.tickStep
+            yMin = 0
+            yMax = max(step, ceil((max(forecastHigh, actualHigh) + step / 4) / step) * step)
+        }
         var series = Self(sourceKey: input.sourceKey, sourceName: sourceName, phase: phase,
                     segments: segments, withheld: withheld, actualSteps: actuals,
                     start: start, end: end, latest: latest, latestActual: actual(at: end, in: actuals),
-                    latestIntervalUnavailable: unavailable, kickoffProjection: kickoffPoint, yMax: yMax, tickStep: step)
+                    latestIntervalUnavailable: unavailable, kickoffProjection: kickoffPoint, yMin: yMin, yMax: yMax, tickStep: step)
         series.scoreOpensAtFloor = opensAtFloor
         return series
     }

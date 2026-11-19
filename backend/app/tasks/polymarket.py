@@ -42,6 +42,7 @@ from app.utils.settled_price import (  # #5246 / #7767
 )
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598
 from app.utils.futures_liveness import preserve_venue_settled  # #2222
+from app.utils.futures_liveness import CLEAR_BOOK_REFUSED_SQL  # 198-B
 from app.utils.venue_competition import POLYMARKET_EVENT_SLUG_KEY  # #8636
 from app.utils.polymarket_no_winner_cutoff import (  # #10407 A1
     NO_WINNER_CUTOFF_KEY,
@@ -4276,6 +4277,22 @@ async def _process_event_batch(
                         "venue's current book prices out (#9399)",
                         event.id, (event.title or "")[:80], withdrawn,
                     )
+
+                # 198-B: this poll ACCEPTED a price on this market, so a refusal
+                # stamp the price refresh left no longer holds and the market may
+                # be featured again. The poll carries the stamp across its
+                # metadata REPLACE (`CARRIED_METADATA_KEYS`), so this explicit
+                # clear is the only way the poll moves it. Guarded: a market that
+                # carries no stamp is not rewritten.
+                if outcome_data:
+                    _book_result = await session.execute(
+                        text(CLEAR_BOOK_REFUSED_SQL).bindparams(mid=futures_market_id)
+                    )
+                    _book_cleared = getattr(_book_result, "rowcount", 0) or 0
+                    if _book_cleared:
+                        stats["book_refused_cleared"] = (
+                            stats.get("book_refused_cleared", 0) + _book_cleared
+                        )
 
                 # #6598: the ranks written above were derived against THIS
                 # BATCH. The batch is not the field — `_retire_unpriced_legs`

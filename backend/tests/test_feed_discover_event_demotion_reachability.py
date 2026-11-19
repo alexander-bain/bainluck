@@ -36,6 +36,16 @@ from app.routes.feed import (
 from app.utils.feed_market_quality import _DISCOVER_FIRST_PAGE_CATEGORY_CAPS
 from app.utils.highlights import get_highlight_label
 
+
+@pytest.fixture(autouse=True)
+def _pre_190_game_admission(monkeypatch):
+    """These cases pin the pre-190 admission: a marquee or finished game held a
+    Discover seat by selection. Ruling 190 (#11937) requires a stated reason
+    instead, and keeps this rule only behind `DISCOVER_GAME_NEEDS_REASON=false`,
+    which is what these cases now guard. The 190 rule is guarded in
+    `test_discover_game_reason_190.py`."""
+    monkeypatch.setenv("DISCOVER_GAME_NEEDS_REASON", "false")
+
 # One `llm_sport_category` per first-page category group, EXCEPT `sports_culture`
 # — that is the group game cards land in, so stocking it with futures would
 # crowd them out legitimately and the page-one guard would fail for a reason
