@@ -112,8 +112,8 @@ def test_schedule_is_registered_bounded_and_partial_result_fails_task(monkeypatc
     task = celery_app.tasks["app.tasks.deliver_activitykit_updates"]
     schedule = celery_app.conf.beat_schedule["activitykit-runtime"]
     assert schedule["task"] == task.name
-    assert schedule["schedule"] == 30
-    assert schedule["options"] == {"queue": "realtime", "expires": 25}
+    assert schedule["schedule"] == 15
+    assert schedule["options"] == {"queue": "realtime", "expires": 12}
     assert (task.soft_time_limit, task.time_limit, task.max_retries) == (150, 180, 0)
     monkeypatch.setattr(
         module,

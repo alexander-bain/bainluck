@@ -128,6 +128,9 @@ logger = logging.getLogger(__name__)
 _stage_timings: ContextVar[Optional[dict[str, float]]] = ContextVar(
     "container_stage_timings", default=None
 )
+# The worker calls the builder directly and must finish its cache writes
+# before its event loop closes. The HTTP reader's loop stays alive.
+_container_http_read: ContextVar[bool] = ContextVar("container_http_read", default=False)
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
 
@@ -396,11 +399,17 @@ async def _assemble_event_cards(
     with _time_stage("venue_settlement"):
         await attach_venue_settlement(db, formatted_events, formatted, datetime.now(timezone.utc))
     with _time_stage("pregame"):
-        await _attach_settled_prematch(db, formatted_events, cards, folded_map)
+        await _attach_settled_prematch(
+            db, formatted_events, cards, folded_map,
+            defer_missing_cache_writes=compact and _container_http_read.get(),
+        )
     return cards, failed
 
 
-async def _attach_settled_prematch(db: AsyncSession, events: list, cards: dict, folded_map: dict) -> None:
+async def _attach_settled_prematch(
+    db: AsyncSession, events: list, cards: dict, folded_map: dict, *,
+    defer_missing_cache_writes: bool = False,
+) -> None:
     """A settled hub card's ``prematch_odds`` — the number its own page prints. #10273.
 
     The list card this hub reuses carries only ``opening_odds``, the sportsbook
@@ -431,7 +440,8 @@ async def _attach_settled_prematch(db: AsyncSession, events: list, cards: dict, 
         return (e.opening_home_probability, e.opening_away_probability)
 
     served = await settled_prematch_odds_by_event(
-        db, events, opening=_opening, surface="container hub"
+        db, events, opening=_opening, surface="container hub",
+        defer_missing_cache_writes=defer_missing_cache_writes,
     )
     for event_id, prematch_odds in served.items():
         card = cards.get(event_id)
@@ -644,6 +654,7 @@ async def get_container(
     """
     timings = {} if debug_timing else None
     token = _stage_timings.set(timings)
+    http_read = _container_http_read.set(True)
     try:
         with _time_stage("total"):
             if (
@@ -746,6 +757,7 @@ async def get_container(
             ) + ";basis=overlapping_wall_ms"
         return result
     finally:
+        _container_http_read.reset(http_read)
         _stage_timings.reset(token)
 
 

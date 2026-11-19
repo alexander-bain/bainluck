@@ -50,6 +50,7 @@ async def settled_prematch_odds_by_event(
     status_of: Optional[Callable[[Any], str]] = None,
     absorbed_ids: Optional[Mapping[int, Iterable[int]]] = None,
     timeout_ms: Optional[int] = None,
+    defer_missing_cache_writes: bool = False,
 ) -> dict[int, dict]:
     """``{event_id: prematch_odds}`` for every settled row the ladder answers.
 
@@ -62,6 +63,8 @@ async def settled_prematch_odds_by_event(
     kickoff, own source first and then twins in id order, as on detail.
     ``timeout_ms`` bounds the optional read without leaking SET LOCAL into
     later stages. Zero skips the venue read and retains the books fallback.
+    ``defer_missing_cache_writes`` lets an HTTP reader leave confirmed-empty
+    Redis fills to its event loop after the query has answered.
     ``surface`` only names the caller in the log lines.
 
     Rows that are not settled, or that the ladder cannot answer, are absent —
@@ -91,7 +94,9 @@ async def settled_prematch_odds_by_event(
             try:
                 if timeout_ms is not None:
                     await db.execute(text(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'"))
-                for row in await fetch_prematch_prior_rows(db, binds):
+                for row in await fetch_prematch_prior_rows(
+                    db, binds, defer_missing_cache_writes=defer_missing_cache_writes,
+                ):
                     by_event.setdefault(row.event_id, {}).setdefault(
                         row.source, prematch_row_to_reading(row)
                     )
