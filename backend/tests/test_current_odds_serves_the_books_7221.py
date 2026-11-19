@@ -17,7 +17,7 @@ from app.dependencies.auth import get_optional_user
 from app.models.models import Event, Sport
 from app.routes import events as events_route
 from app.services.database import get_db, get_db_rw
-from app.utils.aggregation import TIER_ESPN, TIER_OPENING, TIER_SOURCES
+from app.utils.aggregation import TIER_ESPN, TIER_OPENING, TIER_SOURCES, make_price_read
 from app.utils.current_odds_probability import current_odds_probability
 
 EVENT_ID = 15314578
@@ -369,6 +369,107 @@ class TestTheDetailArm:
         current = resp.json()["current_odds"]
         assert current["home_probability"] is None
         assert current["home_probability"] != OPENING
+
+    @pytest.mark.parametrize("seconds_from_kickoff", [-1, 0, 1])
+    @pytest.mark.parametrize("commence_source", ["espn", None], ids=["known-kickoff", "unknown-start"])
+    async def test_the_headline_and_source_rows_use_the_same_quote_admission(
+        self, detail_client_factory, seconds_from_kickoff, commence_source,
+    ):
+        written_at = _offset(-0.01)
+        kickoff = written_at - timedelta(minutes=15)
+        price = 0.495
+        read_at = kickoff + timedelta(seconds=seconds_from_kickoff)
+        quote = {
+            "value": price,
+            "updated_at": written_at.isoformat(),
+            "price_read": make_price_read(price, read_at),
+        }
+        event = _detail_event(bag={"polymarket": quote})
+        event.commence_time = kickoff
+        event.commence_time_source = commence_source
+        client = await detail_client_factory(event=event)
+        response = await client.get(f"/api/events/{event.id}")
+        assert response.status_code == 200
+        body = response.json()
+
+        expected = None if commence_source and seconds_from_kickoff < 0 else price
+        assert body.get("hero_probability") == expected
+        assert body["current_odds"]["home_probability"] == expected
+        public_source = (body.get("win_probability_sources") or {}).get("polymarket", {})
+        espn_sources = (body.get("espn") or {}).get("probability_sources") or {}
+        assert public_source.get("value") == espn_sources.get("polymarket") == expected
+        assert body["opening_odds"]["home_probability"] == OPENING
+        assert event.win_probability_sources["polymarket"] == quote
+
+    @pytest.mark.parametrize("future_kickoff", [False, True], ids=["unknown-start", "future-start"])
+    async def test_live_detail_rechecks_a_dated_quote_when_kickoff_is_confirmed(
+        self, detail_client_factory, future_kickoff,
+    ):
+        written_at = _offset(-0.01)
+        kickoff = written_at - timedelta(minutes=3)
+        price = 0.495
+        quote = {
+            "value": price,
+            "updated_at": written_at.isoformat(),
+            "price_read": make_price_read(price, kickoff - timedelta(seconds=1)),
+        }
+        event = _detail_event(bag={"polymarket": quote})
+        event.commence_time = kickoff + timedelta(hours=1) if future_kickoff else kickoff
+        event.commence_time_source = "espn" if future_kickoff else None
+        client = await detail_client_factory(event=event)
+        url = f"/api/events/{event.id}"
+
+        response = await client.get(url)
+        assert response.status_code == 200
+        assert response.json()["hero_probability"] == price
+
+        event.commence_time = kickoff
+        event.commence_time_source = "espn"
+        response = await client.get(url)
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload.get("hero_probability") is None
+        assert payload["current_odds"]["home_probability"] is None
+        assert "polymarket" not in (payload.get("win_probability_sources") or {})
+        assert payload["opening_odds"]["home_probability"] == OPENING
+
+        live_read_at = kickoff + timedelta(seconds=1)
+        event.win_probability_sources = {
+            "polymarket": {**quote, "price_read": make_price_read(price, live_read_at)},
+        }
+        response = await client.get(url, params={"fresh": "true"})
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["hero_probability"] == price
+        assert payload["current_odds"]["home_probability"] == price
+        mark = payload["source_mark"]
+        assert datetime.fromisoformat(mark["sources"][0]["observed_at"]) == live_read_at
+
+        # The confirmed price is cacheable. Its value and age travel together.
+        event.win_probability_sources = {}
+        response = await client.get(url)
+        assert response.status_code == 200
+        assert response.json()["hero_probability"] == price
+        assert response.json()["source_mark"] == mark
+
+    async def test_an_undated_live_quote_still_uses_the_detail_cache(self, detail_client_factory):
+        event = _detail_event(bag={
+            "polymarket": {"value": 0.495, "updated_at": _offset(-0.01).isoformat()},
+        })
+        event.commence_time_source = None
+        client = await detail_client_factory(event=event)
+        url = f"/api/events/{event.id}"
+
+        response = await client.get(url)
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["hero_probability"] == 0.495
+        assert payload["source_mark"]["sources"][0]["observed_at"] is None
+
+        event.win_probability_sources = {}
+        response = await client.get(url)
+        assert response.status_code == 200
+        assert response.json()["source_mark"] == payload["source_mark"]
 
     async def test_raw_book_evidence_keeps_its_own_number_and_stamp(
         self, detail_client_factory

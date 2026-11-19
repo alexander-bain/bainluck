@@ -461,10 +461,9 @@ async def write_nonvenue_probability(
     allowlist their fields, so these are never served, and later stamps carry
     sibling keys through untouched. Keys must be ``ENTRY_EXTRA_KEYS``; a
     removal (``value is None``) ignores them, because the entry is gone.
-    ``price_read_at`` (#12938, ``betting`` only) dates the value by its inputs
-    instead of ``received_at``: a live consensus is as old as its oldest counted
-    line, however recently the response carrying it arrived. It may only make
-    the reading OLDER than the receipt, never newer.
+    ``price_read_at`` dates a sportsbook consensus by its oldest counted line,
+    capped at ``received_at`` (#12938). The ESPN predictor supplies the time
+    its HTTP response arrived (#12581). Other ESPN writes omit it.
     """
     if source not in NONVENUE_SOURCES:
         raise ValueError(f"not a nonvenue probability source: {source}")
@@ -512,7 +511,7 @@ async def _write(session, event, source, value, metadata, values, evidence, trac
     elif source == "mlb":
         expression = atomic_stamp_expression("mlb", value)
     else:
-        expression = atomic_stamp_expression("espn", value)
+        expression = atomic_stamp_expression("espn", value, price_read_at=price_read_at)
     if value is None:
         # Preserve every concurrent sibling when a source goes below its floor.
         column = Event.win_probability_sources

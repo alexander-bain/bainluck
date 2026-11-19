@@ -813,7 +813,9 @@ class PublishedRead:
         }
 
 
-async def read_published(session, slug: str, *, include_headers: bool = False) -> PublishedRead:
+async def read_published(
+    session, slug: str, *, include_headers: bool = False, inline_schema: bool = False
+) -> PublishedRead:
     """The hub's published membership, from ONE statement, so ONE snapshot.
 
     Under READ COMMITTED every statement gets its own snapshot; reading the
@@ -822,8 +824,7 @@ async def read_published(session, slug: str, *, include_headers: bool = False) -
     One statement cannot. Draws are included one level down, except when
     withdrawn. The generic route also takes headers from this snapshot.
     """
-    schema = await _schema_for_published_read(session)
-    if not schema.columns:
+    if not inline_schema and not (await _schema_for_published_read(session)).columns:
         exists = (
             await session.execute(
                 text("SELECT 1 FROM containers WHERE slug = :slug"), {"slug": slug}
@@ -835,19 +836,31 @@ async def read_published(session, slug: str, *, include_headers: bool = False) -
             reason="publication_schema_absent" if exists else None,
         )
 
+    # A compact NFL week can read the two publication fields with the members.
+    # A field that predates the migration reads as NULL from the JSON record.
+    pub_field = PUBLICATION_COLUMN
+    revision_field = REVISION_COLUMN
+    child_pub_field = f"c.{PUBLICATION_COLUMN}"
+    revision_filter = ""
+    if inline_schema:
+        pub_field = f"to_jsonb(containers)->>'{PUBLICATION_COLUMN}'"
+        revision_field = f"(to_jsonb(containers)->>'{REVISION_COLUMN}')::integer"
+        child_pub_field = f"to_jsonb(c)->>'{PUBLICATION_COLUMN}'"
+        revision_filter = " AND hub.rev IS NOT NULL"
+
     # Append one row with typed headers. Each membership row carries only a
     # NULL in the extra column, even in collections with thousands of members.
     headers_column = ", NULL::record[] AS header_rows" if include_headers else ""
     headers_row = (
-        """
+        f"""
         UNION ALL
         SELECT hub.id, hub.pub, hub.rev, NULL, NULL, NULL, NULL, NULL, NULL,
                (SELECT array_agg(ROW(c.id, c.kind, c.name, c.slug, c.category,
                                      c.status, c.window_start, c.window_end,
-                                     c.parent_container_id, c.publication_state)
+                                     c.parent_container_id, {child_pub_field})
                                  ORDER BY (c.id = hub.id) DESC, c.name, c.id)
                   FROM parts JOIN containers c ON c.id = parts.id)
-        FROM hub WHERE hub.pub = 'published'
+        FROM hub WHERE hub.pub = 'published'{revision_filter}
         """
         if include_headers else ""
     )
@@ -855,18 +868,18 @@ async def read_published(session, slug: str, *, include_headers: bool = False) -
         await session.execute(
             text(
                 "WITH hub AS ("
-                f"  SELECT id, {PUBLICATION_COLUMN} AS pub, {REVISION_COLUMN} AS rev "
+                f"  SELECT id, {pub_field} AS pub, {revision_field} AS rev "
                 "  FROM containers WHERE slug = :slug"
                 "), parts AS ("
                 "  SELECT id FROM hub "
                 "  UNION ALL "
                 "  SELECT c.id FROM containers c JOIN hub ON c.parent_container_id = hub.id "
-                f"  WHERE c.{PUBLICATION_COLUMN} <> 'withdrawn'"
+                f"  WHERE {child_pub_field} <> 'withdrawn'"
                 ") "
                 "SELECT hub.id, hub.pub, hub.rev, e.class, e.child_type, e.child_id, "
                 f"      e.parent_id, e.source, e.confidence{headers_column} "
                 "FROM hub LEFT JOIN event_edges e "
-                "  ON hub.pub = 'published' AND e.kind = 'contains' "
+                f"  ON hub.pub = 'published'{revision_filter} AND e.kind = 'contains' "
                 " AND e.parent_type = 'container' "
                 " AND e.parent_id IN (SELECT id FROM parts) "
                 f"{headers_row}"
@@ -879,6 +892,8 @@ async def read_published(session, slug: str, *, include_headers: bool = False) -
         return PublishedRead(state=READ_UNAVAILABLE, slug=slug)
 
     head = rows[0]
+    if inline_schema and (head[1] is None or head[2] is None):
+        return PublishedRead(state=READ_UNPUBLISHED, slug=slug, reason="publication_schema_absent")
     members = [
         {
             "class": r[3],

@@ -8,7 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
-from app.utils.futures_quote_freshness import price_refresh_due_sql
+from app.utils.futures_quote_freshness import (
+    price_refresh_due_sql,
+    registered_price_refresh_market_ids,
+)
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -452,10 +455,8 @@ async def futures_price_freshness(
     pool_params = pool_bind_params()
     params = {**pool_params, "max_age_hours": max_age_hours}
 
-    # The curated half. Every market a committed register renders, at any tier.
-    from app.utils.tournament_register import registered_market_ids
-
-    registered_ids = sorted(registered_market_ids())
+    # The curated half uses the same exact IDs as the existing refresh pass.
+    registered_ids = sorted(registered_price_refresh_market_ids())
     registered_params = {
         "market_ids": registered_ids,
         "max_age_hours": max_age_hours,

@@ -491,3 +491,38 @@ async def test_dotted_initial_spellings_unify_across_sections_and_charts() -> No
         for o in secs["party_nominations"]["visual_block"]["items"][0]["outcomes"]
     ]
     assert "JD Vance" in gop_nom_names and "J.D. Vance" not in gop_nom_names
+
+
+def test_event_date_span_uses_local_play_timezone_not_utc() -> None:
+    """Fable #12288 turn-on note 1: slate dates reflect where games are played, never UTC rollover."""
+    from app.utils.container_machinery import _format_event_date_span
+
+    # NFL Thu Nov 19 8:15 PM ET (2026-11-20T01:15Z) through Sun Nov 22 8:20 PM ET (2026-11-23T01:20Z)
+    nfl_events = [
+        {"sport": "americanfootball_nfl", "commence_time": "2026-11-20T01:15:00+00:00"},
+        {"sport": "americanfootball_nfl", "commence_time": "2026-11-22T18:00:00+00:00"},
+        {"sport": "americanfootball_nfl", "commence_time": "2026-11-23T01:20:00+00:00"},
+    ]
+    assert _format_event_date_span(nfl_events) == "Nov 19–22"
+
+    # NBA Wed Nov 18 7:00 PM ET (2026-11-19T00:00Z) through Thu Nov 19 8:00 PM ET (2026-11-20T01:00Z)
+    nba_events = [
+        {"sport": "basketball_nba", "commence_time": "2026-11-19T00:00:00+00:00"},
+        {"sport": "basketball_nba", "commence_time": "2026-11-19T02:30:00+00:00"},
+        {"sport": "basketball_nba", "commence_time": "2026-11-20T01:00:00+00:00"},
+    ]
+    assert _format_event_date_span(nba_events) == "Nov 18–19"
+
+    # Single-day NBA evening slate crossing UTC midnight stays one local day
+    single_night = [
+        {"sport": "basketball_nba", "commence_time": "2026-11-19T00:00:00+00:00"},
+        {"sport": "basketball_nba", "commence_time": "2026-11-19T03:30:00+00:00"},
+    ]
+    assert _format_event_date_span(single_night) == "Nov 18"
+
+    # European soccer keeps Europe/London local matchday
+    epl_events = [
+        {"sport": "soccer_epl", "commence_time": "2026-11-21T12:30:00+00:00"},
+        {"sport": "soccer_epl", "commence_time": "2026-11-22T16:30:00+00:00"},
+    ]
+    assert _format_event_date_span(epl_events) == "Nov 21–22"

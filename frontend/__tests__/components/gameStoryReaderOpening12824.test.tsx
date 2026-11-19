@@ -26,6 +26,7 @@ jest.mock("@/hooks", () => ({
 jest.mock("@/hooks/useGameMarketsStream");
 
 const now = new Date("2026-09-28T23:00:00Z");
+const inPlayKickoff = new Date(now.getTime() - 30 * 60_000).toISOString();
 const eventId = 14780556;
 // The retained Packers–Bears pair from the #9470 production specimen.
 const opening: EventDetailResponse = {
@@ -78,6 +79,7 @@ beforeEach(() => {
       outcome_name: `Jordan Love: ${threshold}+`,
       threshold,
       over_probability: [0.75, 0.5, 0.25][index],
+      pregame_mark: [0.74, 0.49, 0.24][index],
       source: "kalshi",
       movement: null,
       observed_at: now.toISOString(),
@@ -105,13 +107,40 @@ async function openStory(event: EventDetailResponse) {
   expect(open).not.toBeNull();
   await act(async () => open!.click());
   const header = host.querySelector('[data-testid="reader-match"]');
-  expect(header?.textContent).toMatch(/Bears vs Packers · Pregame/);
+  expect(header?.textContent).toMatch(/Bears vs Packers/);
   return header!.parentElement!;
 }
 
 it("keeps the scheduled Game Story and withholds the first stored win chance", async () => {
   const header = await openStory(opening);
+  expect(header.textContent).toContain("Pregame");
   expect(header.textContent).not.toContain("Win chances");
+});
+
+it.each(["live", "suspended"] as const)(
+  "withholds an opening-only reader chance when the game is %s",
+  async (status) => {
+    const header = await openStory({
+      ...opening,
+      status,
+      commence_time: inPlayKickoff,
+    });
+    expect(header.textContent).not.toContain("Win chances");
+  },
+);
+
+it("shows the same pair when an in-play sportsbook snapshot supplies the win chances", async () => {
+  const header = await openStory({
+    ...opening,
+    status: "live",
+    commence_time: inPlayKickoff,
+    current_odds: {
+      ...opening.current_odds!,
+      captured_at: now.toISOString(),
+      bookmaker_count: 3,
+    },
+  });
+  expect(header.textContent).toContain("Win chances · Bears 40% · Packers 60%");
 });
 
 it("shows the same pair when a dated blend supplies the win chances", async () => {

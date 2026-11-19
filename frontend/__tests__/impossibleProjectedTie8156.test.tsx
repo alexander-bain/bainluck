@@ -150,48 +150,41 @@ beforeEach(() => {
   historyPayload = history(3.1, 2.9);
 });
 
-describe("#8156 an impossible projected final is not printed", () => {
-  it("prints no projected final when the rounded MLB pair is a tie", () => {
-    // The photographed frame: 3.1 / 2.9 rounds to `3 – 3`, a scoreline MLB
-    // cannot produce.
+describe("Ruling 240: A (#12992, superseding #8156) — level projected finals print; opposing-winner pairs hide", () => {
+  it("prints a level projected final when the rounded MLB pair is a tie", () => {
+    // Ruling 240: A Rule 1: 3.1 / 2.9 rounds to level `3` and `3`, which prints.
     historyPayload = history(3.1, 2.9);
 
     const html = draw();
 
-    // The ship.
-    expect(html).not.toContain(PROJECTION);
-    // NON-VACUITY. A suppression whose real effect is a blank card would pass
-    // the line above. This is the specimen's own hero, still drawn.
+    expect(html).toContain(PROJECTION);
     expect(html).toContain("Dodgers");
     expect(html).toContain("Padres");
     expect(html.length).toBeGreaterThan(2000);
   });
 
-  it("prints no projected final when the served pair is exactly level", () => {
-    // The same claim arriving without any help from the rounding.
+  it("prints a projected final when the served pair is exactly level", () => {
     historyPayload = history(3, 3);
 
-    expect(draw()).not.toContain(PROJECTION);
+    expect(draw()).toContain(PROJECTION);
   });
 
-  it("puts the impossible scoreline nowhere on the page, under any label", () => {
-    // The arms above read the label. This one reads the SCORELINE itself, in
-    // the exact glyphs the hero renders it with (thin spaces around an en
-    // dash), so a "fix" that merely renamed the line would fail here.
-    //
-    // ⚠️ #2920 changed the glyphs: the hero now names each number beside its
-    // team (`ProjectedFinalLine`) and stamps the pair on `data-projected-final`.
-    // The old thin-space form is kept as a second net for any line still
-    // printing it; the stamp is the one that can fail today.
-    //
-    // Notice 34 is the other half of the same assertion: the space is left
-    // empty and not explained, so no apology takes the scoreline's place.
-    historyPayload = history(3.1, 2.9);
+  it("hides the projected final when the rounded pair names the opposite winner from the chance (Rule 2)", () => {
+    // Dodgers (home) favoured at 55%, while the rounded pair puts Padres (away) ahead 4–3.
+    eventPayload = event({
+      hero_probability: 0.55,
+      hero_probability_away: 0.45,
+      hero_probability_source: "blend",
+      current_odds: {
+        home_probability: 0.55,
+        away_probability: 0.45,
+      },
+    });
+    historyPayload = history(2.6, 3.6);
 
     const html = draw();
 
-    expect(html).not.toContain('data-projected-final="3-3"');
-    expect(html).not.toContain("3\u2009\u2013\u20093");
+    expect(html).not.toContain(PROJECTION);
     expect(html).not.toContain("too close");
   });
 

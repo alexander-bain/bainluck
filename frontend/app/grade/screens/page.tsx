@@ -17,7 +17,9 @@ import {
   SCREEN_GRADE_LABELS,
   nextScreen,
   screensPath,
+  undoLastAnswered,
   weekFromSearch,
+  type LastScreenGrade,
   type ScreenGrade,
   type ScreenWeek,
 } from "@/lib/ranking/screenSession";
@@ -43,6 +45,7 @@ function ScreensSession() {
   const [grader, setGrader] = useState("");
   const [n, setN] = useState(1);
   const [answered, setAnswered] = useState<Set<number>>(new Set());
+  const [lastGraded, setLastGraded] = useState<LastScreenGrade | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -87,7 +90,13 @@ function ScreensSession() {
         return;
       }
       // 409: this screen was graded before; the first grade stands.
-      setNote(res.status === 409 ? `Screen ${n} was graded already; the first grade stands.` : `Saved screen ${n}.`);
+      if (res.status === 409) {
+        setLastGraded(null);
+        setNote(`Screen ${n} was graded already; the first grade stands.`);
+      } else {
+        setLastGraded({ n, grade: g });
+        setNote(`Saved screen ${n} (${SCREEN_GRADE_LABELS[g]}).`);
+      }
       const done = new Set(answered).add(n);
       setAnswered(done);
       const next = nextScreen(deck.screens.length, done, n);
@@ -97,6 +106,36 @@ function ScreensSession() {
       }
     } catch {
       setError("Not saved: the network dropped. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const undoLast = async () => {
+    const name = normalizeGraderName(grader);
+    if (!deck || !name || !lastGraded || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const body = JSON.stringify({ week: deck.week, n: lastGraded.n, grader: name });
+      const res = await adminFetch("/api/admin/ranking/screen-grades/undo", secret, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      if (!res.ok) {
+        if (res.status === 404 || res.status === 409) setLastGraded(null);
+        setError(`Could not undo (${res.status}): ${(await res.text()).slice(0, 200)}`);
+        return;
+      }
+      const undoneN = lastGraded.n;
+      setAnswered((prev) => undoLastAnswered(prev, lastGraded));
+      setLastGraded(null);
+      setN(undoneN);
+      setNote(`Undid screen ${undoneN}. Choose a grade again.`);
+      window.scrollTo({ top: 0 });
+    } catch {
+      setError("Could not undo: the network dropped. Try again.");
     } finally {
       setSaving(false);
     }
@@ -143,7 +182,21 @@ function ScreensSession() {
           </button>
         ))}
       </div>
-      {note && <p className="mt-2 text-sm text-text-secondary" role="status">{note}</p>}
+      {note && (
+        <div className="mt-2 flex items-center gap-3 text-sm text-text-secondary" role="status">
+          <span>{note}</span>
+          {lastGraded && (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={undoLast}
+              className="rounded-lg border border-surface-border bg-surface-card px-2.5 py-1 text-xs font-semibold text-text-primary disabled:text-text-muted"
+            >
+              Undo
+            </button>
+          )}
+        </div>
+      )}
       {error && <p className="mt-2 text-sm text-text-secondary">{error}</p>}
       {allDone && <p className="mt-2 text-sm font-semibold text-text-primary">All {total} screens graded. Thank you.</p>}
     </Shell>

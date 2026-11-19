@@ -320,8 +320,11 @@ class WatchUIShardTests(unittest.TestCase):
         matrix = re.search(r"shard: \[(.*?)\]", split).group(1)
         self.assertEqual(set(matrix.split(", ")), set(self.groups))
         self.assertIn("fail-fast: false", split)
-        self.assertIn("timeout-minutes: 60", split)
-        self.assertIn("group: watch-ui-${{ matrix.shard }}-", split)
+        self.assertIn("timeout-minutes: 105", split)
+        # #13027: workflow-level concurrency cancels superseded PR/branch runs
+        # across every job while all five shards in one run execute in parallel.
+        self.assertIn("cancel-in-progress: true", workflow.split("jobs:", 1)[0])
+        self.assertNotIn("concurrency:", split)
         complete = workflow.split("  watch-ui-complete:", 1)[1].split(
             "  companion-archive:", 1
         )[0]
