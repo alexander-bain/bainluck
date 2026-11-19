@@ -33,7 +33,11 @@ import {
 } from "@/lib/finalForecastComparison";
 import { formatEventStartLabel } from "@/lib/eventKeyStats";
 import { sportVocab } from "@/lib/marketMapUtils";
-import { projectedFinalFormat } from "@/lib/projectedFinalPair";
+import {
+  projectedFinalFormat,
+  projectedPairConflictsWithChance,
+  type ProjectedChancePair,
+} from "@/lib/projectedFinalPair";
 import {
   ABOVE_NINETY_NINE_PERCENT,
   BELOW_ONE_PERCENT,
@@ -289,6 +293,17 @@ export function formatHeadlineProjectedNumber199(
   return value.toFixed(1);
 }
 
+function printedHeadlineProjectedValue199(
+  value: number,
+  sportKey: string | null | undefined,
+): number {
+  const lower = (sportKey ?? "").trim().toLowerCase();
+  if (lower.startsWith("americanfootball") || lower.startsWith("basketball")) {
+    return Math.round(value);
+  }
+  return Math.round(value * 10) / 10;
+}
+
 /**
  * Matches iOS `EventSportHeadlines12472.qualifiedLivePregameProjectionPair`:
  * admits the pregame projection into the single grey pregame line (`200-B`)
@@ -298,6 +313,7 @@ export function formatHeadlineProjectedNumber199(
  */
 function qualifiedLivePregameProjectionPair199(
   event: Pick<EventDetailResponse, "pregame_projection" | "sport" | "commence_time">,
+  chance?: ProjectedChancePair | null,
 ): { away: string; home: string } | null {
   const p = event.pregame_projection;
   if (!p || typeof p !== "object") return null;
@@ -332,10 +348,17 @@ function qualifiedLivePregameProjectionPair199(
   ) {
     return null;
   }
-  const vocab = sportVocab(event.sport ?? undefined);
   const roundedHome = Math.round(p.projected_home_score);
   const roundedAway = Math.round(p.projected_away_score);
-  if (!vocab.canEndInATie && roundedHome === roundedAway) return null;
+  if (
+    projectedPairConflictsWithChance(
+      { home: roundedHome, away: roundedAway },
+      chance,
+      event.sport,
+    )
+  ) {
+    return null;
+  }
   return {
     away: String(roundedAway),
     home: String(roundedHome),
@@ -900,12 +923,25 @@ export function resolveEventPageHeadline199(
         ]
       : [{ role: "chance", header: "Chance" }];
 
-    const awayProjCell =
+    const printedBeforePair =
       canGrade && hasProjCol && input.projectedPairAdmitted && input.projectedPairRaw
+        ? {
+            home: printedHeadlineProjectedValue199(
+              input.projectedPairRaw.home_score,
+              event.sport,
+            ),
+            away: printedHeadlineProjectedValue199(
+              input.projectedPairRaw.away_score,
+              event.sport,
+            ),
+          }
+        : null;
+    let awayProjCell =
+      printedBeforePair && input.projectedPairRaw
         ? formatHeadlineProjectedNumber199(input.projectedPairRaw.away_score, event.sport)
         : "";
-    const homeProjCell =
-      canGrade && hasProjCol && input.projectedPairAdmitted && input.projectedPairRaw
+    let homeProjCell =
+      printedBeforePair && input.projectedPairRaw
         ? formatHeadlineProjectedNumber199(input.projectedPairRaw.home_score, event.sport)
         : "";
 
@@ -925,6 +961,17 @@ export function resolveEventPageHeadline199(
         nowMs,
       });
       if (snap.openShares) {
+        if (
+          printedBeforePair &&
+          projectedPairConflictsWithChance(
+            printedBeforePair,
+            { home: snap.openShares.home, away: snap.openShares.away },
+            event.sport,
+          )
+        ) {
+          awayProjCell = "";
+          homeProjCell = "";
+        }
         const texts = formatSoccerThreeWayTexts199(
           snap.openShares.home,
           snap.openShares.draw,
@@ -1021,6 +1068,18 @@ export function resolveEventPageHeadline199(
       }
     }
 
+    if (
+      printedBeforePair &&
+      projectedPairConflictsWithChance(
+        printedBeforePair,
+        { home: homeRaw, away: awayRaw },
+        event.sport,
+      )
+    ) {
+      awayProjCell = "";
+      homeProjCell = "";
+    }
+
     const rows: HeadlineCompetitorRow199[] = [
       {
         role: "away",
@@ -1089,19 +1148,29 @@ export function resolveEventPageHeadline199(
     const hasValidScore =
       input.heroScorePairPresent && !input.heroScoreIsStoppageFiller;
 
-    const awayProjCell =
+    const safeLiveAwayRaw =
       isLiveActive && hasProjCol && input.projectedPairAdmitted && input.projectedPairRaw
-        ? formatHeadlineProjectedNumber199(
-            Math.max(input.projectedPairRaw.away_score, input.bestAwayScore ?? 0),
-            event.sport,
-          )
+        ? Math.max(input.projectedPairRaw.away_score, input.bestAwayScore ?? 0)
+        : null;
+    const safeLiveHomeRaw =
+      isLiveActive && hasProjCol && input.projectedPairAdmitted && input.projectedPairRaw
+        ? Math.max(input.projectedPairRaw.home_score, input.bestHomeScore ?? 0)
+        : null;
+    const printedDuringPair =
+      safeLiveAwayRaw !== null && safeLiveHomeRaw !== null
+        ? {
+            home: printedHeadlineProjectedValue199(safeLiveHomeRaw, event.sport),
+            away: printedHeadlineProjectedValue199(safeLiveAwayRaw, event.sport),
+          }
+        : null;
+
+    let awayProjCell =
+      safeLiveAwayRaw !== null
+        ? formatHeadlineProjectedNumber199(safeLiveAwayRaw, event.sport)
         : "";
-    const homeProjCell =
-      isLiveActive && hasProjCol && input.projectedPairAdmitted && input.projectedPairRaw
-        ? formatHeadlineProjectedNumber199(
-            Math.max(input.projectedPairRaw.home_score, input.bestHomeScore ?? 0),
-            event.sport,
-          )
+    let homeProjCell =
+      safeLiveHomeRaw !== null
+        ? formatHeadlineProjectedNumber199(safeLiveHomeRaw, event.sport)
         : "";
 
     const tennisSlot = isTennis
@@ -1122,8 +1191,12 @@ export function resolveEventPageHeadline199(
           { role: "now" as const, header: "Now" },
         ];
 
+    const strictPre = isLiveActive ? resolveStrictPrematch199(event) : null;
     const pregameProj = isLiveActive
-      ? qualifiedLivePregameProjectionPair199(event)
+      ? qualifiedLivePregameProjectionPair199(
+          event,
+          strictPre ? { home: strictPre.homeProb, away: strictPre.awayProb } : null,
+        )
       : null;
 
     if (isLiveActive && isSoccerSport199(event.sport)) {
@@ -1135,6 +1208,17 @@ export function resolveEventPageHeadline199(
         nowMs,
       });
       if (snap.openShares) {
+        if (
+          printedDuringPair &&
+          projectedPairConflictsWithChance(
+            printedDuringPair,
+            { home: snap.openShares.home, away: snap.openShares.away },
+            event.sport,
+          )
+        ) {
+          awayProjCell = "";
+          homeProjCell = "";
+        }
         const texts = formatSoccerThreeWayTexts199(
           snap.openShares.home,
           snap.openShares.draw,
@@ -1143,6 +1227,10 @@ export function resolveEventPageHeadline199(
         );
         let liveSummary: HeadlineLivePregameSummary199 | null = null;
         if (snap.pregameShares) {
+          const soccerPregameProj = qualifiedLivePregameProjectionPair199(event, {
+            home: snap.pregameShares.home,
+            away: snap.pregameShares.away,
+          });
           const preTexts = formatSoccerThreeWayTexts199(
             snap.pregameShares.home,
             snap.pregameShares.draw,
@@ -1171,27 +1259,27 @@ export function resolveEventPageHeadline199(
             favSide = "draw";
           }
           const namedText = `${favName} ${favText}`;
-          const firstProjText = pregameProj
+          const firstProjText = soccerPregameProj
             ? favIsHome
-              ? pregameProj.home
-              : pregameProj.away
+              ? soccerPregameProj.home
+              : soccerPregameProj.away
             : null;
-          const secondProjText = pregameProj
+          const secondProjText = soccerPregameProj
             ? favIsHome
-              ? pregameProj.away
-              : pregameProj.home
+              ? soccerPregameProj.away
+              : soccerPregameProj.home
             : null;
-          const firstProjSide: "home" | "away" | null = pregameProj
+          const firstProjSide: "home" | "away" | null = soccerPregameProj
             ? favIsHome
               ? "home"
               : "away"
             : null;
-          const secondProjSide: "home" | "away" | null = pregameProj
+          const secondProjSide: "home" | "away" | null = soccerPregameProj
             ? favIsHome
               ? "away"
               : "home"
             : null;
-          const projHalf = pregameProj
+          const projHalf = soccerPregameProj
             ? ` · projected ${firstProjText}–${secondProjText}`
             : "";
           const bodyText = `${namedText}${projHalf}`;
@@ -1280,7 +1368,6 @@ export function resolveEventPageHeadline199(
       }
     }
 
-    const strictPre = isLiveActive ? resolveStrictPrematch199(event) : null;
     const rawSummary = isLiveActive
       ? formatLivePregameSummary(
           {
@@ -1357,6 +1444,18 @@ export function resolveEventPageHeadline199(
       } else if (awayWithheld && homeNow === "" && input.tenthsOptIn) {
         homeNow = formatSingleLiveTenths(input.homeProb) ?? "";
       }
+    }
+
+    if (
+      printedDuringPair &&
+      projectedPairConflictsWithChance(
+        printedDuringPair,
+        { home: homeRaw, away: awayRaw },
+        event.sport,
+      )
+    ) {
+      awayProjCell = "";
+      homeProjCell = "";
     }
 
     const canShowScoreSlot =

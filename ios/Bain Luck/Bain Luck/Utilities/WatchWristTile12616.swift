@@ -410,9 +410,17 @@ struct WatchWristTileModel12616: Equatable, Sendable {
               let a = input.projectedAwayScore,
               h.isFinite, a.isFinite, h > 0, a > 0,
               let rh = Int(exactly: h.rounded()),
-              let ra = Int(exactly: a.rounded()),
-              rh != ra || vocab.canEndInATie
+              let ra = Int(exactly: a.rounded())
         else { return nil }
+        if ProjectedFinalChanceGuard240A.conflicts(
+            projectedHome: Double(rh),
+            projectedAway: Double(ra),
+            homeChance: input.homeProbability,
+            awayChance: input.awayProbability,
+            sportKey: input.sportKey
+        ) {
+            return nil
+        }
         return (away: ra, home: rh)
     }
 
