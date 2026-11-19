@@ -80,6 +80,12 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _fun_admission_enabled() -> bool:
+    from app.utils.discover_fun_tags import is_discover_fun_admission_enabled
+
+    return is_discover_fun_admission_enabled()
+
+
 # --- Keys, versions, and freshness policy -------------------------------------
 # v2 (Queue 288/C91): collision-free canonical identity encoding + a monotonic
 # ``generated_epoch_ms``. The version bump is deliberate — a v1 envelope must
@@ -297,6 +303,12 @@ def base_identity(
     tags_token = _static_tags_token(static_tag_filter)
 
     identity = f"{_KEY_PREFIX}:{_KEY_VERSION}:{sport_token}:{tags_token}"
+    if (
+        sport_filter is None
+        and not static_tag_filter
+        and _fun_admission_enabled()
+    ):
+        identity = f"{identity}:fun=1"
     if len(identity) <= MAX_IDENTITY_LENGTH:
         return identity
     # Digest the (already canonical) tags token. ``~`` cannot begin an escaped
@@ -350,6 +362,7 @@ def build_envelope(
     *,
     pool_counts: Optional[dict[str, int]] = None,
     external_curator_recall_ids: Optional[list[int]] = None,
+    fun_admission_ids: Optional[list[int]] = None,
 ) -> dict:
     """Wrap an ordered candidate-ID list in a freshness-tagged, versioned envelope.
 
@@ -365,7 +378,7 @@ def build_envelope(
     ids = [int(mid) for mid in candidate_ids]
     curator_ids = [int(mid) for mid in (external_curator_recall_ids or [])]
     generated = now.astimezone(timezone.utc)
-    return {
+    envelope = {
         "schema_version": CANDIDATE_BASE_SCHEMA_VERSION,
         "generated_at": generated.isoformat(),
         # Integer build clock for the monotonic publish guard. Comparing ints in
@@ -381,6 +394,9 @@ def build_envelope(
             "max_market_id": max(ids) if ids else 0,
         },
     }
+    if fun_admission_ids is not None:
+        envelope["fun_admission_ids"] = [int(mid) for mid in fun_admission_ids]
+    return envelope
 
 
 def _envelope_age_seconds(envelope: Any, now: datetime) -> Optional[float]:
@@ -411,8 +427,17 @@ def _usable(envelope: Any, now: datetime, max_age_s: float, identity: str) -> bo
 _l0: dict[str, dict[str, Any]] = {}
 
 
-def _served(envelope: dict, provenance: str) -> tuple[list[int], str, list[int]]:
+def _served(
+    envelope: dict,
+    provenance: str,
+    *,
+    fun_admission_ids_out: Optional[list[int]] = None,
+) -> tuple[list[int], str, list[int]]:
     """Return the (candidate_ids, provenance, curator_ids) served tuple."""
+    if fun_admission_ids_out is not None:
+        fun_admission_ids_out[:] = [
+            int(mid) for mid in (envelope.get("fun_admission_ids") or [])
+        ]
     return (
         list(envelope["candidate_ids"]),
         provenance,
@@ -421,7 +446,10 @@ def _served(envelope: dict, provenance: str) -> tuple[list[int], str, list[int]]
 
 
 def _l0_lookup(
-    identity: str, now: datetime
+    identity: str,
+    now: datetime,
+    *,
+    fun_admission_ids_out: Optional[list[int]] = None,
 ) -> Optional[tuple[list[int], str, list[int]]]:
     entry = _l0.get(identity)
     if not entry:
@@ -432,9 +460,13 @@ def _l0_lookup(
     if (time.time() - entry.get("fetched_wall", 0.0)) >= CANDIDATE_BASE_L0_TTL_S:
         return None
     if _usable(envelope, now, CANDIDATE_BASE_FRESH_SECONDS, identity):
-        return _served(envelope, PROV_FRESH)
+        return _served(
+            envelope, PROV_FRESH, fun_admission_ids_out=fun_admission_ids_out
+        )
     if _usable(envelope, now, CANDIDATE_BASE_LAST_GOOD_MAX_AGE_S, identity):
-        return _served(envelope, PROV_LAST_GOOD)
+        return _served(
+            envelope, PROV_LAST_GOOD, fun_admission_ids_out=fun_admission_ids_out
+        )
     return None
 
 
@@ -567,6 +599,7 @@ async def get_candidate_base(
     static_tag_filter: Optional[list[str]],
     *,
     stages=None,
+    fun_admission_ids_out: Optional[list[int]] = None,
 ) -> tuple[Optional[list[int]], str, Optional[list[int]]]:
     """Return (ordered_candidate_ids, provenance, external_curator_recall_ids).
 
@@ -614,7 +647,9 @@ async def get_candidate_base(
     except Exception:
         logger.debug("candidate base kill-switch read failed", exc_info=True)
 
-    hit = _l0_lookup(identity, now)
+    hit = _l0_lookup(
+        identity, now, fun_admission_ids_out=fun_admission_ids_out
+    )
     if hit is not None:
         _record_stage(stages, "candidate_base_read", t0)
         return hit
@@ -627,7 +662,11 @@ async def get_candidate_base(
             _l0_store(identity, fresh_env)
             _remember_last_good(identity, fresh_env)
             _record_stage(stages, "candidate_base_read", t0)
-            return _served(fresh_env, PROV_FRESH)
+            return _served(
+                fresh_env,
+                PROV_FRESH,
+                fun_admission_ids_out=fun_admission_ids_out,
+            )
 
         last_good_env = None
         if _usable(fresh_env, now, CANDIDATE_BASE_LAST_GOOD_MAX_AGE_S, identity):
@@ -641,7 +680,11 @@ async def get_candidate_base(
             _l0_store(identity, last_good_env)
             _remember_last_good(identity, last_good_env)
             _record_stage(stages, "candidate_base_read", t0)
-            return _served(last_good_env, PROV_LAST_GOOD)
+            return _served(
+                last_good_env,
+                PROV_LAST_GOOD,
+                fun_admission_ids_out=fun_admission_ids_out,
+            )
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -654,7 +697,11 @@ async def get_candidate_base(
     )
     if _usable(recalled, now, CANDIDATE_BASE_LAST_GOOD_MAX_AGE_S, identity):
         _record_stage(stages, "candidate_base_read", t0)
-        return _served(recalled, PROV_LAST_GOOD)
+        return _served(
+            recalled,
+            PROV_LAST_GOOD,
+            fun_admission_ids_out=fun_admission_ids_out,
+        )
 
     _record_stage(stages, "candidate_base_read", t0)
     return None, PROV_DIRECT, None

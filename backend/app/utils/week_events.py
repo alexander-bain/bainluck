@@ -36,6 +36,7 @@ from zoneinfo import ZoneInfo
 
 from app.utils.container_presentation import MEMBER_MARKET, market_destination
 from app.utils.feed_market_quality import is_placeholder_flat_field
+from app.utils.source_mark import no_source_mark
 
 logger = logging.getLogger(__name__)
 
@@ -511,6 +512,8 @@ def _evaluate_single_tournament(
                 "id": g_oid,
                 "name": g_name,
                 "probability": g_prob,
+                "source_mark": g_raw.get("source_mark")
+                or no_source_mark("source_evidence_incomplete"),
                 "rendered_percent": _half_up_percent(g_prob),
                 "american_odds": None,
                 "rank": rank_idx,
@@ -666,6 +669,7 @@ def select_week_events(
                 "outcome_id": sel.outcome_id,
                 "label": row_label,
                 "probability": sel.leader_probability,
+                "source_mark": sel.top_golfers[0]["source_mark"],
                 "rendered_percent": sel.rendered_percent,
                 "observed_at": sel.observed_at,
             }

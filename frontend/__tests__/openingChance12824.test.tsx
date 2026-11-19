@@ -132,6 +132,34 @@ it("the live share image can label a separate pregame reading when the cached fo
   expect(image).toContain("Pregame");
 });
 
+it.each(["kalshi", "polymarket"])(
+  "the live share image labels a %s pregame reading but leaves the same current pair unlabelled",
+  async (source) => {
+    const prematch = { source, home_probability: 0.23, away_probability: 0.77 };
+    const live = {
+      status: "live",
+      commence_time: new Date(Date.now() - 25 * 60_000).toISOString(),
+      prematch_odds: prematch,
+    };
+    const fetchEvent = jest.fn().mockResolvedValue({
+      ok: true, json: async () => ({ ...billsPatriots(null), ...live }),
+    });
+    global.fetch = fetchEvent;
+    const historical = await renderShareImage();
+    expect(historical).toContain("23%");
+    expect(historical).toContain("77%");
+    expect(historical).toContain("Pregame");
+
+    fetchEvent.mockResolvedValue({
+      ok: true, json: async () => ({ ...billsPatriots(0.23), ...live }),
+    });
+    const current = await renderShareImage();
+    expect(current).toContain("23%");
+    expect(current).toContain("77%");
+    expect(current).not.toContain("Pregame");
+  },
+);
+
 it.each(["true", "false"])("web game cards respect the opening tag with the unified card flag set to %s", (flag) => {
   const priorFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
   process.env.NEXT_PUBLIC_GAME_CARD_183A = flag;

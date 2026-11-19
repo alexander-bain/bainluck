@@ -1026,6 +1026,19 @@ export default function EventPageHeadline199({
           )}
         </div>
       ) : null}
+
+      {model.scoreUnavailableNotice ? (
+        <div
+          data-testid="headline-12472-no-live-score-notice"
+          className="leading-snug"
+          style={{
+            fontSize: pxToRem199(12),
+            color: HEADLINE_STYLE_199.quietInk,
+          }}
+        >
+          {model.scoreUnavailableNotice}
+        </div>
+      ) : null}
     </div>
   );
 }

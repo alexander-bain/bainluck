@@ -125,6 +125,7 @@ from app.utils.event_rails import (
 )
 from app.utils.lifecycle import EVENT_NOT_STARTED, served_event_status
 from app.utils.score_observation import score_observation_fields
+from app.utils.score_source_availability import score_source_unavailable_fields
 from app.utils.event_props_matrix import blend_mean, build_during_player_props
 from app.utils.prop_expectation_actual import build_after_player_props
 from app.utils.event_question_matrix import (
@@ -21167,6 +21168,14 @@ async def get_event(
     # Tennis's games do not add up to sets won. Its whole source snapshot is
     # checked separately and maps to the fields the installed headline reads.
     attach_tennis_score(event, response, datetime.now(timezone.utc))
+    response.pop("score_source_unavailable", None)
+    response.update(
+        score_source_unavailable_fields(
+            event,
+            status=response.get("status"),
+            payload=response,
+        )
+    )
     response.update(_state_read_window)
 
     # Q050: cache under the id the caller ASKED FOR as well as the one we
@@ -34667,6 +34676,8 @@ async def get_event_odds_history(
         from app.utils.binary_spread import (
             binary_to_implied_spread,
             binary_to_implied_total,
+            blend_projected_final,
+            projected_final_blend_enabled,
             projected_final_score as calc_projected_score,
             extract_spread_threshold,
             extract_total_threshold,
@@ -34678,6 +34689,7 @@ async def get_event_odds_history(
             select_projected_final,
             total_rung_states_only_the_line,
         )
+        from app.utils.live_line_clock import event_state_clock as _pm_event_state_clock
         from app.models.models import FuturesOddsSnapshot
 
         # Get all futures markets linked to this event
@@ -34795,6 +34807,19 @@ async def get_event_odds_history(
                         event.home_team_name,
                         event.away_team_name,
                     )
+                # #13007 / 233-A: on live games, freshness MUST come from when the
+                # rung's price actually moved (`price_changed_at`, #2024), never
+                # from the unconditional poll touch-stamp (`last_updated`) which
+                # refreshes every 2 min even on frozen pregame O/U ladders.
+                rung_updated_at = (
+                    getattr(outcome, "price_changed_at", None)
+                    if event.status == "live"
+                    else (
+                        getattr(outcome, "price_changed_at", None)
+                        or getattr(outcome, "last_updated", None)
+                        or getattr(market, "updated_at", None)
+                    )
+                )
                 if margin_rung is not None:
                     if source not in spread_contracts_by_source:
                         spread_contracts_by_source[source] = []
@@ -34802,6 +34827,7 @@ async def get_event_odds_history(
                         "threshold": margin_rung["threshold"],
                         "probability": margin_rung["probability"],
                         "name": name,
+                        "updated_at": rung_updated_at,
                     })
                     continue
 
@@ -34812,6 +34838,7 @@ async def get_event_odds_history(
                         "threshold": spread_val,
                         "probability": prob,
                         "name": name,
+                        "updated_at": rung_updated_at,
                     })
                     continue
 
@@ -34834,6 +34861,7 @@ async def get_event_odds_history(
                         "threshold": total_val,
                         "probability": prob,
                         "name": name,
+                        "updated_at": rung_updated_at,
                     })
 
             # #8898: one market pricing the SAME side-less line twice is carrying
@@ -34880,11 +34908,13 @@ async def get_event_odds_history(
         # Derive implied values per source
         implied_spreads = {}
         implied_totals = {}
+        blend_spread_inputs = {}
+        blend_total_inputs = {}
 
         for source, contracts in spread_contracts_by_source.items():
             result = binary_to_implied_spread(contracts)
             if result:
-                implied_spreads[source] = {
+                entry = {
                     "spread": result.spread,
                     # Betting-line sign is NOT the chart's axis; see
                     # `home_margin_from_spread`. Rendered consumers read this.
@@ -34896,11 +34926,18 @@ async def get_event_odds_history(
                         key=lambda x: x["threshold"],
                     ),
                 }
+                implied_spreads[source] = entry
+                blend_spread_inputs[source] = {
+                    **entry,
+                    "pool_recrosses": result.pool_recrosses,
+                    "same_line_contradiction": result.same_line_contradiction,
+                    "updated_at": result.updated_at,
+                }
 
         for source, contracts in total_contracts_by_source.items():
             result = binary_to_implied_total(contracts)
             if result:
-                implied_totals[source] = {
+                entry = {
                     "total": result.total,
                     "confidence": result.confidence,
                     "contracts": sorted(
@@ -34909,6 +34946,13 @@ async def get_event_odds_history(
                         key=lambda x: x["threshold"],
                     ),
                 }
+                implied_totals[source] = entry
+                blend_total_inputs[source] = {
+                    **entry,
+                    "pool_recrosses": result.pool_recrosses,
+                    "same_line_contradiction": result.same_line_contradiction,
+                    "updated_at": result.updated_at,
+                }
 
         # Also include sportsbook spread/total from the odds history
         if history:
@@ -34916,19 +34960,30 @@ async def get_event_odds_history(
             sb_ou = latest.get("over_under")
             sb_home = latest.get("projected_home_score")
             sb_away = latest.get("projected_away_score")
+            sb_updated_at = latest.get("timestamp") or latest.get("captured_at")
             if sb_home is not None and sb_away is not None:
                 sb_spread = sb_away - sb_home  # negative = home favored
-                implied_spreads["sportsbook"] = {
+                sb_sp_entry = {
                     "spread": round(sb_spread, 1),
                     "home_margin": home_margin_from_spread(round(sb_spread, 1)),
                     "confidence": 1.0,
                     "contracts": [],
                 }
+                implied_spreads["sportsbook"] = sb_sp_entry
+                blend_spread_inputs["sportsbook"] = {
+                    **sb_sp_entry,
+                    "updated_at": sb_updated_at,
+                }
             if sb_ou is not None:
-                implied_totals["sportsbook"] = {
+                sb_to_entry = {
                     "total": sb_ou,
                     "confidence": 1.0,
                     "contracts": [],
+                }
+                implied_totals["sportsbook"] = sb_to_entry
+                blend_total_inputs["sportsbook"] = {
+                    **sb_to_entry,
+                    "updated_at": sb_updated_at,
                 }
 
         # Compute projected final score from the best available data — the arm
@@ -34964,20 +35019,100 @@ async def get_event_odds_history(
         # `implied_spreads`/`implied_totals` are deliberately left alone — they are
         # the chart's own rungs, and this is the narrow claim: no PROJECTION of a
         # game that has already been played.
+        # Ruling 265: A, for now (#13007): during a live game with the blend
+        # switch enabled, replace the history[-1] sportsbook entry with raw
+        # per-bookmaker snapshots filtered by Ruling 233: A (so a stale
+        # pre-cutoff snapshot extended synthetically to `now` never counts as
+        # current).
+        _blend_now = datetime.now(timezone.utc)
+        _live_clock = _pm_event_state_clock(event)
+        _is_live_event = event.status == "live"
+        if _is_live_event and projected_final_blend_enabled():
+            from app.utils.live_line_clock import current_lines as _pm_current_lines
+
+            blend_spread_inputs.pop("sportsbook", None)
+            blend_total_inputs.pop("sportsbook", None)
+            latest_by_bk: dict[str, Any] = {}
+            for _snap in snapshots:
+                _bk = getattr(_snap, "bookmaker", None)
+                _cap = getattr(_snap, "captured_at", None)
+                if not _bk or _cap is None:
+                    continue
+                _prev = latest_by_bk.get(_bk)
+                if _prev is None or _cap > _prev.captured_at:
+                    latest_by_bk[_bk] = _snap
+            _live_snaps = list(latest_by_bk.values())
+            if _live_clock is not None:
+                _live_snaps = _pm_current_lines(
+                    _live_snaps, now=_blend_now, state_changed_at=_live_clock
+                )
+            if _live_snaps:
+                _rev_bks = detect_reversed_bookmakers(_live_snaps)
+                _agg_live_snaps = (
+                    [s for s in _live_snaps if s.bookmaker not in _rev_bks]
+                    if _rev_bks
+                    else _live_snaps
+                )
+                _live_counted = _agg_live_snaps if _agg_live_snaps else _live_snaps
+                _live_agg = aggregate_bookmaker_odds(_live_counted)
+                _live_sb_home = _live_agg.get("projected_home_score")
+                _live_sb_away = _live_agg.get("projected_away_score")
+                _live_sb_ou = _live_agg.get("over_under")
+                _live_oldest_cap = min(
+                    s.captured_at
+                    for s in _live_counted
+                    if getattr(s, "captured_at", None) is not None
+                )
+                if _live_sb_home is not None and _live_sb_away is not None:
+                    _live_spread = round(float(_live_sb_away) - float(_live_sb_home), 1)
+                    blend_spread_inputs["sportsbook"] = {
+                        "spread": _live_spread,
+                        "home_margin": home_margin_from_spread(_live_spread),
+                        "confidence": 1.0,
+                        "contracts": [],
+                        "updated_at": _live_oldest_cap.isoformat(),
+                    }
+                if _live_sb_ou is not None:
+                    blend_total_inputs["sportsbook"] = {
+                        "total": float(_live_sb_ou),
+                        "confidence": 1.0,
+                        "contracts": [],
+                        "updated_at": _live_oldest_cap.isoformat(),
+                    }
+
         projected = None
         event_is_final = event.status in ("completed", "closed")
-        best_pair = (
-            None if event_is_final
-            else select_projected_final(implied_spreads, implied_totals)
-        )
-        if best_pair is not None:
-            best_spread_source, best_total_source, proj = best_pair
-            projected = {
-                "home_score": proj.home_score,
-                "away_score": proj.away_score,
-                "spread_source": best_spread_source,
-                "total_source": best_total_source,
-            }
+        if not event_is_final and projected_final_blend_enabled():
+            blended = blend_projected_final(
+                blend_spread_inputs,
+                blend_total_inputs,
+                is_live=_is_live_event,
+                now=_blend_now,
+                state_changed_at=_live_clock,
+                sport_key=(
+                    getattr(getattr(event, "sport", None), "key", None)
+                    or getattr(event, "sport_key", None)
+                ),
+            )
+            if blended is not None:
+                projected = {
+                    "home_score": blended.projection.home_score,
+                    "away_score": blended.projection.away_score,
+                    "spread_source": blended.spread_source,
+                    "total_source": blended.total_source,
+                    "spread_sources": list(blended.spread_sources),
+                    "total_sources": list(blended.total_sources),
+                }
+        else:
+            best_pair = None if event_is_final else select_projected_final(implied_spreads, implied_totals)
+            if best_pair is not None:
+                best_spread_source, best_total_source, proj = best_pair
+                projected = {
+                    "home_score": proj.home_score,
+                    "away_score": proj.away_score,
+                    "spread_source": best_spread_source,
+                    "total_source": best_total_source,
+                }
 
         pm_spread_data = {
             "implied_spreads": implied_spreads,
@@ -37688,6 +37823,14 @@ def _format_event(
         logging.warning(f"Error adding EI data for event {event.id}: {e}")
 
     attach_tennis_score(event, response, _served_now)
+    response.pop("score_source_unavailable", None)
+    response.update(
+        score_source_unavailable_fields(
+            event,
+            status=response.get("status"),
+            payload=response,
+        )
+    )
     return response
 
 
@@ -39376,8 +39519,8 @@ def _build_search_top_outcomes(
     recalled through an OUTCOME name carry that outcome. See
     `_search_query_matched_leg`.
 
-    ``lean=True`` returns the minimal typeahead payload (name / probability /
-    movement only — no id/odds/rank) to keep the dropdown response small.
+    ``lean=True`` returns the typeahead payload (name / probability / movement
+    and source mark, with no id/odds/rank) to keep the dropdown response small.
     Placeholder outcomes are filtered; probabilities are #23-normalized so the
     displayed distribution reads sensibly (e.g. "Lakers 62% · Cavs 18%").
 
@@ -39414,6 +39557,8 @@ def _build_search_top_outcomes(
         reader_change_24h,
     )
 
+    source_market = market
+    source_outcomes = {o.id: o for o in market.outcomes}
     _verified_changed = False
     if verified is not None:
         market = _VerifiedMarket(market, verified.overlay, verified.display_overlay)
@@ -39674,6 +39819,8 @@ def _build_search_top_outcomes(
             }
             for o, name in named
         ]
+    # Keep identity separately: lean rows have no id and names can repeat.
+    source_by_row = {id(row): source_outcomes[o.id] for (o, _name), row in zip(named, out)}
     # #6993: null the refused price, keyed on presence, exactly as the detail,
     # group, browse and faceted arms do — `WITHHELD_PRICE_FIELDS` is the one
     # place the spellings of "the price" are listed, so `movement` (this
@@ -39799,6 +39946,12 @@ def _build_search_top_outcomes(
     out = _drop_dominant_field_outcomes(
         out, lambda o: o.get("name"), lambda o: o.get("probability")
     )
+    from app.utils.futures_source_mark import futures_card_source_mark
+
+    for row in out:
+        row["source_mark"] = futures_card_source_mark(
+            source_market, source_by_row[id(row)], row, verified=verified,
+        )
     return _leader_pick_order(out)  # #993 shared leader-pick (Other/Field never headlines)
 
 

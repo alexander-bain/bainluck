@@ -449,14 +449,24 @@ function EventFeedCard({
     { name: data.away_team, abbreviation: data.away_team_data?.abbreviation },
     data.sport,
   );
+  const feedChance = {
+    home: data.current_odds?.home_probability ?? null,
+    away: data.current_odds?.away_probability ?? null,
+  };
   const projectedFinal =
     isScheduled && Date.parse(data.commence_time) > Date.now()
-      ? cardProjectedFinal(data.current_odds, data.sport)
+      ? cardProjectedFinal(data.current_odds, data.sport, feedChance)
       : isLive && Date.parse(data.commence_time) <= Date.now()
-        ? liveCardProjectedFinal(data.current_odds, data.sport, data.commence_time, {
-            home: data.home_score,
-            away: data.away_score,
-          })
+        ? liveCardProjectedFinal(
+            data.current_odds,
+            data.sport,
+            data.commence_time,
+            {
+              home: data.home_score,
+              away: data.away_score,
+            },
+            feedChance,
+          )
         : null;
   // #11296 — on a final, the sportsbooks' last pair before the scheduled start,
   // by the same rule as the league card and the headline; empty while a row

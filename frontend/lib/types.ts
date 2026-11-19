@@ -188,6 +188,8 @@ export interface Event {
   status: EventStatus;
   home_score: number | null;
   away_score: number | null;
+  /** #13000 (`250: A`) — present and `true` when no score source carries this live match. */
+  score_source_unavailable?: boolean;
   /**
    * The per-period line under the score, when the authority holds one.
    *
@@ -1775,6 +1777,8 @@ export interface FeedEventData {
   status: EventStatus;
   home_score: number | null;
   away_score: number | null;
+  /** #13000 (`250: A`) — present and `true` when no score source carries this live match. */
+  score_source_unavailable?: boolean;
   /**
    * #5811 — the venue already graded this scoreless row. Same keys, same
    * shared reader and same three states (absent / `false` / `true`) as

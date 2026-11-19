@@ -140,7 +140,15 @@ describe("#9034 — card and hero print one projected final", () => {
   });
 
   it("agreement holds for any disagreeing pair, not just the specimen's numbers", () => {
-    const ev = event({}, { projected_home_score: 24.4, projected_away_score: 20.6 });
+    const ev = event(
+      { hero_probability: 0.62, hero_probability_away: 0.38 } as Partial<Event>,
+      {
+        home_probability: 0.62,
+        away_probability: 0.38,
+        projected_home_score: 24.4,
+        projected_away_score: 20.6,
+      },
+    );
     expect(cardPair(card(ev))).toBe("24-21");
     expect(heroPair(page(ev, { home_score: 27.9, away_score: 16.2 }))).toBe("24-21");
   });
@@ -172,8 +180,15 @@ describe("#9034 — where the card prints no projection, the page keeps the ladd
         sport: "baseball_mlb",
         home_team: "Los Angeles Dodgers",
         away_team: "San Diego Padres",
+        hero_probability: 0.62,
+        hero_probability_away: 0.38,
       } as Partial<Event>,
-      { projected_home_score: 4.6, projected_away_score: 3.1 },
+      {
+        home_probability: 0.62,
+        away_probability: 0.38,
+        projected_home_score: 4.6,
+        projected_away_score: 3.1,
+      },
     );
     expect(cardPair(card(ev))).toBeNull();
     expect(heroPair(page(ev, { home_score: 5.2, away_score: 3.3 }))).toBe("5-3");

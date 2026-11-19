@@ -41,6 +41,7 @@ from app.utils.sibling_family import (
     load_sibling_family_definitions_from_dir,
     select_sibling_family,
 )
+from app.utils.source_mark import quote_source_mark
 from app.utils.week_events import (
     GOLF_THIS_WEEK_DEFINITION,
     GOLF_THIS_WEEK_PRODUCER,
@@ -375,6 +376,45 @@ class TestWeekEventsThisWeeksTournaments:
         assert feed_item["data"]["roundup"]["kicker"] == "GOLF · THIS WEEK"
         assert container["slug"] == GOLF_THIS_WEEK_SLUG
         assert container["member_count"] == 3
+
+    def test_golf_this_week_preserves_each_golfers_source_mark(self) -> None:
+        tournaments = _make_live_golf_tournaments(toto_flat_placeholder=True)
+        golfer = tournaments[0]["golfers"][0]
+        mark = quote_source_mark(
+            [
+                {"key": "kalshi", "probability": 0.20, "observed_at": OBS},
+                {"key": "polymarket", "probability": 0.1825},
+            ]
+        )
+        golfer["source_mark"] = mark
+        # Selection follows the chance even if the leader is later in the input.
+        tournaments[0]["golfers"].reverse()
+
+        members = select_week_events(tournaments, now=NOW_NOV_6)
+        assert isinstance(members, RoundupMembers)
+        feed = compose_roundup_feed_item(GOLF_THIS_WEEK_PRODUCER, members)
+        container = compose_roundup_container(GOLF_THIS_WEEK_PRODUCER, members)
+        assert feed is not None and container is not None
+        cards = {
+            entry["id"]: entry["card"] for entry in container["sections"][0]["members"]
+        }
+        for item in feed["data"]["items"]:
+            card = item["data"]
+            assert card["top_outcomes"] == cards[card["id"]]["top_outcomes"]
+        for row in feed["data"]["roundup"]["rows"]:
+            outcomes = cards[row["market_id"]]["top_outcomes"]
+            assert row["outcome_id"] == outcomes[0]["id"]
+            assert row["probability"] == outcomes[0]["probability"]
+            assert row["source_mark"] == outcomes[0]["source_mark"]
+            for outcome in outcomes:
+                if outcome["name"] == golfer["name"]:
+                    assert outcome["source_mark"] == mark
+                else:
+                    assert outcome["source_mark"] == {
+                        "state": "none",
+                        "sources": [],
+                        "reason": "source_evidence_incomplete",
+                    }
 
     def test_week_events_finder_across_all_five_sports(self) -> None:
         """Finder evaluates golf, tennis, ufc, motorsport, and esports with exact refusal reasons."""

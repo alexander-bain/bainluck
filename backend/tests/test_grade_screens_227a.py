@@ -51,7 +51,7 @@ def _request():
 
 class FakeDB:
     def __init__(self, rows=()):
-        self.rows, self.added, self.statements = list(rows), [], []
+        self.rows, self.added, self.deleted, self.statements = list(rows), [], [], []
 
     async def execute(self, stmt):
         self.statements.append(stmt)
@@ -60,6 +60,11 @@ class FakeDB:
 
     def add(self, row):
         self.added.append(row)
+
+    async def delete(self, row):
+        self.deleted.append(row)
+        if row in self.rows:
+            self.rows.remove(row)
 
     async def commit(self):
         pass
@@ -139,6 +144,7 @@ async def test_grades_come_back_beside_each_screens_counts(wired):
 def test_the_card_grade_read_leaves_out_screen_grades():
     src = inspect.getsource(admin.get_grades)
     assert "RankingGrade.surface != SURFACE_SCREENS" in src
+    assert "RankingGrade.surface != SURFACE_SCREENS_UNDONE" in src
 
 
 def test_a_malformed_week_is_left_out(tmp_path):
@@ -146,3 +152,35 @@ def test_a_malformed_week_is_left_out(tmp_path):
     path.write_text(json.dumps({WEEK: {"screens": [{"id": "x"}]}, "not-a-week": {"screens": _screens("c")},
                                 OLDER: {"screens": _screens("b")}}))
     assert set(admin.load_screen_samples(path)) == {OLDER}
+
+
+async def test_undo_removes_only_the_last_grade_and_keeps_older_grades_locked(wired):
+    r1 = RankingGrade(slate_id=f"screens-{WEEK}", surface="screens", grader="Alex", expert=True,
+                      position=1, item_key="screen:a1", grade="shareable")
+    r1.graded_at, r1.id = datetime(2026, 1, 1, 10, 0), 1
+    r2 = RankingGrade(slate_id=f"screens-{WEEK}", surface="screens", grader="Alex", expert=True,
+                      position=2, item_key="screen:a2", grade="neither")
+    r2.graded_at, r2.id = datetime(2026, 1, 1, 10, 1), 2
+    db = FakeDB([r1, r2])
+
+    # Older screen #1 cannot be undone — "first grade stands" for anything older.
+    with pytest.raises(HTTPException) as err:
+        await admin.undo_last_screen_grade(
+            admin.ScreenGradeUndoIn(week=WEEK, n=1, grader="Alex"), _request(), secret=None, db=db)
+    assert err.value.status_code == 409
+    assert r1.surface == admin.SURFACE_SCREENS and r2.surface == admin.SURFACE_SCREENS
+
+    # Most recent screen #2 CAN be undone (non-destructive soft retraction off SURFACE_SCREENS).
+    out = await admin.undo_last_screen_grade(
+        admin.ScreenGradeUndoIn(week=WEEK, n=2, grader="Alex"), _request(), secret=None, db=db)
+    assert out == {"status": "undone", "n": 2}
+    assert r1.surface == admin.SURFACE_SCREENS
+    assert r2.surface == admin.SURFACE_SCREENS_UNDONE
+    assert db.deleted == []
+
+
+async def test_undo_with_no_prior_grade_returns_404(wired):
+    with pytest.raises(HTTPException) as err:
+        await admin.undo_last_screen_grade(
+            admin.ScreenGradeUndoIn(week=WEEK, n=1, grader="Alex"), _request(), secret=None, db=FakeDB())
+    assert err.value.status_code == 404

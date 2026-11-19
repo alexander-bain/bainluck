@@ -354,3 +354,39 @@ def test_a_quiet_ten_minutes_sends_a_refresh_every_two_minutes_and_never_goes_st
     assert [p for _, _, p in sends] == ["5"] * 5
     for (_, stale, _), (next_at, _, _) in zip(sends, sends[1:]):
         assert stale > next_at.timestamp() + QUIET_REFRESH_SECONDS
+
+
+def test_a_tenths_only_change_goes_at_priority_5_and_carries_the_new_tenths():
+    """#12999 / #10542: a tenths-only probability jitter stays out of priority 10
+    so 1.0.6 and 1.0.7 preserve priority-10 budget, and still flows at priority 5."""
+    done, first = _send(
+        state(),
+        _clocks(NOW, home_rendered_percent=60, away_rendered_percent=40, home_headline_tenths=601),
+        revision=1,
+        at=NOW,
+    )
+    assert first.push.headers["apns-priority"] == "10"
+
+    t30 = NOW + timedelta(seconds=30)
+    held = done.observe(
+        _clocks(t30, home_rendered_percent=60, away_rendered_percent=40, home_headline_tenths=604),
+        revision=2,
+    )
+    assert held.dispatch(now=t30)[1] is None  # held for quiet refresh, not priority 10
+
+    due = NOW + timedelta(seconds=QUIET_REFRESH_SECONDS)
+    done, refresh = held.dispatch(now=due)
+    assert refresh is not None
+    assert refresh.push.headers["apns-priority"] == "5"
+    assert aps(refresh)["content-state"]["snapshot"]["homeHeadlineTenths"] == 604
+    done = done.complete(refresh.attempt_id, now=due)
+
+    # A whole-percent move still goes immediately at priority 10.
+    t_move = due + timedelta(seconds=15)
+    _, moved = done.observe(
+        _clocks(t_move, home_rendered_percent=61, away_rendered_percent=39, home_headline_tenths=612),
+        revision=3,
+    ).dispatch(now=t_move)
+    assert moved is not None
+    assert moved.push.headers["apns-priority"] == "10"
+    assert aps(moved)["content-state"]["snapshot"]["homeHeadlineTenths"] == 612

@@ -346,6 +346,7 @@ struct DiscoverPairedMetricCardView: View {
     var allowsRouteLinks: Bool = false
     var isOscarsCollectionSurface: Bool = false
     var preloadedImages: [String: PairedPlatformImage] = [:]
+    var containerDestination: (slug: String, name: String)? = nil
     var onOpenMarket: ((Int) -> Void)? = nil
     var onOpenCollection: ((String, String) -> Void)? = nil
 
@@ -403,6 +404,7 @@ struct DiscoverPairedMetricCardView: View {
         allowsRouteLinks: Bool = false,
         isOscarsCollectionSurface: Bool = false,
         preloadedImages: [String: PairedPlatformImage] = [:],
+        containerDestination: (slug: String, name: String)? = nil,
         onOpenMarket: ((Int) -> Void)? = nil,
         onOpenCollection: ((String, String) -> Void)? = nil
     ) {
@@ -416,6 +418,7 @@ struct DiscoverPairedMetricCardView: View {
         self.allowsRouteLinks = allowsRouteLinks
         self.isOscarsCollectionSurface = isOscarsCollectionSurface
         self.preloadedImages = preloadedImages
+        self.containerDestination = containerDestination
         self.onOpenMarket = onOpenMarket
         self.onOpenCollection = onOpenCollection
         self._expanded = State(initialValue: initialExpanded)
@@ -447,6 +450,16 @@ struct DiscoverPairedMetricCardView: View {
         sortedEntries.first(where: { PairedMetricPresentation.resolveKidSafeVisualArt($0) != nil })?.art?.kind ?? .tmdbPoster
     }
 
+    var resolvedContainerDestination: (slug: String, name: String)? {
+        if let containerDestination {
+            return containerDestination
+        }
+        if metricSet.setId.hasPrefix("oscars-"), !isOscarsCollectionSurface {
+            return ("oscars-2027", "Oscars 2027")
+        }
+        return nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if showsCardHeader {
@@ -468,6 +481,12 @@ struct DiscoverPairedMetricCardView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(borderColor, lineWidth: 1))
         .shadow(color: .black.opacity(colorScheme == .dark ? 0.22 : 0.04), radius: 6, x: 0, y: 2)
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .onTapGesture {
+            if let dest = resolvedContainerDestination, let onOpenCollection {
+                onOpenCollection(dest.slug, dest.name)
+            }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("discover.pairedMetric.\(effectiveForm.rawValue).\(metricSet.setId)")
     }
@@ -558,25 +577,28 @@ struct DiscoverPairedMetricCardView: View {
     }
 
     @ViewBuilder
-    private var oscarsCollectionFooterLink: some View {
-        let label = Text("All Oscars categories ›")
+    private func collectionFooterLink(dest: (slug: String, name: String)) -> some View {
+        let isOscars = metricSet.setId.hasPrefix("oscars-") || dest.slug == "oscars-2027"
+        let title = isOscars ? "All Oscars categories ›" : "View the \(dest.name) collection ›"
+        let identifier = isOscars ? "discover.pairedMetric.allOscarsCategories" : "discover.pairedMetric.collectionLink"
+        let label = Text(title)
             .font(.system(size: effectiveKickerSize, weight: .semibold))
             .foregroundStyle(DS.emerald)
             .fixedSize(horizontal: true, vertical: false)
         if let onOpenCollection {
             Button {
-                onOpenCollection("oscars-2027", "Oscars 2027")
+                onOpenCollection(dest.slug, dest.name)
             } label: {
                 label.contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("discover.pairedMetric.allOscarsCategories")
+            .accessibilityIdentifier(identifier)
         } else if allowsRouteLinks {
-            NavigationLink(value: Route.containerHub(slug: "oscars-2027", name: "Oscars 2027")) {
+            NavigationLink(value: Route.containerHub(slug: dest.slug, name: dest.name)) {
                 label.contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("discover.pairedMetric.allOscarsCategories")
+            .accessibilityIdentifier(identifier)
         }
     }
 
@@ -584,10 +606,11 @@ struct DiscoverPairedMetricCardView: View {
     private var traceableMarketLinksRow: some View {
         let s2Id = metricSet.primaryStage2MarketId.flatMap { $0 != currentMarketId ? $0 : nil }
         let s1Id = metricSet.primaryStage1MarketId.flatMap { $0 != currentMarketId ? $0 : nil }
-        let showOscarsHub = metricSet.setId.hasPrefix("oscars-")
-            && !isOscarsCollectionSurface
-            && (onOpenCollection != nil || allowsRouteLinks)
-        if hasInteractiveFooterLinks && (s2Id != nil || s1Id != nil || showOscarsHub) {
+        let footerCollectionDest: (slug: String, name: String)? = {
+            guard !isOscarsCollectionSurface, onOpenCollection != nil || allowsRouteLinks else { return nil }
+            return resolvedContainerDestination
+        }()
+        if hasInteractiveFooterLinks && (s2Id != nil || s1Id != nil || footerCollectionDest != nil) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) {
                     if let s2Id {
@@ -604,8 +627,8 @@ struct DiscoverPairedMetricCardView: View {
                             identifier: "discover.pairedMetric.stage1MarketLink"
                         )
                     }
-                    if showOscarsHub {
-                        oscarsCollectionFooterLink
+                    if let footerCollectionDest {
+                        collectionFooterLink(dest: footerCollectionDest)
                     }
                     Spacer(minLength: 0)
                 }
@@ -625,8 +648,8 @@ struct DiscoverPairedMetricCardView: View {
                             identifier: "discover.pairedMetric.stage1MarketLink"
                         )
                     }
-                    if showOscarsHub {
-                        oscarsCollectionFooterLink
+                    if let footerCollectionDest {
+                        collectionFooterLink(dest: footerCollectionDest)
                     }
                 }
             }
@@ -638,11 +661,10 @@ struct DiscoverPairedMetricCardView: View {
         let showsTMDBFooter = metricSet.usesTMDBArt
         let s2Id = metricSet.primaryStage2MarketId.flatMap { $0 != currentMarketId ? $0 : nil }
         let s1Id = metricSet.primaryStage1MarketId.flatMap { $0 != currentMarketId ? $0 : nil }
-        let showsLinks = hasInteractiveFooterLinks && (
-            s2Id != nil
-            || s1Id != nil
-            || (metricSet.setId.hasPrefix("oscars-") && !isOscarsCollectionSurface && (onOpenCollection != nil || allowsRouteLinks))
-        )
+        let showsCollectionFooter = !isOscarsCollectionSurface
+            && resolvedContainerDestination != nil
+            && (onOpenCollection != nil || allowsRouteLinks)
+        let showsLinks = hasInteractiveFooterLinks && (s2Id != nil || s1Id != nil || showsCollectionFooter)
         return Group {
             if showsOrderingFooter || showsTMDBFooter || showsLinks {
                 VStack(alignment: .leading, spacing: 6) {
