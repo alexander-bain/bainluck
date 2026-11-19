@@ -1437,10 +1437,10 @@ private struct TradeWatchPairView: View {
                         }
                         .buttonStyle(.plain)
 
-                        if let prob = future.probability,
+                        if let markProb = future.probability,
                            let mark = SourceMarkButton(
                                future.sourceMark,
-                               number: future.sourceMark?.state == .settled ? nil : prob,
+                               number: future.sourceMark?.state == .settled ? nil : markProb,
                                subject: future.outcomeName,
                                numberSize: 11,
                                compactRow: true
