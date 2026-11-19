@@ -197,6 +197,11 @@ export interface ProbabilityEvidenceInput {
   win_probability_sources?: WinProbabilitySources;
 }
 
+/** #12824 — cached event or feed payloads may still carry a tagged opening line. */
+export function isStoredOpeningChance(event: object): boolean {
+  return "hero_probability_source" in event && event.hero_probability_source === "opening";
+}
+
 /**
  * Should this event's probability be withheld rather than asserted?
  *

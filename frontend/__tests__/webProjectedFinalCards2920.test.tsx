@@ -79,6 +79,18 @@ function stamp(html: string, testId: string): string | null {
   return m ? `${m[1]}-${m[2]} ${m[3]}` : null;
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the specimen, 14780563, before play", () => {
   it("the fixture is the photographed reading: 29.6 / 22.3 rounds to the 30 – 22 Alex saw", () => {
     const e = F.event_14780563 as Event;

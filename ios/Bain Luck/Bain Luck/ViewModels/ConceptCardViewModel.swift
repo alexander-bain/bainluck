@@ -30,13 +30,23 @@ final class ConceptCardViewModel: ObservableObject {
     @Published private(set) var state: State = .loading
 
     let key: String
+    private var skipNetworkLoad = false
 
     init(key: String) {
         self.key = key
     }
 
+    #if DEBUG
+    init(key: String, loadedPresentation: ConceptCardPresentation) {
+        self.key = key
+        self.state = .loaded(loadedPresentation)
+        self.skipNetworkLoad = true
+    }
+    #endif
+
     @MainActor
     func load() async {
+        guard !skipNetworkLoad else { return }
         if case .loaded = state {} else { state = .loading }
 
         do {

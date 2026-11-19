@@ -5,7 +5,12 @@ import json
 
 import pytest
 
-from app.utils.activitykit_delivery_state import DeliveryState, RetryPolicy
+from app.services.activitykit_state_codec import decode_state, encode_state
+from app.utils.activitykit_delivery_state import (
+    QUIET_REFRESH_SECONDS,
+    DeliveryState,
+    RetryPolicy,
+)
 from app.utils.activitykit_payload import GameActivitySnapshot
 
 NOW = datetime(2026, 10, 5, tzinfo=timezone.utc)
@@ -219,3 +224,133 @@ def test_same_second_end_waits_and_retries_cannot_resurrect_update(kind):
         == dispatched
     )
     assert dispatched.observe(snapshot(home_score=99), revision=3) == dispatched
+
+
+# --- #10542: priority 10 when the screen changes, 5 for a refresh -----------
+# Magic at Celtics, Nov 16: every update went at priority 5, and the locked phone
+# sat three pushes behind a score the server already had.
+
+
+def _send(current, reading, *, revision, at):
+    ready = current.observe(reading, revision=revision)
+    sent, command = ready.dispatch(now=at)
+    assert command is not None
+    return sent.complete(command.attempt_id, now=at), command
+
+
+def test_an_update_that_changes_the_screen_goes_at_10_and_a_refresh_at_5():
+    later = NOW + timedelta(seconds=QUIET_REFRESH_SECONDS)
+    done, first = _send(state(), snapshot(), revision=1, at=NOW)
+    assert first.push.headers["apns-priority"] == "10"  # nothing sent before
+    # Same numbers, newer clocks: a refresh.
+    done, refresh = _send(
+        done, snapshot(score_observed_at=later, probability_observed_at=later), revision=2, at=later
+    )
+    assert refresh.push.headers["apns-priority"] == "5"
+    steps = [
+        ("home_score", 3),
+        ("away_score", 5),
+        ("home_rendered_percent", 61),
+        ("lifecycle", "suspended"),
+    ]
+    reading = {"score_observed_at": later, "probability_observed_at": later}
+    for i, (field, value) in enumerate(steps, start=3):
+        at = later + timedelta(seconds=30 * (i - 2))
+        reading = {**reading, field: value, "score_observed_at": at, "probability_observed_at": at}
+        if field == "lifecycle":
+            # suspended suppresses the forecast, and with it the chance clock
+            reading["home_rendered_percent"] = None
+            reading["probability_observed_at"] = None
+        done, command = _send(done, snapshot(**reading), revision=i, at=at)
+        assert command.push.headers["apns-priority"] == "10", field
+
+
+def test_the_final_score_goes_at_10_and_a_readers_stop_at_5():
+    done, _ = _send(state(), snapshot(), revision=1, at=NOW)
+    final = snapshot(lifecycle="final", home_rendered_percent=None, probability_observed_at=None, home_score=4)
+    ended, end = _send(done, final, revision=2, at=NOW + timedelta(seconds=1))
+    assert aps(end)["event"] == "end" and end.push.headers["apns-priority"] == "10"
+    stopped = done.stop()
+    _, stop = stopped.dispatch(now=NOW + timedelta(seconds=1))
+    assert aps(stop)["event"] == "end" and stop.push.headers["apns-priority"] == "5"
+
+
+def test_a_retry_resends_the_same_priority():
+    ready = state().observe(snapshot(), revision=1)
+    sent, command = ready.dispatch(now=NOW)
+    waiting = sent.complete(command.attempt_id, now=NOW, failure="transient")
+    _, retry = waiting.dispatch(now=NOW + timedelta(seconds=5))
+    assert retry.push.body == command.push.body
+    assert retry.push.headers["apns-priority"] == command.push.headers["apns-priority"] == "10"
+
+
+def test_the_codec_keeps_what_was_sent_and_reads_state_saved_before_priorities():
+    done, _ = _send(state(), snapshot(), revision=1, at=NOW)
+    pending = done.observe(snapshot(home_score=7), revision=2)
+    sent, command = pending.dispatch(now=NOW + timedelta(seconds=1))
+    again = decode_state(json.loads(json.dumps(encode_state(sent))))
+    assert again == sent and again.attempt.push.priority == "10"
+    # A row written before #10542: no `sent_view`, and a push without `priority`.
+    legacy = json.loads(json.dumps(encode_state(sent)))
+    del legacy["state"]["sent_view"]
+    del legacy["state"]["attempt"]["command"]["push"]["priority"]
+    old = decode_state(legacy)
+    assert old.sent_view is None and old.attempt.push.priority == "5"
+    # Its next update is treated as news.
+    after = old.complete(old.attempt.attempt_id, now=NOW + timedelta(seconds=1))
+    _, nxt = after.observe(snapshot(home_score=7, score_observed_at=NOW + timedelta(seconds=2)), revision=3).dispatch(
+        now=NOW + timedelta(seconds=2)
+    )
+    assert nxt.push.headers["apns-priority"] == "10"
+
+
+# #10542 step 3: push only when the screen changes, plus a quiet refresh.
+
+
+def _clocks(at, **changes):
+    return snapshot(score_observed_at=at, probability_observed_at=at, **changes)
+
+
+def test_a_clock_only_reading_waits_for_the_quiet_refresh_then_goes_at_5():
+    done, _ = _send(state(), _clocks(NOW), revision=1, at=NOW)
+    t30 = NOW + timedelta(seconds=30)
+    held = done.observe(_clocks(t30), revision=2)
+    assert held.dispatch(now=t30) == (held, None)  # same screen, 30 s after a push
+    t90 = NOW + timedelta(seconds=90)
+    held = held.observe(_clocks(t90), revision=3)
+    assert held.pending == "update"
+    assert held.dispatch(now=t90)[1] is None
+    due = NOW + timedelta(seconds=QUIET_REFRESH_SECONDS)
+    _, refresh = held.dispatch(now=due)
+    assert refresh.push.headers["apns-priority"] == "5"
+    sent = aps(refresh)["content-state"]["snapshot"]
+    assert sent["scoreObservedAt"] == (t90 - datetime(2001, 1, 1, tzinfo=timezone.utc)).total_seconds()
+
+
+def test_a_screen_change_during_the_wait_goes_at_once_at_10():
+    done, _ = _send(state(), _clocks(NOW), revision=1, at=NOW)
+    t30 = NOW + timedelta(seconds=30)
+    held = done.observe(_clocks(t30), revision=2)
+    assert held.dispatch(now=t30)[1] is None
+    t45 = NOW + timedelta(seconds=45)
+    _, basket = held.observe(_clocks(t45, home_score=3), revision=3).dispatch(now=t45)
+    assert basket.push.headers["apns-priority"] == "10"
+
+
+def test_a_quiet_ten_minutes_sends_a_refresh_every_two_minutes_and_never_goes_stale():
+    """A sweep every 30 s with only the clocks moving: five priority-5 refreshes
+    in ten minutes (not twenty), and each one's stale date is past the next."""
+    done, _ = _send(state(), _clocks(NOW), revision=1, at=NOW)
+    sends = []
+    for i in range(1, 21):
+        at = NOW + timedelta(seconds=30 * i)
+        ready = done.observe(_clocks(at), revision=1 + i)
+        sent, command = ready.dispatch(now=at)
+        if command is None:
+            done = ready
+            continue
+        sends.append((at, aps(command)["stale-date"], command.push.headers["apns-priority"]))
+        done = sent.complete(command.attempt_id, now=at)
+    assert [p for _, _, p in sends] == ["5"] * 5
+    for (_, stale, _), (next_at, _, _) in zip(sends, sends[1:]):
+        assert stale > next_at.timestamp() + QUIET_REFRESH_SECONDS

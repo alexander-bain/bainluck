@@ -1173,6 +1173,9 @@ class FoldedCardNumbers:
     opening: tuple
     """``(home, away)`` from :func:`merge_opening_line` — the SETTLED card's."""
 
+    absorbed_ids: tuple[int, ...] = ()
+    """Proven twins whose pregame history can fill a missing venue reading."""
+
 
 async def folded_card_numbers_batch(db, events) -> dict[int, FoldedCardNumbers]:
     """Both folds for a whole page, in the SAME lookup the sources fold pays.
@@ -1214,6 +1217,7 @@ async def folded_card_numbers_batch(db, events) -> dict[int, FoldedCardNumbers]:
                     )
                 ],
             ),
+            absorbed_ids=tuple(sorted(twin[0] for twin in folded.get(canonical_id, []))),
         )
         for canonical_id, event in canonicals.items()
     }

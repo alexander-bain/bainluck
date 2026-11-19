@@ -313,6 +313,8 @@ _CULTURAL_GRAVITY_T2 = re.compile(
     r"("
     r"#1 (song|album|artist|show|movie|app)|"
     r"number.?1.*(song|album|artist|show|movie)|"
+    r"top (?:global |u\.?s\.? )?netflix (?:show|movie|series)|"
+    r"opening weekend box office|rotten tomatoes score|"
     r"billboard.*(hot 100|200)|"
     r"top (artist|song).*(spotify|billboard)|"
     r"(elon musk|jeff bezos|kim kardashian|kanye|rogan)(?!.*(stock|net worth on))|"

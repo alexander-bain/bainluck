@@ -133,19 +133,24 @@ describe("#7740 — the noun beside the number", () => {
 });
 
 describe("#7740 — what the fallback path renders", () => {
-  // Static render never fires `loadProof`, so `proof` is still {null, null} and
-  // the page takes the editorial branch. That is the path under test here, and it
-  // is the one a reader gets when `/api/calibration` is unreachable.
-  const text = visibleText(renderToStaticMarkup(<AboutPage />));
-
-  it("renders the proof card at all", () => {
-    // The anti-vacuous arm: every absence below is free on a page that did not
-    // render this card.
-    expect(text).toContain(STORY_BLEND.proofLead);
-    expect(text).toContain("our numbers land an average of");
+  it("default Decision 189 About page never prints 'traded markets'", () => {
+    const prev = process.env.NEXT_PUBLIC_ABOUT_189;
+    delete process.env.NEXT_PUBLIC_ABOUT_189;
+    const defaultText = visibleText(renderToStaticMarkup(<AboutPage />));
+    if (prev === undefined) delete process.env.NEXT_PUBLIC_ABOUT_189;
+    else process.env.NEXT_PUBLIC_ABOUT_189 = prev;
+    expect(defaultText).not.toContain("traded markets");
+    expect(defaultText).toContain("We keep score on ourselves.");
   });
 
-  it("does not tell a reader the cohort is a count of markets", () => {
+  it("legacy fallback path renders the proof card with 'traded outcomes' and never 'traded markets'", () => {
+    const prev = process.env.NEXT_PUBLIC_ABOUT_189;
+    process.env.NEXT_PUBLIC_ABOUT_189 = "false";
+    const text = visibleText(renderToStaticMarkup(<AboutPage />));
+    if (prev === undefined) delete process.env.NEXT_PUBLIC_ABOUT_189;
+    else process.env.NEXT_PUBLIC_ABOUT_189 = prev;
+    expect(text).toContain(STORY_BLEND.proofLead);
+    expect(text).toContain("our numbers land an average of");
     expect(text).not.toContain("traded markets");
     expect(text).toContain("traded outcomes");
   });

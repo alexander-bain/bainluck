@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import WidgetKit
 
 // MARK: - Timeline Entry
@@ -25,7 +26,9 @@ struct BainLuckWidgetEntry: TimelineEntry {
                     period: "Q3 4:32",
                     sport: "NBA",
                     homeColor: "#007A33",
-                    awayColor: "#552583"
+                    awayColor: "#552583",
+                    homeDarkColor: TeamTextContrast.usableOnDarkSurface(primaryHex: "#007A33"),
+                    awayDarkColor: TeamTextContrast.usableOnDarkSurface(primaryHex: "#552583", secondaryHex: "#FDB927")
                 ),
                 WidgetGame(
                     id: 2,
@@ -40,7 +43,9 @@ struct BainLuckWidgetEntry: TimelineEntry {
                     period: "Bot 6",
                     sport: "MLB",
                     homeColor: "#003087",
-                    awayColor: "#EB6E1F"
+                    awayColor: "#EB6E1F",
+                    homeDarkColor: TeamTextContrast.usableOnDarkSurface(primaryHex: "#003087"),
+                    awayDarkColor: TeamTextContrast.usableOnDarkSurface(primaryHex: "#EB6E1F")
                 ),
                 WidgetGame(
                     id: 3,
@@ -55,7 +60,9 @@ struct BainLuckWidgetEntry: TimelineEntry {
                     period: "2nd 8:15",
                     sport: "NHL",
                     homeColor: "#FF4C00",
-                    awayColor: "#041E42"
+                    awayColor: "#041E42",
+                    homeDarkColor: TeamTextContrast.usableOnDarkSurface(primaryHex: "#FF4C00"),
+                    awayDarkColor: TeamTextContrast.usableOnDarkSurface(primaryHex: "#041E42", secondaryHex: "#C8102E")
                 ),
             ],
             discoverItems: [
@@ -102,6 +109,18 @@ struct WidgetGame: Identifiable {
     let sport: String
     let homeColor: String?
     let awayColor: String?
+    var homeDarkColor: String? = nil
+    var awayDarkColor: String? = nil
+
+    func resolvedHomeColor(for colorScheme: ColorScheme) -> String? {
+        guard colorScheme == .dark else { return homeColor }
+        return homeDarkColor ?? TeamTextContrast.usableOnDarkSurface(primaryHex: homeColor)
+    }
+
+    func resolvedAwayColor(for colorScheme: ColorScheme) -> String? {
+        guard colorScheme == .dark else { return awayColor }
+        return awayDarkColor ?? TeamTextContrast.usableOnDarkSurface(primaryHex: awayColor)
+    }
 
     /// #5363 — who is ahead, where that is answerable AT ALL.
     ///

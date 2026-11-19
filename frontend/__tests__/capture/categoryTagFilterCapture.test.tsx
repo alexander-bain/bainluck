@@ -154,6 +154,18 @@ function visibleText(markup: string): string {
 
 const EMPTY_LINE = "No soccer items right now";
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the BEFORE state, from the verbatim served payload", () => {
   it("the served payload really is empty — the fixture is not a strawman", () => {
     expect((SERVED_BEFORE as { total: number }).total).toBe(0);

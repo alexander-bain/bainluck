@@ -88,6 +88,18 @@ function stamp(html: string): string | null {
 }
 const ANY_BAND_LABEL = /before scheduled start/i;
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the results rail prints the served final's forecast band", () => {
   it("Buccaneers 19 – Steelers 26: the band, home first, under the actual result", () => {
     const html = rail([briefFrom(NFL)]);

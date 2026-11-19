@@ -332,6 +332,19 @@ final class PinManager: ObservableObject {
         }
     }
 
+    /// Ruling 208-A — the remembered account's pinned game ids, read only, so
+    /// Siri can prefer a pinned team when a spoken name fits two non-pro teams.
+    /// Same keys `bindAccount` reads; nothing is written, listed or spoken.
+    nonisolated static func storedEventIDs(
+        defaults: UserDefaults = .standard,
+        userID: String? = APIClient.persistedLastKnownUserId()
+    ) -> Set<Int> {
+        let key = "bainluck_pins.\(userID.map { "user.\($0)" } ?? "guest").Events"
+        guard let data = defaults.data(forKey: key),
+              let ids = try? JSONDecoder().decode([Int].self, from: data) else { return [] }
+        return Set(ids)
+    }
+
     private func loadFromDefaults() {
         if let data = defaults.data(forKey: eventsKey),
            let ids = try? JSONDecoder().decode([Int].self, from: data) {

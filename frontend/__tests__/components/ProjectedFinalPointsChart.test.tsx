@@ -157,8 +157,8 @@ describe("#10539 no slider, and the readout still carries both quantities", () =
 
   it("the readout is text: each team's projection, its score, and the recorded time", () => {
     const readout = html.slice(html.indexOf('data-testid="projected-reading"'), html.indexOf("</p>", html.indexOf('data-testid="projected-stamp"')));
-    expect(readout).toMatch(/Chicago Bears<\/span><\/div><div[^>]*>27\.0<\/div><div[^>]*>projected final<\/div><div[^>]*data-actual="home"[^>]*>27 final/);
-    expect(readout).toMatch(/Philadelphia Eagles<\/span><\/div><div[^>]*>7\.5<\/div><div[^>]*>projected final<\/div><div[^>]*data-actual="away"[^>]*>7 final/);
+    expect(readout).toMatch(/Bears<\/span><\/div><div[^>]*>27\.0<\/div><div[^>]*data-actual="home"[^>]*>27 final/);
+    expect(readout).toMatch(/Eagles<\/span><\/div><div[^>]*>7\.5<\/div><div[^>]*data-actual="away"[^>]*>7 final/);
     expect(readout).toContain("Last projection before the final · recorded " + formatProjectionTime(Date.parse("2026-09-29T03:09:00Z")));
   });
 
@@ -225,7 +225,8 @@ describe("before kickoff", () => {
   it("has no actual score anywhere", () => {
     expect(html).not.toContain("data-actual=");
     expect(html).not.toContain('data-series="actual-');
-    expect(html).toContain("Latest projection · recorded " + formatProjectionTime(Date.parse("2026-09-28T23:30:00Z")));
+    expect(html).toContain("Projected final · recorded " + formatProjectionTime(Date.parse("2026-09-28T23:30:00Z")));
+    expect(html).not.toContain("Latest projection");
   });
 });
 
@@ -242,7 +243,7 @@ describe("a finished game with no admitted score (#10239 '— final')", () => {
 describe("a live game whose newest reading was unusable", () => {
   it("says so once, without repeating the time", () => {
     const html = render(nflInput({ finalAt: null, asOf: "2026-09-29T01:50:00Z" }));
-    expect(html).toContain("Latest projection · recorded " + formatProjectionTime(Date.parse("2026-09-29T01:20:00Z")));
+    expect(html).toContain("Projected final · recorded " + formatProjectionTime(Date.parse("2026-09-29T01:20:00Z")));
     expect(html).toContain("No usable projection since then");
   });
 });
@@ -269,7 +270,7 @@ describe("#10573 the card's headline is the hero's projected final, never a seco
     const html = renderWith(live, null);
     expect(readout(html)).toContain(">27.0<");
     expect(readout(html)).toContain(">9.5<");
-    expect(stamp(html)).toBe("Latest projection · recorded " + formatProjectionTime(Date.parse("2026-09-29T02:30:00Z")));
+    expect(stamp(html)).toBe("Projected final · recorded " + formatProjectionTime(Date.parse("2026-09-29T02:30:00Z")));
     expect(html).not.toContain('data-testid="projected-page-pair"');
   });
 
@@ -279,8 +280,10 @@ describe("#10573 the card's headline is the hero's projected final, never a seco
     expect(readout(html)).toContain(">11<");
     expect(readout(html)).not.toContain("27.0");
     expect(readout(html)).not.toContain("9.5");
-    // The recorded time belongs to the book's line, not to the page's pair.
-    expect(stamp(html)).toBe("Latest projection");
+    // #12889: "Latest projection" is gone, and "Projected final" is printed once, not under each team.
+    expect(readout(html).toLowerCase()).not.toContain("projected final");
+    expect(stamp(html)).toBe("Projected final");
+    expect(html).not.toContain("Latest projection");
   });
 
   it("prints the hero's whole numbers, so 29.46 is never 29 above and 29.5 below", () => {
@@ -517,5 +520,88 @@ describe("#10547 — each team keeps one colour that its line can be told apart 
           checked++;
         }
     expect(checked).toBeGreaterThan(1000);
+  });
+});
+
+describe("#12889 pregame lines join hourly polls and fit the y-axis while live/finished stay zero-based", () => {
+  // Trail Blazers at Timberwolves (/events/15350164): hourly spreads+totals polls ~55-64 min apart
+  // interleaved with 30-min moneyline-only (`h2h`, null/null) polls.
+  const blazersAtWolvesPregame: ProjectedFinalPointsInput = {
+    sportKey: "basketball_nba",
+    sourceKey: "draftkings",
+    basis: "same_book_same_capture_full_game_spread_and_total",
+    pairs: [
+      { timestamp: "2026-11-17T16:08:00Z", home: 115.0, away: 113.5, homeProbability: 0.5427, kind: "recorded" },
+      { timestamp: "2026-11-17T16:40:00Z", home: null, away: null, homeProbability: 0.5427, kind: "recorded" },
+      { timestamp: "2026-11-17T17:12:00Z", home: 115.0, away: 113.5, homeProbability: 0.5427, kind: "recorded" }, // 64m hop
+      { timestamp: "2026-11-17T17:39:00Z", home: null, away: null, homeProbability: 0.5427, kind: "recorded" },
+      { timestamp: "2026-11-17T18:06:00Z", home: 114.5, away: 113.0, homeProbability: 0.5427, kind: "recorded" },
+      { timestamp: "2026-11-17T18:30:00Z", home: null, away: null, homeProbability: 0.5427, kind: "recorded" },
+      { timestamp: "2026-11-17T19:04:00Z", home: 114.5, away: 113.0, homeProbability: 0.5325, kind: "recorded" },
+      { timestamp: "2026-11-17T19:27:00Z", home: null, away: null, homeProbability: 0.5696, kind: "recorded" },
+      { timestamp: "2026-11-17T19:59:00Z", home: 114.5, away: 111.0, homeProbability: 0.5696, kind: "recorded" },
+      { timestamp: "2026-11-17T20:05:00Z", home: null, away: null, homeProbability: 0.5696, kind: "recorded" },
+      { timestamp: "2026-11-17T20:55:00Z", home: 114.5, away: 111.0, homeProbability: 0.5696, kind: "recorded" },
+      { timestamp: "2026-11-17T21:01:00Z", home: null, away: null, homeProbability: 0.5696, kind: "recorded" },
+      { timestamp: "2026-11-17T21:54:00Z", home: 114.0, away: 111.5, homeProbability: 0.5696, kind: "recorded" },
+    ],
+    actuals: [],
+    kickoffAt: null,
+    finalAt: null,
+    asOf: "2026-11-17T21:55:00Z",
+  };
+
+  it("joins pregame hourly readings up to 2h apart across h2h-only polls into one line per team", () => {
+    const s = buildProjectedFinalPointsSeries(blazersAtWolvesPregame);
+    if (!s.supported) throw new Error("expected supported");
+    expect(s.phase).toBe("before");
+    expect(s.segments).toHaveLength(1);
+    expect(s.segments[0]).toHaveLength(7);
+    expect(s.withheld).toEqual([]);
+    expect(s.yMin).toBe(105);
+    expect(s.yMax).toBe(120);
+    expect(s.yTicks).toEqual([105, 110, 115, 120]);
+  });
+
+  it("separates the two teams vertically on a fitted axis and prints Projected final once without Latest projection", () => {
+    const html = renderToStaticMarkup(
+      <ProjectedFinalPointsChart
+        input={blazersAtWolvesPregame}
+        homeTeam="Minnesota Timberwolves"
+        awayTeam="Portland Trail Blazers"
+        homeColor="#0C2340"
+        awayColor="#E03A3E"
+        projectedFinal={{ home: 114, away: 112 }}
+      />,
+    );
+    expect(count(html, 'data-single-point="true"')).toBe(0);
+    expect(count(html, 'data-series="forecast-home"')).toBe(1);
+    expect(count(html, 'data-series="forecast-away"')).toBe(1);
+    expect(html).not.toContain("Latest projection");
+    expect(count(html, 'data-testid="projected-stamp">Projected final</p>')).toBe(1);
+    const readout = html.slice(html.indexOf('data-testid="projected-reading"'), html.indexOf('data-testid="projected-stamp"'));
+    expect(readout.toLowerCase()).not.toContain("projected final");
+    // Check vertical separation at 21:54Z (114.0 vs 111.5 on 105..120 -> >40 viewBox units apart, not stacked at the top).
+    const homeY = Number(html.match(/data-series="forecast-home" d="M[\d.]+,([\d.]+)/)![1]);
+    const awayY = Number(html.match(/data-series="forecast-away" d="M[\d.]+,([\d.]+)/)![1]);
+    expect(Math.abs(awayY - homeY)).toBeGreaterThan(20);
+  });
+
+  it("still breaks pregame lines across >2h gaps and keeps live/finished games zero-based with 1h break", () => {
+    const gapOver2h = buildProjectedFinalPointsSeries({
+      ...blazersAtWolvesPregame,
+      pairs: [
+        { timestamp: "2026-11-17T17:00:00Z", home: 115.0, away: 113.0, kind: "recorded" },
+        { timestamp: "2026-11-17T19:05:00Z", home: 114.0, away: 111.5, kind: "recorded" },
+      ],
+    });
+    if (!gapOver2h.supported) throw new Error("expected supported");
+    expect(gapOver2h.segments).toHaveLength(2);
+
+    const liveSeries = buildProjectedFinalPointsSeries(nflInput({ finalAt: null, asOf: "2026-09-29T02:35:00Z" }));
+    if (!liveSeries.supported) throw new Error("expected supported");
+    expect(liveSeries.phase).toBe("during");
+    expect(liveSeries.yMin).toBe(0);
+    expect(liveSeries.yTicks[0]).toBe(0);
   });
 });

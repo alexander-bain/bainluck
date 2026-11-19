@@ -8,14 +8,26 @@ nonisolated struct ContainerHubPresentation: Sendable {
     var title: String? {
         response.state == .published || response.state == .empty ? response.container?.name : nil
     }
+    var subtitle: String? {
+        guard response.state == .published,
+              let raw = response.subtitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return nil
+        }
+        return raw
+    }
     var sections: [ContainerHubSection] { response.sections }
+    var hasMachinerySections: Bool { sections.contains { $0.visualBlock != nil } }
     var children: [ContainerHubChild] { response.children.filter(\.canOpen) }
     var members: [ContainerHubMember] { sections.flatMap(\.members) }
 
     nonisolated struct DisplaySection: Identifiable, Sendable {
         let id: Int
         let sectionClass: String
+        let title: String?
+        let note: String?
         let members: [ContainerHubMember]
+        let visualBlock: MachineryVisualBlock?
     }
 
     /// A question shown under a rendered event has one home on the screen.
@@ -24,9 +36,26 @@ nonisolated struct ContainerHubPresentation: Sendable {
     var displaySections: [DisplaySection] {
         let relatedIds = Set(members.flatMap { relatedQuestions(for: $0) }.map(\.id))
         return sections.enumerated().compactMap { index, section in
+            if let vb = section.visualBlock {
+                return DisplaySection(
+                    id: index,
+                    sectionClass: section.sectionClass,
+                    title: section.title,
+                    note: section.note,
+                    members: section.members,
+                    visualBlock: vb
+                )
+            }
             let standalone = section.members.filter { !relatedIds.contains($0.id) }
             guard !standalone.isEmpty else { return nil }
-            return DisplaySection(id: index, sectionClass: section.sectionClass, members: standalone)
+            return DisplaySection(
+                id: index,
+                sectionClass: section.sectionClass,
+                title: section.title,
+                note: section.note,
+                members: standalone,
+                visualBlock: nil
+            )
         }
     }
     var loadedCount: Int { members.count }
@@ -43,8 +72,23 @@ nonisolated struct ContainerHubPresentation: Sendable {
         }
         return Self.sectionTitle(sectionClass)
     }
+    func resolvedSectionTitle(_ section: DisplaySection) -> String {
+        if let explicit = section.title?.trimmingCharacters(in: .whitespacesAndNewlines), !explicit.isEmpty {
+            return explicit
+        }
+        return sectionTitle(section.sectionClass)
+    }
     var isPartial: Bool {
-        response.state == .published && (response.counts?.inventoryComplete == false || (response.counts?.withheldCount.values.reduce(0, +) ?? 0) > 0 || response.withheldCount > 0 || !response.withheld.isEmpty || sections.contains { $0.unavailableCount > 0 || $0.count != $0.members.count } || members.count != response.memberCount)
+        guard response.state == .published else { return false }
+        if hasMachinerySections {
+            return response.withheldCount > 0 || !response.withheld.isEmpty
+        }
+        return response.counts?.inventoryComplete == false
+            || (response.counts?.withheldCount.values.reduce(0, +) ?? 0) > 0
+            || response.withheldCount > 0
+            || !response.withheld.isEmpty
+            || sections.contains { $0.unavailableCount > 0 || $0.count != $0.members.count }
+            || members.count != response.memberCount
     }
 
     var note: String? {
@@ -56,6 +100,7 @@ nonisolated struct ContainerHubPresentation: Sendable {
         case .unavailable: return "This collection isn't available right now."
         case .published:
             if isPartial { return "Some \(noun) aren't available right now." }
+            if hasMachinerySections { return nil }
             return members.isEmpty && children.isEmpty ? "No \(noun) are available right now." : nil
         }
     }

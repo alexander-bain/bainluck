@@ -31,10 +31,12 @@ struct DistributionCardView: View {
         DistributionBoardOrder.listedRows(outcomes, order: data.discoverCard?.distributionOrder)
     }
 
-    /// #10374 — rank digits beside dates read as ranks ("1 October 12"), so a
-    /// chronological board draws none.
+    /// #10374 & #12885 — rank digits beside dates or numerical scales read as
+    /// ranks ("1 October 12", "1 3.75%"), so chronological and numerical boards
+    /// draw none.
     private var showsRanks: Bool {
         !DistributionBoardOrder.isChronological(data.discoverCard?.distributionOrder)
+            && !DistributionBoardOrder.isNumerical(outcomes, order: data.discoverCard?.distributionOrder)
     }
 
     private var remainingCount: Int {
@@ -141,8 +143,12 @@ struct DistributionCardView: View {
                     mark
                 }
                 // #4351: named, or not drawn — was `src.uppercased()`, which is
-                // how this card printed `ODDS_API`.
-                if let src = SourceLabels.label(for: data.source) {
+                // how this card printed `ODDS_API`. Card faces omit Kalshi/Polymarket.
+                if let src = SourceLabels.cardFaceLabel(
+                    for: data.source,
+                    sources: data.sources,
+                    sourceCount: data.sourceCount
+                ) {
                     Text(src)
                         .font(.system(size: 9, weight: .heavy))
                         .foregroundStyle(.blue)

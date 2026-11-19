@@ -46,6 +46,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.models.models import Base, Event, OddsSnapshot, Sport  # noqa: E402
 from app.routes.events import list_events  # noqa: E402
 from app.utils import pregame_projection as pp  # noqa: E402
+from app.utils.prematch_reading import prematch_prior_sql  # noqa: E402
 from app.utils.card_projected_pair import CARD_PROJECTION_READ_CAP_MS  # noqa: E402
 from app.utils.odds_math import project_scores  # noqa: E402
 from tests.test_pregame_projection_routes_11296 import (  # noqa: E402,F401 — `detail` is a fixture
@@ -130,6 +131,7 @@ class _Session:
         self.pregame_rows = list(pregame_rows)
         self.fail = fail
         self.projection_reads: list[dict] = []
+        self.prematch_reads: list[dict] = []
         self.timeouts: list[str] = []
         self.savepoints = 0
         self.rollbacks = 0
@@ -148,6 +150,9 @@ class _Session:
         sql = " ".join(str(statement).split())
         if "statement_timeout" in sql:
             self.timeouts.append(sql)
+            return SimpleNamespace(all=lambda: [])
+        if sql == " ".join(prematch_prior_sql().split()):
+            self.prematch_reads.append(args[0])
             return SimpleNamespace(all=lambda: [])
         if "WITH RECURSIVE bounds" in sql:
             params = args[0] if args else kwargs
@@ -313,7 +318,9 @@ class TestRefusalsSurviveTheListRoute:
             [], sport="tennis_atp",
         )
         assert session.projection_reads == []
-        assert session.savepoints == 0
+        # Tennis has a pregame probability, but no projected final score.
+        assert session.prematch_reads[0]["ids"] == [TENNIS]
+        assert session.savepoints == 1 and session.rollbacks == 1
         assert cards[TENNIS]["pregame_projection_unavailable"] == "format_unsupported"
         assert "pregame_projection" not in cards[TENNIS]
 
@@ -348,8 +355,10 @@ class TestTheCost:
     def test_the_read_carries_its_own_server_side_bound_inside_a_rolled_back_savepoint(self):
         cards, session = _list([_row(STUTTGART, S_UCL)], _stuttgart_rows())
         assert "pregame_projection" in cards[STUTTGART]
-        assert session.savepoints == 1 and session.rollbacks == 1
-        assert session.timeouts == [f"SET LOCAL statement_timeout = '{CARD_PROJECTION_READ_CAP_MS}ms'"]
+        # One probability read and one projection read, each separately bounded.
+        assert len(session.prematch_reads) == len(session.projection_reads) == 1
+        assert session.savepoints == 2 and session.rollbacks == 2
+        assert session.timeouts == [f"SET LOCAL statement_timeout = '{CARD_PROJECTION_READ_CAP_MS}ms'"] * 2
 
     def test_a_failed_read_costs_the_forecast_and_nothing_else(self):
         kick = _kick()

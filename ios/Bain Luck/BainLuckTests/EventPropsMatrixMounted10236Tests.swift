@@ -174,16 +174,17 @@ final class EventPropsMatrixMounted10236Tests: XCTestCase {
         return row.insetBy(dx: -24, dy: -16).intersection(CGRect(x: 0, y: 0, width: w, height: h))
     }
 
-    /// The row's left and right halves, each recognised on its own, without
-    /// language correction, so a percent sign is read as drawn.
-    private func heroHalves(_ image: CGImage, row: CGRect) throws -> (left: String, right: String) {
+    /// The unified 2-row headline's top (away) and bottom (home) rows in the
+    /// `Now` column, each recognised on its own without language correction so
+    /// every percent sign is read as drawn (#10796, updated for #12771).
+    private func heroHalves(_ image: CGImage, row: CGRect) throws -> (top: String, bottom: String) {
         let crop = try XCTUnwrap(image.cropping(to: row.integral))
-        let half = crop.width / 2
-        func read(_ x: Int, _ width: Int) throws -> String {
-            let part = try XCTUnwrap(crop.cropping(to: CGRect(x: x, y: 0, width: width, height: crop.height)))
+        let half = crop.height / 2
+        func read(_ y: Int, _ height: Int) throws -> String {
+            let part = try XCTUnwrap(crop.cropping(to: CGRect(x: 0, y: y, width: crop.width, height: height)))
             return try observations(part, correcting: false).map(\.text).joined(separator: " ")
         }
-        return (try read(0, half), try read(half, crop.width - half))
+        return (try read(0, half), try read(half, crop.height - half))
     }
 
     /// The same pixels with one rectangle (in pixels) painted over in the
@@ -216,7 +217,7 @@ final class EventPropsMatrixMounted10236Tests: XCTestCase {
         let scroll = try XCTUnwrap(pageScroll(in: host.view), "\(name): the page has a scroll view")
         var result: [[String]] = []
         var first: CGImage?
-        var y: CGFloat = 0, index = 0
+        var y: CGFloat = -scroll.adjustedContentInset.top, index = 0
         repeat {
             scroll.setContentOffset(CGPoint(x: 0, y: y), animated: false)
             settle(host, 0.25)
@@ -252,22 +253,22 @@ final class EventPropsMatrixMounted10236Tests: XCTestCase {
             defer { vm.stopRefresh(); win.isHidden = true }
             settle(host, 0.6)
             let (all, first) = try frames(host, name)
-            // #10796 — the first frame's hero row, read on its own: the away
-            // team's 58% on the left, the home team's 42% on the right, each
-            // with its percent sign. #10090 (ALEX item 39): in tenths.
+            // #10796 / #12771 — the first frame's unified 2-row hero (`Now` column),
+            // read on its own: the away team's 58.0% on top, the home team's 42.0%
+            // on the bottom, each with its percent sign.
             let row = try XCTUnwrap(try heroRow(first, numbers: ["58", "42"]),
                                     "\(name): the hero leads the page: \(all[0])")
             let hero = try heroHalves(first, row: row)
-            XCTAssertTrue(hero.left.contains("58.0%") && hero.right.contains("42.0%"),
+            XCTAssertTrue(hero.top.contains("58.0%") && hero.bottom.contains("42.0%"),
                           "\(name): the hero leads the page: \(hero) in \(all[0])")
             // Negative controls on the same pixels: a missing number, and a
             // number whose percent sign is clipped, are both refused.
-            let rightHalf = CGRect(x: row.midX, y: row.minY, width: row.width / 2, height: row.height)
-            let missing = try heroHalves(covering(first, rightHalf), row: row)
-            XCTAssertFalse(missing.right.contains("42.0%"), "\(name): a missing 42.0% still read: \(missing)")
-            let leftSign = CGRect(x: row.minX + row.width * 0.25, y: row.minY, width: row.width * 0.25, height: row.height)
-            let clipped = try heroHalves(covering(first, leftSign), row: row)
-            XCTAssertFalse(clipped.left.contains("58.0%"), "\(name): a clipped 58.0% still read: \(clipped)")
+            let bottomHalf = CGRect(x: row.minX, y: row.midY, width: row.width, height: row.height / 2)
+            let missing = try heroHalves(covering(first, bottomHalf), row: row)
+            XCTAssertFalse(missing.bottom.contains("42.0%"), "\(name): a missing 42.0% still read: \(missing)")
+            let topTrailingSign = CGRect(x: row.maxX - 140, y: row.minY, width: 140, height: row.height / 2)
+            let clipped = try heroHalves(covering(first, topTrailingSign), row: row)
+            XCTAssertFalse(clipped.top.contains("58.0%"), "\(name): a clipped 58.0% still read: \(clipped)")
             print("Hero row read (#10796): \(name) \(hero) | missing \(missing) | clipped \(clipped)")
             let at = try XCTUnwrap(all.firstIndex { $0.contains { $0.contains("Live Player") } },
                                    "\(name): the matrix is on the page: \(all)")

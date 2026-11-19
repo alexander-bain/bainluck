@@ -2,6 +2,49 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import {
+  ABOVE_NINETY_NINE_PERCENT,
+  BELOW_ONE_PERCENT,
+} from "@/lib/probabilityDisplay";
+import { parseNumericalScaleKey } from "@/lib/numericalScaleOrder";
+
+export function formatFedHeatmapCell(prob: number, resolved?: boolean): string {
+  if (!Number.isFinite(prob) || prob <= 0) return "";
+  if (prob < 0.5) return BELOW_ONE_PERCENT;
+  if (prob >= 99.5 && !resolved) return ABOVE_NINETY_NINE_PERCENT;
+  return `${Math.round(prob)}%`;
+}
+
+const LADDER_ABOVE_PREFIX_RE =
+  /^\s*(?:above|over|at least|more than|greater than|exceeds?|reaches?|hits?)\b/i;
+const LADDER_BELOW_PREFIX_RE =
+  /^\s*(?:below|under|at most|less than|fewer than|no more than)\b/i;
+
+export function filterMonotoneLadderRows(
+  rows: [number, string][],
+  reachedSet: ReadonlySet<string>,
+): [number, string][] {
+  if (rows.length < 2) return rows;
+  const allAbove = rows.every(([, label]) => LADDER_ABOVE_PREFIX_RE.test(label));
+  const allBelow = !allAbove && rows.every(([, label]) => LADDER_BELOW_PREFIX_RE.test(label));
+  if (!allAbove && !allBelow) return rows;
+
+  const kept: [number, string][] = [];
+  let prevLiveProb: number | null = null;
+  for (const [prob, label] of rows) {
+    if (reachedSet.has(label.trim())) {
+      kept.push([prob, label]);
+      continue;
+    }
+    if (prevLiveProb !== null) {
+      if (allAbove && prob > prevLiveProb) continue;
+      if (allBelow && prob < prevLiveProb) continue;
+    }
+    prevLiveProb = prob;
+    kept.push([prob, label]);
+  }
+  return kept;
+}
 
 export function probColor(p: number): string {
   if (p >= 65) return "#10B981";
@@ -208,6 +251,10 @@ export function parseNumericBucketSortKey(label: string): [number, number, numbe
     const v = parseFloat(m[1].replace(/,/g, "")) * bucketUnitMult(m[2]);
     return [v, 0, v];
   }
+  const fallbackScale = parseNumericalScaleKey(s);
+  if (fallbackScale) {
+    return [fallbackScale.primary, fallbackScale.boundRank, fallbackScale.secondary];
+  }
   return null;
 }
 
@@ -243,7 +290,10 @@ export function Histogram({ buckets, color }: {
   // above the bar, unstripped (the leading `Headline:` names a leg; it is not
   // boilerplate) and wrapping rather than truncating.
   const stacked = buckets.some(b => label(b[1]).length > SIDE_LABEL_MAX_CHARS);
-  const ordered = stacked ? buckets : orderNumericBuckets(buckets);
+  // Direction 228 (#12885): numeric/count/rate buckets order numerically even
+  // when stacked; combo legs with `,` and `:` return null in parseNumericBucketSortKey
+  // so `orderNumericBuckets` leaves combo markets untouched.
+  const ordered = orderNumericBuckets(buckets);
   const max = Math.max(...ordered.map(b => b[0]));
   const peak = ordered.reduce((best, b, i) => (b[0] > ordered[best][0] ? i : best), 0);
   if (stacked) {

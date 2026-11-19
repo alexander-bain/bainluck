@@ -160,10 +160,9 @@ describe("#8922: the page hands the maps the pair its hero prints, decided once"
     "utf8"
   );
 
-  it("the hero line renders heroProjectedFinal and nothing else", () => {
-    // #2920: the shared `ProjectedFinalLine` prints it, named per team.
+  it("the hero headline gates its projected pair on heroProjectedHome / heroProjectedAway and nothing else", () => {
     expect(page).toMatch(
-      /<ProjectedFinalLine[\s\S]{0,200}?score: heroProjectedFinal\.home[\s\S]{0,200}?score: heroProjectedFinal\.away/
+      /projectedPairRaw:\s*projectedFinalPair,\s*projectedPairAdmitted:\s*heroProjectedHome !== null && heroProjectedAway !== null/
     );
     // the old inline reads of the raw pair are gone from the render
     expect(page).not.toMatch(/Projected final: \{Math\.round\(historyData/);

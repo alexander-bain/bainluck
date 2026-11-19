@@ -160,6 +160,8 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
     let order: String?
     let presentation: String?
     let rows: [FeedRoundupRow]
+    let machineryCard: MachineryCardContract?
+    let pairedMetricSet: PairedMetricSet?
 
     private enum CodingKeys: String, CodingKey {
         case kicker, tag, subtitle, footer, order, presentation, rows
@@ -169,6 +171,10 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         case completeGroupSnake = "complete_group"
         case countLine
         case countLineSnake = "count_line"
+        case machineryCard
+        case machineryCardSnake = "machinery_card"
+        case pairedMetricSet
+        case pairedMetricSetSnake = "paired_metric_set"
     }
 
     init(
@@ -180,7 +186,9 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         countLine: String? = nil,
         order: String? = nil,
         presentation: String? = nil,
-        rows: [FeedRoundupRow]
+        rows: [FeedRoundupRow],
+        machineryCard: MachineryCardContract? = nil,
+        pairedMetricSet: PairedMetricSet? = nil
     ) {
         self.kicker = kicker
         self.tag = tag
@@ -191,6 +199,8 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         self.order = order
         self.presentation = presentation
         self.rows = rows
+        self.machineryCard = machineryCard
+        self.pairedMetricSet = pairedMetricSet
     }
 
     init(from decoder: Decoder) throws {
@@ -209,6 +219,10 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         order = try? c.decodeIfPresent(String.self, forKey: .order)
         presentation = try? c.decodeIfPresent(String.self, forKey: .presentation)
         rows = (try? c.decodeIfPresent([FeedRoundupRow].self, forKey: .rows)) ?? []
+        machineryCard = (try? c.decodeIfPresent(MachineryCardContract.self, forKey: .machineryCard))
+            ?? (try? c.decodeIfPresent(MachineryCardContract.self, forKey: .machineryCardSnake))
+        pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet))
+            ?? (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSetSnake))
     }
 
     private static func nonEmpty(_ text: String?) -> String? {
@@ -393,10 +407,22 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
             )
         }
 
-        // Explicit `order: "probability"` sorts highest-first; all dynamic candidate
-        // producers (movers, closest-race awards/divisions, ceremony categories,
-        // box office slates, yardsticks, sequences) preserve their canonical container order.
-        if trimmed(contract.order).lowercased() == "probability" {
+        // Direction 228 (#12885): numerical scale rows always run in ascending
+        // numerical order, never by probability. Otherwise explicit `order: "probability"`
+        // sorts highest-first and dynamic candidate producers preserve canonical order.
+        let normalizedOrder = trimmed(contract.order).lowercased()
+        if validated.allSatisfy({ $0.kind == .market }),
+           let scaleKeys = NumericalMarketScaleOrder228.scaleKeys(
+               for: validated.map(\.label),
+               orderHint: contract.order,
+               totalOutcomeCount: validated.count
+           ) {
+            let keyed = Array(zip(validated, scaleKeys))
+            validated = keyed.sorted { lhs, rhs in
+                if lhs.1 != rhs.1 { return lhs.1 < rhs.1 }
+                return lhs.0.index < rhs.0.index
+            }.map(\.0)
+        } else if normalizedOrder == "probability" {
             validated.sort { lhs, rhs in
                 if lhs.row.probability != rhs.row.probability {
                     return lhs.row.probability > rhs.row.probability

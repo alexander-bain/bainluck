@@ -121,13 +121,15 @@ final class AFavouritesWinIsNotAnUpset9490Tests: XCTestCase {
             .filter { !$0.isWhitespace }
     }
 
-    func testTheFinishedRowAsksTheReadingNotAFixedCut() throws {
+    func testTheFinishedRowUsesUniformGreyForBothPregameNumbers() throws {
         let code = try cardCode()
         let start = try XCTUnwrap(code.range(of: "privatefuncpreGameOddsLabel(forside:TeamSide,labelled:Bool=false)"),
                                   "the scan is not reading EventCardView.swift")
         let body = String(code[start.upperBound...].prefix(1200))
-        XCTAssertTrue(body.contains(
-            "letisUpset=won&&(reading?.winnerWasUnderdog(homeWon:homeWon,awayWon:awayWon,pricesADraw:prematchAwayIsWithheld)??false)"))
+        XCTAssertTrue(body.contains(".foregroundStyle(DS.textSecondaryReadable)"),
+                      "both finished Pregame numbers use the same readable grey")
+        XCTAssertFalse(body.contains("Color.orange") || body.contains("?.orange"),
+                       "finished Pregame numbers never tint one side orange")
         XCTAssertFalse(body.contains("prob<0.4"), "the fixed cut is back")
         XCTAssertFalse(body.contains("wasUnderdog"), "a second winner-alone cut is back")
     }

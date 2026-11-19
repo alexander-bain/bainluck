@@ -33,10 +33,13 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-const PROJECTION = "Projected final";
-// The hero joins the pair with thin spaces around an en dash; written as
-// escapes so an assertion cannot pass against glyphs the markup never holds.
-const SEP = "\u2009\u2013\u2009";
+const PROJECTION = ">Proj.<";
+
+function heroProjectedPair(html: string): string | null {
+  const h = html.match(/data-projected-cell="home"[^>]*>([^<]+)<\/span>/)?.[1];
+  const a = html.match(/data-projected-cell="away"[^>]*>([^<]+)<\/span>/)?.[1];
+  return h && a ? `${Math.round(Number(h))}-${Math.round(Number(a))}` : null;
+}
 
 function event(overrides: Record<string, unknown> = {}) {
   return {
@@ -147,7 +150,7 @@ describe("#4885 a projected final below the score on the board is not printed", 
     expect(html).toMatch(/>4</);
     // The ship.
     expect(html).not.toContain(PROJECTION);
-    expect(html).not.toContain(`data-projected-final="3-2"`);
+    expect(heroProjectedPair(html)).toBeNull();
     // NON-VACUITY: the specimen's hero is still drawn.
     expect(html).toContain("Orioles");
     expect(html).toContain("Jays");
@@ -161,9 +164,6 @@ describe("#4885 a projected final below the score on the board is not printed", 
   });
 
   it("withholds it when only the TRAILING side is past its projection", () => {
-    // Per side, not per total: 6.4 – 1.6 sums above 4 + 2, yet the Jays
-    // already have 2 and are projected to finish with 2 → prints `6 – 2`, fine;
-    // at 1.4 they would print 1, below their 2.
     historyPayload = history(6.4, 1.4);
 
     expect(draw()).not.toContain(PROJECTION);
@@ -176,20 +176,20 @@ describe("#4885 a projected final below the score on the board is not printed", 
 
     const html = draw();
     expect(html).toContain(PROJECTION);
-    expect(html).toContain(`data-projected-final="5-3"`);
+    expect(heroProjectedPair(html)).toBe("5-3");
   });
 
   it("still projects a pair EQUAL to the score (no more scoring is a real final)", () => {
     historyPayload = history(4.1, 2.2);
 
-    expect(draw()).toContain(`data-projected-final="4-2"`);
+    expect(heroProjectedPair(draw())).toBe("4-2");
   });
 
   it("reads the PRINTED integer: 3.6 under a score of 4 prints 4 and stays", () => {
     // A gate on the raw float would withhold a line the reader reads as right.
     historyPayload = history(3.6, 2.4);
 
-    expect(draw()).toContain(`data-projected-final="4-2"`);
+    expect(heroProjectedPair(draw())).toBe("4-2");
   });
 
   it("still projects before first pitch, where there is no score to contradict", () => {
@@ -201,6 +201,6 @@ describe("#4885 a projected final below the score on the board is not printed", 
     });
     historyPayload = history(3.3, 1.9);
 
-    expect(draw()).toContain(`data-projected-final="3-2"`);
+    expect(heroProjectedPair(draw())).toBe("3-2");
   });
 });

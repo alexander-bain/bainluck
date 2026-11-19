@@ -197,3 +197,75 @@ test('iOS test targets are not reader-visible; the app and the Watch app are (#1
     'ios/Bain Luck/Bain Luck.xcodeproj/project.pbxproj',
   ]) assert.equal(fableHits([name]).length, 1, name);
 });
+
+// ── 235: A (Alex, Wed Nov 18 2026): labelled `not needed`, confirmed by the bot ──
+const CONFIRMED = [{id: 2, user: {login: 'claude[bot]'}, state: 'APPROVED', commit_id: 'head',
+  body: 'Verified the diff.\nLabel confirmed: switched off — GROUPING_V5 is read in feed.py and defaults off.'}];
+const files = (...names) => names.map(filename => ({filename}));
+
+test('235: A labels are read into one of three categories, and unknown labels stay 119-A', () => {
+  const {fableCategory} = policy();
+  assert.deepEqual(fableCategory('Fable: not needed (tests)'), {category: 'tests, CI tooling or docs', switchName: null});
+  assert.deepEqual(fableCategory('Fable: not needed (CI tooling, docs)'), {category: 'tests, CI tooling or docs', switchName: null});
+  assert.deepEqual(fableCategory('Fable: not needed (switched off: `GROUPING_V5`)'), {category: 'switched off', switchName: 'GROUPING_V5'});
+  assert.deepEqual(fableCategory('Fable: not needed (server fields no app draws yet)'), {category: 'server fields no app draws yet', switchName: null});
+  assert.equal(fableCategory('Fable: not needed (alarm wording)'), null);
+  assert.equal(fableCategory('Fable: not needed'), null);
+  assert.equal(fableCategory('Fable: needed (eval)'), null);
+});
+
+test('a switched-off PR may touch reader code, and passes only when the bot confirmed the label', () => {
+  const {verdict} = policy();
+  const body = 'Fable: not needed (switched off: GROUPING_V5)';
+  const touched = files('frontend/components/DiscoverCard.tsx', 'backend/app/routes/feed.py', 'backend/tests/test_x.py');
+  const ok = verdict(pr(body), CONFIRMED, touched);
+  assert.equal(ok.conclusion, 'success');
+  assert.match(ok.summary, /switched off: GROUPING_V5/);
+  assert.doesNotMatch(ok.summary, /Fable ACCEPT at this head/);
+  const unconfirmed = verdict(pr(body), APPROVED, touched);
+  assert.equal(unconfirmed.conclusion, 'failure');
+  assert.match(unconfirmed.summary, /confirm the label/);
+});
+
+test('a switch must be named', () => {
+  const {verdict} = policy();
+  const result = verdict(pr('Fable: not needed (switched off)'), CONFIRMED, files('backend/app/x.py'));
+  assert.equal(result.conclusion, 'failure');
+  assert.match(result.summary, /names no switch/);
+});
+
+test('every category still needs Fable for migrations, repairs, evals, grades, licences and the Tier-B files', () => {
+  const {verdict} = policy();
+  const always = ['backend/alembic/versions/x.py', 'backend/scripts/repair_names.py', 'evals/x.json',
+    'backend/app/routes/admin_ranking_eval_grade.py', 'backend/data/licence_terms.json',
+    'tools/release/tier_b.cjs', '.github/workflows/tier-b-review.yml', 'docs/release-loop/tier-b-review-brief.md',
+    'tests/release/tier_b_119a.test.cjs', 'tools/ranking/capture.mjs'];
+  for (const body of ['Fable: not needed (tests)', 'Fable: not needed (switched off: X)', 'Fable: not needed (server fields)']) {
+    for (const name of always) {
+      const result = verdict(pr(body), CONFIRMED, files('backend/tests/test_x.py', name));
+      assert.equal(result.conclusion, 'failure', `${body} / ${name}`);
+      assert.match(result.summary, /still need Fable under 235: A/);
+    }
+  }
+});
+
+test('tests/CI/docs allows no reader or server code; server fields allows server code but no page or app', () => {
+  const {verdict} = policy();
+  const tooling = 'Fable: not needed (tests, CI tooling)';
+  assert.equal(verdict(pr(tooling), CONFIRMED,
+    files('backend/tests/test_x.py', '.github/workflows/ci.yml', 'docs/x.md', 'tools/heavy-reach.py')).conclusion, 'success');
+  for (const name of ['backend/app/routes/feed.py', 'backend/app/utils/blend.py', 'frontend/app/page.tsx', 'ios/Bain Luck/Views/X.swift']) {
+    assert.equal(verdict(pr(tooling), CONFIRMED, files(name)).conclusion, 'failure', name);
+  }
+  const fields = 'Fable: not needed (server fields)';
+  assert.equal(verdict(pr(fields), CONFIRMED, files('backend/app/routes/auth.py', 'backend/tests/test_auth.py')).conclusion, 'success');
+  for (const name of ['frontend/lib/api.ts', 'ios/Bain Luck/Models/User.swift', 'frontend/next.config.mjs']) {
+    assert.equal(verdict(pr(fields), CONFIRMED, files(name)).conclusion, 'failure', name);
+  }
+});
+
+test('a bare `not needed` keeps the 119-A path check exactly', () => {
+  const {verdict} = policy();
+  assert.equal(verdict(pr('Fable: not needed'), APPROVED, files('backend/app/routes/feed.py')).conclusion, 'failure');
+  assert.equal(verdict(pr('Fable: not needed'), APPROVED, files('backend/tests/test_x.py')).conclusion, 'success');
+});

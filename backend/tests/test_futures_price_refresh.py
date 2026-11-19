@@ -1468,7 +1468,7 @@ class _RunHarness:
         # makes the whole polymarket batch raise, and the run reports `no_work`
         # rather than the price it was set up to write. #9399 added
         # `refuted_out` for the same reason.
-        async def _priced(service, event_ids, stats=None, refuted_out=None):
+        async def _priced(service, event_ids, stats=None, refuted_out=None, book_refused_out=None):
             return (
                 {
                     eid: [

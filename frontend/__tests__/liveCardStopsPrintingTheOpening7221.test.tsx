@@ -129,6 +129,18 @@ function text(html: string): string {
 const render = (currentHome: number) =>
   text(renderToStaticMarkup(<EventCard event={row(currentHome)} />));
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the live search/league card, driven on both payloads", () => {
   it("BEFORE — today's payload prints the opening as the live number, twice", () => {
     // The control. This is the photograph: 64% live, and `Opened 64/36` under

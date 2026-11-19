@@ -159,9 +159,21 @@ const SWEEP = [
   },
 ] as const;
 
+function renderLegacyAbout(): string {
+  const prev = process.env.NEXT_PUBLIC_ABOUT_189;
+  process.env.NEXT_PUBLIC_ABOUT_189 = "false";
+  try {
+    return inApp(<AboutPage />);
+  } finally {
+    if (prev === undefined) delete process.env.NEXT_PUBLIC_ABOUT_189;
+    else process.env.NEXT_PUBLIC_ABOUT_189 = prev;
+  }
+}
+
 describe("ruling 141's last four sentences, on the pages that serve them", () => {
   const rendered: Record<string, string> = {
-    about: inApp(<AboutPage />),
+    about: renderLegacyAbout(),
+    about189: inApp(<AboutPage />),
     golf: inApp(<GolfPage />),
     weather: inApp(<RainForecast />),
   };

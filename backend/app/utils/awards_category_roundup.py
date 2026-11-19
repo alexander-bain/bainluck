@@ -648,6 +648,207 @@ async def _load_awards_markets_from_db(
     return out
 
 
+async def _produce_registered_paired_award_category(
+    db: Any,
+    definition: Mapping[str, Any],
+    rule: Mapping[str, Any],
+) -> Any:
+    """Produce an `awards_category_roundup` backed by `paired_metric_register.json` (#12577)."""
+    from app.services.paired_metric_register import (
+        PAIRED_METRIC_REGISTER_PATH,
+        collect_paired_register_market_ids,
+        load_live_paired_metric_sets,
+        serialize_futures_market_for_pairing,
+    )
+
+    rc = _rc()
+    RoundupMembers = rc.RoundupMembers
+    RoundupRefusal = rc.RoundupRefusal
+
+    register_id = str(rule.get("register") or "").strip()
+    loaded = await load_live_paired_metric_sets(db, set_ids=[register_id])
+    hydrated = loaded.get(register_id)
+    if hydrated is None:
+        return RoundupRefusal((("awards_category", f"register_unavailable:{register_id}"),))
+
+    tolerance = float(
+        rule.get("win_exceeds_nomination_tolerance", WIN_EXCEEDS_NOMINATION_TOLERANCE)
+    )
+    min_paired = int(rule.get("min_paired_nominees", 3))
+    card_rows = int(rule.get("card_rows", 5))
+    stage_1_settled = bool(hydrated.get("stage_1_settled"))
+    stage_2_settled = bool(hydrated.get("stage_2_settled"))
+
+    s2_meta = hydrated.get("stage_2_market") if isinstance(hydrated.get("stage_2_market"), Mapping) else {}
+    w_mid = int(s2_meta.get("id") or 0)
+    if w_mid <= 0:
+        return RoundupRefusal((("awards_category", "missing_winner_field"),))
+
+    valid_entries: list[dict[str, Any]] = []
+    for e in hydrated.get("entries") or ():
+        if not isinstance(e, Mapping):
+            continue
+        p_win = e.get("stage_2_probability")
+        p_nom = e.get("stage_1_probability")
+        if not isinstance(p_win, (int, float)) or not math.isfinite(float(p_win)):
+            continue
+        if not stage_1_settled:
+            if not isinstance(p_nom, (int, float)) or not math.isfinite(float(p_nom)):
+                continue
+            if float(p_win) > float(p_nom) + tolerance + 1e-9:
+                return RoundupRefusal(
+                    (("awards_category", f"win_exceeds_nomination:{e.get('subject')}"),)
+                )
+        valid_entries.append(dict(e))
+
+    if len(valid_entries) < min_paired and not stage_2_settled:
+        return RoundupRefusal((("awards_category", "too_few_paired_nominees"),))
+
+    valid_entries.sort(
+        key=lambda e: (
+            -float(e.get("stage_2_probability") or 0.0),
+            -float(e.get("stage_1_probability") or 0.0),
+            str(e.get("subject") or "").casefold(),
+        )
+    )
+    shown = valid_entries[:card_rows]
+    as_of_obs = str(hydrated.get("as_of") or "") or None
+
+    rows_out: list[dict[str, Any]] = []
+    for idx, e in enumerate(shown):
+        win_p = float(e.get("stage_2_probability") or 0.0)
+        nom_p = e.get("stage_1_probability")
+        raw_oid = e.get("stage_2_outcome_id")
+        outcome_id = int(raw_oid) if isinstance(raw_oid, int) and raw_oid > 0 else (w_mid * 100 + idx + 1)
+        row_obj: dict[str, Any] = {
+            "market_id": w_mid,
+            "outcome_id": outcome_id,
+            "label": str(e.get("subject") or ""),
+            "probability": win_p,
+            "rendered_percent": _half_up_percent(win_p),
+            "primary_bar_label": str(hydrated.get("stage_2_label") or "Wins"),
+            "secondary_bar_label": str(hydrated.get("stage_1_label") or "Nominated"),
+            "observed_at": as_of_obs,
+        }
+        if isinstance(nom_p, (int, float)) and math.isfinite(float(nom_p)):
+            row_obj["secondary_probability"] = float(nom_p)
+            row_obj["secondary_rendered_percent"] = _half_up_percent(float(nom_p))
+        rows_out.append(row_obj)
+
+    # Fetch constituent market dicts so Discover folds them and container serves them
+    raw_reg = json.loads(PAIRED_METRIC_REGISTER_PATH.read_text(encoding="utf-8"))
+    ref_ids = sorted(
+        collect_paired_register_market_ids({register_id: (raw_reg.get("sets") or {}).get(register_id, {})})
+    )
+    markets_by_id: dict[int, Mapping[str, Any]] = {}
+    if isinstance(db, Mapping):
+        markets_by_id = {int(k): v for k, v in db.items() if isinstance(v, Mapping)}
+    elif isinstance(db, (list, tuple)):
+        markets_by_id = {
+            int(m["id"]): m
+            for m in db
+            if isinstance(m, Mapping) and isinstance(m.get("id"), int) and not isinstance(m.get("id"), bool)
+        }
+    elif hasattr(db, "execute") and ref_ids:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+        from app.models.models import FuturesMarket
+
+        stmt = (
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(FuturesMarket.id.in_(ref_ids))
+        )
+        res = await db.execute(stmt)
+        if hasattr(res, "scalars") and callable(res.scalars):
+            for fm in res.scalars().all():
+                markets_by_id[int(fm.id)] = serialize_futures_market_for_pairing(fm)
+
+    # Put winner market first, followed by nominee markets
+    ordered_mids = [w_mid] + [mid for mid in ref_ids if mid != w_mid]
+    member_entries: list[dict[str, Any]] = []
+    for mid in ordered_mids:
+        m = markets_by_id.get(mid)
+        if not isinstance(m, Mapping):
+            continue
+        raw_src = str(m.get("source") or "").strip().lower()
+        src_val = raw_src if raw_src else None
+        raw_outs = [
+            o
+            for o in (m.get("outcomes") or ())
+            if isinstance(o, Mapping) and isinstance(o.get("probability"), (int, float))
+        ]
+        raw_outs.sort(key=lambda o: -float(o["probability"]))
+        m_obs = _iso_utc(m.get("prices_updated_at") or m.get("updated_at")) or as_of_obs
+        member_entries.append(
+            {
+                "type": MEMBER_MARKET,
+                "id": mid,
+                "destination": market_destination(mid),
+                "card": {
+                    "id": mid,
+                    "name": str(m.get("name") or f"Market {mid}"),
+                    "category": "entertainment",
+                    "llm_sport_category": "entertainment",
+                    "market_tier": 1,
+                    "market_type": "field",
+                    "status": str(m.get("status") or "open"),
+                    "source": src_val,
+                    "sources": [src_val] if src_val else [],
+                    "source_count": 1 if src_val else 0,
+                    "mutually_exclusive": bool(m.get("mutually_exclusive", mid == w_mid)),
+                    "resolution_date": _iso_utc(m.get("resolution_date")),
+                    "top_outcomes": [
+                        {
+                            "id": int(o.get("id") or idx + 1),
+                            "name": str(o.get("name") or ""),
+                            "probability": float(o["probability"]),
+                            "rendered_percent": _half_up_percent(float(o["probability"])),
+                            "american_odds": None,
+                            "rank": idx + 1,
+                            "movement": None,
+                            "is_winner": bool(o.get("is_winner")),
+                            "resolution_source": None,
+                        }
+                        for idx, o in enumerate(raw_outs[:10])
+                    ],
+                    "outcome_count": len(m.get("outcomes") or ()),
+                    "updated_at": m_obs,
+                    "prices_updated_at": m_obs,
+                    "price_observed_at": m_obs,
+                },
+                "event_id": None,
+            }
+        )
+
+    section_title = str(definition.get("section_title") or "Best Picture")
+    footer = str(definition.get("footer") or "Several films are nominated; one wins.")
+    kicker = str(definition.get("kicker") or "THE OSCARS · BEST PICTURE")
+    # Sync hydrated kicker without static year digits if needed, keeping dynamic live title
+    hydrated_copy = dict(hydrated)
+    sections_out = [
+        {
+            "class": "title",
+            "title": section_title,
+            "layout": "field",
+            "count": len(member_entries),
+            "members": member_entries,
+        }
+    ]
+    return RoundupMembers(
+        member_entries,
+        rows_out,
+        footer=footer,
+        title=str(hydrated_copy.get("title") or definition.get("name") or section_title),
+        kicker=kicker,
+        sections=sections_out,
+        revision_ids=ordered_mids,
+        parent_slug=str(definition.get("parent_slug") or "") or None,
+        parent_name=str(definition.get("parent_name") or "") or None,
+        paired_metric_set=hydrated_copy,
+    )
+
+
 async def produce_awards_category_roundup(
     db: Any,
     definition: Mapping[str, Any],
@@ -659,6 +860,9 @@ async def produce_awards_category_roundup(
         raise ValueError(
             f"Unsupported producer kind; expected {PRODUCER_KIND_AWARDS_CATEGORY!r}"
         )
+
+    if str(rule.get("register") or "").strip():
+        return await _produce_registered_paired_award_category(db, definition, rule)
 
     if isinstance(db, Mapping):
         by_id = {int(k): v for k, v in db.items() if isinstance(v, Mapping)}
@@ -769,6 +973,8 @@ def build_awards_category_producer(
         tag=str(definition.get("tag") or "ENTERTAINMENT"),
         kicker=str(definition.get("kicker") or "GOLDEN GLOBES"),
         story_key=story_key,
+        parent_slug=str(definition.get("parent_slug") or "") or None,
+        parent_name=str(definition.get("parent_name") or "") or None,
         enabled=enabled if enabled is not None else awards_category_enabled,
     )
 

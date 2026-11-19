@@ -164,21 +164,31 @@ d("#4135 — the app names a source or draws none", () => {
   describe("every surface that draws a source reaches the one resolver", () => {
     // Every site the tree had, discovered by grepping for the old switch. Each
     // must now ASK the resolver rather than carry its own copy of the answer.
-    const sites: Array<[string, string]> = [
-      // #9387 moved the futures detail's hero pill into the verified-title
-      // helper: both its arms (the hero's own contributors, and the market's one
-      // source) resolve through `labels(_:)` / `SourceLabels`. The view's half —
-      // that it still draws the pill through this helper — is asserted below.
+    // Detail attribution helpers reach `SourceLabels.label(for:)` directly;
+    // card-face surfaces reach `SourceLabels.cardFaceLabel(for:)` so single-venue
+    // Kalshi / Polymarket names never print on card faces while non-venue labels
+    // ("Sportsbooks", "DataGolf") and multi-source counts ("2 sources") remain honest.
+    const detailSites: Array<[string, string]> = [
       ["Utilities/VerifiedTitleConsumer9387.swift", "static func labels("],
       ["Utilities/VerifiedTitleConsumer9387.swift", "static func heroSourcePill("],
-      ["Views/SearchView.swift", "private func searchSourceBadge("],
-      ["Components/RelatedFuturesView.swift", "private func sourceLabel("],
-      ["Components/FuturesBrowseComponents.swift", "private var label:"],
       ["Components/DesignSystem.swift", "private var config:"],
     ];
 
-    it.each(sites)("%s %s asks SourceLabels", (relPath, declaration) => {
+    it.each(detailSites)("%s %s asks SourceLabels.label", (relPath, declaration) => {
       expect(slice(relPath, declaration)).toContain("SourceLabels.label(for:");
+    });
+
+    const cardFaceSites: Array<[string, string]> = [
+      ["Views/SearchView.swift", "private func searchSourceBadge("],
+      ["Components/RelatedFuturesView.swift", "private func sourceLabel("],
+      ["Components/FuturesBrowseComponents.swift", "private var label:"],
+      ["Views/SportCategoryView.swift", "private func leagueMarketRow("],
+    ];
+
+    it.each(cardFaceSites)("%s %s asks SourceLabels.cardFaceLabel", (relPath, declaration) => {
+      const body = slice(relPath, declaration, 1400);
+      expect(body).toContain("SourceLabels.cardFaceLabel(for:");
+      expect(body).not.toContain("Text(market.source)");
     });
 
     it("the futures detail draws its hero pill through the resolver-backed helper", () => {
@@ -189,12 +199,13 @@ d("#4135 — the app names a source or draws none", () => {
     });
 
     it.each([
-      ["Views/LeagueGridView.swift"],
-      ["Views/MyStuffView.swift"],
-      ["Components/FuturesCardView.swift"],
-    ])("%s draws its source badge through the resolver", (relPath) => {
+      ["Views/LeagueGridView.swift", "SourceLabels.cardFaceLabel(for:"],
+      ["Views/MyStuffView.swift", "SourceLabels.cardFaceLabel("],
+      ["Views/SportCategoryView.swift", "SourceLabels.cardFaceLabel(for:"],
+      ["Components/FuturesCardView.swift", "SourceLabels."],
+    ])("%s draws its source badge through the resolver", (relPath, token) => {
       const source = stripComments(readFileSync(join(IOS_ROOT, relPath), "utf8"));
-      expect(source).toContain("SourceLabels.label(for:");
+      expect(source).toContain(token);
     });
 
     it("the dead label dictionary is gone and the live colour map is not", () => {
@@ -457,7 +468,7 @@ d("#4135 — the app names a source or draws none", () => {
       const distribution = stripComments(
         readFileSync(join(IOS_ROOT, "Components/DistributionCardView.swift"), "utf8")
       );
-      expect(distribution).toContain("SourceLabels.label(for: data.source)");
+      expect(distribution).toContain("SourceLabels.cardFaceLabel(");
 
       // Verbatim from origin/master 10cbbcfd. Neither line pattern in this file
       // matches the drawn line; the alias scan does, and only because it read the
@@ -526,29 +537,30 @@ d("#4135 — the app names a source or draws none", () => {
       ["Views/DiscoverView.swift", "private struct NativeThresholdComparisonRow: View {"],
     ])("%s %s names its source through the resolver and does not re-case it", (relPath, declaration) => {
       const body = declarationBody(relPath, declaration);
-      expect(body).toContain("SourceLabels.label(for:");
+      expect(body).toContain("SourceLabels.cardFaceLabel(");
       expect(body).not.toContain(".uppercased()");
       expect(body).not.toContain(".capitalized");
     });
 
-    it("every file that still prints a venue reaches the resolver at all", () => {
-      // The coarse net under the slices: a rewrite that renames the declarations
-      // above would skip every `it.each` case via a red slice, but this one still
-      // has to hold. #4351 touched seven files, including the four the first cut
-      // of this ship missed and a LOOK found. #12578 / 137-A (Alex, Nov 10): the
-      // Player Props header names no venue any more, so PlayerPropsCardView
-      // prints none and is no longer one of them.
+    it("every card-face file reaches SourceLabels.cardFaceLabel and omits single-venue Kalshi/Polymarket", () => {
       for (const rel of [
         "Components/DiscoverFuturesCard.swift",
         "Views/DiscoverView.swift",
         "Components/RelatedFuturesView.swift",
         "Components/DistributionCardView.swift",
         "Components/HeatMapCardView.swift",
-        "Views/TeamDetailView.swift",
+        "Views/SportCategoryView.swift",
+        "Views/LeagueGridView.swift",
+        "Views/SearchView.swift",
+        "Views/MyStuffView.swift",
+        "Components/FuturesBrowseComponents.swift",
       ]) {
         const source = stripComments(readFileSync(join(IOS_ROOT, rel), "utf8"));
-        expect([rel, source.includes("SourceLabels.label(for:")]).toEqual([rel, true]);
+        expect([rel, source.includes("SourceLabels.cardFaceLabel(")]).toEqual([rel, true]);
+        expect([rel, source.includes("SourceLabels.label(for:")]).toEqual([rel, false]);
       }
+      const teamDetailSource = stripComments(readFileSync(join(IOS_ROOT, "Views/TeamDetailView.swift"), "utf8"));
+      expect(teamDetailSource).not.toContain("SourceLabels.label(for:");
     });
 
     it("the resolver still refuses to name a key it does not know", () => {

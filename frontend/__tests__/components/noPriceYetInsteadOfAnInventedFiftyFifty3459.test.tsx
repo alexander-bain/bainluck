@@ -119,7 +119,10 @@ describe("#3459 — what the two screens do with it", () => {
           espn: { value: 0.5, display_name: "ESPN", type: "model", color: "#CC0000" },
         },
       }),
-      hist({ win_prob_sources: { espn: ESPN_META } }),
+      hist({
+        win_prob_sources: { espn: ESPN_META },
+        win_prob_history: { espn: wp(0.5) },
+      }),
       evenPoint,
       true,
       false,

@@ -38,15 +38,18 @@
  */
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { SWRConfig, unstable_serialize } from "swr";
 
+import MyStuffPage from "@/app/my-stuff/page";
 import FeedCard from "@/components/FeedCard";
 import { feedItemHasRenderableContent } from "@/components/discover/utils";
 import { fetchFeed } from "@/lib/api";
+import { bindToPrincipal, myStuffKey } from "@/lib/myStuffIdentity";
 import {
   MY_STUFF_FEED_PARAMS,
   followedSportFutures,
 } from "@/lib/myStuffSections";
-import type { FeedItem } from "@/lib/types";
+import type { FeedEventData, FeedItem, FeedResponse } from "@/lib/types";
 
 // Same two mocks every FeedCard render test uses: `next/link` needs a router and
 // the card reads the analytics context on click. Neither is what is under test.
@@ -62,6 +65,92 @@ jest.mock("next/link", () => {
 jest.mock("@/components/Analytics", () => ({
   useAnalyticsContext: () => ({ track: () => {} }),
 }));
+
+jest.mock("@/components/AuthProvider", () => ({
+  useAuthContext: () => ({
+    user: { uid: "fixture-viewer" },
+    isAuthenticated: true,
+    isLoading: false,
+  }),
+}));
+
+jest.mock("@/hooks", () => ({
+  useAnalytics: () => ({ trackEventCardClick: jest.fn() }),
+  usePageTracking: jest.fn(),
+  useScrollDepth: jest.fn(),
+  useEngagementTime: jest.fn(),
+  usePinnedEvents: () => ({ pinnedIds: [1282401, 1282402], togglePin: jest.fn() }),
+  usePinnedFutures: () => ({ pinnedIds: [] }),
+}));
+
+function renderPinnedGames(): string {
+  const opening: FeedEventData & { hero_probability_source: "opening" | "blend" } = {
+    id: 1282401,
+    external_id: "opening-cache",
+    sport: "basketball_nba",
+    sport_name: "NBA",
+    home_team: "Boston Celtics",
+    away_team: "Philadelphia 76ers",
+    status: "live",
+    commence_time: "2026-11-18T01:00:00Z",
+    home_score: 72,
+    away_score: 68,
+    hero_probability_source: "opening",
+    current_odds: { home_probability: 0.71, away_probability: 0.29 },
+    opening_odds: { home_probability: 0.61, away_probability: 0.39, favorite: "home" },
+  };
+  const feed: FeedResponse = {
+    items: [
+      opening,
+      {
+        ...opening,
+        id: 1282402,
+        external_id: "current-blend",
+        home_team: "New York Knicks",
+        away_team: "Miami Heat",
+        home_score: 103,
+        away_score: 104,
+        hero_probability_source: "blend",
+        current_odds: { home_probability: 0.64, away_probability: 0.36 },
+      },
+    ].map(data => ({ type: "event", score: 60, reason: "followed team", headline: null, data })),
+    total: 2,
+    limit: 2,
+    offset: 0,
+    has_more: false,
+  };
+  const principal = "user:fixture-viewer";
+  const key = unstable_serialize(myStuffKey(principal, "feed"));
+  return renderToStaticMarkup(
+    <SWRConfig value={{ fallback: { [key]: bindToPrincipal(principal, feed) } }}>
+      <MyStuffPage />
+    </SWRConfig>,
+  );
+}
+
+describe("cached My Stuff pins", () => {
+  it.each(["true", "false"])("keeps the live score and withholds the tagged opening pair (unified card %s)", enabled => {
+    const original = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = enabled;
+    try {
+      const pinned = renderPinnedGames().match(/<section>([\s\S]*?)<\/section>/)?.[1] ?? "";
+      expect(pinned).toContain(">Pinned</h2>");
+      expect(pinned).toContain('href="/events/1282401"');
+      expect(pinned).toContain(">72</span>");
+      expect(pinned).toContain(">68</span>");
+      expect(pinned).not.toMatch(/(?:71|29)(?:\.0)?%/);
+      if (enabled === "false") {
+        expect(pinned).toMatch(/Opened[\s\S]*?61\/39/);
+      }
+      expect(pinned).toContain('href="/events/1282402"');
+      expect(pinned).toMatch(/64(?:\.0)?%/);
+      expect(pinned).toMatch(/36(?:\.0)?%/);
+    } finally {
+      if (original === undefined) delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+      else process.env.NEXT_PUBLIC_GAME_CARD_183A = original;
+    }
+  });
+});
 
 /**
  * The Omega European Masters Winner as production holds it (2026-09-04): the

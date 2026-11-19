@@ -1,16 +1,19 @@
 "use client";
 
+import Link from "next/link";
 import useSWR from "swr";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import {
   SectionHeader, Card, MarketRow, FooterNote,
   ProbNum, ProbBar, Histogram, Delta, probColor, orderNumericBuckets,
+  formatFedHeatmapCell, filterMonotoneLadderRows,
 } from "@/components/economics/atoms";
 import ErrorState from "@/components/ErrorState";
 import EconomicsSkeleton from "@/components/skeletons/EconomicsSkeleton";
 import { fetchEconomics } from "@/lib/api";
 import { heatmapMinWidth, ratePathHeading } from "@/lib/fedRatePath";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { EconData, EconDistribution } from "@/lib/api";
 import EconomicsAtlasView from "@/components/economics/EconomicsAtlasView";
 import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
@@ -19,12 +22,20 @@ import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
 // Fed Heatmap Section
 // ---------------------------------------------------------------------------
 
+function econMarketHref(marketId: number | null | undefined): string | null {
+  return typeof marketId === "number" && Number.isInteger(marketId) && marketId > 0
+    ? `/futures/${marketId}`
+    : null;
+}
+
 function FedHeatmap({ meetings }: { meetings: any[] }) {
   if (!meetings.length) return null;
 
   const allLabels = new Set<string>();
   meetings.forEach(m => m.dist?.forEach((d: any) => allLabels.add(d[1])));
-  const rates = Array.from(allLabels).sort().reverse();
+  const rates = orderNumericBuckets(Array.from(allLabels).map((r) => [0, r] as [number, string]))
+    .map(([, r]) => r)
+    .reverse();
 
   const get = (m: any, r: string) => {
     const found = m.dist?.find((d: any) => d[1] === r);
@@ -51,12 +62,29 @@ function FedHeatmap({ meetings }: { meetings: any[] }) {
           minWidth: heatmapMinWidth(meetings.length),
         }}>
           <div />
-          {meetings.map((m: any, i: number) => (
-            <div key={i} className="text-center pb-1.5">
-              <div className="text-[11px] font-semibold text-text-secondary">{m.mo || m.date}</div>
-              <div className="font-mono text-[9px] text-text-muted">{m.date}</div>
-            </div>
-          ))}
+          {meetings.map((m: any, i: number) => {
+            const href = econMarketHref(m.market_id);
+            const headerInner = (
+              <>
+                <div className="text-[11px] font-semibold text-text-secondary group-hover:underline">{m.mo || m.date}</div>
+                <div className="font-mono text-[9px] text-text-muted">{m.date}</div>
+              </>
+            );
+            return href ? (
+              <Link
+                key={i}
+                href={href}
+                data-testid="fed-heatmap-meeting-link"
+                className="group block text-center pb-1.5 rounded hover:bg-surface-secondary/60 transition-colors"
+              >
+                {headerInner}
+              </Link>
+            ) : (
+              <div key={i} className="text-center pb-1.5">
+                {headerInner}
+              </div>
+            );
+          })}
           {rates.map(r => (
             <div key={r} className="contents">
               <div className="font-mono text-[10px] text-text-secondary text-right pr-2 flex items-center justify-end" style={{ height: 38 }}>
@@ -67,15 +95,32 @@ function FedHeatmap({ meetings }: { meetings: any[] }) {
                 const modal = m.dist?.reduce((best: number, d: any, i: number) =>
                   d[0] > (m.dist[best]?.[0] || 0) ? i : best, 0) || 0;
                 const isModal = m.dist?.[modal]?.[1] === r;
-                return (
-                  <div key={mi} className="flex items-center justify-center rounded font-mono text-[11px] font-semibold"
-                    style={{
-                      height: 38,
-                      background: cellColor(prob),
-                      border: isModal ? "1.5px solid var(--accent-brand)" : "1px solid var(--surface-border)",
-                      color: prob >= 30 ? "#064E3B" : prob >= 10 ? "var(--text-secondary)" : "var(--text-muted)",
-                    }}>
-                    {prob > 0 ? prob : ""}
+                const href = econMarketHref(m.market_id);
+                const cellText = formatFedHeatmapCell(prob, Boolean(m.resolved));
+                const cellStyle = {
+                  height: 38,
+                  background: cellColor(prob),
+                  border: isModal ? "1.5px solid var(--accent-brand)" : "1px solid var(--surface-border)",
+                  color: prob >= 30 ? "#064E3B" : prob >= 10 ? "var(--text-secondary)" : "var(--text-muted)",
+                };
+                return href ? (
+                  <Link
+                    key={mi}
+                    href={href}
+                    data-testid="fed-heatmap-cell-link"
+                    aria-label={`${m.mo || m.date} FOMC ${r}: ${cellText || `${prob}%`}`}
+                    className="flex items-center justify-center rounded font-mono text-[11px] font-semibold hover:opacity-85 transition-opacity"
+                    style={cellStyle}
+                  >
+                    {cellText}
+                  </Link>
+                ) : (
+                  <div
+                    key={mi}
+                    className="flex items-center justify-center rounded font-mono text-[11px] font-semibold"
+                    style={cellStyle}
+                  >
+                    {cellText}
                   </div>
                 );
               })}
@@ -89,12 +134,13 @@ function FedHeatmap({ meetings }: { meetings: any[] }) {
 
 function RateCutsChart({ cuts }: { cuts: [number, string][] }) {
   if (!cuts.length) return null;
+  const orderedCuts = orderNumericBuckets(cuts);
   // Floor the divisor: an all-zero field makes prob/max NaN, which the browser
   // drops from the style declaration silently — no error, no bar.
-  const max = Math.max(...cuts.map(c => c[0]), 0.1);
+  const max = Math.max(...orderedCuts.map(c => c[0]), 0.1);
   return (
     <div className="flex flex-col gap-2 mt-2">
-      {cuts.map(([prob, label], i) => {
+      {orderedCuts.map(([prob, label], i) => {
         const w = (prob / max) * 100;
         const col = probColor(prob);
         const isModal = prob === max;
@@ -123,20 +169,46 @@ function RateCutsChart({ cuts }: { cuts: [number, string][] }) {
 /** Cumulative "at least X" thresholds. Each row is an independent probability
  *  of clearing its own bar, so they legitimately sum past 100% and are scaled
  *  against 100, never against each other. */
-function ThresholdLadder({ rows }: { rows: [number, string][] }) {
-  const ordered = orderNumericBuckets(rows);
+function ThresholdLadder({
+  rows,
+  reachedLabels,
+}: {
+  rows: [number, string][];
+  reachedLabels?: string[];
+}) {
+  const reachedSet = new Set((reachedLabels ?? []).map((s) => s.trim()));
+  const ordered = filterMonotoneLadderRows(orderNumericBuckets(rows), reachedSet);
+  const rightColWidth = reachedSet.size > 0 ? "68px" : "44px";
   return (
     <div className="flex flex-col gap-1.5 mt-1">
       {ordered.map(([prob, label], i) => {
-        const col = probColor(prob);
+        const isReached = reachedSet.has(label.trim());
+        const col = isReached ? "#10B981" : probColor(prob);
+        const displayPct = isReached
+          ? "✓ Reached"
+          : formatProbabilityPercent(prob / 100, { rendered: Math.round(prob) });
         return (
-          <div key={i} className="grid items-center gap-2" style={{ gridTemplateColumns: "1fr 90px 40px" }}>
+          <div
+            key={i}
+            className="grid items-center gap-2"
+            style={{ gridTemplateColumns: `1fr 82px ${rightColWidth}` }}
+          >
             <span className="text-[12px] text-text-secondary leading-snug min-w-0 truncate">{label}</span>
             <div className="h-[5px] bg-surface-secondary rounded-full overflow-hidden">
-              <div className="h-full rounded-full" style={{ width: `${Math.max(prob, 1.5)}%`, background: col }} />
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: isReached ? "100%" : `${Math.min(100, Math.max(prob, 1.5))}%`,
+                  background: col,
+                  opacity: isReached ? 0.5 : 1,
+                }}
+              />
             </div>
-            <span className="font-mono text-[12px] font-semibold text-right" style={{ color: col }}>
-              {Math.round(prob)}%
+            <span
+              className="font-mono text-[12px] font-semibold text-right whitespace-nowrap"
+              style={{ color: isReached ? "var(--text-secondary)" : col }}
+            >
+              {displayPct}
             </span>
           </div>
         );
@@ -148,19 +220,27 @@ function ThresholdLadder({ rows }: { rows: [number, string][] }) {
 function DistributionCard({ dist }: { dist: EconDistribution }) {
   if (!dist.rows.length) return null;
   const isLadder = dist.kind === "ladder";
-  return (
-    <Card>
+  const href = econMarketHref(dist.market_id);
+  const card = (
+    <Card className={href ? "group-hover:border-text-muted/40 transition-colors" : ""}>
       <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="text-[13px] font-semibold text-text-primary leading-snug">{dist.q}</div>
+        <div className="text-[13px] font-semibold text-text-primary leading-snug group-hover:underline">{dist.q}</div>
       </div>
       {isLadder
-        ? <ThresholdLadder rows={dist.rows} />
+        ? <ThresholdLadder rows={dist.rows} reachedLabels={dist.reached_labels} />
         : <Histogram buckets={dist.rows} color="#10B981" />}
       <FooterNote
         left={isLadder ? "Chance of clearing each threshold" : `${dist.rows.length} brackets`}
         right={isLadder ? "Thresholds overlap" : "Modal bracket highlighted"}
       />
     </Card>
+  );
+  return href ? (
+    <Link href={href} data-testid="econ-distribution-card-link" className="group block">
+      {card}
+    </Link>
+  ) : (
+    card
   );
 }
 
@@ -270,15 +350,25 @@ export default function EconomicsPage() {
                 <FooterNote left="Each column = one FOMC meeting" right="Resolves post-FOMC" />
               </Card>
               <div className="flex flex-col gap-3.5">
-                {t.fed.rate_cuts && t.fed.rate_cuts.length > 0 && (
-                  <Card>
-                    <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-1.5">
-                      How many cuts in 2026?
-                    </div>
-                    <RateCutsChart cuts={t.fed.rate_cuts as [number, string][]} />
-                    <FooterNote left="Modal outcome highlighted" />
-                  </Card>
-                )}
+                {t.fed.rate_cuts && t.fed.rate_cuts.length > 0 && (() => {
+                  const cutsHref = econMarketHref(t.fed.rate_cuts_market_id);
+                  const cutsCard = (
+                    <Card className={cutsHref ? "group-hover:border-text-muted/40 transition-colors" : ""}>
+                      <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-1.5 group-hover:underline">
+                        How many cuts in 2026?
+                      </div>
+                      <RateCutsChart cuts={t.fed.rate_cuts as [number, string][]} />
+                      <FooterNote left="Modal outcome highlighted" />
+                    </Card>
+                  );
+                  return cutsHref ? (
+                    <Link href={cutsHref} data-testid="econ-rate-cuts-card-link" className="group block">
+                      {cutsCard}
+                    </Link>
+                  ) : (
+                    cutsCard
+                  );
+                })()}
                 {t.fed.side_markets && t.fed.side_markets.length > 0 && (
                   <Card>
                     <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-2">

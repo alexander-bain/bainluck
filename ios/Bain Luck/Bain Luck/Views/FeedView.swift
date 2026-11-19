@@ -341,7 +341,9 @@ struct FeedView: View {
                             }
                     }
                 )
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .listRowInsets(EdgeInsets(top: 6, leading: 4, bottom: 10, trailing: 4))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             } else {
                 ForEach(items) { item in
                     feedRow(item)
@@ -392,8 +394,12 @@ struct FeedView: View {
                             ForEach(indices, id: \.self) { idx in
                                 groupedRow(vm.groupedItems[idx])
                                     .padding(12)
-                                    .background(Color.cardBackgroundDark)
+                                    .background(regularGridCardSurface)
                                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                                    )
                                     .onAppear { emitSportsFirstRenderIfNeeded() }
                             }
                         }
@@ -409,7 +415,9 @@ struct FeedView: View {
                             }
                     }
                 )
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .listRowInsets(EdgeInsets(top: 6, leading: 4, bottom: 10, trailing: 4))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             } else {
                 ForEach(vm.groupedItems) { item in
                     groupedRow(item)
@@ -463,12 +471,24 @@ struct FeedView: View {
 
     // MARK: - Grid Card (iPad/Mac with hover + context menu)
 
+    private var regularGridCardSurface: Color {
+        #if os(iOS)
+        return Color(uiColor: .secondarySystemGroupedBackground)
+        #else
+        return Color.cardBackgroundDark
+        #endif
+    }
+
     private func gridCard(_ item: FeedItem) -> some View {
         let isHovered = hoveredItemId == item.id
         return feedRow(item)
             .padding(12)
-            .background(Color.cardBackgroundDark)
+            .background(regularGridCardSurface)
             .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+            )
             #if os(macOS)
             .focusable()
             .focusEffectDisabled()

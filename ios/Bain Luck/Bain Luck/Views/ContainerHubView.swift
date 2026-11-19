@@ -26,7 +26,7 @@ struct ContainerHubView: View {
             }
         }
         .background(DS.surface)
-        .navigationTitle(displayName)
+        .navigationTitle(effectiveNavigationTitle)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
@@ -38,14 +38,33 @@ struct ContainerHubView: View {
         }
     }
 
+    private var effectiveNavigationTitle: String {
+        if GroupingMachineryGate12288.isMachineryCandidateSlug(vm.slug), displayName.count > 28 {
+            return ""
+        }
+        return displayName
+    }
+
     private func hub(_ presentation: ContainerHubPresentation) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 if let title = presentation.title {
-                    Text(title).font(.title2.weight(.bold)).foregroundStyle(DS.textPrimary)
+                    Text(title)
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(DS.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let subtitle = presentation.subtitle {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if let note = presentation.note {
-                    Text(note).font(.subheadline).foregroundStyle(DS.textSecondary)
+                    Text(note)
+                        .font(.subheadline)
+                        .foregroundStyle(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if presentation.response.edition?.isTheme == true, presentation.isPartial {
                     Button("Retry unavailable markets") { Task { await vm.load() } }
@@ -74,19 +93,75 @@ struct ContainerHubView: View {
                     .buttonStyle(.plain)
                     .id("container:\(child.slug)")
                 }
+                if !vm.pairedMetricSets.isEmpty {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if vm.isOscarsHub {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Nominated & Wins by Category")
+                                    .font(.headline)
+                                    .foregroundStyle(DS.textPrimary)
+                                Text("Each contender’s chance of being nominated and chance of winning side by side.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(DS.textSecondary)
+                            }
+                            .padding(.top, 4)
+                        }
+                        ForEach(vm.pairedMetricSets) { pairedSet in
+                            DiscoverPairedMetricCardView(
+                                set: pairedSet,
+                                form: .pairedBarsTop5Expandable,
+                                initialExpanded: !vm.isOscarsHub && vm.pairedMetricSets.count == 1,
+                                allowsRouteLinks: true,
+                                isOscarsCollectionSurface: vm.isOscarsHub
+                            )
+                        }
+                    }
+                    .accessibilityIdentifier("hub.pairedAwardCategories")
+                }
                 // Standalone cards retain published section order. Questions
                 // linked to a rendered event are reached through that game's page.
+                let coveredIds = vm.pairedCoveredMarketIds
                 ForEach(presentation.displaySections) { section in
-                    Section {
-                        ForEach(section.members) { member in
-                            memberCard(member, presentation: presentation)
-                                .id(member.id)
-                        }
-                    } header: {
-                        Text(presentation.sectionTitle(section.sectionClass))
-                            .font(.headline)
-                            .foregroundStyle(DS.textPrimary)
+                    if let visualBlock = section.visualBlock {
+                        Section {
+                            MachinerySectionBlockView(
+                                visualBlock: visualBlock,
+                                members: section.members
+                            )
+                        } header: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(presentation.resolvedSectionTitle(section))
+                                    .font(.headline)
+                                    .foregroundStyle(DS.textPrimary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let sectionNote = section.note?.trimmingCharacters(in: .whitespacesAndNewlines),
+                                   !sectionNote.isEmpty {
+                                    Text(sectionNote)
+                                        .font(.subheadline)
+                                        .foregroundStyle(DS.textSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
                             .padding(.top, 8)
+                        }
+                    } else {
+                        let visibleMembers = coveredIds.isEmpty
+                            ? section.members
+                            : section.members.filter { !($0.type == "market" && coveredIds.contains($0.memberId)) }
+                        if !visibleMembers.isEmpty {
+                            Section {
+                                ForEach(visibleMembers) { member in
+                                    memberCard(member, presentation: presentation)
+                                        .id(member.id)
+                                }
+                            } header: {
+                                Text(presentation.resolvedSectionTitle(section))
+                                    .font(.headline)
+                                    .foregroundStyle(DS.textPrimary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .padding(.top, 8)
+                            }
+                        }
                     }
                 }
                 if vm.pageError != nil {
@@ -170,13 +245,23 @@ struct ContainerHubView: View {
                 if ContainerHubPresentation.questionNeedsVerdictRows(search) {
                     Text(search.name).font(.subheadline.weight(.semibold))
                         .fixedSize(horizontal: false, vertical: true)
-                    ForEach(search.topOutcomes ?? []) { outcome in
-                        HStack(alignment: .firstTextBaseline) {
+                    let rawVerdictOutcomes = search.topOutcomes ?? []
+                    let verdictOutcomes = NumericalMarketScaleOrder228.orderedAll(
+                        rawVerdictOutcomes,
+                        label: \.name,
+                        probability: \.probability
+                    )?.map(\.element) ?? rawVerdictOutcomes
+                    ForEach(verdictOutcomes) { outcome in
+                        let outcomeMark = feed.topOutcomes?.first(where: { $0.id == outcome.id || $0.name == outcome.name })?.sourceMark ?? feed.sourceMark
+                        HStack(alignment: .center, spacing: 4) {
                             Text(outcome.name).font(.caption)
                             Spacer(minLength: 8)
                             Text(ContainerHubPresentation.outcomeLabel(outcome, market: search))
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(outcome.verdict(in: search) == .won ? DS.emerald : DS.textSecondary)
+                            if let mark = SourceMarkButton(outcomeMark, number: nil, numberSize: 12, compactRow: true) {
+                                mark
+                            }
                         }
                     }
                     if search.topOutcomes?.isEmpty != false {

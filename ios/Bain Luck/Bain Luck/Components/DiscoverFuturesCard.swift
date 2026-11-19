@@ -188,12 +188,11 @@ struct NativeFuturesDiscoverCard: View {
     /// uppercasing a name back to `SPORTSBOOKS` would re-create the defect in a
     /// nicer font; D91 asks for a small mark that reads as sourcing, by name.
     private var sourceMark: String? {
-        let keys: [String] = {
-            if let sources = data.sources, sources.count > 1 { return sources }
-            return [data.source].compactMap { $0 }
-        }()
-        let named = keys.compactMap { SourceLabels.label(for: $0) }
-        return named.isEmpty ? nil : named.joined(separator: " + ")
+        SourceLabels.cardFaceLabel(
+            for: data.source,
+            sources: data.sources,
+            sourceCount: data.sourceCount
+        )
     }
 
     /// The source mark (D91): the venue names, small, reading as sourcing. One
@@ -332,7 +331,21 @@ struct NativeFuturesDiscoverCard: View {
 
                 if let outcomes = data.topOutcomes, outcomes.count > 1 {
                     let percents = renderedPercents
-                    let shown = Array(outcomes.prefix(3).enumerated())
+                    let orderedRows: [(originalIndex: Int, outcome: FeedFuturesOutcome, isLeader: Bool)] = {
+                        if let numerical = NumericalMarketScaleOrder228.orderedSlice(
+                            outcomes,
+                            limit: 3,
+                            label: \.name,
+                            probability: \.probability,
+                            explicitSortKey: \.sortKey,
+                            marketType: data.marketType,
+                            totalOutcomeCount: data.outcomeCount ?? outcomes.count,
+                            isCumulative: data.mutuallyExclusive == false
+                        ) {
+                            return numerical.map { ($0.originalIndex, $0.element, $0.isLeader) }
+                        }
+                        return Array(outcomes.prefix(3).enumerated()).map { ($0.offset, $0.element, $0.offset == 0) }
+                    }()
                     // #8213 — the column widths are measured from the strings
                     // these rows will actually print, at this view's text size,
                     // in the width this card was actually given. The percent
@@ -340,18 +353,20 @@ struct NativeFuturesDiscoverCard: View {
                     // so all three rows share a right edge, which is the one
                     // thing the 34pt literal was getting right.
                     let columns = FuturesOutcomeRowColumns.layout(
-                        percentLabels: shown.map {
-                            discoverFuturesCardPercentLabel(
-                                percents.indices.contains($0.offset) ? percents[$0.offset] : nil)
+                        percentLabels: orderedRows.map { row in
+                            let idx = row.originalIndex
+                            return discoverFuturesCardPercentLabel(
+                                percents.indices.contains(idx) ? percents[idx] : nil)
                         },
                         availableWidth: outcomeRowWidth,
                         typeSize: dynamicTypeSize
                     )
                     VStack(spacing: 7) {
-                        ForEach(shown, id: \.element.id) { idx, outcome in
+                        ForEach(orderedRows, id: \.outcome.id) { row in
+                            let idx = row.originalIndex
                             outcomeRow(
-                                outcome,
-                                isLeader: idx == 0,
+                                row.outcome,
+                                isLeader: row.isLeader,
                                 percent: percents.indices.contains(idx) ? percents[idx] : nil,
                                 columns: columns
                             )

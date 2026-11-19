@@ -20,13 +20,28 @@ final class GolfTournamentViewModel: ObservableObject {
     @Published private(set) var atlasData: EventAtlasGolfTournament11666.TournamentAtlasData = .init()
 
     let slug: String
+    private var skipNetworkLoad = false
 
     init(slug: String) {
         self.slug = slug
     }
 
+    #if DEBUG
+    init(
+        slug: String,
+        loadedPresentation: GolfTournamentPresentation,
+        atlasData: EventAtlasGolfTournament11666.TournamentAtlasData = .init()
+    ) {
+        self.slug = slug
+        self.state = .loaded(loadedPresentation)
+        self.atlasData = atlasData
+        self.skipNetworkLoad = true
+    }
+    #endif
+
     @MainActor
     func load() async {
+        guard !skipNetworkLoad else { return }
         // A refresh keeps the last good screen up while it runs. Dropping back
         // to a skeleton on every pull-to-refresh is how a live page flickers.
         if case .loaded = state {} else { state = .loading }

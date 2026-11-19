@@ -132,6 +132,7 @@ export function TeamSeasonJourney({
           selectedOutcomes={new Set([outcome.outcome_id])}
           outcomeColors={colorMap}
           fixedYAxis
+          fieldCeiling
           allowZoom
           showLegend={false}
           height={220}

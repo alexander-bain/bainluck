@@ -38,10 +38,39 @@ struct NativeEventDiscoverCard: View {
     /// Optional preloaded `/history` response for deterministic snapshot/unit tests.
     var chartHistory: EventHistoryResponse? = nil
 
+    init(
+        event: FeedEventData,
+        feedContext: String?,
+        expandedContext: String?,
+        navigationPath: Binding<NavigationPath>,
+        onOpen: (() -> Void)? = nil,
+        onContextExpand: (() -> Void)? = nil,
+        onContextCollapse: (() -> Void)? = nil,
+        onShare: (() -> Void)? = nil,
+        pictureVariant191Adopted: Bool = DiscoverSingleGameCard190C.defaultPictureVariant191Adopted,
+        chartHistory: EventHistoryResponse? = nil
+    ) {
+        var reading = event
+        reading.currentOdds = OpeningLineHero.currentOddsForCard(
+            event.currentOdds, heroSource: event.heroProbabilitySource
+        )
+        self.event = reading
+        self.feedContext = feedContext
+        self.expandedContext = expandedContext
+        self._navigationPath = navigationPath
+        self.onOpen = onOpen
+        self.onContextExpand = onContextExpand
+        self.onContextCollapse = onContextCollapse
+        self.onShare = onShare
+        self.pictureVariant191Adopted = pictureVariant191Adopted
+        self.chartHistory = chartHistory
+    }
+
     /// #8144 — the status column between the crests is sized against the strings
     /// THIS card draws at THIS text size, so both of these are inputs to a layout
     /// decision rather than decoration. See `GameCardStatusColumn`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var clock = MinuteClock.shared
     @State private var heroContentWidth: Double = 0
 
@@ -66,14 +95,27 @@ struct NativeEventDiscoverCard: View {
     /// `ProbabilityBarPalette.colors(awayHex:homeHex:)` compiles, renders and
     /// leaves every contrast test green. A test drives this on a real payload.
     var barColorHexes: (away: String, home: String) {
-        TeamTextContrast.cardColorHexes(
+        barColorHexes(for: .light)
+    }
+
+    func barColorHexes(for scheme: ColorScheme) -> (away: String, home: String) {
+        if scheme == .dark {
+            return TeamTextContrast.darkSurfaceColorHexes(
+                awayHex: event.awayTeamData?.primaryColor,
+                homeHex: event.homeTeamData?.primaryColor,
+                awaySecondaryHex: event.awayTeamData?.secondaryColor,
+                homeSecondaryHex: event.homeTeamData?.secondaryColor
+            )
+        }
+        return TeamTextContrast.cardColorHexes(
             awayHex: event.awayTeamData?.primaryColor,
-            homeHex: event.homeTeamData?.primaryColor
+            homeHex: event.homeTeamData?.primaryColor,
+            awaySecondaryHex: event.awayTeamData?.secondaryColor
         )
     }
 
     private var barColors: (away: Color, home: Color) {
-        let hexes = barColorHexes
+        let hexes = barColorHexes(for: colorScheme)
         return (Color(hex: hexes.away), Color(hex: hexes.home))
     }
 
@@ -211,6 +253,9 @@ struct NativeEventDiscoverCard: View {
     }
 
     private var contextText: String? {
+        // Direction 199 + Ruling 204-C: during and after a game, print no grey
+        // sentence under the card; before a game, keep a real non-records reason.
+        guard !isLive, !isDone, !isSuspended else { return nil }
         if let cleaned = CompactGameCard12616.sanitizedReason(feedContext) { return cleaned }
         if let cleaned = CompactGameCard12616.sanitizedReason(event.highlight?.label) { return cleaned }
         if let ei = event.ei, let score = ei.score, score >= 60, let label = ei.label {
@@ -331,17 +376,11 @@ struct NativeEventDiscoverCard: View {
     private var discoverProjectionAndSuspendedLines: some View {
         // #11296 — the final score is above; the forecast before it is one
         // quiet line here, in the card's team order.
+        // Ruling 204-C: during a live game, `Proj.` is a column (`Score · Proj. · Now`)
+        // and the card prints no grey line.
         if let finalForecast = finalForecast11296 {
             FinalForecastLine11296(
                 comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
-        }
-
-        // #2920 — live: the marked in-play projected final, in the same
-        // quiet slot and the card's team order.
-        if let liveProjection = liveProjectedFinal2920 {
-            LiveProjectedFinalLine2920(
-                printed: liveProjection, awayName: event.awayTeam, homeName: event.homeTeam,
-                sportKey: event.sport)
         }
 
         // live/048 — the shared summary, in the slot the settled card

@@ -1,0 +1,170 @@
+{
+  "2026-w47": {
+    "captured_from": "local build of this branch against api.bainluck.com, 390 px",
+    "screens": [
+      {
+        "id": "77688c045736",
+        "image": "https://raw.githubusercontent.com/alexander-bain/bainluck/d08895735ba29ab09fde97cfc8aa527045d65594/227a-screens/2026-w47/screen-01.png",
+        "page": "/",
+        "screen": 0,
+        "counts": {
+          "pictures": 1,
+          "forms": [
+            "theme"
+          ],
+          "longest_run": 1,
+          "form_count": 1,
+          "kinds": {
+            "tally": {
+              "futures": 1
+            },
+            "largest_share": 1
+          }
+        }
+      },
+      {
+        "id": "61e1f56c1431",
+        "image": "https://raw.githubusercontent.com/alexander-bain/bainluck/d08895735ba29ab09fde97cfc8aa527045d65594/227a-screens/2026-w47/screen-02.png",
+        "page": "/politics",
+        "screen": 0,
+        "counts": {
+          "pictures": 0,
+          "forms": null,
+          "longest_run": null,
+          "form_count": null,
+          "kinds": null
+        }
+      },
+      {
+        "id": "ba35eb3e2eb3",
+        "image": "https://raw.githubusercontent.com/alexander-bain/bainluck/d08895735ba29ab09fde97cfc8aa527045d65594/227a-screens/2026-w47/screen-03.png",
+        "page": "/economics",
+        "screen": 0,
+        "counts": {
+          "pictures": 0,
+          "forms": null,
+          "longest_run": null,
+          "form_count": null,
+          "kinds": null
+        }
+      },
+      {
+        "id": "7f6776fcad9c",
+        "image": "https://raw.githubusercontent.com/alexander-bain/bainluck/d08895735ba29ab09fde97cfc8aa527045d65594/227a-screens/2026-w47/screen-04.png",
+        "page": "/search?q=Chiefs",
+        "screen": 0,
+        "counts": {
+          "pictures": 6,
+          "forms": null,
+          "longest_run": null,
+          "form_count": null,
+          "kinds": null
+        }
+      },
+      {
+        "id": "3d53471edf22",
+        "image": "https://raw.githubusercontent.com/alexander-bain/bainluck/d08895735ba29ab09fde97cfc8aa527045d65594/227a-screens/2026-w47/screen-05.png",
+        "page": "/",
+        "screen": 1,
+        "counts": {
+          "pictures": 1,
+          "forms": [
+            "theme",
+            "theme"
+          ],
+          "longest_run": 2,
+          "form_count": 1,
+          "kinds": {
+            "tally": {
+              "futures": 2
+            },
+            "largest_share": 1
+          }
+        }
+      },
+      {
+        "id": "2bdcde449bd0",
+        "image": "https://raw.githubusercontent.com/alexander-bain/bainluck/d08895735ba29ab09fde97cfc8aa527045d65594/227a-screens/2026-w47/screen-06.png",
+        "page": "/",
+        "screen": 2,
+        "counts": {
+          "pictures": 1,
+          "forms": [
+            "theme",
+            "futures",
+            "futures"
+          ],
+          "longest_run": 2,
+          "form_count": 2,
+          "kinds": {
+            "tally": {
+              "futures": 3
+            },
+            "largest_share": 1
+          }
+        }
+      },
+      {
+        "id": "58aff12f5aac",
+        "image": "https://raw.githubusercontent.com/alexander-bain/bainluck/d08895735ba29ab09fde97cfc8aa527045d65594/227a-screens/2026-w47/screen-07.png",
+        "page": "/search?q=Taylor%20Swift",
+        "screen": 0,
+        "counts": {
+          "pictures": 0,
+          "forms": null,
+          "longest_run": null,
+          "form_count": null,
+          "kinds": null
+        }
+      },
+      {
+        "id": "7247db795bb3",
+        "image": "https://raw.githubusercontent.com/alexander-bain/bainluck/d08895735ba29ab09fde97cfc8aa527045d65594/227a-screens/2026-w47/screen-08.png",
+        "page": "/",
+        "screen": 4,
+        "counts": {
+          "pictures": 2,
+          "forms": [
+            "futures",
+            "futures",
+            "futures"
+          ],
+          "longest_run": 3,
+          "form_count": 1,
+          "kinds": {
+            "tally": {
+              "futures": 3
+            },
+            "largest_share": 1
+          }
+        }
+      },
+      {
+        "id": "2d7489c79983",
+        "image": "https://raw.githubusercontent.com/alexander-bain/bainluck/d08895735ba29ab09fde97cfc8aa527045d65594/227a-screens/2026-w47/screen-09.png",
+        "page": "/sports",
+        "screen": 0,
+        "counts": {
+          "pictures": 8,
+          "forms": null,
+          "longest_run": null,
+          "form_count": null,
+          "kinds": null
+        }
+      },
+      {
+        "id": "02a2d9687602",
+        "image": "https://raw.githubusercontent.com/alexander-bain/bainluck/d08895735ba29ab09fde97cfc8aa527045d65594/227a-screens/2026-w47/screen-10.png",
+        "page": "/entertainment",
+        "screen": 0,
+        "counts": {
+          "pictures": 2,
+          "forms": null,
+          "longest_run": null,
+          "form_count": null,
+          "kinds": null
+        }
+      }
+    ]
+  }
+}

@@ -63,7 +63,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-const PROJECTION = "Projected final";
+const PROJECTION = ">Proj.<";
 
 function event(overrides: Record<string, unknown> = {}) {
   return {

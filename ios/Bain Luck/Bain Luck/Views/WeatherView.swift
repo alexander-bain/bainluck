@@ -384,7 +384,12 @@ private struct CityForecastCard: View {
         toggleExpand: @escaping () -> Void
     ) -> some View {
         let peakProb = distribution.dist.map(\.prob).max() ?? 0
-        let brackets = distribution.dist
+        let brackets = NumericalMarketScaleOrder228.orderedAll(
+            distribution.dist,
+            label: \.label,
+            probability: { Double($0.prob) / 100.0 },
+            orderHint: "numerical"
+        )?.map(\.element) ?? distribution.dist
         let showToggle = brackets.count > visibleCount
         let visibleBrackets = expanded ? brackets : Array(brackets.prefix(visibleCount))
 

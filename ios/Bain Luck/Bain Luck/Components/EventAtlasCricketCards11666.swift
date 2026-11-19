@@ -317,6 +317,7 @@ enum EventAtlasCricketCards11666 {
         let awayTeam: String
         let homeColorHex: String?
         let awayColorHex: String?
+        var awaySecondaryColorHex: String? = nil
         let rows: [OutcomeRowRecord]
 
         func current(at now: Date) -> PregameCard {
@@ -329,13 +330,18 @@ enum EventAtlasCricketCards11666 {
                 awayTeam: awayTeam,
                 homeColorHex: homeColorHex,
                 awayColorHex: awayColorHex,
+                awaySecondaryColorHex: awaySecondaryColorHex,
                 rows: rows.map { $0.current(at: now, phase: phase) }
             )
         }
 
         func presentationInput(now: Date) -> CricketPregameStoryInput10868 {
             let aged = current(at: now)
-            let tints = TeamTextContrast.cardColors(awayHex: aged.awayColorHex, homeHex: aged.homeColorHex)
+            let tints = TeamTextContrast.cardColors(
+                awayHex: aged.awayColorHex,
+                homeHex: aged.homeColorHex,
+                awaySecondaryHex: aged.awaySecondaryColorHex
+            )
             let outlookRows = aged.rows.map {
                 $0.toOutlookRow(
                     eventID: aged.eventID,
@@ -368,6 +374,7 @@ enum EventAtlasCricketCards11666 {
         let awayTeam: String
         let homeColorHex: String?
         let awayColorHex: String?
+        var awaySecondaryColorHex: String? = nil
         let rows: [OutcomeRowRecord]
         let finalScoreSummary: String?
 
@@ -385,6 +392,7 @@ enum EventAtlasCricketCards11666 {
                 awayTeam: awayTeam,
                 homeColorHex: homeColorHex,
                 awayColorHex: awayColorHex,
+                awaySecondaryColorHex: awaySecondaryColorHex,
                 rows: rows.map { $0.current(at: now, phase: phase) },
                 finalScoreSummary: finalScoreSummary
             )
@@ -392,7 +400,11 @@ enum EventAtlasCricketCards11666 {
 
         func presentationInput(selectedRowID: String?, now: Date) -> CricketOutlookInput10868 {
             let aged = current(at: now)
-            let tints = TeamTextContrast.cardColors(awayHex: aged.awayColorHex, homeHex: aged.homeColorHex)
+            let tints = TeamTextContrast.cardColors(
+                awayHex: aged.awayColorHex,
+                homeHex: aged.homeColorHex,
+                awaySecondaryHex: aged.awaySecondaryColorHex
+            )
             let outlookRows = aged.rows.map {
                 $0.toOutlookRow(
                     eventID: aged.eventID,
@@ -463,6 +475,7 @@ enum EventAtlasCricketCards11666 {
         let sourceCount: Int
         let homeColorHex: String?
         let awayColorHex: String?
+        var awaySecondaryColorHex: String? = nil
 
         func current(at now: Date) -> ChaseCard {
             guard phase != .final else { return self }
@@ -493,7 +506,8 @@ enum EventAtlasCricketCards11666 {
                     rawSource: rawSource,
                     sourceCount: sourceCount,
                     homeColorHex: homeColorHex,
-                    awayColorHex: awayColorHex
+                    awayColorHex: awayColorHex,
+                    awaySecondaryColorHex: awaySecondaryColorHex
                 )
             case .during:
                 guard currentChance != nil || !isStaleLive else { return self }
@@ -516,7 +530,8 @@ enum EventAtlasCricketCards11666 {
                     rawSource: rawSource,
                     sourceCount: sourceCount,
                     homeColorHex: homeColorHex,
-                    awayColorHex: awayColorHex
+                    awayColorHex: awayColorHex,
+                    awaySecondaryColorHex: awaySecondaryColorHex
                 )
             case .final:
                 return self
@@ -720,6 +735,7 @@ enum EventAtlasCricketCards11666 {
                             awayTeam: event.awayTeam,
                             homeColorHex: event.homeTeamData?.primaryColor,
                             awayColorHex: event.awayTeamData?.primaryColor,
+                            awaySecondaryColorHex: event.awayTeamData?.secondaryColor,
                             rows: outcomeRows
                         )
                     )
@@ -748,6 +764,7 @@ enum EventAtlasCricketCards11666 {
                             awayTeam: event.awayTeam,
                             homeColorHex: event.homeTeamData?.primaryColor,
                             awayColorHex: event.awayTeamData?.primaryColor,
+                            awaySecondaryColorHex: event.awayTeamData?.secondaryColor,
                             rows: outcomeRows,
                             finalScoreSummary: finalSummary
                         )
@@ -1025,7 +1042,8 @@ enum EventAtlasCricketCards11666 {
                 rawSource: row.source,
                 sourceCount: 1,
                 homeColorHex: event.homeTeamData?.primaryColor,
-                awayColorHex: event.awayTeamData?.primaryColor
+                awayColorHex: event.awayTeamData?.primaryColor,
+                awaySecondaryColorHex: event.awayTeamData?.secondaryColor
             ).current(at: now)
         }
 
@@ -1099,7 +1117,8 @@ enum EventAtlasCricketCards11666 {
                 rawSource: row.source,
                 sourceCount: 1,
                 homeColorHex: event.homeTeamData?.primaryColor,
-                awayColorHex: event.awayTeamData?.primaryColor
+                awayColorHex: event.awayTeamData?.primaryColor,
+                awaySecondaryColorHex: event.awayTeamData?.secondaryColor
             ).current(at: now)
         }
 
@@ -1335,7 +1354,8 @@ struct EventAtlasCricketChaseCardView11666: View {
         let input = card.presentationInput(now: now)
         let tints = TeamTextContrast.cardColors(
             awayHex: card.awayColorHex,
-            homeHex: card.homeColorHex
+            homeHex: card.homeColorHex,
+            awaySecondaryHex: card.awaySecondaryColorHex
         )
         CricketChasePresentation10868(
             input: input,

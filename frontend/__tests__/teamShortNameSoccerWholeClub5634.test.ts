@@ -163,17 +163,14 @@ describe("#5634 — the event page hands the sport to every name it paints", () 
     );
   });
 
-  // A whole club name can wrap under its crest at 390px ("New England" /
-  // "Revolution"); the two lines centre under the crest and record, never
-  // left-hang toward the probability.
-  it("both hero name links centre a name that wraps", () => {
-    const page = read("app/events/[id]/page.tsx");
-    for (const side of ["home", "away"]) {
-      const at = page.indexOf(`{heroShortNames.${side}}`);
-      expect(at).toBeGreaterThan(-1);
-      const link = page.slice(page.lastIndexOf("<TeamNameLink", at), at);
-      expect(link).toMatch(/className="[^"]*\btext-center\b[^"]*"/);
-    }
+  it("EventPageHeadline199 passes sportKey to TeamNameLink and derives short names with the sport", () => {
+    const headlineComp = read("components/event/EventPageHeadline199.tsx");
+    expect(headlineComp).toContain("<TeamNameLink");
+    expect(headlineComp).toContain("sportKey={event.sport}");
+    const headlineLib = read("lib/eventPageHeadline199.ts");
+    expect(headlineLib).toMatch(
+      /teamShortNames\(\s*\{\s*name:\s*event\.home_team[\s\S]*?event\.sport,\s*\)/,
+    );
   });
 
   it("the Bigger Picture section derives its names with the sport", () => {

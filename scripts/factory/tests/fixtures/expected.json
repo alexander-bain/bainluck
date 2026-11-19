@@ -1,0 +1,99 @@
+{
+  "captured_at": "2026-11-18T01:05:44.423692Z",
+  "source": "Field-reduced GitHub responses. The Ship replay uses the recorded merge time before the real live receipt.",
+  "placements": {
+    "12899": [
+      "Test",
+      "Server",
+      true
+    ],
+    "12901": [
+      "Write",
+      "Server",
+      false
+    ],
+    "12900": [
+      "Test",
+      "Server",
+      false
+    ],
+    "12898": [
+      "Merge line",
+      "Apps",
+      false
+    ],
+    "12894": [
+      "Test",
+      "Apps",
+      false
+    ],
+    "12895": [
+      "Write",
+      "Server",
+      false
+    ],
+    "12860": [
+      "Merge line",
+      "Server",
+      false
+    ],
+    "12781": [
+      "Merge line",
+      "Server",
+      false
+    ],
+    "12461": [
+      "Write",
+      "Apps",
+      false
+    ],
+    "12215": [
+      "Write",
+      "Website",
+      false
+    ],
+    "12213": [
+      "Test",
+      "Website",
+      false
+    ],
+    "12871": [
+      "Ship",
+      "Server",
+      true
+    ],
+    "12861": [
+      "Ship",
+      "Server",
+      true
+    ],
+    "12891": [
+      "Live",
+      "Apps",
+      false
+    ],
+    "12851": [
+      "Live",
+      "Server",
+      false
+    ],
+    "12892": [
+      "Live",
+      "Website",
+      false
+    ],
+    "12896": [
+      "Review",
+      "Server",
+      false
+    ],
+    "12893": [
+      "Review",
+      "Server",
+      false
+    ]
+  },
+  "shipping_replay": {
+    "number": 12892
+  }
+}

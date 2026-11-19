@@ -112,6 +112,7 @@ nonisolated struct HistoryPoint: Decodable, Sendable, Equatable {
     let timestamp: String
     let homeProbability: Double?
     let awayProbability: Double?
+    var drawProbability: Double? = nil
     let bookmakerCount: Int?
     let projectedHomeScore: Double?
     let projectedAwayScore: Double?
@@ -180,6 +181,8 @@ nonisolated struct ESPNHistoryPoint: Decodable, Sendable, Equatable {
 nonisolated struct WinProbHistoryPoint: Decodable, Sendable, Equatable {
     let timestamp: String
     let homeProbability: Double?
+    var awayProbability: Double? = nil
+    var drawProbability: Double? = nil
     let gameState: WinProbGameState?
     /// `true` on the ONE point the backend synthesises at "now" on a live game,
     /// carrying the series' last real value forward
@@ -417,4 +420,5 @@ nonisolated struct AggregateLinePoint: Decodable, Sendable, Equatable {
     let timestamp: String
     let homeProbability: Double
     let awayProbability: Double?
+    var drawProbability: Double? = nil
 }

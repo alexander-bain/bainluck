@@ -22,6 +22,7 @@ nonisolated struct LiveEdgeReading: Equatable {
 
     static func current(in event: EventDetail) -> LiveEdgeReading? {
         guard EventPriceStreaming.isEligible(event.status),
+              event.heroProbabilitySource != OpeningLineHero.openingSource,
               let probability = event.currentOdds?.homeProbability,
               let label = LivePriceActivity.displayedLabels(in: event).home else { return nil }
         return LiveEdgeReading(homeProbability: probability, homeLabel: label,

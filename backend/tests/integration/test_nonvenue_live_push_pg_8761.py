@@ -1,7 +1,7 @@
 """#8761: real row writes reach SSE only once PostgreSQL keeps their snapshot."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -356,7 +356,9 @@ async def test_actual_betting_ingest_publishes_its_committed_consensus(
             session,
             event,
             {"bookmakers": [{"key": str(i)} for i in range(3)]},
-            datetime.now(timezone.utc),
+            # Pregame: a fake snapshot carries no `captured_at`, and #12938's live
+            # rule never counts an undated line (it has its own tests).
+            datetime.now(timezone.utc) + timedelta(hours=1),
             {},
             update_opening=False,
         )
@@ -524,3 +526,46 @@ async def test_removal_tombstone_cancels_earlier_quote_at_commit(
     assert (
         not sink
     ), "neither a null-source fake quote nor its superseded value may escape"
+
+
+async def test_entry_extra_lands_inside_the_entry_and_survives_the_next_stamp(pg_engine, sink):
+    """#12824: ESPN's predictor `lastModified` is kept INSIDE the `espn` entry.
+
+    One UPDATE: the stamp and the private key commit together, siblings are
+    untouched, the next stamp without the key carries it through (the inner
+    `||`), and a removal takes the whole entry with it.
+    """
+    event_id = await _seed_event(
+        pg_engine,
+        {"kalshi": {"value": 0.7, "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        event = await session.get(Event, event_id)
+        await write_nonvenue_probability(
+            session, event, "espn", 0.1415,
+            entry_extra={"predictor_last_modified": "2031-03-04T02:00Z"},
+        )
+        await session.commit()
+    stored = await _stored(pg_engine, event_id)
+    assert stored["espn"]["value"] == 0.1415
+    assert stored["espn"]["predictor_last_modified"] == "2031-03-04T02:00Z"
+    assert stored["kalshi"]["value"] == 0.7
+    assert "predictor_last_modified" not in stored  # never a top-level (served) key
+
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        event = await session.get(Event, event_id)
+        await write_nonvenue_probability(session, event, "espn", 0.2)
+        await session.commit()
+    stored = await _stored(pg_engine, event_id)
+    assert stored["espn"]["value"] == 0.2
+    assert stored["espn"]["predictor_last_modified"] == "2031-03-04T02:00Z"
+
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        event = await session.get(Event, event_id)
+        await write_nonvenue_probability(
+            session, event, "espn", None,
+            entry_extra={"predictor_last_modified": "2031-03-05T02:00Z"},
+        )
+        await session.commit()
+    stored = await _stored(pg_engine, event_id)
+    assert "espn" not in stored and stored["kalshi"]["value"] == 0.7

@@ -158,7 +158,8 @@ def _event(event_id: int, status: str, *, start: datetime, box_reads: list):
     e.opening_home_probability = 0.55
     e.opening_away_probability = 0.45
     e.win_probability_sources = {
-        "betting": {"home": 0.6, "away": 0.4, "updated_at": NOW.isoformat()}
+        "betting": {"value": 0.55, "updated_at": NOW.isoformat()},
+        "betting_book_count": 4,
     }
     e.espn_win_prob_home = None
     e.opening_home_spread = -3.5
@@ -212,3 +213,18 @@ async def test_the_recorder_sees_a_read_when_one_happens():
     e = _event(9, "live", start=NOW, box_reads=box_reads)
     _ = e.box_score_data
     assert box_reads == [9]
+
+
+@pytest.mark.asyncio
+async def test_a_verified_final_with_only_an_opening_line_keeps_its_result_card():
+    """#12824: no current quote must not hide a result and its historical prior."""
+    event = _event(10, "completed", start=NOW - timedelta(hours=4), box_reads=[])
+    event.win_probability_sources = {}
+    event.home_score, event.away_score = 31, 38
+    items = await _score(_CapturingDb([event]), share_inputs=True)
+    assert len(items) == 1
+    data = items[0]["data"]
+    assert data["hero_probability_source"] == "settled"
+    assert data["hero_probability"] == 0.0
+    assert data["hero_probability_away"] == 1.0
+    assert data["opening_odds"]["home_probability"] == 0.55

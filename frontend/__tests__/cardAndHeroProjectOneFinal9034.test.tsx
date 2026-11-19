@@ -100,17 +100,30 @@ function card(ev: Event): string {
   );
 }
 
-// #2920: both surfaces print through `ProjectedFinalLine`, which stamps the
-// pair home-away on `data-projected-final` whatever order its names read in.
+// Direction 199: EventPageHeadline199 prints `Proj.` per row (`data-projected-cell`);
+// EventCard prints through `ProjectedFinalLine` (`data-projected-final`).
 function heroPair(html: string): string | null {
-  const m = html.match(/data-testid="event-hero-projected-final" data-projected-final="(\d+)-(\d+)"/);
-  return m ? `${m[1]}-${m[2]}` : null;
+  const h = html.match(/data-projected-cell="home"[^>]*>([^<]+)<\/span>/)?.[1];
+  const a = html.match(/data-projected-cell="away"[^>]*>([^<]+)<\/span>/)?.[1];
+  return h && a ? `${Math.round(Number(h))}-${Math.round(Number(a))}` : null;
 }
 
 function cardPair(html: string): string | null {
   const m = html.match(/data-testid="event-card-projected-final" data-projected-final="(\d+)-(\d+)"/);
   return m ? `${m[1]}-${m[2]}` : null;
 }
+
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
 
 describe("#9034 — card and hero print one projected final", () => {
   it("the specimen: the card and the page print the same pair, the card's", () => {

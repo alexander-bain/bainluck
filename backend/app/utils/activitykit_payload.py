@@ -19,8 +19,12 @@ _TERMINAL_LIFECYCLES = {"final", "closed"}
 _SWIFT_REFERENCE = datetime(2001, 1, 1, tzinfo=timezone.utc)
 _MAX_SWIFT_INT = (1 << 63) - 1
 MAX_PAYLOAD_BYTES = 4096
-# Same observation-age policy as W3.1 GameActivityController, not a fetch TTL.
-OBSERVATION_MAX_AGE = timedelta(seconds=120)
+# #10542 step 4: the activity turns stale only when the score has gone unconfirmed
+# this long (the chance's clock is used only while there is no score). It was the
+# older of both clocks + 120 s, so two minutes of Apple's priority-5 delay turned
+# a 20-second-old score orange (Magic at Celtics, Nov 16). Not a fetch TTL. The
+# app's GameActivityController.staleDate(for:) applies the same rule while open.
+OBSERVATION_MAX_AGE = timedelta(seconds=360)
 
 
 class ActivityKitPayloadError(ValueError):
@@ -115,11 +119,28 @@ class GameActivitySnapshot:
         return {"snapshot": snapshot}
 
 
+#: Apple's two Live Activity priorities. "5" is delivered when convenient, so a
+#: locked phone can show a reading minutes old; "10" is delivered now (#10542:
+#: Magic at Celtics, Nov 16, the phone sat three priority-5 pushes behind a score
+#: the server already had).
+PRIORITIES = ("5", "10")
+
+
+def _priority(value: object) -> str:
+    if value not in PRIORITIES:
+        raise ActivityKitPayloadError("APNs priority must be '5' or '10'")
+    return value
+
+
 @dataclass(frozen=True)
 class ActivityKitPush:
     """Encoded bounded body, without a token, credentials, topic or network client."""
 
     body: bytes
+    priority: str = "5"
+
+    def __post_init__(self) -> None:
+        _priority(self.priority)
 
     @property
     def headers(self) -> dict[str, str]:
@@ -127,7 +148,7 @@ class ActivityKitPush:
         # old reading while a device is offline; retry/reconciliation is a later owner.
         return {
             "apns-push-type": "liveactivity",
-            "apns-priority": "5",
+            "apns-priority": self.priority,
             "apns-expiration": "0",
         }
 
@@ -153,7 +174,7 @@ def _envelope(snapshot: GameActivitySnapshot, sent_at: datetime, event: str) -> 
     }
 
 
-def _encode(aps: dict) -> ActivityKitPush:
+def _encode(aps: dict, priority: str = "5") -> ActivityKitPush:
     try:
         body = json.dumps(
             {"aps": aps}, ensure_ascii=False, allow_nan=False, separators=(",", ":")
@@ -164,11 +185,11 @@ def _encode(aps: dict) -> ActivityKitPush:
         raise ActivityKitPayloadError(
             "ActivityKit payload exceeds the APNs 4 KiB limit"
         )
-    return ActivityKitPush(body=body)
+    return ActivityKitPush(body=body, priority=_priority(priority))
 
 
 def build_activitykit_update(
-    snapshot: GameActivitySnapshot, *, sent_at: datetime
+    snapshot: GameActivitySnapshot, *, sent_at: datetime, priority: str = "5"
 ) -> ActivityKitPush:
     """Update a nonterminal game; freshness belongs to displayed producer clocks.
 
@@ -180,19 +201,26 @@ def build_activitykit_update(
         raise ActivityKitPayloadError(
             "Authoritative terminal lifecycle requires an end push"
         )
-    clocks = []
-    if snapshot.home_score is not None or snapshot.away_score is not None:
-        clocks.append(snapshot.score_observed_at)
-    if snapshot.home_rendered_percent is not None:
-        clocks.append(snapshot.probability_observed_at)
-    if not clocks or any(clock is None for clock in clocks):
+    has_score = snapshot.home_score is not None or snapshot.away_score is not None
+    has_chance = snapshot.home_rendered_percent is not None
+    # A displayed number with no clock is stale now. Otherwise the score's clock
+    # decides; the chance prints its own age and decides only when there is no score.
+    unknown = (has_score and snapshot.score_observed_at is None) or (
+        has_chance and snapshot.probability_observed_at is None
+    )
+    clock = (
+        snapshot.score_observed_at
+        if has_score
+        else snapshot.probability_observed_at if has_chance else None
+    )
+    if unknown or clock is None:
         aps["stale-date"] = aps["timestamp"]
     else:
-        oldest = min(_date(clock, "observation") for clock in clocks)
         aps["stale-date"] = max(
-            0, math.floor((oldest + OBSERVATION_MAX_AGE).timestamp())
+            0,
+            math.floor((_date(clock, "observation") + OBSERVATION_MAX_AGE).timestamp()),
         )
-    return _encode(aps)
+    return _encode(aps, priority)
 
 
 def build_activitykit_end(
@@ -200,6 +228,7 @@ def build_activitykit_end(
     *,
     sent_at: datetime,
     reason: Literal["terminal", "stop"] = "terminal",
+    priority: str = "5",
 ) -> ActivityKitPush:
     """End for authoritative final/closed, or an explicit user stop.
 
@@ -216,4 +245,4 @@ def build_activitykit_end(
         aps["dismissal-date"] = max(0, aps["timestamp"] - 1)
     else:
         raise ActivityKitPayloadError("Unknown end reason")
-    return _encode(aps)
+    return _encode(aps, priority)

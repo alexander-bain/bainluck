@@ -131,99 +131,95 @@ function page(ev: Event, ladder: unknown = null): string {
   );
 }
 
-function stamp(html: string, testId: string): string | null {
-  const m = html.match(new RegExp(`data-testid="${testId}" data-projected-final="(\\d+)-(\\d+)" data-projected-order="([a-z-]+)"`));
-  return m ? `${m[1]}-${m[2]} ${m[3]}` : null;
+function heroCurrentStamp(html: string): string | null {
+  const h = html.match(/data-projected-cell="home"[^>]*>([^<]+)<\/span>/)?.[1];
+  const a = html.match(/data-projected-cell="away"[^>]*>([^<]+)<\/span>/)?.[1];
+  return h && a ? `${Math.round(Number(h))}-${Math.round(Number(a))} home-away` : null;
 }
 
-const CURRENT_LINE = "event-hero-projected-final";
-const BASE_LINE = "event-hero-live-baseline";
-const BASE_DETAILS = "event-hero-live-baseline-details";
+function pregameSummaryText(html: string): string | null {
+  const m = html.match(
+    /data-testid="headline-12472-pregame-summary"[^>]*>([\s\S]*?)<\/div>/,
+  );
+  if (!m) return null;
+  const text = m[1].replace(/<[^>]+>/g, "").trim();
+  return text.replace(/^Pregame\s*/, "Pregame  ");
+}
+
+const SUMMARY_ID = "headline-12472-pregame-summary";
 const FINAL_BAND = "event-hero-final-forecast";
 
-describe("a live game with both typed forecasts", () => {
-  it("prints the current pair first and the retained pregame pair beneath it, home first", () => {
+describe("a live game with both typed forecasts (Direction 199 / Ruling 200-B / Ruling 214-A1)", () => {
+  it("prints the current pair in Proj. and the retained pregame projection in the single grey line below", () => {
     const html = page(liveRow());
-    expect(stamp(html, CURRENT_LINE)).toBe("23-27 home-away");
-    // The served 17.8 / 20.1, rounded as the card and the final band round it.
-    expect(stamp(html, BASE_LINE)).toBe("18-20 home-away");
-    expect(html.indexOf(`data-testid="${BASE_LINE}"`)).toBeGreaterThan(
-      html.indexOf(`data-testid="${CURRENT_LINE}"`),
+    expect(heroCurrentStamp(html)).toBe("23-27 home-away");
+    // Served 17.8 (Buccaneers) / 20.1 (Steelers): Steelers is the pregame favourite (20–18).
+    const summary = pregameSummaryText(html);
+    expect(summary).not.toBeNull();
+    expect(summary).toMatch(/^Pregame  /);
+    expect(summary).toContain("projected 20–18");
+    expect(html.indexOf(`data-testid="${SUMMARY_ID}"`)).toBeGreaterThan(
+      html.indexOf('data-projected-cell="home"'),
     );
   });
 
-  it("is directly beneath: nothing else is drawn between the two lines", () => {
+  it("keeps the grey pregame line single-line (whitespace-nowrap) and quiet (#8B98A9) with Ruling 214-A1 team colours", () => {
     const html = page(liveRow());
-    const current = html.indexOf(`data-testid="${CURRENT_LINE}"`);
-    const base = html.indexOf(`data-testid="${BASE_LINE}"`);
-    const between = html.slice(current, base);
-    // Only the current line's own markup: one opening group, closed before the baseline's.
-    expect(between.match(/data-testid=/g)).toHaveLength(1);
-  });
-
-  it("is labelled as the projection before the scheduled start, and names both teams", () => {
-    const html = page(liveRow());
-    expect(html).toContain('aria-label="Projection before scheduled start: Buccaneers 18, Steelers 20"');
-    expect(html).toContain('aria-label="Projected final: Buccaneers 23, Steelers 27"');
-  });
-
-  it("keeps the current forecast primary: the baseline is the secondary emphasis", () => {
-    const html = page(liveRow());
-    const row = (id: string) => {
-      const at = html.indexOf(`data-testid="${id}"`);
-      return html.slice(at, html.indexOf("</div>", at));
-    };
-    expect(row(CURRENT_LINE)).toContain("font-semibold text-text-primary");
-    expect(row(BASE_LINE)).toContain("font-medium text-text-secondary");
-    expect(row(BASE_LINE)).not.toContain("text-text-primary");
-  });
-
-  it("puts sportsbooks, recorded range and scheduled start in a closed Details", () => {
-    const html = page(liveRow());
-    const at = html.indexOf(`data-testid="${BASE_DETAILS}"`);
-    expect(at).toBeGreaterThan(html.indexOf(`data-testid="${BASE_LINE}"`));
-    const tag = html.slice(html.lastIndexOf("<details", at), at);
-    expect(tag).not.toMatch(/\bopen\b/);
-    expect(html).toContain(`data-forecast-boundary="${START}"`);
-    expect(html.slice(at)).toContain("21 sportsbooks");
+    const at = html.indexOf(`data-testid="${SUMMARY_ID}"`);
+    expect(at).toBeGreaterThan(-1);
+    const tag = html.slice(html.lastIndexOf("<div", at), html.indexOf(">", at) + 1);
+    expect(tag).toContain("whitespace-nowrap");
+    expect(tag.toUpperCase()).toContain("#8B98A9");
   });
 
   it("adds no numeric difference and no final-band markup", () => {
     const html = page(liveRow());
-    expect(stamp(html, FINAL_BAND)).toBeNull();
+    expect(html).not.toContain(`data-testid="${FINAL_BAND}"`);
     expect(html).not.toMatch(/[+−-]\d+ pts/);
+    expect(html).not.toContain("Projection before");
   });
 });
 
-describe("a missing or incompatible baseline leaves the current forecast exactly as it was", () => {
-  const currentOnly = (html: string) => {
-    expect(stamp(html, CURRENT_LINE)).toBe("23-27 home-away");
-    expect(stamp(html, BASE_LINE)).toBeNull();
-    expect(html).not.toContain(`data-testid="${BASE_DETAILS}"`);
+describe("a missing or incompatible baseline omits the projected half from the grey line while leaving Proj. intact", () => {
+  const currentWithoutProjectedHalf = (html: string) => {
+    expect(heroCurrentStamp(html)).toBe("23-27 home-away");
+    const summary = pregameSummaryText(html);
+    if (summary !== null) {
+      expect(summary).not.toContain("projected");
+    }
   };
 
   it("no baseline served", () => {
-    currentOnly(page(liveRow({ pregame_projection: null })));
-    currentOnly(page(liveRow({ pregame_projection: undefined })));
+    currentWithoutProjectedHalf(page(liveRow({ pregame_projection: null })));
+    currentWithoutProjectedHalf(page(liveRow({ pregame_projection: undefined })));
   });
 
   it("the producer's refusal instead of a baseline", () => {
-    currentOnly(page(liveRow({ pregame_projection: null, pregame_projection_unavailable: "no_pregame_reading" })));
+    currentWithoutProjectedHalf(
+      page(liveRow({ pregame_projection: null, pregame_projection_unavailable: "no_pregame_reading" })),
+    );
   });
 
   it("a baseline over the wrong period", () => {
-    currentOnly(page(liveRow({ pregame_projection: { ...BASELINE, period: "regulation" } })));
+    currentWithoutProjectedHalf(
+      page(liveRow({ pregame_projection: { ...BASELINE, period: "regulation" } })),
+    );
   });
 
   it("a baseline in the wrong unit", () => {
-    currentOnly(page(liveRow({ pregame_projection: { ...BASELINE, unit: "goals" } })));
+    currentWithoutProjectedHalf(
+      page(liveRow({ pregame_projection: { ...BASELINE, unit: "goals" } })),
+    );
   });
 
   it("a baseline read after the start", () => {
-    currentOnly(
+    currentWithoutProjectedHalf(
       page(
         liveRow({
-          pregame_projection: { ...BASELINE, latest_captured_at: new Date(Date.parse(START) + 60_000).toISOString() },
+          pregame_projection: {
+            ...BASELINE,
+            latest_captured_at: new Date(Date.parse(START) + 60_000).toISOString(),
+          },
         }),
       ),
     );
@@ -231,63 +227,79 @@ describe("a missing or incompatible baseline leaves the current forecast exactly
 
   it("a baseline read before a different start", () => {
     const earlier = new Date(Date.parse(START) - 3600_000).toISOString();
-    currentOnly(page(liveRow({ pregame_projection: { ...BASELINE, boundary_at: earlier, latest_captured_at: shift(SERVED.earliest_captured_at), earliest_captured_at: new Date(Date.parse(earlier) - 7200_000).toISOString() } })));
-  });
-});
-
-describe("an untyped current source gets no baseline", () => {
-  it("the ladders' in-game pair (no live_projection served) prints alone", () => {
-    const html = page(liveRow({}, null), { home_score: 24.2, away_score: 26.9 });
-    expect(stamp(html, CURRENT_LINE)).toBe("24-27 home-away");
-    expect(stamp(html, BASE_LINE)).toBeNull();
-  });
-
-  it("a refused live_projection prints neither current nor baseline (the existing withholding)", () => {
-    const html = page(liveRow({}, { ...CURRENT, kind: "pregame" }), { home_score: 24.2, away_score: 26.9 });
-    expect(stamp(html, CURRENT_LINE)).toBeNull();
-    expect(stamp(html, BASE_LINE)).toBeNull();
-  });
-});
-
-describe("existing gates still decide whether there is a current line at all", () => {
-  it("a current pair below the board's score prints nothing, and so no baseline", () => {
-    const html = page(liveRow({ home_score: 24, away_score: 13 }));
-    expect(stamp(html, CURRENT_LINE)).toBeNull();
-    expect(stamp(html, BASE_LINE)).toBeNull();
-  });
-
-  it("a live game with no score pair prints nothing, and so no baseline", () => {
-    const html = page(liveRow({ home_score: null, away_score: null } as Partial<Event>));
-    expect(stamp(html, CURRENT_LINE)).toBeNull();
-    expect(stamp(html, BASE_LINE)).toBeNull();
-  });
-
-  it("before play: no baseline, whatever the payload carries", () => {
-    const later = new Date(Date.now() + 3 * 3600_000).toISOString();
-    const html = page(liveRow({ status: "scheduled", commence_time: later, home_score: null, away_score: null } as Partial<Event>));
-    expect(stamp(html, BASE_LINE)).toBeNull();
-  });
-
-  it("hockey: nothing, whatever both objects say", () => {
-    const html = page(
-      liveRow({ sport: "icehockey_nhl", home_score: 1, away_score: 1 }, { ...CURRENT, projected_home_score: 3.6, projected_away_score: 2.4 }),
+    currentWithoutProjectedHalf(
+      page(
+        liveRow({
+          pregame_projection: {
+            ...BASELINE,
+            boundary_at: earlier,
+            latest_captured_at: shift(SERVED.earliest_captured_at),
+            earliest_captured_at: new Date(Date.parse(earlier) - 7200_000).toISOString(),
+          },
+        }),
+      ),
     );
-    expect(stamp(html, BASE_LINE)).toBeNull();
   });
 });
 
-describe("the final path is unchanged", () => {
-  it("the served final still prints its own band, and no live baseline", () => {
+describe("ladders and refused live_projection", () => {
+  it("the ladders' in-game pair (no live_projection served) still prints in Proj.", () => {
+    const html = page(liveRow({}, null), { home_score: 24.2, away_score: 26.9 });
+    expect(heroCurrentStamp(html)).toBe("24-27 home-away");
+  });
+
+  it("a refused live_projection withholds Proj.", () => {
+    const html = page(liveRow({}, { ...CURRENT, kind: "pregame" }), {
+      home_score: 24.2,
+      away_score: 26.9,
+    });
+    expect(heroCurrentStamp(html)).toBeNull();
+  });
+});
+
+describe("existing gates still decide whether Proj. and the grey line print", () => {
+  it("a current pair below the board's score withholds Proj.", () => {
+    const html = page(liveRow({ home_score: 24, away_score: 13 }));
+    expect(heroCurrentStamp(html)).toBeNull();
+  });
+
+  it("a live game with no score pair withholds Proj.", () => {
+    const html = page(liveRow({ home_score: null, away_score: null } as Partial<Event>));
+    expect(heroCurrentStamp(html)).toBeNull();
+  });
+
+  it("before play: no live pregame summary line, whatever the payload carries", () => {
+    const later = new Date(Date.now() + 3 * 3600_000).toISOString();
+    const html = page(
+      liveRow({ status: "scheduled", commence_time: later, home_score: null, away_score: null } as Partial<Event>),
+    );
+    expect(pregameSummaryText(html)).toBeNull();
+  });
+
+  it("hockey: no pregame projected score in the grey line", () => {
+    const html = page(
+      liveRow(
+        { sport: "icehockey_nhl", home_score: 1, away_score: 1 },
+        { ...CURRENT, projected_home_score: 3.6, projected_away_score: 2.4 },
+      ),
+    );
+    const summary = pregameSummaryText(html);
+    if (summary !== null) {
+      expect(summary).not.toContain("projected");
+    }
+  });
+});
+
+describe("the final path prints Pregame · Final with no live grey line", () => {
+  it("the served final renders data-phase='after' with no live grey line", () => {
     const html = page(SERVED_DETAIL);
-    expect(stamp(html, FINAL_BAND)).toBe("18-20 home-away");
-    expect(stamp(html, BASE_LINE)).toBeNull();
-    expect(html).toContain('data-testid="event-hero-final-forecast-details"');
-    expect(html).not.toContain(`data-testid="${BASE_DETAILS}"`);
+    expect(html).toContain('data-phase="after"');
+    expect(pregameSummaryText(html)).toBeNull();
   });
 });
 
-describe("soccer keeps its 90-minute basis visible on both lines", () => {
-  it("goals over regulation on both objects: the label says 90 min", () => {
+describe("soccer prints regulation goals in Proj. and rounded goals in the single grey line", () => {
+  it("goals over regulation on both objects: Proj. and Pregame grey line both render", () => {
     const html = page(
       liveRow(
         {
@@ -298,12 +310,24 @@ describe("soccer keeps its 90-minute basis visible on both lines", () => {
           away_team_data: undefined,
           home_score: 1,
           away_score: 0,
-          pregame_projection: { ...BASELINE, unit: "goals", period: "regulation", projected_home_score: 1.4, projected_away_score: 1.1 },
+          pregame_projection: {
+            ...BASELINE,
+            unit: "goals",
+            period: "regulation",
+            projected_home_score: 1.4,
+            projected_away_score: 1.1,
+          },
         } as Partial<Event>,
-        { ...CURRENT, unit: "goals", period: "regulation", projected_home_score: 2.2, projected_away_score: 0.9 },
+        {
+          ...CURRENT,
+          unit: "goals",
+          period: "regulation",
+          projected_home_score: 2.2,
+          projected_away_score: 0.9,
+        },
       ),
     );
-    expect(html).toContain('aria-label="Projected final (90 min): Arsenal 2, Chelsea 1"');
-    expect(html).toContain('aria-label="Projection (90 min) before scheduled start: Arsenal 1, Chelsea 1"');
+    expect(heroCurrentStamp(html)).toBe("2-1 home-away");
+    expect(pregameSummaryText(html)).toContain("projected 1–1");
   });
 });

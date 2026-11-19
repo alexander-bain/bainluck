@@ -249,7 +249,7 @@ describe("#5666 part 2 — the family is closed: no seventh surface can spell it
     // mistake the family itself is made of.
     const repaired: Array<[string, string]> = [
       ["components/golf/MoversStrip.tsx", "{delta} pts"],
-      ["components/FeedCard.tsx", "{formatMovementPoints(leader.movement)} pts"],
+      ["components/FeedCard.tsx", "{formatMovementPoints(leader.movement)} points"],
       ["components/CombinedFeedCard.tsx", "{formatMovementPoints(outcome.bestMovement)} pts"],
     ];
     for (const [rel, expected] of repaired) {

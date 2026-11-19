@@ -8,16 +8,22 @@ protocol FuturesDetailProviding: Sendable {
     func fetchFuturesDetail(id: Int) async throws -> FuturesMarketDetail
     /// #9387 opt-in. A provider that predates it serves its default body.
     func fetchFuturesDetail(id: Int, representation: FuturesRepresentation) async throws -> FuturesMarketDetail
+    /// #12577 / #12849: optional server-hydrated paired-metric set (`Nominated %` + `Wins %`).
+    func fetchPairedMetricByMarket(marketId: Int) async throws -> PairedMetricSet?
 }
 extension FuturesDetailProviding {
     func fetchFuturesDetail(id: Int, representation: FuturesRepresentation) async throws -> FuturesMarketDetail {
         try await fetchFuturesDetail(id: id)
+    }
+    func fetchPairedMetricByMarket(marketId: Int) async throws -> PairedMetricSet? {
+        nil
     }
 }
 extension APIClient: FuturesDetailProviding {}
 
 final class FuturesDetailViewModel: ObservableObject {
     @Published private(set) var market: FuturesMarketDetail?
+    @Published private(set) var pairedMetricSet: PairedMetricSet?
     @Published private(set) var loading = true
     @Published private(set) var error: String?
     @Published private(set) var chartRefreshToken = 0
@@ -77,9 +83,15 @@ final class FuturesDetailViewModel: ObservableObject {
         // and the page sat on its spinner until the stream rescued it.
         loading = market == nil
         do {
-            let fetched = try await client.fetchFuturesDetail(id: marketId, representation: representation)
+            async let detailTask = client.fetchFuturesDetail(id: marketId, representation: representation)
+            async let pairedTask: PairedMetricSet? = (try? await client.fetchPairedMetricByMarket(marketId: marketId)) ?? nil
+            let fetched = try await detailTask
+            let fetchedPaired = await pairedTask
             guard !Task.isCancelled, generation == loadGeneration, fetched.id == marketId else { return }
             adopt(fetched)
+            if let fetchedPaired, !fetchedPaired.entries.isEmpty {
+                pairedMetricSet = fetchedPaired
+            }
             error = nil
         } catch {
             guard !Task.isCancelled, generation == loadGeneration else { return }

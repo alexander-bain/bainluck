@@ -154,6 +154,7 @@ export default function SettledPathChart({
           historyData={plotted}
           selectedOutcomes={selected}
           fixedYAxis
+          fieldCeiling
           stepInterpolation
           showAxes
           showLegend

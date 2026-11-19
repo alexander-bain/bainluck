@@ -1,8 +1,8 @@
 /**
- * Feature flag and reason-line hygiene for the unified 183-A web game card (#12616).
+ * Feature flag and reason-line hygiene for the unified 183-A web game card (#12616, Ruling 207-A).
  *
- * Strictly switched OFF by default (`NEXT_PUBLIC_GAME_CARD_183A !== "true"`).
- * Turning this flag on is reader-visible and requires Fable's explicit sign-off.
+ * Enabled by default (`NEXT_PUBLIC_GAME_CARD_183A !== "false"`); disabled only
+ * when `NEXT_PUBLIC_GAME_CARD_183A` is explicitly set to `"false"`.
  */
 
 const FILLER_REASON_PATTERNS: RegExp[] = [
@@ -19,7 +19,7 @@ export function isWebGameCard183AEnabled(override?: boolean): boolean {
   if (typeof override === "boolean") {
     return override;
   }
-  return process.env.NEXT_PUBLIC_GAME_CARD_183A === "true";
+  return process.env.NEXT_PUBLIC_GAME_CARD_183A !== "false";
 }
 
 /**

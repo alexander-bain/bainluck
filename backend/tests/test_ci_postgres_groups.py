@@ -332,7 +332,7 @@ def test_common_setup_services_and_intentional_scope_skip():
     # #10708: skipped on a pure-ios/ PR too; native-backend-readers covers it.
     assert worker["if"] == "needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true'"
     assert worker["strategy"]["fail-fast"] is False
-    assert worker["strategy"]["matrix"]["group"] == ["shared", "shared-middle", "shared-tail", "isolated", "shared-suffix"]
+    assert worker["strategy"]["matrix"]["group"] == ["shared", "shared-middle", "shared-tail", "isolated", "shared-suffix", "shared-tail-2"]
     assert worker["services"]["postgres"]["image"] == "postgres:15"
     assert worker["services"]["postgres"]["env"]["POSTGRES_DB"] == "bl_searchtest"
     assert worker["services"]["redis"]["ports"] == ["56379:6379"]
@@ -590,3 +590,102 @@ def test_receipt_values_are_environment_data_never_interpolated_shell():
             "REUSE_HEAD": "${{ needs.change-scope.outputs.reuse_head }}",
             "REUSE_BASE": "${{ needs.change-scope.outputs.reuse_base }}",
         }
+
+
+# Fable, Wed Nov 18: shared-tail took 20-24 minutes, 3-6 more than any backend shard,
+# so it splits in two at a full schema reset. Everything from #4586 on runs on its own
+# runner, in the same order, after the same pg_trgm provisioning and 55-A plugin.
+SECOND_TAIL_BOUNDARY = "#4586 restore compare-and-swap (real Postgres)"
+SECOND_TAIL_PLUGIN = RETRY_PLUGIN.replace("shared tail ", "shared tail 2 ")
+SECOND_TAIL_PROVISIONER = TAIL_PROVISIONER.replace("shared tail ", "shared tail 2 ")
+SECOND_TAIL_UPLOAD = "#12252 shared tail 2 — upload this attempt's 55-A retries for the flake sentinel"
+
+
+def _second_tail_fixture_source():
+    return (ROOT / "backend/tests/integration/test_restore_4586_manifest_cas_pg.py").read_text()
+
+
+def _validate_second_tail(worker, fixture_source):
+    steps = worker["steps"]
+    names = [s.get("name") for s in steps]
+    first = [s for s in steps if s.get("if") == "matrix.group == 'shared-tail'"]
+    second = [s for s in steps if s.get("if") == "matrix.group == 'shared-tail-2'"]
+    assert [s["name"] for s in second[:3]] == [SECOND_TAIL_PLUGIN, SECOND_TAIL_PROVISIONER, SECOND_TAIL_BOUNDARY]
+    assert second[-1]["name"] == SECOND_TAIL_UPLOAD
+    # The same plugin bytes and the same provisioner as the first tail runner.
+    assert second[0]["run"] == next(s for s in first if s["name"] == RETRY_PLUGIN)["run"]
+    assert second[1]["run"] == next(s for s in first if s["name"] == TAIL_PROVISIONER)["run"]
+    _validate_tail_provisioner(second[1])
+    # One chain cut in two: every test step of the second runner comes after every test step
+    # of the first, in the original file order, so neither runner's order changed.
+    setup = {RETRY_PLUGIN, TAIL_PROVISIONER, SECOND_TAIL_PLUGIN, SECOND_TAIL_PROVISIONER, SECOND_TAIL_UPLOAD,
+             "#12252 shared tail — upload this attempt's 55-A retries for the flake sentinel"}
+
+    def tests(group_steps):
+        return [names.index(s["name"]) for s in group_steps if s["name"] not in setup]
+    a, b = tests(first), tests(second)
+    assert a and b and max(a) < min(b)
+    assert names[min(b)] == SECOND_TAIL_BOUNDARY
+    # Nothing between the two halves belongs to the tail chain at all.
+    between = [s for s in steps[max(a) + 1:min(b)] if "shared-tail" in str(s.get("if"))]
+    assert [s["name"] for s in between] == [SECOND_TAIL_PLUGIN, SECOND_TAIL_PROVISIONER]
+    assert "tests/integration/test_restore_4586_manifest_cas_pg.py" in second[2]["run"]
+    # The boundary file starts each test from the full registered schema: it registers every
+    # model, drops the two backup tables that are not in Base.metadata, then drop_all and
+    # create_all (no table subset) before the test gets the engine.
+    tree = ast.parse(fixture_source)
+    fixture = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "pg_engine")
+    register = next(n.lineno for n in ast.walk(fixture) if isinstance(n, ast.Import)
+                    and any(a.name == "app.models.models" for a in n.names))
+    resets = {ast.unparse(n.args[0]): n for n in ast.walk(fixture) if isinstance(n, ast.Call)
+              and ast.unparse(n.func).endswith("run_sync") and n.args}
+    drop, create = resets["Base.metadata.drop_all"], resets["Base.metadata.create_all"]
+    assert not drop.keywords and not create.keywords and len(drop.args) == len(create.args) == 1
+    yielded = next(n.lineno for n in ast.walk(fixture) if isinstance(n, ast.Yield))
+    assert register < drop.lineno < create.lineno < yielded
+    engine = next(n for n in ast.walk(fixture) if isinstance(n, ast.Call)
+                  and ast.unparse(n.func) == "create_async_engine")
+    assert ast.unparse(engine.args[0]) == "DB_URL"
+    assert 'os.environ.get("SEARCH_TEST_DATABASE_URL")' in fixture_source
+
+
+def test_the_second_tail_runner_starts_at_a_full_reset_and_keeps_the_chain_order():
+    jobs, _ = _inputs()
+    _validate_second_tail(jobs["database-integration"], _second_tail_fixture_source())
+
+
+@pytest.mark.parametrize("mutation", ["early_step_moved", "late_step_back", "no_provisioner", "no_plugin",
+                                     "different_plugin", "missing_reset", "limited_create", "reset_after_yield",
+                                     "missing_registration", "boundary_moved"])
+def test_the_second_tail_boundary_refuses_unsafe_assignment_or_fixture(mutation):
+    jobs, _ = _inputs()
+    worker = jobs["database-integration"]
+    source = _second_tail_fixture_source()
+    steps = worker["steps"]
+    by = {s.get("name"): s for s in steps}
+    if mutation == "early_step_moved":    # a step before the reset joins the second runner
+        by["#4482 a task's query budget survives the pool (real Postgres)"]["if"] = "matrix.group == 'shared-tail-2'"
+    elif mutation == "late_step_back":    # a step after the reset stays on the first runner
+        by["#678 account deletion actually deletes (real Postgres)"]["if"] = "matrix.group == 'shared-tail'"
+    elif mutation == "no_provisioner":
+        worker["steps"] = [s for s in steps if s.get("name") != SECOND_TAIL_PROVISIONER]
+    elif mutation == "no_plugin":
+        worker["steps"] = [s for s in steps if s.get("name") != SECOND_TAIL_PLUGIN]
+    elif mutation == "different_plugin":
+        by[SECOND_TAIL_PLUGIN]["run"] = by[SECOND_TAIL_PLUGIN]["run"].replace("16.7", "16.8")
+    elif mutation == "missing_reset":
+        source = source.replace("await conn.run_sync(Base.metadata.drop_all)", "pass")
+    elif mutation == "limited_create":
+        source = source.replace("conn.run_sync(Base.metadata.create_all)",
+                                "conn.run_sync(Base.metadata.create_all, tables=[])")
+    elif mutation == "reset_after_yield":
+        source = source.replace("    yield engine\n", "    yield engine\n    async with engine.begin() as conn:\n"
+                                "        await conn.run_sync(Base.metadata.drop_all)\n", 1)
+        source = source.replace("        await conn.run_sync(Base.metadata.drop_all)\n        await conn.run_sync"
+                                "(Base.metadata.create_all)\n", "        await conn.run_sync(Base.metadata.create_all)\n", 1)
+    elif mutation == "missing_registration":
+        source = source.replace("import app.models.models", "import os")
+    else:                                  # the second runner starts one step later
+        by[SECOND_TAIL_BOUNDARY]["if"] = "matrix.group == 'shared-tail'"
+    with pytest.raises((AssertionError, KeyError, StopIteration, ValueError)):
+        _validate_second_tail(worker, source)

@@ -509,16 +509,14 @@ d("a draw is not the away team on iOS", () => {
     expect(code).toMatch(
       /side == \.home\s*\?\s*reading\?\.homeProbability\s*:\s*\(prematchAwayIsWithheld \? nil : reading\?\.awayProbability\)/
     );
-    // Both bars keep the remainder and drop the colour on their own reading.
-    expect(code).toMatch(
-      /prematchAwayIsWithheld\s*\r?\n?\s*\?\s*Color\.secondary\.opacity\(0\.25\)/
-    );
+    // Finished cards draw no probability bar; the active bar keeps the remainder and drops the colour when away is withheld.
+    expect(code).toMatch(/if isFinished \{\s*EmptyView\(\)\s*\}/);
     expect(code).toMatch(
       /currentAwayIsWithheld \? Color\.secondary\.opacity\(0\.25\) : awayColor/
     );
     expect(
       (code.match(/Color\.secondary\.opacity\(0\.25\)/g) ?? []).length
-    ).toBe(2);
+    ).toBe(1);
   });
 
   /**
@@ -647,10 +645,16 @@ d("a draw is not the away team on iOS", () => {
 
     expect(menu).toMatch(/let awayProb: Int\?/);
     expect(menu).toMatch(
-      /let printable = DrawPricedWinner\.printablePair\([\s\S]{0,200}sport: event\.sport\s*\)/
+      /let chance = Self\.currentChancePercents\(\s*odds: event\.currentOdds,\s*heroSource: event\.heroProbabilitySource,\s*sport: event\.sport\s*\)/
     );
-    expect(menu).toMatch(/awayProb: printableAwayPct,/);
-    expect(menu).toMatch(/Text\("\\\(game\.homeAbbrev\) \\\(game\.homeProb\)"\)/);
+    expect(menu).toMatch(
+      /let printable = DrawPricedWinner\.printablePair\(away: away, home: home, sport: sport\)/
+    );
+    expect(menu).toMatch(/return \(homePct, printable\?\.away == nil \? nil : awayPct\)/);
+    expect(menu).toMatch(/homeProb: chance\.home,\s*awayProb: chance\.away,/);
+    expect(menu).toMatch(
+      /let chance = game\.awayProb\.map \{[^\n]+\}\s*\?\? "\\\(game\.homeAbbrev\) \\\(homeProb\)"\s*Text\(chance\)/
+    );
 
     // The widget is a STANDALONE TARGET and shares the rule rather than
     // transcribing it — the membership exception is asserted below.
@@ -744,7 +748,7 @@ d("a draw is not the away team on iOS", () => {
         "                    away: printable.away ?? (1 - homeProbability),",
       ],
       "MenuBarView.swift": [
-        "                let awayProbability = 1.0 - homeProbability",
+        "        let away = 1 - home",
       ],
       "ShareCardRenderer.swift": [
         "    private var awayBarShare: Double { awayProbability ?? (1 - homeProbability) }",

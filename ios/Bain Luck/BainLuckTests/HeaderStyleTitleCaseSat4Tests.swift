@@ -92,7 +92,21 @@ final class HeaderStyleTitleCaseSat4Tests: XCTestCase {
             "away_probability": 0.316,
             "home_rendered_percent": 68,
             "away_rendered_percent": 32,
-            "updated_at": "2026-11-15T16:59:45Z"
+            "updated_at": "2026-11-15T16:59:45Z",
+            "live_projection": {
+              "projected_away_score": 23.6,
+              "projected_home_score": 28.1,
+              "kind": "in_play",
+              "boundary": "commence_time",
+              "boundary_at": "2026-11-15T18:00:00Z",
+              "earliest_confirmed_at": "2026-11-15T18:45:00Z",
+              "latest_captured_at": "2026-11-15T18:46:00Z",
+              "source": "sportsbooks",
+              "basis": "consensus_spread_total",
+              "bookmaker_count": 4,
+              "unit": "points",
+              "period": "full_game"
+            }
           },
           "prematch_odds": {
             "home_probability": 0.58,
@@ -296,7 +310,7 @@ final class HeaderStyleTitleCaseSat4Tests: XCTestCase {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("4. Discover Single-Game Card (During Game: Score · Pregame · Now)")
+                Text("4. Discover Single-Game Card (During Game: Score · Proj. · Now)")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color(hex: "#374151"))
                 DiscoverCompactSingleGameCard190CView(

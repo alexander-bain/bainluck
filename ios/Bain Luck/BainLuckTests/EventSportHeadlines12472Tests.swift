@@ -236,7 +236,11 @@ final class EventSportHeadlines12472Tests: XCTestCase {
         XCTAssertEqual(EventSportHeadlines12472.kind(for: nflFinal, now: fixedNow), .nflAfterGame)
 
         let nflOpeningOnly = try nflPregameFixture(heroSource: "opening")
-        XCTAssertNil(EventSportHeadlines12472.kind(for: nflOpeningOnly, now: fixedNow), "opening-only weeks keep OpeningLineHero")
+        // An opening-only game still uses the unified layout with an unpriced headline.
+        XCTAssertEqual(
+            EventSportHeadlines12472.kind(for: nflOpeningOnly, now: fixedNow),
+            .nflBeforeGame
+        )
 
         let nbaLive = try nbaLiveFixture()
         XCTAssertEqual(EventSportHeadlines12472.kind(for: nbaLive, now: fixedNow), .nbaDuringGame)
@@ -292,8 +296,8 @@ final class EventSportHeadlines12472Tests: XCTestCase {
         let streaming = try XCTUnwrap(
             resolveHeadline(event, hasScore: false, numberStreams: true)
         )
-        XCTAssertEqual(streaming.away.winChanceText, "34.2%")
-        XCTAssertEqual(streaming.home.winChanceText, "65.8%")
+        XCTAssertEqual(streaming.away.winChanceText, "34%", "#12822: before kickoff Chance stays whole percents even while streaming")
+        XCTAssertEqual(streaming.home.winChanceText, "66%", "#12822: before kickoff Chance stays whole percents even while streaming")
     }
 
     func testNFLBeforeGameMetaUsesPlainDateWhenDaysAwayAndCountdownInsideLastHour() throws {

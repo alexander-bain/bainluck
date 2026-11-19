@@ -148,6 +148,18 @@ function renderList(events: Event[], withCues: boolean): string[] {
   );
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("hostCuesForEvents — the trigger", () => {
   it("fires on the split-squad pair and names a different host on each", () => {
     const cues = hostCuesForEvents([AT_TORONTO, AT_OTTAWA]);

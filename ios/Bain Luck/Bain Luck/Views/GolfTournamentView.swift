@@ -33,6 +33,25 @@ struct GolfTournamentView: View {
         _vm = StateObject(wrappedValue: GolfTournamentViewModel(slug: slug))
     }
 
+    #if DEBUG
+    init(
+        slug: String,
+        displayName: String,
+        loadedPresentationForTest: GolfTournamentPresentation,
+        atlasDataForTest: EventAtlasGolfTournament11666.TournamentAtlasData = .init()
+    ) {
+        self.slug = slug
+        self.displayName = displayName
+        _vm = StateObject(
+            wrappedValue: GolfTournamentViewModel(
+                slug: slug,
+                loadedPresentation: loadedPresentationForTest,
+                atlasData: atlasDataForTest
+            )
+        )
+    }
+    #endif
+
     var body: some View {
         Group {
             switch vm.state {
@@ -80,9 +99,13 @@ struct GolfTournamentView: View {
             }
             .padding(.horizontal)
             .padding(.bottom, 40)
+            .frame(maxWidth: Self.readableDetailMaxWidth)
+            .frame(maxWidth: .infinity)
         }
         .refreshable { await vm.load() }
     }
+
+    static let readableDetailMaxWidth: CGFloat = 720
 
     @inline(never)
     private func atlasSection(_ presentation: GolfTournamentPresentation) -> some View {

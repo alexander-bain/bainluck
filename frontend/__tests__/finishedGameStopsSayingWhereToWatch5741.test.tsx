@@ -186,7 +186,7 @@ describe("#5741 the broadcast chip answers a question somebody still has", () =>
     expect(draw()).toContain(BROADCAST);
   });
 
-  it("🔴 STILL SHOWS on a live game", () => {
+  it("omits broadcast on a live game under Direction 199 (top bar carries LIVE pill + league)", () => {
     eventPayload = event({
       status: "live",
       home_score: 1,
@@ -194,18 +194,15 @@ describe("#5741 the broadcast chip answers a question somebody still has", () =>
       commence_time: startedHoursAgo(1),
     });
 
-    expect(draw()).toContain(BROADCAST);
+    expect(draw()).not.toContain(BROADCAST);
   });
 
-  it("is addressable, so a DOM probe can tell this chip from any other text", () => {
-    // New with this ship, and the one assertion here that is expected to be red
-    // before it. The absence arms above are deliberately written against the
-    // broadcast STRING so they cannot be satisfied by a missing attribute.
+  it("is addressable on pregame, so a DOM probe can tell this chip from any other text", () => {
     eventPayload = event({
-      status: "live",
-      home_score: 1,
-      away_score: 0,
-      commence_time: startedHoursAgo(1),
+      status: "scheduled",
+      home_score: null,
+      away_score: null,
+      commence_time: startsInHours(3),
     });
 
     expect(draw()).toContain(CHIP);
@@ -213,16 +210,13 @@ describe("#5741 the broadcast chip answers a question somebody still has", () =>
 
   // ── controls ───────────────────────────────────────────────────────────────
 
-  it("takes the chip and nothing else out of the meta row", () => {
-    // The failure mode of a JSX gate is a condition that swallows its siblings.
-    // The date label lives in the same flex row and is what the reader is left
-    // with, so it is asserted by its own testid rather than by eye.
+  it("takes the chip and nothing else out of the finished meta row", () => {
     eventPayload = event();
 
     const html = draw();
 
-    expect(html).toContain('data-testid="event-hero-start"');
-    expect(html).toContain("Final");
+    expect(html).toContain("MLB · Final");
+    expect(html).not.toContain(BROADCAST);
   });
 
   it("draws the page rather than failing to render it", () => {

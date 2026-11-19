@@ -56,21 +56,46 @@ export function cleanSource(src?: string | null): string | null {
 
 function pairsToOutcomes(
   pairs: [number | null | undefined, string][] | undefined,
-  orderNumeric = true
+  orderNumeric = true,
+  reachedLabels?: string[],
 ): AtlasCategoryOutcome[] {
   if (!Array.isArray(pairs)) return [];
+  const reachedSet = new Set((reachedLabels ?? []).map((s) => s.trim()));
   const valid = pairs.filter(
     (p): p is [number | null | undefined, string] =>
       Array.isArray(p) && typeof p[1] === "string" && p[1].trim().length > 0
   );
   const ordered = orderNumeric ? orderPairsNumerically(valid) : valid;
-  return ordered.map(([prob, label], idx) => {
+  const allAbove =
+    ordered.length >= 2 &&
+    ordered.every(([, l]) =>
+      /^\s*(?:above|over|at least|more than|greater than|exceeds?|reaches?|hits?)\b/i.test(l),
+    );
+  const filtered: [number | null | undefined, string][] = [];
+  let prevLive: number | null = null;
+  for (const [prob, label] of ordered) {
     const trimmed = label.trim();
+    if (reachedSet.has(trimmed)) {
+      filtered.push([prob, label]);
+      continue;
+    }
+    if (allAbove && typeof prob === "number" && Number.isFinite(prob)) {
+      if (prevLive !== null && prob > prevLive) continue;
+      prevLive = prob;
+    }
+    filtered.push([prob, label]);
+  }
+  return filtered.map(([prob, label], idx) => {
+    const trimmed = label.trim();
+    const reached = reachedSet.has(trimmed);
     return {
       id: `${trimmed}-${idx}`,
       label: trimmed,
-      probability: toProb01(prob),
-      renderedPercent: toRenderedPct(prob),
+      probability: reached ? 1 : toProb01(prob),
+      renderedPercent: reached ? 100 : toRenderedPct(prob),
+      ...(reached
+        ? { isSettled: true, isWinner: true, settledResult: "won" as const }
+        : {}),
     };
   });
 }
@@ -100,13 +125,18 @@ function renderSideBinaryRow(m: any, i: number) {
 
 function renderDistributionBlock(dist: EconDistribution, key: string | number) {
   if (!dist.rows?.length) return null;
-  const outcomes = pairsToOutcomes(dist.rows, true);
+  const outcomes = pairsToOutcomes(
+    dist.rows,
+    true,
+    dist.kind === "ladder" ? dist.reached_labels : undefined,
+  );
   if (outcomes.length === 0) return null;
   if (dist.kind === "ladder") {
     return (
       <ThresholdLadderCard
         key={key}
         meta={{
+          marketId: dist.market_id ?? null,
           marketTitle: dist.q,
           source: cleanSource(dist.src),
         }}
@@ -118,6 +148,7 @@ function renderDistributionBlock(dist: EconDistribution, key: string | number) {
     <BucketDistribution
       key={key}
       meta={{
+        marketId: dist.market_id ?? null,
         marketTitle: dist.q,
         source: cleanSource(dist.src),
       }}
@@ -199,6 +230,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
             {t.fed.rate_cuts && t.fed.rate_cuts.length > 0 && (
               <BucketDistribution
                 meta={{
+                  marketId: t.fed.rate_cuts_market_id ?? null,
                   kicker: "RATE CUTS",
                   marketTitle: "How many cuts in 2026?",
                   source: null,

@@ -320,9 +320,9 @@ final class AmazingHeadlinesOvernight4Tests: XCTestCase {
         XCTAssertEqual(nonStreaming.rows[2].cells.last, "25%")
 
         let streaming = try XCTUnwrap(resolveHeadline(match, hasScore: false, numberStreams: true))
-        XCTAssertEqual(streaming.rows[0].cells.last, "52.4%")
-        XCTAssertEqual(streaming.rows[1].cells.last, "22.8%")
-        XCTAssertEqual(streaming.rows[2].cells.last, "24.8%")
+        XCTAssertEqual(streaming.rows[0].cells.last, "52%", "#12822: before kickoff Chance stays whole percents")
+        XCTAssertEqual(streaming.rows[1].cells.last, "23%", "#12822: before kickoff Chance stays whole percents")
+        XCTAssertEqual(streaming.rows[2].cells.last, "25%", "#12822: before kickoff Chance stays whole percents")
 
         // Countdown inside last hour (182-A)
         let withinHour = try soccerBeforeFixture(commenceTime: "2026-11-14T08:35:00Z")

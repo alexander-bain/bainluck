@@ -107,8 +107,8 @@ function draw(): string {
 }
 
 function expectPageAndCard(html: string) {
-  expect(html).toContain("Tigers");
-  expect(html).toContain("Golden Bears");
+  expect(html).toContain("Clemson");
+  expect(html).toContain("California");
   expect(html).toContain(CARD);
 }
 
