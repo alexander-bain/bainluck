@@ -43,6 +43,7 @@ from app.utils.futures_market_snapshot import (
     normalized_field_comparisons,
     reader_change_24h,
 )
+from app.utils.event_completion import served_commence_time
 from app.utils.event_rails import (
     commence_time_was_never_a_kickoff,
     live_first_order,
@@ -1713,6 +1714,27 @@ async def _attach_pregame_projections(
         attach_pregame_projection(brief, answers.get(event_id))
 
 
+def _order_upcoming_briefs(briefs: list[dict]) -> list[dict]:
+    """Keep live cards in SQL `live_first_order`, sort non-live by served start (#13000)."""
+    live = [g for g in briefs if g.get("status") == "live"]
+    scheduled = [g for g in briefs if g.get("status") != "live"]
+
+    def _start_ts(card: dict) -> float:
+        raw = card.get("commence_time")
+        if not isinstance(raw, str) or not raw:
+            return float("inf")
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except ValueError:
+            return float("inf")
+
+    scheduled.sort(key=_start_ts)
+    return live + scheduled
+
+
 def _format_game_brief(
     event: Event,
     sport_key: str | None = None,
@@ -1752,13 +1774,26 @@ def _format_game_brief(
     )
     away_prob = round(1.0 - home_prob, 6) if home_prob is not None else None
 
+    _now = datetime.now(timezone.utc)
+    _served_status = served_event_status(event.status, event.commence_time, _now)
+    # #13000 / #9634: a scheduled row held on StatPal's later-session start
+    # (`upcoming_rail_condition` -> `statpal_later_session_rows`) must serve
+    # StatPal's start here too, matching `/api/events/{id}` instead of printing
+    # the stale venue stamp from an earlier day.
+    _served_start = served_commence_time(
+        _served_status,
+        event.commence_time,
+        getattr(event, "win_probability_sources", None),
+        _now,
+    )
+
     brief: dict = {
         "id": event.id,
         "external_id": getattr(event, "external_id", None),
         "sport": sport_key,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
-        "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+        "commence_time": _served_start.isoformat() if _served_start else None,
         # A FINAL card prefers this over commence_time for its date (gotcha #22
         # family): a Kalshi-sourced commence_time can be a close/resolution stamp.
         "completed_at": (
@@ -1775,9 +1810,7 @@ def _format_game_brief(
         # routed through this helper — served the same two rows as `scheduled`.
         # One row, two answers, and the one the league page drew was the wrong
         # one. Admin/debug surfaces deliberately keep the raw value.
-        "status": served_event_status(
-            event.status, event.commence_time, datetime.now(timezone.utc)
-        ),
+        "status": _served_status,
         "home_score": event.home_score,
         "away_score": event.away_score,
         "home_win_probability": home_prob,
@@ -3758,6 +3791,7 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             return out
 
         _grows = _format_all(_g_events)
+        _grows = _order_upcoming_briefs(_grows)
         # `or _more_games` (#3872): the share hands back at most the cap, so the
         # +1 that used to declare "there are more" is gone by the time we get
         # here. The count taken from the full candidate list above still knows.

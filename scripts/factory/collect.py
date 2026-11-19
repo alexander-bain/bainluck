@@ -17,6 +17,8 @@ import urllib.request
 import urllib.parse
 
 from model import build, instant, iso, public_title, PACIFIC, TRUSTED
+from ci_queue import attach_machine_reason, machine_queue
+from notes import make_notes
 from signals import commands_from, test_file
 
 REPO = "alexander-bain/bainluck"
@@ -40,7 +42,7 @@ class GitHub:
         self.lock = threading.Lock()
         self.started_at = time.monotonic()
 
-    def request(self, endpoint, data=None, method=None, binary=None):
+    def request(self, endpoint, data=None, method=None, binary=None, timeout=30):
         method = method or ("POST" if data is not None or binary is not None else "GET")
         graphql_read = (
             endpoint == "graphql"
@@ -80,7 +82,7 @@ class GitHub:
                 "graphql" if endpoint == "graphql" else "core"
             ] += 1
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 self._remember_rate(response.headers)
                 content = response.read()
         except urllib.error.HTTPError as error:
@@ -137,12 +139,20 @@ def read_public(url):
 
 def safe_comment(comment):
     body = comment.get("body", "")
+    fable = body.startswith("**Fable")
+    heading = body.partition("\n")[0]
+    changes = fable and bool(re.search(r"\bCHANGES\b", heading))
     return {
         "created_at": comment["created_at"],
         "updated_at": comment["updated_at"],
         "association": comment.get("author_association"),
-        "fable_accept": body.startswith("**Fable")
-        and bool(re.search(r"\bACCEPT\b|\bno look needed\b", body, re.I)),
+        "fable_changes": changes,
+        "fable_accept": fable
+        and not changes
+        and bool(
+            re.search(r"\bACCEPT\b|\bno look needed\b", body, re.I)
+            or re.search(r"\bACCEPTED\b", heading)
+        ),
     }
 
 
@@ -162,6 +172,11 @@ def collect_pull(api, summary, cached=None):
         )
     }
     core["title"] = public_title(core["title"])
+    login = (summary.get("user") or {}).get("login")
+    core["title_trusted"] = summary.get("author_association") in TRUSTED and not (
+        login
+        and re.search(rf"(?<![\w-]){re.escape(login)}(?![\w-])", core["title"], re.I)
+    )
     core.update(
         branch=summary["head"]["ref"],
         head_sha=summary["head"]["sha"],
@@ -293,7 +308,9 @@ def refresh_open_evidence(api, pulls):
       comments(last:100) { totalCount nodes { body createdAt updatedAt authorAssociation } }
       commits(last:1) { nodes { commit { oid statusCheckRollup { contexts(first:100) {
         totalCount nodes {
-          ... on CheckRun { name status conclusion startedAt completedAt checkSuite { app { slug } } }
+          ... on CheckRun { name status conclusion startedAt completedAt checkSuite {
+            app { slug } workflowRun { workflow { name } }
+          } }
           ... on StatusContext { context state createdAt }
         }
       } } } } }
@@ -367,10 +384,15 @@ def refresh_open_evidence(api, pulls):
                         }
                     )
                 elif check["name"] != "Update the factory":
+                    suite = check["checkSuite"]
+                    workflow = (
+                        (suite.get("workflowRun") or {}).get("workflow") or {}
+                    ).get("name")
                     checks.append(
                         {
                             "name": check["name"],
-                            "app": check["checkSuite"]["app"]["slug"],
+                            "app": suite["app"]["slug"],
+                            "ci": workflow == "CI",
                             "started_at": check["startedAt"],
                             "finished_at": check["completedAt"],
                             "state": check["status"].lower(),
@@ -509,7 +531,11 @@ def collect(api, previous=None, cache=None, open_summaries=None):
             break
     numbers = {p["number"] for p in summaries}
     for old in previous.get("changes", []):
-        if old["station"] == "Ship" and old["number"] not in numbers:
+        if (
+            old["station"] == "Ship"
+            and old.get("merged_at")
+            and old["number"] not in numbers
+        ):
             summaries.append(api.request(f"repos/{REPO}/pulls/{old['number']}"))
     with ThreadPoolExecutor(max_workers=4) as workers:
         pulls = list(
@@ -527,6 +553,7 @@ def collect(api, previous=None, cache=None, open_summaries=None):
     # A reported live time refines the server observation only after ancestry
     # independently proves this exact merged change was deployed.
     comments = api.pages(f"issues/12779/comments?since={iso(floor)}")
+    commands = commands_from(comments)
     positions = {
         sha: i
         for i, sha in enumerate(
@@ -547,37 +574,33 @@ def collect(api, previous=None, cache=None, open_summaries=None):
             )
             if included:
                 receipt["contains"].append(merge_sha)
-    for comment in comments:
-        if comment.get("author_association") not in TRUSTED:
+    merged = {p["number"]: p for p in pulls if p.get("merged_at")}
+    for post in commands:
+        if post["kind"] != "live":
             continue
-        match = re.search(
-            r"\blive\s+#(\d+)\s*\((server|website|apps)\)", comment["body"], re.I
-        )
-        if not match:
-            continue
-        number, line = int(match[1]), match[2].title()
-        pull = next(
-            (p for p in pulls if p["number"] == number and p.get("merged_at")), None
-        )
-        proof = next(
-            (
-                r
-                for r in receipts
-                if r["line"] == line
-                and pull
-                and pull["merge_commit_sha"] in r["contains"]
-            ),
-            None,
-        )
-        if proof and pull["merged_at"] <= comment["created_at"] <= proof["at"]:
-            receipts.append(
-                {
-                    **proof,
-                    "at": comment["created_at"],
-                    "kind": "reported",
-                    "contains": [pull["merge_commit_sha"]],
-                }
+        for number in post["numbers"]:
+            pull = merged.get(number)
+            if not pull or instant(post["at"]) < instant(pull["merged_at"]):
+                continue
+            proof = next(
+                (
+                    r
+                    for r in receipts
+                    if r["line"] == post["line"]
+                    and pull["merge_commit_sha"] in r["contains"]
+                    and instant(post["at"]) <= instant(r["at"])
+                ),
+                None,
             )
+            if proof:
+                receipts.append(
+                    {
+                        **proof,
+                        "at": post["at"],
+                        "kind": "reported",
+                        "contains": [pull["merge_commit_sha"]],
+                    }
+                )
     runs = api.request(
         f"repos/{REPO}/actions/runs?branch=master&event=push&per_page=30"
     )["workflow_runs"]
@@ -595,6 +618,14 @@ def collect(api, previous=None, cache=None, open_summaries=None):
         "tests": tests,
         "tests_at": ci.get("updated_at") if ci else None,
         "testflight": latest.get("Apps", {}).get("state", "unknown"),
+        "successful_runs": [
+            {"started_at": run["run_started_at"], "finished_at": run["updated_at"]}
+            for run in {r["id"]: r for r in runs + completed}.values()
+            if run["name"] == "CI"
+            and run["conclusion"] == "success"
+            and run.get("run_started_at")
+            and run.get("updated_at")
+        ],
     }
     flight_run = next((r for r in runs if r["name"] == "TestFlight release"), None)
     if flight_run and flight_run["conclusion"] in {"failure", "cancelled", "timed_out"}:
@@ -605,12 +636,16 @@ def collect(api, previous=None, cache=None, open_summaries=None):
         "deployments": receipts,
         "master": master,
         "coverage": coverage,
-        "commands": reconcile_commands(comments, pulls, previous),
+        "master_ci_active": any(
+            run["name"] == "CI" and run.get("status") != "completed" for run in runs
+        ),
+        "commands": reconcile_commands(commands, pulls, previous),
+        "hold_commands": previous.get("signals", {}).get("commands", []) + commands,
     }
 
 
-def reconcile_commands(comments, pulls, previous):
-    commands = previous.get("signals", {}).get("commands", []) + commands_from(comments)
+def reconcile_commands(commands, pulls, previous):
+    commands = previous.get("signals", {}).get("commands", []) + commands
     latest = {}
     merged = {p["number"]: p.get("merged_at") for p in pulls}
     for command in sorted(commands, key=lambda c: c["at"]):
@@ -637,6 +672,10 @@ def floor_changed(previous, current):
         visible["jams"] = sorted(
             visible.get("jams", []), key=lambda jam: (jam["key"], jam["started_at"])
         )
+        if visible.get("notes"):
+            visible["notes"] = {
+                k: v for k, v in visible["notes"].items() if k != "snapshot_at"
+            }
         return visible
 
     return not previous or content(previous) != content(current)
@@ -718,6 +757,12 @@ def main():
     if args.publish:
         authorize_publication()
     api = GitHub(read_only=not args.publish)
+    note_stats = {
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "day_calls": None,
+        "day_cost_usd": None,
+    }
     try:
         previous = json.loads(args.previous.read_text()) if args.previous else {}
         cache = (
@@ -731,6 +776,26 @@ def main():
             summaries = api.pages("pulls?state=open&sort=updated&direction=desc")
         snapshot = collect(api, previous, cache, summaries)
         result = build(snapshot, previous)
+        if snapshot.get("master_ci_active") and any(
+            s["kind"] == "line-stalled" for s in result["stops"]
+        ):
+            attach_machine_reason(
+                result, machine_queue(api, REPO, datetime.now(timezone.utc))
+            )
+
+        def save_meter(body):
+            api.request(
+                f"repos/{REPO}/releases/{release['id']}", {"body": body}, method="PATCH"
+            )
+
+        result["notes"], note_stats = make_notes(
+            result,
+            snapshot["pulls"],
+            previous.get("notes") or {},
+            (release or {}).get("body") or "",
+            save_meter if release else None,
+            os.environ.get("OPENAI_API_KEY") if args.publish else None,
+        )
         changed = floor_changed(previous, result)
         cache_payload = {
             "schema_version": 1,
@@ -773,6 +838,7 @@ def main():
             )
         )
     finally:
+        print("FACTORY_NOTES " + json.dumps(note_stats))
         print("FACTORY_METRICS " + json.dumps(api.metrics()))
 
 

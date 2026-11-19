@@ -439,6 +439,7 @@ nonisolated struct RelatedFuture: Decodable, Identifiable, Sendable {
     let bookmakerCount: Int?
     let allSources: [String]?
     let matchedPlayer: MatchedPlayer?
+    var sourceMark: SourceMark? = nil
 
     var id: Int { outcomeId }
 
@@ -449,7 +450,7 @@ nonisolated struct RelatedFuture: Decodable, Identifiable, Sendable {
         case probabilityChange24h = "probabilityChange24H"
         case openingProbability, rank, relevanceScore, relevanceReason
         case lastUpdated, nextUpdateExpected, resolutionDate, bookmakerCount
-        case allSources, matchedPlayer
+        case allSources, matchedPlayer, sourceMark
     }
 }
 

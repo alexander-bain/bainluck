@@ -154,19 +154,32 @@ struct EventSportHeadlineCard12472: View {
 
     static func resolvedHeadlineSourceMark(
         model: EventSportHeadlines12472.Model
-    ) -> (mark: SourceMark, number: Double?, subject: String?, isPregame: Bool)? {
+    ) -> (mark: SourceMark, number: Double?, subject: String?, isPregame: Bool, showsTenths: Bool)? {
         guard let mark = model.sourceMark, mark.draws else { return nil }
         let subject = model.home.shortName
         if mark.state == .settled {
-            return (mark, nil, subject, false)
+            return (mark, nil, subject, false, false)
         }
-        let homeProb = model.rows.first(where: { $0.role == .home })?.rawProbability
+        let homeRow = model.rows.first(where: { $0.role == .home })
+        let homeProb = homeRow?.rawProbability
         let isAfter = model.kind.phase == .after || EventState.isFinished(model.eventStatus)
         if isAfter {
             guard let pregameProb = homeProb else { return nil }
-            return (mark, pregameProb, subject, true)
+            return (mark, pregameProb, subject, true, false)
         }
-        return (mark, homeProb, subject, false)
+        let printedCell: String? = {
+            guard let homeRow else { return model.home.winChanceText }
+            if let colIndex = model.columns.firstIndex(where: { $0.role == .now || $0.role == .chance }),
+               colIndex < homeRow.cells.count {
+                return homeRow.cells[colIndex]
+            }
+            return model.home.winChanceText
+        }()
+        let showsTenths = printedCell?.contains(".") == true
+        let alignedProb = showsTenths
+            ? EventCardView.alignNumberToPrintedTenths(homeProb, printedText: printedCell)
+            : homeProb
+        return (mark, alignedProb, subject, false, showsTenths)
     }
 
     private var resolvedHeadlineSourceMark: SourceMarkButton? {
@@ -176,7 +189,8 @@ struct EventSportHeadlineCard12472: View {
             number: resolved.number,
             subject: resolved.subject,
             isPregame: resolved.isPregame,
-            numberSize: 20
+            numberSize: 20,
+            showsTenths: resolved.showsTenths
         )
     }
 

@@ -83,6 +83,7 @@ def compose(
     tests: list[str],
     failed_jobs: list[str],
     deployed: bool = False,
+    rerun: Optional[str] = None,
 ) -> str:
     if tests:
         shown = ", ".join(f"`{t}`" for t in tests[:MAX_TESTS])
@@ -97,25 +98,65 @@ def compose(
     ref = pr_reference(title)
     headline = title.splitlines()[0][:120] if title else ""
     what = f"{ref} " if ref else ""
+    if rerun is None:
+        if deployed:
+            rerun = "not_needed"
+        elif attempt == 1:
+            rerun = "triggered"
+        else:
+            rerun = "already_ran"
     if deployed:
-        hold, policy = "", (
-            "This run's `deploy` job still succeeded, so the server slot is not held. "
+        hold, policy, procedure = (
+            "",
+            "This run's `deploy` job still succeeded, so the server slot is not held. ",
+            "",
         )
     else:
-        hold, policy = "HOLD (server), ", (
+        hold = "HOLD (server), "
+        policy = (
             "This run's `deploy` job did not succeed, so nothing from it reaches the server. "
-            "Until the HOLD ends, the batch's lane may re-run the failed jobs once, and only a back-out "
-            "or a fix for the named test merges on the server; website and apps keep moving. "
-            "The HOLD ends at the first of: the next server \"live\" line; a green master run containing "
-            "this change that `/api/health` serves; Fable or Alex saying so. "
+            "Until the HOLD ends, only a back-out or a fix for the named test merges on the server; "
+            "website and apps keep moving. "
+            "The HOLD ends at the first of: the re-run passing; the next server \"live\" line; "
+            "a green master run containing this change that `/api/health` serves; Fable or Alex saying so."
         )
+        if rerun == "triggered":
+            line1 = (
+                "Ruling 241: A — This alarm re-ran the failed jobs once automatically "
+                "(nobody needs to press re-run); when the re-run passes, the HOLD ends immediately "
+                "and nobody waits for a repair PR."
+            )
+        elif rerun == "would_trigger":
+            line1 = (
+                "Ruling 241: A — On a live run this alarm re-runs the failed jobs once automatically "
+                "(dry-run: not triggered); when the re-run passes, the HOLD ends immediately "
+                "and nobody waits for a repair PR."
+            )
+        elif rerun.startswith("failed:"):
+            detail = rerun[len("failed:"):].strip()
+            line1 = (
+                f"Ruling 241: A — Automatic re-run failed ({detail}); re-run the failed jobs once "
+                "manually — when the re-run passes, the HOLD ends immediately and nobody waits for a repair PR."
+            )
+        else:
+            line1 = (
+                f"Ruling 241: A — The automatic re-run already ran and attempt {attempt} failed too "
+                "(no further auto-rerun); back out last-in or land a fix for the named test."
+            )
+        line2 = (
+            "If a timing test failed on master, passed on that re-run, and no change in the batch "
+            "touched it, Builder E moves it within the hour to `flaky-canary` (non-blocking) via a "
+            "tests-only PR (`backend/tests/timing_quarantine.json`) with an issue and 7 days to repair or delete it."
+        )
+        procedure = f"\n\n{line1}\n{line2}"
     return (
         f"stuck: master red, {hold}{shown}, [run {run_id}]({run_url})"
         + (f" (attempt {attempt})" if attempt > 1 else "")
         + f"\n\nMaster `{sha[:10]}` — {what}{headline}. "
         "Posted automatically by `master-red-alarm.yml`. "
         + policy
-        + "Read the failing job before any re-run.\n\n"
+        + procedure
+        + "\n\n"
         + marker(run_id, attempt)
     )
 
@@ -187,6 +228,27 @@ def main(argv: Optional[list[str]] = None) -> int:
             if node not in tests:
                 tests.append(node)
 
+    deployed = any(j.get("name") == "deploy" and j.get("conclusion") == "success" for j in jobs)
+
+    if not args.dry_run and already_posted(_recent_comment_bodies(repo, issue), run_id, attempt):
+        print(f"already posted for run {run_id} attempt {attempt}")
+        return 0
+
+    if deployed:
+        rerun_state = "not_needed"
+    elif attempt > 1:
+        rerun_state = "already_ran"
+    elif args.dry_run:
+        rerun_state = "would_trigger"
+    else:
+        try:
+            _gh(f"repos/{repo}/actions/runs/{run_id}/rerun-failed-jobs", "--method", "POST")
+            rerun_state = "triggered"
+            print(f"triggered rerun-failed-jobs for run {run_id}")
+        except (RuntimeError, subprocess.TimeoutExpired) as err:
+            rerun_state = f"failed:{str(err).splitlines()[0][:140]}"
+            print(f"rerun-failed-jobs failed for run {run_id}: {err}")
+
     line = compose(
         run_id=run_id,
         attempt=attempt,
@@ -196,13 +258,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         conclusion=conclusion,
         tests=tests,
         failed_jobs=[j.get("name", "?") for j in failed],
-        deployed=any(j.get("name") == "deploy" and j.get("conclusion") == "success" for j in jobs),
+        deployed=deployed,
+        rerun=rerun_state,
     )
     print(line)
     if args.dry_run:
-        return 0
-    if already_posted(_recent_comment_bodies(repo, issue), run_id, attempt):
-        print(f"already posted for run {run_id} attempt {attempt}")
         return 0
     _gh(f"repos/{repo}/issues/{issue}/comments", "--method", "POST", body={"body": line})
     print(f"posted on #{issue}")

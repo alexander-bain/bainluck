@@ -44,6 +44,7 @@ from app.utils.probability_eligibility import (
     EligibilityRecord,
     is_refused,
 )
+from app.utils.scheduled_start import loaded_price_admission_kickoff
 from app.utils.source_divergence import (
     SourceDivergence,
     assess_divergence,
@@ -1442,7 +1443,8 @@ _EXCLUDE_WHEN_COMPLETED = {"kalshi", "polymarket"}
 
 
 def _tier1_readings(
-    event, event_status: Optional[str] = None
+    event, event_status: Optional[str] = None, *, now: Optional[datetime] = None,
+    pregame_refusals: Optional[set[str]] = None,
 ) -> tuple[dict[str, float], dict[str, datetime]]:
     """The ``win_probability_sources`` entries tier 1 will actually use.
 
@@ -1467,6 +1469,11 @@ def _tier1_readings(
     is_finished = status in ("completed", "closed")
 
     wps = getattr(event, "win_probability_sources", None) or {}
+    kickoff = loaded_price_admission_kickoff(event) if status == "live" else None
+    if kickoff is not None:
+        now = now if now is not None else datetime.now(timezone.utc)
+        if kickoff > now:
+            kickoff = None
     prob_readings: dict[str, float] = {}
     stamps: dict[str, datetime] = {}
     for k, v in wps.items():
@@ -1479,10 +1486,36 @@ def _tier1_readings(
         value, updated_at = parse_source_entry(v)
         if value is None:
             continue
+        if kickoff is not None and k != "final_result":
+            # A publication can restamp a quote. Compare only the observation
+            # bound to this exact price so an undated socket quote keeps its policy.
+            read_at = source_price_read_time(wps, k, value, now=now)
+            if read_at is not None and read_at < kickoff:
+                if pregame_refusals is not None:
+                    pregame_refusals.add(k)
+                continue
         prob_readings[k] = value
         if updated_at is not None:
             stamps[k] = updated_at
     return prob_readings, stamps
+
+
+def witnessed_pregame_price_sources(event, *, now: datetime) -> set[str]:
+    """Sources whose exact price live admission refused as pregame."""
+    refusals: set[str] = set()
+    _tier1_readings(event, now=now, pregame_refusals=refusals)
+    return refusals
+
+
+def has_dated_price_source(sources: dict, *, now: datetime) -> bool:
+    """Does a stored quote carry a price-bound clock before kickoff filtering?"""
+    for source, entry in sources.items():
+        if source == "final_result" or source not in SOURCE_WEIGHTS or is_refused(entry):
+            continue
+        price, _ = parse_source_entry(entry)
+        if price is not None and source_price_read_time(sources, source, price, now=now) is not None:
+            return True
+    return False
 
 
 def pregame_blend_rests_on_espn_alone(event, event_status: Optional[str] = None) -> bool:

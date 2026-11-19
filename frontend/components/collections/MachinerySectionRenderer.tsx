@@ -408,7 +408,7 @@ function ContenderSpotlightBlock({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline justify-between gap-2">
                     <span
-                      className={`truncate text-sm ${
+                      className={`break-words text-sm leading-snug ${
                         isFav ? "font-bold text-text-primary" : "font-medium text-text-secondary"
                       }`}
                     >
@@ -475,7 +475,7 @@ function ContenderSpotlightBlock({
                 poster={isPoster}
                 reserveSlotWhenMissing={podiumHasAnyArt}
               />
-              <div className="mt-2 line-clamp-2 text-xs font-semibold leading-tight text-text-primary">
+              <div className="mt-2 break-words text-xs font-semibold leading-tight text-text-primary">
                 {o.name}
               </div>
               {o.art?.detail && (
@@ -518,9 +518,9 @@ function ContenderSpotlightBlock({
                   />
                 )}
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-text-primary">{o.name}</div>
+                  <div className="break-words text-sm font-medium leading-snug text-text-primary">{o.name}</div>
                   {o.art?.detail && (
-                    <div className="truncate text-[11px] text-text-muted">{o.art.detail}</div>
+                    <div className="break-words text-[11px] leading-snug text-text-muted">{o.art.detail}</div>
                   )}
                 </div>
               </div>
@@ -595,7 +595,7 @@ function SiblingFieldsGridBlock({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-baseline justify-between gap-2">
                           <span
-                            className={`truncate text-xs ${
+                            className={`break-words text-xs leading-snug ${
                               isFav ? "font-semibold text-text-primary" : "font-medium text-text-secondary"
                             }`}
                           >
@@ -676,7 +676,7 @@ function BenchmarkStripBlock({
                     reserveSlotWhenMissing
                   />
                 )}
-                <span className="line-clamp-2 text-xs font-medium text-text-primary">{title}</span>
+                <span className="break-words text-xs font-medium leading-snug text-text-primary">{title}</span>
               </div>
               <span className="shrink-0 rounded-md bg-surface-elevated px-2 py-1 text-xs font-bold tabular-nums text-text-primary">
                 {yes.rendered_percent}%
@@ -718,21 +718,21 @@ function SingleHistoryChartCard({
   const series = resolveDistinctChartSeries((chart.series ?? []).slice(0, 3));
   const inner = (
     <>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="truncate text-xs font-bold text-text-primary">{chart.title}</span>
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <span className="break-words text-xs font-bold leading-snug text-text-primary">{chart.title}</span>
         <span className="shrink-0 text-[11px] text-text-muted">
           {formatShortSpanDate(chart.start_iso)}–{formatShortSpanDate(chart.end_iso)}
         </span>
       </div>
       <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1">
         {series.slice(0, 3).map((s) => (
-          <span key={s.outcome_id} className="inline-flex items-center gap-1.5 text-[11px]">
+          <span key={s.outcome_id} className="inline-flex min-w-0 items-center gap-1.5 text-[11px]">
             <span
               className="inline-block h-2 w-2 shrink-0 rounded-full"
               style={{ backgroundColor: s.color }}
             />
-            <span className="truncate font-medium text-text-secondary">{s.name}</span>
-            <span className="font-bold tabular-nums text-text-primary">{s.current_pct}%</span>
+            <span className="break-words font-medium leading-snug text-text-secondary">{s.name}</span>
+            <span className="shrink-0 font-bold tabular-nums text-text-primary">{s.current_pct}%</span>
           </span>
         ))}
       </div>
@@ -975,7 +975,7 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between gap-2">
                       <span
-                        className={`truncate text-sm ${
+                        className={`break-words text-sm leading-snug ${
                           isFav ? "font-semibold text-text-primary" : "font-medium text-text-secondary"
                         }`}
                       >
