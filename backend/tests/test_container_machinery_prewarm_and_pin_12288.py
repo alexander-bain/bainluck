@@ -469,3 +469,475 @@ async def test_edition_pinned_discover_page1_page2_and_reload_one_minute_later_w
     finally:
         ROUNDUP_PRODUCERS.clear()
         ROUNDUP_PRODUCERS.update(saved)
+
+
+def test_machinery_live_rail_enrollment_and_imminent_start_window() -> None:
+    """Live slates AND slates starting within 3 minutes enroll on the 30s rail;
+    final or distant slates leave it."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.utils.roundup_containers import _roundup_payload_needs_live_rail
+
+    now = datetime(2026, 11, 19, 18, 0, 0, tzinfo=timezone.utc)
+    now_ts = now.timestamp()
+
+    live_payload = {
+        "sections": [
+            {"members": [{"type": "event", "id": 1, "card": {"status": "live"}}]}
+        ]
+    }
+    imminent_payload = {
+        "sections": [
+            {
+                "members": [
+                    {
+                        "type": "event",
+                        "id": 2,
+                        "card": {
+                            "status": "scheduled",
+                            "commence_time": (now + timedelta(seconds=120)).isoformat(),
+                        },
+                    }
+                ]
+            }
+        ]
+    }
+    distant_payload = {
+        "sections": [
+            {
+                "members": [
+                    {
+                        "type": "event",
+                        "id": 3,
+                        "card": {
+                            "status": "scheduled",
+                            "commence_time": (now + timedelta(hours=4)).isoformat(),
+                        },
+                    }
+                ]
+            }
+        ]
+    }
+    final_payload = {
+        "sections": [
+            {
+                "members": [
+                    {
+                        "type": "event",
+                        "id": 4,
+                        "card": {
+                            "status": "final",
+                            "commence_time": (now - timedelta(hours=2)).isoformat(),
+                        },
+                    }
+                ]
+            }
+        ]
+    }
+
+    assert _roundup_payload_needs_live_rail(live_payload, now_ts=now_ts) is True
+    assert _roundup_payload_needs_live_rail(imminent_payload, now_ts=now_ts) is True
+    assert _roundup_payload_needs_live_rail(distant_payload, now_ts=now_ts) is False
+    assert _roundup_payload_needs_live_rail(final_payload, now_ts=now_ts) is False
+
+
+@pytest.mark.asyncio
+async def test_live_machinery_republish_on_30s_rail_keeps_live_slates_warm_and_fills_holes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fable Point 1: `_prewarm_live_machinery_roundups` (called every 30s on realtime)
+    rebuilds live slates FIRST, skips already-warm non-live groupings, and refills any
+    absent non-live key as a LAT-P112 safety net."""
+    from app.tasks.precompute_category_pages import _prewarm_live_machinery_roundups
+    from app.utils.roundup_containers import (
+        MACHINERY_LIVE_SLUGS_KEY,
+        _redis_cache_key,
+    )
+
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "false")
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+
+    class _FakeSyncRedis:
+        def __init__(self, hashes: dict, existing: set[str]):
+            self.hashes = hashes
+            self.existing = existing
+            self.calls = 0
+
+        def hgetall(self, k: str):
+            self.calls += 1
+            return dict(self.hashes.get(k, {}))
+
+        def exists(self, k: str):
+            self.calls += 1
+            return 1 if k in self.existing else 0
+
+    rc_off = _FakeSyncRedis({}, set())
+    off_res = await _prewarm_live_machinery_roundups(rc_off, deadline_s=10.0)
+    assert off_res["outcome"] == "disabled"
+    assert rc_off.calls == 0
+
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+    saved = dict(ROUNDUP_PRODUCERS)
+    call_order: list[tuple[str, ...]] = []
+
+    def _make_prod(slug: str) -> RoundupProducer:
+        return RoundupProducer(
+            slug=slug,
+            name=slug,
+            kind="roundup",
+            category="other",
+            section_title="Markets",
+            footer="",
+            produce=AsyncMock(),
+            membership="computed-produced",
+            relations=("same_subject",),
+            level="member",
+            rule={"producer": "container_machinery"},
+            enabled=lambda: True,
+        )
+
+    async def _fake_prewarm(deadline_s: float = 10.0, *, slugs=None):
+        tup = tuple(sorted(slugs or ()))
+        call_order.append(tup)
+        return {
+            "outcome": "ok",
+            "warmed": len(tup),
+            "slugs": {s: {"outcome": "ok", "elapsed_ms": 12.0, "live": True} for s in tup},
+        }
+
+    try:
+        ROUNDUP_PRODUCERS.clear()
+        all_slugs = [
+            "machinery-nba-night",
+            "machinery-nfl-week",
+            "machinery-fed-and-macro",
+        ]
+        for s in all_slugs:
+            ROUNDUP_PRODUCERS[s] = _make_prod(s)
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ensure_optional_roundup_candidates",
+            lambda: None,
+        )
+        monkeypatch.setattr(
+            "app.tasks.precompute_category_pages._prewarm_machinery_roundups",
+            _fake_prewarm,
+        )
+
+        # Case A: NBA is live, all 3 keys exist -> rebuilds ONLY machinery-nba-night
+        rc_live = _FakeSyncRedis(
+            {MACHINERY_LIVE_SLUGS_KEY: {b"machinery-nba-night": b"1800000000"}},
+            {_redis_cache_key(s) for s in all_slugs},
+        )
+        res_a = await _prewarm_live_machinery_roundups(rc_live, deadline_s=10.0)
+        assert res_a["outcome"] == "ok"
+        assert res_a["live_slugs"] == ["machinery-nba-night"]
+        assert res_a["absent_slugs"] == []
+        assert call_order == [("machinery-nba-night",)]
+
+        # Case B: NBA is live AND Fed key went absent -> live runs FIRST, absent SECOND
+        call_order.clear()
+        rc_hole = _FakeSyncRedis(
+            {MACHINERY_LIVE_SLUGS_KEY: {"machinery-nba-night": "1800000000"}},
+            {_redis_cache_key("machinery-nba-night"), _redis_cache_key("machinery-nfl-week")},
+        )
+        res_b = await _prewarm_live_machinery_roundups(rc_hole, deadline_s=10.0)
+        assert res_b["live_slugs"] == ["machinery-nba-night"]
+        assert res_b["absent_slugs"] == ["machinery-fed-and-macro"]
+        assert call_order == [("machinery-nba-night",), ("machinery-fed-and-macro",)]
+
+        # Case C: Nothing live and all keys warm -> idle, zero builds
+        call_order.clear()
+        rc_idle = _FakeSyncRedis({}, {_redis_cache_key(s) for s in all_slugs})
+        res_c = await _prewarm_live_machinery_roundups(rc_idle, deadline_s=10.0)
+        assert res_c["outcome"] == "idle"
+        assert call_order == []
+    finally:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS.update(saved)
+
+
+@pytest.mark.asyncio
+async def test_live_machinery_card_enforces_60s_ceiling_on_page_and_discover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fable Point 1 worst-case staleness proof:
+    - Live machinery card carries `data.status == 'live'` so Discover detects it as live.
+    - Local dyno cache anchors to Redis `built_at` (never double-TTL'd past 60s).
+    - Cached live machinery read records `built_at` in LAT-P230's age sink so
+      `live_total_age_headroom_s` keeps Discover + grouping <= 60s total."""
+    from app.utils import principal_independent_cache as pic
+    from app.utils.feed_cache import (
+        FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
+        live_total_age_headroom_s,
+        payload_contains_live_event,
+    )
+    from app.utils.roundup_containers import (
+        _record_machinery_live_origin,
+        evaluate_roundup_producer,
+    )
+
+    reset_roundup_cache_for_tests()
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+
+    async def _live_produce(db, *, now=None):
+        return RoundupMembers(
+            members=[
+                {
+                    "type": "event",
+                    "id": 42,
+                    "destination": "/events/42",
+                    "card": {"id": 42, "status": "live", "home_team": "Bulls", "away_team": "Heat"},
+                }
+            ],
+            rows=[
+                {
+                    "event_id": 42,
+                    "label": "Heat at Bulls",
+                    "probability": 0.52,
+                    "rendered_percent": 52,
+                }
+            ],
+            title="Heat at Bulls live",
+            destination_href="/collections/machinery-nba-night",
+        )
+
+    prod = RoundupProducer(
+        slug="machinery-nba-night",
+        name="NBA Slate",
+        kind="roundup",
+        category="basketball",
+        section_title="Live Games",
+        footer="",
+        produce=_live_produce,
+        membership="computed-produced",
+        relations=("same_subject",),
+        level="member",
+        rule={"producer": "container_machinery"},
+        enabled=lambda: True,
+    )
+
+    built_ts = 1_800_000_000.0
+    fi, cp = await evaluate_roundup_producer(prod, object(), now=built_ts)
+    assert fi is not None and cp is not None
+    assert fi["data"]["status"] == "live"
+    assert payload_contains_live_event({"items": [fi]}) is True
+
+    # Reading a 45s-old cached live entry records its origin in LAT-P230 sink,
+    # capping any Discover response cache TTL to <= 15s (45 + 15 == 60s ceiling).
+    origins: list[float] = []
+    pic.bind_reuse_sink([], [], origins)
+    _record_machinery_live_origin(built_ts, "machinery-nba-night", cp)
+    assert origins == [built_ts]
+    assert live_total_age_headroom_s(45.0) == FEED_RESPONSE_STALE_TTL_LIVE_SECONDS - 45
+    assert live_total_age_headroom_s(60.0) == 0
+    reset_roundup_cache_for_tests()
+
+
+def test_scoped_open_market_scan_uses_ix_fm_feed_open_sports_without_ilike_or_sort() -> None:
+    """Fable Point 2 structural SQL proof: the machinery candidate scan walks
+    `ix_fm_feed_open_sports` (status='open' AND event_id IS NULL AND llm_sport_category)
+    with UNION ALL and zero ILIKE / NOT ILIKE / unindexed ORDER BY volume."""
+    from sqlalchemy.dialects import postgresql
+
+    from app.utils.container_machinery import (
+        _build_scoped_open_market_scan_stmt,
+        _category_llm_pool_for_definition,
+    )
+
+    fed_pool = _category_llm_pool_for_definition({"category": "economics"})
+    assert fed_pool is not None and "economics" in fed_pool and "finance" in fed_pool
+
+    sql = str(
+        _build_scoped_open_market_scan_stmt(fed_pool).compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+    sql_low = sql.lower()
+    assert "union all" in sql_low
+    assert "futures_markets.status = 'open'" in sql_low
+    assert "futures_markets.event_id is null" in sql_low
+    assert "futures_markets.llm_sport_category in" in sql_low
+    assert "futures_markets.llm_sport_category is null" in sql_low
+    assert "ilike" not in sql_low
+    assert "order by" not in sql_low
+
+
+@pytest.mark.asyncio
+async def test_load_snapshot_from_db_batches_withheld_prices_and_single_fleet_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fable Point 2 batching proof: `_load_snapshot_from_db` calls
+    `withheld_price_outcome_ids_for_markets` ONCE (never per-market N+1) and
+    `_fleet_newest_observation` at most ONCE across all candidate markets."""
+    from datetime import datetime, timezone
+
+    from app.utils.container_machinery import _load_snapshot_from_db
+
+    fake_outcomes = [
+        SimpleNamespace(
+            id=101,
+            name="Quarter-point cut",
+            current_probability=0.61,
+            implied_probability=0.61,
+            opening_probability=0.55,
+            image_url=None,
+            last_updated=None,
+            is_winner=None,
+            resolution_source=None,
+            volume_24h=100,
+            volume_24h_at=None,
+        ),
+        SimpleNamespace(
+            id=102,
+            name="No change",
+            current_probability=0.30,
+            implied_probability=0.30,
+            opening_probability=0.35,
+            image_url=None,
+            last_updated=None,
+            is_winner=None,
+            resolution_source=None,
+            volume_24h=100,
+            volume_24h_at=None,
+        ),
+        SimpleNamespace(
+            id=103,
+            name="Quarter-point increase",
+            current_probability=0.09,
+            implied_probability=0.09,
+            opening_probability=0.10,
+            image_url=None,
+            last_updated=None,
+            is_winner=None,
+            resolution_source=None,
+            volume_24h=100,
+            volume_24h_at=None,
+        ),
+    ]
+    fake_markets = [
+        SimpleNamespace(
+            id=1,
+            name="Fed decision in Jan 2027?",
+            status="open",
+            source="polymarket",
+            mutually_exclusive=True,
+            market_type="field",
+            volume=900000,
+            image_url=None,
+            llm_sport_category="economics",
+            outcomes=fake_outcomes,
+        ),
+        SimpleNamespace(
+            id=2,
+            name="What will the Fed rate be at the end of 2026?",
+            status="open",
+            source="polymarket",
+            mutually_exclusive=True,
+            market_type="field",
+            volume=800000,
+            image_url=None,
+            llm_sport_category="economics",
+            outcomes=fake_outcomes,
+        ),
+    ]
+
+    class _FakeResult:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return list(self._rows)
+
+        def unique(self):
+            return self
+
+        def scalars(self):
+            return self
+
+    class _FakeSession:
+        def __init__(self):
+            self.exec_calls = 0
+
+        async def execute(self, stmt):
+            self.exec_calls += 1
+            if self.exec_calls == 1:
+                return _FakeResult([(m.id, m.name, m.volume) for m in fake_markets])
+            if self.exec_calls == 2:
+                return _FakeResult(fake_markets)
+            return _FakeResult([])
+
+    batched_withheld_calls: list[int] = []
+    fleet_calls = 0
+
+    async def _fake_batched_withheld(db, markets):
+        batched_withheld_calls.append(len(markets))
+        return {m.id: set() for m in markets}
+
+    async def _fake_fleet(db, fm):
+        nonlocal fleet_calls
+        fleet_calls += 1
+        return datetime(2026, 11, 19, 12, 0, 0, tzinfo=timezone.utc)
+
+    async def _fake_out_legs(markets):
+        return {}
+
+    async def _fake_vt(db, fm):
+        return SimpleNamespace(reason="not_a_title_question")
+
+    def _fake_format(fm, *_args, **_kwargs):
+        return {
+            "outcomes": [
+                {"id": o.id, "name": o.name, "probability": o.current_probability}
+                for o in fm.outcomes
+            ]
+        }
+
+    monkeypatch.setattr(
+        "app.routes.futures.withheld_price_outcome_ids_for_markets",
+        _fake_batched_withheld,
+    )
+    monkeypatch.setattr("app.routes.futures._fleet_newest_observation", _fake_fleet)
+    monkeypatch.setattr("app.routes.futures.out_legs_by_market", _fake_out_legs)
+    monkeypatch.setattr("app.routes.futures._resolve_verified_title", _fake_vt)
+    monkeypatch.setattr("app.routes.futures._format_market_detail", _fake_format)
+    monkeypatch.setattr(
+        "app.routes.futures._apply_verified_title_to_detail", lambda d, v, fm: None
+    )
+
+    definition = {
+        "slug": "machinery-fed-and-macro",
+        "category": "economics",
+        "rule": {
+            "sections": [
+                {
+                    "key": "jan_fomc",
+                    "atom_query": {
+                        "kind": "markets",
+                        "title_all_tokens": ["fed", "decision", "jan"],
+                        "shape": "field",
+                        "max_items": 1,
+                    },
+                },
+                {
+                    "key": "rate_path",
+                    "atom_query": {
+                        "kind": "markets",
+                        "any_tokens": ["fed rate be at the end of 2026"],
+                        "shape": "field",
+                        "max_items": 1,
+                    },
+                },
+            ]
+        },
+    }
+    session = _FakeSession()
+    snap = await _load_snapshot_from_db(
+        session, definition, datetime(2026, 11, 19, 12, 0, 0, tzinfo=timezone.utc)
+    )
+    assert len(snap["markets"]) == 2
+    assert batched_withheld_calls == [2]
+    assert fleet_calls == 1
+    # 1 lightweight ix_fm_feed_open_sports scan + 1 PK _verified_title_market_stmt
+    # + 1 FuturesOddsSnapshot history read (no double FuturesMarket fetch!)
+    assert session.exec_calls == 3
