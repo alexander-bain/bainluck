@@ -66,6 +66,7 @@ return 1
 """
 
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_MENTION_RE = re.compile(r"@(?=[A-Za-z0-9])")
 _PHONE_RE = re.compile(
     r"(?<!\w)(?:"
     r"\+\d{1,3}[\s.-]?\(?\d{2,4}\)?[\s.-]\d{3,4}[\s.-]\d{3,4}"
@@ -222,11 +223,12 @@ def compress_screenshot_if_needed(
 
 
 def strip_emails_and_phones(text: str) -> str:
-    """Remove email addresses and phone numbers from model-written text (249-A)."""
+    """Remove email addresses and phone numbers, and break GitHub @mentions (249-A)."""
     if not text:
         return ""
     cleaned = _EMAIL_RE.sub("[redacted email]", text)
     cleaned = _PHONE_RE.sub("[redacted phone]", cleaned)
+    cleaned = _MENTION_RE.sub("@ ", cleaned)
     return cleaned.strip()
 
 
