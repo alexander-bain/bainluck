@@ -3561,7 +3561,7 @@ def test_a_module_a_heavy_task_imports_counts_and_others_do_not():
     # `from app.tasks import heavy_memory_turns as turns` imports a module
     assert _exempt_reasons(changed=["backend/app/tasks/heavy_memory_turns.py"]) == [
         "backend/app/tasks/heavy_memory_turns.py: code a heavy task imports"]
-    for path in ("backend/app/tasks/light_work.py", "frontend/app/page.tsx", "backend/app/routes/feed.py"):
+    for path in ("backend/app/tasks/light_work.py", "docs/notes.md", "backend/app/routes/feed.py"):
         assert _exempt_reasons(changed=[path]) == [], path
 
 
@@ -3609,8 +3609,8 @@ def _git_repo(tmp_path, *versions):
 def test_floor_exempt_between_reads_a_real_diff(tmp_path):
     v1, v2, v3 = _git_repo(
         tmp_path,
-        (TASKS_V1, {"frontend/x.ts": "1"}),
-        (TASKS_V1, {"frontend/x.ts": "2"}),
+        (TASKS_V1, {"docs/x.md": "1"}),
+        (TASKS_V1, {"docs/x.md": "2"}),
         (TASKS_V1, {"backend/app/tasks/precompute_calibration.py": "x = 1"}),
     )
     assert sync.floor_exempt_between(v1, v2, repo=str(tmp_path))[0] is False
