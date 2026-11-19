@@ -17,8 +17,8 @@ from sqlalchemy import text
 import scripts.repair_wbb_upcoming_orientation_13036 as mod
 
 
-def _dt(hour: int = 18, day: int = 20) -> datetime:
-    return datetime(2026, 11, day, hour, 0, tzinfo=timezone.utc)
+def _dt(hour: int = 18, day: int = 15) -> datetime:
+    return datetime(2025, 2, day, hour, 0, tzinfo=timezone.utc)
 
 
 def _cand(
@@ -164,13 +164,13 @@ class TestWriteGates:
 class TestProbabilityFlipping:
     def test_flips_both_dict_and_bare_float_shapes_and_is_self_inverse(self):
         wps = {
-            "polymarket": {"value": 0.725, "updated_at": "2026-11-19T18:00:00Z"},
+            "polymarket": {"value": 0.725, "updated_at": "2025-02-15T18:00:00Z"},
             "kalshi": 0.71,
             "meta": {"note": "kept", "flag": True},
         }
         flipped = mod.flip_win_probability_sources(wps)
         assert flipped == {
-            "polymarket": {"value": 0.275, "updated_at": "2026-11-19T18:00:00Z"},
+            "polymarket": {"value": 0.275, "updated_at": "2025-02-15T18:00:00Z"},
             "kalshi": 0.29,
             "meta": {"note": "kept", "flag": True},
         }
@@ -203,7 +203,7 @@ class TestTwinDetectionAndPlanBuilding:
             "USC Trojans (W)",
             home_norm="Notre Dame Fighting Irish (W)",
             away_norm="USC Trojans (W)",
-            wps={"polymarket": {"value": 0.62, "updated_at": "2026-11-19T17:00:00Z"}},
+            wps={"polymarket": {"value": 0.62, "updated_at": "2025-02-15T17:00:00Z"}},
         )
         clean = [_twin(901, "Duke Blue Devils", "Fordham Rams")]
         espn_fixtures = [
