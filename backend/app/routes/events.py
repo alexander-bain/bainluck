@@ -125,6 +125,7 @@ from app.utils.event_rails import (
 )
 from app.utils.lifecycle import EVENT_NOT_STARTED, served_event_status
 from app.utils.score_observation import score_observation_fields
+from app.utils.score_source_availability import score_source_unavailable_fields
 from app.utils.event_props_matrix import blend_mean, build_during_player_props
 from app.utils.prop_expectation_actual import build_after_player_props
 from app.utils.event_question_matrix import (
@@ -21167,6 +21168,14 @@ async def get_event(
     # Tennis's games do not add up to sets won. Its whole source snapshot is
     # checked separately and maps to the fields the installed headline reads.
     attach_tennis_score(event, response, datetime.now(timezone.utc))
+    response.pop("score_source_unavailable", None)
+    response.update(
+        score_source_unavailable_fields(
+            event,
+            status=response.get("status"),
+            payload=response,
+        )
+    )
     response.update(_state_read_window)
 
     # Q050: cache under the id the caller ASKED FOR as well as the one we
@@ -37688,6 +37697,14 @@ def _format_event(
         logging.warning(f"Error adding EI data for event {event.id}: {e}")
 
     attach_tennis_score(event, response, _served_now)
+    response.pop("score_source_unavailable", None)
+    response.update(
+        score_source_unavailable_fields(
+            event,
+            status=response.get("status"),
+            payload=response,
+        )
+    )
     return response
 
 
