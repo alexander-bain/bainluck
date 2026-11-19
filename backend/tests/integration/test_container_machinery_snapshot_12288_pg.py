@@ -561,6 +561,61 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
         outcomes=[("1.0% to 1.5%", 0.24, 0.31), ("1.5% to 2.5%", 0.47, 0.41), ("2.5% to 3.5%", 0.29, 0.28)],
         with_history=True,
     )
+
+    # 6. White Christmas (#13097 Batch 1)
+    for city, prob in (("Pittsburgh", 0.44), ("Milwaukee", 0.41), ("Denver", 0.30), ("Seattle", 0.11)):
+        await _add_market(
+            external_id=f"KXSNOW-XMAS-{city.upper()}",
+            name=f"Will it snow in {city} on Christmas?",
+            category="weather",
+            outcomes=[("Above 0 inches", prob, prob)],
+        )
+
+    # 7. The Next James Bond Film (#13097 Batch 1)
+    await _add_market(
+        external_id="KXBOND-THEME",
+        name="Next James Bond film: Artist performing the James Bond Theme",
+        category="entertainment",
+        outcomes=[("Raye", 0.43, 0.41), ("Olivia Dean", 0.28, 0.29), ("Dua Lipa", 0.14, 0.15)],
+    )
+    await _add_market(
+        external_id="KXBOND-GIRL",
+        name="Next James Bond film: Actress cast as Bond girl",
+        category="entertainment",
+        outcomes=[("Zendaya", 0.25, 0.24), ("Florence Pugh", 0.24, 0.24), ("Margaret Qualley", 0.23, 0.23)],
+    )
+    await _add_market(
+        external_id="KXBOND-VILLAIN",
+        name="Next James Bond film: Actor cast as the villain",
+        category="entertainment",
+        outcomes=[("Cillian Murphy", 0.18, 0.18), ("Callum Turner", 0.14, 0.14), ("Aaron Taylor-Johnson", 0.12, 0.12)],
+    )
+
+    # 8. Who Gets Engaged? (#13097 Batch 1, Ruling 273: B)
+    await _add_market(
+        external_id="PMENG-SWEENEY",
+        name="Scooter Braun and Sydney Sweeney engaged in 2026?",
+        category="entertainment",
+        outcomes=[("Yes", 0.36, 0.36)],
+    )
+    await _add_market(
+        external_id="KXENG-SWEENEY",
+        name="Sydney Sweeney and Scooter Braun: Engaged this year?",
+        category="entertainment",
+        outcomes=[("Yes", 0.35, 0.35)],
+    )
+    await _add_market(
+        external_id="KXENG-CHALAMET",
+        name="Timothée Chalamet and Kylie Jenner: Engaged in 2026?",
+        category="entertainment",
+        outcomes=[("Yes", 0.13, 0.13)],
+    )
+    await _add_market(
+        external_id="KXENG-TIGER",
+        name="Tiger Woods and Vanessa Trump: Engaged in 2026?",
+        category="politics",
+        outcomes=[("Yes", 0.06, 0.06)],
+    )
     await session.commit()
 
 

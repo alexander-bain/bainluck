@@ -1,0 +1,41 @@
+{
+  "slug": "machinery-white-christmas",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "same_measure",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "WEATHER · CHRISTMAS",
+  "name": "White Christmas",
+  "category": "weather",
+  "tag": "WEATHER",
+  "section_title": "Snow on Christmas",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "card_section_key": "christmas_snow",
+    "sections": [
+      {
+        "key": "christmas_snow",
+        "title": "Snow on Christmas",
+        "note": "Chance of measurable snow on Christmas Day across U.S. cities.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["snow", "christmas"],
+          "shape": "binary",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 12,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3
+        }
+      }
+    ]
+  }
+}

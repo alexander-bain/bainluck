@@ -970,9 +970,9 @@ async def test_scoped_scan_parity_with_legacy_ilike_across_all_five_definitions_
         _json.loads(p.read_text(encoding="utf-8"))
         for p in sorted(cand_dir.glob("machinery-*.json"))
     ]
-    assert len(defs) == 5
+    assert len(defs) >= 8
 
-    # Fixture covering all 5 definitions + an off-pool category + an event_id!=None game prop
+    # Fixture covering all registered definitions + an off-pool category + an event_id!=None game prop
     fixture_rows = [
         (1, "Fed decision in Jan 2027?", 950000, "economics", None),
         (2, "Fed decision in March 2027?", 600000, "economics", None),
@@ -996,6 +996,13 @@ async def test_scoped_scan_parity_with_legacy_ilike_across_all_five_definitions_
         (20, "NBA Points Per Game Leader 2026-27?", 410000, "basketball", None),
         (21, "NBA Sixth Man of the Year Winner?", 390000, "basketball", None),
         (22, "NBA Defensive Player of the Year Winner?", 385000, "basketball", None),
+        # #13097 Batch 1 fun groupings (White Christmas, Next James Bond, Who Gets Engaged)
+        (23, "Will it snow in Pittsburgh on Christmas?", 50000, "weather", None),
+        (24, "Will it snow in Denver on Christmas?", 45000, "weather", None),
+        (25, "Next James Bond film: Artist performing the James Bond Theme", 80000, "entertainment", None),
+        (26, "Next James Bond film: Actress cast as Bond girl", 75000, "entertainment", None),
+        (27, "Timothée Chalamet and Kylie Jenner: Engaged in 2026?", 60000, "entertainment", None),
+        (28, "Tiger Woods and Vanessa Trump: Engaged in 2026?", 40000, "politics", None),
         # Intentionally excluded game-linked prop (event_id IS NOT NULL)
         (99, "NFL Passing Yards Leader — Game Prop Tonight", 999999, "football", 55555),
     ]
