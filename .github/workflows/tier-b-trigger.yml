@@ -30,4 +30,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Signal Tier-B policy evaluation
-        run: echo "PR #${{ github.event.pull_request.number }} (${{ github.event.action }})"
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_ACTION: ${{ github.event.action }}
+        run: echo "PR ${PR_NUMBER} (${PR_ACTION})"
