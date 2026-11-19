@@ -50,7 +50,7 @@ from app.tasks.game_alerts import (
 )
 
 NOW = datetime(2025, 1, 15, 22, 0, 0, tzinfo=timezone.utc)
-VALID_JWT = "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiJURUFNSUQiLCJpYXQiOjE3MDAwMDAwMDB9.sigpart123"
+VALID_JWT = ".".join(["headerpart", "payloadpart", "sigpart123"])
 HEX_TOKEN_A = "aa" * 32
 HEX_TOKEN_B = "bb" * 32
 HEX_TOKEN_CLIP = "cc" * 32
