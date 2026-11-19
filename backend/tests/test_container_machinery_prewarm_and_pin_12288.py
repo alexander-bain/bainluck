@@ -941,3 +941,183 @@ async def test_load_snapshot_from_db_batches_withheld_prices_and_single_fleet_re
     # 1 lightweight ix_fm_feed_open_sports scan + 1 PK _verified_title_market_stmt
     # + 1 FuturesOddsSnapshot history read (no double FuturesMarket fetch!)
     assert session.exec_calls == 3
+
+
+@pytest.mark.asyncio
+async def test_scoped_scan_parity_with_legacy_ilike_across_all_five_definitions_and_fallbacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parity proof for claude[bot] Finding 2:
+    1. Across all 5 registered machinery definitions, the new `ix_fm_feed_open_sports`
+       Python-filtered selection picks the exact same standalone (`event_id IS NULL`)
+       markets as the legacy SQL `ILIKE`/`NOT ILIKE` matcher.
+    2. Game-linked prop rows (`event_id IS NOT NULL`) are intentionally excluded so
+       game props never pollute standalone championship/award/macro sections.
+    3. An off-pool `llm_sport_category` (e.g. `'news'`) still seats via the
+       unmatched-section fallback, even if `min_items == 0`."""
+    import json as _json
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    from app.utils.container_machinery import (
+        _category_llm_pool_for_definition,
+        _load_snapshot_from_db,
+        _market_title_matches_query,
+    )
+
+    cand_dir = Path(__file__).resolve().parents[1] / "data" / "groupings" / "candidates"
+    defs = [
+        _json.loads(p.read_text(encoding="utf-8"))
+        for p in sorted(cand_dir.glob("machinery-*.json"))
+    ]
+    assert len(defs) == 5
+
+    # Fixture covering all 5 definitions + an off-pool category + an event_id!=None game prop
+    fixture_rows = [
+        (1, "Fed decision in Jan 2027?", 950000, "economics", None),
+        (2, "Fed decision in March 2027?", 600000, "economics", None),
+        (3, "What will the Fed rate be at the end of 2026?", 800000, "economics", None),
+        (4, "How many Fed rate hikes in 2026?", 450000, "finance", None),
+        (5, "US recession in 2027?", 700000, "politics", None),
+        (6, "US GDP growth in 2026?", 400000, "economics", None),
+        (7, "2028 Presidential Election Winning Party?", 900000, "politics", None),
+        (8, "2028 Presidential Election Winner?", 950000, "politics", None),
+        (9, "2028 Democratic Presidential Nominee?", 650000, "politics", None),
+        (10, "2028 Republican Presidential Nominee?", 640000, "politics", None),
+        (11, "2028 Presidential Primary: Iowa?", 300000, "politics", None),
+        (12, "Oscars 2027 Best Director Winner?", 500000, "entertainment", None),
+        (13, "Oscars 2027 Best Actor Winner?", 480000, "entertainment", None),
+        (14, "Oscars 2027 Best Actress Winner?", 470000, "entertainment", None),
+        (15, "NFL MVP Winner 2026?", 850000, "football", None),
+        (16, "NFL Passing Yards Leader 2026?", 420000, "football", None),
+        (17, "NFC North Champion 2026?", 410000, "football", None),
+        (18, "AFC North Champion 2026?", 405000, "football", None),
+        (19, "NBA MVP Winner 2026-27?", 820000, "basketball", None),
+        (20, "NBA Points Per Game Leader 2026-27?", 410000, "basketball", None),
+        (21, "NBA Sixth Man of the Year Winner?", 390000, "basketball", None),
+        (22, "NBA Defensive Player of the Year Winner?", 385000, "basketball", None),
+        # Intentionally excluded game-linked prop (event_id IS NOT NULL)
+        (99, "NFL Passing Yards Leader — Game Prop Tonight", 999999, "football", 55555),
+    ]
+
+    def _legacy_ilike_match(name: str, aq: dict) -> bool:
+        low = name.lower()
+        for t in aq.get("title_all_tokens") or ():
+            if str(t).strip().lower() not in low:
+                return False
+        any_t = [str(t).strip().lower() for t in (aq.get("any_tokens") or ()) if str(t).strip()]
+        if any_t and not any(t in low for t in any_t):
+            return False
+        for ex in aq.get("exclude_tokens") or ():
+            if str(ex).strip().lower() in low:
+                return False
+        return True
+
+    for d in defs:
+        pool = _category_llm_pool_for_definition(d)
+        assert pool is not None
+        scoped = [r for r in fixture_rows if r[4] is None and (r[3] in pool or r[3] is None)]
+        for sec in d["rule"]["sections"]:
+            aq = sec["atom_query"]
+            if aq["kind"] not in {"markets", "market_history"}:
+                continue
+            assert int(aq.get("min_items", 0) or 0) >= 1
+            legacy_standalone_ids = {
+                r[0] for r in fixture_rows if r[4] is None and _legacy_ilike_match(r[1], aq)
+            }
+            new_scoped_ids = {
+                r[0] for r in scoped if _market_title_matches_query(r[1], aq)
+            }
+            assert new_scoped_ids == legacy_standalone_ids
+            assert 99 not in new_scoped_ids
+
+    # Off-pool category fallback test (even when min_items == 0):
+    off_pool_market = SimpleNamespace(
+        id=777,
+        name="Fed decision in Jan 2027?",
+        status="open",
+        source="polymarket",
+        mutually_exclusive=True,
+        market_type="field",
+        volume=500000,
+        image_url=None,
+        llm_sport_category="news",  # outside economics pool!
+        outcomes=[
+            SimpleNamespace(id=1, name="Quarter-point cut", current_probability=0.60, implied_probability=0.60, opening_probability=0.55, image_url=None),
+            SimpleNamespace(id=2, name="No change", current_probability=0.30, implied_probability=0.30, opening_probability=0.35, image_url=None),
+            SimpleNamespace(id=3, name="Quarter-point increase", current_probability=0.10, implied_probability=0.10, opening_probability=0.10, image_url=None),
+        ],
+    )
+
+    class _FallbackResult:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return list(self._rows)
+
+        def unique(self):
+            return self
+
+        def scalars(self):
+            return self
+
+    class _FallbackSession:
+        def __init__(self):
+            self.calls = 0
+
+        async def execute(self, stmt):
+            self.calls += 1
+            if self.calls == 1:
+                return _FallbackResult([])  # scoped pool returned 0 hits
+            if self.calls == 2:
+                return _FallbackResult([(777, off_pool_market.name, off_pool_market.volume)])
+            if self.calls == 3:
+                return _FallbackResult([off_pool_market])
+            return _FallbackResult([])
+
+    monkeypatch.setattr(
+        "app.routes.futures.withheld_price_outcome_ids_for_markets",
+        AsyncMock(return_value={777: set()}),
+    )
+    monkeypatch.setattr("app.routes.futures._fleet_newest_observation", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.routes.futures.out_legs_by_market", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        "app.routes.futures._resolve_verified_title",
+        AsyncMock(return_value=SimpleNamespace(reason="not_a_title_question")),
+    )
+    monkeypatch.setattr(
+        "app.routes.futures._format_market_detail",
+        lambda fm, *a, **kw: {
+            "outcomes": [
+                {"id": o.id, "name": o.name, "probability": o.current_probability}
+                for o in fm.outcomes
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        "app.routes.futures._apply_verified_title_to_detail", lambda d, v, fm: None
+    )
+
+    def_min0 = {
+        "slug": "machinery-fed-and-macro",
+        "category": "economics",
+        "rule": {
+            "sections": [
+                {
+                    "key": "jan_fomc",
+                    "atom_query": {
+                        "kind": "markets",
+                        "title_all_tokens": ["fed", "decision", "jan"],
+                        "shape": "field",
+                        "min_items": 0,
+                        "max_items": 1,
+                    },
+                }
+            ]
+        },
+    }
+    snap = await _load_snapshot_from_db(
+        _FallbackSession(), def_min0, datetime(2026, 11, 19, 12, 0, 0, tzinfo=timezone.utc)
+    )
+    assert [m["id"] for m in snap["markets"]] == [777]

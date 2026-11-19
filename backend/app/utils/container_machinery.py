@@ -1992,7 +1992,7 @@ async def _load_snapshot_from_db(
                     for row in lightweight_rows
                     if (not has_tokens or _market_title_matches_query(row[1], aq))
                 ]
-                if not sec_hits and (cat_pool is None or int(aq.get("min_items", 0) or 0) > 0):
+                if not sec_hits:
                     unmatched_sections.append(aq)
                 else:
                     sec_hits.sort(key=lambda r: (-r[2], r[0]))
