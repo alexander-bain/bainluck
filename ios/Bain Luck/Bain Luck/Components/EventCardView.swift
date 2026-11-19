@@ -418,10 +418,24 @@ struct EventCardView: View {
         if let chosen = homePreCand ?? awayPreCand {
             return (chosen.0, chosen.1, chosen.2, true)
         }
-        if let homeSettled = event.sourceMark, homeSettled.state == .settled, homeSettled.draws {
+        let homeSettled = (event.sourceMark?.state == .settled && event.sourceMark?.draws == true)
+            ? event.sourceMark : nil
+        let awaySettled = (event.awaySourceMark?.state == .settled && event.awaySourceMark?.draws == true)
+            ? event.awaySourceMark : nil
+        if let awaySettled, awaySettled.settled?.result == "Won", homeSettled?.settled?.result != "Won" {
+            return (awaySettled, nil, names.away, false)
+        }
+        if let homeSettled, homeSettled.settled?.result == "Won", awaySettled?.settled?.result != "Won" {
             return (homeSettled, nil, names.home, false)
         }
-        if let awaySettled = event.awaySourceMark, awaySettled.state == .settled, awaySettled.draws {
+        if let h = event.homeScore, let a = event.awayScore {
+            if a > h, let awaySettled { return (awaySettled, nil, names.away, false) }
+            if h > a, let homeSettled { return (homeSettled, nil, names.home, false) }
+        }
+        if let homeSettled {
+            return (homeSettled, nil, names.home, false)
+        }
+        if let awaySettled {
             return (awaySettled, nil, names.away, false)
         }
         return nil

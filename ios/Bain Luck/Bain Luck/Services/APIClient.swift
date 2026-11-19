@@ -1434,6 +1434,25 @@ actor APIClient {
             query: ["cursor": cursor, "revision": String(revision), "limit": String(limit)], requiresNetwork: true)
     }
 
+    /// #12901: Compact NFL week deferred-market continuation (`market_cursor` / `market_revision` / `market_limit`),
+    /// honouring `page.nextUrl` (and matching `fetchContainerHub(slug:)`'s `include_children` scope).
+    func fetchContainerHubMarketPage(
+        slug: String,
+        cursor: String,
+        revision: Int,
+        limit: Int,
+        nextUrl: String? = nil
+    ) async throws -> ContainerHubResponse {
+        let req = try ContainerHubService.marketContinuationRequest(
+            slug: slug,
+            cursor: cursor,
+            revision: revision,
+            limit: limit,
+            nextUrl: nextUrl
+        )
+        return try await fetch(req.path, query: req.query, requiresNetwork: true)
+    }
+
     /// #9653: optional Browse discovery always revalidates publication/flags.
     /// No local TTL or last-good fallback may restore a revoked entry.
     func fetchContainerDiscovery(_ request: ContainerDiscoveryRequest) async throws -> ContainerDiscoveryResponse {
