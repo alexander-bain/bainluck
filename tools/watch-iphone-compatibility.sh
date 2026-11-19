@@ -41,19 +41,22 @@ printf '%s\n' "$TEST_UDID" > "$OUT/destination.txt"
 xcrun simctl boot "$TEST_UDID"
 xcrun simctl bootstatus "$TEST_UDID" -b
 # This simulator and all build files disappear when GitHub disposes the runner.
+BUILD_JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 set +e
 xcodebuild test -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
   -scheme BainLuckTests -configuration Debug \
   -destination "platform=iOS Simulator,id=$TEST_UDID" \
   -derivedDataPath "$DERIVED" -resultBundlePath "$OUT/BainLuckTests.xcresult" \
-  -parallel-testing-enabled NO -jobs 2 -collect-test-diagnostics never \
+  -parallel-testing-enabled NO -jobs "$BUILD_JOBS" -collect-test-diagnostics never \
   -test-timeouts-enabled YES -maximum-test-execution-time-allowance 180 \
   CODE_SIGNING_ALLOWED=NO \
+  COMPILER_INDEX_STORE_ENABLE=NO \
   'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox' \
   > "$OUT/tests.log" 2>&1
 TEST_EXIT=$?
 set -e
 printf 'xcodebuild exit: %s\n' "$TEST_EXIT"
+grep -E "Test Suite 'All tests'|Executed [0-9]+ tests, with" "$OUT/tests.log" | tail -6 || true
 if [[ "$TEST_EXIT" -ne 0 ]]; then tail -80 "$OUT/tests.log"; fi
 python3 "$ROOT/tools/watch_iphone_receipt.py" --log "$OUT/tests.log" \
   --exit-code "$TEST_EXIT" --sha "$SHA" --output "$OUT/receipt.json"
