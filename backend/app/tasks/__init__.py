@@ -7962,9 +7962,27 @@ def deliver_activitykit_updates():
     return result
 
 
+@celery_app.task(name="app.tasks.deliver_activitykit_starts", soft_time_limit=60,
+                 time_limit=90, max_retries=0)
+def deliver_activitykit_starts():
+    """One default-off sweep of kickoff Live Activity start pushes (#13052 / 254-A)."""
+    from app.tasks.activitykit_start import run_activitykit_start_dispatch
+
+    result = run_async(run_activitykit_start_dispatch())
+    if result["terminal"] in {"failed", "partial"}:
+        logger.warning("ActivityKit start dispatch incomplete: %s", result)
+        raise RuntimeError("ActivityKit start dispatch incomplete")
+    return result
+
+
 celery_app.conf.beat_schedule = {
     "activitykit-runtime": {
         "task": "app.tasks.deliver_activitykit_updates",
+        "schedule": 30.0,
+        "options": {"queue": "realtime", "expires": 25},
+    },
+    "activitykit-start-push": {
+        "task": "app.tasks.deliver_activitykit_starts",
         "schedule": 30.0,
         "options": {"queue": "realtime", "expires": 25},
     },
