@@ -40,7 +40,7 @@ test("actual hub keeps ordinary members and saves reading context before week na
   global.fetch = jest.fn(async (url) => ({ ok: true, status: 200, json: async () => String(url).endsWith("week-navigation") ? answer(4, 6) : body })) as unknown as typeof fetch;
   await act(async () => root.render(<CollectionHub slug={slug} />));
   expect(element.querySelectorAll("[data-collection-member]")).toHaveLength(5);
-  expect(element.textContent).toContain("Back to Discover");
+  expect(element.textContent).toContain("Explore Discover");
   const first = document.getElementById(`collection-member-${hub.members[0].key}`)!;
   jest.spyOn(first, "getBoundingClientRect").mockReturnValue({ bottom: 100, top: 12 } as DOMRect);
   const next = element.querySelector('nav a[href="/collections/nfl-2026-week-6"]')!;
