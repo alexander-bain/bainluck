@@ -57,9 +57,13 @@ class _FakeRedis:
 class _RecordingAsyncSession(AsyncSession):
     """Lightweight AsyncSession subclass that records SQL without a real DB."""
 
-    def __init__(self, replies=None):
+    is_active = True
+
+    def __init__(self, replies=None, initial_statement_timeout="30s"):
         self._replies = list(replies or [])
+        self._initial_statement_timeout = initial_statement_timeout
         self.statements: list[str] = []
+        self.statement_params: list[dict | None] = []
         self.savepoints = 0
         self.rolled_back = 0
 
@@ -69,8 +73,13 @@ class _RecordingAsyncSession(AsyncSession):
         yield self
 
     async def execute(self, statement, params=None):
-        self.statements.append(str(statement))
-        if str(statement).startswith("SET LOCAL"):
+        sql = str(statement)
+        self.statements.append(sql)
+        self.statement_params.append(dict(params) if isinstance(params, dict) else None)
+        if "current_setting('statement_timeout')" in sql:
+            timeout = self._initial_statement_timeout
+            return SimpleNamespace(all=lambda: [], fetchall=lambda: [], scalar=lambda: timeout)
+        if "set_config('statement_timeout'" in sql:
             return SimpleNamespace(all=lambda: [], fetchall=lambda: [], scalar=lambda: None)
         rows = self._replies.pop(0) if self._replies else []
         return SimpleNamespace(all=lambda: rows, fetchall=lambda: rows)
@@ -151,7 +160,12 @@ class TestFeedCollectionsStatementTimeout:
             db, items, rank_key=_rank_key, budget_seconds=0.25
         )
         assert db.savepoints == 1
-        assert any("SET LOCAL statement_timeout = 250" in s for s in db.statements)
+        assert db.statements == [
+            "SELECT current_setting('statement_timeout')",
+            "SELECT set_config('statement_timeout', :val, true)",
+            "SELECT set_config('statement_timeout', :val, true)",
+        ]
+        assert db.statement_params == [None, {"val": "250ms"}, {"val": "30s"}]
         assert db.rolled_back == 0
         assert len(result) == 2
 
@@ -169,7 +183,12 @@ class TestFeedCollectionsStatementTimeout:
         )
         assert result is items
         assert db.savepoints == 1
-        assert any("SET LOCAL statement_timeout = 200" in s for s in db.statements)
+        # On error, no restore runs inside the aborted savepoint; savepoint rollback reverts it.
+        assert db.statements == [
+            "SELECT current_setting('statement_timeout')",
+            "SELECT set_config('statement_timeout', :val, true)",
+        ]
+        assert db.statement_params == [None, {"val": "200ms"}]
         assert db.rolled_back == 0
 
 

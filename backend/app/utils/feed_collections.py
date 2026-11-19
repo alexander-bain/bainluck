@@ -149,12 +149,29 @@ async def add_feed_collections(
             # #11931: enforce the collection read budget server-side inside a
             # SAVEPOINT so Postgres itself cancels at `timeout_ms` instead of
             # stalling `db.rollback()` for 2-10 s on a cancelled asyncpg query.
+            # On error, savepoint rollback reverts `set_config(..., true)`
+            # automatically. On success, releasing a savepoint keeps a local GUC
+            # for the enclosing transaction, so restore the prior value first.
+            # Keep generous client-side backstop slack (`+ 0.5 s`) so Postgres
+            # delivers QueryCanceledError cleanly over the wire rather than
+            # `asyncio.wait_for` tearing down the asyncpg connection.
             timeout_ms = max(1, int(timeout_s * 1000))
             async with db.begin_nested():
-                await db.execute(text(f"SET LOCAL statement_timeout = {timeout_ms}"))
+                prev_res = await db.execute(
+                    text("SELECT current_setting('statement_timeout')")
+                )
+                prev_timeout = prev_res.scalar() if prev_res is not None else None
+                await db.execute(
+                    text("SELECT set_config('statement_timeout', :val, true)"),
+                    {"val": f"{timeout_ms}ms"},
+                )
                 read = await asyncio.wait_for(
                     container_discovery.discover_collections(db, event_ids=games),
-                    timeout=timeout_s + 0.05,
+                    timeout=timeout_s + 0.5,
+                )
+                await db.execute(
+                    text("SELECT set_config('statement_timeout', :val, true)"),
+                    {"val": str(prev_timeout) if prev_timeout is not None else "0"},
                 )
         else:
             read = await asyncio.wait_for(
@@ -163,9 +180,10 @@ async def add_feed_collections(
             )
     except Exception:
         # A cancelled/failed statement can leave the session aborted (on the
-        # non-savepoint path). Ordinary cards are already serialized; restore it
+        # non-savepoint path, or if the client-side backstop invalidated the
+        # asyncpg connection). Ordinary cards are already serialized; restore it
         # for subsequent feed reads.
-        if not isinstance(db, AsyncSession):
+        if not isinstance(db, AsyncSession) or not db.is_active:
             await db.rollback()
         logger.warning(
             "Discover collection read failed; keeping ordinary cards", exc_info=True
