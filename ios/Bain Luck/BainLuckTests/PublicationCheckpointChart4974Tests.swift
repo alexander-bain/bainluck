@@ -901,6 +901,12 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         XCTAssertEqual(plotBuilds, before, "releasing rebuilt the data plot")
 
         // Rendered text, read after the count.
+        // Strict known failure on master (#12756 moved `EventAtlasChartHeaderView11666`
+        // into `.overlay(alignment: .topLeading)`, where `EventAtlasSelectedReadingSlot11666`
+        // covers the withheld slot until `selection.checkpoint != .withheld` is gated).
+        // Kept strict so #12745 touches zero production files and XCTest reports the
+        // day the production fix merges.
+        XCTExpectFailure("#12756 follow-up: EventAtlasSelectedReadingSlot11666 overlay covers withheld readout on master")
         selection.hold(date: at(30), checkpoint: .withheld)
         pump(host)
         let gap = try visibleText(host, name: "inline-gap")

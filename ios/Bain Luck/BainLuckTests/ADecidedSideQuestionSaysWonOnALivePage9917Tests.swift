@@ -158,7 +158,14 @@ final class ADecidedSideQuestionSaysWonOnALivePage9917Tests: XCTestCase {
         XCTAssertTrue(source.contains("let rowTreatment = treatment(for: o)"))
         XCTAssertTrue(source.contains("switch rowTreatment {"))
         let verdictCase = try XCTUnwrap(source.range(of: "case .verdict(let v):"))
-        XCTAssertTrue(source[verdictCase.upperBound...].prefix(120).contains("Text(v.label)"))
+        // #12513 — the case grew an Atlas branch (85-A), which pushed `Text(v.label)`
+        // past a fixed 120 characters. Scan the case itself, up to the next one:
+        // both of its renderings must come from the verdict it is given.
+        let rest = source[verdictCase.upperBound...]
+        let caseBody = rest.prefix(upTo: rest.range(of: "\n            case .")?.lowerBound ?? rest.endIndex)
+        XCTAssertTrue(caseBody.contains("Text(v.label)"), "the verdict row stopped printing the verdict's label")
+        XCTAssertTrue(caseBody.contains("resolvedVerdictText(for: o, verdict: v"),
+                      "the Atlas verdict row stopped reading the verdict it is given")
         XCTAssertFalse(source.contains("prob: m.probability ?? 0,\n                            sourceCount: 1,\n                            observedAt: m.observedAt\n                        )"),
                        "a second, verdict-blind row builder is back beside `entry(label:from:)`")
     }
