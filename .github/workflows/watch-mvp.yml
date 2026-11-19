@@ -156,12 +156,18 @@ on:
 permissions:
   contents: read
 
+# #13027 (251: A): cancel superseded PR and master Watch runs so stale heads
+# stop holding the 5-slot macOS runner pool. Previously watch-ui-products had
+# no concurrency group, iphone-compatibility set cancel-in-progress: false,
+# and master pushes fell back to github.run_id. The latest head of every PR
+# and master still runs all nine Watch jobs intact.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('watch-mvp-pr-{0}', github.event.pull_request.number) || format('watch-mvp-{0}', github.ref) }}
+  cancel-in-progress: true
+
 jobs:
   watch-mvp:
     name: Watch behavior and unsigned builds
-    concurrency:
-      group: watch-build-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-      cancel-in-progress: true
     runs-on: macos-15
     timeout-minutes: 20
     env:
@@ -201,10 +207,6 @@ jobs:
 
   iphone-compatibility:
     name: Watch change iPhone compatibility
-    concurrency:
-      # Preserve full-suite evidence without blocking independent Watch UI work.
-      group: watch-iphone-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-      cancel-in-progress: false
     needs: watch-mvp
     runs-on: xcode-27
     # #12513: the full suite on Xcode 27.2 ran 62 min and was cut at 60.
@@ -311,9 +313,6 @@ jobs:
       fail-fast: false
       matrix:
         shard: [corner, readings, navigation, controls, widgets]
-    concurrency:
-      group: watch-ui-${{ matrix.shard }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-      cancel-in-progress: true
     needs: watch-ui-products
     runs-on: xcode-27
     # Reduced selected-game scope: exact101 cases across five isolated pairs.
@@ -463,9 +462,6 @@ jobs:
     needs: watch-mvp
     runs-on: xcode-27
     timeout-minutes: 45
-    concurrency:
-      group: watch-companion-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-      cancel-in-progress: true
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
