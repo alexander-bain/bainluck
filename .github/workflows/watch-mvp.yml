@@ -78,6 +78,7 @@ on:
       - 'ios/Bain Luck/Bain Luck/Services/AnalyticsPrivacy.swift'
       - 'ios/Bain Luck/Bain Luck/Services/AnalyticsService.swift'
       - 'tools/tests/watch-selected-game/**'
+      - '.github/scripts/watch-mvp-scope.py'
       - '.github/workflows/watch-mvp.yml'
   push:
     branches: [master]
@@ -151,6 +152,7 @@ on:
       - 'ios/Bain Luck/Bain Luck/Services/AnalyticsPrivacy.swift'
       - 'ios/Bain Luck/Bain Luck/Services/AnalyticsService.swift'
       - 'tools/tests/watch-selected-game/**'
+      - '.github/scripts/watch-mvp-scope.py'
       - '.github/workflows/watch-mvp.yml'
 
 permissions:
@@ -166,8 +168,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # #13027 (251: A): verify the true 3-dot PR diff touches a Watch/app path
+  # before allocating any macOS runner. GitHub's `on: pull_request: paths:`
+  # filter admits server-only PRs (#12962, #12970) after a merge from master
+  # hits the 300-file cap. Fails closed toward relevant=true on any error.
+  watch-scope:
+    name: Check Watch/app diff scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.decide.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Classify Watch/app diff scope
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE='${{ github.event.pull_request.base.sha }}'
+            HEAD='${{ github.event.pull_request.head.sha }}'
+          else
+            BASE='${{ github.event.before }}'
+            HEAD='${{ github.sha }}'
+          fi
+          python3 .github/scripts/watch-mvp-scope.py \
+            --event '${{ github.event_name }}' \
+            --base "$BASE" \
+            --head "$HEAD" \
+            --github-output "$GITHUB_OUTPUT"
+
   watch-mvp:
     name: Watch behavior and unsigned builds
+    needs: watch-scope
+    if: needs.watch-scope.outputs.relevant == 'true'
     runs-on: macos-15
     timeout-minutes: 20
     env:
@@ -409,8 +445,8 @@ jobs:
 
   watch-ui-complete:
     name: Watch full UI coverage from isolated pairs
-    needs: watch-ui-journey
-    if: always()
+    needs: [watch-scope, watch-ui-journey]
+    if: always() && needs.watch-scope.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
