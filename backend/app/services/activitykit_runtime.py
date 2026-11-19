@@ -93,6 +93,7 @@ async def run_activitykit_page(
     policy=RuntimePolicy(),
     after="",
     clock=lambda: datetime.now(timezone.utc),
+    score_refresher=None,
 ):
     """Capture canonical readings and dispatch one finite, fair page.
 
@@ -138,9 +139,23 @@ async def run_activitykit_page(
                     .all()
                 )
             # Enumeration connection is released before capture or dispatch.
+            page_rows = rows[: policy.batch_size]
+            if score_refresher is not None and page_rows:
+                # #10542 step 5: refresh ESPN scores only for games with an
+                # active Live Activity before capturing observations. Fails open
+                # so a slow or dark ESPN never delays delivery of stored data.
+                distinct_event_ids = list(
+                    dict.fromkeys(row["event_id"] for row in page_rows)
+                )
+                try:
+                    await score_refresher(distinct_event_ids)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    pass
             observations = {}
             phase = "delivery"
-            for row in rows[: policy.batch_size]:
+            for row in page_rows:
                 identity, event_id = row["activity_id"], row["event_id"]
                 result.next_cursor = identity
                 result.scanned += 1
