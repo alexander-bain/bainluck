@@ -137,12 +137,20 @@ def read_public(url):
 
 def safe_comment(comment):
     body = comment.get("body", "")
+    fable = body.startswith("**Fable")
+    heading = body.partition("\n")[0]
+    changes = fable and bool(re.search(r"\bCHANGES\b", heading))
     return {
         "created_at": comment["created_at"],
         "updated_at": comment["updated_at"],
         "association": comment.get("author_association"),
-        "fable_accept": body.startswith("**Fable")
-        and bool(re.search(r"\bACCEPT\b|\bno look needed\b", body, re.I)),
+        "fable_changes": changes,
+        "fable_accept": fable
+        and not changes
+        and bool(
+            re.search(r"\bACCEPT\b|\bno look needed\b", body, re.I)
+            or re.search(r"\bACCEPTED\b", heading)
+        ),
     }
 
 
@@ -527,6 +535,7 @@ def collect(api, previous=None, cache=None, open_summaries=None):
     # A reported live time refines the server observation only after ancestry
     # independently proves this exact merged change was deployed.
     comments = api.pages(f"issues/12779/comments?since={iso(floor)}")
+    commands = commands_from(comments)
     positions = {
         sha: i
         for i, sha in enumerate(
@@ -547,37 +556,33 @@ def collect(api, previous=None, cache=None, open_summaries=None):
             )
             if included:
                 receipt["contains"].append(merge_sha)
-    for comment in comments:
-        if comment.get("author_association") not in TRUSTED:
+    merged = {p["number"]: p for p in pulls if p.get("merged_at")}
+    for post in commands:
+        if post["kind"] != "live":
             continue
-        match = re.search(
-            r"\blive\s+#(\d+)\s*\((server|website|apps)\)", comment["body"], re.I
-        )
-        if not match:
-            continue
-        number, line = int(match[1]), match[2].title()
-        pull = next(
-            (p for p in pulls if p["number"] == number and p.get("merged_at")), None
-        )
-        proof = next(
-            (
-                r
-                for r in receipts
-                if r["line"] == line
-                and pull
-                and pull["merge_commit_sha"] in r["contains"]
-            ),
-            None,
-        )
-        if proof and pull["merged_at"] <= comment["created_at"] <= proof["at"]:
-            receipts.append(
-                {
-                    **proof,
-                    "at": comment["created_at"],
-                    "kind": "reported",
-                    "contains": [pull["merge_commit_sha"]],
-                }
+        for number in post["numbers"]:
+            pull = merged.get(number)
+            if not pull or instant(post["at"]) < instant(pull["merged_at"]):
+                continue
+            proof = next(
+                (
+                    r
+                    for r in receipts
+                    if r["line"] == post["line"]
+                    and pull["merge_commit_sha"] in r["contains"]
+                    and instant(post["at"]) <= instant(r["at"])
+                ),
+                None,
             )
+            if proof:
+                receipts.append(
+                    {
+                        **proof,
+                        "at": post["at"],
+                        "kind": "reported",
+                        "contains": [pull["merge_commit_sha"]],
+                    }
+                )
     runs = api.request(
         f"repos/{REPO}/actions/runs?branch=master&event=push&per_page=30"
     )["workflow_runs"]
@@ -595,6 +600,14 @@ def collect(api, previous=None, cache=None, open_summaries=None):
         "tests": tests,
         "tests_at": ci.get("updated_at") if ci else None,
         "testflight": latest.get("Apps", {}).get("state", "unknown"),
+        "successful_runs": [
+            {"started_at": run["run_started_at"], "finished_at": run["updated_at"]}
+            for run in {r["id"]: r for r in runs + completed}.values()
+            if run["name"] == "CI"
+            and run["conclusion"] == "success"
+            and run.get("run_started_at")
+            and run.get("updated_at")
+        ],
     }
     flight_run = next((r for r in runs if r["name"] == "TestFlight release"), None)
     if flight_run and flight_run["conclusion"] in {"failure", "cancelled", "timed_out"}:
@@ -605,12 +618,13 @@ def collect(api, previous=None, cache=None, open_summaries=None):
         "deployments": receipts,
         "master": master,
         "coverage": coverage,
-        "commands": reconcile_commands(comments, pulls, previous),
+        "commands": reconcile_commands(commands, pulls, previous),
+        "hold_commands": previous.get("signals", {}).get("commands", []) + commands,
     }
 
 
-def reconcile_commands(comments, pulls, previous):
-    commands = previous.get("signals", {}).get("commands", []) + commands_from(comments)
+def reconcile_commands(commands, pulls, previous):
+    commands = previous.get("signals", {}).get("commands", []) + commands
     latest = {}
     merged = {p["number"]: p.get("merged_at") for p in pulls}
     for command in sorted(commands, key=lambda c: c["at"]):

@@ -83,6 +83,40 @@ class FactoryRules(unittest.TestCase):
     def place(self, pull):
         return classify(pull, self.snapshot["deployments"], self.now)
 
+    def test_fables_real_changes_verdict_sends_12765_back_to_write(self):
+        fixture = json.loads((FIXTURES / "now-nov18-holds.json").read_text())
+        pull = self.ready()
+        earlier = {
+            "created_at": "2026-11-16T19:54:53Z",
+            "association": "OWNER",
+            "fable_accept": True,
+        }
+        pull.update(
+            number=12765, comments=[earlier, safe_comment(fixture["fable_changes"])]
+        )
+        placed = self.place(pull)
+        self.assertEqual((placed["station"], placed["sent_back"]), ("Write", True))
+        pull["comments"].append({**earlier, "created_at": "2026-11-19T01:00:00Z"})
+        self.assertEqual(self.place(pull)["station"], "Merge line")
+
+    def test_dependabot_12211_does_not_raise_an_inspection_wait(self):
+        pull = self.ready()
+        pull.update(
+            number=12211,
+            branch="dependabot/github_actions/actions/github-script-9",
+            reviews=[],
+            comments=[],
+            created_at=iso(self.now - timedelta(days=4)),
+            updated_at=iso(self.now - timedelta(hours=30)),
+        )
+        pull["checks"][0]["finished_at"] = iso(self.now - timedelta(hours=30))
+        actual = build({**self.snapshot, "pulls": [pull], "master": {}})
+        self.assertTrue(actual["changes"][0]["bot_update"])
+        self.assertEqual(actual["changes"][0]["station"], "Review")
+        self.assertFalse(
+            any(stop["kind"] == "review-waiting" for stop in actual["stops"])
+        )
+
     def test_saved_real_github_responses_place_at_least_twelve_changes(self):
         self.assertGreaterEqual(len(self.expected["placements"]), 12)
         self.assertEqual(
