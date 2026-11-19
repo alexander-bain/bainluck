@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { getAuth } from "firebase/auth";
 import { usePageTracking } from "@/hooks/usePageTracking";
 import { useScrollDepth } from "@/hooks/useScrollDepth";
@@ -117,6 +117,7 @@ export default function BugReportsPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const autoSelectedFromQueryRef = useRef(false);
   const [copied, setCopied] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(true);
@@ -183,10 +184,19 @@ export default function BugReportsPage() {
     );
   };
 
-  const selectReport = async (id: number) => {
+  const updateStatusSilent = useCallback(async (id: number, newStatus: string) => {
+    const headers = await getAuthHeaders();
+    if (secret) {
+      await adminFetch(`/api/admin/bug-reports/${id}?status=${newStatus}`, secret, { method: "PATCH", headers });
+    } else {
+      await fetch(`${API}/api/admin/bug-reports/${id}?status=${newStatus}`, { method: "PATCH", headers });
+    }
+  }, [secret, getAuthHeaders]);
+
+  const selectReport = useCallback(async (id: number, target?: BugReport) => {
     setSelectedId(id);
     setShowPrompt(false);
-    const report = reports.find(r => r.id === id);
+    const report = target ?? reports.find(r => r.id === id);
     if (report && report.status === "new") {
       setReports(prev => prev.map(r => r.id === id ? { ...r, status: "reviewed" } : r));
       updateStatusSilent(id, "reviewed");
@@ -208,16 +218,20 @@ export default function BugReportsPage() {
         }
       } catch { }
     }
-  };
+  }, [reports, secret, getAuthHeaders, updateStatusSilent]);
 
-  const updateStatusSilent = async (id: number, newStatus: string) => {
-    const headers = await getAuthHeaders();
-    if (secret) {
-      await adminFetch(`/api/admin/bug-reports/${id}?status=${newStatus}`, secret, { method: "PATCH", headers });
-    } else {
-      await fetch(`${API}/api/admin/bug-reports/${id}?status=${newStatus}`, { method: "PATCH", headers });
+  useEffect(() => {
+    if (autoSelectedFromQueryRef.current || reports.length === 0) return;
+    const rawId = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("id") : null;
+    if (!rawId) return;
+    const parsedId = Number.parseInt(rawId, 10);
+    if (!Number.isFinite(parsedId)) return;
+    const match = reports.find(r => r.id === parsedId);
+    if (match) {
+      autoSelectedFromQueryRef.current = true;
+      void selectReport(match.id, match);
     }
-  };
+  }, [reports, selectReport]);
 
   const copyPrompt = (prompt: string) => {
     navigator.clipboard.writeText(prompt);
@@ -421,7 +435,7 @@ export default function BugReportsPage() {
                 {selected.screenshot_base64 && (
                   <div className="bg-white rounded-xl border p-4">
                     <img
-                      src={`data:image/jpeg;base64,${selected.screenshot_base64}`}
+                      src={`data:${selected.screenshot_base64.startsWith("iVBOR") ? "image/png" : "image/jpeg"};base64,${selected.screenshot_base64}`}
                       alt="Bug screenshot"
                       className="rounded-lg border max-h-[500px] w-full object-contain bg-gray-50"
                     />

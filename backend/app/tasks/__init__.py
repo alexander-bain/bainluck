@@ -3328,12 +3328,32 @@ def create_github_issue_for_bug_report_task(self, report_id: int):
 
             severity = compute_severity(report.description)
             title = format_issue_title(report.description)
+
+            screenshot_summary = None
+            if (report.app_state or {}).get("source") == "testflight" and report.screenshot_base64:
+                from app.services.testflight_feedback import summarize_testflight_screenshot
+                try:
+                    screenshot_summary = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            summarize_testflight_screenshot,
+                            report.screenshot_base64,
+                            report_id=report.id,
+                        ),
+                        timeout=10.0,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "TestFlight screenshot summary timed out or failed for report #%d (filing without it): %s",
+                        report.id, exc,
+                    )
+
             body = format_issue_body(
                 report_id=report.id,
                 description=report.description,
                 category=report.category,
                 app_state=report.app_state,
                 has_screenshot=bool(report.screenshot_base64),
+                screenshot_summary=screenshot_summary,
             )
             labels = build_labels(report.category, severity, is_owner=is_owner)
 

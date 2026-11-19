@@ -121,6 +121,7 @@ TASKS: dict[str, str] = {
     # other
     "admin_diagnosis": "admin ops diagnosis panel",
     "bug_fixed_email": "bug-fixed notification email body",
+    "testflight_screenshot_summary": "TestFlight bug-report screenshot description (249-A)",
 }
 
 #: Pre-registry per-family override, still honoured so an existing deployment

@@ -99,6 +99,8 @@ def format_issue_body(
     category: str | None,
     app_state: dict | None,
     has_screenshot: bool,
+    *,
+    screenshot_summary: str | None = None,
 ) -> str:
     desc = description or "(no description)"
     severity = compute_severity(description)
@@ -115,7 +117,7 @@ def format_issue_body(
     user_id = state.get("user_id", "")
     user_display = user_name if user_name and user_name != "anonymous" else (f"user {user_id}" if user_id else "anonymous")
 
-    admin_url = f"{FRONTEND_URL}/admin/bug-reports"
+    admin_url = f"{FRONTEND_URL}/admin/bug-reports?id={report_id}"
 
     lines = [
         "## Bug Report",
@@ -142,9 +144,17 @@ def format_issue_body(
         head = "\n".join(str(crash_log).splitlines()[:60]).replace("`", "'")
         lines += ["<details><summary>Crash log (first 60 lines)</summary>", "", "```", head, "```", "</details>", ""]
 
+    cleaned_summary = (screenshot_summary or "").strip()
+    if cleaned_summary:
+        lines.append("### Screenshot description")
+        lines.append("*Written by a model from the screenshot (the image itself stays private in Admin).*")
+        lines.append("")
+        lines.append(cleaned_summary)
+        lines.append("")
+
     if has_screenshot:
         lines.append("### Screenshot")
-        lines.append(f"[View screenshot + full app state →]({admin_url})")
+        lines.append(f"[View screenshot + full app state (report #{report_id}) →]({admin_url})")
         lines.append("")
 
     lines.append("---")
