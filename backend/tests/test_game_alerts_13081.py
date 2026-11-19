@@ -21,7 +21,7 @@ Covers:
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from uuid import UUID, uuid4
 
@@ -34,9 +34,11 @@ from app.services.apns_alert import (
     GameAlertPush,
 )
 from app.services.game_alerts_dispatch import (
+    build_game_alert_payload,
     dispatch_game_alerts,
     is_close_late,
     is_final_period,
+    is_just_started,
 )
 from app.services.push_audience import (
     AlertTarget,
@@ -48,6 +50,9 @@ from app.tasks.game_alerts import (
     run_game_alerts_dispatch,
     run_purge_expired_appclip_devices,
 )
+from app.utils.activitykit_payload import OBSERVATION_MAX_AGE
+from app.utils.activitykit_projection import project_activitykit_snapshot
+from app.utils.activitykit_start_payload import build_activitykit_start_alert
 
 NOW = datetime(2025, 1, 15, 22, 0, 0, tzinfo=timezone.utc)
 VALID_JWT = ".".join(["headerpart", "payloadpart", "sigpart123"])
@@ -69,6 +74,8 @@ def _event_detail(
     home_score: int | None = 98,
     away_score: int | None = 96,
     result: str | None = None,
+    commence_time: datetime | None = None,
+    prob_observed_at: datetime | None = NOW,
 ) -> dict:
     detail: dict = {
         "id": event_id,
@@ -82,11 +89,14 @@ def _event_detail(
         "score_observed_at": NOW.isoformat() if home_score is not None else None,
         "espn": {"period": period} if period is not None else {},
     }
+    if commence_time is not None:
+        detail["commence_time"] = commence_time.isoformat()
     if home_prob is not None and away_prob is not None:
         detail["hero_probability"] = home_prob
         detail["hero_probability_away"] = away_prob
         detail["hero_probability_source"] = "blended"
-        detail["hero_probability_observed_at"] = NOW.isoformat()
+        if prob_observed_at is not None:
+            detail["hero_probability_observed_at"] = prob_observed_at.isoformat()
         detail["current_odds"] = {
             "home_probability": home_prob,
             "away_probability": away_prob,
@@ -312,12 +322,123 @@ class TestCloseLateRule259A:
             home_prob=home_prob,
             away_prob=away_prob,
         )
-        assert is_close_late(detail) is expected
+        assert is_close_late(detail, now=NOW) is expected
 
     def test_non_live_or_early_period_is_not_close_late(self):
-        assert is_close_late(_event_detail(status="scheduled", period="4th Quarter")) is False
-        assert is_close_late(_event_detail(status="live", period="2nd Quarter")) is False
-        assert is_close_late(_event_detail(status="completed", period="Final")) is False
+        assert is_close_late(_event_detail(status="scheduled", period="4th Quarter"), now=NOW) is False
+        assert is_close_late(_event_detail(status="live", period="2nd Quarter"), now=NOW) is False
+        assert is_close_late(_event_detail(status="completed", period="Final"), now=NOW) is False
+
+
+# --- 2b. Fable look items 1-4: just-started, OBSERVATION_MAX_AGE, wording ----
+
+
+class TestFableLookGuards:
+    @pytest.mark.parametrize(
+        ("period", "commence_offset_min", "expected"),
+        [
+            ("1st Quarter", -5, True),
+            ("Q1", -25, True),
+            ("1st Period", -10, True),
+            ("1st Half", -8, True),
+            ("Top 1st", -12, True),
+            ("1st Set", -10, True),
+            # Mid-game / later periods must NEVER send "Starting now"
+            ("2nd Quarter", -35, False),
+            ("3rd Quarter", -90, False),
+            ("4th Quarter", -120, False),
+            ("Halftime", -60, False),
+            ("End of 1st Quarter", -20, False),
+            ("2nd Half", -50, False),
+            ("OT", -160, False),
+            # Missing period label falls back to <= 15 minutes from commence_time
+            (None, -5, True),
+            (None, -15, True),
+            (None, -16, False),
+            (None, -90, False),
+        ],
+    )
+    def test_start_alert_only_fires_when_game_just_went_live(
+        self, period, commence_offset_min, expected
+    ):
+        detail = _event_detail(
+            event_id=701,
+            status="live",
+            period=period,
+            commence_time=NOW + timedelta(minutes=commence_offset_min),
+        )
+        assert is_just_started(detail, now=NOW) is expected
+        push = build_game_alert_payload(
+            detail, trigger_kind="start", device_id=uuid4(), now=NOW
+        )
+        assert (push is not None) is expected
+
+    def test_stale_probability_blocks_close_late_and_drops_number_on_start(self):
+        stale_ts = NOW - OBSERVATION_MAX_AGE - timedelta(seconds=1)
+        fresh_ts = NOW - OBSERVATION_MAX_AGE + timedelta(seconds=1)
+
+        stale_late = _event_detail(
+            event_id=702, period="4th Quarter", home_prob=0.52, away_prob=0.48, prob_observed_at=stale_ts
+        )
+        fresh_late = _event_detail(
+            event_id=702, period="4th Quarter", home_prob=0.52, away_prob=0.48, prob_observed_at=fresh_ts
+        )
+        assert is_close_late(stale_late, now=NOW) is False
+        assert (
+            build_game_alert_payload(
+                stale_late, trigger_kind="close_late", device_id=uuid4(), now=NOW
+            )
+            is None
+        )
+        assert is_close_late(fresh_late, now=NOW) is True
+
+        stale_start = _event_detail(
+            event_id=703, period="1st Quarter", home_prob=0.52, away_prob=0.48, prob_observed_at=stale_ts
+        )
+        fresh_start = _event_detail(
+            event_id=703, period="1st Quarter", home_prob=0.52, away_prob=0.48, prob_observed_at=fresh_ts
+        )
+        push_stale = build_game_alert_payload(
+            stale_start, trigger_kind="start", device_id=uuid4(), now=NOW
+        )
+        push_fresh = build_game_alert_payload(
+            fresh_start, trigger_kind="start", device_id=uuid4(), now=NOW
+        )
+        assert push_stale is not None and push_stale.body == "Starting now"
+        assert push_fresh is not None and push_fresh.body == "Starting now · Lakers 52%"
+
+    def test_start_wording_matches_activitykit_start_alert_builder(self):
+        detail = _event_detail(event_id=704, period="1st Quarter", home_prob=0.52, away_prob=0.48)
+        expected = build_activitykit_start_alert(
+            project_activitykit_snapshot(detail), sent_at=NOW
+        )
+        push = build_game_alert_payload(
+            detail, trigger_kind="start", device_id=uuid4(), now=NOW
+        )
+        assert push is not None
+        assert push.title == expected["title"]
+        assert push.body == expected["body"]
+
+    def test_final_wording_uses_won_for_both_players_and_teams(self):
+        tennis_final = _event_detail(
+            event_id=705,
+            sport="tennis_atp_us_open",
+            status="completed",
+            away_team="Alcaraz",
+            home_team="Sinner",
+            home_score=3,
+            away_score=1,
+            period="Final",
+            home_prob=None,
+            away_prob=None,
+            result="home",
+        )
+        push = build_game_alert_payload(
+            tennis_final, trigger_kind="final", device_id=uuid4(), now=NOW
+        )
+        assert push is not None
+        assert push.body == "Sinner won"
+        assert "win" not in push.body.lower()
 
 
 # --- 3. Dispatcher triggers, 258/260 suppression, dedup, 410, App Clip -------
@@ -382,7 +503,18 @@ class TestGameAlertsDispatch:
         monkeypatch.setattr(mod, "alert_targets", _fake_alert_targets)
         monkeypatch.setattr(mod, "_active_la_device_ids", _fake_active_la)
 
-        live_detail = _event_detail(
+        start_detail = _event_detail(
+            event_id=500,
+            sport="basketball_nba",
+            status="live",
+            period="1st Quarter",
+            home_prob=0.55,
+            away_prob=0.45,
+            home_score=4,
+            away_score=2,
+            commence_time=NOW - timedelta(minutes=5),
+        )
+        live_late_detail = _event_detail(
             event_id=501,
             sport="basketball_nba",
             status="live",
@@ -391,6 +523,7 @@ class TestGameAlertsDispatch:
             away_prob=0.47,
             home_score=101,
             away_score=99,
+            commence_time=NOW - timedelta(hours=2),
         )
         final_detail = _event_detail(
             event_id=502,
@@ -406,8 +539,10 @@ class TestGameAlertsDispatch:
             result="home",
         )
 
+        details = {500: start_detail, 501: live_late_detail, 502: final_detail}
+
         async def _reader(db, eid):
-            return live_detail if eid == 501 else final_detail
+            return details[eid]
 
         pool = _RecordingPool()
         dedup = _MemoryDedup()
@@ -418,12 +553,15 @@ class TestGameAlertsDispatch:
             dedup,
             now=NOW,
             detail_reader=_reader,
-            live_finder=lambda db, ts: _const([501]),
+            live_finder=lambda db, ts: _const([500, 501]),
             final_finder=lambda db, ts: _const([502]),
         )
 
-        # Event 501 (live + close_late):
+        # Event 500 (1st Quarter):
         #   - start -> dev_plain ONLY (dev_with_la is in plan.start, not plan.alert)
+        #   - close_late -> none (not final period)
+        # Event 501 (4th Quarter, close_late):
+        #   - start -> none (already Q4, not just started)
         #   - close_late -> dev_plain ONLY (dev_with_la suppressed by 260: A; dev_clip skipped)
         # Event 502 (final):
         #   - final -> ALL 3 (dev_plain, dev_with_la per 260: A, dev_clip per #13079)
@@ -436,9 +574,10 @@ class TestGameAlertsDispatch:
         prod_sent = pool.by_env["production"].sent
         sandbox_sent = pool.by_env["sandbox"].sent
 
-        # Production got: dev_plain start, dev_plain close_late, dev_plain final, dev_clip final
+        # Production got: dev_plain start (500), dev_plain close_late (501), dev_plain final (502), dev_clip final (502)
         prod_pairs = [(tok, p.trigger_kind, p.event_id, topic) for tok, p, topic, _ in prod_sent]
-        assert (HEX_TOKEN_A, "start", 501, alert_topic("ios")) in prod_pairs
+        assert (HEX_TOKEN_A, "start", 500, alert_topic("ios")) in prod_pairs
+        assert (HEX_TOKEN_A, "start", 501, alert_topic("ios")) not in prod_pairs
         assert (HEX_TOKEN_A, "close_late", 501, alert_topic("ios")) in prod_pairs
         assert (HEX_TOKEN_A, "final", 502, alert_topic("ios")) in prod_pairs
         assert (HEX_TOKEN_CLIP, "final", 502, alert_topic("appclip")) in prod_pairs
@@ -462,7 +601,7 @@ class TestGameAlertsDispatch:
             dedup,
             now=NOW,
             detail_reader=_reader,
-            live_finder=lambda db, ts: _const([501]),
+            live_finder=lambda db, ts: _const([500, 501]),
             final_finder=lambda db, ts: _const([502]),
         )
         assert summary2.attempted == 0

@@ -50,15 +50,20 @@ from app.services.push_audience import (
     forget_token,
     kickoff_plan,
 )
+from app.utils.activitykit_payload import OBSERVATION_MAX_AGE
 from app.utils.activitykit_projection import project_activitykit_snapshot
+from app.utils.activitykit_start_payload import build_activitykit_start_alert
 
 _DEVICES = PushDevice.__table__
 _PINS = UserPin.__table__
 _REG = ActivityKitRegistration.__table__
 
-#: Bounded live kickoff/close-late lookback and lead windows.
+#: Bounded live close-late lookback and lead windows.
 LIVE_ALERT_LOOKBACK = timedelta(hours=6)
 LIVE_ALERT_LEAD = timedelta(minutes=15)
+#: "Starting now" only fires when a game has just gone live (first period, or
+#: within 15 minutes of commence_time when no period label is present yet).
+START_JUST_LIVE_WINDOW = timedelta(minutes=15)
 #: Bounded final-alert lookback so historic finished rows never fire phantom buzzes.
 FINAL_ALERT_LOOKBACK = timedelta(hours=12)
 #: Once-per-(device, event, trigger) dedup TTL in Redis.
@@ -71,7 +76,12 @@ MAX_EVENTS_PER_BEAT = 50
 CLOSE_LATE_MIN_PERCENT = 35
 CLOSE_LATE_MAX_PERCENT = 65
 
-# Period parsing for Ruling 259: A ("final period").
+# Period parsing for Starts ("first period") and Ruling 259: A ("final period").
+_FIRST_PERIOD_RE = re.compile(
+    r"\b(?:1st(?:\s+(?:quarter|qtr|period|half|inning|set|round))?|q1|p1|1h|r1"
+    r"|(?:top|mid(?:dle)?|bot(?:tom)?)\s+1(?:st)?|set\s+1|round\s+1)\b",
+    re.IGNORECASE,
+)
 _TERMINAL_PERIOD_RE = re.compile(
     r"\bfinal\b(?!\s+set\b)|\bft\b|\bfull[- ]?time\b|\bended\b|\bpostponed\b"
     r"|\bcancell?ed\b|\babandoned\b|\bhalftime\b|\bhalf[- ]?time\b",
@@ -155,12 +165,83 @@ def _raw_period(detail: Mapping[str, object]) -> str | None:
     return None
 
 
-def is_close_late(detail: Mapping[str, object]) -> bool:
-    """Ruling 259: A — live game in its final period with chance in 35%-65%."""
+def _parse_commence_time(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        if value.utcoffset() is None:
+            return None
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str) and value.strip():
+        try:
+            dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if dt.utcoffset() is None:
+            return None
+        return dt.astimezone(timezone.utc)
+    return None
+
+
+def _probability_is_fresh(
+    snapshot, *, now: datetime, max_age: timedelta = OBSERVATION_MAX_AGE
+) -> bool:
+    prob_at = snapshot.probability_observed_at
+    if prob_at is None or prob_at.utcoffset() is None:
+        return False
+    age = now.astimezone(timezone.utc) - prob_at.astimezone(timezone.utc)
+    return timedelta(0) <= age <= max_age
+
+
+def is_first_period(period: str | None) -> bool:
+    """True when ``period`` places a live game in its opening period."""
+    if not isinstance(period, str):
+        return False
+    text = period.strip()
+    if not text:
+        return False
+    if _TERMINAL_PERIOD_RE.search(text) or _END_OF_PERIOD_RE.search(text):
+        return False
+    if _OVERTIME_RE.search(text):
+        return False
+    return bool(_FIRST_PERIOD_RE.search(text))
+
+
+def is_just_started(detail: Mapping[str, object], *, now: datetime) -> bool:
+    """True only when a live game has just begun (Fable look #13088 item 1).
+
+    Prevents a phone that pins a game in Q3 (or every live game when the switch
+    flips on) from receiving a stale ``"Starting now"`` alert hours after tipoff:
+    - If a period label is present, it must be the first period (Q1 / 1st
+      Period / 1st Half / Top/Mid/Bot 1st / 1st Set / Round 1).
+    - If no period label is present yet, ``commence_time`` must be within
+      ``START_JUST_LIVE_WINDOW`` (15 minutes) of ``now``.
+    """
+    snapshot = project_activitykit_snapshot(detail)
+    if snapshot.lifecycle != "live":
+        return False
+    period = _raw_period(detail)
+    if period is not None:
+        return is_first_period(period)
+    ct = _parse_commence_time(detail.get("commence_time"))
+    if ct is None:
+        return False
+    elapsed = now.astimezone(timezone.utc) - ct
+    return -START_JUST_LIVE_WINDOW <= elapsed <= START_JUST_LIVE_WINDOW
+
+
+def is_close_late(
+    detail: Mapping[str, object],
+    *,
+    now: datetime | None = None,
+    freshness_window: timedelta = OBSERVATION_MAX_AGE,
+) -> bool:
+    """Ruling 259: A — live game in its final period with a fresh chance in 35%-65%."""
     snapshot = project_activitykit_snapshot(detail)
     if snapshot.lifecycle != "live":
         return False
     if snapshot.home_rendered_percent is None:
+        return False
+    clock = now if now is not None else datetime.now(timezone.utc)
+    if not _probability_is_fresh(snapshot, now=clock, max_age=freshness_window):
         return False
     if not (CLOSE_LATE_MIN_PERCENT <= snapshot.home_rendered_percent <= CLOSE_LATE_MAX_PERCENT):
         return False
@@ -207,22 +288,23 @@ def build_game_alert_payload(
     cmd_id = f"{trigger_kind}:{snapshot.event_id}:{device_id}"
 
     if trigger_kind == "start":
-        if snapshot.lifecycle != "live":
+        if not is_just_started(detail, now=now):
             return None
-        title = _matchup_title(away, home, snapshot.sport)
-        leader = _leader_summary(snapshot)
-        body = f"Starting now — {leader}" if leader else "Starting now"
+        # Share the exact kickoff alert builder with `activitykit_start_payload`
+        # so the title, wording ("Starting now · Team 52%"), and 6-minute
+        # `OBSERVATION_MAX_AGE` freshness gate stay identical across both paths.
+        start_alert = build_activitykit_start_alert(snapshot, sent_at=now)
         return GameAlertPush(
             event_id=snapshot.event_id,
             trigger_kind="start",
-            title=title,
-            body=body,
+            title=start_alert["title"],
+            body=start_alert["body"],
             command_id=cmd_id,
             expiration_epoch=exp,
         )
 
     if trigger_kind == "close_late":
-        if not is_close_late(detail):
+        if not is_close_late(detail, now=now):
             return None
         if snapshot.away_score is not None and snapshot.home_score is not None:
             title = f"{away} {snapshot.away_score}–{snapshot.home_score} {home}"
@@ -231,9 +313,9 @@ def build_game_alert_payload(
         period = snapshot.period_label or _raw_period(detail)
         leader = _leader_summary(snapshot)
         if period and leader:
-            body = f"Close late ({period}) — {leader}"
+            body = f"Close late ({period}) · {leader}"
         elif leader:
-            body = f"Close late — {leader}"
+            body = f"Close late · {leader}"
         else:
             body = "Close late"
         return GameAlertPush(
@@ -258,14 +340,14 @@ def build_game_alert_payload(
                 title = (
                     f"Final: {home} {snapshot.home_score}–{snapshot.away_score} {away}"
                 )
-                body = f"{home} win"
+                body = f"{home} won"
             elif snapshot.result == "away" or (
                 snapshot.result is None and snapshot.away_score > snapshot.home_score
             ):
                 title = (
                     f"Final: {away} {snapshot.away_score}–{snapshot.home_score} {home}"
                 )
-                body = f"{away} win"
+                body = f"{away} won"
             else:
                 title = (
                     f"Final: {away} {snapshot.away_score}–{snapshot.home_score} {home}"
@@ -274,9 +356,9 @@ def build_game_alert_payload(
         else:
             title = f"Final: {_matchup_title(away, home, snapshot.sport)}"
             if snapshot.result == "home":
-                body = f"{home} win"
+                body = f"{home} won"
             elif snapshot.result == "away":
-                body = f"{away} win"
+                body = f"{away} won"
             elif snapshot.result == "draw":
                 body = "Draw"
             else:
@@ -628,10 +710,15 @@ async def dispatch_game_alerts(
     for event_id in live_event_ids:
         async with sessions() as db:
             detail = await reader(db, event_id)
-            start_candidates = await _all_kickoff_alert_targets(
-                db, event_id, now=clock, min_app_version=min_app_version
+            start_active = is_just_started(detail, now=clock)
+            start_candidates = (
+                await _all_kickoff_alert_targets(
+                    db, event_id, now=clock, min_app_version=min_app_version
+                )
+                if start_active
+                else []
             )
-            close_late_active = is_close_late(detail)
+            close_late_active = is_close_late(detail, now=clock)
             close_candidates = (
                 await _all_alert_targets(db, event_id, now=clock)
                 if close_late_active

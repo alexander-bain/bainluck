@@ -127,6 +127,7 @@ class APNsAlertTransport:
             async with asyncio.timeout(min(1, self._timeout)):
                 await resource.aclose()
         except (TimeoutError, httpx.HTTPError):
+            # Best-effort bounded teardown; never mask a caller outcome or cancellation.
             pass
 
     async def send(
@@ -212,6 +213,7 @@ class APNsAlertTransport:
                                     else None
                                 )
                             except (ValueError, TypeError, OverflowError):
+                                # Malformed Retry-After date; fall back to default retry without delay.
                                 pass
                         return APNsResult("retry", "apns_transient", delay, retry_at)
                     return APNsResult("rejected", "apns_rejected")
