@@ -188,7 +188,7 @@ struct FeedView: View {
 
             // League & category chips — navigate to league grids or category pages
             Section {
-                SportFilterChips(selectedCategory: $selectedCategory) { route in
+                SportFilterChips(selectedCategory: $selectedCategory, items: vm.items) { route in
                     path.append(route)
                 }
                 .listRowInsets(EdgeInsets())
