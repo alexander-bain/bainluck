@@ -294,15 +294,24 @@ async def dispatch_kickoff_starts(
 
             command = DeliveryCommand(
                 command_id=f"start:{event_id}:{target.device_id}",
+                # DeliveryCommand.kind only distinguishes non-terminal vs terminal/stop;
+                # APNs reads `"event": "start"` from `push.body`.
                 kind="update",
                 push=push,
             )
             attempted += 1
-            result: APNsResult = await transports.for_env(target.apns_env).send(
-                command,
-                activity_token=target.token,
-                provider_token=jwt_token,
-            )
+            try:
+                result: APNsResult = await transports.for_env(target.apns_env).send(
+                    command,
+                    activity_token=target.token,
+                    provider_token=jwt_token,
+                )
+            except Exception:
+                # Gotcha #42: isolate per-device transport failures and release the dedup
+                # claim so later targets still dispatch and this device retries on next beat.
+                retryable += 1
+                await dedup.release(event_id, target.device_id)
+                continue
             if result.outcome == "accepted":
                 accepted += 1
             elif result.outcome == "unavailable":
