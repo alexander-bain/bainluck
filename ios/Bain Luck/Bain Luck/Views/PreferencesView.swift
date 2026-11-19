@@ -1,5 +1,6 @@
 import Combine
 import SwiftUI
+import UserNotifications
 
 // MARK: - Affinity row layout metrics
 
@@ -122,12 +123,14 @@ struct PreferencesView: View {
     @State private var analyticsConsentGranted = TelemetryConsent.shared.isGranted
     @State private var telemetryPersistence = TelemetryConsent.shared.persistence
     @State private var groupingMachineryEnabled = false
+    @State private var gameAlertsEnabled = GameAlertsPreference13083.shared.isEnabled
+    @State private var notificationAuthStatus: UNAuthorizationStatus = .notDetermined
 
     var body: some View {
         Group {
-            if viewModel.loading {
+            if authManager.isAuthenticated && viewModel.loading {
                 ProgressView("Loading preferences...")
-            } else if let error = viewModel.error, viewModel.prefs == nil {
+            } else if authManager.isAuthenticated, let error = viewModel.error, viewModel.prefs == nil {
                 ContentUnavailableView(
                     "Couldn't Load Preferences",
                     systemImage: "wifi.exclamationmark",
@@ -142,8 +145,15 @@ struct PreferencesView: View {
         .navigationBarTitleDisplayMode(preferencesTitleDisplayMode)
         #endif
         .task {
-            await viewModel.load()
+            gameAlertsEnabled = GameAlertsPreference13083.shared.isEnabled
+            notificationAuthStatus = await NotificationManager.shared.notificationAuthorizationStatus()
+            if authManager.isAuthenticated {
+                await viewModel.load()
+            }
             AnalyticsService.trackScreen(name: "preferences", type: "preferences")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .gameAlertsPreferenceDidChange13083)) { _ in
+            gameAlertsEnabled = GameAlertsPreference13083.shared.isEnabled
         }
         #if os(iOS)
         .fullScreenCover(isPresented: $showOnboarding) {
@@ -198,13 +208,17 @@ struct PreferencesView: View {
     private var preferencesContent: some View {
         ScrollView {
             VStack(spacing: 24) {
-                accountHero
-                ownerGroupingMachinerySection
-                teamsSection
-                interestsSection
+                if authManager.isAuthenticated || viewModel.prefs != nil {
+                    accountHero
+                    ownerGroupingMachinerySection
+                    teamsSection
+                    interestsSection
+                }
                 notificationsSection
                 privacySection
-                actionsSection
+                if authManager.isAuthenticated || viewModel.prefs != nil {
+                    actionsSection
+                }
             }
             .padding(.vertical)
             .frame(maxWidth: Self.readableDetailMaxWidth)
@@ -883,10 +897,21 @@ struct PreferencesView: View {
 
     // MARK: - Notifications
 
-    /// Notification preferences. Only shown when signed in — the underlying
-    /// preference is per-account and the endpoint requires authentication.
+    /// Notification preferences. On iPhone, "Game alerts" is kept on-device (262: A)
+    /// and shown signed in or signed out (177: A); "Morning Digest" stays per-account.
     @ViewBuilder
     private var notificationsSection: some View {
+        #if os(iOS)
+        VStack(spacing: 10) {
+            sectionHeader(emoji: "\u{1F514}", title: "Notifications", count: nil)
+            gameAlertsRow
+                .padding(.horizontal)
+            if authManager.isAuthenticated {
+                morningDigestRow
+                    .padding(.horizontal)
+            }
+        }
+        #else
         if authManager.isAuthenticated {
             VStack(spacing: 10) {
                 sectionHeader(emoji: "\u{1F514}", title: "Notifications", count: nil)
@@ -894,7 +919,64 @@ struct PreferencesView: View {
                     .padding(.horizontal)
             }
         }
+        #endif
     }
+
+    #if os(iOS)
+    private var gameAlertsSubtitle: String {
+        if gameAlertsEnabled && notificationAuthStatus == .denied {
+            return "Notifications are off in iPhone Settings — turn them on to receive game alerts"
+        }
+        return "Pinned games: start (when no Live Activity runs), close late, and final"
+    }
+
+    private var gameAlertsRow: some View {
+        Toggle(isOn: Binding(
+            get: { gameAlertsEnabled },
+            set: { enabled in
+                gameAlertsEnabled = enabled
+                if enabled {
+                    Task {
+                        notificationAuthStatus = await GameAlertsPreference13083.shared.optInAndRequestPermission()
+                    }
+                } else {
+                    GameAlertsPreference13083.shared.setEnabled(false)
+                }
+            }
+        )) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "bell.badge.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Game alerts")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(gameAlertsSubtitle)
+                        .font(.caption2)
+                        .foregroundStyle(
+                            gameAlertsEnabled && notificationAuthStatus == .denied
+                                ? Color.orange
+                                : Color.secondary.opacity(0.75)
+                        )
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .toggleStyle(.switch)
+        .tint(Color.accentColor)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.4), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
+        .accessibilityIdentifier("preferences.gameAlertsToggle")
+    }
+    #endif
 
     private var morningDigestSubtitle: String {
         if let error = viewModel.morningDigestError { return error }

@@ -1,8 +1,15 @@
 import SwiftUI
+#if os(iOS)
+import UserNotifications
+#endif
 
 struct PinManagementView: View {
     @EnvironmentObject private var pinManager: PinManager
     @Environment(\.dismiss) private var dismiss
+    #if os(iOS)
+    @State private var gameAlertsEnabled = GameAlertsPreference13083.shared.isEnabled
+    @State private var notificationAuthStatus: UNAuthorizationStatus = .notDetermined
+    #endif
     #if DEBUG
     @StateObject private var vm = PinManagementView.makeViewModel()
 
@@ -50,6 +57,43 @@ struct PinManagementView: View {
                         ForEach(pins) { pin in pinRow(pin) }
                     }
                 }
+                #if os(iOS)
+                Section("Notifications") {
+                    Toggle(isOn: Binding(
+                        get: { gameAlertsEnabled },
+                        set: { enabled in
+                            gameAlertsEnabled = enabled
+                            if enabled {
+                                Task {
+                                    notificationAuthStatus = await GameAlertsPreference13083.shared.optInAndRequestPermission()
+                                }
+                            } else {
+                                GameAlertsPreference13083.shared.setEnabled(false)
+                            }
+                        }
+                    )) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Game alerts")
+                                .font(.body.weight(.medium))
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(
+                                gameAlertsEnabled && notificationAuthStatus == .denied
+                                    ? "Notifications are off in iPhone Settings — turn them on to receive game alerts"
+                                    : "Pinned games: start (when no Live Activity runs), close late, and final"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(
+                                gameAlertsEnabled && notificationAuthStatus == .denied
+                                    ? Color.orange
+                                    : Color.secondary
+                            )
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .tint(Color.accentColor)
+                    .accessibilityIdentifier("pinManagement.gameAlertsToggle")
+                }
+                #endif
             }
             .navigationTitle("Manage pins")
             #if os(iOS)
@@ -67,7 +111,18 @@ struct PinManagementView: View {
             }
         }
         #endif
-        .task { await pinManager.loadPins() }
+        .task {
+            #if os(iOS)
+            gameAlertsEnabled = GameAlertsPreference13083.shared.isEnabled
+            notificationAuthStatus = await NotificationManager.shared.notificationAuthorizationStatus()
+            #endif
+            await pinManager.loadPins()
+        }
+        #if os(iOS)
+        .onReceive(NotificationCenter.default.publisher(for: .gameAlertsPreferenceDidChange13083)) { _ in
+            gameAlertsEnabled = GameAlertsPreference13083.shared.isEnabled
+        }
+        #endif
         .task(id: pinManager.savedPins) { await vm.load(pinManager.savedPins) }
         .onChange(of: pinManager.identityGeneration) { _, _ in dismiss() }
     }
