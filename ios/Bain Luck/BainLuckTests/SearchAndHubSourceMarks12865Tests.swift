@@ -487,4 +487,159 @@ final class SearchAndHubSourceMarks12865Tests: XCTestCase {
         try XCTUnwrap(sideBySide(settledLight, settledDark).pngData())
             .write(to: outDir.appendingPathComponent("12865-settled-away-winner-sheet-light-dark-390.png"))
     }
+
+    func testCompactNFLWeekHubPreservesDeferredMarketCursorAndLoadsMore() async throws {
+        let initialCursor = "WzEwMSw1LHRydWUsNTAxLFs0MDEsNDAyXV0"
+        let page1JSON = """
+        {
+          "state": "published",
+          "slug": "nfl-2026-week-11",
+          "revision": 5,
+          "edition": { "kind": "nfl_week", "league": "nfl", "season": 2026, "stage": "Regular Season", "week": 11 },
+          "container": { "id": 101, "kind": "week", "name": "NFL Week 11", "slug": "nfl-2026-week-11" },
+          "children": [],
+          "member_count": 1,
+          "withheld": [],
+          "withheld_count": 0,
+          "assembled": true,
+          "known_classes": ["game", "prop", "futures"],
+          "counts": {
+            "market_count": 20,
+            "selected_market_count": 12,
+            "deferred_market_count": 8
+          },
+          "page": {
+            "kind": "nfl_week_markets",
+            "limit": 12,
+            "next_cursor": "\(initialCursor)",
+            "next_url": "/api/containers/nfl-2026-week-11?market_cursor=\(initialCursor)&market_revision=5&market_limit=50&include_children=false"
+          },
+          "sections": [
+            {
+              "class": "prop",
+              "title": "Player Props",
+              "count": 1,
+              "members": [
+                {
+                  "type": "market",
+                  "id": 501,
+                  "destination": { "kind": "market", "id": 501, "api": "/api/futures/501" },
+                  "card": {
+                    "id": 501,
+                    "name": "Saquon Barkley Rushing Yards",
+                    "status": "open",
+                    "source": "kalshi",
+                    "top_outcomes": [{ "id": 1, "name": "90+ yards", "probability": 0.54 }]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+        """
+
+        let page2JSON = """
+        {
+          "state": "published",
+          "slug": "nfl-2026-week-11",
+          "revision": 5,
+          "edition": { "kind": "nfl_week", "league": "nfl", "season": 2026, "stage": "Regular Season", "week": 11 },
+          "container": { "id": 101, "kind": "week", "name": "NFL Week 11", "slug": "nfl-2026-week-11" },
+          "children": [],
+          "member_count": 1,
+          "withheld": [],
+          "withheld_count": 0,
+          "assembled": true,
+          "known_classes": ["game", "prop", "futures"],
+          "counts": {
+            "market_count": 20,
+            "selected_market_count": 8,
+            "deferred_market_count": 0
+          },
+          "page": {
+            "kind": "nfl_week_markets",
+            "limit": 50,
+            "next_cursor": null,
+            "next_url": null
+          },
+          "sections": [
+            {
+              "class": "prop",
+              "title": "Player Props",
+              "count": 1,
+              "members": [
+                {
+                  "type": "market",
+                  "id": 502,
+                  "destination": { "kind": "market", "id": 502, "api": "/api/futures/502" },
+                  "card": {
+                    "id": 502,
+                    "name": "Lamar Jackson Passing Yards",
+                    "status": "open",
+                    "source": "kalshi",
+                    "top_outcomes": [{ "id": 2, "name": "225+ yards", "probability": 0.48 }]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+        """
+
+        let page1 = try decodeSnake(ContainerHubResponse.self, Data(page1JSON.utf8))
+        let page2 = try decodeSnake(ContainerHubResponse.self, Data(page2JSON.utf8))
+        XCTAssertEqual(page1.marketCounts, ContainerHubMarketCounts(marketCount: 20, selectedMarketCount: 12, deferredMarketCount: 8))
+        XCTAssertEqual(page1.page?.kind, "nfl_week_markets")
+        XCTAssertEqual(page1.page?.nextCursor, initialCursor)
+
+        final class RecordingMarketPageLoader: ContainerHubLoading, @unchecked Sendable {
+            let first: ContainerHubResponse
+            let second: ContainerHubResponse
+            var recordedMarketCursor: String?
+            var recordedRevision: Int?
+            var recordedLimit: Int?
+            var calledRegularLoadPage = false
+
+            init(first: ContainerHubResponse, second: ContainerHubResponse) {
+                self.first = first
+                self.second = second
+            }
+
+            nonisolated func load(slug: String) async throws -> ContainerHubResponse { first }
+
+            nonisolated func loadPage(slug: String, cursor: String, revision: Int, limit: Int) async throws -> ContainerHubResponse {
+                calledRegularLoadPage = true
+                return second
+            }
+
+            nonisolated func loadMarketPage(slug: String, cursor: String, revision: Int, limit: Int) async throws -> ContainerHubResponse {
+                recordedMarketCursor = cursor
+                recordedRevision = revision
+                recordedLimit = limit
+                return second
+            }
+        }
+
+        let loader = RecordingMarketPageLoader(first: page1, second: page2)
+        let vm = ContainerHubViewModel(slug: "nfl-2026-week-11", service: loader)
+        await vm.load()
+
+        guard case .loaded(let initialPresentation) = vm.state else {
+            return XCTFail("Expected loaded state")
+        }
+        XCTAssertEqual(initialPresentation.response.page?.nextCursor, initialCursor, "Load more markets must be offered when deferred markets exist")
+
+        await vm.loadMore()
+        XCTAssertFalse(loader.calledRegularLoadPage, "Compact week hub must use loadMarketPage (market_cursor), not theme loadPage")
+        XCTAssertEqual(loader.recordedMarketCursor, initialCursor)
+        XCTAssertEqual(loader.recordedRevision, 5)
+        XCTAssertEqual(loader.recordedLimit, 12)
+
+        guard case .loaded(let expandedPresentation) = vm.state else {
+            return XCTFail("Expected loaded state after loadMore")
+        }
+        XCTAssertNil(expandedPresentation.response.page?.nextCursor)
+        let allIds = expandedPresentation.sections.flatMap { $0.members.map(\.memberId) }
+        XCTAssertEqual(allIds, [501, 502], "Deferred market 502 must append after initial market 501")
+    }
 }

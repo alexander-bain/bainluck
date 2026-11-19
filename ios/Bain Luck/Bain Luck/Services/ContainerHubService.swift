@@ -3,6 +3,7 @@ import Foundation
 nonisolated protocol ContainerHubLoading: Sendable {
     nonisolated func load(slug: String) async throws -> ContainerHubResponse
     nonisolated func loadPage(slug: String, cursor: String, revision: Int, limit: Int) async throws -> ContainerHubResponse
+    nonisolated func loadMarketPage(slug: String, cursor: String, revision: Int, limit: Int) async throws -> ContainerHubResponse
     nonisolated func loadPairedMetrics(slug: String) async -> [PairedMetricSet]
 }
 
@@ -10,6 +11,10 @@ extension ContainerHubLoading {
     func loadPage(slug: String, cursor: String, revision: Int, limit: Int) async throws -> ContainerHubResponse {
         // Existing sports-only test/loaders remain compatible; no invented page.
         throw APIError.invalidURL
+    }
+
+    func loadMarketPage(slug: String, cursor: String, revision: Int, limit: Int) async throws -> ContainerHubResponse {
+        try await loadPage(slug: slug, cursor: cursor, revision: revision, limit: limit)
     }
 
     func loadPairedMetrics(slug: String) async -> [PairedMetricSet] {
@@ -31,6 +36,11 @@ nonisolated struct ContainerHubService: ContainerHubLoading {
     func loadPage(slug: String, cursor: String, revision: Int, limit: Int) async throws -> ContainerHubResponse {
         guard revision > 0, ContainerHubPage.validCursor(cursor) else { throw APIError.invalidURL }
         return try await client.fetchContainerHub(slug: slug, cursor: cursor, revision: revision, limit: limit)
+    }
+
+    func loadMarketPage(slug: String, cursor: String, revision: Int, limit: Int) async throws -> ContainerHubResponse {
+        guard revision > 0, ContainerHubPage.validMarketCursor(cursor) else { throw APIError.invalidURL }
+        return try await client.fetchContainerHubMarketPage(slug: slug, cursor: cursor, revision: revision, limit: limit)
     }
 
     func loadPairedMetrics(slug: String) async -> [PairedMetricSet] {

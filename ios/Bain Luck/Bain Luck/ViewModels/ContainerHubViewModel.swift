@@ -125,9 +125,14 @@ final class ContainerHubViewModel: ObservableObject {
 
     @MainActor
     func loadMore() async {
+        let isWeekMarkets = { (r: ContainerHubResponse) in
+            r.page?.kind == ContainerHubPage.nflWeekMarketsKind
+        }
         guard !isLoadingMore, case .loaded(let current) = state,
-              current.response.state == .published, current.response.edition?.isTheme == true,
+              current.response.state == .published,
+              current.response.edition?.isTheme == true || isWeekMarkets(current.response),
               let revision = current.response.revision, let cursor = current.response.page?.nextCursor else { return }
+        let loadWeekMarkets = isWeekMarkets(current.response)
         issued += 1
         let ticket = issued
         pageVersion += 1
@@ -136,7 +141,10 @@ final class ContainerHubViewModel: ObservableObject {
         pageError = nil
         defer { if pageVersion == version { isLoadingMore = false } }
         do {
-            let response = try await service.loadPage(slug: slug, cursor: cursor, revision: revision, limit: current.response.page?.limit ?? 50)
+            let pageLimit = current.response.page?.limit ?? 50
+            let response = loadWeekMarkets
+                ? try await service.loadMarketPage(slug: slug, cursor: cursor, revision: revision, limit: pageLimit)
+                : try await service.loadPage(slug: slug, cursor: cursor, revision: revision, limit: pageLimit)
             guard version == pageVersion, admitted(ticket), !Task.isCancelled else { return }
             try validate(response)
             guard revisionAdmitted(response) else { return }
@@ -178,7 +186,9 @@ final class ContainerHubViewModel: ObservableObject {
     }
     private func sameRevision(_ lhs: ContainerHubResponse, _ rhs: ContainerHubResponse) -> Bool {
         lhs.state == .published && rhs.state == .published && lhs.slug == rhs.slug && lhs.revision == rhs.revision
-            && lhs.edition == rhs.edition && lhs.counts?.shownCount == rhs.counts?.shownCount
+            && lhs.edition == rhs.edition
+            && lhs.counts?.shownCount == rhs.counts?.shownCount
+            && lhs.marketCounts?.marketCount == rhs.marketCounts?.marketCount
     }
 
     @MainActor
@@ -198,7 +208,8 @@ final class ContainerHubViewModel: ObservableObject {
             closeReads()
             heldPages = []
         } else {
-            heldPages = response.edition?.isTheme == true ? [HeldPage(cursor: nil, response: response)] : []
+            let retainsPagination = response.edition?.isTheme == true || response.page?.kind == ContainerHubPage.nflWeekMarketsKind
+            heldPages = retainsPagination ? [HeldPage(cursor: nil, response: response)] : []
         }
         let presentation = ContainerHubPresentation(response: response)
         context.accept(presentation)

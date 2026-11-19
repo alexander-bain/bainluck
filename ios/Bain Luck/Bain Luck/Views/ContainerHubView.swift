@@ -1,5 +1,26 @@
 import SwiftUI
 
+private enum ContainerHubThemeTokens {
+    static func surface(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color.black : DS.surface
+    }
+    static func cardBg(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color(white: 0.11) : DS.cardBg
+    }
+    static func subtleBg(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color.white.opacity(0.08) : DS.surface
+    }
+    static func border(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color.white.opacity(0.14) : DS.border
+    }
+    static func textPrimary(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color.primary : DS.textPrimary
+    }
+    static func textSecondary(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color.secondary : DS.textSecondary
+    }
+}
+
 /// #9652: the selected sensible-group treatment, using ordinary card routes.
 /// It stays in its caller's NavigationStack, so Back reveals the same StateObject
 /// and scroll binding rather than constructing a replacement hub.
@@ -8,12 +29,12 @@ struct ContainerHubView: View {
     @StateObject private var vm: ContainerHubViewModel
     @Environment(\.colorScheme) private var colorScheme
 
-    private var hubSurface: Color { colorScheme == .dark ? Color.black : DS.surface }
-    private var hubCardBg: Color { colorScheme == .dark ? Color(white: 0.11) : DS.cardBg }
-    private var hubSubtleBg: Color { colorScheme == .dark ? Color.white.opacity(0.08) : DS.surface }
-    private var hubBorder: Color { colorScheme == .dark ? Color.white.opacity(0.14) : DS.border }
-    private var hubTextPrimary: Color { colorScheme == .dark ? Color.primary : DS.textPrimary }
-    private var hubTextSecondary: Color { colorScheme == .dark ? Color.secondary : DS.textSecondary }
+    private var hubSurface: Color { ContainerHubThemeTokens.surface(colorScheme) }
+    private var hubCardBg: Color { ContainerHubThemeTokens.cardBg(colorScheme) }
+    private var hubSubtleBg: Color { ContainerHubThemeTokens.subtleBg(colorScheme) }
+    private var hubBorder: Color { ContainerHubThemeTokens.border(colorScheme) }
+    private var hubTextPrimary: Color { ContainerHubThemeTokens.textPrimary(colorScheme) }
+    private var hubTextSecondary: Color { ContainerHubThemeTokens.textSecondary(colorScheme) }
 
     init(slug: String, displayName: String, service: any ContainerHubLoading = ContainerHubService()) {
         self.displayName = displayName
@@ -322,9 +343,9 @@ struct ContainerHubCollectionLink: View {
                     Spacer()
                     Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                 }
-                .foregroundStyle(colorScheme == .dark ? Color.primary : DS.textPrimary)
+                .foregroundStyle(ContainerHubThemeTokens.textPrimary(colorScheme))
                 .padding(16)
-                .background(colorScheme == .dark ? Color(white: 0.11) : DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
+                .background(ContainerHubThemeTokens.cardBg(colorScheme), in: RoundedRectangle(cornerRadius: 12))
             }
             .buttonStyle(.plain)
         }
