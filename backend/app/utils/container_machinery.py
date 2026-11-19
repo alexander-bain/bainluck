@@ -4065,10 +4065,10 @@ async def serve_machinery_candidate_preview(
             redis_client = await get_shared_async_redis()
             blob = json.dumps({"status": "ok", "cached_at": stored_at, "payload": envelope})
             await bounded_redis_call(
-                lambda: redis_client.setex(
+                lambda: redis_client.set(
                     _preview_redis_key(canon_slug, bool(include_children)),
-                    int(_MACHINERY_PREVIEW_CACHE_TTL_S),
                     blob,
+                    ex=int(_MACHINERY_PREVIEW_CACHE_TTL_S),
                 )
             )
         except Exception:  # noqa: BLE001 — preview cache write fails open
