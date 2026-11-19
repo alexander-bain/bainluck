@@ -2,8 +2,9 @@ import AppIntents
 import SwiftUI
 
 /// #12315 — one hint in My Stuff that Bain Luck answers Siri: Apple's own tip
-/// for "Ask About a Team" (`TeamChanceIntent208B`), whose first phrase in
-/// `BainLuckShortcuts10873` is `"Ask Bain Luck about the [team]"`. It goes away
+/// for "Get Probability" (`GetProbabilityIntent10873`), whose first phrase in
+/// `BainLuckShortcuts10873` is `"Ask Bain Luck about a game"` (non-parameterized
+/// so `SiriTipView` never renders raw `${team}` template syntax). It goes away
 /// for good once the reader closes it or has run either Siri probability
 /// shortcut, and never shows while tips are hidden for a test run
 /// (`-contextual_tips_10876 hidden`).
@@ -23,7 +24,7 @@ struct SiriProbabilityTip12315: View {
         #if os(iOS)
         if SiriProbabilityTipRule12315.shows(dismissed: dismissed, used: used,
                                              option: SiriProbabilityTipRule12315.launchOption) {
-            SiriTipView(intent: TeamChanceIntent208B(),
+            SiriTipView(intent: GetProbabilityIntent10873(),
                         isVisible: Binding(get: { true }, set: { if !$0 { dismissed = true } }))
                 .padding(.horizontal)
                 .padding(.bottom, 8)

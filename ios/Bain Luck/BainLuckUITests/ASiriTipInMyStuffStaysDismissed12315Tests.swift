@@ -32,6 +32,7 @@ final class ASiriTipInMyStuffStaysDismissed12315Tests: XCTestCase {
         let hint = app.staticTexts.matching(identifier: hintID).firstMatch
         XCTAssertTrue(hint.waitForExistence(timeout: 10), "a reader who has never seen the hint does not see it")
         XCTAssertTrue(hint.label.contains("Bain Luck"), "the hint does not name the app: \(hint.label)")
+        XCTAssertFalse(hint.label.contains("${"), "the hint must not expose raw parameter template syntax: \(hint.label)")
         app.buttons.matching(identifier: hintID).firstMatch.tap()
         XCTAssertTrue(hint.waitForNonExistence(timeout: 5), "closing the hint left it on screen")
 
