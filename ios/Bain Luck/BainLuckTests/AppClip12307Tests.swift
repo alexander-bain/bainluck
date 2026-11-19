@@ -200,8 +200,8 @@ final class AppClip12307Tests: XCTestCase {
         XCTAssertTrue(sc.hasLiveScores)
         XCTAssertEqual(sc.score(forRowIndex: 0), "65")
         XCTAssertEqual(sc.score(forRowIndex: 1), "67")
-        XCTAssertEqual(sc.clockLine, "Q4 · 3:18")
-        XCTAssertEqual(ClipLoader12307.statusText(for: reading, scoreClock: sc), "Live · Q4 · 3:18")
+        XCTAssertEqual(sc.clockLine, "Q4 3:18")
+        XCTAssertEqual(ClipLoader12307.statusText(for: reading, scoreClock: sc), "Live · Q4 3:18")
 
         let scoredNoClock = try SavedWidgetDetailPayload10875.decode(
             eventJSON(status: "live", homeScore: 67, awayScore: 65), as: .game)

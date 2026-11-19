@@ -121,10 +121,10 @@ enum ClipLoader12307 {
         let isLive = event.status == "live"
         guard isLive else { return nil }
         let bothScores = event.awayScore != nil && event.homeScore != nil
-        let period = event.espn?.period?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let clock = event.espn?.gameClock?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parts = [period, clock].compactMap { $0 }.filter { !$0.isEmpty }
-        let clockLine = parts.isEmpty ? nil : parts.joined(separator: " · ")
+        let clockLine = PeriodLabel.liveStatusText(
+            period: event.espn?.period,
+            gameClock: event.espn?.gameClock
+        )
         return ClipGameScoreClock12307(
             isLive: true,
             awayScore: bothScores ? event.awayScore : nil,
