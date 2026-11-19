@@ -245,6 +245,72 @@ def _scale_skeleton(raw: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+_PLAIN_RATE_MOVE_RE = re.compile(
+    r"^(quarter|half|three-quarter|full|\d+(?:\.\d+)?)-point(?:\s+(or\s+(?:larger|more|greater)))?\s+(cut|decrease|increase|hike)$",
+    re.IGNORECASE,
+)
+
+_COUNT_BPS_PAREN_RE = re.compile(
+    r"^(\d+)(\+)?\s*\(\s*(\d+(?:\.\d+)?)(\+)?\s*(?:bps|basis\s+points?)\s*\)$",
+    re.IGNORECASE,
+)
+
+_PLAIN_MAGNITUDE_BPS: dict[str, float] = {
+    "quarter": 25.0,
+    "half": 50.0,
+    "three-quarter": 75.0,
+    "full": 100.0,
+}
+
+
+def _plain_rate_move_label(val_bps: float, direction: int, is_open: bool) -> str:
+    """Ruling 244: A — format Fed/central-bank rate moves in plain English, never 'bps'."""
+    word = "cut" if direction < 0 else "increase"
+    rounded = round(val_bps, 4)
+    if abs(rounded - 25.0) < 1e-6:
+        mag = "Quarter-point"
+    elif abs(rounded - 50.0) < 1e-6:
+        mag = "Half-point"
+    elif abs(rounded - 75.0) < 1e-6:
+        mag = "Three-quarter-point"
+    elif abs(rounded - 100.0) < 1e-6:
+        mag = "Full-point"
+    else:
+        pts = val_bps / 100.0
+        mag = f"{pts:g}-point"
+    if is_open:
+        return f"{mag} or larger {word}"
+    return f"{mag} {word}"
+
+
+def _plain_bps_step_words(val_bps: float) -> str:
+    rounded = round(val_bps, 4)
+    if abs(rounded - 25.0) < 1e-6:
+        return "quarter point"
+    if abs(rounded - 50.0) < 1e-6:
+        return "half point"
+    if abs(rounded - 75.0) < 1e-6:
+        return "three-quarter point"
+    if abs(rounded - 100.0) < 1e-6:
+        return "full point"
+    return f"{val_bps / 100.0:g} points"
+
+
+def _prose_rate_outcome(label: str, *, capitalize_first: bool = False) -> str:
+    """Format a cleaned outcome label naturally inside a sentence (Ruling 244: A)."""
+    s = str(label or "").strip()
+    if not s:
+        return s
+    low = s.lower()
+    if _PLAIN_RATE_MOVE_RE.match(s):
+        phrase = f"a {low}"
+    else:
+        phrase = _prose_outcome_name(s)
+    if capitalize_first and phrase:
+        return phrase[0].upper() + phrase[1:]
+    return phrase
+
+
 def parse_numerical_scale_key(raw_label: Optional[str]) -> Optional[dict[str, Any]]:
     """Parse one outcome label into a numerical-scale sort key, or ``None`` if not a numeric scale."""
     full = (raw_label or "").strip()
@@ -262,6 +328,24 @@ def parse_numerical_scale_key(raw_label: Optional[str]) -> Optional[dict[str, An
 
     if _HOLD_MOVE_RE.match(stripped):
         return {"kind": "signed_move", "primary": 0.0, "bound_rank": 0, "secondary": 0.0, "skeleton": "signed_move"}
+
+    m_plain = _PLAIN_RATE_MOVE_RE.match(stripped)
+    if m_plain:
+        mag_tok = m_plain.group(1).lower()
+        val = (
+            _PLAIN_MAGNITUDE_BPS[mag_tok]
+            if mag_tok in _PLAIN_MAGNITUDE_BPS
+            else _parse_float(mag_tok) * 100.0
+        )
+        is_open = bool(m_plain.group(2))
+        direction = -1.0 if m_plain.group(3).lower() in {"cut", "decrease"} else 1.0
+        return {
+            "kind": "signed_move",
+            "primary": direction * val,
+            "bound_rank": (-1 if direction < 0 else 1) if is_open else 0,
+            "secondary": direction * val,
+            "skeleton": "signed_move",
+        }
 
     m = _SIGNED_PREFIX_MOVE_RE.match(stripped)
     if m:
@@ -422,9 +506,24 @@ def _clean_outcome_label(label: str) -> str:
     if re.match(r"^exactly\s+[-+$€£\d]", trimmed, re.IGNORECASE):
         trimmed = re.sub(r"^exactly\s+", "", trimmed, flags=re.IGNORECASE).strip()
 
-    # Unify FOMC / rate-move outcomes onto house style ('25 bps decrease', 'No change', '25 bps increase', '50+ bps increase').
+    # Ruling 244: A — plain-English Fed/rate-move labels (never 'bps').
     if _HOLD_MOVE_RE.match(trimmed):
         return "No change"
+
+    m_cnt = _COUNT_BPS_PAREN_RE.match(trimmed)
+    if m_cnt:
+        cnt = int(m_cnt.group(1))
+        cnt_plus = "+" if m_cnt.group(2) else ""
+        bps_v = _parse_float(m_cnt.group(3))
+        bps_plus = bool(m_cnt.group(4))
+        if math.isfinite(bps_v):
+            if cnt == 0 and not cnt_plus:
+                return "0 hikes"
+            noun = "hike" if (cnt == 1 and not cnt_plus) else "hikes"
+            step_txt = _plain_bps_step_words(bps_v)
+            if bps_plus:
+                step_txt = f"{step_txt} or more"
+            return f"{cnt}{cnt_plus} {noun} ({step_txt})"
 
     m_pre = _SIGNED_PREFIX_MOVE_RE.match(trimmed)
     if m_pre and re.search(r"bps|basis\s+points?", trimmed, re.IGNORECASE):
@@ -439,8 +538,7 @@ def _clean_outcome_label(label: str) -> str:
                 is_open = True
             else:
                 is_open = bool(op_tok or plus_tok)
-            word = "decrease" if direction < 0 else "increase"
-            return f"{_format_bps_number(val)}{'+' if is_open else ''} bps {word}"
+            return _plain_rate_move_label(val, direction, is_open)
 
     m_suf = _SIGNED_SUFFIX_MOVE_RE.match(trimmed)
     if m_suf and re.search(r"bps|basis\s+points?", trimmed, re.IGNORECASE):
@@ -455,8 +553,7 @@ def _clean_outcome_label(label: str) -> str:
                 is_open = True
             else:
                 is_open = bool(op_tok or plus_tok or or_more)
-            word = "decrease" if direction < 0 else "increase"
-            return f"{_format_bps_number(val)}{'+' if is_open else ''} bps {word}"
+            return _plain_rate_move_label(val, direction, is_open)
 
     return _proper_case_outcome_label(trimmed)
 
@@ -2459,15 +2556,17 @@ def _build_dynamic_title_from_set(
         if sp_fav and sibling_items:
             sib_fav = _fav_outcome(sibling_items[0])
             if sib_fav:
-                lead_subj = _prose_market_phrase(str(spotlight_item["title"]), capitalize_first=True)
+                sp_phrase = _prose_market_phrase(str(spotlight_item["title"]))
                 sib_phrase = _prose_market_phrase(str(sibling_items[0]["title"]))
+                lead_outcome = _prose_rate_outcome(str(sp_fav["name"]), capitalize_first=True)
+                sib_outcome = _prose_rate_outcome(str(sib_fav["name"]), capitalize_first=False)
                 return (
-                    f"{lead_subj} prices {sp_fav['name']} at {sp_fav['rendered_percent']}%, "
-                    f"with {sib_fav['name']} leading {sib_phrase} at {sib_fav['rendered_percent']}%"
+                    f"{lead_outcome} leads {sp_phrase} at {sp_fav['rendered_percent']}%, "
+                    f"with {sib_outcome} leading {sib_phrase} at {sib_fav['rendered_percent']}%"
                 )
         if sp_fav:
             sp_phrase = _prose_market_phrase(str(spotlight_item["title"]))
-            return f"{_prose_outcome_name(str(sp_fav['name']))} leads {sp_phrase} at {sp_fav['rendered_percent']}%"
+            return f"{_prose_rate_outcome(str(sp_fav['name']), capitalize_first=True)} leads {sp_phrase} at {sp_fav['rendered_percent']}%"
 
     return str(definition.get("name") or definition.get("slug") or "Round-Up")
 
