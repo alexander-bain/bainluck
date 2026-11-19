@@ -28,6 +28,7 @@ the predicate correct and the call site passing `None`, arm one below fails and
 every unit guard stays green.
 """
 
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -298,9 +299,11 @@ def _fresh_opening_chance(now):
 
 async def _serve_opening_history(
     now, rows, *, sources=None, folded=True, chart_range="all", kickoff=None,
+    commence_source=None,
 ):
     event = _live_event({} if folded else sources or {})
     event.commence_time = kickoff if kickoff is not None else now - timedelta(minutes=15)
+    event.commence_time_source = commence_source
     event.opening_home_probability = 0.495
     twin = SimpleNamespace(
         id=event.id + 1,
@@ -319,6 +322,64 @@ async def _serve_opening_history(
         db=session,
     )
     return payload, session.blend_reads
+
+
+@pytest.mark.parametrize("folded", [False, True], ids=["canonical", "folded"])
+@pytest.mark.parametrize("quote", ["pregame", "confirmed", "live-peer", "withdrawn"])
+async def test_fresh_kickoff_evidence_overrides_a_cached_opening_chance(monkeypatch, folded, quote):
+    now = datetime.now(UTC)
+    kickoff = now - timedelta(minutes=15)
+    opening = _opening_snapshot(now)
+    tail = _snapshot(now - timedelta(hours=2), 0.495)
+    rows = [
+        opening,
+        tail,
+        _snapshot(opening.captured_at, 0.56, source="kalshi"),
+        _snapshot(tail.captured_at, 0.59, source="kalshi"),
+    ]
+    actual_read, sources = _fresh_opening_chance(now)
+    if quote != "confirmed":
+        sources["polymarket"]["price_read"] = make_price_read(0.495, tail.captured_at)
+    if quote == "live-peer":
+        sources["kalshi"] = {
+            "value": 0.7,
+            "price_read": make_price_read(0.7, actual_read.captured_at),
+            "updated_at": actual_read.captured_at.isoformat(),
+        }
+    if quote == "withdrawn":
+        sources = {}
+
+    revisions = {str(_SPECIMEN_ID): 5}
+    if folded:
+        revisions[str(_SPECIMEN_ID + 1)] = 8
+    cached = {
+        "hero_probability_source": "blend",
+        "hero_probability": 0.495,
+        "hero_probability_observed_at": tail.captured_at.isoformat(),
+        "blend_fold_revision": revisions,
+        "source_mark": {"sources": [{
+            "key": "polymarket",
+            "probability": 0.495,
+            "observed_at": tail.captured_at.isoformat(),
+        }]},
+    }
+    monkeypatch.setitem(events._event_detail_cache, _SPECIMEN_ID, (time.time(), "live", cached))
+    payload, reads = await _serve_opening_history(
+        now, rows, sources=sources, folded=folded, kickoff=kickoff, commence_source="espn",
+    )
+
+    points = [p for p in _points(payload) if not p.get("live_edge")]
+    assert [(p["timestamp"], p["home_probability"]) for p in points] == [
+        (p.captured_at.isoformat(), p.home_win_probability) for p in (opening, tail)
+    ]
+    assert reads <= 1
+    endpoint = payload["aggregate_line"][-1]
+    assert payload["blend_edge_pinned"] is (quote in ("confirmed", "live-peer"))
+    if quote in ("pregame", "withdrawn"):
+        assert datetime.fromisoformat(endpoint["timestamp"]) < kickoff
+    else:
+        assert endpoint["home_probability"] == (0.495 if quote == "confirmed" else 0.7)
+        assert payload["blend_edge_observed_at"] == actual_read.captured_at.isoformat()
 
 
 async def test_a_folded_live_game_never_promotes_its_only_stored_pregame_quote():
