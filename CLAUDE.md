@@ -41,8 +41,8 @@ Architecture work may only ride an already queued user-visible ship.
   Settled heroes show winners, cards show results, props show grades, charts show the completed journey.
 - Anonymous submission must keep working for bug reports.
 - No fresh matching measurement means no accuracy claim. **RED means REAL.**
-- Credentials NEVER go in tracked files. Keep secrets in untracked environment files or service
-  secrets; gitleaks is the backstop. A leak requires rotation, because history retains it.
+- Credentials NEVER go in tracked files (gitleaks; leaks need rotation). Never open `.env`
+  files; an admin-token read needs Alex's yes (142-A), never printed or stored.
 
 ## Code Style
 
