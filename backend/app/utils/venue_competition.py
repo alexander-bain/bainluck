@@ -191,12 +191,22 @@ KALSHI_SERIES_LEAGUES: dict[str, str] = {
 }
 
 
+#: Non-soccer Polymarket game-slug codes that map unambiguously to one league
+#: (#13036: women's college basketball `cwbb-*` slugs). Kept separate from
+#: :data:`POLYMARKET_LEAGUE_CODES` so the soccer-only refusal map stays scoped.
+POLYMARKET_NON_SOCCER_LEAGUE_CODES: dict[str, str] = {
+    "cwbb": "basketball_wncaab",
+}
+
+
 def _league_for_polymarket_code(code: str) -> Optional[str]:
     """The ONE league whose venue codes include ``code``, else None.
 
     ``ucl`` is listed under both the Champions League and its qualifying
     rounds, so it names no single league and places nothing.
     """
+    if code in POLYMARKET_NON_SOCCER_LEAGUE_CODES:
+        return POLYMARKET_NON_SOCCER_LEAGUE_CODES[code]
     owners = [
         league for league, codes in POLYMARKET_LEAGUE_CODES.items() if code in codes
     ]
@@ -245,6 +255,7 @@ POLYMARKET_SPORT_FAMILY_CODES: dict[str, str] = {
     "mlb": "baseball",
     "nba": "basketball",
     "wnba": "basketball",
+    "cwbb": "basketball",
     "nhl": "icehockey",
     "mls": "soccer",
 }

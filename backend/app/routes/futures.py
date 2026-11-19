@@ -1406,6 +1406,7 @@ async def browse_futures(
     # search drop AFTER normalization, and browse has no basis step to sit either
     # side of.
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
+    from app.utils.futures_source_mark import mark_futures_card_rows
     from app.utils.outcome_display import (
         drop_dominant_field_outcomes,
         drop_incoherent_ladder_outcomes,
@@ -1555,6 +1556,7 @@ async def browse_futures(
                 o["movement"] = None
         leader_pick_order(display_outcomes)
         top3 = display_outcomes[:3]
+        mark_futures_card_rows(market, top3)
         items.append({
             "id": market.id,
             "name": market.name,
@@ -1856,6 +1858,7 @@ async def faceted_futures_search(
     import json as _json
     from sqlalchemy import literal_column, text as sql_text
     from app.utils.event_taxonomy import validate_tag
+    from app.utils.futures_source_mark import mark_futures_card_rows
 
     # Build tag filter from both sources
     tag_filter: list[str] = []
@@ -2005,6 +2008,7 @@ async def faceted_futures_search(
                     if field in od:
                         od[field] = None
             top3.append(od)
+        mark_futures_card_rows(market, top3)
         formatted.append({
             "id": market.id,
             "name": market.name,
@@ -10279,6 +10283,9 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
             getattr(market, "name", "") or "",
         )
     top_outcomes = outcome_dicts[:5]
+    from app.utils.futures_source_mark import mark_futures_card_rows
+
+    mark_futures_card_rows(market, top_outcomes)
 
     # Cross-source info from canonical key
     source_info = None

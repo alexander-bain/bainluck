@@ -41,7 +41,7 @@ import {
   slateRoundKey,
   titleChipLabel,
 } from "@/lib/matchList";
-import { buildBracket } from "@/lib/bracket";
+import { buildBracket, prematchFromSlate } from "@/lib/bracket";
 import type { Broadcast, SlateMatch, SlateSide } from "@/lib/slate";
 import {
   SYNTHETIC_MENS_DRAW,
@@ -131,10 +131,33 @@ describe("ruling 4 — the slate and the draw are one match list", () => {
 
   it("the surviving entry keeps the draw POSITION and gains the slate's PRICE", () => {
     const rounds = buildBracket(draw);
-    const [entry] = buildMatchList({ slate: [match()], rounds });
+    const slate = [match()];
+    const [entry] = buildMatchList({
+      slate, rounds, prematch: prematchFromSlate(slate, rounds),
+    });
     expect(entry.round).toBe("F");
     const alcaraz = entry.sides.find((s) => s.entityKey === "carlos-alcaraz");
     expect(alcaraz?.matchProbability).toBe(0.78);
+    expect(alcaraz?.openingProbability).toBe(0.74);
+  });
+
+  it("keeps an opening line out of the current match percentages when the quote is absent", () => {
+    const rounds = buildBracket(draw);
+    const row = match({ live_state: "in_progress", probability_is_live: false });
+    const slate = [{
+      ...row,
+      sides: row.sides.map((side) => ({ ...side, probability: null, move: null })),
+    }];
+    const entries = buildMatchList({
+      slate, rounds, prematch: prematchFromSlate(slate, rounds),
+    });
+    const [entry] = entries;
+    expect(entry.sides.map((side) => side.openingProbability)).toEqual([0.74, 0.26]);
+    expect(entry.sides.map((side) => side.matchProbability)).toEqual([null, null]);
+
+    const html = renderToStaticMarkup(<TournamentMatches entries={entries} initialRound="F" />);
+    expect(html).toContain('data-in-play="true"');
+    expect(html).not.toContain('data-percent=');
   });
 
   it("keeps a slate match the draw does not contain — qualifying is still a round", () => {

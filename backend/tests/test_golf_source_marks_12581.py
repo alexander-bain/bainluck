@@ -7,6 +7,7 @@ import pytest
 
 from app.routes.golf import (
     _aggregate_golfer_outcome,
+    _build_current_event,
     _build_h2h_entry,
     _build_tournament_entry,
     _enrich_with_schedule,
@@ -100,6 +101,15 @@ def test_single_source_and_legacy_field_scaling_keep_the_raw_quote():
     assert mark["state"] == "single"
     assert mark["sources"][0]["probability"] == 0.395
     assert "scal" in mark["method"].lower()
+
+
+def test_current_golf_event_summary_keeps_the_leaders_mark():
+    field = _field([("polymarket", [("Matthew Fitzpatrick", 0.395)], 0.121 / 0.395)])
+    summary = _build_current_event(field)
+    assert summary["leader"] == "Matthew Fitzpatrick"
+    assert summary["leader_probability"] == 0.121
+    assert summary["source_mark"] == summary["top_golfers"][0]["source_mark"]
+    assert summary["source_mark"]["sources"][0]["probability"] == 0.395
 
 
 def test_whole_field_scaling_keeps_raw_inputs_and_separates_it_from_price_rounding():
