@@ -3493,7 +3493,7 @@ def _pregame_cutoff(tourn: dict, tourn_markets: list, redis_client) -> tuple[dat
 
 
 async def _attach_pregame(db, tournaments: list[dict], tournament_markets: dict, now: datetime) -> None:
-    """Serve ``pregame_probability`` per golfer and ``pregame_as_of`` per tournament.
+    """Serve each golfer's pregame probability and mark at the tournament cutoff.
 
     #12740. "Pregame" used to be the first reading ever stored, which can be
     weeks early or, for a market picked up late, mid-tournament. It is now the
@@ -3515,6 +3515,7 @@ async def _attach_pregame(db, tournaments: list[dict], tournament_markets: dict,
     for tourn in tournaments:
         for golfer in (tourn.get("_all_golfers") or []) + (tourn.get("golfers") or []):
             golfer["pregame_probability"] = None
+            golfer["pregame_source_mark"] = None
         tourn["pregame_as_of"] = None
         tourn["pregame_cutoff_basis"] = None
 
@@ -3546,13 +3547,18 @@ async def _attach_pregame(db, tournaments: list[dict], tournament_markets: dict,
         )
         if not as_of:
             continue
-        pregame_by_key = {}
+        pregame_by_key: dict[str, tuple[float, dict]] = {}
         for g in (as_of.get("_all_golfers") or as_of.get("golfers") or []):
             key = _match_key(g.get("name") or "")
             if key and g.get("probability") is not None:
-                pregame_by_key[key] = round(float(g["probability"]), 4)
+                pregame_by_key[key] = (
+                    round(float(g["probability"]), 4),
+                    g["source_mark"],
+                )
         for golfer in (tourn.get("_all_golfers") or []) + (tourn.get("golfers") or []):
-            golfer["pregame_probability"] = pregame_by_key.get(_match_key(golfer.get("name") or ""))
+            pregame = pregame_by_key.get(_match_key(golfer.get("name") or ""))
+            if pregame is not None:
+                golfer["pregame_probability"], golfer["pregame_source_mark"] = pregame
         tourn["pregame_as_of"] = cutoff.isoformat()
         tourn["pregame_cutoff_basis"] = basis
 
