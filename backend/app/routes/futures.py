@@ -4724,8 +4724,9 @@ def _unsupported_price_verdicts(
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
             _as_float(latest_trade.get(o.id)),
-            has_trade_evidence=o.id in latest_trade
-            and latest_trade[o.id] is not None,
+            # A stored snapshot with a null trade can inform the award
+            # guard. A missing snapshot still provides no evidence.
+            has_trade_evidence=o.id in latest_trade,
             in_exclusive_field=in_exclusive_field,
             multi_selection_award=multi_selection_award,
             volume_24h=getattr(o, "volume_24h", None),
