@@ -18,7 +18,7 @@ from app.routes import futures as route
     ],
 )
 def test_philon_trade_is_refused_only_with_current_absence_of_support(ticker, ask):
-    observed_at = datetime(2026, 11, 19, 2, tzinfo=timezone.utc)
+    observed_at = datetime.now(timezone.utc)
     row = {
         "current_probability": Decimal("0.87"),
         "current_yes_bid": Decimal("0"),
