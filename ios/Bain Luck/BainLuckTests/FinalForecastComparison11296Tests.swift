@@ -448,7 +448,12 @@ final class FinalForecastComparison11296Tests: XCTestCase {
         XCTAssertTrue(discover.contains("structNativeEventDiscoverCard:View{"), "anti-vacuity")
         for (name, code) in [("EventCardView", sports), ("DiscoverEventCard", discover)] {
             XCTAssertEqual(occurrences("FinalForecastLine11296(", in: code), 1, name)
-            XCTAssertEqual(occurrences("ifletfinalForecast=finalForecast11296{", in: code), 1, name)
+            if name == "EventCardView" {
+                XCTAssertEqual(occurrences("if!compactScheduleStyle,letfinalForecast=finalForecast11296{", in: code), 1, name)
+                XCTAssertEqual(occurrences("spokenText:FinalForecastComparison11296.spokenText(finalForecast,awayName:event.awayTeam,homeName:event.homeTeam)", in: code), 1, name)
+            } else {
+                XCTAssertEqual(occurrences("ifletfinalForecast=finalForecast11296{", in: code), 1, name)
+            }
             XCTAssertEqual(occurrences("FinalForecastLine11296(comparison:finalForecast,awayName:event.awayTeam,homeName:event.homeTeam)", in: code), 1, name)
             XCTAssertTrue(code.contains("actualPeriod:FinalForecastComparison11296.actualPeriod(sport:event.sport,servedFinalScorePeriod:event.finalScorePeriod),projection:event.pregameProjection)"), name)
             XCTAssertFalse(code.contains("actualPeriod:.fullGame"), "\(name): the period is the served witness's, never assumed")

@@ -11,6 +11,7 @@ import logging
 import time
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import container_discovery
 from app.utils.container_corrections import PUBLICATION_COLUMN, REVISION_COLUMN
@@ -142,15 +143,48 @@ async def add_feed_collections(
                 None,
             )
         return items
+    timeout_s = min(budget_seconds, COLLECTION_READ_BUDGET_SECONDS)
     try:
-        read = await asyncio.wait_for(
-            container_discovery.discover_collections(db, event_ids=games),
-            timeout=min(budget_seconds, COLLECTION_READ_BUDGET_SECONDS),
-        )
+        if isinstance(db, AsyncSession):
+            # #11931: enforce the collection read budget server-side inside a
+            # SAVEPOINT so Postgres itself cancels at `timeout_ms` instead of
+            # stalling `db.rollback()` for 2-10 s on a cancelled asyncpg query.
+            # On error, savepoint rollback reverts `set_config(..., true)`
+            # automatically. On success, releasing a savepoint keeps a local GUC
+            # for the enclosing transaction, so restore the prior value first.
+            # Keep generous client-side backstop slack (`+ 0.5 s`) so Postgres
+            # delivers QueryCanceledError cleanly over the wire rather than
+            # `asyncio.wait_for` tearing down the asyncpg connection.
+            timeout_ms = max(1, int(timeout_s * 1000))
+            async with db.begin_nested():
+                prev_res = await db.execute(
+                    text("SELECT current_setting('statement_timeout')")
+                )
+                prev_timeout = prev_res.scalar() if prev_res is not None else None
+                await db.execute(
+                    text("SELECT set_config('statement_timeout', :val, true)"),
+                    {"val": f"{timeout_ms}ms"},
+                )
+                read = await asyncio.wait_for(
+                    container_discovery.discover_collections(db, event_ids=games),
+                    timeout=timeout_s + 0.5,
+                )
+                await db.execute(
+                    text("SELECT set_config('statement_timeout', :val, true)"),
+                    {"val": str(prev_timeout) if prev_timeout is not None else "0"},
+                )
+        else:
+            read = await asyncio.wait_for(
+                container_discovery.discover_collections(db, event_ids=games),
+                timeout=timeout_s,
+            )
     except Exception:
-        # A cancelled/failed statement can leave the session aborted. Ordinary
-        # cards are already serialized; restore it for subsequent feed reads.
-        await db.rollback()
+        # A cancelled/failed statement can leave the session aborted (on the
+        # non-savepoint path, or if the client-side backstop invalidated the
+        # asyncpg connection). Ordinary cards are already serialized; restore it
+        # for subsequent feed reads.
+        if not isinstance(db, AsyncSession) or not db.is_active:
+            await db.rollback()
         logger.warning(
             "Discover collection read failed; keeping ordinary cards", exc_info=True
         )

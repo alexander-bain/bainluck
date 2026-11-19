@@ -66,6 +66,7 @@ async def read_served_discover_deck(db: Any) -> dict:
         exclude_reviewed=False,
         reviewer=None,
         reviewed_surface=None,
+        machinery=None,
         secret=None,
         db=db,
         user=None,

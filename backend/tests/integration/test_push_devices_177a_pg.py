@@ -11,6 +11,7 @@ fails on any skip.
 
 import importlib.util
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -18,7 +19,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException, Request
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, insert, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -28,6 +29,7 @@ from app.models.activitykit_delivery import ActivityKitDelivery
 from app.models.models import UserPin
 from app.models.push_device import PushDevice
 from app.routes import activitykit, devices
+from app.services import push_audience as audience
 from app.services.database import get_db_rw
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
@@ -305,3 +307,94 @@ def test_the_migration_upgrades_refuses_an_ownerless_activity_and_downgrades():
         with engine.begin() as conn:
             conn.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         engine.dispose()
+
+
+# --- 212-A: who hears about a pinned game (app/services/push_audience.py) -----
+
+
+async def _seed(pg, **row):
+    device = row.pop("device_id", None) or uuid4()
+    values = {
+        "device_id": device,
+        "secret_hash": "a" * 64,
+        "platform": "ios",
+        "apns_env": "production",
+        "pinned_event_ids": [],
+        "pinned_market_ids": [],
+        **row,
+    }
+    async with pg() as db:
+        await db.execute(insert(DEVICES).values(**values))
+        await db.commit()
+    return device
+
+
+async def test_212a_alerts_reach_phone_pins_account_pins_and_a_fresh_app_clip_only(pg):
+    now = datetime.now(timezone.utc)
+    own = await _seed(pg, notification_token="01" * 32, pinned_event_ids=[42])
+    account = await _seed(pg, notification_token="02" * 32, user_id=1)
+    clip = await _seed(pg, platform="appclip", notification_token="03" * 32, pinned_event_ids=[42])
+    old_clip = await _seed(pg, platform="appclip", notification_token="04" * 32, pinned_event_ids=[42])
+    await _seed(pg, notification_token=None, la_start_token="05" * 32, pinned_event_ids=[42])
+    await _seed(pg, notification_token="06" * 32, pinned_event_ids=[43])
+    await _seed(pg, notification_token="07" * 32, user_id=2)
+    async with pg() as db:
+        await db.execute(insert(UserPin.__table__).values(user_id=1, pin_type="event", target_id=42))
+        await db.execute(insert(UserPin.__table__).values(user_id=2, pin_type="future", target_id=42))
+        await db.execute(
+            update(DEVICES).where(DEVICES.c.device_id == old_clip).values(created_at=now - timedelta(hours=8, minutes=1))
+        )
+        await db.commit()
+        got = await audience.alert_targets(db, "event", 42, now=now)
+    assert {t.device_id for t in got} == {own, account, clip}
+    topics = {t.device_id: t.topic for t in got}
+    assert topics[clip] == audience.CLIP_TOPIC and topics[own] == audience.APP_TOPIC
+    # user 2 pinned MARKET 42, not game 42; it is a market alert's audience.
+    async with pg() as db:
+        markets = await audience.alert_targets(db, "market", 42, now=now)
+    assert len(markets) == 1 and markets[0].token == "07" * 32
+
+
+async def test_212a_alerts_page_in_device_order(pg):
+    now = datetime.now(timezone.utc)
+    ids = sorted([await _seed(pg, notification_token=f"{i:02x}" * 32, pinned_event_ids=[42]) for i in range(16, 21)])
+    seen, after = [], None
+    async with pg() as db:
+        while True:
+            page = await audience.alert_targets(db, "event", 42, now=now, after=after, limit=2)
+            if not page:
+                break
+            seen += [t.device_id for t in page]
+            after = page[-1].device_id
+    assert seen == ids
+
+
+async def test_212a_kickoff_sends_one_push_per_phone_and_never_a_start_to_the_clip(pg):
+    now = datetime.now(timezone.utc)
+    start = await _seed(pg, notification_token="11" * 32, la_start_token="12" * 32, os_major=18, app_version="1.0.8", pinned_event_ids=[42])
+    plain = await _seed(pg, notification_token="13" * 32, os_major=17, pinned_event_ids=[42])
+    clip = await _seed(pg, platform="appclip", notification_token="14" * 32, pinned_event_ids=[42])
+    old = await _seed(pg, notification_token="15" * 32, la_start_token="16" * 32, app_version="1.0.7", pinned_event_ids=[42])
+    async with pg() as db:
+        plan = await audience.kickoff_plan(db, 42, now=now, min_app_version="1.0.8")
+    assert [t.device_id for t in plan.start] == [start] and plan.start[0].input_push_token is True
+    assert {t.device_id for t in plan.alert} == {plain, clip, old}
+    assert not {t.device_id for t in plan.start} & {t.device_id for t in plan.alert}
+
+
+async def test_212a_a_410_clears_only_that_token_and_the_purge_takes_only_expired_clips(pg):
+    now = datetime.now(timezone.utc)
+    phone = await _seed(pg, notification_token="21" * 32, la_start_token="22" * 32, la_start_token_at=now, pinned_event_ids=[42])
+    fresh_clip = await _seed(pg, platform="appclip", notification_token="23" * 32)
+    old_clip = await _seed(pg, platform="appclip", notification_token="24" * 32)
+    async with pg() as db:
+        await db.execute(
+            update(DEVICES).where(DEVICES.c.device_id == old_clip).values(created_at=now - timedelta(hours=9))
+        )
+        assert await audience.forget_token(db, "la_start_token", "22" * 32) == 1
+        assert await audience.purge_expired_appclip_devices(db, now=now) == 1
+        await db.commit()
+    row = await stored(pg, phone)
+    assert row["la_start_token"] is None and row["la_start_token_at"] is None
+    assert row["notification_token"] == "21" * 32 and row["pinned_event_ids"] == [42]
+    assert await stored(pg, fresh_clip) is not None and await stored(pg, old_clip) is None

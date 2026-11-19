@@ -23,7 +23,11 @@ def tournament(**overrides):
         "start_date": "2026-10-09T12:00:00+00:00",
         "end_date": "2026-10-12T12:00:00+00:00",
         "market_sources": ["kalshi", "polymarket"],
-        "golfers": [{"name": "Leader", "rank": 1, "probability": 0.2, "movement_24h": 0.05, "movement_is_dated": False}],
+        "golfers": [{
+            "name": "Leader", "rank": 1, "probability": 0.2,
+            "movement_24h": 0.05, "movement_is_dated": False,
+            "source_mark": {"state": "none", "sources": [], "reason": "source_evidence_incomplete"},
+        }],
         **overrides,
     }
 

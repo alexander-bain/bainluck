@@ -126,6 +126,18 @@ const BAND_CARD = "event-card-projected-final";
 const BAND_FEED = "feed-card-projected-final";
 const withoutBand = (html: string) => html.replace(/<div role="group"[^]*?<\/div>/, "");
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the fixtures are the readings they claim", () => {
   it("Georgia 21 – 0 live, the in-play pair dated after kickoff", () => {
     expect(UGA.status).toBe("live");

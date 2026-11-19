@@ -2436,7 +2436,8 @@ struct OddsChartView: View {
                             awayScore: awayScore,
                             servedSettledResult: servedSettledResult,
                             gameStart: kickoffDate,
-                            settledResult: atlasSettledResult
+                            settledResult: atlasSettledResult,
+                            liveTailVertex: liveEdge != nil ? liveSplit?.tail.to : nil
                         )
                     }
                     if let liveSplit, let liveEdge {

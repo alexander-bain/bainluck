@@ -352,7 +352,7 @@ describe("decideCalibrationStaleness", () => {
       }
 
       it("promises the schedule when the beat is landing", () => {
-        expect(clauseFor({ stalled: false, beats_missed: 0 })).toBe("The curve rebuilds hourly.");
+        expect(clauseFor({ stalled: false, beats_missed: 0 })).toBe("The curve rebuilds daily.");
       });
 
       it("withholds it when the payload's own arithmetic says a publish was missed", () => {
@@ -371,7 +371,7 @@ describe("decideCalibrationStaleness", () => {
       });
 
       it("still describes a declared stall in full", () => {
-        expect(clauseFor({ stalled: true, beats_missed: 51 })).toMatch(/51 hourly rebuilds have/);
+        expect(clauseFor({ stalled: true, beats_missed: 51 })).toMatch(/51 daily rebuilds have/);
       });
     });
   });
@@ -470,7 +470,7 @@ describe("methodologyRefreshClause — #7612, the same promise one card down", (
     // page the sentence is supported and the reader keeps it.
     expect(decideCalibrationStaleness({ availability: "fresh" })).toBeNull();
     expect(methodologyRefreshClause(decideCalibrationStaleness({ availability: "fresh" }))).toBe(
-      "Data refreshes hourly.",
+      "Data refreshes daily.",
     );
   });
 
@@ -508,8 +508,8 @@ describe("methodologyRefreshClause — #7612, the same promise one card down", (
   });
 
   it("is total: a missing notice is the fresh reading, an undefined one too", () => {
-    expect(methodologyRefreshClause(null)).toBe("Data refreshes hourly.");
-    expect(methodologyRefreshClause(undefined)).toBe("Data refreshes hourly.");
+    expect(methodologyRefreshClause(null)).toBe("Data refreshes daily.");
+    expect(methodologyRefreshClause(undefined)).toBe("Data refreshes daily.");
   });
 });
 

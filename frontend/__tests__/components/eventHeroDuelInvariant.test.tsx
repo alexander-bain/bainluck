@@ -160,15 +160,18 @@ function settled(home: number, away: number) {
 
 /** LIVE, NO BLEND, and a history row more than 5 points away — the override branch. */
 function liveHistoryOverride(home: number, away: number) {
+  const observed = "2030-01-01T12:30:00.000Z";
+  const book = { timestamp: observed, kind: "recorded", observed_at: observed };
   const history = {
     history: [
       {
-        timestamp: "2030-01-01T11:30:00.000Z",
+        timestamp: observed,
         home_probability: home,
         away_probability: away,
         bookmaker_count: 2,
       },
     ],
+    bookmaker_history: { bookA: [book], bookB: [book] },
   } as unknown as EventHistoryResponse;
   return resolveProbability(
     makeEvent({

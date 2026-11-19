@@ -585,3 +585,68 @@ class TestCollectionTitleAndMembers12090:
         assert not (
             await discovery.discover_collections(pg_session, query="Week 5")
         ).collections
+
+
+class TestFeedCollectionsStatementTimeoutRealPostgres11931:
+    """#11931: add_feed_collections enforces its budget via local statement_timeout
+    inside a savepoint without leaking that timeout to later queries on the
+    same transaction — verified against a real PostgreSQL server."""
+
+    async def test_success_restores_statement_timeout_for_later_queries(self, pg_session):
+        from app.routes.feed import _rank_key
+        from app.utils.feed_collections import add_feed_collections
+
+        _, events = await _seed(pg_session)
+        await pg_session.execute(text("SET LOCAL statement_timeout = '12345ms'"))
+        items = [
+            {
+                "type": "event",
+                "score": 50,
+                "_rank_score": 50,
+                "_sort_time": 1,
+                "data": {"id": events["wk5_a"]},
+            }
+        ]
+        result = await add_feed_collections(
+            pg_session, items, rank_key=_rank_key, budget_seconds=0.25
+        )
+        assert any(it.get("type") == "collection" for it in result)
+        restored = (
+            await pg_session.execute(text("SHOW statement_timeout"))
+        ).scalar_one()
+        assert restored == "12345ms"
+        # A later query slower than the 250 ms collection budget must still complete.
+        await pg_session.execute(text("SELECT pg_sleep(0.35)"))
+
+    async def test_timeout_cancels_in_savepoint_and_restores_statement_timeout(
+        self, pg_session, monkeypatch
+    ):
+        from app.routes.feed import _rank_key
+        from app.utils.feed_collections import add_feed_collections
+
+        _, events = await _seed(pg_session)
+        await pg_session.execute(text("SET LOCAL statement_timeout = '12345ms'"))
+
+        async def _slow_discover(db, **kwargs):
+            await db.execute(text("SELECT pg_sleep(0.4)"))
+            return discovery.CollectionDiscoveryResult(collections=[])
+
+        monkeypatch.setattr(discovery, "discover_collections", _slow_discover)
+        items = [
+            {
+                "type": "event",
+                "score": 50,
+                "_rank_score": 50,
+                "_sort_time": 1,
+                "data": {"id": events["wk5_a"]},
+            }
+        ]
+        result = await add_feed_collections(
+            pg_session, items, rank_key=_rank_key, budget_seconds=0.05
+        )
+        assert result is items
+        restored = (
+            await pg_session.execute(text("SHOW statement_timeout"))
+        ).scalar_one()
+        assert restored == "12345ms"
+        assert (await pg_session.execute(text("SELECT 1"))).scalar_one() == 1

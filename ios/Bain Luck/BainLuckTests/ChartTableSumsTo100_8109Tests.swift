@@ -358,7 +358,9 @@ final class ChartTableSumsTo100_8109Tests: XCTestCase {
             // that property reads `data.outcomes` — not the rows on screen.
             ("renderedPercents(forServedField: servedOutcomes)",
              1, "the decision moved off the SERVED field onto the rows on screen"),
-            ("let outcomes = data?.outcomes ?? []",
+            // #12480 moved the withholding into `resolveServedOutcomes`; the
+            // property still hands it `data.outcomes`, never the rows on screen.
+            ("Self.resolveServedOutcomes(\n            data?.outcomes ?? [],",
              1, "`servedOutcomes` stopped reading the served field"),
             ("servedRenderedPercents[row.servedIndex]",
              1, "the lookup stopped using the served index"),

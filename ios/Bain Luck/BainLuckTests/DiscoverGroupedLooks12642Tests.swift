@@ -391,7 +391,7 @@ final class DiscoverGroupedLooks12642Tests: XCTestCase {
             expanded: false
         )
         XCTAssertEqual(collapsedExpander?.primary, "Show all 10 most likely nominees (+5 more)")
-        XCTAssertEqual(collapsedExpander?.unpricedNotice, "incl. I Play Rocky (49% nom · Not listed to win)")
+        XCTAssertEqual(collapsedExpander?.unpricedNotice, "incl. I Play Rocky (49% nominated · Not listed to win)")
 
         let expandedExpander = PairedMetricPresentation.expanderCopy(
             sortedEntries: sorted,

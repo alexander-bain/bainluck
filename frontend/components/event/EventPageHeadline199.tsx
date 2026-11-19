@@ -431,13 +431,16 @@ export default function EventPageHeadline199({
       </div>
     );
 
+  const wideFeaturedCompact =
+    colCount <= 4 && !model.columns.some((c) => c.role === "setScore");
+
   return (
     <div
       ref={cueRef}
       data-testid="event-page-headline-199"
       data-phase={model.phase}
       data-atlas-mode={atlasMode ? "true" : undefined}
-      className="rounded-2xl bg-surface-card px-3.5 py-3 space-y-2.5"
+      className="rounded-2xl bg-surface-card px-3.5 py-3 lg:px-5 lg:py-4 space-y-2.5 lg:space-y-3"
       style={{
         border: "1px solid rgba(15, 23, 42, 0.08)",
         boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
@@ -527,26 +530,63 @@ export default function EventPageHeadline199({
         {model.hasAnyColumnValue && model.columns.length > 0 ? (
           <div
             aria-hidden="true"
-            className="flex items-baseline justify-end"
-            style={{ gap: colGapPx }}
+            className={
+              wideFeaturedCompact
+                ? "flex items-baseline justify-end lg:justify-start lg:gap-6 xl:gap-8"
+                : "flex items-baseline justify-end"
+            }
+            style={wideFeaturedCompact ? undefined : { gap: colGapPx }}
           >
-            {model.columns.map((col, idx) => (
-              <span
-                key={`${col.role}-${col.setIndex ?? idx}`}
-                className="font-semibold leading-none text-right whitespace-nowrap shrink-0"
-                style={{
-                  minWidth: columnMinWidthCss199(col.role, model.phase, colCount),
-                  fontSize: pxToRem199(11),
-                  color: HEADLINE_STYLE_199.quietInk,
-                }}
-              >
-                {col.header}
-              </span>
-            ))}
+            {wideFeaturedCompact ? (
+              <span className="hidden lg:block lg:w-[232px] xl:w-[288px] shrink-0" />
+            ) : null}
+            <div
+              className={
+                wideFeaturedCompact
+                  ? "flex items-baseline shrink-0 lg:!gap-3 xl:!gap-4"
+                  : "flex items-baseline shrink-0"
+              }
+              style={{ gap: colGapPx }}
+            >
+              {model.columns.map((col, idx) => {
+                const isPrimaryCol = col.role === "now" || col.role === "chance";
+                const isSecondaryCol =
+                  col.role === "score" || col.role === "projected" || col.role === "pregame";
+                const isFinalCol = col.role === "finalResult";
+                const wideColWidthCls = wideFeaturedCompact
+                  ? isPrimaryCol
+                    ? "lg:!min-w-[104px] xl:!min-w-[118px] 2xl:!min-w-[124px]"
+                    : isSecondaryCol
+                      ? "lg:!min-w-[56px] xl:!min-w-[64px]"
+                      : isFinalCol
+                        ? "lg:!min-w-[88px] xl:!min-w-[100px]"
+                        : ""
+                  : "";
+                return (
+                  <span
+                    key={`${col.role}-${col.setIndex ?? idx}`}
+                    className={`font-semibold leading-none text-right whitespace-nowrap shrink-0 lg:!text-[12px] ${wideColWidthCls}`}
+                    style={{
+                      minWidth: columnMinWidthCss199(col.role, model.phase, colCount),
+                      fontSize: pxToRem199(11),
+                      color: HEADLINE_STYLE_199.quietInk,
+                    }}
+                  >
+                    {col.header}
+                  </span>
+                );
+              })}
+            </div>
           </div>
         ) : null}
 
-        <div>
+        <div
+          className={
+            wideFeaturedCompact
+              ? "lg:[&_[data-headline-row]]:justify-start lg:[&_[data-headline-row]]:gap-6 xl:[&_[data-headline-row]]:gap-8 lg:[&_[data-headline-identity]]:flex-none lg:[&_[data-headline-identity]]:w-[232px] xl:[&_[data-headline-identity]]:w-[288px] lg:[&_[data-headline-identity]]:gap-3 lg:[&_[data-headline-nums]]:!gap-3 xl:[&_[data-headline-nums]]:!gap-4"
+              : undefined
+          }
+        >
           {model.rows.map((row, rowIdx) => {
             const tint = rowTint(row.role);
             const isLoser = row.won === false;
@@ -560,7 +600,7 @@ export default function EventPageHeadline199({
                 {rowIdx > 0 ? (
                   <div
                     aria-hidden="true"
-                    className="my-1.5"
+                    className="my-1.5 lg:my-2"
                     style={{
                       height: 0.5,
                       backgroundColor: "rgba(15, 23, 42, 0.06)",
@@ -569,15 +609,21 @@ export default function EventPageHeadline199({
                 ) : null}
                 <div
                   data-testid={`headline-12472-${row.role}-row`}
+                  data-headline-row=""
                   className="flex items-center justify-between gap-2 min-w-0 max-[359px]:flex-wrap"
                 >
-                  <div className="flex items-center gap-2 min-w-0 flex-1 max-[359px]:basis-full">
+                  <div
+                    data-headline-identity=""
+                    className="flex items-center gap-2 min-w-0 flex-1 max-[359px]:basis-full"
+                  >
                     {renderCrest(row, tint)}
                     <div className="flex flex-col min-w-0">
                       {row.role === "draw" ? (
                         <span
                           data-headline-name=""
-                          className={`${isLoser ? "font-semibold" : "font-bold"} leading-tight truncate`}
+                          className={`${isLoser ? "font-semibold" : "font-bold"} leading-tight truncate ${
+                            wideFeaturedCompact ? "lg:!text-[18px] xl:!text-[19.5px]" : ""
+                          }`}
                           style={{
                             fontSize: pxToRem199(nameFontPx),
                             color: nameColor,
@@ -594,6 +640,11 @@ export default function EventPageHeadline199({
                         >
                           <span
                             data-headline-name=""
+                            className={
+                              wideFeaturedCompact
+                                ? "lg:!text-[18px] xl:!text-[19.5px]"
+                                : undefined
+                            }
                             style={{
                               fontSize: pxToRem199(nameFontPx),
                               color: nameColor,
@@ -606,7 +657,7 @@ export default function EventPageHeadline199({
                       )}
                       {row.record ? (
                         <span
-                          className="font-medium tabular-nums leading-tight truncate mt-[1px]"
+                          className="font-medium tabular-nums leading-tight truncate mt-[1px] lg:!text-[13px]"
                           style={{
                             fontSize: pxToRem199(12),
                             color: HEADLINE_STYLE_199.quietInk,
@@ -620,6 +671,7 @@ export default function EventPageHeadline199({
 
                   {model.columns.length > 0 ? (
                     <div
+                      data-headline-nums=""
                       className="flex items-baseline shrink-0 max-[359px]:ml-auto"
                       style={{ gap: colGapPx }}
                     >
@@ -635,7 +687,11 @@ export default function EventPageHeadline199({
                               key={`${col.role}-${colIdx}`}
                               data-headline-cell={col.role}
                               data-hero-digits={text ? "" : undefined}
-                              className="font-black tabular-nums leading-none text-right whitespace-nowrap tracking-[-0.02em] shrink-0"
+                              className={`font-black tabular-nums leading-none text-right whitespace-nowrap tracking-[-0.02em] shrink-0 ${
+                                wideFeaturedCompact
+                                  ? "lg:!text-[34px] xl:!text-[38px] 2xl:!text-[40px] lg:!min-w-[104px] xl:!min-w-[118px] 2xl:!min-w-[124px]"
+                                  : ""
+                              }`}
                               style={{
                                 minWidth,
                                 fontSize: pxToRem199(primaryFontPx),
@@ -658,7 +714,11 @@ export default function EventPageHeadline199({
                               data-score-cell={
                                 col.role === "score" && text ? row.role : undefined
                               }
-                              className="font-semibold tabular-nums leading-none text-right whitespace-nowrap shrink-0"
+                              className={`font-semibold tabular-nums leading-none text-right whitespace-nowrap shrink-0 ${
+                                wideFeaturedCompact
+                                  ? "lg:!text-[20px] xl:!text-[22px] lg:!min-w-[56px] xl:!min-w-[64px]"
+                                  : ""
+                              }`}
                               style={{
                                 minWidth,
                                 fontSize: pxToRem199(secondaryFontPx),
@@ -675,7 +735,11 @@ export default function EventPageHeadline199({
                             <span
                               key={`${col.role}-${colIdx}`}
                               data-headline-cell={col.role}
-                              className="font-semibold tabular-nums leading-none text-right whitespace-nowrap shrink-0"
+                              className={`font-semibold tabular-nums leading-none text-right whitespace-nowrap shrink-0 ${
+                                wideFeaturedCompact
+                                  ? "lg:!text-[19px] xl:!text-[21px] lg:!min-w-[56px] xl:!min-w-[64px]"
+                                  : ""
+                              }`}
                               style={{
                                 minWidth,
                                 fontSize: pxToRem199(secondaryFontPx),
@@ -737,12 +801,16 @@ export default function EventPageHeadline199({
                             <span
                               key={`${col.role}-${colIdx}`}
                               data-headline-cell={col.role}
-                              className="inline-flex items-baseline justify-end gap-[3px] whitespace-nowrap shrink-0"
+                              className={`inline-flex items-baseline justify-end gap-[3px] whitespace-nowrap shrink-0 ${
+                                wideFeaturedCompact ? "lg:!min-w-[88px] xl:!min-w-[100px]" : ""
+                              }`}
                               style={{ minWidth }}
                             >
                               {text ? (
                                 <span
-                                  className="font-extrabold tabular-nums leading-none"
+                                  className={`font-extrabold tabular-nums leading-none ${
+                                    wideFeaturedCompact ? "lg:!text-[28px] xl:!text-[30px]" : ""
+                                  }`}
                                   style={{
                                     fontSize: pxToRem199(colCount >= 5 ? 19.5 : 22),
                                     color: HEADLINE_STYLE_199.primaryInk,
@@ -768,7 +836,9 @@ export default function EventPageHeadline199({
                           <span
                             key={`${col.role}-${colIdx}`}
                             data-headline-cell={col.role}
-                            className="font-semibold tabular-nums leading-none text-right whitespace-nowrap shrink-0"
+                            className={`font-semibold tabular-nums leading-none text-right whitespace-nowrap shrink-0 ${
+                              wideFeaturedCompact ? "lg:!text-[21px] xl:!text-[23px] lg:!min-w-[88px] xl:!min-w-[100px]" : ""
+                            }`}
                             style={{
                               minWidth,
                               fontSize: pxToRem199(secondaryFontPx),

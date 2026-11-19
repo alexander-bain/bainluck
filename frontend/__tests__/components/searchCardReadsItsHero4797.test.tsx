@@ -149,6 +149,18 @@ function printedPercents(html: string): number[] {
   );
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#4797 — a served blend reaches the card", () => {
   test("ARM 1: the live specimen prints its 23% instead of 'No price yet'", () => {
     // THE BUG, in the row that is still on production nine days after the

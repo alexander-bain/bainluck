@@ -1,7 +1,11 @@
 """An unchanged price acknowledgement can feed optional DNPL, never a stamp."""
 
 from types import SimpleNamespace
-from app.tasks.polymarket_ws import books_with_complements, _poly_book_is_untradeable
+from app.tasks.polymarket_ws import (
+    _poly_book_is_untradeable,
+    _venue_message_ms,
+    books_with_complements,
+)
 from app.tasks.live_blend_refresh import HeldRowQuotes
 import pytest
 
@@ -96,6 +100,7 @@ async def test_successful_unchanged_ack_hands_frozen_observation_to_preview_only
                 books_by_asset={}, _note_raw=lambda asset: None, _tick_targets=lambda asset: [1],
                 books_with_complements=books_with_complements,
                 _poly_book_is_untradeable=_poly_book_is_untradeable,
+                _venue_message_ms=_venue_message_ms,
                 repeat_skip_s=0.0)  # #10090: today's path (`PM_WS_REPEAT_SKIP_MS=0`)
     compile_functions(ROOT / "app/tasks/polymarket_ws.py", ["_mark_input", "handle_price"], r.ns)
     r.ns["price_buffer"].update(database)

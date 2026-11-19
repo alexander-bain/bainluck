@@ -190,16 +190,31 @@ struct TeamDetailView: View {
                                 // #11493: the grid's verdict, never the residual 0.1%.
                                 switch ChampionshipPathPresentation.value(entry) {
                                 case .percent(let text):
-                                    Text(text)
-                                        .font(.subheadline).bold().monospacedDigit()
+                                    HStack(spacing: 4) {
+                                        Text(text)
+                                            .font(.subheadline).bold().monospacedDigit()
+                                        if let mark = SourceMarkButton(entry.sourceMark, number: entry.probability, numberSize: 15, compactRow: true) {
+                                            mark.buttonStyle(.borderless)
+                                        }
+                                    }
                                 case .out:
-                                    Text(TeamFutureRowPresentation.outBadge)
-                                        .font(.subheadline).bold()
-                                        .foregroundStyle(.secondary)
+                                    HStack(spacing: 4) {
+                                        Text(TeamFutureRowPresentation.outBadge)
+                                            .font(.subheadline).bold()
+                                            .foregroundStyle(.secondary)
+                                        if let mark = SourceMarkButton(entry.sourceMark, number: nil, numberSize: 15, compactRow: true) {
+                                            mark.buttonStyle(.borderless)
+                                        }
+                                    }
                                 case .won:
-                                    Text(TeamFutureRowPresentation.wonBadge)
-                                        .font(.subheadline).bold()
-                                        .foregroundStyle(.green)
+                                    HStack(spacing: 4) {
+                                        Text(TeamFutureRowPresentation.wonBadge)
+                                            .font(.subheadline).bold()
+                                            .foregroundStyle(.green)
+                                        if let mark = SourceMarkButton(entry.sourceMark, number: nil, numberSize: 15, compactRow: true) {
+                                            mark.buttonStyle(.borderless)
+                                        }
+                                    }
                                 case .none:
                                     EmptyView()
                                 }

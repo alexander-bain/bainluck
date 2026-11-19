@@ -126,6 +126,18 @@ function bandLabel(html: string, testId: string): { cls: string; text: string } 
 }
 const DETAILS = "event-hero-final-forecast-details";
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the fixtures are what production served", () => {
   it("the NFL final carries the producer's object; the NHL final carries only its refusal", () => {
     const d = F.detail_14966179 as Event;

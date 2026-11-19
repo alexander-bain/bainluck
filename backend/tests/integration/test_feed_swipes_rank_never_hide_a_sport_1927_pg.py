@@ -41,6 +41,17 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+
+@pytest.fixture(autouse=True)
+def _pre_190_game_admission(monkeypatch):
+    """These cases pin the pre-190 admission: a game held its Discover seat by
+    selection, and the question here is only whether a reader's feedback can
+    hide it. Ruling 190 (#11937) requires a stated reason instead, and keeps the
+    old rule only behind `DISCOVER_GAME_NEEDS_REASON=false`, which these cases
+    now guard. The 190 rule is guarded in `test_discover_game_reason_190.py`."""
+    monkeypatch.setenv("DISCOVER_GAME_NEEDS_REASON", "false")
+
+
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
 
 pytestmark = [

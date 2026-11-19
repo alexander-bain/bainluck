@@ -714,7 +714,7 @@ enum EventSportHeadlines12472 {
         let homeRecord = trimmedNonEmpty(event.homeTeamData?.record)
 
         // 3-way soccer before match: Chance is always whole percents before kickoff (#12822, Direction 199).
-        if canGrade, isSoccerSport(event.sport),
+        if canGrade, !withholdsOpeningAsCurrent(event), isSoccerSport(event.sport),
            let shares = extractSoccerThreeWayOpenShares(event: event, gameMarkets: gameMarkets, now: now) {
             let formatted = soccerThreeWayChanceTexts(
                 home: shares.home,
@@ -797,7 +797,7 @@ enum EventSportHeadlines12472 {
         var bar: BottomBar? = nil
         var confidenceTier: String? = nil
 
-        if canGrade, let odds = event.currentOdds {
+        if canGrade, !withholdsOpeningAsCurrent(event), let odds = event.currentOdds {
             let shown = OpeningLineHero.resolve(odds, for: event)
             if !shown.isOpeningLine,
                let pair = DrawPricedWinner.printablePair(
@@ -876,7 +876,7 @@ enum EventSportHeadlines12472 {
             pregameAwayMarker: nil,
             livePregameSummary: nil,
             showsEkg: canGrade && !homeChance.isEmpty,
-            sourceMark: event.sourceMark,
+            sourceMark: (awayChance.isEmpty && homeChance.isEmpty) ? nil : event.sourceMark,
             confidenceTier: confidenceTier
         )
     }
@@ -965,7 +965,7 @@ enum EventSportHeadlines12472 {
         )
 
         // 3-way soccer during match
-        if isLive, isSoccerSport(event.sport) {
+        if isLive, !withholdsOpeningAsCurrent(event), isSoccerSport(event.sport) {
             let marketSnap = extractSoccerThreeWayMarketSnapshot(
                 event: event,
                 gameMarkets: gameMarkets,
@@ -1080,7 +1080,7 @@ enum EventSportHeadlines12472 {
         var bar: BottomBar? = nil
         var confidenceTier: String? = nil
 
-        if isLive, let odds = event.currentOdds {
+        if isLive, !withholdsOpeningAsCurrent(event), let odds = event.currentOdds {
             let shown = OpeningLineHero.resolve(odds, for: event)
             if !shown.isOpeningLine,
                let pair = DrawPricedWinner.printablePair(
@@ -1200,7 +1200,7 @@ enum EventSportHeadlines12472 {
             pregameAwayMarker: pregameMarker,
             livePregameSummary: summary,
             showsEkg: isLive && !homeNow.isEmpty,
-            sourceMark: event.sourceMark,
+            sourceMark: (awayNow.isEmpty && homeNow.isEmpty) ? nil : event.sourceMark,
             confidenceTier: confidenceTier
         )
     }
@@ -1613,11 +1613,18 @@ enum EventSportHeadlines12472 {
         return disqualifiedSoccerThreeWayRegex?.firstMatch(in: name, options: [], range: range) != nil
     }
 
+    /// #12824 — An opening or stored pregame figure is never shown as the current
+    /// chance (`Chance` before kickoff or `Now` during play).
+    nonisolated static func withholdsOpeningAsCurrent(_ event: EventDetail) -> Bool {
+        event.heroProbabilitySource == OpeningLineHero.openingSource
+    }
+
     nonisolated static func extractSoccerThreeWayOpenShares(
         event: EventDetail,
         gameMarkets: GameMarketsResponse?,
         now: Date = Date()
     ) -> (home: Double, draw: Double, away: Double)? {
+        guard !withholdsOpeningAsCurrent(event) else { return nil }
         if let odds = event.currentOdds {
             let scaled = EventAtlasSoccerCards11666.scaleThreeWayField(
                 home: odds.homeProbability,

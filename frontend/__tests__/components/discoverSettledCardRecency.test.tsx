@@ -71,6 +71,18 @@ function render(item: FeedItem) {
   );
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("a settled Discover card says when the game finished", () => {
   beforeAll(() => jest.useFakeTimers().setSystemTime(NOW));
   afterAll(() => jest.useRealTimers());

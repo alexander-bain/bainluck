@@ -46,6 +46,18 @@ import TeamNameLink from "@/components/TeamNameLink";
 import { EventCard as DiscoverEventCard } from "@/components/discover/EventCard";
 import type { Event, FeedEventData, FeedItem } from "@/lib/types";
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("Ruling 194-A — college teams print the school, never the mascot", () => {
   it("recognizes every NCAA sport key and rejects professional leagues", () => {
     for (const key of [

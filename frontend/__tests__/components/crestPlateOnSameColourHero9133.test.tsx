@@ -44,6 +44,18 @@ function card(away: object, home: object, sport = "americanfootball_nfl"): strin
   );
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#9133 crest plate on a same-colour hero", () => {
   test("the Jets crest on the NFL hero sits on a plate; the Lions crest does not", () => {
     const html = card(NYJ, DET);

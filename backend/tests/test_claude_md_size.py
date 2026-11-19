@@ -174,7 +174,7 @@ def test_day0_trim_keeps_product_rules_and_gates_at_the_entrypoint():
         "author window merges",
         "Tier C requires Alex's tap",
         "`live-path` is the two-minute lane",
-        "NOW #11852 is the only priority list and status line",
+        "NOW #11852 is the priority list; status lines: #12779",
         "Build nothing a platform already provides.",
         "GitHub, Heroku, Vercel, Better Stack, Xcode Cloud",
         "no custom webhooks, relays, log pipelines, release locks or promotion systems",

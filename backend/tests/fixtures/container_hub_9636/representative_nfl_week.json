@@ -47,6 +47,11 @@
           {
             "card": {
               "away_score": 3,
+              "away_source_mark": {
+                "reason": "no_probability",
+                "sources": [],
+                "state": "none"
+              },
               "away_team": "Dallas Cowboys",
               "commence_time": "2026-10-04T16:00:00+00:00",
               "completed_at": null,
@@ -78,6 +83,11 @@
               "home_score": 7,
               "home_team": "Philadelphia Eagles",
               "id": 502,
+              "source_mark": {
+                "reason": "no_probability",
+                "sources": [],
+                "state": "none"
+              },
               "sport": "americanfootball_nfl",
               "sport_name": "NFL",
               "start_is_from_schedule": false,
@@ -103,6 +113,11 @@
           {
             "card": {
               "away_score": null,
+              "away_source_mark": {
+                "reason": "no_probability",
+                "sources": [],
+                "state": "none"
+              },
               "away_team": "Kansas City Chiefs",
               "commence_time": "2026-10-06T22:00:00+00:00",
               "completed_at": null,
@@ -133,6 +148,11 @@
               "home_score": null,
               "home_team": "Buffalo Bills",
               "id": 501,
+              "source_mark": {
+                "reason": "no_probability",
+                "sources": [],
+                "state": "none"
+              },
               "sport": "americanfootball_nfl",
               "sport_name": "NFL",
               "start_is_from_schedule": false,

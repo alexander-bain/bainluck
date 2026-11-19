@@ -18,6 +18,7 @@ import { futuresOutcomeTotal } from "@/lib/discover/futuresBoard";
 import { namesOnlyTheOtherLeague, sharedLeague } from "@/lib/otherLeagueMarket";
 import { hasSerieAFemminileTags } from "@/lib/relatedRailQuery";
 import { formatAtlasMarketHeading } from "@/components/atlas/atlasStateCopy";
+import { isStoredOpeningChance } from "@/lib/probabilityEvidence";
 
 /** The item types this section knows how to render.
  *
@@ -440,13 +441,14 @@ export default function RelatedByTag({
                (the fields are optional because a Discover response is cached)
                then prints a served value beside a locally derived one, which is
                the same 101 arriving from the other side. */
-            const awayProbability = d.current_odds?.away_probability;
-            const homeProbability = d.current_odds?.home_probability;
+            const currentOdds = isStoredOpeningChance(d) ? undefined : d.current_odds;
+            const awayProbability = currentOdds?.away_probability;
+            const homeProbability = currentOdds?.home_probability;
             const duel = servedDuelPercents(
               awayProbability,
               homeProbability,
-              d.current_odds?.away_rendered_percent,
-              d.current_odds?.home_rendered_percent,
+              currentOdds?.away_rendered_percent,
+              currentOdds?.home_rendered_percent,
             );
             /* #8702 — on a draw-priced sport a served `current_odds` pair that
                sums to 1 carries the away side as `1 − home`: "does not lose",

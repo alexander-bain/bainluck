@@ -433,11 +433,13 @@ async def test_the_real_betting_ingest_receipts_per_book_versions(pg_engine, sin
 
     from sqlalchemy import delete, select
 
-    from app.models.models import OddsSnapshot
+    from app.models.models import OddsSnapshot, ScoreSnapshot
     from app.tasks.odds_polling import _ingest_event_odds
 
     async with pg_engine.begin() as conn:
         await conn.run_sync(lambda c: OddsSnapshot.__table__.create(c, checkfirst=True))
+        # #12938: a live ingest reads the game's last score change.
+        await conn.run_sync(lambda c: ScoreSnapshot.__table__.create(c, checkfirst=True))
 
     def book(key, home, away, minute):
         return {"key": key, "last_update": f"2026-10-28T18:0{minute}:00Z", "markets": [

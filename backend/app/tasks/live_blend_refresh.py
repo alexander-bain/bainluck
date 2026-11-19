@@ -51,11 +51,8 @@ THREE THINGS IT DELIBERATELY DOES NOT DO.
   dyno. The background queue is a known congestion point (GIN beat starvation),
   and a fast lane queued behind a slow one is not a fast lane.
 * **It does not re-derive the inversion verdict per tick.**
-  `_check_and_fix_inversion` costs a per-event `odds_snapshots` lookup, which is
-  affordable every 120 seconds and not every 2. Orientation is a property of the
-  LINKAGE, not of the price, so it is computed once and cached — and the 120s
-  poll re-derives it authoritatively regardless, which bounds how long a wrong
-  verdict can survive to one poll interval.
+  The cold check uses event context and may need a pregame sportsbook lookup.
+  The verdict is cached within the same phase, and the 120s poll re-derives it.
 
 SAFETY POSTURE. Every failure here is swallowed and counted. This runs inside
 the WS consumer's flush loop, and a blend refresh that raises must never take
@@ -3578,6 +3575,21 @@ class _HoldingFrontier:
         return self.window.released_signal()
 
 
+@dataclass(frozen=True)
+class _CachedInversion:
+    expires_at: float
+    flipped: bool
+    context: tuple[bool, datetime | None]
+    evidence_expires_at: datetime | None = None
+
+    def applies(
+        self, context: tuple[bool, datetime | None], wall_now: datetime,
+    ) -> bool:
+        return self.context == context and (
+            self.evidence_expires_at is None or wall_now < self.evidence_expires_at
+        )
+
+
 class LiveBlendRefresher:
     """Stateful per-source refresher, owned by one WS consumer run.
 
@@ -3787,7 +3799,7 @@ class LiveBlendRefresher:
         self._history_changed = asyncio.Event()
         self._history_reserved: dict[int, float] = {}
         self._history_retry_at: dict[int, float] = {}
-        self._inversion: dict[int, tuple[float, bool]] = {}
+        self._inversion: dict[int, _CachedInversion] = {}
         self.stats: dict[str, int] = {
             "considered": 0,
             "throttled": 0,
@@ -4254,7 +4266,7 @@ class LiveBlendRefresher:
     # ── inversion orientation, cached ────────────────────────────────────────
 
     async def _oriented(
-        self, session, event_id: int, home_prob: float, *, reading=None,
+        self, session, event_id: int, home_prob: float, *, reading=None, event=None,
         before_fallback: Optional[Callable[[], Awaitable[None]]] = None,
         fallback_scope: Optional[Callable[[], Any]] = None,
     ) -> float:
@@ -4274,32 +4286,46 @@ class LiveBlendRefresher:
             self._inversion.pop(event_id, None)
             return reading.home_probability
 
-        now = time.monotonic()
-        cached = self._inversion.get(event_id)
-        if cached is not None and now < cached[0]:
-            return 1.0 - home_prob if cached[1] else home_prob
+        from app.tasks.prediction_market_matching import (
+            _inversion_decision,
+            _live_inversion_context,
+        )
 
-        from app.tasks.prediction_market_matching import _check_and_fix_inversion
+        now = time.monotonic()
+        wall_now = datetime.now(timezone.utc)
+        context = _live_inversion_context(event, wall_now)
+        cached = self._inversion.get(event_id)
+        if (
+            cached is not None
+            and now < cached.expires_at
+            and cached.applies(context, wall_now)
+        ):
+            return 1.0 - home_prob if cached.flipped else home_prob
 
         if before_fallback is not None:
             # Preserve the existing bound on the cold Event/OddsSnapshot reads.
             await before_fallback()
         if fallback_scope is None:
-            corrected = await _check_and_fix_inversion(
+            decision = await _inversion_decision(
                 session, event_id, home_prob, self.source,
             )
         else:
             # #10090: siblings share the transaction, so a failed cold read
             # rolls back only its own savepoint, never their stamps.
             async with fallback_scope():
-                corrected = await _check_and_fix_inversion(
+                decision = await _inversion_decision(
                     session, event_id, home_prob, self.source,
                 )
+        corrected = decision.home_probability
         flipped = not math.isclose(corrected, home_prob, rel_tol=0.0, abs_tol=1e-9)
-        self._inversion[event_id] = (now + self.inversion_ttl_s, flipped)
+        # The cold event read may see a rescheduled kickoff after the graph read.
+        self._inversion[event_id] = _CachedInversion(
+            now + self.inversion_ttl_s, flipped,
+            decision.context or context, decision.evidence_expires_at,
+        )
         return corrected
 
-    def _live_orientation(self, event_id: int, reading):
+    def _live_orientation(self, event_id: int, reading, *, event):
         """#10090: an unproven reading oriented as the stamp would orient it
         now — `_oriented`'s cached verdict while it is live, or expired by at
         most ``ORIENTATION_PREVIEW_GRACE_S`` — never a read. None when there is
@@ -4311,9 +4337,14 @@ class LiveBlendRefresher:
         at 16:55Z a Kalshi input waited 80 s the same way (event 15340110).
         """
         cached = self._inversion.get(event_id)
-        if cached is None or time.monotonic() >= cached[0] + ORIENTATION_PREVIEW_GRACE_S:
+        if cached is None or time.monotonic() >= cached.expires_at + ORIENTATION_PREVIEW_GRACE_S:
             return None
-        if not cached[1]:
+        from app.tasks.prediction_market_matching import _live_inversion_context
+
+        wall_now = datetime.now(timezone.utc)
+        if not cached.applies(_live_inversion_context(event, wall_now), wall_now):
+            return None
+        if not cached.flipped:
             return reading
         return _replace(reading, home_probability=1.0 - reading.home_probability)
 
@@ -7050,7 +7081,8 @@ class LiveBlendRefresher:
 
                         with tx.span("read"):
                             home_prob = await self._oriented(
-                                session, event_id, reading.home_probability, reading=reading,
+                                session, event_id, reading.home_probability,
+                                reading=reading, event=event,
                                 **({"before_fallback": ensure_lock_budget} if len(grouped) == 1
                                    else {"before_fallback": sibling_fallback,
                                          "fallback_scope": session.begin_nested}),
@@ -9835,7 +9867,9 @@ class LiveBlendRefresher:
         if reading is not None and not has_proven_home_orientation(reading):
             # The stamp applies its live inversion verdict to this reading
             # without a read (`_oriented`): show now what it will write.
-            oriented = None if proof_kwargs else self._live_orientation(event_id, reading)
+            oriented = None if proof_kwargs else self._live_orientation(
+                event_id, reading, event=event,
+            )
             if oriented is not None:
                 stats["verdict_oriented"] += 1
         if oriented is None:

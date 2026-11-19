@@ -1,0 +1,421 @@
+[
+ {
+  "type": "futures",
+  "score": 53,
+  "reason": "1.2\u20131.5T (45%) leads Anthropic IPO Closing Market Cap (Middle Brackets)",
+  "headline": "1.2\u20131.5T leads at 45%",
+  "context_summary": "1.2\u20131.5T leads at 45%",
+  "data": {
+   "id": 16623139,
+   "name": "Anthropic IPO Closing Market Cap (Middle Brackets)",
+   "sport": null,
+   "sport_name": null,
+   "llm_sport_category": "tech",
+   "source": "polymarket",
+   "source_count": 1,
+   "sources": [
+    "polymarket"
+   ],
+   "market_tier": 2,
+   "market_type": "quantity",
+   "status": "open",
+   "resolution_date": "2028-01-01T04:59:00+00:00",
+   "price_observed_at": "2026-11-16T14:32:38+00:00",
+   "top_outcomes": [
+    {
+     "id": 95080959,
+     "name": "1.2\u20131.5T",
+     "probability": 0.45269936,
+     "rank": 1,
+     "movement": null,
+     "rendered_percent": 45
+    },
+    {
+     "id": 95080960,
+     "name": "1.5\u20131.8T",
+     "probability": 0.23576028,
+     "rank": 2,
+     "movement": null,
+     "rendered_percent": 24
+    },
+    {
+     "id": 95080962,
+     "name": "0.9\u20131.2T",
+     "probability": 0.17434373,
+     "rank": 3,
+     "movement": null,
+     "rendered_percent": 17
+    }
+   ],
+   "full_field_rendered": true,
+   "display_scale": 1.0094999999999998,
+   "card_sum_reason": null,
+   "outcome_count": 7,
+   "canonical_market_key": null,
+   "group_id": "polymarket:428957",
+   "group_type": "negrisk",
+   "discover_card": {
+    "suggested_format": "threshold_heatmap",
+    "bundle_candidate": true,
+    "comparison_theme": "ipo_valuation",
+    "threshold_points": [
+     {
+      "source": "outcome",
+      "label": "0.6\u20130.9T",
+      "value": 600000000000.0,
+      "unit": "",
+      "direction": "exact",
+      "probability": 0.01584943
+     },
+     {
+      "source": "outcome",
+      "label": "<0.6T",
+      "value": 600000000000.0,
+      "unit": "T",
+      "direction": "exact",
+      "probability": 0.00495295
+     },
+     {
+      "source": "outcome",
+      "label": "0.9\u20131.2T",
+      "value": 900000000000.0,
+      "unit": "",
+      "direction": "exact",
+      "probability": 0.17434373
+     },
+     {
+      "source": "outcome",
+      "label": "1.2\u20131.5T",
+      "value": 1200000000000.0,
+      "unit": "",
+      "direction": "exact",
+      "probability": 0.45269936
+     },
+     {
+      "source": "outcome",
+      "label": "1.5\u20131.8T",
+      "value": 1500000000000.0,
+      "unit": "",
+      "direction": "exact",
+      "probability": 0.23576028
+     },
+     {
+      "source": "outcome",
+      "label": "1.8T+",
+      "value": 1800000000000.0,
+      "unit": "T",
+      "direction": "exact",
+      "probability": 0.11391778
+     }
+    ],
+    "ladder_treatment_refused": false,
+    "field_is_a_race": true,
+    "distribution_outcomes": [
+     {
+      "label": "1.2\u20131.5T",
+      "probability": 0.45269936,
+      "movement": null,
+      "rendered_percent": 45
+     },
+     {
+      "label": "1.5\u20131.8T",
+      "probability": 0.23576028,
+      "movement": null,
+      "rendered_percent": 24
+     },
+     {
+      "label": "0.9\u20131.2T",
+      "probability": 0.17434373,
+      "movement": null,
+      "rendered_percent": 17
+     },
+     {
+      "label": "1.8T+",
+      "probability": 0.11391778,
+      "movement": null,
+      "rendered_percent": 11
+     },
+     {
+      "label": "0.6\u20130.9T",
+      "probability": 0.01584943,
+      "movement": null,
+      "rendered_percent": 2
+     },
+     {
+      "label": "<0.6T",
+      "probability": 0.00495295,
+      "movement": null,
+      "rendered_percent": 1
+     },
+     {
+      "label": "No IPO by December 31, 2027",
+      "probability": 0.00247647,
+      "movement": null,
+      "rendered_percent": 0
+     }
+    ],
+    "distribution_order": "probability",
+    "remaining_outcome_count": 0,
+    "qa_signals": [],
+    "public_source_disagreement": false,
+    "reasons": [
+     "threshold_values",
+     "bundle_candidate"
+    ]
+   },
+   "image_url": null,
+   "image_width": null,
+   "image_height": null,
+   "hook_description": null,
+   "temporal_badge": null,
+   "confidence_tier": "moderate",
+   "confidence_score": 0.6471,
+   "confidence_signals": {
+    "has_closing_line": false
+   },
+   "market_tags": [
+    "category:conference",
+    "market_status:open",
+    "source:polymarket",
+    "tier:2"
+   ],
+   "image_presentation": null,
+   "image_monogram": {
+    "initials": "AN",
+    "label": "Anthropic IPO Closing Market Cap (Middle Brackets)",
+    "kind": "organization",
+    "bg_hex": "#7f1d1d",
+    "accent_hex": "#dc2626"
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "score": 52,
+  "reason": "$1.25\u2013$1.5T (41%) leads Anthropic IPO Closing Market Cap",
+  "headline": "$1.25\u2013$1.5T leads at 41%",
+  "context_summary": "$1.25\u2013$1.5T leads at 41%",
+  "data": {
+   "id": 30691373,
+   "name": "Anthropic IPO Closing Market Cap",
+   "sport": null,
+   "sport_name": null,
+   "llm_sport_category": "economics",
+   "source": "polymarket",
+   "source_count": 1,
+   "sources": [
+    "polymarket"
+   ],
+   "market_tier": 2,
+   "market_type": "quantity",
+   "status": "open",
+   "resolution_date": "2028-01-01T04:59:00+00:00",
+   "price_observed_at": "2026-11-16T14:32:38+00:00",
+   "top_outcomes": [
+    {
+     "id": 141295117,
+     "name": "$1.25\u2013$1.5T",
+     "probability": 0.413286,
+     "rank": 1,
+     "movement": null,
+     "rendered_percent": 41
+    },
+    {
+     "id": 141295119,
+     "name": "<$1.25T",
+     "probability": 0.2510142,
+     "rank": 2,
+     "movement": null,
+     "rendered_percent": 25
+    },
+    {
+     "id": 141295116,
+     "name": "$1.5\u2013$1.75T",
+     "probability": 0.17647059,
+     "rank": 3,
+     "movement": null,
+     "rendered_percent": 18
+    }
+   ],
+   "full_field_rendered": true,
+   "display_scale": 0.9859999999999999,
+   "card_sum_reason": null,
+   "outcome_count": 10,
+   "canonical_market_key": null,
+   "group_id": "polymarket:548858",
+   "group_type": "negrisk",
+   "discover_card": {
+    "suggested_format": "threshold_heatmap",
+    "bundle_candidate": true,
+    "comparison_theme": "ipo_valuation",
+    "threshold_points": [
+     {
+      "source": "outcome",
+      "label": "$1.25\u2013$1.5T",
+      "value": 1250000000000.0,
+      "unit": "$",
+      "direction": "exact",
+      "probability": 0.413286
+     },
+     {
+      "source": "outcome",
+      "label": "<$1.25T",
+      "value": 1250000000000.0,
+      "unit": "$T",
+      "direction": "exact",
+      "probability": 0.2510142
+     },
+     {
+      "source": "outcome",
+      "label": "$1.5\u2013$1.75T",
+      "value": 1500000000000.0,
+      "unit": "$",
+      "direction": "exact",
+      "probability": 0.17647059
+     },
+     {
+      "source": "outcome",
+      "label": "$1.75\u2013$2.0T",
+      "value": 1750000000000.0,
+      "unit": "$",
+      "direction": "exact",
+      "probability": 0.08772819
+     },
+     {
+      "source": "outcome",
+      "label": "$2.0\u2013$2.25T",
+      "value": 2000000000000.0,
+      "unit": "$",
+      "direction": "exact",
+      "probability": 0.02941176
+     },
+     {
+      "source": "outcome",
+      "label": "$2.25\u2013$2.5T",
+      "value": 2250000000000.0,
+      "unit": "$",
+      "direction": "exact",
+      "probability": 0.00811359
+     },
+     {
+      "source": "outcome",
+      "label": "$2.5\u2013$2.75T",
+      "value": 2500000000000.0,
+      "unit": "$",
+      "direction": "exact",
+      "probability": 0.00912779
+     },
+     {
+      "source": "outcome",
+      "label": "$2.75\u2013$3.0T",
+      "value": 2750000000000.0,
+      "unit": "$",
+      "direction": "exact",
+      "probability": 0.01064909
+     },
+     {
+      "source": "outcome",
+      "label": "$3.0T+",
+      "value": 3000000000000.0,
+      "unit": "$T",
+      "direction": "exact",
+      "probability": 0.01267748
+     }
+    ],
+    "ladder_treatment_refused": false,
+    "field_is_a_race": true,
+    "distribution_outcomes": [
+     {
+      "label": "$1.25\u2013$1.5T",
+      "probability": 0.413286,
+      "movement": null,
+      "rendered_percent": 41
+     },
+     {
+      "label": "<$1.25T",
+      "probability": 0.2510142,
+      "movement": null,
+      "rendered_percent": 25
+     },
+     {
+      "label": "$1.5\u2013$1.75T",
+      "probability": 0.17647059,
+      "movement": null,
+      "rendered_percent": 18
+     },
+     {
+      "label": "$1.75\u2013$2.0T",
+      "probability": 0.08772819,
+      "movement": null,
+      "rendered_percent": 9
+     },
+     {
+      "label": "$2.0\u2013$2.25T",
+      "probability": 0.02941176,
+      "movement": null,
+      "rendered_percent": 3
+     },
+     {
+      "label": "$3.0T+",
+      "probability": 0.01267748,
+      "movement": null,
+      "rendered_percent": 1
+     },
+     {
+      "label": "$2.75\u2013$3.0T",
+      "probability": 0.01064909,
+      "movement": null,
+      "rendered_percent": 1
+     },
+     {
+      "label": "$2.5\u2013$2.75T",
+      "probability": 0.00912779,
+      "movement": null,
+      "rendered_percent": 1
+     }
+    ],
+    "distribution_order": "probability",
+    "remaining_outcome_count": 2,
+    "qa_signals": [],
+    "public_source_disagreement": false,
+    "reasons": [
+     "threshold_values",
+     "bundle_candidate"
+    ]
+   },
+   "image_url": null,
+   "image_width": null,
+   "image_height": null,
+   "hook_description": null,
+   "temporal_badge": null,
+   "confidence_tier": "moderate",
+   "confidence_score": 0.6471,
+   "confidence_signals": {
+    "has_closing_line": false
+   },
+   "discover_llm": {
+    "topic": "economics",
+    "subtopic": "ipo",
+    "archetype": "other",
+    "audience_scope": "niche",
+    "salience_score": 3,
+    "junk_flags": [],
+    "comparison_axes": []
+   },
+   "market_tags": [
+    "category:conference",
+    "market_status:open",
+    "source:polymarket",
+    "tier:2"
+   ],
+   "image_presentation": null,
+   "image_monogram": {
+    "initials": "AN",
+    "label": "Anthropic IPO Closing Market Cap",
+    "kind": "organization",
+    "bg_hex": "#581c87",
+    "accent_hex": "#9333ea"
+   }
+  }
+ }
+]

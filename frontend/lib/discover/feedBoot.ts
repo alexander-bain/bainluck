@@ -94,6 +94,9 @@ export function bootFeedPath(): string {
   // boot URL must omit it too or it is a different URL.
   if (offset) params.set("offset", offset.toString());
   params.set("event_pct", FEED_EVENT_PCT.toString());
+  if (process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 === "true") {
+    params.set("machinery", "1");
+  }
   return `/api/feed?${params.toString()}`;
 }
 

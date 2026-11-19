@@ -54,6 +54,7 @@ import os
 from contextlib import ExitStack, asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -1074,6 +1075,46 @@ async def _stored_row(session, event_id):
 
 
 class TestThePollsCommittedStampPublishesItsFrame:
+    async def test_same_price_on_a_second_venue_poll_serves_its_new_read_time(
+        self, pg_session, published,
+    ):
+        from app.utils.aggregation import PricedOutcomeRead
+        from app.utils.source_mark import headline_source_marks
+
+        event, _market = await _seed(pg_session)
+        event_id = event.id
+        payload = list(CAPTURED.values())
+        venue_reads = []
+
+        class RecordedRead(PricedOutcomeRead):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
+                if self.external_id == LAR:
+                    venue_reads.append(self.received_at)
+
+        with patch("app.utils.aggregation.PricedOutcomeRead", RecordedRead):
+            for poll in range(2):
+                stats = await _run_poll_10090(pg_session, payload)
+                assert stats["errors"] == [], stats["errors"]
+                assert len(venue_reads) == poll + 1
+                sources, _rev, status = await _stored_row(pg_session, event_id)
+                assert status == "live"
+                assert sources["kalshi"]["value"] == EXPECTED[LAR]
+                marks = headline_source_marks(
+                    SimpleNamespace(win_probability_sources=sources),
+                    SimpleNamespace(source="blend"),
+                    [("kalshi", EXPECTED[LAR])],
+                )
+                observed_at = venue_reads[-1].isoformat().replace("+00:00", "Z")
+                for mark, price in zip(
+                    marks, (EXPECTED[LAR], 1 - EXPECTED[LAR]), strict=True,
+                ):
+                    assert mark["state"] == "single"
+                    assert mark["sources"][0]["observed_at"] == observed_at
+                    assert mark["sources"][0]["probability"] == pytest.approx(price)
+
+        assert venue_reads[1] > venue_reads[0]
+
     async def test_a_live_stamp_publishes_one_fresh_frame_after_its_commit(
         self, pg_session, published,
     ):

@@ -116,6 +116,18 @@ const KALSHI_FINAL = makeData({
 
 // ── /sports and every other FeedCard list ───────────────────────────────────
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the /sports FINAL card", () => {
   it("prints a pre-match percent beside EACH team, off the winning rung", () => {
     // 60/40 is Kalshi's; 55/45 is the books' `opening_odds` on the same payload.

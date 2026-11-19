@@ -109,6 +109,18 @@ function text(html: string): string {
     .replace(/\s+/g, " ");
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#3211 · a past-kickoff scheduled card states what is not known", () => {
   it("prints the shared label", () => {
     // The control for every suppression below: if the card were not reaching
