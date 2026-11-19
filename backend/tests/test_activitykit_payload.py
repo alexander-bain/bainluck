@@ -285,3 +285,60 @@ def test_utf8_payload_size_is_bounded_in_bytes_and_boundary_is_inclusive():
 def test_invalid_unicode_never_escapes_as_an_undeliverable_body():
     with pytest.raises(ActivityKitPayloadError):
         build_activitykit_update(snapshot(home_team="\ud800"), sent_at=SENT)
+
+
+def test_full_headline_payload_is_compact_validated_and_backwards_compatible():
+    """#12999 — full headline push stays well under 4 KiB and rejects malformed display fields."""
+    from app.services.activitykit_observation import decode_snapshot, encode_snapshot
+
+    full = snapshot(
+        home_team="Florida Gators",
+        away_team="Houston Cougars",
+        home_score=54,
+        away_score=58,
+        home_rendered_percent=39,
+        away_rendered_percent=61,
+        home_headline_tenths=386,
+        sport="basketball_ncaab",
+        home_abbreviation="FLA",
+        away_abbreviation="HOU",
+        home_color_hex="#0021A5",
+        away_color_hex="#C8102E",
+        away_secondary_color_hex="#960C22",
+        period_label="2nd Half",
+    )
+    push = build_activitykit_update(full, sent_at=SENT)
+    assert len(push.body) < 1024
+    wire = aps(push)["content-state"]["snapshot"]
+    assert wire["awayRenderedPercent"] == 61
+    assert wire["homeHeadlineTenths"] == 386
+    assert wire["sport"] == "basketball_ncaab"
+    assert wire["periodLabel"] == "2nd Half"
+    assert decode_snapshot(encode_snapshot(full)) == full
+
+    # Legacy 9-field persisted observation still decodes cleanly.
+    legacy = {
+        "schema": 1,
+        "snapshot": {
+            "event_id": 101,
+            "home_team": "Giants",
+            "away_team": "Dodgers",
+            "lifecycle": "live",
+            "home_score": 3,
+            "away_score": 2,
+            "home_rendered_percent": 46,
+            "score_observed_at": (SENT - timedelta(seconds=30)).isoformat(),
+            "probability_observed_at": (SENT - timedelta(seconds=10)).isoformat(),
+        },
+    }
+    assert decode_snapshot(legacy).sport is None
+
+    # Invalid display fields fail closed.
+    for bad in (
+        {"home_headline_tenths": 386},  # missing away_rendered_percent
+        {"home_color_hex": "red"},
+        {"pregame_away_percent": 48, "pregame_home_percent": None},
+        {"result": "home"},  # live lifecycle cannot carry final result
+    ):
+        with pytest.raises(ActivityKitPayloadError):
+            snapshot(**bad)
