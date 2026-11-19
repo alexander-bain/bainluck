@@ -252,7 +252,7 @@ async def test_run_writes_withdraws_and_keeps(monkeypatch):
         yield session
 
     plans = {
-        1: ("write", 0.1415, {"basis": "espn_predictor"}),
+        1: ("write", 0.1415, {"basis": "espn_predictor"}, NOW),
         2: ("remove", "predictor-stale"),
         3: ("keep", "board-dark"),
         4: ("keep", "predictor-dark"),
@@ -303,7 +303,7 @@ async def test_one_failed_write_does_not_cost_the_rest(monkeypatch):
         yield session
 
     async def fake_read(read_rows, now, stats):
-        return {1: ("write", 0.3, {}), 2: ("write", 0.4, {})}
+        return {1: ("write", 0.3, {}, NOW), 2: ("write", 0.4, {}, NOW)}
 
     writes = []
 
@@ -458,36 +458,62 @@ class TestNeverStepBack:
         assert stats["older_copy"] == 2 and stats["kept"] == 1 and stats["removed"] == 1
 
 
-def test_a_write_carries_espns_last_modified_inside_the_entry(monkeypatch):
-    """So the next run can tell an older copy from a refresh."""
-    import asyncio
+@pytest.mark.asyncio
+async def test_same_predictor_price_advances_the_read_time(monkeypatch):
     from contextlib import asynccontextmanager
 
-    session = _FakeSession([_db_row(1, {})])
+    from app.services import espn_api
+
+    when = NOW + timedelta(days=20)
+    modified_at = NOW - timedelta(hours=1)
+    started_again = NOW + timedelta(minutes=15)
+    first_read = NOW + timedelta(seconds=2)
+    second_read = started_again + timedelta(seconds=3)
+    instants = iter((NOW, first_read, started_again, second_read))
+    session = _FakeSession([_db_row(1, {}, when)])
 
     @asynccontextmanager
     async def fake_session(**_kw):
         yield session
 
-    async def fake_read(rows, now, stats):
-        return {1: ("write", 0.1415, {"basis": "espn_predictor", "espn_id": "401873105",
-                                      "last_modified": "2031-03-04T02:00Z"})}
+    class FakeESPN:
+        def __init__(self, *, rate_limit_delay):
+            pass
 
-    seen = {}
+        async def get_scoreboard(self, *args, **kwargs):
+            return [_game(PATS, BILLS, when)]
 
-    async def fake_write(session_, target, source, value, **kw):
-        seen.update(kw)
+        async def get_predictor(self, *args, **kwargs):
+            return _nfl_payload(modified_at)
+
+        async def close(self):
+            pass
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return next(instants)
+
+    writes = []
+
+    async def fake_write(_session, _target, source, value, *, price_read_at, entry_extra, **_kw):
+        writes.append((source, value, price_read_at, entry_extra))
 
     async def fake_publish(_session):
         return None
 
     monkeypatch.delenv("ESPN_PREDICTOR_MODE", raising=False)
+    monkeypatch.setattr(espn_api, "ESPNAPIService", FakeESPN)
+    monkeypatch.setattr(ep, "datetime", Clock)
     monkeypatch.setattr("app.tasks.base.get_task_session", fake_session)
-    monkeypatch.setattr(ep, "_read_espn", fake_read)
     monkeypatch.setattr("app.utils.nonvenue_live_push.write_nonvenue_probability", fake_write)
     monkeypatch.setattr("app.utils.nonvenue_live_push.publish_committed_nonvenue_frames", fake_publish)
-    asyncio.run(ep._run_refresh_espn_predictor())
-    assert seen["entry_extra"] == {"predictor_last_modified": "2031-03-04T02:00Z"}
+    assert (await ep._run_refresh_espn_predictor())["written"] == 1
+    assert (await ep._run_refresh_espn_predictor())["written"] == 1
+    assert writes == [
+        ("espn", 0.14151, first_read, {"predictor_last_modified": _stamp(modified_at)}),
+        ("espn", 0.14151, second_read, {"predictor_last_modified": _stamp(modified_at)}),
+    ]
 
 
 def test_the_writer_refuses_an_unlisted_entry_key():
@@ -520,7 +546,7 @@ class TestRuling226A:
         async def fake_read(rows, now, stats):
             read_rows.extend(r.event_id for r in rows)
             return {r.event_id: ("write", 0.1415, {"basis": "espn_predictor",
-                                                   "last_modified": _stamp(NOW)}) for r in rows}
+                                                   "last_modified": _stamp(NOW)}, NOW) for r in rows}
 
         async def fake_write(session_, target, source, value, **kw):
             if value is None:
@@ -651,7 +677,7 @@ class TestDuplicateRows:
 
         async def fake_read(rows, now, stats):
             read_rows.extend(r.event_id for r in rows)
-            return {r.event_id: ("write", 0.9965, {"basis": "espn_predictor"}) for r in rows}
+            return {r.event_id: ("write", 0.9965, {"basis": "espn_predictor"}, NOW) for r in rows}
 
         async def fake_write(session_, target, source, value, **kw):
             writes.append((target.id, value, (kw.get("evidence") or {}).get("withdrawn")))
