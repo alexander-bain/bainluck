@@ -152,13 +152,37 @@ struct EventSportHeadlineCard12472: View {
         )
     }
 
+    static func resolvedHeadlineSourceMark(
+        model: EventSportHeadlines12472.Model
+    ) -> (mark: SourceMark, number: Double?, subject: String?, isPregame: Bool)? {
+        guard let mark = model.sourceMark, mark.draws else { return nil }
+        let subject = model.home.shortName
+        if mark.state == .settled {
+            return (mark, nil, subject, false)
+        }
+        let homeProb = model.rows.first(where: { $0.role == .home })?.rawProbability
+        let isAfter = model.kind.phase == .after || EventState.isFinished(model.eventStatus)
+        if isAfter {
+            guard let pregameProb = homeProb else { return nil }
+            return (mark, pregameProb, subject, true)
+        }
+        return (mark, homeProb, subject, false)
+    }
+
+    private var resolvedHeadlineSourceMark: SourceMarkButton? {
+        guard let resolved = Self.resolvedHeadlineSourceMark(model: model) else { return nil }
+        return SourceMarkButton(
+            resolved.mark,
+            number: resolved.number,
+            subject: resolved.subject,
+            isPregame: resolved.isPregame,
+            numberSize: 20
+        )
+    }
+
     private var hasTrailingControls: Bool {
         if showsActiveEkgControl { return true }
-        return SourceMarkButton(
-            model.sourceMark,
-            number: model.home.rawProbability,
-            numberSize: 20
-        ) != nil
+        return resolvedHeadlineSourceMark != nil
     }
 
     private static func livePregameMetaText(
@@ -326,11 +350,7 @@ struct EventSportHeadlineCard12472: View {
                     .buttonStyle(.plain)
                 }
             }
-            if let markButton = SourceMarkButton(
-                model.sourceMark,
-                number: model.home.rawProbability,
-                numberSize: 20
-            ) {
+            if let markButton = resolvedHeadlineSourceMark {
                 markButton
                     .padding(.vertical, -10)
             }
@@ -375,7 +395,7 @@ struct EventSportHeadlineCard12472: View {
                     }
                 }
             )
-            .frame(idealWidth: 280, maxWidth: 300)
+            .frame(minWidth: 320, idealWidth: 340, maxWidth: 358)
             #if os(iOS)
             .presentationCompactAdaptation(.popover)
             #endif
@@ -405,15 +425,18 @@ struct EventSportHeadlineCard12472: View {
         HStack(alignment: .firstTextBaseline, spacing: columnSpacing) {
             Spacer(minLength: 4)
             ForEach(Array(model.columns.enumerated()), id: \.offset) { idx, col in
-                Text(col.header)
-                    .font(HeadlineStyleTable199.headers(.page, scaledSize: effectiveHeaderSize))
-                    .foregroundStyle(HeadlineStyleTable199.quietInk)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: resolvedColumnWidth(for: col, at: idx), alignment: .trailing)
-                    .padding(.leading, extraLeadingGap(at: idx))
+                let colWidth = resolvedColumnWidth(for: col, at: idx)
+                if colWidth > 0 {
+                    Text(col.header)
+                        .font(HeadlineStyleTable199.headers(.page, scaledSize: effectiveHeaderSize))
+                        .foregroundStyle(HeadlineStyleTable199.quietInk)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.45)
+                        .allowsTightening(true)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: colWidth, alignment: .trailing)
+                        .padding(.leading, extraLeadingGap(at: idx))
+                }
             }
         }
         .accessibilityHidden(true)
@@ -521,16 +544,19 @@ struct EventSportHeadlineCard12472: View {
         tint: Color
     ) -> some View {
         ForEach(Array(model.columns.enumerated()), id: \.offset) { idx, col in
-            let cellText = idx < row.cells.count ? row.cells[idx] : ""
-            cellView(
-                text: cellText,
-                column: col,
-                columnIndex: idx,
-                row: row,
-                tint: tint
-            )
-            .frame(width: resolvedColumnWidth(for: col, at: idx), alignment: .trailing)
-            .padding(.leading, extraLeadingGap(at: idx))
+            let colWidth = resolvedColumnWidth(for: col, at: idx)
+            if colWidth > 0 {
+                let cellText = idx < row.cells.count ? row.cells[idx] : ""
+                cellView(
+                    text: cellText,
+                    column: col,
+                    columnIndex: idx,
+                    row: row,
+                    tint: tint
+                )
+                .frame(width: colWidth, alignment: .trailing)
+                .padding(.leading, extraLeadingGap(at: idx))
+            }
         }
     }
 

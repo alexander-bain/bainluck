@@ -128,7 +128,7 @@ async def test_matcher_persists_opponent_quote_and_draw_not_complement(monkeypat
 async def test_ws_writer_streams_raw_home_with_real_away_and_draw(
     monkeypatch,
 ):
-    from app.tasks.live_blend_refresh import LiveBlendRefresher
+    from app.tasks.live_blend_refresh import LiveBlendRefresher, _CachedInversion
     from contextlib import asynccontextmanager
     import time
     from tests.test_live_blend_refresh import _RecordingSession
@@ -173,7 +173,7 @@ async def test_ws_writer_streams_raw_home_with_real_away_and_draw(
         frames.extend(batch)
 
     r = LiveBlendRefresher("polymarket")
-    r._inversion[15290678] = (time.monotonic() + 150, True)
+    r._inversion[15290678] = _CachedInversion(time.monotonic() + 150, True, (False, None))
     monkeypatch.setattr(r, "_publish", publish)
     stats = await r.refresh([15290678])
     await r.drain_history()

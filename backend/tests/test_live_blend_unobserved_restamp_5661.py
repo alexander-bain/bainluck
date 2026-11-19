@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.tasks.prediction_market_matching import _InversionDecision
 from app.tasks.live_blend_refresh import (
     LiveBlendRefresher,
     restamp_records_no_observation,
@@ -183,10 +184,10 @@ def _refresher(monkeypatch, *, sources, home_probability, outcomes):
     )
 
     async def _no_inversion(session, event_id, home_prob, source):
-        return home_prob
+        return _InversionDecision(home_prob)
 
     monkeypatch.setattr(
-        "app.tasks.prediction_market_matching._check_and_fix_inversion", _no_inversion
+        "app.tasks.prediction_market_matching._inversion_decision", _no_inversion
     )
     snapshots = []
 

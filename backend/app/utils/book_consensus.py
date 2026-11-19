@@ -55,7 +55,13 @@ from __future__ import annotations
 
 from typing import Optional, Sequence
 
-__all__ = ["CONSENSUS_SPLIT_GAP", "median_invents_its_answer"]
+__all__ = ["BETTING_BOOK_FLOOR", "CONSENSUS_SPLIT_GAP", "median_invents_its_answer"]
+
+#: Ruling 051 (#1841), Alex 2026-08-14. At or above three books, the writer
+#: can publish a median. Below three books it drops ``betting`` and the blend
+#: re-weights over the other fresh sources. The floor prevents the stale
+#: 87–13 shown on event 15192596 when two books could no longer form a consensus.
+BETTING_BOOK_FLOOR = 3
 
 #: How far the two middle readings may sit apart before the median's
 #: interpolation stops being a summary of the books and becomes a number none of

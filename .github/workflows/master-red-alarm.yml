@@ -1,0 +1,65 @@
+name: Master red alarm
+
+# Fable, Mon Nov 16 (item 3): when a CI run on master fails, post
+# "stuck: master red, <test>, <run>" on the NOW-lines issue within minutes, so no
+# lane has to notice by hand. On Nov 16 master sat red from 12:09 AM to 5:23 AM PT.
+#
+# GitHub API only, through `gh`: it reads the run, its failed jobs' logs, and the
+# issue's comments, then posts one line. No production read, no re-run, no deploy.
+# One line per run and attempt: the line carries a hidden marker checked first.
+# Script and its tests: backend/scripts/master_red_alarm.py,
+# backend/tests/test_master_red_alarm.py.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "A CI run id to read (prints the line; posts nothing)"
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+env:
+  # Where lane status lines go. #11852 filled at 2,500 comments on Nov 15;
+  # repoint here when #12779 fills.
+  NOW_LINES_ISSUE: "12779"
+
+jobs:
+  alarm:
+    # Only a push to master that failed or timed out. A cancelled run is a
+    # superseded one, not a red master.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'master' &&
+       (github.event.workflow_run.conclusion == 'failure' ||
+        github.event.workflow_run.conclusion == 'timed_out'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: master-red-alarm-${{ github.event.workflow_run.id || inputs.run_id }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: backend/scripts/master_red_alarm.py
+          sparse-checkout-cone-mode: false
+      - name: Post the stuck line
+        # Standard library plus `gh`; no install. Dispatch only prints.
+        run: |
+          set -uo pipefail
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            python3 backend/scripts/master_red_alarm.py --dry-run
+          else
+            python3 backend/scripts/master_red_alarm.py
+          fi

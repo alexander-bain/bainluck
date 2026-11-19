@@ -31,6 +31,7 @@ from app.tasks import celery_app
 from app.tasks import container_hub_warmer as warmer
 from app.utils import container_corrections as corrections
 from app.utils.container_read_cache import (
+    CONTAINER_READ_FRESH_TTL_LIVE_SECONDS,
     CONTAINER_READ_STALE_TTL_SECONDS,
     CachedRead,
     container_read_cache_key,
@@ -148,7 +149,8 @@ def rig(monkeypatch):
         assert limit == discovery.MAX_COLLECTIONS
         return SimpleNamespace(collections=[{"slug": s} for s in state["slugs"]])
 
-    async def _read_published(session, slug):
+    async def _read_published(session, slug, *, include_headers):
+        assert include_headers
         st, rev = state["published"][slug]
         return corrections.PublishedRead(state=st, revision=rev, container_id=1, slug=slug)
 
@@ -239,6 +241,41 @@ async def test_default_week_read_reuses_the_warmed_body(rig, monkeypatch):
     assert response.headers["X-Feed-Cache"] == "shared_hit"
     assert response.body == b'{"slug":"nfl-2026-week-4"}'
     assert not rig["built"]
+
+
+async def test_week_preview_is_available_while_the_response_is_still_building(rig, monkeypatch):
+    from app.utils.container_week_preview import (
+        PreparedWeekMarketPreview,
+        WeekMarketPreview,
+        decode_prepared_week_preview,
+        prepared_week_preview_key,
+    )
+
+    slug = "nfl-2026-week-4"
+    rig["slugs"] = [slug]
+    response_key = container_read_cache_key(slug, 34, True, compact=True)
+    preview_key = prepared_week_preview_key(response_key)
+    prepared = PreparedWeekMarketPreview(time.time(), WeekMarketPreview([81], {11: 2}, {}, {81: "prop"}))
+    original_build = route._build_entry
+
+    async def prepare(session, published):
+        assert published.slug == slug
+        return prepared
+
+    async def build(session, published, include_children, *, compact, prepared_preview):
+        assert prepared_preview is prepared
+        assert response_key not in rig["redis"].store
+        assert decode_prepared_week_preview(rig["redis"].store[preview_key], time.time()) == prepared
+        return await original_build(session, published, include_children, compact=compact)
+
+    monkeypatch.setattr(route, "_prepare_week_market_preview", prepare)
+    monkeypatch.setattr(route, "_build_entry", build)
+
+    summary = await warmer._warm_container_hubs()
+
+    assert summary["built"] == [slug]
+    assert response_key in rig["redis"].store
+    assert 0 < rig["redis"].ttls[preview_key] <= CONTAINER_READ_FRESH_TTL_LIVE_SECONDS
 
 
 async def test_a_hub_a_reader_just_built_is_skipped(rig):

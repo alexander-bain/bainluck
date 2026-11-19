@@ -3349,40 +3349,70 @@ async def _check_duplicate_kalshi_linkage(
 
 INVERSION_THRESHOLD = 0.30  # 30% — if flipping brings it 30%+ closer to consensus
 
-# Peer-consensus fallback (#1112): when the sportsbook consensus is ambiguous
-# (~0.5) or missing — the mid-game case where the only OddsSnapshot is a stale
-# pregame line — consult already-written INDEPENDENT live sources on the event.
-# These sources derive from the game itself, not the prediction-market linkage,
-# so they cannot share the yes_is_home orientation bug we are guarding against.
-# Kalshi/polymarket are excluded: they can carry the SAME inversion.
+# Independent sources may help spot an extreme mirror (#1112). Venue peers
+# are excluded because they can share the same side-assignment error.
 _PEER_CONSENSUS_SOURCES = ("stat_model", "mlb", "espn", "betting")
 _PEER_EXTREME_HI = 0.80
 _PEER_EXTREME_LO = 0.20
-_PEER_MIN_VOTES = 2  # require >=2 extreme peers agreeing before we trust them
+_PEER_MIN_VOTES = 2
+
+
+def _live_inversion_context(event, now: datetime) -> tuple[bool, datetime | None]:
+    """Whether only live evidence may orient a quote, and its kickoff cutoff."""
+    from app.utils.prematch_reading import opening_consensus_has_frozen
+    from app.utils.settled_hero import is_finished_status
+
+    status = getattr(event, "status", None)
+    if is_finished_status(status) or getattr(event, "completed_at", None) is not None:
+        return False, None
+
+    kickoff = getattr(event, "commence_time", None)
+    if isinstance(kickoff, datetime) and kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=timezone.utc)
+    if not opening_consensus_has_frozen(kickoff, status, now):
+        return False, None
+    return True, kickoff if isinstance(kickoff, datetime) and kickoff <= now else None
+
+
+def _live_inversion_price(
+    sources: dict, source: str, kickoff: datetime, now: datetime,
+) -> tuple[float, datetime] | None:
+    from app.utils.aggregation import MAX_STALENESS, parse_source_entry, source_price_read_time
+
+    if source == "betting":
+        from app.utils.book_consensus import BETTING_BOOK_FLOOR
+
+        count = sources.get("betting_book_count")
+        if type(count) is not int or count < BETTING_BOOK_FLOOR:
+            return None
+
+    value, _ = parse_source_entry(sources.get(source))
+    if value is None or not 0 <= value <= 1:
+        return None
+    observed_at = source_price_read_time(sources, source, value, now=now)
+    if observed_at is None or observed_at < kickoff:
+        return None
+    expires_at = observed_at + timedelta(seconds=MAX_STALENESS)
+    return (value, expires_at) if now < expires_at else None
 
 
 def _peer_consensus_side(win_probability_sources: dict, exclude_source: str):
-    """Return 'home' / 'away' if >=2 independent live peers are extreme and
-    unanimous on a side, else None. Peers on opposite extremes cancel to None."""
+    """Return the side favored by at least two unanimous extreme peers."""
+    from app.utils.aggregation import parse_source_entry
+
     if not win_probability_sources:
         return None
     home_votes = 0
     away_votes = 0
-    for ps in _PEER_CONSENSUS_SOURCES:
-        if ps == exclude_source:
+    for peer in _PEER_CONSENSUS_SOURCES:
+        if peer == exclude_source:
             continue
-        # #1829: read through the shared parser. `float({"value": 0.9})` raises
-        # TypeError, and the except below SWALLOWS it — so once the writers
-        # started stamping, every peer would have dropped out silently,
-        # `_PEER_MIN_VOTES` would never be reached, and the #1112 inversion
-        # guard would have stopped firing forever with nothing in any log.
-        from app.utils.aggregation import parse_source_entry
-        pv, _ = parse_source_entry(win_probability_sources.get(ps))
-        if pv is None:
+        value, _ = parse_source_entry(win_probability_sources.get(peer))
+        if value is None:
             continue
-        if pv >= _PEER_EXTREME_HI:
+        if value >= _PEER_EXTREME_HI:
             home_votes += 1
-        elif pv <= _PEER_EXTREME_LO:
+        elif value <= _PEER_EXTREME_LO:
             away_votes += 1
     if home_votes >= _PEER_MIN_VOTES and away_votes == 0:
         return "home"
@@ -3617,51 +3647,70 @@ async def _orient_blend_reading(session, event_id: int, reading, source: str) ->
     )
 
 
+@dataclass(frozen=True)
+class _InversionDecision:
+    home_probability: float
+    evidence_expires_at: datetime | None = None
+    context: tuple[bool, datetime | None] | None = None
+
+
 async def _check_and_fix_inversion(
-    session, event_id: int, home_prob: float, source: str,
+    session, event_id: int, home_prob: float, source: str, *, historical: bool = False,
 ) -> float:
-    """
-    Compare prediction market home_prob against sportsbook consensus.
-    If the probability appears inverted (flipping it brings it much closer
-    to consensus), return the flipped value. Otherwise return as-is.
+    decision = await _inversion_decision(
+        session, event_id, home_prob, source, historical=historical,
+    )
+    return decision.home_probability
 
-    This catches systematic inversions from yes_is_home mismatches,
-    outcome-order bugs, and matchup parsing errors.
 
-    Two independent checks:
-      1. Sportsbook consensus (primary): flip if flipping lands far closer to
-         the latest/opening OddsSnapshot line.
-      2. Peer consensus (#1112 fallback): when the sportsbook line is ambiguous
-         (~0.5) or missing — the mid-game stale-pregame case where check (1)
-         cannot fire — flip when this source is the extreme MIRROR of >=2
-         unanimous, independent live peers (stat_model/mlb/espn/betting).
+async def _inversion_decision(
+    session, event_id: int, home_prob: float, source: str, *, historical: bool = False,
+) -> _InversionDecision:
+    """Correct an unproven mirror using independent evidence from the right phase.
+
+    #12824: once underway, only a price observed at or after kickoff may decide
+    a venue quote's side. A single raw sportsbook row is not the admitted
+    aggregate, and a peer's publication clock does not date its input.
     """
     from app.models.models import Event, OddsSnapshot
 
     event = await session.get(Event, event_id)
     if not event:
-        return home_prob
-
-    # Get sportsbook consensus: latest odds snapshot first, opening odds as fallback
+        return _InversionDecision(home_prob)
+    sources = getattr(event, "win_probability_sources", None)
+    if not isinstance(sources, dict):
+        sources = {}
+    now = datetime.now(timezone.utc)
+    live, kickoff = (False, None) if historical else _live_inversion_context(event, now)
     consensus = None
-
-    # Try latest odds snapshot (most accurate for live/recent games)
-    latest_snap = await session.execute(
-        select(OddsSnapshot.home_win_probability)
-        .where(
-            OddsSnapshot.event_id == event_id,
-            OddsSnapshot.home_win_probability.isnot(None),
+    consensus_expires_at = None
+    if not live:
+        latest_snap = await session.execute(
+            select(OddsSnapshot.home_win_probability)
+            .where(
+                OddsSnapshot.event_id == event_id,
+                OddsSnapshot.home_win_probability.isnot(None),
+            )
+            .order_by(OddsSnapshot.captured_at.desc())
+            .limit(1)
         )
-        .order_by(OddsSnapshot.captured_at.desc())
-        .limit(1)
-    )
-    snap_prob = latest_snap.scalar_one_or_none()
-    if snap_prob is not None:
-        consensus = float(snap_prob)
-
-    # Fallback to opening odds (always available, set pre-game)
-    if consensus is None and event.opening_home_probability is not None:
-        consensus = float(event.opening_home_probability)
+        if not historical:
+            # A pregame lookup may finish after kickoff.
+            now = datetime.now(timezone.utc)
+            live, kickoff = _live_inversion_context(event, now)
+        if not live:
+            snap_prob = latest_snap.scalar_one_or_none()
+            if snap_prob is not None:
+                consensus = float(snap_prob)
+            elif event.opening_home_probability is not None:
+                consensus = float(event.opening_home_probability)
+    context = (live, kickoff)
+    if live:
+        if kickoff is None:
+            return _InversionDecision(home_prob, context=context)
+        price = _live_inversion_price(sources, "betting", kickoff, now)
+        if price is not None:
+            consensus, consensus_expires_at = price
 
     # Primary check: sportsbook consensus (only when it is reliable, i.e. extreme
     # enough to disambiguate a flip).
@@ -3680,31 +3729,41 @@ async def _check_and_fix_inversion(
                 event_id, source, home_prob, consensus, flipped,
                 raw_diff, INVERSION_THRESHOLD, flipped_diff,
             )
-            return flipped
+            return _InversionDecision(flipped, consensus_expires_at, context)
 
-    # Fallback check: peer consensus (#1112). Only meaningful when THIS source is
-    # itself extreme — a mirror is an extreme value on the wrong side. This never
-    # fires pregame (peers are not extreme until the game decides).
+    # Fallback check (#1112): only an extreme reading can mirror extreme peers.
     if home_prob <= _PEER_EXTREME_LO or home_prob >= _PEER_EXTREME_HI:
-        peer_side = _peer_consensus_side(
-            event.win_probability_sources or {}, exclude_source=source,
-        )
+        peer_expires_at = None
+        peer_values = sources
+        if kickoff is not None:
+            live_peers = [
+                (peer, price)
+                for peer in _PEER_CONSENSUS_SOURCES if peer != source
+                if (price := _live_inversion_price(sources, peer, kickoff, now)) is not None
+            ]
+            peer_values = {peer: price for peer, (price, _) in live_peers}
+            peer_expires_at = min(
+                (expires_at for _, (price, expires_at) in live_peers
+                 if price <= _PEER_EXTREME_LO or price >= _PEER_EXTREME_HI),
+                default=None,
+            )
+        peer_side = _peer_consensus_side(peer_values, exclude_source=source)
         if peer_side == "home" and home_prob <= _PEER_EXTREME_LO:
             logger.warning(
                 "Peer-consensus inversion for event %d source=%s: raw=%.3f is the "
                 "mirror of >=2 unanimous home-extreme peers. Using flipped value.",
                 event_id, source, home_prob,
             )
-            return 1.0 - home_prob
+            return _InversionDecision(1.0 - home_prob, peer_expires_at, context)
         if peer_side == "away" and home_prob >= _PEER_EXTREME_HI:
             logger.warning(
                 "Peer-consensus inversion for event %d source=%s: raw=%.3f is the "
                 "mirror of >=2 unanimous away-extreme peers. Using flipped value.",
                 event_id, source, home_prob,
             )
-            return 1.0 - home_prob
+            return _InversionDecision(1.0 - home_prob, peer_expires_at, context)
 
-    return home_prob
+    return _InversionDecision(home_prob, context=context)
 
 
 # SQL LIKE patterns for Kalshi game tickers (e.g., "kxnbagame%")
@@ -13296,7 +13355,7 @@ async def _backfill_polymarket_win_prob_history(
                     else:
                         sample_home = 1.0 - sample_yes
                     checked = await _check_and_fix_inversion(
-                        session, event_id, sample_home, "polymarket",
+                        session, event_id, sample_home, "polymarket", historical=True,
                     )
                     needs_flip = abs(checked - sample_home) > 0.01
 

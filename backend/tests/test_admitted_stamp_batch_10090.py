@@ -27,6 +27,7 @@ from copy import copy
 import pytest
 
 import app.tasks.live_blend_refresh as lbr
+from app.tasks.prediction_market_matching import _InversionDecision
 from app.tasks import speed_switches as sw
 from app.tasks.speed_switches import OFF
 from tests.test_admitted_debt_slots_10090 import _Gated, _finish, _running_call, _settle
@@ -360,9 +361,12 @@ def _real_refresher(monkeypatch, count):
     return r, session, opened, committed, published
 
 
-def _warm_orientation(r, count):
+def _warm_orientation(r, count, *, live=False):
     """Each event's inversion verdict cached: no cold orientation read."""
-    r._inversion.update({event_id: (1e9, False) for event_id in range(1, count + 1)})
+    r._inversion.update({
+        event_id: lbr._CachedInversion(1e9, False, (live, None))
+        for event_id in range(1, count + 1)
+    })
 
 
 def _logged(session):
@@ -464,10 +468,10 @@ def _cold_reads(monkeypatch, log, fail=()):
         log.append(f"cold read {event_id}")
         if event_id in fail:
             raise RuntimeError("canceling statement due to statement timeout")
-        return home_prob
+        return _InversionDecision(home_prob)
 
     monkeypatch.setattr(
-        "app.tasks.prediction_market_matching._check_and_fix_inversion", cold,
+        "app.tasks.prediction_market_matching._inversion_decision", cold,
     )
     return reads
 

@@ -61,16 +61,36 @@ nonisolated struct LiveUpdateStream: Equatable {
         SourceLabels.label(for: source) ?? "Another venue"
     }
 
-    /// The receipt time to the hundredth of a second, local time: 2:57:03.42 PM.
+    /// The receipt time to the second, local time: 2:57:03 PM (#12938: seconds, no hundredths).
     static func timeText(_ date: Date, timeZone: TimeZone = .current) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
-        let parts = calendar.dateComponents([.hour, .minute, .second, .nanosecond], from: date)
+        let parts = calendar.dateComponents([.hour, .minute, .second], from: date)
         let hour24 = parts.hour ?? 0
         let hour = hour24 % 12 == 0 ? 12 : hour24 % 12
-        let hundredths = min(99, (parts.nanosecond ?? 0) / 10_000_000)
-        return String(format: "%d:%02d:%02d.%02d %@", hour, parts.minute ?? 0, parts.second ?? 0,
-                      hundredths, hour24 < 12 ? "AM" : "PM")
+        return String(format: "%d:%02d:%02d %@", hour, parts.minute ?? 0, parts.second ?? 0,
+                      hour24 < 12 ? "AM" : "PM")
+    }
+
+    /// Collapses consecutive rows sharing the same printed venue and probability
+    /// (keeping the newest receipt in each run) so multi-leg or unchanged venue
+    /// ticks never draw a run of identical rows, and caps at `maxCount` whole rows (#12938).
+    static func displayRows(_ rows: [Update], maxCount: Int? = nil) -> [Update] {
+        if let maxCount, maxCount <= 0 { return [] }
+        var collapsed: [Update] = []
+        collapsed.reserveCapacity(min(rows.count, maxCount ?? rows.count))
+        for row in rows {
+            if let previous = collapsed.last,
+               venueName(previous.source) == venueName(row.source),
+               probabilityText(previous.p) == probabilityText(row.p) {
+                continue
+            }
+            collapsed.append(row)
+            if let maxCount, collapsed.count >= maxCount {
+                break
+            }
+        }
+        return collapsed
     }
 }
 

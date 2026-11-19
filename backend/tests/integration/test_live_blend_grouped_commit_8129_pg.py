@@ -41,6 +41,7 @@ from app.models.models import (
 )
 from app.services.database import Base
 from app.tasks.live_blend_refresh import LiveBlendRefresher, TailReceipts
+from app.utils.aggregation import stamp_source_reading
 from tests.test_live_blend_refresh import is_normal_recovery_owner
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
@@ -546,22 +547,30 @@ async def test_real_cold_orientation_later_event_view_warm_price_and_named_overr
 
     track_orientation(r, "grouped")
     async with rig.maker() as session:
-        # Real sportsbook fallback: raw .7 -> .3, with actual odds rows.
+        # The current sportsbook consensus corrects .7 to .3 for Event1.
+        # Event3 has the same .3 solely as a pregame row and opener.
+        betting = stamp_source_reading(
+            {"betting_book_count": 4}, "betting", 0.3,
+            price_read_at=datetime.now(timezone.utc),
+        )
+        await session.execute(
+            update(Event).where(Event.id == 1).values(win_probability_sources=betting)
+        )
+        await session.execute(
+            update(Event).where(Event.id == 3).values(opening_home_probability=0.3)
+        )
         session.add(
             OddsSnapshot(
-                event_id=1,
+                event_id=3,
                 bookmaker="orientation-control",
                 home_win_probability=0.3,
                 away_win_probability=0.7,
-                captured_at=datetime.now(timezone.utc),
+                captured_at=datetime.now(timezone.utc) - timedelta(hours=1),
             )
         )
         await session.commit()
-    # 4772b51e0b: the singleton now reads its cohort in one scalar statement,
-    # so no Event sits in its session's identity map and a cold unproven
-    # reading pays the Event point read as well as the real odds lookup, as
-    # every grouped event below does. (673c6a3860's lock budget, installed
-    # just before these fallback reads, is not a read and is not counted.)
+    # A cold singleton reads its Event for the latest evidence. The in-play
+    # check has no reason to look up a raw book, even when no live price exists.
     small, _, _, _, _ = refresher(rig)
     track_orientation(small, "baseline")
     await small.refresh([3])
@@ -569,8 +578,8 @@ async def test_real_cold_orientation_later_event_view_warm_price_and_named_overr
         sql for label, sql in orientation_reads
         if label == "baseline" and ("FROM odds_snapshots" in sql or "FROM events" in sql)
     ]
-    assert len(baseline_reads) == 2
-    assert sum("FROM odds_snapshots" in sql for sql in baseline_reads) == 1
+    assert small._last_written_value[3] == 0.7
+    assert len(baseline_reads) == 1 and "FROM events" in baseline_reads[0]
     async with rig.maker() as session:
         await session.execute(
             update(FuturesOutcome)
@@ -591,10 +600,12 @@ async def test_real_cold_orientation_later_event_view_warm_price_and_named_overr
                 update(Event)
                 .where(Event.id == 2)
                 .values(
-                    win_probability_sources={
-                        "espn": {"value": 0.02},
-                        "stat_model": {"value": 0.03},
-                    }
+                    win_probability_sources=stamp_source_reading(
+                        stamp_source_reading(
+                            {}, "espn", 0.02, price_read_at=datetime.now(timezone.utc),
+                        ),
+                        "stat_model", 0.03, price_read_at=datetime.now(timezone.utc),
+                    ),
                 )
             )
             await session.commit()
@@ -605,16 +616,14 @@ async def test_real_cold_orientation_later_event_view_warm_price_and_named_overr
     await r.refresh(range(1, 9))
     assert r._last_written_value[1] == 0.3
     assert r._last_written_value[2] == 0.1
-    assert r._inversion[1][1] is True and r._inversion[2][1] is True
-    # Only point reads of Event and OddsSnapshot classify fallback cost, not
-    # publication observer queries. Each cold unproven event adds both reads.
+    assert r._inversion[1].flipped and r._inversion[2].flipped
+    # Each cold in-play orientation reads only Event in its write session.
     grouped_reads = [
         sql for label, sql in orientation_reads
         if label == "grouped" and ("FROM odds_snapshots" in sql or "FROM events" in sql)
     ]
-    assert len(grouped_reads) == 16
-    assert sum("FROM odds_snapshots" in sql for sql in grouped_reads) == 8
-    assert sum("FROM events" in sql for sql in grouped_reads) == 8
+    assert len(grouped_reads) == 8
+    assert all("FROM events" in sql for sql in grouped_reads)
     # Warm boolean cache transforms the NEW input rather than pinning .3.
     async with rig.maker() as session:
         await session.execute(
