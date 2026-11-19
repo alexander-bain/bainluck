@@ -202,6 +202,8 @@ function CoinFlipMatchupsBlock({
           const awayArt = raw.away_art as MachinerySubjectArt | undefined;
           const homeArt = raw.home_art as MachinerySubjectArt | undefined;
           const when = formatShortKickoff(String(raw.commence_time ?? ""));
+          const showTossUpTag =
+            raw.show_toss_up_tag !== false && raw.is_toss_up !== false;
           return (
             <Link
               key={eid}
@@ -209,7 +211,13 @@ function CoinFlipMatchupsBlock({
               className="block rounded-card border border-surface-border bg-surface-card p-3 transition-colors hover:bg-surface-elevated"
             >
               <div className="mb-2 flex items-center justify-between text-xs text-text-muted">
-                <span className="font-semibold uppercase tracking-wide text-accent-brand">Toss-up</span>
+                {showTossUpTag ? (
+                  <span className="font-semibold uppercase tracking-wide text-accent-brand">
+                    Toss-up
+                  </span>
+                ) : (
+                  <span />
+                )}
                 <span>{when}</span>
               </div>
               <div className="flex items-center justify-between gap-2">

@@ -215,6 +215,7 @@ async def _measure_one_category(category: str) -> dict[str, int] | None:
                     exclude_reviewed=False,
                     reviewer=None,
                     reviewed_surface=None,
+                    machinery=None,
                     secret=None,
                     db=db,
                     user=None,

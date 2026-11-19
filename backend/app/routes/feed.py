@@ -3843,6 +3843,13 @@ async def get_feed(
         None,
         description="Optional ranking_judgments surface filter for reviewed exclusion.",
     ),
+    machinery: Optional[int] = Query(
+        None,
+        description=(
+            "Ruling 252: A (#12288) — opt in (`machinery=1`) for website and iOS 1.0.7+ "
+            "machinery groupings. Omitted by iOS 1.0.6 and older app versions."
+        ),
+    ),
     secret: Optional[str] = Query(
         None, description="Admin secret for debug diagnostics"
     ),
@@ -4254,7 +4261,11 @@ async def get_feed(
         ):
             return None
         return feed_page_base_cache_key(
-            **{k: v for k, v in _cache_shape.items() if k not in ("offset", "edition")}
+            **{
+                k: v
+                for k, v in _cache_shape.items()
+                if k not in ("offset", "edition", "machinery")
+            }
         )
 
     _opening_reader_kind = (
@@ -4520,6 +4531,9 @@ async def get_feed(
             max_age_seconds=0.0 if _prewarm_rebuild else 5.0,
             budget_seconds=_feed_budget_remaining_s(),
         )
+    _include_machinery_feed = (
+        isinstance(machinery, int) and bool(machinery) and not _prewarm_rebuild
+    )
     if (
         not debug
         and not exclude_reviewed
@@ -4548,6 +4562,7 @@ async def get_feed(
             edition=_edition_request,
             collections=_collections_key,
             opening_seating=_opening_seating,
+            machinery=_include_machinery_feed,
         )
         # LAT-P001: shared key builder — the pre-warm beat writes through the
         # SAME function, so a warmed key can never drift from the read key.
@@ -5202,7 +5217,7 @@ async def get_feed(
             _page_base_shape = {
                 k: v
                 for k, v in _cache_shape.items()
-                if k not in ("offset", "edition")
+                if k not in ("offset", "edition", "machinery")
             }
             _page_base_key = feed_page_base_cache_key(**_page_base_shape)
             _base_raw, _base_status = (
@@ -5213,6 +5228,41 @@ async def get_feed(
             _base_body = (
                 _safe_cache_payload(_base_raw) if _base_raw is not None else None
             )
+            if (
+                _base_body is not None
+                and _include_machinery_feed
+                and isinstance(_base_body.get("items"), list)
+            ):
+                from app.utils.roundup_containers import (
+                    ROUNDUP_READ_BUDGET_SECONDS,
+                    add_roundup_feed_items,
+                    roundup_feed_enabled,
+                )
+
+                if roundup_feed_enabled(
+                    mode=mode,
+                    include_events=include_events,
+                    include_futures=include_futures,
+                    my_teams_only=my_teams_only,
+                    debug=debug or exclude_reviewed,
+                    category=category,
+                    sport=sport,
+                ):
+                    _spliced_items = await add_roundup_feed_items(
+                        db,
+                        list(_base_body["items"]),
+                        page_window=DISCOVER_COMPOSITION_WINDOW,
+                        budget_seconds=_feed_budget_remaining_s(),
+                        stage_budget_seconds=ROUNDUP_READ_BUDGET_SECONDS,
+                        now=_request_now,
+                        include_machinery=True,
+                        machinery_only=True,
+                    )
+                    _base_body = {
+                        **_base_body,
+                        "items": _spliced_items,
+                        "total": len(_spliced_items),
+                    }
             # T4-B2 / #5102. The base is the WHOLE current list, which is
             # precisely what a pin needs: reorder it into the requested
             # edition's order and slice that, so the reader keeps their place
@@ -6424,6 +6474,7 @@ async def get_feed(
             roundup_feed_enabled,
         )
 
+        _base_feed_items_without_machinery = None
         if roundup_feed_enabled(
             mode=mode,
             include_events=include_events,
@@ -6459,7 +6510,36 @@ async def get_feed(
                     set(ctx.recent_seen_event_ids)
                     | set(ctx.recent_dismissed_event_ids)
                 ),
+                include_machinery=False,
             )
+            if _include_machinery_feed:
+                # Keep the single shared page-base 1.0.6-safe (Ruling 252: A).
+                # Captured ONLY when machinery=1 actually runs so non-machinery
+                # builds (including edition-pinned builds with switches off) are
+                # byte-for-byte unchanged.
+                _base_feed_items_without_machinery = list(feed_items)
+                feed_items = await add_roundup_feed_items(
+                    db,
+                    feed_items,
+                    page_window=DISCOVER_COMPOSITION_WINDOW,
+                    budget_seconds=_feed_budget_remaining_s(),
+                    stage_budget_seconds=ROUNDUP_READ_BUDGET_SECONDS,
+                    now=now,
+                    returning_reader=is_returning_reader(ctx),
+                    seen_card_keys=(
+                        set(ctx.recent_seen_keys) | set(ctx.recent_dismissed_keys)
+                    ),
+                    seen_futures_ids=(
+                        set(ctx.recent_seen_futures_ids)
+                        | set(ctx.recent_dismissed_futures_ids)
+                    ),
+                    seen_event_ids=(
+                        set(ctx.recent_seen_event_ids)
+                        | set(ctx.recent_dismissed_event_ids)
+                    ),
+                    include_machinery=True,
+                    machinery_only=True,
+                )
             if _capture is not None and feed_items is not _before_roundups:
                 _capture.abandon("roundup_containers")
 
@@ -6680,6 +6760,13 @@ async def get_feed(
             _capture.venue_fields_before(feed_items) if _capture is not None else None
         )
         _venue_branch = await _attach_feed_venue_settlement(db, feed_items, now)
+        if _base_feed_items_without_machinery is not None:
+            _served_item_ids = {id(item) for item in feed_items}
+            _folded_out_base_items = [
+                b for b in _base_feed_items_without_machinery if id(b) not in _served_item_ids
+            ]
+            if _folded_out_base_items:
+                await _attach_feed_venue_settlement(db, _folded_out_base_items, now)
         if _capture is not None:
             _capture.record_venue_settlement(feed_items, _venue_before, _venue_branch)
         _previous_at = _record_feed_timing(
@@ -6696,6 +6783,11 @@ async def get_feed(
         # ``_rank_score`` and friends to every reader of page 2.
         for item in feed_items:
             _publish_feed_item(item)
+        if _base_feed_items_without_machinery is not None:
+            _published_item_ids = {id(item) for item in feed_items}
+            for _b_item in _base_feed_items_without_machinery:
+                if id(_b_item) not in _published_item_ids:
+                    _publish_feed_item(_b_item)
 
         payload = _feed_page_payload(
             _served_items,
@@ -7116,7 +7208,9 @@ async def get_feed(
                 try:
                     _page_base_body = dict(payload)
                     _page_base_body["items"] = feed_items
-                    _page_base_body["total"] = total
+                    if _base_feed_items_without_machinery is not None:
+                        _page_base_body["items"] = _base_feed_items_without_machinery
+                    _page_base_body["total"] = len(_page_base_body["items"])
                     # Per-serve fields. ``render_feed_page_from_base`` sets all
                     # four; leaving them in the stored body would let a future
                     # reader take one page's window for the base's own.
@@ -7127,7 +7221,7 @@ async def get_feed(
                         # composes it at its own clock — and its edition fields
                         # name only the edition this build minted (the reader
                         # publishes any other), never this request's status.
-                        _page_base_body["total"] = len(feed_items)
+                        _page_base_body["total"] = len(_page_base_body["items"])
                         for _per_request in (
                             FEED_EDITION_FIELD,
                             "continuation_start",

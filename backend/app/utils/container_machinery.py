@@ -36,7 +36,12 @@ from app.utils.container_presentation import (
     event_destination,
     market_destination,
 )
+from app.utils.draw_priced_winner import printable_away
 from app.utils.graded_card import rendered_card_percents, rendered_duel_percents
+
+# Ruling 253: A (#12288): "toss-up" means neither side above 55% (45%–55%).
+TOSS_UP_MAX_SIDE_PROB = 0.55
+TOSS_UP_MIN_SECTION_COUNT = 2
 
 __all__ = [
     "CANDIDATE_2028_PRESIDENTIAL_PATH",
@@ -725,6 +730,22 @@ def _default_art_resolver() -> SubjectArtResolver:
     return SubjectArtResolver()
 
 
+def _is_event_toss_up(item: Mapping[str, Any]) -> bool:
+    """Ruling 253: A — a game is a toss-up iff neither side is above 55%."""
+    if isinstance(item.get("is_toss_up"), bool):
+        return bool(item["is_toss_up"])
+    ap_pct = item.get("away_pct")
+    hp_pct = item.get("home_pct")
+    if isinstance(ap_pct, int) and isinstance(hp_pct, int):
+        return max(ap_pct, hp_pct) <= int(round(TOSS_UP_MAX_SIDE_PROB * 100))
+    fav = item.get("fav_prob")
+    if isinstance(fav, (int, float)):
+        return float(fav) <= (TOSS_UP_MAX_SIDE_PROB + 1e-9)
+    ap = float(item.get("away_prob") or 0.5)
+    hp = float(item.get("home_prob") or 0.5)
+    return max(ap, hp) <= (TOSS_UP_MAX_SIDE_PROB + 1e-9)
+
+
 def choose_section_form(
     atoms_kind: str,
     selected_items: Sequence[Mapping[str, Any]],
@@ -737,9 +758,15 @@ def choose_section_form(
         return "probability_history_chart"
 
     if atoms_kind == "events":
-        if len(selected_items) >= 2 and all(
-            0.34 <= float(it.get("fav_prob") or 0.5) <= 0.66 for it in selected_items
-        ):
+        any_started = any(
+            str(it.get("status") or "").strip().lower()
+            in {"live", "in_progress", "halftime"}
+            for it in selected_items
+        )
+        if any_started:
+            return "matchup_slate"
+        in_band = sum(1 for it in selected_items if _is_event_toss_up(it))
+        if in_band >= TOSS_UP_MIN_SECTION_COUNT and in_band == len(selected_items):
             return "coin_flip_matchups"
         return "matchup_slate"
 
@@ -1296,10 +1323,20 @@ def _hydrate_event_visual_item(
         explicit_color=away_td.get("primary_color"),
     )
 
-    # Slice 5 Note 1: send two-way game pairs through rendered_duel_percents so away_pct + home_pct == 100.
-    away_pct_raw, home_pct_raw = rendered_duel_percents(ap, hp)
-    away_pct = int(away_pct_raw) if away_pct_raw is not None else _half_up_pct(ap)
-    home_pct = int(home_pct_raw) if home_pct_raw is not None else _half_up_pct(hp)
+    # Ruling 253: A & Fable 8:35 PM Rule 1: print the exact pair the game's own
+    # page serves (`current_odds.away_rendered_percent`, `home_rendered_percent`),
+    # never a second independent rounding.
+    sport_key_str = str(event.get("sport") or "").strip().lower()
+    served_away_pct = odds.get("away_rendered_percent")
+    served_home_pct = odds.get("home_rendered_percent")
+    if isinstance(served_away_pct, int) and isinstance(served_home_pct, int):
+        away_pct = int(served_away_pct)
+        home_pct = int(served_home_pct)
+    else:
+        canonical_away_p = printable_away(ap, hp, sport_key_str)
+        away_pct_raw, home_pct_raw = rendered_duel_percents(canonical_away_p, hp)
+        away_pct = int(away_pct_raw) if away_pct_raw is not None else _half_up_pct(ap)
+        home_pct = int(home_pct_raw) if home_pct_raw is not None else _half_up_pct(hp)
 
     explicit_mpn = event.get("member_page_numbers")
     if isinstance(explicit_mpn, Mapping):
@@ -1313,6 +1350,12 @@ def _hydrate_event_visual_item(
     card_ev = dict(event)
     card_ev["hero_probability"] = hp
     card_ev["hero_probability_away"] = ap
+    card_odds = dict(odds) if isinstance(odds, Mapping) else {}
+    card_odds.setdefault("home_probability", hp)
+    card_odds.setdefault("away_probability", ap)
+    card_odds["away_rendered_percent"] = away_pct
+    card_odds["home_rendered_percent"] = home_pct
+    card_ev["current_odds"] = card_odds
     if not isinstance(card_ev.get("home_team_data"), Mapping) and (home_art.get("url") or home_art.get("accent_color")):
         card_ev["home_team_data"] = {
             "logo_small": home_art.get("url"),
@@ -1328,6 +1371,7 @@ def _hydrate_event_visual_item(
     card_ev["member_page_numbers"] = ev_mpn
 
     fav_prob = max(hp, ap)
+    is_toss_up = max(away_pct, home_pct) <= int(round(TOSS_UP_MAX_SIDE_PROB * 100))
     return {
         "event_id": eid,
         "href": f"/events/{eid}",
@@ -1347,6 +1391,8 @@ def _hydrate_event_visual_item(
         "home_art": home_art,
         "away_art": away_art,
         "fav_prob": fav_prob,
+        "is_toss_up": is_toss_up,
+        "show_toss_up_tag": is_toss_up,
         "closeness_to_50": abs(hp - 0.5),
         "member_page_numbers": ev_mpn,
         "card": card_ev,
@@ -1572,9 +1618,6 @@ async def _load_snapshot_from_db(
                 continue
             hp = float(hero.home_probability)
             ap = float(hero.away_probability)
-            away_pct_raw, home_pct_raw = rendered_duel_percents(ap, hp)
-            away_pct = int(away_pct_raw) if away_pct_raw is not None else _half_up_pct(ap)
-            home_pct = int(home_pct_raw) if home_pct_raw is not None else _half_up_pct(hp)
             sport_obj = getattr(ev, "sport", None)
             if isinstance(sport_obj, str):
                 sport_key_val = sport_obj
@@ -1585,6 +1628,11 @@ async def _load_snapshot_from_db(
             else:
                 sport_key_val = ""
                 sport_name_val = ""
+            # Exact same two lines as GET /api/events/{id} (`routes/events.py:20829-20837`).
+            canonical_ap = printable_away(ap, hp, sport_key_val)
+            away_pct_raw, home_pct_raw = rendered_duel_percents(canonical_ap, hp)
+            away_pct = int(away_pct_raw) if away_pct_raw is not None else _half_up_pct(ap)
+            home_pct = int(home_pct_raw) if home_pct_raw is not None else _half_up_pct(hp)
             home_team_obj = getattr(ev, "home_team", None)
             away_team_obj = getattr(ev, "away_team", None)
             home_team_str = str(
@@ -1621,6 +1669,8 @@ async def _load_snapshot_from_db(
                 "current_odds": {
                     "home_probability": hp,
                     "away_probability": ap,
+                    "away_rendered_percent": away_pct,
+                    "home_rendered_percent": home_pct,
                 },
                 "member_page_numbers": {
                     "away_pct": away_pct,
@@ -2344,22 +2394,31 @@ def _build_dynamic_title_from_set(
                     return f"{leader_name} leads {cat_label} at {win_pct}%, with {strong_nom} contenders at 75%+ to be nominated"
                 return f"{leader_name} leads {cat_label} at {win_pct}%"
 
-    # 2. Event-led slate (e.g. NFL slate — named by biggest/closest game & dates, never week number)
+    # 2. Event-led slate (e.g. NFL/NBA slate — named by biggest/closest game & dates, never week number)
+    # Ruling 253: A: count ONLY games inside the <=55% toss-up band across the slate;
+    # with fewer than 2 toss-ups, drop the ", with N toss-up games" clause entirely.
     event_items: list[Mapping[str, Any]] = []
+    seen_event_ids: set[int] = set()
     tossup_count = 0
     for sec in built_sections:
         vb = sec.get("visual_block") or {}
         if vb.get("form_id") in {"coin_flip_matchups", "matchup_slate"}:
             its = [it for it in (vb.get("items") or ()) if isinstance(it, Mapping)]
-            if vb.get("form_id") == "coin_flip_matchups":
-                tossup_count = max(tossup_count, len(its))
+            for it in its:
+                eid = int(it.get("event_id") or 0)
+                if eid > 0 and eid in seen_event_ids:
+                    continue
+                if eid > 0:
+                    seen_event_ids.add(eid)
+                if _is_event_toss_up(it):
+                    tossup_count += 1
             event_items.extend(its)
     if event_items:
         lead_ev = event_items[0]
         matchup = f"{lead_ev.get('away_short') or lead_ev.get('away_team')} at {lead_ev.get('home_short') or lead_ev.get('home_team')}"
         span = _format_event_date_span(event_items)
         span_clause = f" the {span} slate" if span else " this slate"
-        if tossup_count >= 2:
+        if tossup_count >= TOSS_UP_MIN_SECTION_COUNT:
             return f"{matchup} headlines{span_clause}, with {tossup_count} toss-up games"
         return f"{matchup} headlines{span_clause}"
 
@@ -2656,12 +2715,57 @@ async def produce_container_machinery(
                 ev_items.append(hyd)
             order_by = str(aq.get("order_by") or "kickoff_asc")
             if order_by == "closeness_to_50":
+                # Fable 2026-11-18 Rule 3: no row may show a started game with only
+                # its scheduled time. Hold only unstarted games in closest-games /
+                # Coin-Flip Matchups whenever >= min_items unstarted games exist
+                # (live games render with full LIVE + score cards in Live & Upcoming
+                # Matchups). If fewer than min_items unstarted games remain on the
+                # slate, keep the live games and `choose_section_form` forces
+                # `matchup_slate` so both web and iOS 1.0.7 draw full LIVE score cards.
+                unstarted_items = [
+                    it
+                    for it in ev_items
+                    if str(it.get("status") or "").strip().lower()
+                    not in {"live", "in_progress", "halftime"}
+                ]
+                if len(unstarted_items) >= min_items:
+                    ev_items = unstarted_items
                 ev_items.sort(key=lambda x: (x["closeness_to_50"], x["commence_time"]))
+                # Ruling 253: A — "Toss-up" means neither side above 55%.
+                # When >= 2 games are inside the band, feature ONLY those true toss-ups.
+                # With fewer than 2, rename the section to "Closest games", strip all
+                # TOSS-UP tags, and choose the non-toss-up slate form (so iOS 1.0.7 and
+                # web both show clean matchup rows with zero TOSS-UP badges).
+                in_band_items = [it for it in ev_items if _is_event_toss_up(it)]
+                if len(in_band_items) >= TOSS_UP_MIN_SECTION_COUNT:
+                    ev_items = in_band_items[:max_items]
+                    for it in ev_items:
+                        it["show_toss_up_tag"] = True
+                else:
+                    ev_items = ev_items[:max_items]
+                    sec_title = "Closest games"
+                    sec_note = "Closest matchups on this slate."
+                    for it in ev_items:
+                        it["show_toss_up_tag"] = False
             else:
                 ev_items.sort(key=lambda x: x["commence_time"])
-            ev_items = ev_items[:max_items]
+                ev_items = ev_items[:max_items]
             if len(ev_items) < min_items:
                 return RoundupRefusal((("container_machinery", f"too_few_events:{sec_key}"),))
+            # Games-in-play dynamic heading rule (Fable 2026-11-18):
+            # Never show live games under "Upcoming Matchups".
+            if sec_title.strip().lower().startswith("upcoming"):
+                live_count = sum(
+                    1
+                    for it in ev_items
+                    if str(it.get("status") or "").strip().lower() == "live"
+                )
+                if live_count > 0 and live_count == len(ev_items):
+                    sec_title = "Live Now"
+                    sec_note = "Live scores and win chances."
+                elif live_count > 0:
+                    sec_title = "Live & Upcoming Matchups"
+                    sec_note = "Live scores and upcoming games in start-time order."
             form_id = choose_section_form("events", ev_items)
             sec_members = []
             for it in ev_items:
@@ -3341,7 +3445,13 @@ def _compute_member_number_parity(
     event_truth: dict[int, dict[str, int]] = {}
     market_truth: dict[int, dict[str, Any]] = {}
 
+    card_checked = 0
+    card_mismatches: list[dict[str, Any]] = []
+    page_checked = 0
+    page_mismatches: list[dict[str, Any]] = []
+
     for sec in sections:
+        sec_cls = str(sec.get("class") or "")
         for m in sec.get("members") or ():
             if not isinstance(m, Mapping):
                 continue
@@ -3350,18 +3460,63 @@ def _compute_member_number_parity(
             card_obj = m.get("card") if isinstance(m.get("card"), Mapping) else {}
             mpn = card_obj.get("member_page_numbers")
             if m_type == "event":
-                if isinstance(mpn, Mapping):
+                # Fable 2026-11-18 strict game-page parity rule:
+                # Never self-compare against a copied member_page_numbers dict.
+                # Verify that card.current_odds carries the exact canonical game-page
+                # rendered pair (`away_rendered_percent`, `home_rendered_percent`)
+                # produced by `printable_away` + `rendered_duel_percents` — the same
+                # function `/api/events/{id}` serves — and fail parity immediately if
+                # `current_odds` omits those integers or disagrees with the game page.
+                co = (
+                    card_obj.get("current_odds")
+                    if isinstance(card_obj.get("current_odds"), Mapping)
+                    else {}
+                )
+                ap_raw = co.get("away_probability")
+                if ap_raw is None:
+                    ap_raw = card_obj.get("hero_probability_away")
+                hp_raw = co.get("home_probability")
+                if hp_raw is None:
+                    hp_raw = card_obj.get("hero_probability")
+                sport_s = str(card_obj.get("sport") or "").strip().lower()
+                canonical_away: Optional[int] = None
+                canonical_home: Optional[int] = None
+                if isinstance(ap_raw, (int, float)) and isinstance(hp_raw, (int, float)):
+                    c_ap = printable_away(float(ap_raw), float(hp_raw), sport_s)
+                    c_a_pct, c_h_pct = rendered_duel_percents(c_ap, float(hp_raw))
+                    if c_a_pct is not None and c_h_pct is not None:
+                        canonical_away = int(c_a_pct)
+                        canonical_home = int(c_h_pct)
+                served_away = co.get("away_rendered_percent")
+                served_home = co.get("home_rendered_percent")
+                if canonical_away is not None and canonical_home is not None:
                     event_truth[mid] = {
-                        "away_pct": int(mpn["away_pct"]),
-                        "home_pct": int(mpn["home_pct"]),
+                        "away_pct": canonical_away,
+                        "home_pct": canonical_home,
                     }
-                elif (
-                    isinstance(card_obj.get("rendered_away_percent"), int)
-                    and isinstance(card_obj.get("rendered_home_percent"), int)
-                ):
+                    page_checked += 2
+                    if not isinstance(served_away, int) or int(served_away) != canonical_away:
+                        page_mismatches.append(
+                            {
+                                "location": f"{sec_cls}:member_card_current_odds:{mid}:away_rendered_percent",
+                                "event_id": mid,
+                                "shown": served_away,
+                                "member_page": canonical_away,
+                            }
+                        )
+                    if not isinstance(served_home, int) or int(served_home) != canonical_home:
+                        page_mismatches.append(
+                            {
+                                "location": f"{sec_cls}:member_card_current_odds:{mid}:home_rendered_percent",
+                                "event_id": mid,
+                                "shown": served_home,
+                                "member_page": canonical_home,
+                            }
+                        )
+                elif isinstance(served_away, int) and isinstance(served_home, int):
                     event_truth[mid] = {
-                        "away_pct": int(card_obj["rendered_away_percent"]),
-                        "home_pct": int(card_obj["rendered_home_percent"]),
+                        "away_pct": int(served_away),
+                        "home_pct": int(served_home),
                     }
             elif m_type == "market":
                 if isinstance(mpn, Mapping):
@@ -3375,8 +3530,6 @@ def _compute_member_number_parity(
                     market_truth[mid] = {"by_outcome_id": by_oid, "by_outcome_key": by_key}
 
     # 1. Discover card numbers
-    card_checked = 0
-    card_mismatches: list[dict[str, Any]] = []
     fi_data = (feed_item or {}).get("data") if isinstance((feed_item or {}).get("data"), Mapping) else {}
     rc = fi_data.get("roundup") or (feed_item or {}).get("roundup_contract") or {}
     if not isinstance(rc, Mapping):
@@ -3461,8 +3614,6 @@ def _compute_member_number_parity(
                     )
 
     # 2. Container page section numbers
-    page_checked = 0
-    page_mismatches: list[dict[str, Any]] = []
     for sec in sections:
         sec_cls = str(sec.get("class") or "")
         vb = sec.get("visual_block")

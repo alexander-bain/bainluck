@@ -527,4 +527,48 @@ describe("#12288 Slice 6 — Website parity, error states, and non-repeating fir
     expect(html).not.toContain("block truncate text-xs text-text-muted");
     expect(html).not.toContain("block truncate text-sm font-semibold");
   });
+
+  it("253: A: omits Toss-up badge when show_toss_up_tag is false", () => {
+    const vb: MachineryVisualBlock = {
+      form_id: "coin_flip_matchups",
+      initial_visible_limit: 3,
+      items: [
+        {
+          event_id: 14969890,
+          away_short: "Ravens",
+          home_short: "Panthers",
+          away_pct: 43,
+          home_pct: 57,
+          commence_time: "2026-11-22T18:00:00+00:00",
+          is_toss_up: false,
+          show_toss_up_tag: false,
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <MachinerySectionRenderer visualBlock={vb} members={[]} />,
+    );
+    expect(html).toContain("Ravens");
+    expect(html).toContain("43%");
+    expect(html).toContain("57%");
+    expect(html).not.toContain("Toss-up");
+  });
+
+  it("252: A: bootFeedPath appends machinery=1 only when NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 is true", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { bootFeedPath } = require("@/lib/discover/feedBoot");
+    const prev = process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1;
+    try {
+      delete process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1;
+      expect(bootFeedPath()).not.toContain("machinery=1");
+      process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 = "true";
+      expect(bootFeedPath()).toContain("machinery=1");
+    } finally {
+      if (prev === undefined) {
+        delete process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1;
+      } else {
+        process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 = prev;
+      }
+    }
+  });
 });
