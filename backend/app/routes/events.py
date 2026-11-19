@@ -35828,6 +35828,49 @@ async def get_event_odds_history(
     }
 
 
+_LINE_MOVEMENT_DISAGREEMENT_BASIS = "admitted-source-pair-v2"
+
+
+def _line_movement_disagreement(event: Event) -> Optional[dict[str, float | str]]:
+    """Compare two current inputs admitted by the shared blend rules."""
+    from app.utils.aggregation import effective_source_weights_detailed, parse_source_entry
+
+    source_entries = event.win_probability_sources
+    if not isinstance(source_entries, dict):
+        return None
+    sources, probabilities, weights, floored = effective_source_weights_detailed(event)
+    admitted = {
+        source: probability
+        for source, probability, weight in zip(sources, probabilities, weights)
+        if weight > 0 and source not in floored
+    }
+    sportsbook_prob = admitted.get("betting")
+    if sportsbook_prob is None:
+        return None
+
+    # Snapshot history can contain an opening quote long after the venue stopped
+    # pricing the event. Choose among current inputs, with dated readings first
+    # and a stable venue order when their timestamps tie or are both absent.
+    undated = datetime.min.replace(tzinfo=timezone.utc)
+    venue = max(
+        (source for source in ("kalshi", "polymarket") if source in admitted),
+        key=lambda source: parse_source_entry(source_entries[source])[1] or undated,
+        default=None,
+    )
+    if venue is None:
+        return None
+    venue_prob = admitted[venue]
+    divergence = abs(venue_prob - sportsbook_prob)
+    if divergence >= 0.05:
+        return {
+            "sportsbook_home_prob": round(sportsbook_prob, 4),
+            "prediction_market_home_prob": round(venue_prob, 4),
+            "source": venue,
+            "divergence": round(divergence, 4),
+        }
+    return None
+
+
 @router.get("/{event_id}/line-movement")
 async def get_line_movement_analysis(
     event_id: int,
@@ -35860,6 +35903,7 @@ async def get_line_movement_analysis(
         raise HTTPException(status_code=404, detail="Event not found")
 
     now = datetime.now(timezone.utc)
+    disagreement_data = _line_movement_disagreement(event)
 
     # Check for cached analysis
     cached = await db.execute(
@@ -35879,15 +35923,25 @@ async def get_line_movement_analysis(
             # Extract stored context metadata if available
             stored_movement_data = cached_analysis.movement_data or []
             stored_context = None
+            disagreement_basis = None
             if isinstance(stored_movement_data, dict):
                 stored_context = stored_movement_data.get("context")
+                disagreement_basis = stored_movement_data.get("disagreement_basis")
                 stored_movement_data = stored_movement_data.get("movements", [])
+            disagreement = cached_analysis.disagreement_data
+            # Reuse a comparison only while both admitted inputs still
+            # support it. Movement history and its explanation have their own TTL.
+            if (
+                disagreement_basis != _LINE_MOVEMENT_DISAGREEMENT_BASIS
+                or disagreement != disagreement_data
+            ):
+                disagreement = None
             return {
                 "event_id": event_id,
                 "movements": stored_movement_data,
                 "explanation": cached_analysis.explanation,
-                "disagreement_explanation": cached_analysis.disagreement_explanation,
-                "disagreement_data": cached_analysis.disagreement_data,
+                "disagreement_explanation": cached_analysis.disagreement_explanation if disagreement else None,
+                "disagreement_data": disagreement,
                 "context": stored_context,
                 "cached": True,
                 "created_at": cached_analysis.created_at.isoformat(),
@@ -36108,58 +36162,8 @@ async def get_line_movement_analysis(
         if attribution.surfaced:
             explanation = attribution.primary_cause
 
-    # Check for prediction market disagreement
+    # No synchronous LLM call for the comparison (latency/133).
     disagreement_explanation = None
-    disagreement_data = None
-
-    # Look for prediction market win_prob_snapshots
-    try:
-        from app.models.models import WinProbSnapshot
-        pm_result = await db.execute(
-            select(WinProbSnapshot)
-            .where(
-                WinProbSnapshot.event_id == event_id,
-                WinProbSnapshot.source.in_(["kalshi", "polymarket"]),
-            )
-            .order_by(WinProbSnapshot.captured_at.desc())
-            .limit(2)
-        )
-        pm_snapshots = pm_result.scalars().all()
-
-        if pm_snapshots and opening_home_prob is not None:
-            # Compare latest prediction market price to sportsbook consensus
-            pm_snap = pm_snapshots[0]
-            pm_prob = float(pm_snap.home_probability) if pm_snap.home_probability is not None else None
-            sportsbook_prob = opening_home_prob
-
-            # Use latest aggregated odds if available
-            if aggregated_snapshots:
-                sportsbook_prob = aggregated_snapshots[-1]["home_probability"]
-
-            if pm_prob is not None and sportsbook_prob is not None:
-                divergence = abs(pm_prob - sportsbook_prob)
-                if divergence >= 0.05:  # 5% disagreement threshold
-                    disagreement_data = {
-                        "sportsbook_home_prob": round(sportsbook_prob, 4),
-                        "prediction_market_home_prob": round(pm_prob, 4),
-                        "source": pm_snap.source,
-                        "divergence": round(divergence, 4),
-                    }
-
-                    # NO LLM CALL HERE (latency/133). This used to call the
-                    # SYNCHRONOUS generate_market_disagreement_explanation()
-                    # from inside an async handler — a blocking OpenAI request
-                    # with a 30s client timeout, which parks the whole event
-                    # loop (and so both workers' worth of concurrency on the
-                    # dyno), not just this request. It fired on every cache
-                    # miss: disagreement_data is set on 264/264 rows ever
-                    # written to line_movement_analyses, and
-                    # disagreement_explanation on 0 of those 264. Measured
-                    # payout: zero, for an unbounded block. The numbers below
-                    # are deterministic and are the part clients render;
-                    # disagreement_explanation stays in the response as null.
-    except Exception:
-        pass  # win_prob_snapshots table may not exist or other DB issue
 
     # Cache the analysis
     ttl = None
@@ -36184,6 +36188,7 @@ async def get_line_movement_analysis(
     cache_data = {
         "movements": movements_data,
         "context": context_meta,
+        "disagreement_basis": _LINE_MOVEMENT_DISAGREEMENT_BASIS,
     }
 
     # Upsert cached analysis
