@@ -39393,8 +39393,8 @@ def _build_search_top_outcomes(
     recalled through an OUTCOME name carry that outcome. See
     `_search_query_matched_leg`.
 
-    ``lean=True`` returns the minimal typeahead payload (name / probability /
-    movement only — no id/odds/rank) to keep the dropdown response small.
+    ``lean=True`` returns the typeahead payload (name / probability / movement
+    and source mark, with no id/odds/rank) to keep the dropdown response small.
     Placeholder outcomes are filtered; probabilities are #23-normalized so the
     displayed distribution reads sensibly (e.g. "Lakers 62% · Cavs 18%").
 
@@ -39431,6 +39431,8 @@ def _build_search_top_outcomes(
         reader_change_24h,
     )
 
+    source_market = market
+    source_outcomes = {o.id: o for o in market.outcomes}
     _verified_changed = False
     if verified is not None:
         market = _VerifiedMarket(market, verified.overlay, verified.display_overlay)
@@ -39691,6 +39693,8 @@ def _build_search_top_outcomes(
             }
             for o, name in named
         ]
+    # Keep identity separately: lean rows have no id and names can repeat.
+    source_by_row = {id(row): source_outcomes[o.id] for (o, _name), row in zip(named, out)}
     # #6993: null the refused price, keyed on presence, exactly as the detail,
     # group, browse and faceted arms do — `WITHHELD_PRICE_FIELDS` is the one
     # place the spellings of "the price" are listed, so `movement` (this
@@ -39816,6 +39820,12 @@ def _build_search_top_outcomes(
     out = _drop_dominant_field_outcomes(
         out, lambda o: o.get("name"), lambda o: o.get("probability")
     )
+    from app.utils.futures_source_mark import futures_card_source_mark
+
+    for row in out:
+        row["source_mark"] = futures_card_source_mark(
+            source_market, source_by_row[id(row)], row, verified=verified,
+        )
     return _leader_pick_order(out)  # #993 shared leader-pick (Other/Field never headlines)
 
 
