@@ -66,7 +66,10 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     }
 
     private var effectivePregameWidth: CGFloat {
-        dynamicTypeSize.isAccessibilitySize ? min(pregameColWidth, 74) : min(pregameColWidth, 66)
+        if model.headers.pregame == "Proj." {
+            return dynamicTypeSize.isAccessibilitySize ? min(scoreColWidth, 58) : min(scoreColWidth, 52)
+        }
+        return dynamicTypeSize.isAccessibilitySize ? min(pregameColWidth, 74) : min(pregameColWidth, 62)
     }
 
     private var effectivePrimaryWidth: CGFloat {
@@ -93,19 +96,13 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         return scoreW + pregameW + primaryW
     }
 
-    private func sharedCompactTeamNameFontSize(forRowWidth rowWidth: CGFloat) -> CGFloat {
-        let competitorNames = model.rows
-            .filter { $0.kind != .draw }
-            .map(\.shortName)
-        let tickReserve: CGFloat = model.isFinished ? 16 : 0
-        let availableWidth = max(rowWidth - 36 - 8 - tickReserve - trailingColumnsClusterWidth, 48)
-        return CardTeamNameSizing.sharedWordSafeFontSize(
-            names: competitorNames,
-            baseSize: min(compactNameSize, 20),
-            weight: .bold,
-            availableWidth: availableWidth,
-            minimumScale: 0.48
-        )
+    /// #13013 (`246: A`) — Same uniform team-name font size across every Discover game card.
+    var renderedCompactTeamNameFontSize13013: CGFloat {
+        uniformCompactTeamNameFontSize
+    }
+
+    private var uniformCompactTeamNameFontSize: CGFloat {
+        CompactGameCard12616.uniformCardNameFontSize(scaledBaseSize: compactNameSize)
     }
 
     var body: some View {
@@ -119,12 +116,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                     }
                 }
             } else {
-                ViewThatFits(in: .horizontal) {
-                    compactCompetitorStack(rowWidth: 333, isFallback: false)
-                    compactCompetitorStack(rowWidth: 296, isFallback: false)
-                    compactCompetitorStack(rowWidth: 264, isFallback: false)
-                    compactCompetitorStack(rowWidth: 232, isFallback: true)
-                }
+                compactCompetitorStack()
             }
 
             if let bar = model.bar {
@@ -331,11 +323,11 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
 
     // MARK: - Competitor & 187-A Middle Draw Rows
 
-    private func compactCompetitorStack(rowWidth: CGFloat, isFallback: Bool) -> some View {
-        let fontSize = sharedCompactTeamNameFontSize(forRowWidth: rowWidth)
+    private func compactCompetitorStack() -> some View {
+        let fontSize = uniformCompactTeamNameFontSize
         return VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(model.rows.enumerated()), id: \.offset) { _, row in
-                compactRowView(row, nameFontSize: fontSize, preventSingleWordTruncation: !isFallback)
+                compactRowView(row, nameFontSize: fontSize, preventSingleWordTruncation: false)
             }
         }
     }
@@ -372,7 +364,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 }
             }
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 4)
 
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 if model.headers.score != nil {
