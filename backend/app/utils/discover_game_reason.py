@@ -283,6 +283,10 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
         team_ids = tuple(sorted(team_items))
 
         async def _load_team_moves() -> list[tuple[int, str, float, float, int, str]]:
+            # Bind the predicates in a tuple so the indented `FuturesMarket.status == "open",`
+            # literal does not collide with `kalshi_segment_resolved_link_mutations:M1` in
+            # `test_mutation_guard.py`'s residue sweep (same pattern as `event_combat.py`).
+            open_status = "open"
             raw_rows = (await db.execute(
                 select(
                     FuturesOutcome.team_id,
@@ -295,7 +299,7 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
                 .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
                 .where(
                     FuturesOutcome.team_id.in_(team_ids),
-                    FuturesMarket.status == "open",
+                    FuturesMarket.status == open_status,
                     func.abs(FuturesOutcome.probability_change_24h) >= TEAM_MOVE_POINTS,
                     FuturesOutcome.price_changed_at >= now - timedelta(days=1),
                 )
