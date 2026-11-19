@@ -3991,6 +3991,8 @@ async def get_golf(
                     "tournament_name": tourn["name"],
                     "movement_24h": g["movement_24h"],
                     "probability": g["probability"],
+                    "source_mark": g.get("source_mark")
+                    or no_source_mark("source_evidence_incomplete"),
                 })
     all_movers.sort(key=lambda m: abs(m["movement_24h"]), reverse=True)
     biggest_movers = all_movers[:5]
@@ -4182,6 +4184,7 @@ def _build_current_event(t: dict) -> dict:
     triples.sort(key=_sort_key)
     sorted_ids = [t[0] for t in triples]
     sorted_names = [t[1] for t in triples]
+    leader = t["golfers"][0] if t["golfers"] else None
 
     return {
         "key": t["key"],
@@ -4192,8 +4195,13 @@ def _build_current_event(t: dict) -> dict:
         "end_date": t.get("end_date"),
         "venue": t.get("venue"),
         "golfer_count": len(t["golfers"]),
-        "leader": t["golfers"][0]["name"] if t["golfers"] else None,
-        "leader_probability": t["golfers"][0]["probability"] if t["golfers"] else None,
+        "leader": leader["name"] if leader else None,
+        "leader_probability": leader["probability"] if leader else None,
+        "source_mark": (
+            leader.get("source_mark") or no_source_mark("source_evidence_incomplete")
+            if leader
+            else no_source_mark("no_probability")
+        ),
         "top_golfers": t["golfers"][:5],
         "market_ids": sorted_ids,
         "market_names": sorted_names,
