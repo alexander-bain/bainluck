@@ -5706,6 +5706,8 @@ async def get_feed(
                             # #11295: the optional pair read is bounded inside
                             # what is left of this budget.
                             projection_budget_s=_feed_budget_remaining_s,
+                            timing_records=_timings,
+                            timing_started_at=_started_at,
                         )
                     feed_items.extend(event_items)
                 except Exception as e:
@@ -6488,6 +6490,9 @@ async def get_feed(
                     _capture.record_collections if _capture is not None else None
                 ),
             )
+            _previous_at = _record_feed_timing(
+                _timings, _started_at, _previous_at, "collections"
+            )
 
         if _theme_refs_enabled:
             # #9925: on the full deck, before the pin and seating take bodies
@@ -6502,6 +6507,9 @@ async def get_feed(
                 # The offline replay does not run this stage, so a deck it
                 # touched could never verify.
                 _capture.abandon("theme_collection_refs")
+            _previous_at = _record_feed_timing(
+                _timings, _started_at, _previous_at, "theme_refs"
+            )
 
         from app.utils.roundup_containers import (
             ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS,
@@ -6578,6 +6586,9 @@ async def get_feed(
                 )
             if _capture is not None and feed_items is not _before_roundups:
                 _capture.abandon("roundup_containers")
+            _previous_at = _record_feed_timing(
+                _timings, _started_at, _previous_at, "roundups"
+            )
 
         # T4-B2 / #5102: the pin, on the BUILD path. Applied to ``feed_items``
         # before the slice below, which is the only placement that works —
@@ -6669,6 +6680,9 @@ async def get_feed(
                     items=feed_items,
                 )
 
+        _previous_at = _record_feed_timing(
+            _timings, _started_at, _previous_at, "opening_seating"
+        )
         total = len(_served_items)
         paginated = _served_items[offset : offset + limit]
 
@@ -11946,6 +11960,15 @@ def _build_personalization_trace(
     }
 
 
+#: Above this many matched ``Sport`` rows (e.g. tennis ~60 tournament rows,
+#: soccer ~35+ leagues), ``Event.sport_id.in_(...)`` lures Postgres into
+#: bitmap-scanning tens of thousands of historical rows via ``ix_events_sport_id``
+#: instead of scanning the small 24h/36h time window via
+#: ``ix_events_status_commence``. Using ``(Event.sport_id + 0).in_(...)`` keeps
+#: Postgres on the time-window index while still filtering inside SQL (#11931).
+_EVENT_SPORT_ID_INDEX_CAP = 8
+
+
 async def _score_events(
     db: AsyncSession,
     now: datetime,
@@ -11962,6 +11985,8 @@ async def _score_events(
     *,
     share_scored_events: bool = False,
     defer_personalization: bool = False,
+    timing_records: Optional[list[dict[str, float | str]]] = None,
+    timing_started_at: Optional[float] = None,
 ) -> list[dict]:
     """Score and format events for the feed.
 
@@ -11988,6 +12013,18 @@ async def _score_events(
     set reuse one answer. Only `/api/feed`'s build passes it, and it is ignored
     for My Teams and for a price refresh, which read directly as before.
     """
+    _ev_timing_started = (
+        timing_started_at if timing_started_at is not None else time.perf_counter()
+    )
+    _ev_timing_prev = time.perf_counter()
+
+    def _mark_event_stage(stage: str) -> None:
+        nonlocal _ev_timing_prev
+        if timing_records is not None:
+            _ev_timing_prev = _record_feed_timing(
+                timing_records, _ev_timing_started, _ev_timing_prev, f"events.{stage}"
+            )
+
     _defer_pers = (
         defer_personalization and not my_teams_only and price_refresh_events is None
     )
@@ -12021,6 +12058,8 @@ async def _score_events(
                     sports_mode=True,
                     projection_budget_s=projection_budget_s,
                     defer_personalization=True,
+                    timing_records=timing_records,
+                    timing_started_at=_ev_timing_started,
                 )
 
         scored_items = await _pic.get_or_build(
@@ -12109,7 +12148,16 @@ async def _score_events(
                 matching_sport_ids = list(sport_id_rows)
                 if not matching_sport_ids:
                     return []
-                candidate_conditions.append(Event.sport_id.in_(matching_sport_ids))
+                if len(matching_sport_ids) > _EVENT_SPORT_ID_INDEX_CAP:
+                    # Large multi-league/tournament families (tennis, soccer,
+                    # basketball) span dozens of sport_ids and tens of thousands
+                    # of historical rows; keep Postgres on
+                    # `ix_events_status_commence` instead of `ix_events_sport_id`.
+                    candidate_conditions.append(
+                        (Event.sport_id + 0).in_(matching_sport_ids)
+                    )
+                else:
+                    candidate_conditions.append(Event.sport_id.in_(matching_sport_ids))
             else:
                 candidate_conditions.append(Sport.key.ilike(f"%{sport_filter}%"))
 
@@ -12244,6 +12292,7 @@ async def _score_events(
         if price_refresh_events is None:
             result = await db.execute(query)
             events = result.scalars().all()
+            _mark_event_stage("query")
         else:
             # Already-painted exact identities, freshly loaded/folded by price-cards.
             # No candidate pool, pagination, ranking or response cache is traversed.
@@ -12335,6 +12384,7 @@ async def _score_events(
                 _fallback_answer = await read_snapshot_fallbacks(db, fallback_ids, now=now)
             for event_id, home in _fallback_answer.items():
                 snapshot_fallbacks[event_id] = round(float(home), 6)
+            _mark_event_stage("fallbacks")
 
         # ── WHAT EACH PREDICTION MARKET SAID BEFORE THE MATCH (ux/1036 Tier A) ──
         #
@@ -12381,12 +12431,14 @@ async def _score_events(
                 )
             else:
                 prematch_by_event = await read_prematch_priors(db, pm_binds)
+            _mark_event_stage("prematch")
 
         # Score each event using aggregate probabilities from all available sources
         scored_items = []
         user_team_ids = set(ctx.team_relations.keys()) if my_teams_only else set()
 
         champ_probs = {} if price_refresh_events is not None else await _get_championship_probabilities(db)
+        _mark_event_stage("champ_probs")
 
         from app.utils.feed_scoring import (
             apply_completed_freshness_decay,
@@ -13108,6 +13160,7 @@ async def _score_events(
             events,
             remaining_s=projection_budget_s() if projection_budget_s else None,
         )
+        _mark_event_stage("projections")
 
     if _defer_pers:
         return scored_items
@@ -14510,15 +14563,39 @@ async def _compute_ordered_candidate_ids(
     external_curator_recall_list = list(external_curator_recall_ids)
     pool_ids: dict[str, list[int]] = {}
     candidate_market_ids: list[int] = list(external_curator_recall_list)
-    for name, query, _limit in pool_specs:
+    active_pool_specs: list[tuple[str, Any, int]] = []
+    for name, query, limit in pool_specs:
         if _pool_disjoint_from_category(name, category_filter):
             pool_ids[name] = []
             continue
-        result = await db.execute(query)
-        _mark(f"pool_{name}")
-        ids = list(result.scalars().all())
-        pool_ids[name] = ids
-        candidate_market_ids.extend(ids)
+        active_pool_specs.append((name, query, limit))
+
+    union_query = None
+    if category_filter and isinstance(db, AsyncSession) and len(active_pool_specs) > 1:
+        from app.utils.category_candidate_union import (
+            build_category_candidate_union_query,
+        )
+
+        union_query = build_category_candidate_union_query(
+            id_filters, active_pool_specs
+        )
+
+    if union_query is not None:
+        result = await db.execute(union_query)
+        _mark("pool_category_union")
+        buckets: list[list[int]] = [[] for _ in active_pool_specs]
+        for pool_idx, market_id in result.all():
+            buckets[int(pool_idx)].append(int(market_id))
+        for (name, _query, _limit), ids in zip(active_pool_specs, buckets):
+            pool_ids[name] = ids
+            candidate_market_ids.extend(ids)
+    else:
+        for name, query, _limit in active_pool_specs:
+            result = await db.execute(query)
+            _mark(f"pool_{name}")
+            ids = list(result.scalars().all())
+            pool_ids[name] = ids
+            candidate_market_ids.extend(ids)
 
     seen_market_ids: set[int] = set()
     market_ids: list[int] = []

@@ -301,8 +301,9 @@ class TestCategoryBrowsePoolPruning:
             "_external_curator_recall_market_ids",
             AsyncMock(return_value=[]),
         )
-        # Only the 5 nonsports_* pools should execute for category="politics".
-        db = _RecordingAsyncSession(replies=[[101], [102], [], [101, 103], []])
+        # The 5 nonsports_* pools fuse into one MATERIALIZED-CTE union query
+        # for category="politics", while the 3 disjoint sports pools stay skipped.
+        db = _RecordingAsyncSession(replies=[[(0, 101), (1, 102), (3, 101), (3, 103)]])
         market_ids, pool_counts, curator_ids = (
             await feed_mod._compute_ordered_candidate_ids(
                 db,
@@ -311,7 +312,8 @@ class TestCategoryBrowsePoolPruning:
                 category_filter="politics",
             )
         )
-        assert len(db.statements) == 5
+        assert len(db.statements) == 1
+        assert "with cat_base as materialized" in _compile_pg(db.statements[0])
         assert market_ids == [101, 102, 103]
         assert curator_ids == []
         # Provenance keys remain complete with 0 for skipped pools.
@@ -319,4 +321,5 @@ class TestCategoryBrowsePoolPruning:
         assert pool_counts["sports_postseason"] == 0
         assert pool_counts["sports_editorial_recall"] == 0
         assert pool_counts["nonsports_volume"] == 1
+        assert pool_counts["nonsports_editorial_recall"] == 2
         assert pool_counts["deduped"] == 3
