@@ -142,6 +142,8 @@ async def test_real_default_http_keeps_all_14_games_but_hydrates_only_12_boards(
     assert len([m for m in members if m["type"] == "event"]) == 14
     assert len([m for m in members if m["type"] == "market"]) == 12
     assert len(session.hydrated) == 1 and len(session.hydrated[0]) == 12
+    assert len(session.edge_reads()) == 1
+    assert not any("to_regclass('public.container_corrections')" in sql for sql in session.statements)
     assert payload["counts"] == {
         "market_count": 4984,
         "selected_market_count": 12,
