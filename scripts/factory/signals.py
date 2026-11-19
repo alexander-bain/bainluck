@@ -26,6 +26,7 @@ LIVE_LINES = {
     "Builder C": ("Apps",),
     "Atlas": ("Server", "Website"),
     "Builder E": ("Server",),
+    "Builder F": ("Apps",),
     "Apple": ("Apps",),
 }
 AUTHORS = (*LIVE_LINES, "Fable", "Alex", "Wee-Bey")
@@ -40,6 +41,16 @@ HOLD_OVER = re.compile(
     re.I,
 )
 TEST_NAME = re.compile(r"\btest_[A-Za-z0-9_]{1,90}\b", re.ASCII)
+BUILD = re.compile(
+    r"\bTestFlight\s+build[\s*`#]+([1-9][0-9]{0,9})\b"
+    r"|\bTestFlight\s+[0-9]+\.[0-9]+\.[0-9]+\s+\(([1-9][0-9]{0,9})\)",
+    re.I,
+)
+
+
+def testflight_number(text):
+    numbers = {int(a or b) for a, b in BUILD.findall(text)}
+    return numbers.pop() if len(numbers) == 1 else None
 
 
 def named_lines(text):
@@ -116,6 +127,11 @@ def commands_from(comments):
                 targets = (
                     named_lines(delivery) if explicit else LIVE_LINES.get(author, ())
                 )
+                # The byline can appear before the numbered change on a live post.
+                prefix = re.sub(
+                    rf"^\s*[—–]\s*\**(?:{AUTHOR})\**\s*,\s*(?=#)", "", prefix
+                )
+                prefix = re.split(r"\s+[—–]\s+", prefix, maxsplit=1)[0]
                 numbers = re.split(r"[\s,+]+", prefix.strip())
                 ids = (
                     [int(n[1:]) for n in numbers]
@@ -123,9 +139,16 @@ def commands_from(comments):
                     else []
                 )
                 for target in targets:
-                    commands.append(
-                        {"kind": "live", "line": target, "at": at, "numbers": ids}
-                    )
+                    event = {"kind": "live", "line": target, "at": at, "numbers": ids}
+                    if target == "Apps":
+                        build = testflight_number(status)
+                        if build:
+                            event["build"] = build
+                    commands.append(event)
+            elif BUILD.match(status) and (build := testflight_number(status)):
+                commands.append(
+                    {"kind": "build", "line": "Apps", "at": at, "build": build}
+                )
 
             merging = re.search(r"\bmerging\b", line, re.I)
             if merging:
@@ -216,6 +239,18 @@ def reader_behind(published_at, now):
     return now - moment(published_at) > timedelta(minutes=15)
 
 
+def longest_wait(changes):
+    dated = [c for c in changes if c.get("station_since") and c.get("number")]
+    oldest = min(
+        dated, key=lambda c: (moment(c["station_since"]), c["number"]), default=None
+    )
+    return (
+        {"number": oldest["number"], "waiting_since": oldest["station_since"]}
+        if oldest
+        else {}
+    )
+
+
 def stopped_rules(
     changes, commands, master, last_merges, observed_since, now, holds=None
 ):
@@ -231,6 +266,8 @@ def stopped_rules(
             if c["line"] == line
             and c["station"] == "Merge line"
             and not c.get("bot_update")
+            and not c.get("parked")
+            and not c.get("side_track")
         ]
         since = last_merges.get(line) or observed_since
         if waiting and now - moment(since) >= timedelta(minutes=30):
@@ -242,6 +279,7 @@ def stopped_rules(
                     "since": since,
                     "count": len(waiting),
                     "level": "amber",
+                    **longest_wait(waiting),
                 }
             )
         announcements = [
@@ -264,6 +302,7 @@ def stopped_rules(
                         "since": latest["at"],
                         "count": len(latest["numbers"]),
                         "level": "amber",
+                        "number": latest["numbers"][0],
                     }
                 )
         hold = holds.get(line)
@@ -277,15 +316,18 @@ def stopped_rules(
                     "count": len(waiting),
                     "level": "red",
                     "source": hold["source"],
+                    **longest_wait(waiting),
                     **({"test": hold["test"]} if hold.get("test") else {}),
                 }
             )
         reviewing = [
-            c["station_since"]
+            c
             for c in changes
             if c["line"] == line
             and c["station"] == "Review"
             and not c.get("bot_update")
+            and not c.get("parked")
+            and not c.get("side_track")
             and c.get("station_since")
             and timedelta(0) <= now - moment(c["last_activity"]) <= timedelta(hours=48)
             and now - moment(c["station_since"]) > timedelta(hours=2)
@@ -296,9 +338,10 @@ def stopped_rules(
                     "kind": "review-waiting",
                     "line": line,
                     "station": "Review",
-                    "since": min(reviewing, key=moment),
+                    "since": min((c["station_since"] for c in reviewing), key=moment),
                     "count": len(reviewing),
                     "level": "amber",
+                    **longest_wait(reviewing),
                 }
             )
     if master.get("tests") == "failing":

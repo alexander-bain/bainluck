@@ -46,10 +46,8 @@ it("prints both observed November 18 stoppages at 10 AM Pacific", () => {
   const messages = (data.stops as Stop[]).map((s) =>
     stopText(s, "2026-11-18T18:00:00Z"),
   );
-  expect(messages).toContain(
-    "Server: nothing merged for 3 hr 50 min, 14 waiting.",
-  );
-  expect(messages).toContain("Announced at 8:47 AM, not merged.");
+  expect(messages).toContain("Server loading dock has stalled.");
+  expect(messages).toContain("Server announced a merge at 8:47 AM PT.");
 });
 
 it("runs only recently crossed belts and stops them for an old read or a blocking station", () => {

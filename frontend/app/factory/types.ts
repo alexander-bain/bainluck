@@ -6,7 +6,7 @@ export type Station =
   | "Merge line"
   | "Ship"
   | "Live";
-export type Builder = "S" | "B" | "C" | "D" | "E" | "F" | "Other";
+export type Builder = "S" | "B" | "C" | "D" | "E" | "F" | "W" | "Other";
 
 export interface Change {
   number: number;
@@ -26,6 +26,12 @@ export interface Change {
   revision_at?: string;
   sent_back?: boolean;
   bot_update?: boolean;
+  parked?: boolean;
+  checks_running?: boolean;
+  merge_announced_at?: string;
+  live_posted_at?: string;
+  live_post_observed_at?: string;
+  testflight_build?: number;
 }
 
 export interface Transfer {
@@ -34,6 +40,7 @@ export interface Transfer {
   from: Station;
   to: Station;
   at: string;
+  observed_at?: string;
 }
 
 export interface Stop {
@@ -45,6 +52,9 @@ export interface Stop {
   level: "red" | "amber";
   source?: { id: number; author: string };
   test?: string;
+  number?: number;
+  waiting_since?: string;
+  machines?: { running: number; waiting: number };
 }
 
 export interface Jam {
@@ -74,6 +84,12 @@ export interface FactoryData {
   read_expires_at?: string;
   transitions?: Transfer[];
   stops?: Stop[];
+  notes?: {
+    snapshot_at: string;
+    floor: string;
+    stations: Record<string, string>;
+    source: "model" | "counts";
+  };
   changes: Change[];
   jams: Jam[];
   signals: {
@@ -81,6 +97,7 @@ export interface FactoryData {
     testflight: string;
     tests_at?: string;
     last_merged_at?: Partial<Record<Line, string>>;
+    testflight_post?: { build: number; at: string };
   };
   coverage: string[];
 }
