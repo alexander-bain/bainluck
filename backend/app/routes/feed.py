@@ -72,6 +72,7 @@ from app.utils.event_completion import EVENT_SUSPENDED, finished_event_end_time
 from app.utils.event_rails import started_live
 from app.utils.lifecycle import served_event_status
 from app.utils.score_observation import score_observation_fields
+from app.utils.score_source_availability import score_source_unavailable_fields
 from app.utils.scheduled_start import loaded_commence_time_source
 from app.utils.external_curator_freshness import (
     recall_cutoff as _curator_recall_cutoff,
@@ -12833,6 +12834,14 @@ async def _score_events(
             # The same projection serves cached feed and fresh price-card reads.
             if isinstance(getattr(event, "score_observed_at", None), datetime):
                 event_data.update(score_observation_fields(event))
+            event_data.update(
+                score_source_unavailable_fields(
+                    event,
+                    sport_key=sport_key,
+                    status=served_status,
+                    payload=event_data,
+                )
+            )
             event_data["temporal_badge"] = _compute_temporal_badge(
                 # #5324 — this one takes NO `commence_time` at all, so `live`
                 # in, "Live" badge out, unconditionally. It is the second of the

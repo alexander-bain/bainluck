@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from app.utils.event_completion import served_commence_time
+from app.utils.score_source_availability import score_source_unavailable_fields
 from app.utils.event_rails import (
     commence_time_was_never_a_kickoff,
     live_first_order,
@@ -1031,6 +1032,9 @@ def _format_event_brief(
         "away_team": event.away_team_name,
         "home_score": event.home_score,
         "away_score": event.away_score,
+        **score_source_unavailable_fields(
+            event, sport_key=sport.key if sport else None, status=status
+        ),
         # #1779 family: never render live before the row's own start time.
         "status": status,
         "commence_time": _served_start.isoformat() if _served_start else None,
