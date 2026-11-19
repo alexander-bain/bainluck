@@ -2486,12 +2486,19 @@ struct DiscoverView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
-                // #12288: Owner-only machinery groupings preview (Alex + Preferences switch ON).
-                // Strictly absent for public, signed-out, and switched-off accounts.
+                // #12288 (`252: A`): Owner-only machinery groupings preview (Alex + Preferences switch ON),
+                // deduplicated against any `machinery-*` slugs already served in `vm.items` (`machinery=1`).
+                let servedMachinerySlugs = Set(
+                    vm.items.compactMap { $0.bundle?.roundupContract?.machineryCard?.slug }
+                )
+                let unservedPreviewItems = machineryPreviewItems.filter { entry in
+                    guard let slug = entry.machineryCard?.slug else { return false }
+                    return !servedMachinerySlugs.contains(slug)
+                }
                 if GroupingMachineryGate12288.canAccessMachinery(user: authManager.user),
-                   !machineryPreviewItems.isEmpty {
+                   !unservedPreviewItems.isEmpty {
                     VStack(spacing: DiscoverMasonry.spacing) {
-                        ForEach(machineryPreviewItems) { entry in
+                        ForEach(unservedPreviewItems) { entry in
                             if let card = entry.machineryCard {
                                 MachineryDiscoverEntryCardView(
                                     card: card,

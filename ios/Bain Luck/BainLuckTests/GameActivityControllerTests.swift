@@ -334,5 +334,24 @@ final class GameActivityControllerTests: XCTestCase {
         }
     }
 
+    /// #12999 — leaving the app must not immediately force a push-registered
+    /// Live Activity stale; its real observation staleDate stays in force.
+    @MainActor func testLeavingAppDoesNotMarkPushBackedActivityStaleImmediately() async throws {
+        let service = FakeGameActivityService()
+        let controller = GameActivityController(
+            service: service,
+            isForeground: { true },
+            hasPushUpdates: { true },
+            now: { self.clock }
+        )
+        controller.start(snapshot: try snapshot(clock: clock, scoreClock: clock, scores: true))
+        let countBefore = service.updates.count
+        let staleBefore = service.updates.last?.2
+        controller.endViewing(eventID: 1)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(service.updates.count, countBefore, "push-backed activity must not write staleDate = now() on departure")
+        XCTAssertEqual(service.updates.last?.2, staleBefore)
+    }
+
 }
 #endif

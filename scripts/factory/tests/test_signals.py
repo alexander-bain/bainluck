@@ -317,6 +317,8 @@ class FactoryStops(unittest.TestCase):
                     "since": ready,
                     "count": 1,
                     "level": "amber",
+                    "number": 12002,
+                    "waiting_since": ready,
                 }
             ],
         )

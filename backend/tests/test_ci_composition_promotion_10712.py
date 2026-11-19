@@ -50,7 +50,7 @@ DEPLOY_IF = (
     "needs.change-scope.result == 'success' && needs.fast-gate.result == 'success' && "
     "needs.backend-tests.result == 'success' && needs.e2e-contract.result == 'success' && "
     "(needs.change-scope.outputs.live == 'true' || (needs.shard-completeness.result == 'success' && "
-    "needs.search-recall.result == 'success' && needs.frontend-build.result == 'success'))"
+    "needs.database-integration.result == 'success' && needs.frontend-build.result == 'success'))"
 )
 
 # Exact approved shell grammar prevents overwriting FILES, component-only tests

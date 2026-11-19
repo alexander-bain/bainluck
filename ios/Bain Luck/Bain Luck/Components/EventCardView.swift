@@ -427,9 +427,94 @@ struct EventCardView: View {
         return nil
     }
 
+    struct CardSourceMarkPresentation: Equatable {
+        let mark: SourceMark
+        let number: Double?
+        let subject: String?
+        let isPregame: Bool
+        let showsTenths: Bool
+    }
+
+    static func alignNumberToPrintedTenths(_ raw: Double?, printedText: String?) -> Double? {
+        guard let raw,
+              let printedText,
+              printedText.contains("."),
+              printedText.hasSuffix("%"),
+              SourceMarkSheet.formatSheetProbability(raw, showsTenths: true) != printedText,
+              let parsedPercent = Double(printedText.dropLast()) else {
+            return raw
+        }
+        return parsedPercent / 100.0
+    }
+
+    /// Single game-card source-mark resolver shared across Sports, League, Search,
+    /// Team, Hub (`EventCardView`) and Discover (`DiscoverCompactSingleGameCard190C`).
+    /// Where the live `Now` cell prints tenths (`"96.0%"`), the sheet opens in tenths too.
+    static func resolvedCardSourceMarkPresentation(
+        event rawEvent: FeedEventData,
+        canStillBeGraded: Bool,
+        currentAwayIsWithheld: Bool,
+        prematch: PrematchReading?,
+        prematchAwayIsWithheld: Bool
+    ) -> CardSourceMarkPresentation? {
+        var event = rawEvent
+        event.currentOdds = CompactGameCard12616.currentOddsForCard(rawEvent)
+        guard let resolved = Self.resolvedCardSourceMark(
+            event: event,
+            canStillBeGraded: canStillBeGraded,
+            currentAwayIsWithheld: currentAwayIsWithheld,
+            prematch: prematch,
+            prematchAwayIsWithheld: prematchAwayIsWithheld
+        ) else {
+            return nil
+        }
+
+        guard canStillBeGraded,
+              !resolved.isPregame,
+              event.status == "live",
+              resolved.number != nil else {
+            return CardSourceMarkPresentation(
+                mark: resolved.mark,
+                number: resolved.number,
+                subject: resolved.subject,
+                isPregame: resolved.isPregame,
+                showsTenths: false
+            )
+        }
+
+        let liveTenths = CompactGameCard12616.liveTenthsStrings(
+            away: event.currentOdds?.awayProbability,
+            home: event.currentOdds?.homeProbability,
+            awayIsWithheld: currentAwayIsWithheld
+        )
+        let hasHomeCandidate = event.sourceMark?.draws == true && event.currentOdds?.homeProbability != nil
+        let hasAwayCandidate = !currentAwayIsWithheld
+            && event.awaySourceMark?.draws == true
+            && event.currentOdds?.awayProbability != nil
+        let choseAway: Bool = {
+            if hasHomeCandidate && hasAwayCandidate {
+                return (event.currentOdds?.awayProbability ?? 0) > (event.currentOdds?.homeProbability ?? 0)
+            }
+            return hasAwayCandidate
+        }()
+        let printedCell = choseAway ? liveTenths.away : liveTenths.home
+        let showsTenths = printedCell?.contains(".") == true
+        let alignedNumber = showsTenths
+            ? alignNumberToPrintedTenths(resolved.number, printedText: printedCell)
+            : resolved.number
+
+        return CardSourceMarkPresentation(
+            mark: resolved.mark,
+            number: alignedNumber,
+            subject: resolved.subject,
+            isPregame: resolved.isPregame,
+            showsTenths: showsTenths
+        )
+    }
+
     @ViewBuilder
     private var cardSourceMarkButton: some View {
-        if let resolved = Self.resolvedCardSourceMark(
+        if let resolved = Self.resolvedCardSourceMarkPresentation(
             event: event,
             canStillBeGraded: canStillBeGraded,
             currentAwayIsWithheld: currentAwayIsWithheld,
@@ -441,7 +526,8 @@ struct EventCardView: View {
             number: resolved.number,
             subject: resolved.subject,
             isPregame: resolved.isPregame,
-            numberSize: 17
+            numberSize: 17,
+            showsTenths: resolved.showsTenths
         ) {
             button
                 .padding(.vertical, -8)

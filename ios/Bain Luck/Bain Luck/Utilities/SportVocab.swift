@@ -524,3 +524,65 @@ extension SportVocab {
             + "\(unitSingular) margin."
     }
 }
+
+/// Ruling 240: A (#12992) — Never two winners on one card.
+/// Shared across the app, Widget, and Watch targets via `SportVocab.swift`,
+/// matching `projectedPairConflictsWithChance` in `frontend/lib/projectedFinalPair.ts`
+/// gate for gate:
+///   1. A level printed pair never conflicts (`|home - away| <= 1e-9`).
+///   2. A chance of exactly 50% (or equal two-team win shares in a 3-way market)
+///      never conflicts.
+///   3. When the printed projected pair has one team ahead and the card's chance
+///      favours the other team, `conflicts(...)` returns `true` so the surface
+///      shows the chance only.
+enum ProjectedFinalChanceGuard240A {
+    nonisolated static let tieEpsilon: Double = 1e-9
+
+    nonisolated static func conflicts(
+        projectedHome: Double,
+        projectedAway: Double,
+        homeChance: Double?,
+        awayChance: Double?,
+        sportKey: String?
+    ) -> Bool {
+        guard projectedHome.isFinite, projectedAway.isFinite else { return false }
+        if abs(projectedHome - projectedAway) <= tieEpsilon { return false }
+
+        let pricesADraw = SportVocab.forSport(sportKey).winnerMarketPricesADraw
+        let validHome: Double? = {
+            guard let h = homeChance, h.isFinite, h > 0, h < 1 else { return nil }
+            return h
+        }()
+        let validAway: Double? = {
+            guard let a = awayChance, a.isFinite, a > 0, a < 1 else { return nil }
+            return a
+        }()
+
+        if let vh = validHome, let va = validAway {
+            if abs(vh - va) <= tieEpsilon { return false }
+            let chanceFavoursHome = vh > va
+            let pairFavoursHome = projectedHome > projectedAway
+            return chanceFavoursHome != pairFavoursHome
+        }
+
+        if !pricesADraw, let vh = validHome {
+            if abs(vh - 0.5) <= tieEpsilon { return false }
+            let chanceFavoursHome = vh > 0.5
+            let pairFavoursHome = projectedHome > projectedAway
+            return chanceFavoursHome != pairFavoursHome
+        }
+
+        if !pricesADraw, let va = validAway {
+            if abs(va - 0.5) <= tieEpsilon { return false }
+            let chanceFavoursHome = va < 0.5
+            let pairFavoursHome = projectedHome > projectedAway
+            return chanceFavoursHome != pairFavoursHome
+        }
+
+        if pricesADraw, let vh = validHome, vh > 0.5 + tieEpsilon {
+            return projectedAway > projectedHome
+        }
+
+        return false
+    }
+}

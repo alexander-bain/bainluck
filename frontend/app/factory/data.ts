@@ -1,4 +1,5 @@
 import type { FactoryData } from "./types";
+import { stationNames } from "./activity";
 
 export const FACTORY_DATA_URL =
   "https://github.com/alexander-bain/bainluck/releases/download/factory-data/factory.json";
@@ -16,6 +17,32 @@ interface VerifiedRead {
 }
 
 type LoadVerifiedRead = () => Promise<VerifiedRead>;
+
+function notesForSnapshot(payload: FactoryData) {
+  const note = payload.notes;
+  const plain = (text: unknown, cap: number) =>
+    typeof text === "string" &&
+    /^[A-Za-z0-9 #_,.'’!?-]+$/.test(text) &&
+    text.split(/\s+/).length <= cap;
+  if (
+    !note ||
+    note.snapshot_at !== payload.generated_at ||
+    !["counts", "model"].includes(note.source) ||
+    !plain(note.floor, 30) ||
+    !note.stations ||
+    !Object.entries(note.stations).every(
+      ([station, text]) =>
+        Object.values(stationNames).includes(station) && plain(text, 16),
+    )
+  )
+    return undefined;
+  return {
+    snapshot_at: note.snapshot_at,
+    source: note.source,
+    floor: note.floor,
+    stations: note.stations,
+  };
+}
 
 function validateSnapshot(payload: FactoryData): FactoryData {
   if (
@@ -36,7 +63,9 @@ function validateSnapshot(payload: FactoryData): FactoryData {
         ["Write", "Test", "Review", "Merge line", "Ship", "Live"].includes(
           transfer.to,
         ) &&
-        Number.isFinite(Date.parse(transfer.at)),
+        Number.isFinite(Date.parse(transfer.at)) &&
+        (transfer.observed_at === undefined ||
+          Number.isFinite(Date.parse(transfer.observed_at))),
     ) ||
     !Array.isArray(payload.stops ?? []) ||
     !(payload.stops ?? []).every(
@@ -56,7 +85,16 @@ function validateSnapshot(payload: FactoryData): FactoryData {
         ["red", "amber"].includes(stop.level) &&
         Number.isSafeInteger(stop.count) &&
         stop.count >= 0 &&
-        Number.isFinite(Date.parse(stop.since)),
+        Number.isFinite(Date.parse(stop.since)) &&
+        (stop.number === undefined ||
+          (Number.isSafeInteger(stop.number) && stop.number > 0)) &&
+        (stop.waiting_since === undefined ||
+          Number.isFinite(Date.parse(stop.waiting_since))) &&
+        (stop.machines === undefined ||
+          (Number.isSafeInteger(stop.machines.running) &&
+            stop.machines.running >= 0 &&
+            Number.isSafeInteger(stop.machines.waiting) &&
+            stop.machines.waiting > 0)),
     ) ||
     !payload.changes.every(
       (change: FactoryData["changes"][number]) =>
@@ -68,7 +106,16 @@ function validateSnapshot(payload: FactoryData): FactoryData {
           change.station,
         ) &&
         Array.isArray(change.reasons) &&
-        Number.isFinite(Date.parse(change.last_activity)),
+        Number.isFinite(Date.parse(change.last_activity)) &&
+        ["S", "B", "C", "D", "E", "F", "W", "Other"].includes(change.builder) &&
+        (change.testflight_build === undefined ||
+          (Number.isSafeInteger(change.testflight_build) &&
+            change.testflight_build > 0)) &&
+        [
+          change.merge_announced_at,
+          change.live_posted_at,
+          change.live_post_observed_at,
+        ].every((at) => at === undefined || Number.isFinite(Date.parse(at))),
     ) ||
     !Number.isFinite(Date.parse(payload.generated_at)) ||
     (payload.read_expires_at !== undefined &&
@@ -76,6 +123,7 @@ function validateSnapshot(payload: FactoryData): FactoryData {
     !Number.isFinite(Date.parse(payload.observed_since))
   )
     throw new Error("Snapshot incomplete");
+  const notes = notesForSnapshot(payload);
   return {
     schema_version: payload.schema_version,
     generated_at: payload.generated_at,
@@ -85,6 +133,7 @@ function validateSnapshot(payload: FactoryData): FactoryData {
       : {}),
     ...(payload.transitions ? { transitions: payload.transitions } : {}),
     ...(payload.stops ? { stops: payload.stops } : {}),
+    ...(notes ? { notes } : {}),
     changes: payload.changes,
     jams: payload.jams,
     signals: payload.signals,
