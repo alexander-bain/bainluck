@@ -37,7 +37,7 @@ Architecture work may only ride an already queued user-visible ship.
 - Personalization is bounded and latency-safe: left-swipe is a soft downrank, never a hard dismissal.
 - Calibration uses `COALESCE(calibration_probability, opening_probability)`.
 - Anonymous bug-report submission must keep working. No fresh matching measurement = no accuracy claim. **RED means REAL.**
-- Never commit credentials (gitleaks) or open `.env` files; never print, log or store tokens.
+- Never commit credentials (gitleaks) or open `.env` files; never print, log or store tokens. A leak requires rotation.
   Read-only admin reads on `tools/admin/readonly_allowlist.json` (via `tools/admin/readonly_read.py`,
   posting its one-line log on the issue) need no ask; a new address needs Alex's yes once; anything
   that writes, deletes or changes a setting goes to Alex every time (142-A / 247-A).
