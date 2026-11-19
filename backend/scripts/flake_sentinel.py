@@ -12,7 +12,8 @@ EVIDENCE (both read from GitHub, nothing from a person):
     the failed job's log are the flaked tests. A job that failed with no test named
     (a setup step, a cascade) is reported as job-level and never filed.
   * a 55-A retry INSIDE a job: the shared tail's conftest hook writes each re-run nodeid
-    to ``$FLAKY_RETRIES_FILE`` and CI uploads it as ``flaky-retries-<attempt>`` (the
+    to ``$FLAKY_RETRIES_FILE`` and CI uploads it as ``flaky-retries-<attempt>`` (shared-tail-2:
+    ``flaky-retries-shared-tail-2-<attempt>``) (the
     annotation text stays as well). Listing those artifacts is one call per page, where
     reading annotations would be one call per job — GITHUB_TOKEN gets 1,000 calls an hour.
 
@@ -63,6 +64,12 @@ MARKER_KEY = "flaky-test-fingerprint"
 QUARANTINE_LABEL = "flaky-quarantine"
 TITLE_PREFIX = "Flaky: "
 RETRY_ARTIFACT = "flaky-retries-{attempt}"
+#: Each shared-tail runner uploads its own retries (an artifact name is unique per run).
+#: Fable, Nov 18: the tail split at #4586's full reset into shared-tail and shared-tail-2.
+RETRY_ARTIFACTS = (
+    (RETRY_ARTIFACT, "database-integration (shared-tail)"),
+    ("flaky-retries-shared-tail-2-{attempt}", "database-integration (shared-tail-2)"),
+)
 RETRY_ATTEMPTS = (1, 2, 3)
 # Stop reading (and say so) before the token's hourly budget is spent.
 RATE_FLOOR = 100
@@ -281,10 +288,10 @@ def rerun_events(api: Api, runs: list[dict]) -> tuple[list[Event], list[dict]]:
 
 def retry_events(api: Api, since: str) -> list[Event]:
     events = []
-    for attempt in RETRY_ATTEMPTS:
+    for (artifact, job_name), attempt in ((a, n) for a in RETRY_ARTIFACTS for n in RETRY_ATTEMPTS):
         page = 1
         while True:
-            b = api.get(f"/repos/{REPO}/actions/artifacts?name={RETRY_ARTIFACT.format(attempt=attempt)}"
+            b = api.get(f"/repos/{REPO}/actions/artifacts?name={artifact.format(attempt=attempt)}"
                         f"&per_page=100&page={page}")
             arts = b.get("artifacts", [])
             for a in arts:
@@ -297,7 +304,7 @@ def retry_events(api: Api, since: str) -> list[Event]:
                         for line in z.read(name).decode("utf-8", "replace").splitlines():
                             if re.fullmatch(r"tests/[\w/.-]+\.py::\S+", line.strip()):
                                 events.append(Event(line.strip(), run.get("head_sha") or "", run.get("id") or 0,
-                                                    attempt, "database-integration (shared-tail)",
+                                                    attempt, job_name,
                                                     a.get("created_at") or "", "retry"))
             if len(arts) < 100:
                 break

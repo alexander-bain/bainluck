@@ -577,9 +577,14 @@ def test_slice1_candidates_are_switched_off_and_contain_zero_hand_placed_ids() -
 
 def test_choose_section_form_is_purely_data_shape_driven() -> None:
     assert choose_section_form("paired_stage", [{}, {}, {}]) == "paired_stage_bars"
+    # Ruling 253: A — coin_flip_matchups requires >= 2 games with neither side above 55%.
     assert (
-        choose_section_form("events", [{"fav_prob": 0.52}, {"fav_prob": 0.58}])
+        choose_section_form("events", [{"fav_prob": 0.52}, {"fav_prob": 0.55}])
         == "coin_flip_matchups"
+    )
+    assert (
+        choose_section_form("events", [{"fav_prob": 0.52}, {"fav_prob": 0.56}])
+        == "matchup_slate"
     )
     assert (
         choose_section_form("events", [{"fav_prob": 0.85}, {"fav_prob": 0.79}])
@@ -689,15 +694,23 @@ def test_slice2_bar_no_question_word_proper_case_and_definition_only_fourth_grou
         discover_machinery_candidate_paths,
     )
 
-    # 1. All 4 unlike groupings discovered automatically (including machinery-fed-and-macro.json)
+    # 1. All 4 core unlike groupings discovered automatically (plus any definition-only candidates)
     paths = discover_machinery_candidate_paths()
     slugs = [load_machinery_definition(p)["slug"] for p in paths]
-    assert slugs == [
+    assert {
         "machinery-2028-presidential",
         "machinery-fed-and-macro",
         "machinery-nfl-week",
         "machinery-oscars-best-picture",
-    ]
+    }.issubset(set(slugs))
+    for p in paths:
+        assert not (CONTAINERS_DATA_DIR / p.name).exists()
+        raw_p = json.loads(p.read_text(encoding="utf-8"))
+        for bad_key in HAND_LIST_ID_RULE_KEYS:
+            assert bad_key not in raw_p.get("rule", {})
+        ser_p = json.dumps(raw_p)
+        assert "market_id" not in ser_p
+        assert "event_id" not in ser_p
 
     # 2. Proper-casing miscased names without mangling numeric/rate brackets
     assert _proper_case_outcome_label("Anne hathaway") == "Anne Hathaway"
@@ -779,7 +792,7 @@ async def test_admin_only_machinery_preview_blocks_public_and_serves_admin(
         auth = (getattr(request, "headers", None) or {}).get("Authorization", "")
         return auth == "Bearer admin-ok"
 
-    async def _fake_read_published(_db: Any, slug: str) -> Any:
+    async def _fake_read_published(_db: Any, slug: str, *, include_headers: bool) -> Any:
         return SimpleNamespace(
             state=container_corrections.READ_UNAVAILABLE,
             slug=slug,
@@ -878,13 +891,14 @@ async def test_slice3_all_four_groupings_pass_227a_and_direction_228() -> None:
     )
 
     snap = _sample_snapshot()
-    items = await evaluate_machinery_candidates_preview(snap, now=FIXED_NOW)
-    assert [it["slug"] for it in items] == [
+    core_slugs = [
         "machinery-nfl-week",
         "machinery-oscars-best-picture",
         "machinery-2028-presidential",
         "machinery-fed-and-macro",
     ]
+    items = await evaluate_machinery_candidates_preview(snap, slugs=core_slugs, now=FIXED_NOW)
+    assert [it["slug"] for it in items] == core_slugs
 
     for it in items:
         rep = it["diversity_report"]
@@ -956,7 +970,16 @@ async def test_slice4_card_charts_own_headline_flat_line_is_not_picture_and_natu
     )
 
     snap = _sample_snapshot()
-    items = await evaluate_machinery_candidates_preview(snap, now=FIXED_NOW)
+    items = await evaluate_machinery_candidates_preview(
+        snap,
+        slugs=[
+            "machinery-nfl-week",
+            "machinery-oscars-best-picture",
+            "machinery-2028-presidential",
+            "machinery-fed-and-macro",
+        ],
+        now=FIXED_NOW,
+    )
     by_slug = {it["slug"]: it for it in items}
 
     # 1. Card's mini_chart shows the card's OWN headline market (57574217 "Fed Decision in January"),
@@ -1107,7 +1130,16 @@ async def test_slice5_fable_six_notes_pairs_moving_charts_subject_headings_title
     assert _history_chart_moved(pinned_lock_chart) is False
 
     snap = _sample_snapshot()
-    items = await evaluate_machinery_candidates_preview(snap, now=FIXED_NOW)
+    items = await evaluate_machinery_candidates_preview(
+        snap,
+        slugs=[
+            "machinery-nfl-week",
+            "machinery-oscars-best-picture",
+            "machinery-2028-presidential",
+            "machinery-fed-and-macro",
+        ],
+        now=FIXED_NOW,
+    )
     by_slug = {it["slug"]: it for it in items}
 
     # 3. Charts on the grouping's subject: 2028 Presidential never seats Senate or House seats.

@@ -6411,18 +6411,25 @@ final class FieldPhaseHeadline10868Tests: XCTestCase {
                         XCTAssertEqual(bounds.midY, size.height / 2, accuracy: 1e-9)
                         XCTAssertTrue(canvas.contains(bounds), "\(shape)")
                         // The drawn fill is exactly the shape's extent.
+                        // #12513 — `Path` keeps its points as `Float`: 35.4 reads back as
+                        // 35.400002, so `1e-6` failed on every run. `1e-4` pt is still exact.
                         let drawn = plan.fill.boundingRect
-                        XCTAssertEqual(drawn.minX, bounds.minX, accuracy: 1e-6)
-                        XCTAssertEqual(drawn.maxX, bounds.maxX, accuracy: 1e-6)
-                        XCTAssertEqual(drawn.minY, bounds.minY, accuracy: 1e-6)
-                        XCTAssertEqual(drawn.maxY, bounds.maxY, accuracy: 1e-6)
+                        XCTAssertEqual(drawn.minX, bounds.minX, accuracy: 1e-4)
+                        XCTAssertEqual(drawn.maxX, bounds.maxX, accuracy: 1e-4)
+                        XCTAssertEqual(drawn.minY, bounds.minY, accuracy: 1e-4)
+                        XCTAssertEqual(drawn.maxY, bounds.maxY, accuracy: 1e-4)
                         if hollow, let outline = plan.outline, let stroke = plan.stroke {
                             let inset: CGFloat = shape == .diamond ? 2.squareRoot() : 1
                             XCTAssertEqual(outline.minX, bounds.minX + inset, accuracy: 1e-9)
                             XCTAssertEqual(outline.width, bounds.width - 2 * inset, accuracy: 1e-9)
                             XCTAssertEqual(outline.midY, bounds.midY, accuracy: 1e-9)
                             // The outline's outer edge, as the view strokes it, is the shape's own edge: never outside it.
-                            let edge = stroke.strokedPath(StrokeStyle(lineWidth: plan.lineWidth)).boundingRect
+                            // #12513 — measured on Core Graphics' stroke, which is what draws it.
+                            // SwiftUI's `strokedPath(_:).boundingRect` leaves the miter points out
+                            // on iOS 27 (a diamond reads √2 − 1 short whatever the join), while the
+                            // drawn miter reaches the shape's edge exactly.
+                            let edge = stroke.cgPath.copy(strokingWithWidth: plan.lineWidth, lineCap: .butt,
+                                                          lineJoin: .miter, miterLimit: 10).boundingBoxOfPath
                             XCTAssertEqual(edge.minX, bounds.minX, accuracy: 0.01, "\(shape)")
                             XCTAssertEqual(edge.maxX, bounds.maxX, accuracy: 0.01, "\(shape)")
                             XCTAssertEqual(edge.minY, bounds.minY, accuracy: 0.01, "\(shape)")
@@ -6464,7 +6471,14 @@ final class FieldPhaseHeadline10868Tests: XCTestCase {
                 XCTAssertNil(FieldHeadlineGeometry10868.keyFrameSide(diameter: bad), "\(bad)")
                 XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: false, in: frame, diameter: bad, lineWidth: 2), "\(shape) \(bad)")
                 XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: true, in: frame, diameter: 10, lineWidth: bad), "\(shape) \(bad)")
-                XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: false, in: frame, diameter: 10, lineWidth: bad), "\(shape) \(bad)")
+                // #12513 — a filled key never strokes, so the largest FINITE width is
+                // drawable there; only a width that isn't a width is refused. The hollow
+                // line above, and the "too wide to inset" loop below, keep the finite limit.
+                if bad.isFinite && bad > 0 {
+                    XCTAssertNotNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: false, in: frame, diameter: 10, lineWidth: bad), "\(shape) \(bad)")
+                } else {
+                    XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: false, in: frame, diameter: 10, lineWidth: bad), "\(shape) \(bad)")
+                }
             }
             // A frame that cannot hold the widest shape draws none — never a clipped or shrunken key.
             for size in [CGSize(width: 11.9, height: 12), CGSize(width: 12, height: 11.9), .zero,

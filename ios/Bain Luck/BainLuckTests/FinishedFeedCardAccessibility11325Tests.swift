@@ -185,6 +185,69 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
                       "\(name): a live card took the finished layout — \(all)")
     }
 
+    func testLiveSportsOpeningOnlyKeepsScoreAndPregame12824() throws {
+        // Constructed old feed response and a timed blend with the same numbers.
+        // The source, rather than the size of the change, determines admission.
+        let opening = try chanceFeedEvent12824(source: "opening")
+        let current = try chanceFeedEvent12824(source: "blend", observedAt: "2026-11-18T02:53:01Z")
+        for (event, showsNow) in [(opening, false), (current, true)] {
+            let name = "12824-live-390-\(event.heroProbabilitySource ?? "unknown")"
+            let read = try sportsLines(event, width: 390, size: .large, name: name)
+            let visible = read.map(\.text).joined(separator: " ")
+            for word in ["Score", "79", "77", "Pregame Timberwolves 62%"] {
+                XCTAssertTrue(visible.contains(word), "\(name): missing \(word) — \(describe(read))")
+            }
+            for word in ["Now", "41.8%", "58.2%"] {
+                XCTAssertEqual(visible.contains(word), showsNow, "\(name): \(word) — \(describe(read))")
+            }
+        }
+    }
+
+    func testScheduledAndFinishedSportsOpeningOnly12824() throws {
+        let scheduled = try chanceFeedEvent12824(source: "opening", status: "scheduled")
+        let scheduledRead = try sportsLines(scheduled, width: 390, size: .large, name: "12824-scheduled-390-opening")
+        let scheduledText = scheduledRead.map(\.text).joined(separator: " ")
+        XCTAssertTrue(scheduledText.contains("Proj") && scheduledText.contains("112") && scheduledText.contains("114"),
+                      describe(scheduledRead))
+        for word in ["Chance", "42%", "58%"] {
+            XCTAssertFalse(scheduledText.contains(word), describe(scheduledRead))
+        }
+
+        let finished = try chanceFeedEvent12824(source: "opening", status: "completed")
+        let finishedRead = try sportsLines(finished, width: 390, size: .large, name: "12824-final-390-opening")
+        let finishedText = finishedRead.map(\.text).joined(separator: " ")
+        assertWholeToken("Final", in: finishedRead, "12824-final-390-opening")
+        for word in ["79", "77", "Pregame", "38%", "62%"] {
+            XCTAssertTrue(finishedText.contains(word), describe(finishedRead))
+        }
+        for word in ["Now", "42%", "58%"] {
+            XCTAssertFalse(finishedText.contains(word), describe(finishedRead))
+        }
+    }
+
+    func testSportsOpeningGateAndMyStuffCopy12824() throws {
+        var opening = try chanceFeedEvent12824(source: "opening")
+        opening.currentOdds?.drawProbability = 0.12
+        opening.currentOdds?.liveProjection = try JSONDecoder().decode(LiveProjection.self, from: Data("{}".utf8))
+        let odds = try XCTUnwrap(EventCardView(event: opening, reason: nil).event.currentOdds)
+        XCTAssertNil(odds.homeProbability)
+        XCTAssertNil(odds.awayProbability)
+        XCTAssertNil(odds.drawProbability)
+        XCTAssertNil(odds.homeRenderedPercent)
+        XCTAssertNil(odds.awayRenderedPercent)
+        XCTAssertEqual(odds.liveProjection, opening.currentOdds?.liveProjection)
+        XCTAssertEqual(opening.currentOdds?.homeProbability, 0.582)
+        XCTAssertEqual(opening.currentOdds?.homeRenderedPercent, 58)
+        XCTAssertNil(MyStuffView.eventCopyProbabilityText(opening))
+
+        let timed = try chanceFeedEvent12824(source: "blend", observedAt: "2026-11-18T02:53:01Z")
+        let untimed = try chanceFeedEvent12824(source: "blend")
+        for blend in [timed, untimed] {
+            XCTAssertEqual(EventCardView(event: blend, reason: nil).event.currentOdds?.homeProbability, 0.582)
+            XCTAssertEqual(MyStuffView.eventCopyProbabilityText(blend), "Minnesota Timberwolves: 58%")
+        }
+    }
+
     // MARK: - The hosted pill-edge misread (Watch MVP run 39990600534)
 
     /// Hosted Xcode 27 read the Large card's top row as "NFL (FINAL" and the
@@ -745,6 +808,27 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
     /// decodes; the pair rounds to 24/76, digits no score or forecast uses.
     private static let constructedOpeningOdds =
         #""opening_odds": {"home_probability": 0.7619, "away_probability": 0.2381, "favorite": "home"}"#
+
+    private func chanceFeedEvent12824(
+        source: String, status: String = "live", observedAt: String? = nil
+    ) throws -> FeedEventData {
+        let observed = observedAt.map { #""hero_probability_observed_at": "\#($0)","# } ?? ""
+        return try leagueFeedEvent(#"""
+        {
+          "id": 15350164, "sport": "basketball_nba", "sport_name": "NBA",
+          "away_team": "Portland Trail Blazers", "home_team": "Minnesota Timberwolves",
+          "status": "\#(status)", "commence_time": "2026-11-18T01:00:00Z",
+          "away_score": 79, "home_score": 77,
+          "hero_probability_source": "\#(source)", \#(observed)
+          "current_odds": {
+            "away_probability": 0.418, "home_probability": 0.582,
+            "away_rendered_percent": 42, "home_rendered_percent": 58,
+            "projected_away_score": 112, "projected_home_score": 114
+          },
+          "prematch_odds": {"away_probability": 0.38, "home_probability": 0.62}
+        }
+        """#)
+    }
 
     /// #9483 — a `/api/leagues` row in a CONSTRUCTED one-item feed envelope.
     private func leagueFeedEvent(_ data: String) throws -> FeedEventData {

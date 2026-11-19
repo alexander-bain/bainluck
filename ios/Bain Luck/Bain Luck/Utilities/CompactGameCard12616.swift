@@ -6,6 +6,19 @@ import SwiftUI
 /// `EventCardView`.
 enum CompactGameCard12616 {
 
+    /// Older feed items can carry the stored opening in `current_odds` (#12824).
+    /// Keep projections on the card while withholding the chance and its rendered pair.
+    nonisolated static func currentOddsForCard(_ event: FeedEventData) -> CurrentOdds? {
+        guard event.heroProbabilitySource == OpeningLineHero.openingSource,
+              var odds = event.currentOdds else { return event.currentOdds }
+        odds.homeProbability = nil
+        odds.awayProbability = nil
+        odds.drawProbability = nil
+        odds.homeRenderedPercent = nil
+        odds.awayRenderedPercent = nil
+        return odds
+    }
+
     /// Column headers above the team rows (`medium` context on the left,
     /// optional `Proj.` middle column on live cards under Ruling 204-C, and
     /// `large` primary answer on the right). A blank column draws no header.

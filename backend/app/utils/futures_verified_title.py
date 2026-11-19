@@ -417,6 +417,9 @@ class OutcomeOverlay:
     #: False only when the value IS the requested source's own served value,
     #: so its opening and movement still describe the same estimator.
     changed: bool
+    # Exact admitted prices, before the shared field's display normalization.
+    # BoardRow.observed_at is a row-touch clock, not bound quote-read evidence.
+    source_inputs: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -525,6 +528,7 @@ def compose_outcomes(
             observed_at=min(r.observed_at for _, r in used).isoformat(),
             aggregation_rule=rule,
             changed=sources != [requested.source],
+            source_inputs=tuple((source, float(row.probability)) for source, row in used),
         )
 
     team_ids = {tid for board in team_maps.values() for tid in board}

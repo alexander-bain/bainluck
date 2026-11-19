@@ -51,21 +51,21 @@ def project_activitykit_snapshot(detail: Mapping[str, object]) -> GameActivitySn
     """Project canonical detail fields with the phone's current-then-hero selection.
 
     The hero clock dates current_odds only if BOTH values agree with that hero.
-    An unmatched current reading remains displayable with unknown observation age.
+    An opening-tagged or undated reading supplies no current forecast.
     Terminal status never follows probability extremes or score comparisons.
     """
     lifecycle = _lifecycle(detail.get("status"))
-    hero = _probability(detail.get("hero_probability"))
-    raw_hero_away = detail.get("hero_probability_away")
-    odds = detail.get("current_odds")
-    odds = odds if isinstance(odds, Mapping) else {}
-    current = _probability(odds.get("home_probability"))
-    home = current if current is not None else hero
-    raw_away = odds.get("away_probability") if current is not None else raw_hero_away
-    away = _probability(raw_away)
     percent = None
     probability_clock = None
-    if lifecycle in {"scheduled", "live"}:
+    if lifecycle in {"scheduled", "live"} and detail.get("hero_probability_source") != "opening":
+        hero = _probability(detail.get("hero_probability"))
+        raw_hero_away = detail.get("hero_probability_away")
+        odds = detail.get("current_odds")
+        odds = odds if isinstance(odds, Mapping) else {}
+        current = _probability(odds.get("home_probability"))
+        home = current if current is not None else hero
+        raw_away = odds.get("away_probability") if current is not None else raw_hero_away
+        away = _probability(raw_away)
         sport = detail.get("sport")
         if (
             not isinstance(sport, str)
@@ -77,6 +77,8 @@ def project_activitykit_snapshot(detail: Mapping[str, object]) -> GameActivitySn
             percent = rendered_duel_percents(away, home)[1]
         if percent is not None and home == hero and raw_away == raw_hero_away:
             probability_clock = _clock(detail.get("hero_probability_observed_at"))
+        if probability_clock is None:
+            percent = None
     home_score = detail.get("home_score")
     away_score = detail.get("away_score")
     home_score = home_score if type(home_score) is int and home_score >= 0 else None

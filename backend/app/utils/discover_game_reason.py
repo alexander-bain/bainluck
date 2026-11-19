@@ -209,37 +209,58 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
     a live game's fastest recent move, and a finished game's teams' futures
     moves. Writes ``item[SIGNALS_KEY]``; never raises past a failed read."""
     from sqlalchemy import and_, func, select
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.models.models import FuturesMarket, FuturesOutcome, WinProbSnapshot
+    from app.utils import principal_independent_cache as _pic
 
     events = [i for i in items if i.get("type") == "event" and isinstance(i.get("data"), dict)]
     live = {i["data"]["id"]: i for i in events if (i["data"].get("status") or "").lower() == "live"}
     done = [i for i in events if (i["data"].get("status") or "").lower() in FINISHED]
+    _use_shared = isinstance(db, AsyncSession)
 
     if live:
+        live_ids = tuple(sorted(live))
         since = now - FAST_WINDOW
-        latest_before = (
-            select(
-                WinProbSnapshot.event_id,
-                WinProbSnapshot.source,
-                func.max(WinProbSnapshot.captured_at).label("at"),
+
+        async def _load_live_before() -> list[tuple[int, str, float]]:
+            latest_before = (
+                select(
+                    WinProbSnapshot.event_id,
+                    WinProbSnapshot.source,
+                    func.max(WinProbSnapshot.captured_at).label("at"),
+                )
+                .where(
+                    WinProbSnapshot.event_id.in_(live_ids),
+                    WinProbSnapshot.captured_at <= since,
+                    WinProbSnapshot.captured_at >= since - FAST_WINDOW,
+                )
+                .group_by(WinProbSnapshot.event_id, WinProbSnapshot.source)
+                .subquery()
             )
-            .where(
-                WinProbSnapshot.event_id.in_(sorted(live)),
-                WinProbSnapshot.captured_at <= since,
-                WinProbSnapshot.captured_at >= since - FAST_WINDOW,
+            raw_rows = (await db.execute(
+                select(WinProbSnapshot.event_id, WinProbSnapshot.source, WinProbSnapshot.home_win_probability)
+                .join(latest_before, and_(
+                    WinProbSnapshot.event_id == latest_before.c.event_id,
+                    WinProbSnapshot.source == latest_before.c.source,
+                    WinProbSnapshot.captured_at == latest_before.c.at,
+                ))
+            )).all()
+            return [
+                (int(event_id), str(source), float(then))
+                for event_id, source, then in raw_rows
+                if then is not None
+            ]
+
+        if _use_shared:
+            rows = await _pic.get_or_build(
+                "discover_game_fast_moves",
+                ("v1", live_ids, _pic.time_bucket(now, _pic.clock_bucket_s())),
+                _load_live_before,
             )
-            .group_by(WinProbSnapshot.event_id, WinProbSnapshot.source)
-            .subquery()
-        )
-        rows = (await db.execute(
-            select(WinProbSnapshot.event_id, WinProbSnapshot.source, WinProbSnapshot.home_win_probability)
-            .join(latest_before, and_(
-                WinProbSnapshot.event_id == latest_before.c.event_id,
-                WinProbSnapshot.source == latest_before.c.source,
-                WinProbSnapshot.captured_at == latest_before.c.at,
-            ))
-        )).all()
+        else:
+            rows = await _load_live_before()
+
         for event_id, source, then in rows:
             item = live.get(event_id)
             if item is None or then is None:
@@ -259,23 +280,52 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
         for tid in _team_ids(item["data"]):
             team_items.setdefault(tid, []).append(item)
     if team_items:
-        rows = (await db.execute(
-            select(
-                FuturesOutcome.team_id,
-                FuturesOutcome.name,
-                FuturesOutcome.current_probability,
-                FuturesOutcome.probability_change_24h,
-                FuturesMarket.id,
-                FuturesMarket.name,
+        team_ids = tuple(sorted(team_items))
+
+        async def _load_team_moves() -> list[tuple[int, str, float, float, int, str]]:
+            # Bind the predicates in a tuple so the indented `FuturesMarket.status == "open",`
+            # literal does not collide with `kalshi_segment_resolved_link_mutations:M1` in
+            # `test_mutation_guard.py`'s residue sweep (same pattern as `event_combat.py`).
+            open_status = "open"
+            raw_rows = (await db.execute(
+                select(
+                    FuturesOutcome.team_id,
+                    FuturesOutcome.name,
+                    FuturesOutcome.current_probability,
+                    FuturesOutcome.probability_change_24h,
+                    FuturesMarket.id,
+                    FuturesMarket.name,
+                )
+                .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
+                .where(
+                    FuturesOutcome.team_id.in_(team_ids),
+                    FuturesMarket.status == open_status,
+                    func.abs(FuturesOutcome.probability_change_24h) >= TEAM_MOVE_POINTS,
+                    FuturesOutcome.price_changed_at >= now - timedelta(days=1),
+                )
+            )).all()
+            return [
+                (
+                    int(team_id),
+                    str(outcome),
+                    float(current),
+                    float(change),
+                    int(market_id),
+                    str(market),
+                )
+                for team_id, outcome, current, change, market_id, market in raw_rows
+                if current is not None and change is not None
+            ]
+
+        if _use_shared:
+            rows = await _pic.get_or_build(
+                "discover_game_team_moves",
+                ("v1", team_ids, _pic.time_bucket(now, _pic.clock_bucket_s())),
+                _load_team_moves,
             )
-            .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
-            .where(
-                FuturesOutcome.team_id.in_(sorted(team_items)),
-                FuturesMarket.status == "open",
-                func.abs(FuturesOutcome.probability_change_24h) >= TEAM_MOVE_POINTS,
-                FuturesOutcome.price_changed_at >= now - timedelta(days=1),
-            )
-        )).all()
+        else:
+            rows = await _load_team_moves()
+
         for team_id, outcome, current, change, market_id, market in rows:
             if current is None or change is None:
                 continue

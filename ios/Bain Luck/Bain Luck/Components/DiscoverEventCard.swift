@@ -70,6 +70,7 @@ struct NativeEventDiscoverCard: View {
     /// THIS card draws at THIS text size, so both of these are inputs to a layout
     /// decision rather than decoration. See `GameCardStatusColumn`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var clock = MinuteClock.shared
     @State private var heroContentWidth: Double = 0
 
@@ -94,7 +95,19 @@ struct NativeEventDiscoverCard: View {
     /// `ProbabilityBarPalette.colors(awayHex:homeHex:)` compiles, renders and
     /// leaves every contrast test green. A test drives this on a real payload.
     var barColorHexes: (away: String, home: String) {
-        TeamTextContrast.cardColorHexes(
+        barColorHexes(for: .light)
+    }
+
+    func barColorHexes(for scheme: ColorScheme) -> (away: String, home: String) {
+        if scheme == .dark {
+            return TeamTextContrast.darkSurfaceColorHexes(
+                awayHex: event.awayTeamData?.primaryColor,
+                homeHex: event.homeTeamData?.primaryColor,
+                awaySecondaryHex: event.awayTeamData?.secondaryColor,
+                homeSecondaryHex: event.homeTeamData?.secondaryColor
+            )
+        }
+        return TeamTextContrast.cardColorHexes(
             awayHex: event.awayTeamData?.primaryColor,
             homeHex: event.homeTeamData?.primaryColor,
             awaySecondaryHex: event.awayTeamData?.secondaryColor
@@ -102,7 +115,7 @@ struct NativeEventDiscoverCard: View {
     }
 
     private var barColors: (away: Color, home: Color) {
-        let hexes = barColorHexes
+        let hexes = barColorHexes(for: colorScheme)
         return (Color(hex: hexes.away), Color(hex: hexes.home))
     }
 
