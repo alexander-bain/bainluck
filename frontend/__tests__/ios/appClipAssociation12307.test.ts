@@ -22,7 +22,11 @@ const read = (...parts: string[]) => readFileSync(join(...parts), "utf8");
 const HOSTS = ["bainluck.com", "www.bainluck.com"];
 
 function plistArray(xml: string, key: string): string[] {
-  const block = xml.match(new RegExp(`<key>${key.replace(/\./g, "\\.")}</key>\\s*<array>([\\s\\S]*?)</array>`));
+  const marker = `<key>${key}</key>`;
+  const keyIndex = xml.indexOf(marker);
+  if (keyIndex === -1) return [];
+  const afterKey = xml.slice(keyIndex + marker.length);
+  const block = afterKey.match(/^\s*<array>([\s\S]*?)<\/array>/);
   if (!block) return [];
   return Array.from(block[1].matchAll(/<string>([^<]+)<\/string>/g), (m) => m[1]);
 }
