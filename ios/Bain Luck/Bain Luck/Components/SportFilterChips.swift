@@ -84,14 +84,16 @@ enum SportPillSeason13013 {
     }
 }
 
+/// #13013 (`246: A` + `264: A`) — Fixed league order inside each activity group:
+/// `All` pinned first, then `NFL → NBA → MLB → NHL → NCAAF → NCAAB → Soccer → Tennis → Golf`.
 let sportCategories: [SportCategory] = [
     .init(id: "all", name: "All", sportPrefixes: [], futuresCategories: [], route: nil),
-    .init(id: "basketball", name: "NBA", sportPrefixes: ["basketball_nba", "basketball_wnba"], futuresCategories: ["basketball"], route: .leagueGrid(slug: "nba")),
     .init(id: "football", name: "NFL", sportPrefixes: ["americanfootball_nfl"], futuresCategories: ["football"], route: .leagueGrid(slug: "nfl")),
-    .init(id: "ncaaf", name: "NCAAF", sportPrefixes: ["americanfootball_ncaaf"], futuresCategories: ["ncaaf", "college_football"], route: .leagueGrid(slug: "ncaa-football")),
-    .init(id: "ncaab", name: "NCAAB", sportPrefixes: ["basketball_ncaab", "basketball_wncaab"], futuresCategories: ["ncaab", "college_basketball"], route: .leagueGrid(slug: "ncaa-basketball")),
+    .init(id: "basketball", name: "NBA", sportPrefixes: ["basketball_nba", "basketball_wnba"], futuresCategories: ["basketball"], route: .leagueGrid(slug: "nba")),
     .init(id: "baseball", name: "MLB", sportPrefixes: ["baseball"], futuresCategories: ["baseball"], route: .leagueGrid(slug: "mlb")),
     .init(id: "hockey", name: "NHL", sportPrefixes: ["icehockey"], futuresCategories: ["hockey"], route: .leagueGrid(slug: "nhl")),
+    .init(id: "ncaaf", name: "NCAAF", sportPrefixes: ["americanfootball_ncaaf"], futuresCategories: ["ncaaf", "college_football"], route: .leagueGrid(slug: "ncaa-football")),
+    .init(id: "ncaab", name: "NCAAB", sportPrefixes: ["basketball_ncaab", "basketball_wncaab"], futuresCategories: ["ncaab", "college_basketball"], route: .leagueGrid(slug: "ncaa-basketball")),
     .init(id: "soccer", name: "Soccer", sportPrefixes: ["soccer"], futuresCategories: ["soccer"], route: .leagueGrid(slug: "epl")),
     // Tennis routes to the CATEGORY, not a league grid: `/api/leagues/tennis` answers 200 with
     // `total_markets: 0`, while `SportCategoryView(key: "tennis")` merges ATP + WTA matches and
@@ -106,10 +108,11 @@ struct SportFilterChips: View {
     @Binding var selectedCategory: String
     var items: [FeedItem] = []
     var now: Date = Date()
+    var calendar: Calendar = .current
     var onNavigate: ((Route) -> Void)? = nil
 
     private var displayedCategories: [SportCategory] {
-        Self.orderedCategories(items: items, now: now)
+        Self.orderedCategories(items: items, now: now, calendar: calendar)
     }
 
     var body: some View {
@@ -137,12 +140,14 @@ struct SportFilterChips: View {
         }
     }
 
-    /// #13013 (`246: A`) — Orders Sports tab pills by what is on today:
+    /// #13013 (`246: A` + `264: A`) — Orders Sports tab pills into three groups with
+    /// one fixed league order (`NFL, NBA, MLB, NHL, NCAAF, NCAAB, Soccer, Tennis, Golf`)
+    /// inside each group:
     /// 1. `All` is pinned first.
-    /// 2. Sports with live games/tournaments right now come next (by live count, then today's count, then base order).
-    /// 3. Sports with games/tournaments on today (scheduled in the next 24h or in `Just Happened`) come next (by today's count, then base order).
-    /// 4. In-season sports that are quiet today follow in base order.
-    /// 5. Out-of-season sports with no game today sit last in base order.
+    /// 2. Sports with a game/tournament today (live, scheduled today, or just finished).
+    /// 3. In-season sports with nothing today.
+    /// 4. Out-of-season sports.
+    /// Never orders by live-game count, and a sport never moves when its game goes live.
     static func orderedCategories(
         from base: [SportCategory] = sportCategories,
         items: [FeedItem],
@@ -156,80 +161,61 @@ struct SportFilterChips: View {
             let category: SportCategory
             let baseIndex: Int
             let tier: Int
-            let liveCount: Int
-            let todayCount: Int
         }
 
-        let upcomingHorizon: TimeInterval = 24 * 3600
         let justHappenedWindow: TimeInterval = 18 * 3600
 
         let scored: [CategoryActivity] = rest.map { baseIndex, category in
-            var seenEventIds = Set<Int>()
-            var seenTournamentKeys = Set<String>()
-            var liveCount = 0
-            var todayCount = 0
+            var hasGameToday = false
 
-            for item in items {
+            for item in items where !hasGameToday {
                 if let event = item.event, category.matches(item) {
-                    guard seenEventIds.insert(event.id).inserted else { continue }
                     if event.status == "live" {
-                        liveCount += 1
-                        todayCount += 1
+                        hasGameToday = true
                     } else if EventState.section(of: event, now: now) == .finished {
-                        let age = event.commenceTime?.asDate.map { now.timeIntervalSince($0) } ?? 0
-                        if age <= justHappenedWindow {
-                            todayCount += 1
-                        }
-                    } else if SportsUpcomingCutoff13001.admitsUpcoming(event, now: now) {
                         if let start = event.commenceTime?.asDate {
-                            let delta = start.timeIntervalSince(now)
-                            if delta <= upcomingHorizon || calendar.isDate(start, inSameDayAs: now) {
-                                todayCount += 1
+                            let age = now.timeIntervalSince(start)
+                            if age <= justHappenedWindow || calendar.isDate(start, inSameDayAs: now) {
+                                hasGameToday = true
                             }
+                        } else {
+                            hasGameToday = true
                         }
+                    } else if SportsUpcomingCutoff13001.admitsUpcoming(event, now: now),
+                              let start = event.commenceTime?.asDate,
+                              calendar.isDate(start, inSameDayAs: now) {
+                        hasGameToday = true
                     }
                 } else if category.id == "golf", let tournament = item.tournament {
-                    guard seenTournamentKeys.insert(tournament.key).inserted else { continue }
                     let status = (tournament.scheduleStatus ?? "").lowercased()
-                    if status == "live" || status == "in_progress" {
-                        liveCount += 1
-                        todayCount += 1
-                    } else if tournament.marqueeWhathit == true {
-                        todayCount += 1
-                    } else if let start = (tournament.commenceTime ?? tournament.startDate)?.asDate {
-                        let delta = start.timeIntervalSince(now)
-                        if (delta >= -72 * 3600 && delta <= upcomingHorizon) || calendar.isDate(start, inSameDayAs: now) {
-                            todayCount += 1
-                        }
+                    if status == "live" || status == "in_progress" || tournament.marqueeWhathit == true {
+                        hasGameToday = true
+                    } else if let start = (tournament.commenceTime ?? tournament.startDate)?.asDate,
+                              calendar.isDate(start, inSameDayAs: now) {
+                        hasGameToday = true
                     }
                 }
             }
 
             let inSeason = SportPillSeason13013.isInSeason(categoryId: category.id, now: now, calendar: calendar)
             let tier: Int
-            if liveCount > 0 {
+            if hasGameToday {
                 tier = 0
-            } else if todayCount > 0 {
-                tier = 1
             } else if inSeason {
-                tier = 2
+                tier = 1
             } else {
-                tier = 3
+                tier = 2
             }
 
             return CategoryActivity(
                 category: category,
                 baseIndex: baseIndex,
-                tier: tier,
-                liveCount: liveCount,
-                todayCount: todayCount
+                tier: tier
             )
         }
 
         let sortedRest = scored.sorted { lhs, rhs in
             if lhs.tier != rhs.tier { return lhs.tier < rhs.tier }
-            if lhs.liveCount != rhs.liveCount { return lhs.liveCount > rhs.liveCount }
-            if lhs.todayCount != rhs.todayCount { return lhs.todayCount > rhs.todayCount }
             return lhs.baseIndex < rhs.baseIndex
         }.map(\.category)
 

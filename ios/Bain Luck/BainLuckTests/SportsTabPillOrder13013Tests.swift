@@ -3,7 +3,11 @@ import UIKit
 import XCTest
 @testable import Bain_Luck
 
-/// #13013 (`246: A`) — Sports tab pills ordered by what is on today, with out-of-season sports last.
+/// #13013 (`246: A` + `264: A`) — Sports tab pills ordered into three groups
+/// (`game today` → `in season with nothing today` → `out of season`), with one
+/// fixed league order (`NFL, NBA, MLB, NHL, NCAAF, NCAAB, Soccer, Tennis, Golf`)
+/// inside each group, no ordering by live-game count, and zero movement when a
+/// game goes live or finishes.
 @MainActor
 final class SportsTabPillOrder13013Tests: XCTestCase {
 
@@ -30,27 +34,32 @@ final class SportsTabPillOrder13013Tests: XCTestCase {
         """)
     }
 
-    func testNovemberGameNightOrdersLiveThenTodayThenQuietInSeasonWithOffseasonMLBLast() throws {
-        var utc = Calendar(identifier: .gregorian)
-        utc.timeZone = TimeZone(secondsFromGMT: 0)!
-        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-19T02:00:00Z"))
+    private var easternCalendar: Calendar {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "America/New_York")!
+        return cal
+    }
+
+    func testNovemberGameNightUsesFixedLeagueOrderInsideGroupsAndNeverOrdersByLiveCount() throws {
+        let cal = easternCalendar
+        // Thu Nov 19, 2026 at 7:30 PM ET (2026-11-20T00:30:00Z)
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-20T00:30:00Z"))
 
         let items: [FeedItem] = [
-            // 3 NCAAB live
-            try eventItem(id: 101, sport: "basketball_ncaab", status: "live", commenceISO: "2026-11-19T00:30:00Z"),
-            try eventItem(id: 102, sport: "basketball_ncaab", status: "live", commenceISO: "2026-11-19T01:00:00Z"),
-            try eventItem(id: 103, sport: "basketball_wncaab", status: "live", commenceISO: "2026-11-19T01:15:00Z"),
-            // 2 NBA live (+ duplicate ID from backfill must not double count)
-            try eventItem(id: 201, sport: "basketball_nba", status: "live", commenceISO: "2026-11-19T00:30:00Z"),
-            try eventItem(id: 201, sport: "basketball_nba", status: "live", commenceISO: "2026-11-19T00:30:00Z"),
-            try eventItem(id: 202, sport: "basketball_nba", status: "live", commenceISO: "2026-11-19T01:00:00Z"),
-            // 1 NHL live + 1 NHL upcoming tonight
-            try eventItem(id: 301, sport: "icehockey_nhl", status: "live", commenceISO: "2026-11-19T00:00:00Z"),
-            try eventItem(id: 302, sport: "icehockey_nhl", status: "scheduled", commenceISO: "2026-11-19T03:00:00Z"),
-            // 2 Tennis upcoming today (no live)
-            try eventItem(id: 401, sport: "tennis_atp", status: "scheduled", commenceISO: "2026-11-19T14:00:00Z"),
-            try eventItem(id: 402, sport: "tennis_wta", status: "scheduled", commenceISO: "2026-11-19T16:00:00Z"),
-            // 1 NFL Thursday Night Football within 24h
+            // 4 NCAAB live games — must NOT jump ahead of NFL (scheduled today) or NBA/NHL
+            try eventItem(id: 101, sport: "basketball_ncaab", status: "live", commenceISO: "2026-11-19T23:30:00Z"),
+            try eventItem(id: 102, sport: "basketball_ncaab", status: "live", commenceISO: "2026-11-20T00:00:00Z"),
+            try eventItem(id: 103, sport: "basketball_wncaab", status: "live", commenceISO: "2026-11-20T00:15:00Z"),
+            try eventItem(id: 104, sport: "basketball_ncaab", status: "live", commenceISO: "2026-11-20T00:20:00Z"),
+            // 2 NBA live games
+            try eventItem(id: 201, sport: "basketball_nba", status: "live", commenceISO: "2026-11-20T00:00:00Z"),
+            try eventItem(id: 202, sport: "basketball_nba", status: "live", commenceISO: "2026-11-20T00:10:00Z"),
+            // 1 NHL live + 1 NHL scheduled tonight
+            try eventItem(id: 301, sport: "icehockey_nhl", status: "live", commenceISO: "2026-11-20T00:00:00Z"),
+            try eventItem(id: 302, sport: "icehockey_nhl", status: "scheduled", commenceISO: "2026-11-20T03:00:00Z"),
+            // 1 Tennis match just finished earlier today
+            try eventItem(id: 401, sport: "tennis_atp", status: "completed", commenceISO: "2026-11-19T18:00:00Z"),
+            // 1 NFL Thursday Night Football scheduled today at 8:15 PM ET (2026-11-20T01:15:00Z)
             try eventItem(id: 501, sport: "americanfootball_nfl", status: "scheduled", commenceISO: "2026-11-20T01:15:00Z"),
             // MLB Championship futures card alone does NOT count as a game on today
             try decodeItem("""
@@ -62,16 +71,38 @@ final class SportsTabPillOrder13013Tests: XCTestCase {
             """),
         ]
 
-        let ordered = SportFilterChips.orderedCategories(items: items, now: now, calendar: utc).map(\.name)
+        // Group 0 (game today): NFL, NBA, NHL, NCAAB, Tennis
+        // Group 1 (in season, nothing today): NCAAF, Soccer, Golf
+        // Group 2 (out of season): MLB
+        let ordered = SportFilterChips.orderedCategories(items: items, now: now, calendar: cal).map(\.name)
         XCTAssertEqual(
             ordered,
-            ["All", "NCAAB", "NBA", "NHL", "Tennis", "NFL", "NCAAF", "Soccer", "Golf", "MLB"]
+            ["All", "NFL", "NBA", "NHL", "NCAAB", "Tennis", "NCAAF", "Soccer", "Golf", "MLB"]
         )
     }
 
-    func testMidJulySummerSlatePutsMLBAheadAndWinterOffseasonSportsLast() throws {
-        var utc = Calendar(identifier: .gregorian)
-        utc.timeZone = TimeZone(secondsFromGMT: 0)!
+    func testSportPillDoesNotMoveWhenScheduledGameGoesLiveOrFinishes() throws {
+        let cal = easternCalendar
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-20T01:20:00Z"))
+
+        for nflStatus in ["scheduled", "live", "completed"] {
+            let items: [FeedItem] = [
+                try eventItem(id: 101, sport: "basketball_ncaab", status: "live", commenceISO: "2026-11-20T00:00:00Z"),
+                try eventItem(id: 201, sport: "basketball_nba", status: "live", commenceISO: "2026-11-20T00:30:00Z"),
+                try eventItem(id: 501, sport: "americanfootball_nfl", status: nflStatus, commenceISO: "2026-11-20T01:15:00Z"),
+            ]
+            let ordered = SportFilterChips.orderedCategories(items: items, now: now, calendar: cal).map(\.name)
+            XCTAssertEqual(
+                ordered,
+                ["All", "NFL", "NBA", "NCAAB", "NHL", "NCAAF", "Soccer", "Tennis", "Golf", "MLB"],
+                "Pill order must stay identical when NFL transitions across status=\(nflStatus)"
+            )
+        }
+    }
+
+    func testMidJulySummerSlatePutsMLBAheadAndWinterOffseasonSportsLastInFixedOrder() throws {
+        let cal = easternCalendar
+        // Wed Jul 22, 2026 at 7:30 PM ET (2026-07-22T23:30:00Z)
         let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-22T23:30:00Z"))
 
         let items: [FeedItem] = [
@@ -80,26 +111,29 @@ final class SportsTabPillOrder13013Tests: XCTestCase {
             try eventItem(id: 701, sport: "soccer_usa_mls", status: "scheduled", commenceISO: "2026-07-23T01:30:00Z"),
         ]
 
-        let ordered = SportFilterChips.orderedCategories(items: items, now: now, calendar: utc).map(\.name)
+        // Group 0 (game today): MLB, Soccer
+        // Group 1 (in season, nothing today): Tennis, Golf
+        // Group 2 (out of season, fixed order): NFL, NBA, NHL, NCAAF, NCAAB
+        let ordered = SportFilterChips.orderedCategories(items: items, now: now, calendar: cal).map(\.name)
         XCTAssertEqual(
             ordered,
-            ["All", "MLB", "Soccer", "Tennis", "Golf", "NBA", "NFL", "NCAAF", "NCAAB", "NHL"]
+            ["All", "MLB", "Soccer", "Tennis", "Golf", "NFL", "NBA", "NHL", "NCAAF", "NCAAB"]
         )
     }
 
-    func testEmptyPreloadItemsInNovemberStillPlaceOffseasonMLBLast() throws {
-        var utc = Calendar(identifier: .gregorian)
-        utc.timeZone = TimeZone(secondsFromGMT: 0)!
+    func testEmptyPreloadItemsInNovemberStillPlaceOffseasonMLBLastInFixedOrder() throws {
+        let cal = easternCalendar
         let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-19T14:00:00Z"))
 
-        let ordered = SportFilterChips.orderedCategories(items: [], now: now, calendar: utc).map(\.name)
-        XCTAssertEqual(ordered.first, "All")
-        XCTAssertEqual(ordered.last, "MLB")
+        let ordered = SportFilterChips.orderedCategories(items: [], now: now, calendar: cal).map(\.name)
+        XCTAssertEqual(
+            ordered,
+            ["All", "NFL", "NBA", "NHL", "NCAAF", "NCAAB", "Soccer", "Tennis", "Golf", "MLB"]
+        )
     }
 
-    func testLiveGolfTournamentLiftsGolfPillWithoutChangingCategoryMatches() throws {
-        var utc = Calendar(identifier: .gregorian)
-        utc.timeZone = TimeZone(secondsFromGMT: 0)!
+    func testLiveGolfTournamentLiftsGolfIntoGameTodayGroupWithoutChangingCategoryMatches() throws {
+        let cal = easternCalendar
         let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-19T19:00:00Z"))
 
         let tournamentItem = try decodeItem("""
@@ -123,9 +157,9 @@ final class SportsTabPillOrder13013Tests: XCTestCase {
             tournamentItem,
             try eventItem(id: 801, sport: "basketball_nba", status: "scheduled", commenceISO: "2026-11-20T00:30:00Z"),
         ]
-        let ordered = SportFilterChips.orderedCategories(items: items, now: now, calendar: utc).map(\.name)
-        // Golf (1 live tournament -> tier 0) sits immediately after All, ahead of scheduled NBA (tier 1), with offseason MLB last.
-        XCTAssertEqual(ordered.prefix(3), ["All", "Golf", "NBA"])
+        let ordered = SportFilterChips.orderedCategories(items: items, now: now, calendar: cal).map(\.name)
+        // Both NBA (scheduled today) and Golf (live tournament today) are in Group 0, ordered by fixed league order (NBA before Golf), ahead of idle in-season sports and offseason MLB.
+        XCTAssertEqual(ordered.prefix(3), ["All", "NBA", "Golf"])
         XCTAssertEqual(ordered.last, "MLB")
     }
 
@@ -135,19 +169,18 @@ final class SportsTabPillOrder13013Tests: XCTestCase {
         let dir = URL(fileURLWithPath: outDir, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
-        var utc = Calendar(identifier: .gregorian)
-        utc.timeZone = TimeZone(secondsFromGMT: 0)!
-        let novNow = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-19T02:00:00Z"))
+        let cal = easternCalendar
+        let novNow = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-20T00:30:00Z"))
         let julNow = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-22T23:30:00Z"))
 
         let novItems: [FeedItem] = [
-            try eventItem(id: 101, sport: "basketball_ncaab", status: "live", commenceISO: "2026-11-19T00:30:00Z"),
-            try eventItem(id: 102, sport: "basketball_ncaab", status: "live", commenceISO: "2026-11-19T01:00:00Z"),
-            try eventItem(id: 103, sport: "basketball_wncaab", status: "live", commenceISO: "2026-11-19T01:15:00Z"),
-            try eventItem(id: 201, sport: "basketball_nba", status: "live", commenceISO: "2026-11-19T00:30:00Z"),
-            try eventItem(id: 202, sport: "basketball_nba", status: "live", commenceISO: "2026-11-19T01:00:00Z"),
-            try eventItem(id: 301, sport: "icehockey_nhl", status: "live", commenceISO: "2026-11-19T00:00:00Z"),
-            try eventItem(id: 401, sport: "tennis_atp", status: "scheduled", commenceISO: "2026-11-19T14:00:00Z"),
+            try eventItem(id: 101, sport: "basketball_ncaab", status: "live", commenceISO: "2026-11-19T23:30:00Z"),
+            try eventItem(id: 102, sport: "basketball_ncaab", status: "live", commenceISO: "2026-11-20T00:00:00Z"),
+            try eventItem(id: 103, sport: "basketball_wncaab", status: "live", commenceISO: "2026-11-20T00:15:00Z"),
+            try eventItem(id: 201, sport: "basketball_nba", status: "live", commenceISO: "2026-11-20T00:00:00Z"),
+            try eventItem(id: 202, sport: "basketball_nba", status: "live", commenceISO: "2026-11-20T00:10:00Z"),
+            try eventItem(id: 301, sport: "icehockey_nhl", status: "live", commenceISO: "2026-11-20T00:00:00Z"),
+            try eventItem(id: 401, sport: "tennis_atp", status: "completed", commenceISO: "2026-11-19T18:00:00Z"),
             try eventItem(id: 501, sport: "americanfootball_nfl", status: "scheduled", commenceISO: "2026-11-20T01:15:00Z"),
         ]
         let julItems: [FeedItem] = [
@@ -156,15 +189,15 @@ final class SportsTabPillOrder13013Tests: XCTestCase {
             try eventItem(id: 701, sport: "soccer_usa_mls", status: "scheduled", commenceISO: "2026-07-23T01:30:00Z"),
         ]
 
-        let novOrdered = SportFilterChips.orderedCategories(items: novItems, now: novNow, calendar: utc)
-        let julOrdered = SportFilterChips.orderedCategories(items: julItems, now: julNow, calendar: utc)
+        let novOrdered = SportFilterChips.orderedCategories(items: novItems, now: novNow, calendar: cal)
+        let julOrdered = SportFilterChips.orderedCategories(items: julItems, now: julNow, calendar: cal)
 
         for (fileName, typeSize, height) in [
             ("13013-pill-order-default-390.png", DynamicTypeSize.large, CGFloat(540)),
             ("13013-pill-order-largest-text-390.png", DynamicTypeSize.xxxLarge, CGFloat(660)),
         ] {
-            let light = renderSheet(novItems: novItems, novNow: novNow, novOrdered: novOrdered, julItems: julItems, julNow: julNow, julOrdered: julOrdered, scheme: .light, typeSize: typeSize, height: height)
-            let dark = renderSheet(novItems: novItems, novNow: novNow, novOrdered: novOrdered, julItems: julItems, julNow: julNow, julOrdered: julOrdered, scheme: .dark, typeSize: typeSize, height: height)
+            let light = renderSheet(novItems: novItems, novNow: novNow, novOrdered: novOrdered, julItems: julItems, julNow: julNow, julOrdered: julOrdered, cal: cal, scheme: .light, typeSize: typeSize, height: height)
+            let dark = renderSheet(novItems: novItems, novNow: novNow, novOrdered: novOrdered, julItems: julItems, julNow: julNow, julOrdered: julOrdered, cal: cal, scheme: .dark, typeSize: typeSize, height: height)
             let combined = sideBySide(light, dark)
             try XCTUnwrap(combined.pngData()).write(to: dir.appendingPathComponent(fileName))
         }
@@ -210,22 +243,23 @@ final class SportsTabPillOrder13013Tests: XCTestCase {
         julItems: [FeedItem],
         julNow: Date,
         julOrdered: [SportCategory],
+        cal: Calendar,
         scheme: ColorScheme,
         typeSize: DynamicTypeSize,
         height: CGFloat
     ) -> UIImage {
         let bg = scheme == .dark ? Color.black : Color(UIColor.systemGroupedBackground)
         let view = VStack(alignment: .leading, spacing: 14) {
-            Text("Sports Tab Pills · November Game Night")
+            Text("Sports Tab Pills · November Game Night (264: A)")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
 
-            SportFilterChips(selectedCategory: .constant("all"), items: novItems, now: novNow)
+            SportFilterChips(selectedCategory: .constant("all"), items: novItems, now: novNow, calendar: cal)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("Full 10-pill order (live → on today → in-season → MLB offseason last):")
+            Text("10-pill order (game today → in-season → out-of-season):")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 16)
@@ -233,15 +267,15 @@ final class SportsTabPillOrder13013Tests: XCTestCase {
 
             Divider().padding(.horizontal, 16).padding(.vertical, 4)
 
-            Text("Sports Tab Pills · July Summer Night")
+            Text("Sports Tab Pills · July Summer Night (264: A)")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 16)
 
-            SportFilterChips(selectedCategory: .constant("all"), items: julItems, now: julNow)
+            SportFilterChips(selectedCategory: .constant("all"), items: julItems, now: julNow, calendar: cal)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("Full 10-pill order (MLB live + Soccer today → Tennis/Golf → winter offseason last):")
+            Text("10-pill order (MLB/Soccer today → Tennis/Golf → winter offseason):")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 16)
