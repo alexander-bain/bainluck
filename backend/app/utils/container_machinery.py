@@ -2466,7 +2466,8 @@ def _twin_market_key(title: str) -> str:
             low,
         )
         if m_oscar_cat:
-            return f"oscars:{re.sub(r'\s+', ' ', m_oscar_cat.group(1)).strip()}"
+            oscar_cat = " ".join(m_oscar_cat.group(1).split())
+            return f"oscars:{oscar_cat}"
     return _norm_key(title)
 
 
