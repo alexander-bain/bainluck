@@ -34,7 +34,8 @@ from collect import (
     main,
 )
 from unittest.mock import patch, MagicMock
-from notes import make_notes
+from notes import ModelBudget, make_notes
+from speech import make_speech
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -545,7 +546,10 @@ class FactoryRules(unittest.TestCase):
             "jams": [],
             "events": [],
         }
-        previous["notes"], _ = make_notes(previous, [], {}, "", None, None)
+        budget = ModelBudget("", None, now=instant(previous["generated_at"]))
+        previous["notes"], _ = make_notes(previous, [], {}, budget, None)
+        previous["speech"], _ = make_speech(previous, {}, budget, None)
+        previous["model_usage"] = {"day": budget.state()["day"], "calls": 0}
         current = {**previous, "generated_at": "2026-11-18T01:05:00Z"}
         api = MagicMock()
         api.pages.return_value = []
@@ -566,6 +570,8 @@ class FactoryRules(unittest.TestCase):
             "collect.collect", return_value={"pulls": []}
         ), patch(
             "collect.build", return_value=current
+        ), patch(
+            "collect.ModelBudget", return_value=budget
         ), patch(
             "collect.publish_asset"
         ) as publish:

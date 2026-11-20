@@ -1,4 +1,4 @@
-import { factoryEventKinds, type FactoryData, type FloorEvent } from "./types";
+import { factoryEventKinds, factoryMoods, type FactoryData, type FloorEvent } from "./types";
 import { stationNames, stations } from "./activity";
 
 export const FACTORY_DATA_URL =
@@ -67,6 +67,19 @@ function notesForSnapshot(payload: FactoryData) {
     floor: note.floor,
     stations: note.stations,
   };
+}
+
+function speechForSnapshot(payload: FactoryData): FactoryData["speech"] {
+  const speech: FactoryData["speech"] = {};
+  for (const lane of ["S", "B", "C", "D", "E", "F", "W"] as const) {
+    const line = payload.speech?.[lane];
+    if (
+      line && typeof line.text === "string" && line.text.length <= 140 &&
+      /^[A-Za-z0-9 #_,.'’!?-]+$/.test(line.text) && factoryMoods.includes(line.mood) &&
+      (line.source === "model" || line.source === "facts")
+    ) speech[lane] = { text: line.text, mood: line.mood, source: line.source };
+  }
+  return Object.keys(speech).length ? speech : undefined;
 }
 
 function validateSnapshot(payload: FactoryData): FactoryData {
@@ -174,6 +187,11 @@ function validateSnapshot(payload: FactoryData): FactoryData {
   )
     throw new Error("Snapshot incomplete");
   const notes = notesForSnapshot(payload);
+  const speech = speechForSnapshot(payload);
+  const usage = payload.model_usage;
+  const modelUsage = usage && /^\d{4}-\d{2}-\d{2}$/.test(usage.day) &&
+    Number.isSafeInteger(usage.calls) && usage.calls >= 0 && usage.calls <= 200
+    ? { day: usage.day, calls: usage.calls } : undefined;
   return {
     schema_version: payload.schema_version,
     generated_at: payload.generated_at,
@@ -186,6 +204,8 @@ function validateSnapshot(payload: FactoryData): FactoryData {
     ...(payload.injury_clock ? { injury_clock: payload.injury_clock } : {}),
     ...(payload.stops ? { stops: payload.stops } : {}),
     ...(notes ? { notes } : {}),
+    ...(speech ? { speech } : {}),
+    ...(modelUsage ? { model_usage: modelUsage } : {}),
     changes: payload.changes,
     jams: payload.jams,
     signals: payload.signals,

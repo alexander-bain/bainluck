@@ -20,7 +20,8 @@ from model import build, instant, iso, public_title, PACIFIC, TRUSTED
 from ci_queue import attach_machine_reason, machine_queue
 from events import add_events
 from signs import add_signs, switched_off, wrong_numbers
-from notes import make_notes
+from notes import ModelBudget, make_notes
+from speech import make_speech
 from signals import commands_from, test_file
 
 REPO = "alexander-bain/bainluck"
@@ -871,6 +872,7 @@ def main():
         "day_calls": None,
         "day_cost_usd": None,
     }
+    speech_stats = note_stats.copy()
     try:
         previous = json.loads(args.previous.read_text()) if args.previous else {}
         cache = (
@@ -898,14 +900,17 @@ def main():
                 f"repos/{REPO}/releases/{release['id']}", {"body": body}, method="PATCH"
             )
 
+        key = os.environ.get("OPENAI_API_KEY") if args.publish else None
+        budget = ModelBudget((release or {}).get("body") or "", save_meter if release else None)
         result["notes"], note_stats = make_notes(
-            result,
-            snapshot["pulls"],
-            previous.get("notes") or {},
-            (release or {}).get("body") or "",
-            save_meter if release else None,
-            os.environ.get("OPENAI_API_KEY") if args.publish else None,
+            result, snapshot["pulls"], previous.get("notes") or {}, budget, key
         )
+        result["speech"], speech_stats = make_speech(
+            result, previous.get("speech") or {}, budget, key
+        )
+        meter = budget.state()
+        if meter:
+            result["model_usage"] = {"day": meter["day"], "calls": meter["calls"]}
         changed = floor_changed(previous, result)
         cache_payload = {
             "schema_version": 1,
@@ -949,6 +954,7 @@ def main():
         )
     finally:
         print("FACTORY_NOTES " + json.dumps(note_stats))
+        print("FACTORY_SPEECH " + json.dumps(speech_stats))
         print("FACTORY_METRICS " + json.dumps(api.metrics()))
 
 

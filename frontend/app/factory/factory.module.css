@@ -1467,3 +1467,188 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 @media (max-width: 640px) {
   .builderCard > .worker { width: 60px; height: 49px; }
 }
+
+/* Ink-and-Copper Workshop. Status colors stay distinct from the frame. */
+.factory {
+  --floor: #f5ecdb;
+  --paper: #fff8eb;
+  --edge: #c8ad8e;
+  --ink: #231d19;
+  --secondary: #5d5145;
+  --housing: #222925;
+  --workshop-copper: #99552d;
+  --workshop-rim: #e9ab71;
+  --workshop-enamel: #4e7365;
+  --workshop-sky: #e0ebdf;
+}
+
+.factory h1,
+.sectionHeading h2 {
+  font-family: Georgia, serif;
+  font-weight: 700;
+  letter-spacing: -0.045em;
+}
+
+.heading {
+  position: relative;
+  isolation: isolate;
+  min-height: 78px;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 4px 9px;
+  background: var(--workshop-sky);
+  border: 1px solid var(--workshop-copper);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.heading::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: url("/factory/workshop-header.png") center 35% / 100% auto no-repeat;
+}
+
+.titlePlate,
+.injurySign,
+.updated {
+  background: var(--paper);
+  border: 1px solid var(--workshop-copper);
+  border-radius: 9px;
+  box-shadow: 0 1px 0 var(--workshop-rim);
+  padding: 5px 8px;
+}
+
+.titlePlate { min-width: 0; }
+.titlePlate .intro,
+.titlePlate h1 { margin: 0; }
+.updated { flex: none; }
+.updated strong { margin-bottom: 2px; }
+
+.workshopIdle {
+  position: absolute;
+  inset-inline-end: 27%;
+  inset-block-end: 6px;
+  z-index: -1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--workshop-copper);
+  pointer-events: none;
+}
+
+.idleSteam { opacity: 0.6; }
+.factory[data-motion="running"] .idleGear {
+  animation: workshopGear 32s linear infinite;
+}
+.factory[data-motion="running"] .idleSteam {
+  animation: workshopSteam 7s ease-in-out infinite;
+}
+
+@keyframes workshopGear {
+  to { transform: rotate(360deg); }
+}
+@keyframes workshopSteam {
+  0%, 100% { opacity: 0.45; transform: translateY(2px); }
+  50% { opacity: 0.75; transform: translateY(-3px); }
+}
+
+.floorCard {
+  border-color: var(--workshop-copper);
+  border-top-width: 3px;
+  box-shadow: inset 0 1px 0 var(--workshop-rim);
+}
+
+.stationHeadings > div,
+.lineName {
+  border: 1px solid var(--workshop-copper);
+  background: var(--paper);
+  box-shadow: inset 0 1px 0 var(--workshop-rim);
+  border-radius: 9px 9px 6px 6px;
+}
+.stationHeadings > div { position: relative; padding: 2px 4px; }
+.stationHeadings > div > strong { padding-inline-start: 18px; }
+.stationIcon { position: absolute; inset-block-start: 4px; inset-inline-start: 4px; }
+.stationNote p { margin-bottom: 0; }
+.lineName { align-self: start; padding: 5px 3px; }
+.floorKey { padding-block-end: 4px; }
+
+.machine {
+  position: relative;
+  background: var(--housing);
+  color: #f7efe1;
+  border-color: var(--workshop-copper);
+  box-shadow: inset 0 0 0 1px rgb(234 171 113 / 21%);
+}
+
+.beltSegment { border-color: var(--workshop-enamel); }
+.crate[data-arriving="true"] { visibility: hidden; }
+
+.speechFigure {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+}
+
+.voiceButton {
+  display: inline-flex;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.voiceButton:focus-visible { outline: 2px solid var(--workshop-rim); }
+.voiceButton > .worker { width: 34px; height: 27px; margin-left: -3px; }
+.dockCrew .voiceButton > .worker { width: 24px; height: 23px; margin-left: 0; }
+.speechBubble {
+  font-size: 11px;
+  line-height: 1.35;
+  padding: 5px 7px;
+  border: 1px solid var(--workshop-copper);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  margin: 3px 0 0;
+}
+
+.workerBubble {
+  position: absolute;
+  z-index: 4;
+  inset-block-end: calc(100% - 2px);
+  inset-inline-start: 1px;
+  width: 132px;
+  box-shadow: 0 2px 4px rgb(26 17 6 / 22%);
+  pointer-events: none;
+}
+.machine[data-bay="Live"] .workerBubble {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+}
+
+@media (max-width: 640px) {
+  .heading { padding: 8px; }
+  .heading::before { background-size: auto 100%; background-position: right center; }
+  .workshopIdle { inset-inline-end: 12px; }
+  .updated, .injurySign { max-width: 100%; }
+  .speechBubble { padding: 4px 6px; }
+}
+
+@media (prefers-color-scheme: dark) {
+  .factory {
+    --floor: #101b28;
+    --paper: #192635;
+    --edge: #5c5360;
+    --ink: #f3e6d4;
+    --secondary: #c4bbad;
+    --housing: #111e2b;
+    --workshop-copper: #c18554;
+    --workshop-rim: #f1b681;
+    --workshop-enamel: #61977b;
+    --workshop-sky: #112233;
+  }
+}

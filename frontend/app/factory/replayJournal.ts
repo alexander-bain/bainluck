@@ -8,19 +8,16 @@ function transferId(event: Omit<FloorEvent, "id">) {
   return `transfer:${event.line}:${event.number}:${event.from}:${event.station}:${Date.parse(event.at)}:${Date.parse(event.observed_at)}`;
 }
 
-export function replayReading(data: FactoryData | null, date: string): DayReplay | undefined {
-  if (!data?.transitions || pacificDay(data.generated_at) !== date) return;
+export function transferEvents(data: FactoryData): FloorEvent[] {
   const builders = new Map(data.changes.map((change) => [change.number, change.builder]));
-  const returned = new Set(
-    data.events?.filter((event) => event.kind === "returned").map(transferId),
-  );
-  const reading: DayReplay = { date, through: data.generated_at, events: [] };
   const through = Date.parse(data.generated_at);
-  for (const transfer of data.transitions) {
+  const moves: FloorEvent[] = [];
+  for (const transfer of data.transitions ?? []) {
     if (
       transfer.from === transfer.to || transfer.number <= 0 ||
-      pacificDay(transfer.at) !== date || Date.parse(transfer.at) > through
+      Date.parse(transfer.at) > through
     ) continue;
+    const observedAt = transfer.observed_at ?? transfer.at;
     const event = {
       kind: "move" as const,
       number: transfer.number,
@@ -29,12 +26,23 @@ export function replayReading(data: FactoryData | null, date: string): DayReplay
       from: transfer.from,
       station: transfer.to,
       at: transfer.at,
-      observed_at: transfer.observed_at ?? transfer.at,
+      observed_at: observedAt,
     };
-    const id = transferId(event);
-    reading.events.push({ ...event, id, kind: returned.has(id) ? "returned" : "move" });
+    const returned = data.events?.some((record) => record.kind === "returned" &&
+      record.number === event.number && record.line === event.line &&
+      record.from === event.from && record.station === event.station &&
+      Date.parse(record.observed_at) === Date.parse(observedAt));
+    moves.push({ ...event, id: transferId(event), kind: returned ? "returned" : "move" });
   }
-  return mergeReadings(reading);
+  return moves;
+}
+
+export function replayReading(data: FactoryData | null, date: string): DayReplay | undefined {
+  if (!data?.transitions || pacificDay(data.generated_at) !== date) return;
+  return mergeReadings({
+    date, through: data.generated_at,
+    events: transferEvents(data).filter((event) => pacificDay(event.at) === date),
+  });
 }
 
 function mergeReadings(current: DayReplay, ...history: (DayReplay | undefined)[]): DayReplay {

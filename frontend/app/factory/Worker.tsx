@@ -1,13 +1,7 @@
-import type { Builder, Station } from "./types";
+import type { Builder, FactoryMood, Station } from "./types";
 import styles from "./factory.module.css";
 
-type WorkerState =
-  | "working"
-  | "idle"
-  | "asleep"
-  | "alarmed"
-  | "carrying"
-  | "waiting";
+export type WorkerState = FactoryMood | "idle" | "alarmed";
 type Identity = Exclude<Builder, "Other"> | "Fable";
 const hats: Record<Identity, string> = {
   S: "M35 26q9-16 25-5l-1 6H35m22-3 13 2-5 3",
@@ -30,6 +24,8 @@ export default function Worker({
   state: WorkerState;
   identity: Identity;
 }) {
+  const concerned = state === "alarmed" || state === "stuck";
+  const scene = state === "celebrating" ? "Live" : station;
   return (
     <svg
       viewBox="0 0 100 76"
@@ -52,7 +48,7 @@ export default function Worker({
           <>
             <path d="M42 31v2m12-2v2" />
             <path
-              d={state === "alarmed" ? "M46 39q3-5 6 0" : "M45 38q4 3 8 0"}
+              d={concerned ? "M46 39q3-5 6 0" : "M45 38q4 3 8 0"}
             />
           </>
         )}
@@ -72,17 +68,17 @@ export default function Worker({
         </g>
       ) : state === "waiting" ? (
         <path d="M39 47 35 60m22-13 4 13" className={styles.workerHands} />
-      ) : state === "alarmed" ? (
+      ) : concerned ? (
         <path
           d="M39 47L26 31l-4-9m35 24 14-15 4-9"
           className={styles.workerHands}
         />
       ) : (
         <g className={styles.workerHands}>
-          {!station && (
+          {!scene && (
             <path d="M39 47 30 51m27-4 11 5" className={styles.workerArm} />
           )}
-          {station === "Write" && (
+          {scene === "Write" && (
             <>
               <path
                 d="M39 47 29 53h28m-1-6 11 9"
@@ -93,7 +89,7 @@ export default function Worker({
               <path d="m62 47 5 9" />
             </>
           )}
-          {station === "Test" && (
+          {scene === "Test" && (
             <>
               <path
                 d="M39 47 28 55l9 5m20-13 15 5"
@@ -110,7 +106,7 @@ export default function Worker({
               <path d="M66 42h8v5h-8zm-1 12 3 3 6-7m-9 13h10" />
             </>
           )}
-          {station === "Review" && (
+          {scene === "Review" && (
             <>
               <path
                 d="M39 47 28 59h-7m36-12 9-9"
@@ -123,14 +119,14 @@ export default function Worker({
               </g>
             </>
           )}
-          {station === "Merge line" && (
+          {scene === "Merge line" && (
             <>
               <path d="M39 48 27 56m30-9 14 5" className={styles.workerArm} />
               <path d="M63 72h26v-9H63zm12-9L69 41" className={styles.lever} />
               <circle cx="69" cy="40" r="4" className={styles.workerHat} />
             </>
           )}
-          {station === "Ship" && (
+          {scene === "Ship" && (
             <>
               <path d="M39 47 31 58m26-11 7 12" className={styles.workerArm} />
               <rect
@@ -144,7 +140,7 @@ export default function Worker({
               <path d="M43 56v18m13-18v18m-27-9h40" />
             </>
           )}
-          {station === "Live" && (
+          {scene === "Live" && (
             <>
               <path d="M39 47 24 54m33-7 15-10" className={styles.workerArm} />
               <path d="M71 37V17l15 5-15 7" className={styles.dispatchFlag} />
@@ -158,7 +154,7 @@ export default function Worker({
           Zzz
         </text>
       )}
-      {state === "alarmed" && (
+      {concerned && (
         <text x="77" y="17" className={styles.alarmText}>
           !
         </text>

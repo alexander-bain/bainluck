@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from model import instant, iso
 from notes import (
     DAILY_CALLS,
+    ModelBudget,
     caption_facts,
     fallback,
     make_notes,
@@ -106,10 +107,8 @@ class ForemanNotes(unittest.TestCase):
                 self.snapshot,
                 self.pulls,
                 previous or {},
-                self.body,
-                self.save,
+                ModelBudget(self.body, self.save, now=now or self.now),
                 key,
-                now=now or self.now,
                 request=self.request,
             )
 
@@ -239,6 +238,7 @@ class ForemanNotes(unittest.TestCase):
         meter = read_meter(self.body, self.now)
         meter.update(
             calls=DAILY_CALLS - 1,
+            notes_calls=DAILY_CALLS - 1,
             last_at=iso(self.now - timedelta(minutes=10)),
             last_facts="1" * 64,
         )

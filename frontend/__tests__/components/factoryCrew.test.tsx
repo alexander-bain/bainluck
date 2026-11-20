@@ -533,3 +533,54 @@ it("leaves the previous snapshot's notes off the current floor", async () => {
     await act(async () => root.unmount());
   }
 });
+
+it("keeps lane speech, its pose and the daily count readable with motion off", async () => {
+  const reduce = watchMotion();
+  reduce();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const data: FactoryData = {
+    ...snapshot,
+    speech: { B: { text: "#12998 is in checks.", mood: "working", source: "model" } },
+    model_usage: { day: "2026-11-18", calls: 3 },
+  };
+  try {
+    await act(async () => root.render(<FactoryFloor data={data} lastGoodAt={now} renderedAt={now} />));
+    const builder = container.querySelector('[data-crew="B"]');
+    expect(builder?.getAttribute("data-pose")).toBe("working");
+    expect(builder?.querySelector('p[data-source="model"]')?.textContent).toBe("#12998 is in checks.");
+    expect(container.textContent).toContain("3 of 200 model calls made today.");
+    expect(container.querySelector("[data-factory]")?.getAttribute("data-motion")).toBe("paused");
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("starts a real transfer when an open page receives a newer read", async () => {
+  watchMotion();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const next = "2026-11-18T18:00:10Z";
+  const selector = '[data-event-id^="transfer:"]';
+  try {
+    const before: FactoryData = { ...snapshot, transitions: [], changes: [{ ...base, station: "Write" }] };
+    await act(async () => root.render(<FactoryFloor data={before} lastGoodAt={now} renderedAt={now} />));
+    expect(container.querySelector(selector)).toBeNull();
+    const after: FactoryData = {
+      ...snapshot, generated_at: next,
+      transitions: [{ number: 12998, line: "Server", from: "Write", to: "Test", at: next, observed_at: next }],
+    };
+    await act(async () => root.render(<FactoryFloor data={after} lastGoodAt={next} renderedAt={next} />));
+    await act(async () => { jest.advanceTimersByTime(1); });
+    expect(container.querySelector(selector)?.textContent).toContain("#12998");
+    expect(container.querySelector('[data-arriving="true"]')?.textContent).toContain("#12998");
+    await act(async () => { jest.advanceTimersByTime(1500); });
+    expect(container.querySelector(selector)).toBeNull();
+    expect(container.querySelector('[data-arriving="true"]')).toBeNull();
+    await act(async () => root.render(<FactoryFloor data={after} lastGoodAt={next} renderedAt={next} />));
+    await act(async () => { jest.advanceTimersByTime(1); });
+    expect(container.querySelector(selector)).toBeNull();
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
