@@ -70,14 +70,14 @@ const stationIcons = {
   Ship: Truck,
   Live: Check,
 };
-const descriptions = [
-  "Taking shape",
-  "Checking it works",
-  "Fable’s inspection desk",
-  "Ready for a turn",
-  "On its way",
-  "In your hands",
-];
+const engineering: Record<Station, string> = {
+  Write: "writing",
+  Test: "automated tests",
+  Review: "review",
+  "Merge line": "merge queue",
+  Ship: "deploying",
+  Live: "in readers’ hands",
+};
 const bayLimit = 2;
 const shelfKeys = ["held", "parked", "bot", "side"] as const;
 type Shelf = (typeof shelfKeys)[number];
@@ -605,10 +605,10 @@ export default function FactoryFloor({
           <div className={styles.floorGrid}>
             <div className={styles.stationHeadings}>
               <span />
-              {stations.map((station, index) => (
+              {stations.map((station) => (
                 <div key={station}>
                   <strong>{stationNames[station]}</strong>
-                  <span>{descriptions[index]}</span>
+                  <span>{engineering[station]}</span>
                   {station === "Review" && (
                     <div className={styles.inspectionDesk}>
                       <Worker station="Review" identity="Fable" state="idle" />
@@ -666,6 +666,7 @@ export default function FactoryFloor({
                       );
                       const crew = crewActivity(data, now, changes);
                       const worker = crew.change ?? changes[0];
+                      const workerId = worker?.builder === "Other" ? undefined : worker?.builder;
                       const workerState = changes.length
                         ? crew.pose
                         : activity.worker;
@@ -739,15 +740,12 @@ export default function FactoryFloor({
                                   <li>+{dockBuilders.length - 3}</li>
                                 )}
                               </ul>
-                            ) : worker && worker.builder !== "Other" ? (
-                              <div className={styles.bayWorker}>
-                                <Worker
-                                  station={station}
-                                  identity={worker.builder}
-                                  state={workerState}
-                                />
-                                <span>{names[worker.builder]}</span>
-                              </div>
+                            ) : workerId ? (
+                              <Worker
+                                station={station}
+                                identity={workerId}
+                                state={workerState}
+                              />
                             ) : (
                               <Icon
                                 className={styles.stationObject}
@@ -785,6 +783,9 @@ export default function FactoryFloor({
                               </span>
                             </span>
                           </div>
+                          {workerId && !dockBuilders.length && (
+                            <span className={styles.bayWorkerName}>{names[workerId]}</span>
+                          )}
                           <div className={styles.crates}>
                             {crates.map(crate)}
                             {!changes.length && (
@@ -862,17 +863,7 @@ export default function FactoryFloor({
             })}
           </div>
         </div>
-        <div className={styles.floorKey}>
-          <span>
-            <i className={styles.keyCrate} /> A change can ship on more than one line
-          </span>
-          <span>
-            <i className={styles.keyAmber} /> Ten or more waiting for 30 minutes
-          </span>
-          <span>
-            <b>?</b> Evidence is incomplete
-          </span>
-        </div>
+        <p className={styles.floorKey}>A crate is one change.</p>
         {(selected || group) && (
           <dialog
             className={styles.detail}

@@ -86,6 +86,23 @@ it("runs only recently crossed belts and stops them for an old read or a blockin
   expect(readerBehind(flowing, "2026-11-18T18:15:00Z")).toBe(false);
 });
 
+it("pairs each factory station with its engineering name", () => {
+  const html = renderToStaticMarkup(
+    <FactoryFloor data={data} lastGoodAt={data.generated_at} renderedAt={data.generated_at} />,
+  );
+  for (const [name, term] of [
+    ["Bench", "writing"],
+    ["Checks", "automated tests"],
+    ["Inspection", "review"],
+    ["Loading dock", "merge queue"],
+    ["Truck", "deploying"],
+    ["Live", "in readers’ hands"],
+  ]) {
+    expect(html).toContain(`<strong>${name}</strong><span>${term}</span>`);
+  }
+  expect(html).toContain("A crate is one change.");
+});
+
 it.each(["Live", "Test"] as const)(
   "shows two crates and an overflow control at %s",
   (station) => {
