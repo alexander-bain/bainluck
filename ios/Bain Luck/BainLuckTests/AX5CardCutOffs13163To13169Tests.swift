@@ -345,7 +345,7 @@ final class AX5CardCutOffs13163To13169Tests: XCTestCase {
                 let joined = lines.joined(separator: " ")
                 let dehyphenated = joined.replacingOccurrences(of: "- ", with: "")
                 XCTAssertFalse(joined.contains("\u{2026}") || joined.contains("..."), "13167 (\(sizeLabel), \(scheme)) truncated with ellipsis: \(joined)")
-                for token in ["CME Group", "Tour", "Championship", "Jeeno Thitikul", "43%", "12.7pp today", "Naples"] {
+                for token in ["CME Group", "Tour", "Championship", "Jeeno Thitikul", "43%", "12.7 points today", "Naples"] {
                     XCTAssertTrue(dehyphenated.localizedCaseInsensitiveContains(token), "13167 (\(sizeLabel), \(scheme)) missing '\(token)': \(joined)")
                 }
             }
