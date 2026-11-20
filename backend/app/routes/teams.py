@@ -41,7 +41,13 @@ from app.utils.sport_keys import (
     same_sport_same_gender,
     sport_display_name,
 )
-from app.utils.standings_shape import public_standings
+from app.utils.standings_shape import (
+    _board_record,
+    public_standings,
+    record_exceeds_season_ceiling,
+    record_leads_fresh_board,
+    standings_exceeds_season_ceiling,
+)
 from app.utils.source_mark import quote_source_mark, settled_source_mark
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -780,30 +786,56 @@ def _record_for_declared_season(team: Team, now: datetime | None = None) -> str 
     return record
 
 
-def _format_team(team: Team, now: datetime | None = None) -> dict:
+def _format_team(
+    team: Team,
+    now: datetime | None = None,
+    *,
+    season_games_ceiling: int | None = None,
+) -> dict:
     sport = team.sport
+    sport_key = sport.key if sport else None
+    if season_games_ceiling is None:
+        from app.routes.events import cached_league_season_ceiling
+
+        season_games_ceiling = cached_league_season_ceiling(
+            sport_key, getattr(team, "sport_id", None)
+        )
+    standings = public_standings(team.standings_data)
+    if standings_exceeds_season_ceiling(standings, season_games_ceiling):
+        standings = None
+    record = _record_for_declared_season(team, now)
+    if record is not None and (
+        record_exceeds_season_ceiling(record, season_games_ceiling)
+        or record_leads_fresh_board(
+            record,
+            standings,
+            getattr(team, "standings_updated_at", None),
+            now,
+        )
+    ):
+        record = _board_record(standings) if standings else None
     return {
         "id": team.id,
         "slug": team.slug,
         "name": team.name,
         "abbreviation": team.abbreviation,
-        "sport_key": sport.key if sport else None,
+        "sport_key": sport_key,
         # #6444: a team in an uncurated league used to have its own machine key
         # read back to it as a league name — `/api/teams/alabama-state-hornets`
         # served `sport_name: "basketball_other"`. The helper rejects exactly one
         # value, the key itself, so the 162 branded rows pass through untouched.
-        "sport_name": sport_display_name(sport.key, sport.name) if sport else None,
+        "sport_name": sport_display_name(sport_key, sport.name) if sport else None,
         "location": team.location,
         "primary_color": team.primary_color,
         "secondary_color": team.secondary_color,
         "logo_small": team.logo_url_small,
         "logo_large": team.logo_url_large,
-        # #6266: withheld out of season — see `_record_for_declared_season`.
-        "record": _record_for_declared_season(team, now),
+        # #6266 / #13229: withheld out of season or when prior-season games exceed league ceiling.
+        "record": record,
         # `public_standings` drops write-dead keys (#4811): a pre-#4732
         # `conf_rank` is a division place wearing a conference label, and this
         # is the payload the team-page hero reads.
-        "standings": public_standings(team.standings_data),
+        "standings": standings,
         "season_stats": team.season_stats,
         "roster": team.roster_players,
     }
