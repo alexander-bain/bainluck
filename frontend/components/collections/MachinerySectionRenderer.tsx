@@ -937,27 +937,42 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
               const awayArt = r.away_art as MachinerySubjectArt | undefined;
               const homeArt = r.home_art as MachinerySubjectArt | undefined;
               return (
-                <div key={eid} className="flex items-center justify-between gap-2 py-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <SubjectAvatar
-                      art={awayArt}
-                      label={awayShort}
-                      sizeClass="h-7 w-7"
-                      widthClass="w-7 h-1"
-                      reserveSlotWhenMissing={anyCardAwayArt}
-                    />
-                    <span className="text-xs font-semibold text-text-primary">{awayShort}</span>
+                <div
+                  key={eid}
+                  data-testid="machinery-matchup-row"
+                  className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 py-2"
+                >
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+                    <span className="inline-flex items-center gap-1.5">
+                      <SubjectAvatar
+                        art={awayArt}
+                        label={awayShort}
+                        sizeClass="h-6 w-6"
+                        widthClass="w-6 h-1"
+                        reserveSlotWhenMissing={anyCardAwayArt}
+                      />
+                      <span className="text-xs font-semibold leading-snug text-text-primary">
+                        {awayShort}
+                      </span>
+                    </span>
                     <span className="text-[11px] text-text-muted">at</span>
-                    <SubjectAvatar
-                      art={homeArt}
-                      label={homeShort}
-                      sizeClass="h-7 w-7"
-                      widthClass="w-7 h-1"
-                      reserveSlotWhenMissing={anyCardHomeArt}
-                    />
-                    <span className="text-xs font-semibold text-text-primary">{homeShort}</span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <SubjectAvatar
+                        art={homeArt}
+                        label={homeShort}
+                        sizeClass="h-6 w-6"
+                        widthClass="w-6 h-1"
+                        reserveSlotWhenMissing={anyCardHomeArt}
+                      />
+                      <span className="text-xs font-semibold leading-snug text-text-primary">
+                        {homeShort}
+                      </span>
+                    </span>
                   </div>
-                  <span className="shrink-0 text-xs font-bold tabular-nums text-text-primary">
+                  <span
+                    data-testid="machinery-matchup-pcts"
+                    className="ml-auto shrink-0 whitespace-nowrap text-xs font-bold tabular-nums text-text-primary"
+                  >
                     {awayPct}%–{homePct}%
                   </span>
                 </div>

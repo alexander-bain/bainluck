@@ -117,7 +117,7 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
                 return ColumnHeaders(
                     leading: art.projectedBefore != nil ? "Proj." : nil,
                     pregame: nil,
-                    primary: "Chance"
+                    primary: reading.phase == .openingLine ? "Opening" : "Chance"
                 )
             case .during:
                 // Rulings 213-A + 214-A1: Score · Proj. · Now during a game (no Pregame column).

@@ -8,7 +8,7 @@ import {
   MachineryDiscoverCard,
   isMachinerySlice1Enabled,
 } from "@/components/collections/MachinerySectionRenderer";
-import { buildRoundupCardModel } from "@/lib/discover/roundupCard";
+import { buildRoundupCardModel, compactStripDateLabel } from "@/lib/discover/roundupCard";
 import type { FeedItem, FeedRoundupContract, FeedThemeCollectionRef } from "@/lib/types";
 import { BundleActionBar } from "../BundleActionBar";
 import { admitCollectionRef, rememberThemeCollectionReturn } from "../shared";
@@ -60,27 +60,38 @@ export function RoundupCard({
   // Checked before legacy `buildRoundupCardModel` because machinery groupings (#12288)
   // carry their own card contract and intentionally omit the legacy roundup `footer`.
   if (contract?.paired_metric_set) {
+    const paired = contract.paired_metric_set;
+    if (
+      !paired.title?.trim() ||
+      !Array.isArray(paired.entries) ||
+      paired.entries.length === 0
+    ) {
+      return null;
+    }
     return (
       <div data-testid="roundup-card-slot">
         <AwardCategoryPairedCard
-          set={contract.paired_metric_set}
+          set={paired}
           surface="discover"
         />
         {isMachinerySlice1Enabled() && destination && contract?.machinery_card && (
           <Link
             href={destination.href}
-            className="mt-2 flex items-center justify-between rounded-card border border-surface-border bg-surface-card px-3.5 py-2 text-xs font-semibold text-accent-brand transition-colors hover:bg-surface-elevated"
+            data-testid="paired-card-machinery-link"
+            className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-card border border-surface-border bg-surface-card px-3.5 py-2 text-xs font-semibold text-accent-brand transition-colors hover:bg-surface-elevated"
           >
-            <span className="text-text-secondary">{destination.name}</span>
-            <span>Open all {contract.machinery_card.section_count} sections ›</span>
+            <span className="min-w-0 text-text-secondary">{destination.name}</span>
+            <span className="ml-auto shrink-0 whitespace-nowrap">
+              Open all {contract.machinery_card.section_count} sections ›
+            </span>
           </Link>
         )}
         {!previewOnly && (
           <div className="mt-[10px]">
             <BundleActionBar
               items={items}
-              title={contract.paired_metric_set.title || title}
-              sharedQuestion={contract.paired_metric_set.title || title}
+              title={paired.title || title}
+              sharedQuestion={paired.title || title}
               storyKey={storyKey ?? bundleId}
               positionIndex={positionIndex}
             />
@@ -128,48 +139,50 @@ export function RoundupCard({
         longHeadline={model.longHeadline}
       />
       {model.presentation === "strip" ? (
-        <div className="grid grid-cols-3 gap-2.5" data-testid="roundup-rows" data-presentation="strip">
-          {model.rows.map((row) => (
-            <div
-              key={row.marketId}
-              className="flex min-w-0 flex-col justify-between rounded-xl border border-surface-border bg-surface-elevated/40 p-2.5"
-              data-testid="roundup-row"
-              data-market-id={row.marketId}
-            >
-              <div className="min-w-0" data-testid="roundup-row-label">
-                <div className="truncate text-[13px] font-medium leading-[1.25] text-text-primary">
-                  {row.opponentLabel ?? row.label}
-                </div>
-                {row.dateLabel ? (
-                  <div className="mt-0.5 truncate text-[11.5px] leading-[1.2] text-text-secondary">
-                    {row.dateLabel}
+        <div className="roundup-strip-container">
+          <div className="roundup-strip-grid grid grid-cols-3 gap-1.5" data-testid="roundup-rows" data-presentation="strip">
+            {model.rows.map((row) => (
+              <div
+                key={row.marketId}
+                className="roundup-strip-box flex min-w-0 flex-col justify-between rounded-xl border border-surface-border bg-surface-elevated/40 px-1.5 py-2.5"
+                data-testid="roundup-row"
+                data-market-id={row.marketId}
+              >
+                <div className="min-w-0" data-testid="roundup-row-label">
+                  <div className="roundup-strip-opponent whitespace-normal break-words text-[13px] font-medium leading-[1.25] tracking-[-0.015em] text-text-primary">
+                    {row.opponentLabel ?? row.label}
                   </div>
-                ) : null}
-              </div>
-              <div className="mt-2.5">
-                <div className="flex items-baseline justify-between gap-1">
-                  <span className="font-mono text-[18px] font-bold leading-[1.15] tracking-[-0.03em] text-text-primary tabular-nums">
-                    {row.marker}
-                    {row.digits}
-                    <small className="ml-px text-[0.6em] font-medium tracking-normal text-text-secondary">%</small>
-                  </span>
-                  {row.rowMark ? (
-                    <PriceAgeMark observedAt={row.observedAt} nowMs={now} cadence={row.cadence} scope="row" />
+                  {row.dateLabel ? (
+                    <div className="roundup-strip-date mt-0.5 whitespace-nowrap text-[11.5px] leading-[1.2] text-text-secondary">
+                      {compactStripDateLabel(row.dateLabel)}
+                    </div>
                   ) : null}
                 </div>
-                <span
-                  className="mt-1.5 block h-[5px] overflow-hidden rounded-[3px] bg-surface-elevated"
-                  aria-hidden="true"
-                >
-                  <i
-                    className="block h-full min-w-[3px] rounded-r-[3px] bg-[var(--series-1)]"
-                    style={{ width: `${Math.max(0, Math.min(1, row.fill)) * 100}%` }}
-                    data-testid="roundup-row-bar"
-                  />
-                </span>
+                <div className="mt-2.5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-1 gap-y-0.5">
+                    <span className="font-mono text-[18px] font-bold leading-[1.15] tracking-[-0.03em] text-text-primary tabular-nums">
+                      {row.marker}
+                      {row.digits}
+                      <small className="ml-px text-[0.6em] font-medium tracking-normal text-text-secondary">%</small>
+                    </span>
+                    {row.rowMark ? (
+                      <PriceAgeMark observedAt={row.observedAt} nowMs={now} cadence={row.cadence} scope="row" />
+                    ) : null}
+                  </div>
+                  <span
+                    className="mt-1.5 block h-[5px] overflow-hidden rounded-[3px] bg-surface-elevated"
+                    aria-hidden="true"
+                  >
+                    <i
+                      className="block h-full min-w-[3px] rounded-r-[3px] bg-[var(--series-1)]"
+                      style={{ width: `${Math.max(0, Math.min(1, row.fill)) * 100}%` }}
+                      data-testid="roundup-row-bar"
+                    />
+                  </span>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       ) : (
         <div className="grid gap-[14px]" data-testid="roundup-rows">

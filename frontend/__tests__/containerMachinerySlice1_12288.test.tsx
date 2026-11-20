@@ -437,4 +437,97 @@ describe("#12288 Slice 1 — topic-free container machinery renderer", () => {
     );
     expect(offHtml).toBe("");
   });
+
+  it("wraps matchup card rows and Oscars link row cleanly at 288px desktop width without truncation (#13188)", () => {
+    process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 = "true";
+
+    const nbaCard = {
+      slug: "machinery-nba-night",
+      form_id: "coin_flip_matchups",
+      kicker: "NBA · THIS SLATE",
+      title: "Timberwolves at Trail Blazers headlines the Nov 20–25 slate",
+      subtitle: "Games on this slate priced closest to a 50–50 toss-up.",
+      footer: "",
+      destination_href: "/collections/machinery-nba-night",
+      section_count: 5,
+      rows: [
+        {
+          event_id: 901,
+          away_short: "Timberwolves",
+          home_short: "Trail Blazers",
+          away_pct: 49,
+          home_pct: 51,
+        },
+      ],
+    };
+    const nflCard = {
+      slug: "machinery-nfl-week",
+      form_id: "matchup_slate",
+      kicker: "NFL · THIS SLATE",
+      title: "Commanders at Buccaneers headlines the Nov 22–27 slate",
+      subtitle: "Closest matchups on this slate.",
+      footer: "",
+      destination_href: "/collections/machinery-nfl-week",
+      section_count: 4,
+      rows: [
+        {
+          event_id: 902,
+          away_short: "Commanders",
+          home_short: "Buccaneers",
+          away_pct: 54,
+          home_pct: 46,
+        },
+      ],
+    };
+
+    for (const card of [nbaCard, nflCard]) {
+      const html = renderToStaticMarkup(<MachineryDiscoverCard card={card} />);
+      expect(html).toContain('data-testid="machinery-matchup-row"');
+      expect(html).toContain("flex-wrap");
+      expect(html).toContain('data-testid="machinery-matchup-pcts"');
+      expect(html).toContain("whitespace-nowrap");
+      expect(html).not.toContain("truncate");
+      expect(html).not.toContain("…");
+    }
+
+    // Broken paired_metric_set (empty entries or missing title) is refused cleanly.
+    const emptyPairedHtml = renderToStaticMarkup(
+      <RoundupCard
+        title="Broken"
+        contract={{
+          kicker: "OSCARS",
+          footer: "",
+          tag: null,
+          rows: [],
+          paired_metric_set: {
+            set_id: "oscar-empty",
+            category: "entertainment",
+            kicker: "OSCARS",
+            title: "Broken empty set",
+            subtitle: "",
+            stage_1_label: "Nominated",
+            stage_2_label: "Wins",
+            stage_1_settled_yes_label: "✓",
+            stage_1_settled_no_label: "✗",
+            stage_1_market: { id: 1, source: "kalshi", name: "A" },
+            stage_2_market: { id: 2, source: "kalshi", name: "B" },
+            never_blend: true,
+            as_of: "2026-11-20T10:00:00Z",
+            entries: [],
+          },
+        }}
+        collectionRef={{
+          slug: "machinery-oscars-best-picture",
+          href: "/collections/machinery-oscars-best-picture",
+          name: "Oscars",
+          revision: 1,
+          collection_count: 1,
+        }}
+        items={[]}
+        bundleId="roundup:machinery-oscars-best-picture"
+      />,
+    );
+    expect(emptyPairedHtml).toBe("");
+    delete process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1;
+  });
 });
