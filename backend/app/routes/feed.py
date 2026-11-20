@@ -2353,8 +2353,18 @@ async def enrich_event_team_data(db, feed_items: list[dict]) -> None:
             # item, so the card resolves a school's name against its OWN league
             # (#7262) rather than whichever of its four rows sorts last.
             item_sport_key = d.get("sport")
-            home_team = _team_for_event(team_lookup, d["home_team"], item_sport_key)
-            away_team = _team_for_event(team_lookup, d["away_team"], item_sport_key)
+            home_team = _team_for_event(
+                team_lookup,
+                d["home_team"],
+                item_sport_key,
+                team_id=item.get("_home_team_id"),
+            )
+            away_team = _team_for_event(
+                team_lookup,
+                d["away_team"],
+                item_sport_key,
+                team_id=item.get("_away_team_id"),
+            )
             if home_team:
                 d["home_team_data"] = _format_team_data(home_team)
             if away_team:
@@ -13623,6 +13633,8 @@ async def _score_events(
             if p_in is None:
                 _personalized_events.append(item)
                 continue
+            item["_home_team_id"] = p_in.get("home_team_id")
+            item["_away_team_id"] = p_in.get("away_team_id")
 
             event_id = p_in["event_id"]
             event_status = p_in["event_status"]

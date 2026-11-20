@@ -1934,8 +1934,18 @@ def _format_game_brief(
         # football games, in week 4) and North Texas from its women's basketball
         # row ("19-13"). `sport_key` is the argument this whole payload is built
         # for, so the rail always knows which league it is rendering.
-        home_team = _team_for_event(team_lookup, event.home_team_name, sport_key)
-        away_team = _team_for_event(team_lookup, event.away_team_name, sport_key)
+        home_team = _team_for_event(
+            team_lookup,
+            event.home_team_name,
+            sport_key,
+            team_id=getattr(event, "home_team_id", None),
+        )
+        away_team = _team_for_event(
+            team_lookup,
+            event.away_team_name,
+            sport_key,
+            team_id=getattr(event, "away_team_id", None),
+        )
         if home_team and (home_team.primary_color or home_team.logo_url_small):
             brief["home_team_data"] = _format_team_data(home_team)
         if away_team and (away_team.primary_color or away_team.logo_url_small):
