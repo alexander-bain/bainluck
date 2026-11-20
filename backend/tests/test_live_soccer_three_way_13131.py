@@ -23,7 +23,7 @@ from app.utils.hero_probability import HeroReading
 FIXED_NOW = datetime(2025, 3, 10, 22, 0, 0, tzinfo=timezone.utc)
 
 
-def test_live_soccer_feed_card_never_emits_two_way_complement_without_draw():
+def test_live_soccer_feed_card_never_emits_two_way_complement_or_home_only_without_draw():
     hero = HeroReading(home_probability=0.62, away_probability=0.38, source="blend")
     data = format_event_data(
         event_id=15343915,
@@ -54,11 +54,12 @@ def test_live_soccer_feed_card_never_emits_two_way_complement_without_draw():
         hero=hero,
     )
     co = data["current_odds"]
-    assert co["home_probability"] == pytest.approx(0.62)
+    assert co["home_probability"] is None
     assert co["away_probability"] is None
     assert co["draw_probability"] is None
-    assert data["hero_probability"] == pytest.approx(0.62)
+    assert data["hero_probability"] is None
     assert data["hero_probability_away"] is None
+    assert data["hero_probability_draw"] is None
 
 
 def test_live_soccer_feed_card_serves_home_draw_away_summing_to_100():
@@ -198,3 +199,99 @@ def test_league_game_brief_serves_three_way_for_live_brazil_soccer():
     assert co["draw_probability"] == pytest.approx(0.25)
     assert co["home_rendered_percent"] + co["draw_rendered_percent"] + co["away_rendered_percent"] == 100
     assert brief["away_source_mark"]["state"] == "single"
+    # Away source mark carries the away chance (0.21), never 1 - home (0.46).
+    assert brief["away_source_mark"]["sources"][0]["probability"] == pytest.approx(0.21)
+
+
+@pytest.mark.asyncio
+async def test_read_live_three_way_books_folds_suppressed_twin_snapshots():
+    """Cologne at Bayern Munich (15351899): live sportsbook rows sit on
+    suppressed twin 15342140. Passing `absorbed_ids_by_event` lets feed and
+    league rails resolve the exact same 90 / 7 / 3 as `/api/events/15351899`."""
+    ev_canonical = SimpleNamespace(
+        id=15351899,
+        status="live",
+        commence_time=FIXED_NOW - timedelta(minutes=30),
+        sport=SimpleNamespace(key="soccer_germany_bundesliga"),
+    )
+    snap_twin_1 = SimpleNamespace(
+        event_id=15342140,
+        bookmaker="draftkings",
+        home_win_probability=0.90,
+        away_win_probability=0.03,
+        captured_at=FIXED_NOW - timedelta(minutes=1),
+        valid_until=FIXED_NOW,
+        home_spread=None,
+        over_under=None,
+        projected_home_score=None,
+        projected_away_score=None,
+        home_moneyline=None,
+        away_moneyline=None,
+    )
+    snap_twin_2 = SimpleNamespace(
+        event_id=15342140,
+        bookmaker="fanduel",
+        home_win_probability=0.90,
+        away_win_probability=0.03,
+        captured_at=FIXED_NOW - timedelta(minutes=1),
+        valid_until=FIXED_NOW,
+        home_spread=None,
+        over_under=None,
+        projected_home_score=None,
+        projected_away_score=None,
+        home_moneyline=None,
+        away_moneyline=None,
+    )
+    queried_ids: list[int] = []
+
+    def _capture_query(ids):
+        queried_ids.extend(ids)
+        return ids
+
+    class _FakeDB:
+        async def execute(self, stmt):
+            return SimpleNamespace(
+                scalars=lambda: SimpleNamespace(all=lambda: [snap_twin_1, snap_twin_2])
+            )
+
+    books = await read_live_three_way_books(
+        _FakeDB(),
+        [ev_canonical],
+        FIXED_NOW,
+        latest_odds_query=_capture_query,
+        absorbed_ids_by_event={15351899: (15342140,)},
+    )
+    assert set(queried_ids) == {15351899, 15342140}
+    assert 15351899 in books
+    bh, ba = books[15351899]
+    assert bh == pytest.approx(0.90)
+    assert ba == pytest.approx(0.03)
+
+
+def test_cologne_at_bayern_away_source_mark_carries_away_chance_for_blended_sources():
+    """On a 90 / 7 / 3 Bundesliga match with two blended sources, away_source_mark
+    must scale each source by the three-way away share (0.03 / 0.10 = 0.30),
+    never emitting 1 - p_home (0.10 / 0.09)."""
+    from app.utils.source_mark import blended_source_marks
+
+    ev = SimpleNamespace(
+        win_probability_sources={
+            "betting": {"value": 0.90},
+            "polymarket": {"value": 0.91},
+            "betting_book_count": 10,
+        }
+    )
+    home_mark, away_mark = blended_source_marks(
+        ev,
+        [("betting", 0.90), ("polymarket", 0.91)],
+        method="weighted average",
+        away_available=True,
+        three_way_probs=(0.902, 0.0294, 0.0686),
+    )
+    home_by_key = {s["key"]: s["probability"] for s in home_mark["sources"]}
+    away_by_key = {s["key"]: s["probability"] for s in away_mark["sources"]}
+    assert home_by_key == {"betting": 0.90, "polymarket": 0.91}
+    assert away_by_key["betting"] == pytest.approx(0.03, abs=1e-4)
+    assert away_by_key["polymarket"] == pytest.approx(0.027, abs=1e-4)
+    assert away_by_key["betting"] < 0.05  # definitely not 1 - 0.90 = 0.10
+

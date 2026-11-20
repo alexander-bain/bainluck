@@ -11998,12 +11998,49 @@ async def search_events(
     # it. Search returns at most `per_page` = 100, so this is one statement.
     folded_map = await folded_card_numbers_batch(db, events)
 
+    # #13131: if a live draw-priced event's sportsbook rows live on a suppressed
+    # twin, read those twin snapshots so list/search show the exact same three
+    # numbers as `/api/events/{id}`. Zero queries when no such twin exists.
+    _search_twin_three_way: dict[int, tuple[float, float]] = {}
+    _search_twin_candidates: list = []
+    _search_twin_ids_by_event: dict[int, list[int]] = {}
+    for _ev in events:
+        if not sport_prices_a_draw(loaded_sport_key(_ev)):
+            continue
+        _f = folded_map.get(_ev.id)
+        _tids = list((_f.absorbed_ids if _f is not None else ()) or ())
+        for _pt in _prematch_absorbed_ids.get(_ev.id) or ():
+            if _pt not in _tids:
+                _tids.append(_pt)
+        if not _tids:
+            continue
+        _agg_existing = (aggregated_odds_map.get(_ev.id) or {}).get("aggregated") or {}
+        if resolve_three_way_probabilities(
+            _agg_existing.get("home_probability"),
+            books_home=_agg_existing.get("home_probability"),
+            books_away=_agg_existing.get("away_probability"),
+            sport_key=loaded_sport_key(_ev),
+        ) is None:
+            _search_twin_candidates.append(_ev)
+            _search_twin_ids_by_event[_ev.id] = _tids
+    if _search_twin_candidates:
+        from app.utils.draw_priced_winner import read_live_three_way_books
+
+        _search_twin_three_way = await read_live_three_way_books(
+            db,
+            _search_twin_candidates,
+            datetime.now(timezone.utc),
+            latest_odds_query=latest_odds_per_bookmaker_query,
+            absorbed_ids_by_event=_search_twin_ids_by_event,
+        )
+
     for event in events:
         _folded = folded_map.get(event.id)
         formatted = _format_event_with_aggregated_odds(
             event, aggregated_odds_map.get(event.id), gei_percentiles, team_lookup,
             folded_sources=_folded.win_probability_sources if _folded is not None else None,
             folded_opening=_folded.opening if _folded is not None else None,
+            three_way_books=_search_twin_three_way.get(event.id),
         )
         # #2920 — the event page's marked in-play pair, from the rows this route
         # already read, so a search row and the page it opens agree.
@@ -19278,6 +19315,42 @@ async def list_events(
     # this costs nothing extra.
     folded_map = await folded_card_numbers_batch(db, events)
 
+    # #13131: if a live draw-priced event's sportsbook rows live on a suppressed
+    # twin, read those twin snapshots so `/api/events` shows the exact same
+    # three numbers as `/api/events/{id}`. Zero queries when no such twin exists.
+    _list_twin_three_way: dict[int, tuple[float, float]] = {}
+    _list_twin_candidates: list = []
+    _list_twin_ids_by_event: dict[int, list[int]] = {}
+    for _ev in events:
+        if not sport_prices_a_draw(loaded_sport_key(_ev)):
+            continue
+        _f = folded_map.get(_ev.id)
+        _tids = list((_f.absorbed_ids if _f is not None else ()) or ())
+        for _pt in _prematch_absorbed_ids.get(_ev.id) or ():
+            if _pt not in _tids:
+                _tids.append(_pt)
+        if not _tids:
+            continue
+        _agg_existing = (aggregated_odds_map.get(_ev.id) or {}).get("aggregated") or {}
+        if resolve_three_way_probabilities(
+            _agg_existing.get("home_probability"),
+            books_home=_agg_existing.get("home_probability"),
+            books_away=_agg_existing.get("away_probability"),
+            sport_key=loaded_sport_key(_ev),
+        ) is None:
+            _list_twin_candidates.append(_ev)
+            _list_twin_ids_by_event[_ev.id] = _tids
+    if _list_twin_candidates:
+        from app.utils.draw_priced_winner import read_live_three_way_books
+
+        _list_twin_three_way = await read_live_three_way_books(
+            db,
+            _list_twin_candidates,
+            datetime.now(timezone.utc),
+            latest_odds_query=latest_odds_per_bookmaker_query,
+            absorbed_ids_by_event=_list_twin_ids_by_event,
+        )
+
     # Format response with aggregated odds.
     #
     # The row's OWN numbers are the default, never a blank: the batch promises
@@ -19296,6 +19369,7 @@ async def list_events(
                     _folded.win_probability_sources if _folded is not None else None
                 ),
                 folded_opening=_folded.opening if _folded is not None else None,
+                three_way_books=_list_twin_three_way.get(e.id),
             )
         )
 
@@ -21189,10 +21263,25 @@ async def get_event(
 
     from app.utils.source_mark import headline_source_marks
 
+    _detail_mark_three_way = (
+        (
+            response.get("hero_probability"),
+            response.get("hero_probability_away"),
+            response.get("hero_probability_draw"),
+        )
+        if (
+            not is_finished_status(response.get("status"))
+            and response.get("hero_probability") is not None
+            and response.get("hero_probability_away") is not None
+            and response.get("hero_probability_draw") is not None
+        )
+        else None
+    )
     response["source_mark"], response["away_source_mark"] = headline_source_marks(
         blend_view, _effective_hero, _hero_source_inputs,
         method=_hero_source_method[0] if _hero_source_method else None,
         away_available=response.get("hero_probability_away") is not None,
+        three_way_probs=_detail_mark_three_way,
     )
 
     # #5077: this page says LIVE, ticks a 20s refresh, shows no score, and its
@@ -38111,7 +38200,7 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
     return response
 
 
-def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], gei_percentiles: dict = None, team_lookup: dict = None, time_series_metrics=None, folded_sources: Optional[dict] = None, folded_opening: Optional[tuple] = None) -> dict:
+def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], gei_percentiles: dict = None, team_lookup: dict = None, time_series_metrics=None, folded_sources: Optional[dict] = None, folded_opening: Optional[tuple] = None, three_way_books: Optional[tuple[float, float]] = None) -> dict:
     """Format event for API response with aggregated odds from multiple bookmakers.
 
     ``folded_sources`` is this event's #3810 fold — its own readings plus any
@@ -38231,10 +38320,17 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         _list_draw_pct: Optional[int] = None
         _list_away_pct: Optional[int] = None
         if sport_prices_a_draw(_event_sport_key):
+            _bh_list = aggregated["home_probability"]
+            _ba_list = aggregated["away_probability"]
+            if (
+                (_bh_list is None or _ba_list is None)
+                and three_way_books is not None
+            ):
+                _bh_list, _ba_list = three_way_books
             _list_three_way = resolve_three_way_probabilities(
                 _served_home,
-                books_home=aggregated["home_probability"],
-                books_away=aggregated["away_probability"],
+                books_home=_bh_list,
+                books_away=_ba_list,
                 sport_key=_event_sport_key,
             )
             if _list_three_way is not None:
@@ -38242,16 +38338,12 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
                 _list_home_pct, _list_draw_pct, _list_away_pct = rendered_three_way_percents(
                     _served_home, _served_draw, _served_away
                 )
-            elif response.get("status") == "scheduled":
+            else:
+                # #13131: a draw-priced list card must show all three numbers or
+                # none — never one orphan home chance or a two-way complement.
                 _served_home = None
                 _served_away = None
-            else:
-                _served_away = (
-                    round(1.0 - _served_home, 6)
-                    if _served_home is not None
-                    else None
-                )
-                _served_away = printable_away(_served_away, _served_home, _event_sport_key)
+                _served_draw = None
         else:
             _served_away = (
                 round(1.0 - _served_home, 6)
@@ -38359,6 +38451,13 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         if _hero.source != "settled":
             if sport_prices_a_draw(_event_sport_key):
                 _lh3 = _list_three_way
+                if _lh3 is None and three_way_books is not None:
+                    _lh3 = resolve_three_way_probabilities(
+                        _hero.home_probability,
+                        books_home=three_way_books[0],
+                        books_away=three_way_books[1],
+                        sport_key=_event_sport_key,
+                    )
                 if (
                     _lh3 is None
                     and _hero.source == "opening"
@@ -38375,16 +38474,25 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
                     response["hero_probability"] = _lh3[0]
                     _hero_away_out = _lh3[1]
                     response["hero_probability_draw"] = _lh3[2]
-                elif response.get("status") == "scheduled":
-                    # #13131 step 3: scheduled one-leg three-way game -> no orphan chance.
+                    if response.get("current_odds") is None:
+                        _hp3, _dp3, _ap3 = rendered_three_way_percents(
+                            _lh3[0], _lh3[2], _lh3[1]
+                        )
+                        response["current_odds"] = {
+                            "home_probability": _lh3[0],
+                            "away_probability": _lh3[1],
+                            "draw_probability": _lh3[2],
+                            "home_rendered_percent": _hp3,
+                            "away_rendered_percent": _ap3,
+                            "draw_rendered_percent": _dp3,
+                        }
+                else:
+                    # #13131: a draw-priced list card must show all three numbers
+                    # or none — never one orphan home chance.
                     response["hero_probability"] = None
                     _hero_away_out = None
                     response["hero_probability_draw"] = None
                     _list_effective_hero = None
-                else:
-                    _hero_away_out = printable_away(
-                        _hero_away_out, _hero.home_probability, _event_sport_key
-                    )
             else:
                 _hero_away_out = printable_away(
                     _hero_away_out, _hero.home_probability, _event_sport_key
@@ -38415,10 +38523,25 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     # The fold was read in the existing batch; formatting adds no query or clock.
     from app.utils.source_mark import headline_source_marks
 
+    _list_mark_three_way = (
+        (
+            response.get("hero_probability"),
+            response.get("hero_probability_away"),
+            response.get("hero_probability_draw"),
+        )
+        if (
+            not is_finished_status(response.get("status"))
+            and response.get("hero_probability") is not None
+            and response.get("hero_probability_away") is not None
+            and response.get("hero_probability_draw") is not None
+        )
+        else None
+    )
     response["source_mark"], response["away_source_mark"] = headline_source_marks(
         _hero_view, _list_effective_hero, _hero_inputs,
         method=_hero_method[0] if _hero_method else None,
         away_available=response.get("hero_probability_away") is not None,
+        three_way_probs=_list_mark_three_way,
     )
 
     # Compute highlight data (Level 1 + Level 2 if time_series available)
