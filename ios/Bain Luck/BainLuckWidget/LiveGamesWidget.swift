@@ -211,34 +211,40 @@ struct MediumLiveGamesView: View {
                         .fixedSize(horizontal: true, vertical: false)
                 }
 
-                HStack(spacing: 3) {
-                    // Team color dot
+                HStack(spacing: 2) {
+                    // Fixed columns wide enough for 4-char short names (TA&M, M-OH)
+                    // and 3-digit scores (101-98) so scores align vertically across rows
+                    // without crossing the center divider or splitting digits (#13162).
                     Circle()
                         .fill(Color(hex: game.resolvedAwayColor(for: colorScheme) ?? "#666666"))
                         .frame(width: 6, height: 6)
                     Text(game.awayAbbrev)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 10.5, weight: .medium))
                         .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
+                        .minimumScaleFactor(0.8)
+                        .frame(width: 33, alignment: .leading)
                     Text("\(game.awayScore ?? 0)")
                         .font(.system(size: 11, weight: .heavy, design: .rounded).monospacedDigit())
                         .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
+                        .minimumScaleFactor(0.85)
+                        .frame(width: 24, alignment: .trailing)
 
                     Text("-")
                         .font(.system(size: 8))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(width: 5, alignment: .center)
 
                     Text("\(game.homeScore ?? 0)")
                         .font(.system(size: 11, weight: .heavy, design: .rounded).monospacedDigit())
                         .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
+                        .minimumScaleFactor(0.85)
+                        .frame(width: 24, alignment: .leading)
                     Text(game.homeAbbrev)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 10.5, weight: .medium))
                         .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
+                        .minimumScaleFactor(0.8)
+                        .frame(width: 33, alignment: .trailing)
                     Circle()
                         .fill(Color(hex: game.resolvedHomeColor(for: colorScheme) ?? "#0A84FF"))
                         .frame(width: 6, height: 6)
@@ -422,34 +428,33 @@ struct LargeDashboardView: View {
                         Text(game.awayAbbrev)
                             .font(.system(size: 13, weight: game.awayIsLeading ? .bold : .medium))
                             .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
+                            .minimumScaleFactor(0.85)
                         // #5363 — withheld on a draw-priced sport.
                         Text(game.awayProb.map { "\($0)%" } ?? "")
                             .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
                     }
-                    .frame(minWidth: 38, alignment: .leading)
+                    .frame(width: 46, alignment: .leading)
                 }
 
-                // Score (#13162: never cap width below two/three heavy digits)
+                // Score (#13162: fixed column widths wide enough for 3-digit scores so rows align vertically)
                 HStack(spacing: 4) {
                     Text("\(game.awayScore ?? 0)")
                         .font(.system(size: 15, weight: .heavy, design: .rounded).monospacedDigit())
                         .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .frame(minWidth: 24, alignment: .trailing)
+                        .minimumScaleFactor(0.85)
+                        .frame(width: 32, alignment: .trailing)
                     Text("-")
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(width: 6, alignment: .center)
                     Text("\(game.homeScore ?? 0)")
                         .font(.system(size: 15, weight: .heavy, design: .rounded).monospacedDigit())
                         .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .frame(minWidth: 24, alignment: .leading)
+                        .minimumScaleFactor(0.85)
+                        .frame(width: 32, alignment: .leading)
                 }
 
                 // Home team
@@ -458,14 +463,13 @@ struct LargeDashboardView: View {
                         Text(game.homeAbbrev)
                             .font(.system(size: 13, weight: game.homeIsLeading ? .bold : .medium))
                             .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
+                            .minimumScaleFactor(0.85)
                         Text("\(game.homeProb)%")
                             .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
                     }
-                    .frame(minWidth: 38, alignment: .trailing)
+                    .frame(width: 46, alignment: .trailing)
 
                     RoundedRectangle(cornerRadius: 2)
                         .fill(Color(hex: game.resolvedHomeColor(for: colorScheme) ?? "#0A84FF"))

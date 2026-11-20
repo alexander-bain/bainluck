@@ -381,13 +381,23 @@ final class SavedWidgetArt12466Tests: XCTestCase {
         XCTAssertTrue(looks.contains("ViewThatFits(in: .vertical)"))
         XCTAssertTrue(looks.contains(".lineLimit(singleLine ? 1 : nil)"))
 
-        // #13162: LiveGamesWidget never constrains scores to narrow fixed widths (16/20pt) that stack digits vertically.
+        // #13162: LiveGamesWidget uses aligned score/team columns wide enough for 3-digit scores & 4-char names.
         XCTAssertFalse(dashboard.contains(".frame(width: 20, alignment: .trailing)"))
         XCTAssertFalse(dashboard.contains(".frame(width: 20, alignment: .leading)"))
         XCTAssertFalse(dashboard.contains(".frame(width: 16, alignment: .trailing)"))
         XCTAssertFalse(dashboard.contains(".frame(width: 16, alignment: .leading)"))
+        XCTAssertTrue(dashboard.contains(".frame(width: 24, alignment: .trailing)"))
+        XCTAssertTrue(dashboard.contains(".frame(width: 32, alignment: .trailing)"))
         XCTAssertTrue(dashboard.contains("compactDiscoverList(count: 3"))
         XCTAssertTrue(dashboard.contains("largeDiscoverList(count: 5)"))
         XCTAssertTrue(dashboard.contains(".multilineTextAlignment(.leading)"))
+
+        // #13080 + #13194 (284: B): Lock Screen removed-state message wraps without "…" at default & .xxxLarge.
+        let savedWidget = try String(
+            contentsOf: root.appendingPathComponent("BainLuckWidget/SavedItemWidget10875.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(savedWidget.contains("accessoryMessageTier(titleSize: nil"))
+        XCTAssertTrue(savedWidget.contains("Text(message.lockScreenDetail)"))
     }
 }

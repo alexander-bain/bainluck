@@ -411,7 +411,9 @@ struct SavedMarketLook12466: View {
         ViewThatFits(in: .vertical) {
             marketCard(subjectSize: nil, outcomeSize: HeadlineStyleTable199.nameBaseSize(.widget),
                        valueSize: family == .systemMedium ? 32 : 28, barHeight: 7, footerSize: nil, spacing: 4)
-            marketCard(subjectSize: family == .systemMedium ? 13 : 11.5, outcomeSize: 12,
+            marketCard(subjectSize: family == .systemMedium ? 16 : 12.5, outcomeSize: family == .systemMedium ? 14 : 12.5,
+                       valueSize: family == .systemMedium ? 30 : 26, barHeight: 6, footerSize: 10.5, spacing: 3)
+            marketCard(subjectSize: family == .systemMedium ? 15 : 11.5, outcomeSize: family == .systemMedium ? 13 : 12,
                        valueSize: family == .systemMedium ? 28 : 24, barHeight: 6, footerSize: 10, spacing: 3)
             marketCard(subjectSize: 10.5, outcomeSize: 10.5,
                        valueSize: family == .systemMedium ? 24 : 20, barHeight: 5, footerSize: 9.5, spacing: 2)
