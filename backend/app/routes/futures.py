@@ -1113,7 +1113,15 @@ def _movers_payload(outcomes, hours: int) -> dict:
         "movers": [
             {
                 "outcome_id": o.id,
-                "name": o.name,
+                "name": (
+                    reader_outcome_name(
+                        getattr(o, "external_id", None),
+                        o.name,
+                        market_threshold_label(o.market) if getattr(o, "market", None) else None,
+                        market_name=getattr(getattr(o, "market", None), "name", None),
+                    )
+                    or o.name
+                ),
                 "market_id": o.market_id,
                 "market_name": o.market.name if o.market else None,
                 "current_probability": float(o.current_probability) if o.current_probability is not None else None,
@@ -1501,10 +1509,20 @@ async def browse_futures(
         # "judge the number RENDERED" rule needs it, since the raw price is no
         # longer the rendered number once a leg is withheld.
         display_outcomes = []
+        _browse_threshold_label = market_threshold_label(market)
+        _browse_market_name = getattr(market, "name", None)
         for o in sorted_outcomes:
             od = {
                 "id": o.id,
-                "name": o.name,
+                "name": (
+                    reader_outcome_name(
+                        getattr(o, "external_id", None),
+                        o.name,
+                        _browse_threshold_label,
+                        market_name=_browse_market_name,
+                    )
+                    or o.name
+                ),
                 "probability": float(o.current_probability) if o.current_probability is not None else None,
                 # #10248 D5 — `reader_change_24h`.
                 "movement": (
@@ -1989,10 +2007,20 @@ async def faceted_futures_search(
             reverse=True,
         )
         top3 = []
+        _hl_threshold_label = market_threshold_label(market)
+        _hl_market_name = getattr(market, "name", None)
         for o in sorted_outcomes[:3]:
             od = {
                 "id": o.id,
-                "name": o.name,
+                "name": (
+                    reader_outcome_name(
+                        getattr(o, "external_id", None),
+                        o.name,
+                        _hl_threshold_label,
+                        market_name=_hl_market_name,
+                    )
+                    or o.name
+                ),
                 "probability": float(o.current_probability) if o.current_probability is not None else None,
                 # #10248 D5 — `reader_change_24h`.
                 "movement": (
@@ -6500,7 +6528,15 @@ async def get_related_events(
             # detail in another representation can print that row's own number
             # by id instead of this route's source value beside it.
             "outcome_id": o.id,
-            "outcome_name": o.name,
+            "outcome_name": (
+                reader_outcome_name(
+                    getattr(o, "external_id", None),
+                    o.name,
+                    market_threshold_label(market),
+                    market_name=getattr(market, "name", None),
+                )
+                or o.name
+            ),
             "probability": _served_probability(o),
             "american_odds": None if o.id in withheld else o.current_american_odds,
             "rank": o.rank,
@@ -9844,7 +9880,10 @@ async def get_futures_history(
             _leg_side_label(leg_sides[o.external_id], o.name)
             if o.external_id in leg_sides
             else reader_outcome_name(
-                o.external_id, o.name, market_threshold_label(market)
+                getattr(o, "external_id", None),
+                o.name,
+                market_threshold_label(market),
+                market_name=getattr(market, "name", None),
             )
             or o.name
         )
@@ -10290,7 +10329,15 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
     outcome_dicts = [
         {
             "id": o.id,
-            "name": o.name,
+            "name": (
+                reader_outcome_name(
+                    getattr(o, "external_id", None),
+                    o.name,
+                    market_threshold_label(market),
+                    market_name=getattr(market, "name", None),
+                )
+                or o.name
+            ),
             "probability": float(o.current_probability) if o.current_probability is not None else None,
             "american_odds": o.current_american_odds,
             "rank": o.rank,
@@ -10831,7 +10878,10 @@ def _format_market_detail(
                 _leg_side_label(leg_sides[o.external_id], o.name)
                 if leg_sides and o.external_id in leg_sides
                 else reader_outcome_name(
-                    o.external_id, o.name, market_threshold_label(market)
+                    getattr(o, "external_id", None),
+                    o.name,
+                    market_threshold_label(market),
+                    market_name=getattr(market, "name", None),
                 )
                 or o.name
             ),
@@ -11998,7 +12048,15 @@ async def get_group(
         ):
             od = {
                 "id": o.id,
-                "name": o.name,
+                "name": (
+                    reader_outcome_name(
+                        getattr(o, "external_id", None),
+                        o.name,
+                        market_threshold_label(m),
+                        market_name=getattr(m, "name", None),
+                    )
+                    or o.name
+                ),
                 "probability": o.current_probability,
                 "american_odds": probability_to_american(o.current_probability) if o.current_probability and 0 < o.current_probability < 1 else None,
                 "market_id": m.id,
