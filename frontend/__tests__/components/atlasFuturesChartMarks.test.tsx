@@ -107,7 +107,8 @@ describe('Step F3 — Atlas chart marks on FuturesChart (#883)', () => {
     expect(html).toContain('>Opening<');
     expect(html).toContain('>Recorded reading<');
     expect(html).toContain('>Change<');
-    expect(html).toContain('Tap any reading for exact time (PT)');
+    expect(html).toContain('Tap any reading for exact time');
+    expect(html).not.toContain('Tap any reading for exact time (PT)');
     expect(html).toContain('data-testid="atlas-chart-opening-mark"');
     expect(html).toContain('data-testid="atlas-chart-recorded-mark"');
 
@@ -156,7 +157,7 @@ describe('Step F3 — Atlas chart marks on FuturesChart (#883)', () => {
       expect(openingReadout?.textContent).toContain('Florida');
       expect(openingReadout?.textContent).toContain('22%');
       expect(openingReadout?.textContent).toContain('Opening');
-      expect(openingReadout?.textContent).toContain('PT');
+      expect(openingReadout?.textContent).toMatch(/\d{1,2}:\d{2}:\d{2}\s*(AM|PM)/);
       expect(openingReadout?.innerHTML).toContain('bg-surface-card');
       expect(openingReadout?.innerHTML).not.toContain('#FFFFFF');
 
@@ -170,7 +171,7 @@ describe('Step F3 — Atlas chart marks on FuturesChart (#883)', () => {
       );
       expect(recordedReadout?.textContent).toContain('29%');
       expect(recordedReadout?.textContent).toContain('Recorded');
-      expect(recordedReadout?.textContent).toContain('PT');
+      expect(recordedReadout?.textContent).toMatch(/\d{1,2}:\d{2}:\d{2}\s*(AM|PM)/);
     } finally {
       await act(async () => {
         root.unmount();

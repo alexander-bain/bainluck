@@ -109,7 +109,8 @@ describe("Step E2 — Game chart marks on OddsChart (#11974)", () => {
     expect(html).toContain(">Pregame<");
     expect(html).not.toContain(">Recorded reading<");
     expect(html).toContain(">Change<");
-    expect(html).toContain("Tap any reading for exact time (PT)");
+    expect(html).toContain("Tap any reading for exact time");
+    expect(html).not.toContain("Tap any reading for exact time (PT)");
 
     const openingMatches = html.match(/data-testid="atlas-chart-opening-mark"/g) ?? [];
     const recordedMatches = html.match(/data-testid="atlas-chart-recorded-mark"/g) ?? [];
@@ -383,7 +384,8 @@ describe("Step E2 — Game chart marks on OddsChart (#11974)", () => {
     expect(readout?.textContent).toContain("Denver Nuggets");
     expect(readout?.textContent).toContain("Recorded");
     expect(readout?.textContent).toContain("64%");
-    expect(readout?.textContent).toContain("PT");
+    const timeEl = container.querySelector('[data-testid="atlas-chart-selected-reading-time"]');
+    expect(timeEl?.textContent).toMatch(/\d{1,2}:\d{2}:\d{2}\s*(AM|PM)/);
 
     const clearBtn = container.querySelector('[data-testid="atlas-chart-reading-clear"]');
     expect(clearBtn).not.toBeNull();
