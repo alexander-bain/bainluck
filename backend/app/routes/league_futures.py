@@ -1774,13 +1774,6 @@ def _format_game_brief(
     the iOS decoder already types; dropping it to "clean up" would silently retier
     every league.
     """
-    source_inputs: list[tuple[str, float]] = []
-    source_method: list[str] = []
-    home_prob = _event_probability(
-        event, source_inputs=source_inputs, source_method=source_method
-    )
-    away_prob = round(1.0 - home_prob, 6) if home_prob is not None else None
-
     _now = datetime.now(timezone.utc)
     _served_status = served_event_status(event.status, event.commence_time, _now)
     # #13000 / #9634: a scheduled row held on StatPal's later-session start
@@ -1793,6 +1786,26 @@ def _format_game_brief(
         getattr(event, "win_probability_sources", None),
         _now,
     )
+
+    from app.utils.hero_probability import resolve_hero
+    from app.utils.settled_hero import is_finished_status, settled_current_chance
+    from app.utils.source_mark import headline_source_marks
+
+    _is_finished = is_finished_status(_served_status)
+    _finished_hero = None
+    _finished_sc = None
+    source_inputs: list[tuple[str, float]] = []
+    source_method: list[str] = []
+    if _is_finished:
+        _finished_hero = resolve_hero(event)
+        _finished_sc = settled_current_chance(_finished_hero, sport_key=sport_key)
+        home_prob = _finished_sc.home_probability if _finished_sc.resolved else None
+        away_prob = _finished_sc.away_probability if _finished_sc.resolved else None
+    else:
+        home_prob = _event_probability(
+            event, source_inputs=source_inputs, source_method=source_method
+        )
+        away_prob = round(1.0 - home_prob, 6) if home_prob is not None else None
 
     brief: dict = {
         "id": event.id,
@@ -1826,11 +1839,27 @@ def _format_game_brief(
         "home_win_probability": home_prob,
     }
 
-    # THE ONE BLEND. `home_probability` here is the same number
-    # `home_win_probability` carries — the same `compute_aggregate_probability`
-    # call, not a second derivation — because the shared card reads `current_odds`
-    # and the census reads the flat key, and the two must never be able to differ.
-    if home_prob is not None:
+    # THE ONE BLEND (or the resolved result on finished games, #13172 Option B).
+    # `home_probability` here is the same number `home_win_probability` carries
+    # because the shared card reads `current_odds` and the census reads the flat
+    # key, and the two must never be able to differ.
+    if _is_finished:
+        _draw_priced = sport_prices_a_draw(sport_key)
+        if _finished_sc is not None and _finished_sc.resolved:
+            _co: dict = {
+                "home_probability": _finished_sc.home_probability,
+                "away_probability": _finished_sc.away_probability,
+                "home_rendered_percent": _finished_sc.home_rendered_percent,
+                "away_rendered_percent": _finished_sc.away_rendered_percent,
+            }
+            if _draw_priced:
+                _co["draw_probability"] = _finished_sc.draw_probability
+                _co["draw_rendered_percent"] = _finished_sc.draw_rendered_percent
+            brief["current_odds"] = _co
+        brief["source_mark"], brief["away_source_mark"] = headline_source_marks(
+            event, _finished_hero, []
+        )
+    elif home_prob is not None:
         from app.utils.draw_priced_winner import (
             rendered_three_way_percents,
             resolve_three_way_probabilities,

@@ -1512,15 +1512,26 @@ def _hydrate_event_visual_item(
     if status in {"cancelled", "postponed"}:
         return None
     odds = event.get("current_odds") if isinstance(event.get("current_odds"), Mapping) else {}
+    hero_source = str(event.get("hero_probability_source") or event.get("hero_source") or "").strip().lower()
+    if status in {"completed", "final", "closed"} and hero_source == "final_unresolved":
+        # #13172 Option B: finished with no verified result never serves the last live price.
+        return None
     home_p = event.get("hero_probability")
     away_p = event.get("hero_probability_away")
+    draw_p = event.get("hero_probability_draw")
     if home_p is None:
         home_p = odds.get("home_probability")
     if away_p is None:
         away_p = odds.get("away_probability")
+    if draw_p is None:
+        draw_p = odds.get("draw_probability")
 
     pre = event.get("prematch_odds") if isinstance(event.get("prematch_odds"), Mapping) else {}
-    if status in {"completed", "final", "closed"} and (home_p is None or away_p is None):
+    if (
+        status in {"completed", "final", "closed"}
+        and hero_source == "settled"
+        and (home_p is None or away_p is None)
+    ):
         home_p = pre.get("home_probability")
         away_p = pre.get("away_probability")
 
@@ -1528,7 +1539,8 @@ def _hydrate_event_visual_item(
         return None
     hp = float(home_p)
     ap = float(away_p)
-    if hp <= 0.0 and ap <= 0.0:
+    dp = float(draw_p) if isinstance(draw_p, (int, float)) else None
+    if hp <= 0.0 and ap <= 0.0 and not (dp is not None and dp > 0.0):
         return None
 
     home_team = str(event.get("home_team") or "").strip()
@@ -1574,11 +1586,21 @@ def _hydrate_event_visual_item(
     card_ev = dict(event)
     card_ev["hero_probability"] = hp
     card_ev["hero_probability_away"] = ap
+    if dp is not None:
+        card_ev["hero_probability_draw"] = dp
     card_odds = dict(odds) if isinstance(odds, Mapping) else {}
-    card_odds.setdefault("home_probability", hp)
-    card_odds.setdefault("away_probability", ap)
+    card_odds["home_probability"] = hp
+    card_odds["away_probability"] = ap
     card_odds["away_rendered_percent"] = away_pct
     card_odds["home_rendered_percent"] = home_pct
+    if dp is not None:
+        card_odds["draw_probability"] = dp
+        served_draw_pct = odds.get("draw_rendered_percent")
+        card_odds["draw_rendered_percent"] = (
+            int(served_draw_pct)
+            if isinstance(served_draw_pct, int)
+            else int(round(dp * 100))
+        )
     card_ev["current_odds"] = card_odds
     if not isinstance(card_ev.get("home_team_data"), Mapping) and (home_art.get("url") or home_art.get("accent_color")):
         card_ev["home_team_data"] = {
@@ -1951,14 +1973,15 @@ async def _load_snapshot_from_db(
             .order_by(Event.commence_time.asc())
             .limit(40)
         )
+        from app.utils.draw_priced_winner import sport_prices_a_draw
+        from app.utils.settled_hero import is_finished_status, settled_current_chance
+
         rows = (await db.execute(stmt)).scalars().all()
         for ev in rows:
             # Slice 6 Item 2b: use resolve_hero (same authority as GET /api/events/{id})
             hero = resolve_hero(ev)
             if hero is None:
                 continue
-            hp = float(hero.home_probability)
-            ap = float(hero.away_probability)
             sport_obj = getattr(ev, "sport", None)
             if isinstance(sport_obj, str):
                 sport_key_val = sport_obj
@@ -1969,11 +1992,28 @@ async def _load_snapshot_from_db(
             else:
                 sport_key_val = ""
                 sport_name_val = ""
-            # Exact same two lines as GET /api/events/{id} (`routes/events.py:20829-20837`).
-            canonical_ap = printable_away(ap, hp, sport_key_val)
-            away_pct_raw, home_pct_raw = rendered_duel_percents(canonical_ap, hp)
-            away_pct = int(away_pct_raw) if away_pct_raw is not None else _half_up_pct(ap)
-            home_pct = int(home_pct_raw) if home_pct_raw is not None else _half_up_pct(hp)
+            dp: Optional[float] = None
+            draw_pct: Optional[int] = None
+            if is_finished_status(ev.status):
+                _sc = settled_current_chance(hero, sport_key=sport_key_val)
+                if not _sc.resolved:
+                    # #13172 Option B: final_unresolved never serves a live price.
+                    continue
+                hp = float(_sc.home_probability)
+                ap = float(_sc.away_probability)
+                home_pct = int(_sc.home_rendered_percent)
+                away_pct = int(_sc.away_rendered_percent)
+                if sport_prices_a_draw(sport_key_val):
+                    dp = _sc.draw_probability
+                    draw_pct = _sc.draw_rendered_percent
+            else:
+                hp = float(hero.home_probability)
+                ap = float(hero.away_probability)
+                # Exact same two lines as GET /api/events/{id} (`routes/events.py:20829-20837`).
+                canonical_ap = printable_away(ap, hp, sport_key_val)
+                away_pct_raw, home_pct_raw = rendered_duel_percents(canonical_ap, hp)
+                away_pct = int(away_pct_raw) if away_pct_raw is not None else _half_up_pct(ap)
+                home_pct = int(home_pct_raw) if home_pct_raw is not None else _half_up_pct(hp)
             home_team_obj = getattr(ev, "home_team", None)
             away_team_obj = getattr(ev, "away_team", None)
             home_team_str = str(
@@ -1994,6 +2034,15 @@ async def _load_snapshot_from_db(
                 )
                 or ""
             )
+            ev_current_odds: dict[str, Any] = {
+                "home_probability": hp,
+                "away_probability": ap,
+                "away_rendered_percent": away_pct,
+                "home_rendered_percent": home_pct,
+            }
+            if dp is not None:
+                ev_current_odds["draw_probability"] = dp
+                ev_current_odds["draw_rendered_percent"] = draw_pct
             ev_dict: dict[str, Any] = {
                 "id": ev.id,
                 "sport": sport_key_val,
@@ -2006,14 +2055,10 @@ async def _load_snapshot_from_db(
                 "away_score": ev.away_score,
                 "hero_probability": hp,
                 "hero_probability_away": ap,
+                **({"hero_probability_draw": dp} if dp is not None else {}),
                 "hero_source": hero.source,
                 "has_sportsbook": _event_has_sportsbook(ev, hero_source=hero.source),
-                "current_odds": {
-                    "home_probability": hp,
-                    "away_probability": ap,
-                    "away_rendered_percent": away_pct,
-                    "home_rendered_percent": home_pct,
-                },
+                "current_odds": ev_current_odds,
                 "member_page_numbers": {
                     "away_pct": away_pct,
                     "home_pct": home_pct,

@@ -939,12 +939,46 @@ def _format_event_brief(
     # one row, it empties the whole rail (gotcha #42).
     now = datetime.now(timezone.utc)
     status = served_event_status(event.status, event.commence_time, now)
+    sport_key = sport.key if sport else None
     wp = None
-    away_unavailable = not is_home and sport_prices_a_draw(sport.key if sport else None)
+    draw_prob = None
+    away_unavailable = not is_home and sport_prices_a_draw(sport_key)
     current_mark = no_source_mark(
         "away_unavailable" if away_unavailable else "no_probability"
     )
-    if isinstance(event.win_probability_sources, (dict, type(None))):
+    from app.utils.hero_probability import resolve_hero
+    from app.utils.settled_hero import is_finished_status, settled_current_chance
+    from app.utils.source_mark import headline_source_marks
+
+    if is_finished_status(status):
+        # #13172 Option B — finished games serve their settled result (team-relative
+        # 1.0 win / 0.0 loss, 0.0 with draw_probability=1.0 on a draw-priced draw)
+        # and None when final_unresolved, never the last live price.
+        _hero = resolve_hero(event) if isinstance(event.win_probability_sources, (dict, type(None))) else None
+        if _hero is None:
+            from app.utils.hero_probability import HeroReading
+            from app.utils.settled_hero import resolve_settled_hero
+
+            _settled = resolve_settled_hero(
+                status=getattr(event, "status", None),
+                home_score=getattr(event, "home_score", None),
+                away_score=getattr(event, "away_score", None),
+                completed_at=getattr(event, "completed_at", None),
+            )
+            if _settled is not None:
+                _hero = HeroReading(
+                    home_probability=_settled.home_probability,
+                    away_probability=_settled.away_probability,
+                    source=_settled.source,
+                    settled_result=_settled.result,
+                )
+        _sc = settled_current_chance(_hero, sport_key=sport_key)
+        if _sc.resolved:
+            wp = _sc.home_probability if is_home else _sc.away_probability
+            draw_prob = _sc.draw_probability
+        home_mark, away_mark = headline_source_marks(event, _hero, [])
+        current_mark = home_mark if is_home else away_mark
+    elif isinstance(event.win_probability_sources, (dict, type(None))):
         source_inputs = []
         source_method = []
         wp, _ = compute_aggregate_probability_tiered(
@@ -1046,6 +1080,11 @@ def _format_event_brief(
         "is_home": is_home,
         "opponent": opponent,
         "win_probability": round(wp, 3) if wp is not None else None,
+        **(
+            {"draw_probability": round(draw_prob, 3)}
+            if draw_prob is not None
+            else {}
+        ),
         "source_mark": current_mark,
         "pregame_win_probability": round(float(pre), 3) if pre is not None else None,
         "pregame_source_mark": pregame_mark,

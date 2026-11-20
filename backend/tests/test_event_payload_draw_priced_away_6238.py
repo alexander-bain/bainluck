@@ -392,8 +392,8 @@ async def test_a_settled_soccer_result_keeps_the_losing_side():
 
 @pytest.mark.asyncio
 async def test_a_settled_soccer_draw_keeps_both_halves():
-    """The case this issue is ABOUT, once it is over: 2-2 resolves 0.5/0.5 with
-    `result="draw"`, which is the one shape that tells a reader nobody won."""
+    """#13172 Option B: on a draw-priced sport (soccer), a settled 2-2 draw
+    resolves to draw=1.0 (100%), home=0.0 (0%), away=0.0 (0%) — never 50/50."""
     payload = await _payload(
         _event(
             sport_key=SOCCER,
@@ -406,9 +406,16 @@ async def test_a_settled_soccer_draw_keeps_both_halves():
         )
     )
     assert payload["hero_probability_source"] == "settled"
-    assert payload["hero_probability"] == pytest.approx(0.5)
-    assert payload["hero_probability_away"] == pytest.approx(0.5)
+    assert payload["hero_probability"] == pytest.approx(0.0)
+    assert payload["hero_probability_away"] == pytest.approx(0.0)
+    assert payload["hero_probability_draw"] == pytest.approx(1.0)
     assert payload["hero_settled_result"] == "draw"
+    assert payload["current_odds"]["home_probability"] == pytest.approx(0.0)
+    assert payload["current_odds"]["away_probability"] == pytest.approx(0.0)
+    assert payload["current_odds"]["draw_probability"] == pytest.approx(1.0)
+    assert payload["current_odds"]["home_rendered_percent"] == 0
+    assert payload["current_odds"]["away_rendered_percent"] == 0
+    assert payload["current_odds"]["draw_rendered_percent"] == 100
 
 
 # ── The rule itself ─────────────────────────────────────────────────────────
