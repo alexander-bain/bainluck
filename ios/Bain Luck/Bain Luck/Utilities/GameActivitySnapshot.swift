@@ -80,10 +80,12 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         homeScore = try c.decodeIfPresent(Int.self, forKey: .homeScore)
         awayScore = try c.decodeIfPresent(Int.self, forKey: .awayScore)
         lifecycle = try c.decode(Lifecycle.self, forKey: .lifecycle)
-        homeRenderedPercent = try c.decodeIfPresent(Int.self, forKey: .homeRenderedPercent)
+        let home = try c.decodeIfPresent(Int.self, forKey: .homeRenderedPercent)
         scoreObservedAt = try c.decodeIfPresent(Date.self, forKey: .scoreObservedAt)
         probabilityObservedAt = try c.decodeIfPresent(Date.self, forKey: .probabilityObservedAt)
         let hasForecast = lifecycle == .live || lifecycle == .scheduled
+        // Older activity states can carry a chance without its observation time.
+        homeRenderedPercent = probabilityObservedAt == nil ? nil : home
         // Display-only fields are cleaned, never fatal: a bad badge or colour
         // must not cost the reader the score and chance that decoded fine.
         let away = (try? c.decodeIfPresent(Int.self, forKey: .awayRenderedPercent)) ?? nil
@@ -121,8 +123,8 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
               !homeTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !awayTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               homeScore.map({ $0 >= 0 }) ?? true, awayScore.map({ $0 >= 0 }) ?? true,
-              homeRenderedPercent.map({ (0...100).contains($0) && hasForecast }) ?? true,
-              probabilityObservedAt == nil || homeRenderedPercent != nil,
+              home.map({ (0...100).contains($0) && hasForecast }) ?? true,
+              probabilityObservedAt == nil || home != nil,
               scoreObservedAt == Self.validDate(scoreObservedAt),
               probabilityObservedAt == Self.validDate(probabilityObservedAt) else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
@@ -158,7 +160,8 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         let validHome = Self.validProbability(homeProbability)
         let validAway = Self.validProbability(awayProbability)
         let hasSport = sport?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        if lifecycle == .live || lifecycle == .scheduled {
+        if let observedAt = Self.validDate(probabilityObservedAt),
+           lifecycle == .live || lifecycle == .scheduled {
             if !hasSport || DrawPricedWinner.sportPricesADraw(sport) || Self.validProbability(drawProbability) != nil {
                 homeRenderedPercent = renderedPercent(validHome)
                 awayRenderedPercent = nil
@@ -169,7 +172,7 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
             }
             homeHeadlineTenths = awayRenderedPercent == nil ? nil
                 : Self.headlineTenths(home: validHome, away: validAway)
-            self.probabilityObservedAt = homeRenderedPercent == nil ? nil : Self.validDate(probabilityObservedAt)
+            self.probabilityObservedAt = homeRenderedPercent == nil ? nil : observedAt
         } else {
             homeRenderedPercent = nil
             awayRenderedPercent = nil
