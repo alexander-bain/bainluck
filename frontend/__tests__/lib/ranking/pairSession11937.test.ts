@@ -4,6 +4,7 @@
  */
 import {
   MORNING_NOT_READY_MESSAGE,
+  MORNING_PAIR_PAUSED_MESSAGE,
   PAIR_CHOICES,
   PAIR_CHOICE_LABELS,
   formatCaptureDayPt,
@@ -67,5 +68,6 @@ describe("capture day and before-7:15 AM morning guard", () => {
     expect(isCapturedTodayPt(wedCapture, thuEarly)).toBe(false);
     expect(isCapturedTodayPt(wedCapture, wedLater)).toBe(true);
     expect(normalizeMorningError(`HTTP 409: ${MORNING_NOT_READY_MESSAGE}`)).toBe(MORNING_NOT_READY_MESSAGE);
+    expect(normalizeMorningError(`HTTP 409: ${MORNING_PAIR_PAUSED_MESSAGE}`)).toBe(MORNING_PAIR_PAUSED_MESSAGE);
   });
 });

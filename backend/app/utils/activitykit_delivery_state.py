@@ -102,6 +102,7 @@ def reader_view(snapshot: GameActivitySnapshot) -> tuple:
         snapshot.result,
         snapshot.pregame_away_percent,
         snapshot.pregame_home_percent,
+        snapshot.score_source_unavailable,
     )
 
 

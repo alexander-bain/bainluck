@@ -81,6 +81,21 @@ export {
   type HeadlineRowRole199,
 };
 
+export const NO_LIVE_SCORE_TOURNAMENT_LINE_250A = "No live score for this tournament.";
+export const NO_LIVE_SCORE_GAME_LINE_250A = "No live score for this game.";
+
+export function resolveScoreUnavailableNotice250A(
+  event: Pick<EventDetailResponse, "sport" | "sport_key" | "score_source_unavailable">,
+  isLive: boolean,
+): string | null {
+  if (!isLive || event.score_source_unavailable !== true) return null;
+  const lower = (event.sport ?? event.sport_key ?? "").trim().toLowerCase();
+  if (isTennisSport199(lower) || lower.startsWith("golf")) {
+    return NO_LIVE_SCORE_TOURNAMENT_LINE_250A;
+  }
+  return NO_LIVE_SCORE_GAME_LINE_250A;
+}
+
 export function isSoccerSport199(sport: string | null | undefined): boolean {
   const s = (sport ?? "").trim().toLowerCase();
   return s === "soccer" || s.startsWith("soccer_");
@@ -734,14 +749,24 @@ function buildTennisScoreSlot199(opts: {
   return { columns, awayCells, homeCells, awayEmph, homeEmph };
 }
 
+function isGenericLivePlaceholderClock199(text: string | null | undefined): boolean {
+  if (!text) return true;
+  return /^(?:live|in\s*progress)$/i.test(text.trim());
+}
+
 function normalizeLiveBadgeClock199(opts: {
   event: EventDetailResponse;
   liveClockLabel: string | null | undefined;
 }): string {
+  if (opts.event.score_source_unavailable === true) {
+    return "LIVE";
+  }
   const sport = opts.event.sport;
   if (isTennisSport199(sport)) {
     const rawPeriod = opts.event.espn?.period?.trim();
-    if (rawPeriod) return `LIVE · ${normalizeTennisSetLabel(rawPeriod)}`;
+    if (rawPeriod && !isGenericLivePlaceholderClock199(rawPeriod)) {
+      return `LIVE · ${normalizeTennisSetLabel(rawPeriod)}`;
+    }
     const box = opts.event.box_score_data as
       | { away_period_scores?: unknown[]; home_period_scores?: unknown[] }
       | undefined;
@@ -752,7 +777,11 @@ function normalizeLiveBadgeClock199(opts: {
     );
     if (setCount >= 1) return `LIVE · Set ${setCount}`;
     const trimmed = opts.liveClockLabel?.trim();
-    if (trimmed && !parseTennisGamePoints199(trimmed)) {
+    if (
+      trimmed &&
+      !isGenericLivePlaceholderClock199(trimmed) &&
+      !parseTennisGamePoints199(trimmed)
+    ) {
       return `LIVE · ${trimmed}`;
     }
     return "LIVE";
@@ -762,15 +791,17 @@ function normalizeLiveBadgeClock199(opts: {
     const rawClock = opts.event.espn?.game_clock?.trim();
     if (rawClock && rawClock.includes("'")) return `LIVE · ${rawClock}`;
     const label = opts.liveClockLabel?.trim();
-    if (label) {
+    if (label && !isGenericLivePlaceholderClock199(label)) {
       const cleaned = label.replace(/^(?:1st|2nd)\s*(?:Half)?\s*·\s*/i, "");
-      return `LIVE · ${cleaned}`;
+      if (!isGenericLivePlaceholderClock199(cleaned)) {
+        return `LIVE · ${cleaned}`;
+      }
     }
     return "LIVE";
   }
 
   const rawLabel = opts.liveClockLabel?.trim();
-  if (!rawLabel) return "LIVE";
+  if (!rawLabel || isGenericLivePlaceholderClock199(rawLabel)) return "LIVE";
   const compact = rawLabel
     .replace(/\b1st Quarter\b/gi, "Q1")
     .replace(/\b2nd Quarter\b/gi, "Q2")
@@ -782,7 +813,7 @@ function normalizeLiveBadgeClock199(opts: {
     .replace(/\b1st Half\b/gi, "1H")
     .replace(/\b2nd Half\b/gi, "2H")
     .replace(/\s*·\s*/g, " ");
-  return `LIVE · ${compact}`;
+  return isGenericLivePlaceholderClock199(compact) ? "LIVE" : `LIVE · ${compact}`;
 }
 
 function suppressEmptyColumnHeaders(
@@ -1144,16 +1175,29 @@ export function resolveEventPageHeadline199(
 
     const isTennis = isTennisSport199(event.sport);
     const isScoreless = isMMASport199(event.sport) || isBoxingSport199(event.sport);
-    const hasProjCol = carriesProjectedScoreColumn199(event.sport);
+    const scoreUnavailable = isLiveActive && event.score_source_unavailable === true;
+    const omitsScoreColumn = isScoreless || scoreUnavailable;
+    const noLiveScoreNotice = resolveScoreUnavailableNotice250A(event, isLiveActive);
+    const hasProjCol = carriesProjectedScoreColumn199(event.sport) && !scoreUnavailable;
     const hasValidScore =
-      input.heroScorePairPresent && !input.heroScoreIsStoppageFiller;
+      !scoreUnavailable &&
+      input.heroScorePairPresent &&
+      !input.heroScoreIsStoppageFiller;
 
     const safeLiveAwayRaw =
-      isLiveActive && hasProjCol && input.projectedPairAdmitted && input.projectedPairRaw
+      isLiveActive &&
+      !scoreUnavailable &&
+      hasProjCol &&
+      input.projectedPairAdmitted &&
+      input.projectedPairRaw
         ? Math.max(input.projectedPairRaw.away_score, input.bestAwayScore ?? 0)
         : null;
     const safeLiveHomeRaw =
-      isLiveActive && hasProjCol && input.projectedPairAdmitted && input.projectedPairRaw
+      isLiveActive &&
+      !scoreUnavailable &&
+      hasProjCol &&
+      input.projectedPairAdmitted &&
+      input.projectedPairRaw
         ? Math.max(input.projectedPairRaw.home_score, input.bestHomeScore ?? 0)
         : null;
     const printedDuringPair =
@@ -1173,20 +1217,21 @@ export function resolveEventPageHeadline199(
         ? formatHeadlineProjectedNumber199(safeLiveHomeRaw, event.sport)
         : "";
 
-    const tennisSlot = isTennis
-      ? buildTennisScoreSlot199({
-          event,
-          awaySetScore: input.bestAwayScore,
-          homeSetScore: input.bestHomeScore,
-          hasScore: hasValidScore,
-          includePoints: isLiveActive,
-        })
-      : null;
+    const tennisSlot =
+      isTennis && !scoreUnavailable
+        ? buildTennisScoreSlot199({
+            event,
+            awaySetScore: input.bestAwayScore,
+            homeSetScore: input.bestHomeScore,
+            hasScore: hasValidScore,
+            includePoints: isLiveActive,
+          })
+        : null;
 
     const baseColumns: HeadlineColumnSpec199[] = tennisSlot
       ? [...tennisSlot.columns, { role: "now", header: "Now" }]
       : [
-          ...(!isScoreless ? [{ role: "score" as const, header: "Score" }] : []),
+          ...(!omitsScoreColumn ? [{ role: "score" as const, header: "Score" }] : []),
           ...(hasProjCol ? [{ role: "projected" as const, header: "Proj." }] : []),
           { role: "now" as const, header: "Now" },
         ];
@@ -1300,6 +1345,21 @@ export function resolveEventPageHeadline199(
           hasValidScore && input.bestHomeScore != null ? String(input.bestHomeScore) : "";
         const awayScoreCell =
           hasValidScore && input.bestAwayScore != null ? String(input.bestAwayScore) : "";
+        const homeSoccerCells = [
+          ...(!omitsScoreColumn ? [homeScoreCell] : []),
+          ...(hasProjCol ? [homeProjCell] : []),
+          texts.home,
+        ];
+        const awaySoccerCells = [
+          ...(!omitsScoreColumn ? [awayScoreCell] : []),
+          ...(hasProjCol ? [awayProjCell] : []),
+          texts.away,
+        ];
+        const drawSoccerCells = [
+          ...(!omitsScoreColumn ? [""] : []),
+          ...(hasProjCol ? [""] : []),
+          texts.draw,
+        ];
 
         const rows: HeadlineCompetitorRow199[] = [
           {
@@ -1308,7 +1368,7 @@ export function resolveEventPageHeadline199(
             opponentFullName: event.away_team,
             shortName: shortNames.home,
             record: null,
-            cells: [homeScoreCell, homeProjCell, texts.home],
+            cells: homeSoccerCells,
             rawProbability: snap.openShares.home,
             won: null,
             emphasizedColumns: [],
@@ -1321,7 +1381,7 @@ export function resolveEventPageHeadline199(
             opponentFullName: event.home_team,
             shortName: shortNames.away,
             record: null,
-            cells: [awayScoreCell, awayProjCell, texts.away],
+            cells: awaySoccerCells,
             rawProbability: snap.openShares.away,
             won: null,
             emphasizedColumns: [],
@@ -1334,7 +1394,7 @@ export function resolveEventPageHeadline199(
             opponentFullName: "",
             shortName: "Draw",
             record: null,
-            cells: ["", "", texts.draw],
+            cells: drawSoccerCells,
             rawProbability: snap.openShares.draw,
             won: null,
             emphasizedColumns: [],
@@ -1363,6 +1423,7 @@ export function resolveEventPageHeadline199(
             awayShare: snap.openShares.away,
           },
           livePregameSummary: liveSummary,
+          scoreUnavailableNotice: noLiveScoreNotice,
           colors,
         };
       }
@@ -1459,7 +1520,7 @@ export function resolveEventPageHeadline199(
     }
 
     const canShowScoreSlot =
-      !isScoreless &&
+      !omitsScoreColumn &&
       !input.heroScoreIsStoppageFiller &&
       (isLiveActive || event.status === "suspended");
     const awayScoreCell =
@@ -1474,14 +1535,14 @@ export function resolveEventPageHeadline199(
     const awayCells = tennisSlot
       ? [...tennisSlot.awayCells, awayNow]
       : [
-          ...(!isScoreless ? [awayScoreCell] : []),
+          ...(!omitsScoreColumn ? [awayScoreCell] : []),
           ...(hasProjCol ? [awayProjCell] : []),
           awayNow,
         ];
     const homeCells = tennisSlot
       ? [...tennisSlot.homeCells, homeNow]
       : [
-          ...(!isScoreless ? [homeScoreCell] : []),
+          ...(!omitsScoreColumn ? [homeScoreCell] : []),
           ...(hasProjCol ? [homeProjCell] : []),
           homeNow,
         ];
@@ -1530,6 +1591,7 @@ export function resolveEventPageHeadline199(
       rows,
       bottomBar,
       livePregameSummary,
+      scoreUnavailableNotice: noLiveScoreNotice,
       colors,
     };
   }

@@ -382,10 +382,17 @@ async def _publish_discover_candidate_base():
 
     now = datetime.now(timezone.utc)
     t0 = time.perf_counter()
+    fun_admission_ids: list[int] = []
     try:
         async with get_task_session() as db:
             market_ids, pool_counts, curator_ids = await asyncio.wait_for(
-                _compute_ordered_candidate_ids(db, now, None, None),
+                _compute_ordered_candidate_ids(
+                    db,
+                    now,
+                    None,
+                    None,
+                    fun_admission_ids_out=fun_admission_ids,
+                ),
                 timeout=deadline_s,
             )
     except asyncio.TimeoutError:
@@ -403,6 +410,7 @@ async def _publish_discover_candidate_base():
         market_ids,
         pool_counts=pool_counts,
         external_curator_recall_ids=curator_ids,
+        fun_admission_ids=fun_admission_ids if fun_admission_ids else None,
     )
 
     # Failed/partial builds never replace last-good: only publish a fully-built,
@@ -1765,12 +1773,20 @@ async def _prewarm_discover_feed_responses():
         shapes[label] = await warm(rc, deadline_s=deadline_s)
         budget_left = max(0.0, budget_left - (_time.monotonic() - started))
 
+    # #12288: keep the 5 machinery roundup Redis caches warm in parallel when
+    # CONTAINER_MACHINERY_SLICE1_ENABLED=true so website & iOS 1.0.7+ `machinery=1`
+    # Discover splices and `/collections/machinery-*` opens hit warm Redis (<20 ms)
+    # without ever modifying the 1.0.6-safe Discover base cache.
+    machinery_result = await _prewarm_machinery_roundups()
+
     report = {
         "ran_at": datetime.now(timezone.utc).isoformat(),
         "shapes": shapes,
         "pass_budget_s": FEED_PREWARM_PASS_BUDGET_S,
         "budget_left_s": round(budget_left, 1),
     }
+    if machinery_result.get("outcome") != "disabled":
+        report["machinery"] = machinery_result
     try:
         rc.setex(
             FEED_PREWARM_STATUS_KEY,
@@ -1781,6 +1797,269 @@ async def _prewarm_discover_feed_responses():
         logger.debug("feed pre-warm status write failed", exc_info=True)
 
     return sum(1 for s in shapes.values() if s.get("outcome") == "ok")
+
+
+async def _prewarm_machinery_roundups(
+    deadline_s: float = 25.0,
+    *,
+    slugs: list[str] | set[str] | tuple[str, ...] | None = None,
+    rc: object | None = None,
+) -> dict:
+    """Warm registered `machinery-*` roundup caches into shared Redis in parallel."""
+    import asyncio
+    import time as _time
+
+    from app.routes.containers import containers_read_enabled
+    from app.tasks.base import get_task_session
+    from app.utils.container_machinery import container_machinery_enabled
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        _is_machinery_producer_slug,
+        _roundup_payload_has_live_event,
+        ensure_optional_roundup_candidates,
+        evaluate_roundup_producer,
+        store_roundup_cache_sync,
+        verify_roundup_cache_sync,
+    )
+
+    if not container_machinery_enabled() or not containers_read_enabled():
+        return {"outcome": "disabled", "warmed": 0}
+
+    sync_rc = rc
+    if sync_rc is None:
+        try:
+            from app.tasks.redis_state import get_redis_client
+
+            sync_rc = get_redis_client()
+        except Exception:  # noqa: BLE001 — test environments without Redis
+            sync_rc = None
+
+    ensure_optional_roundup_candidates()
+    slug_filter = set(slugs) if slugs is not None else None
+    producers = [
+        p
+        for p in ROUNDUP_PRODUCERS.values()
+        if _is_machinery_producer_slug(p.slug)
+        and (p.enabled is None or p.enabled())
+        and (slug_filter is None or p.slug in slug_filter)
+    ]
+    if not producers:
+        return {"outcome": "empty", "warmed": 0, "slugs": {}}
+
+    wall_started = _time.monotonic()
+
+    async def _warm_one(prod) -> tuple[str, dict]:
+        t0 = _time.monotonic()
+        try:
+            async with get_task_session(
+                statement_timeout_ms=max(1000, int(deadline_s * 1000))
+            ) as db:
+                fi, cp = await asyncio.wait_for(
+                    evaluate_roundup_producer(prod, db, force_refresh=True),
+                    timeout=deadline_s,
+                )
+                elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
+                ok = fi is not None and cp is not None
+                redis_written = False
+                redis_read_back = False
+                redis_ttl_s = None
+                if ok and sync_rc is not None:
+                    redis_written = store_roundup_cache_sync(
+                        sync_rc, prod.slug, _time.time(), fi, cp
+                    )
+                    if redis_written:
+                        redis_read_back, redis_ttl_s = verify_roundup_cache_sync(
+                            sync_rc, prod.slug
+                        )
+                return prod.slug, {
+                    "outcome": "ok" if ok else "refused",
+                    "elapsed_ms": elapsed_ms,
+                    "live": bool(_roundup_payload_has_live_event(cp)) if ok else False,
+                    "redis_written": redis_written,
+                    "redis_read_back": redis_read_back,
+                    "redis_ttl_s": redis_ttl_s,
+                }
+        except asyncio.TimeoutError:
+            elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
+            logger.warning(
+                "Machinery roundup pre-warm timeout for %s after %.1fs",
+                prod.slug,
+                deadline_s,
+            )
+            return prod.slug, {
+                "outcome": "timeout",
+                "elapsed_ms": elapsed_ms,
+                "live": False,
+                "redis_written": False,
+                "redis_read_back": False,
+                "redis_ttl_s": None,
+            }
+        except Exception as exc:  # noqa: BLE001
+            elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
+            logger.warning("Machinery roundup pre-warm failed for %s: %s", prod.slug, exc)
+            return prod.slug, {
+                "outcome": "error",
+                "elapsed_ms": elapsed_ms,
+                "live": False,
+                "redis_written": False,
+                "redis_read_back": False,
+                "redis_ttl_s": None,
+            }
+
+    results = dict(await asyncio.gather(*(_warm_one(p) for p in producers)))
+    wall_ms = round((_time.monotonic() - wall_started) * 1000.0, 1)
+    total_db_ms = round(sum(float(v.get("elapsed_ms") or 0.0) for v in results.values()), 1)
+    warmed = sum(1 for v in results.values() if v.get("outcome") == "ok")
+    redis_written_n = sum(1 for v in results.values() if v.get("redis_written"))
+    redis_read_back_n = sum(1 for v in results.values() if v.get("redis_read_back"))
+    logger.info(
+        "Machinery roundup pre-warm finished: %d/%d ok redis_written=%d/%d redis_read_back=%d/%d wall_ms=%.1f total_db_ms=%.1f (%s)",
+        warmed,
+        len(producers),
+        redis_written_n,
+        len(producers),
+        redis_read_back_n,
+        len(producers),
+        wall_ms,
+        total_db_ms,
+        {k: f"{v['outcome']}:{v['elapsed_ms']}ms" for k, v in results.items()},
+    )
+    return {
+        "outcome": "ok" if warmed else "empty",
+        "warmed": warmed,
+        "redis_written": redis_written_n,
+        "redis_read_back": redis_read_back_n,
+        "wall_ms": wall_ms,
+        "total_db_ms": total_db_ms,
+        "slugs": results,
+    }
+
+
+def _live_machinery_slugs(rc) -> set[str]:
+    """Read `MACHINERY_LIVE_SLUGS_KEY` from Redis; fails open to empty set."""
+    from app.utils.roundup_containers import MACHINERY_LIVE_SLUGS_KEY
+
+    try:
+        raw = rc.hgetall(MACHINERY_LIVE_SLUGS_KEY)
+    except Exception:
+        logger.debug("machinery live-slugs read failed", exc_info=True)
+        return set()
+    if not raw:
+        return set()
+    out: set[str] = set()
+    for k in raw:
+        slug = k.decode("utf-8") if isinstance(k, (bytes, bytearray)) else str(k)
+        if slug:
+            out.add(slug)
+    return out
+
+
+def _absent_machinery_slugs(rc, *, registered_slugs: list[str], exclude: set[str]) -> list[str]:
+    """Return registered machinery slugs whose Redis cache entry is absent or due for proactive refresh (#12288)."""
+    import time as _time
+
+    from app.utils.roundup_containers import ROUNDUP_CACHE_TTL_S, _redis_cache_key
+
+    absent: list[str] = []
+    now_ts = _time.time()
+    for slug in registered_slugs:
+        if slug in exclude:
+            continue
+        key = _redis_cache_key(slug)
+        try:
+            if not rc.exists(key):
+                absent.append(slug)
+                continue
+            if hasattr(rc, "get"):
+                raw = rc.get(key)
+                if isinstance(raw, (bytes, bytearray)):
+                    raw = raw.decode("utf-8", errors="ignore")
+                if isinstance(raw, str) and raw.startswith("{"):
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, dict) and isinstance(
+                        parsed.get("built_at"), (int, float)
+                    ):
+                        soft_ttl = float(parsed.get("ttl_s") or ROUNDUP_CACHE_TTL_S)
+                        if (now_ts - float(parsed["built_at"])) >= (0.70 * soft_ttl):
+                            absent.append(slug)
+        except Exception:
+            logger.debug("machinery cache exists check failed for %s", slug, exc_info=True)
+    return absent
+
+
+async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 10.0) -> dict:
+    """Republish live (60s TTL) and absent machinery groupings on the 30s realtime rail.
+
+    - Live machinery groupings (or slates with a game starting within 3 minutes)
+      are rebuilt FIRST so a 60s live entry always outlasts the 30s wait for the
+      next refresh (~29s headroom) and never disappears from Discover during games.
+    - Absent non-live machinery keys are rebuilt SECOND with remaining budget as
+      a LAT-P112 safety net if the 120s host beat lags past the 300s non-live TTL.
+    - Returns immediately with zero Redis/DB calls when the machinery switch is off.
+    """
+    import time as _time
+
+    from app.routes.containers import containers_read_enabled
+    from app.utils.container_machinery import container_machinery_enabled
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        _is_machinery_producer_slug,
+        ensure_optional_roundup_candidates,
+    )
+
+    if not container_machinery_enabled() or not containers_read_enabled():
+        return {"outcome": "disabled", "warmed": 0}
+
+    ensure_optional_roundup_candidates()
+    registered = sorted(
+        p.slug
+        for p in ROUNDUP_PRODUCERS.values()
+        if _is_machinery_producer_slug(p.slug) and (p.enabled is None or p.enabled())
+    )
+    registered_set = set(registered)
+    live_slugs = sorted(s for s in _live_machinery_slugs(rc) if s in registered_set)
+    absent_slugs = _absent_machinery_slugs(
+        rc, registered_slugs=registered, exclude=set(live_slugs)
+    )
+    if not live_slugs and not absent_slugs:
+        return {
+            "outcome": "idle",
+            "warmed": 0,
+            "live_slugs": [],
+            "absent_slugs": [],
+            "slugs": {},
+        }
+
+    started = _time.monotonic()
+    combined_slugs: dict[str, dict] = {}
+    warmed = 0
+
+    if live_slugs and deadline_s >= 1.0:
+        res_live = await _prewarm_machinery_roundups(
+            deadline_s=deadline_s, slugs=live_slugs
+        )
+        combined_slugs.update(res_live.get("slugs") or {})
+        warmed += int(res_live.get("warmed") or 0)
+
+    remaining_s = deadline_s - (_time.monotonic() - started)
+    if absent_slugs and remaining_s >= 1.5:
+        res_absent = await _prewarm_machinery_roundups(
+            deadline_s=remaining_s, slugs=absent_slugs
+        )
+        combined_slugs.update(res_absent.get("slugs") or {})
+        warmed += int(res_absent.get("warmed") or 0)
+
+    return {
+        "outcome": "ok" if warmed else "empty",
+        "warmed": warmed,
+        "live_slugs": live_slugs,
+        "absent_slugs": absent_slugs,
+        "wall_ms": round((_time.monotonic() - started) * 1000.0, 1),
+        "total_db_ms": round(
+            sum(float(v.get("elapsed_ms") or 0.0) for v in combined_slugs.values()), 1
+        ),
+        "slugs": combined_slugs,
+    }
 
 
 async def _prewarm_live_feed_shapes():
@@ -1999,7 +2278,22 @@ async def _prewarm_live_feed_shapes():
                 dict(shape), rc, deadline_s=remaining_s
             )
 
-    await asyncio.gather(*(_republish(label, shape) for label, shape in targets))
+    # #12288: run live/due machinery roundup prewarm CONCURRENTLY with the feed
+    # shapes inside the same bounded pass budget so slow discover builds (~19s
+    # out of 20s) never starve machinery refreshes to <1.5s. Zero Redis/DB work
+    # when machinery is switched off, and <2ms idle when all 5 keys are fresh.
+    machinery_live_result: dict = {"outcome": "disabled", "warmed": 0}
+
+    async def _run_machinery_live() -> None:
+        nonlocal machinery_live_result
+        machinery_live_result = await _prewarm_live_machinery_roundups(
+            rc, deadline_s=min(10.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
+        )
+
+    await asyncio.gather(
+        *(_republish(label, shape) for label, shape in targets),
+        _run_machinery_live(),
+    )
 
     # The idle pass reports too, and that is deliberate (gotcha #53). "Nothing was
     # live" and "this beat has not run since the deploy" are different facts with
@@ -2030,6 +2324,8 @@ async def _prewarm_live_feed_shapes():
             1,
         ),
     }
+    if machinery_live_result.get("outcome") != "disabled":
+        report["machinery"] = machinery_live_result
     try:
         rc.setex(
             FEED_LIVE_PREWARM_STATUS_KEY,

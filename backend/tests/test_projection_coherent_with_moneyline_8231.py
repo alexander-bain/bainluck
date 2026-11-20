@@ -184,10 +184,18 @@ def test_every_served_per_book_site_calls_the_refusal():
     """Two `bookmaker_odds` tables and the history's per-book lines. A route that
     stopped calling the helper would pass every helper test above."""
     import inspect
+    import re
 
     src = inspect.getsource(events_module)
-    assert src.count('response["bookmaker_odds"] = refuse_incoherent_projections(bookmaker_odds_list)') == 2
-    assert "refuse_incoherent_projections([point_data])" in src
+    bookmaker_calls = re.findall(
+        r'response\["bookmaker_odds"\]\s*=\s*refuse_incoherent_projections\(\s*bookmaker_odds_list\b[^)]*\)',
+        src,
+    )
+    assert len(bookmaker_calls) == 2
+    assert re.search(
+        r"refuse_incoherent_projections\(\s*\[point_data\](?:\s*,[^)]*)?\s*\)",
+        src,
+    )
     assert 'response["bookmaker_odds"] = bookmaker_odds_list\n' not in src
 
 

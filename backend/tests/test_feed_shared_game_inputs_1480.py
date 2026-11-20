@@ -53,10 +53,10 @@ SCHEDULED_A, SCHEDULED_B = 1480001, 1480002
 SETTLED_A, SETTLED_B = 1480003, 1480004
 
 
-def _sport():
+def _sport(key: str = "soccer_epl", name: str = "EPL"):
     s = MagicMock()
-    s.key = "soccer_epl"
-    s.name = "EPL"
+    s.key = key
+    s.name = name
     return s
 
 
@@ -81,7 +81,9 @@ def _event(event_id: int, status: str, *, start: datetime):
     e.llm_gender = None
     e.llm_level = None
     e.llm_league = None
-    e.sport = _sport()
+    # Scheduled fixtures test 1-leg win_prob_snapshots fallback (two-way NBA);
+    # settled fixtures keep soccer_epl to exercise prematch draw readings.
+    e.sport = _sport("basketball_nba", "NBA") if status == "scheduled" else _sport()
     e.statpal_end_time = None
     e.completed_at = start + timedelta(hours=2) if status == "completed" else None
     e.period = None

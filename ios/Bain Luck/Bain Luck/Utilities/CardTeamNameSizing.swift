@@ -116,14 +116,27 @@ nonisolated enum CardTeamNameSizing {
         fontSize: CGFloat,
         weight: Font.Weight = .bold
     ) -> CGFloat {
-        var maxWidth: CGFloat = 0
+        maxSingleWordWidth(names: names, fontSize: fontSize, weight: weight)
+    }
+
+    /// Widest single word across `names` at `fontSize`, used by three-way cards (#13121)
+    /// to decide whether a full-size club name fits beside trailing columns or should
+    /// grow vertically rather than shrinking below a two-way card's type size.
+    static func maxSingleWordWidth(
+        names: [String],
+        fontSize: CGFloat,
+        weight: Font.Weight = .bold
+    ) -> CGFloat {
+        let clampedSize = max(fontSize, 10)
+        var maxWord: CGFloat = 0
         for raw in names {
-            for word in raw.split(whereSeparator: \.isWhitespace) {
-                let w = singleLineWidth(String(word), fontSize: fontSize, weight: weight)
-                if w > maxWidth { maxWidth = w }
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            for word in trimmed.split(whereSeparator: \.isWhitespace).map(String.init) {
+                maxWord = max(maxWord, singleLineWidth(word, fontSize: clampedSize, weight: weight))
             }
         }
-        return maxWidth
+        return maxWord
     }
 
     private static func singleLineWidth(

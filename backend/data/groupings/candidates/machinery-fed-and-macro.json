@@ -60,17 +60,21 @@
       },
       {
         "key": "rate_path",
-        "title": "Year-End Rate & Hike Count",
-        "note": "Mutually exclusive year-end target rate and 2026 rate-hike count scales.",
+        "title": "December FOMC, Year-End Rate & Hike Count",
+        "note": "Upcoming December FOMC move alongside mutually exclusive year-end target rate and 2026 rate-hike count scales.",
         "dynamic_item_note": true,
         "atom_query": {
           "kind": "markets",
-          "any_tokens": ["fed rate be at the end of 2026", "fed rate hikes in 2026"],
+          "any_tokens": [
+            "fed decision in december",
+            "fed rate be at the end of 2026",
+            "fed rate hikes in 2026"
+          ],
           "exclude_tokens": ["above", "below", "hit"],
           "shape": "field",
           "order_by": "closeness_to_50",
           "min_items": 2,
-          "max_items": 2,
+          "max_items": 3,
           "max_outcomes": 4
         }
       },
@@ -118,6 +122,7 @@
           ],
           "shape": "field",
           "order_by": "movement_desc",
+          "max_horizon_years": 2,
           "min_items": 1,
           "max_items": 2,
           "max_outcomes": 3,

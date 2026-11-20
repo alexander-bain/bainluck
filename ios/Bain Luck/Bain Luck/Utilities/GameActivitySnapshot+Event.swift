@@ -102,7 +102,8 @@ extension GameActivitySnapshot {
             servedResult: event.heroSettledResult,
             awaySecondaryColorHex: event.awayTeamData?.secondaryColor,
             pregameAwayPercent: pregame?.away,
-            pregameHomePercent: pregame?.home
+            pregameHomePercent: pregame?.home,
+            scoreSourceUnavailable: event.scoreSourceUnavailable
         )
     }
 

@@ -494,6 +494,7 @@ def feed_page_base_cache_key(
     category: Optional[str] = None,
     collections: Optional[str] = None,
     opening_seating: bool = False,
+    fun_admission: bool = False,
 ) -> str:
     """Key for one stored, offset-independent Discover build.
 
@@ -537,6 +538,10 @@ def feed_page_base_cache_key(
         # #5105. Prepended under the `if`, like every segment above, so a
         # legacy build keeps its byte-identical key.
         parts = f"{FEED_OPENING_SEATING_KEY_MARKER}|{parts}"
+    if fun_admission:
+        # #13097 / Ruling 272: A. Prepended under the `if` so switch-OFF keys
+        # stay byte-identical and toggling the switch never reads a stale build.
+        parts = f"fun=1|{parts}"
     return f"{FEED_PAGE_BASE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
 
 
@@ -959,6 +964,7 @@ def feed_response_cache_key(
     collections: Optional[str] = None,
     opening_seating: bool = False,
     machinery: bool = False,
+    fun_admission: bool = False,
 ) -> str:
     """Build the Redis response-cache key for one ``GET /api/feed`` shape.
 
@@ -1034,6 +1040,10 @@ def feed_response_cache_key(
         # older app versions (1.0.6) omit it and hash the byte-identical key they
         # always did, hitting the single 1.0.6-safe prewarmed base feed.
         parts = f"mach=1|{parts}"
+    if fun_admission:
+        # #13097 / Ruling 272: A. Prepended under the `if` so switch-OFF keys
+        # stay byte-identical and toggling the switch never reads a stale build.
+        parts = f"fun=1|{parts}"
     return f"{FEED_RESPONSE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
 
 

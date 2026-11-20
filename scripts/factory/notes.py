@@ -13,7 +13,7 @@ import sys
 from types import SimpleNamespace
 
 from model import PACIFIC, STATIONS, instant, iso, public_title
-from signals import TEST_NAME
+from signals import TEST_NAME, on_floor
 
 # Import the standard-library registry without initializing the backend app.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend/app/services"))
@@ -56,12 +56,7 @@ def caption_facts(snapshot, pulls):
     now = instant(snapshot["generated_at"])
     day = now.astimezone(PACIFIC).date()
     changes = snapshot["changes"]
-    floor = [
-        c
-        for c in changes
-        if c["station"] != "Live"
-        and not any(c.get(flag) for flag in ("parked", "bot_update", "side_track"))
-    ]
+    floor = [c for c in changes if on_floor(c)]
     live = [
         c
         for c in changes
@@ -91,7 +86,7 @@ def caption_facts(snapshot, pulls):
         title = public_title(trusted_titles.get(chosen["number"], ""))
         if len(title) <= 100 and PLAIN.fullmatch(title) and not DOMAIN.search(title):
             change["title"] = title
-        stations[name] = {"count": len(crates), "change": change}
+        stations[name] = {"count": len({c["number"] for c in crates}), "change": change}
     hold = next(
         (
             s
@@ -109,9 +104,9 @@ def caption_facts(snapshot, pulls):
         builds.add(posted["build"])
     return {
         "counts": {
-            "on_floor": len(floor),
-            "live": len(live),
-            "parked": sum(c.get("parked", False) for c in changes),
+            "on_floor": len({c["number"] for c in floor}),
+            "live": len({c["number"] for c in live}),
+            "parked": len({c["number"] for c in changes if c.get("parked")}),
         },
         "stations": stations,
         "server_hold": server_hold,

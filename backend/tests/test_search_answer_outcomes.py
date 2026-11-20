@@ -396,7 +396,9 @@ class TestBuildTopOutcomes:
 
     def test_lean_shape_is_minimal(self):
         out = _build_search_top_outcomes(self._market(), limit=3, lean=True)
-        assert set(out[0].keys()) == {"name", "probability", "movement", "rendered_percent"}
+        assert set(out[0].keys()) == {
+            "name", "probability", "movement", "rendered_percent", "source_mark",
+        }
 
     def test_full_shape_has_odds_rank(self):
         out = _build_search_top_outcomes(self._market(), limit=3, lean=False)

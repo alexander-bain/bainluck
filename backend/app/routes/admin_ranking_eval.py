@@ -524,6 +524,7 @@ async def get_grades(
         RankingGrade.surface != SURFACE_PAIR,
         # 227-A point 6: a whole-screen look is not a card grade either (/screen-grades).
         RankingGrade.surface != SURFACE_SCREENS,
+        RankingGrade.surface != SURFACE_SCREENS_UNDONE,
     )
     if slate_id:
         stmt = stmt.where(RankingGrade.slate_id == slate_id)
@@ -1382,6 +1383,17 @@ PAIRS_PATH = Path(__file__).resolve().parents[1] / "data" / "ranking_pairs.json"
 PAIR_CHOICES = ("left", "right", "none")
 PAIR_SIZE = 10
 DEFAULT_MORNING_PAIR = "p1"
+MORNING_PAIR_PAUSED_ENV = "RANKING_MORNING_PAIR_PAUSED"
+MORNING_PAIR_PAUSED_DETAIL = (
+    "Nothing to grade right now. Candidate 2 ended under Ruling 277: A; "
+    "grading resumes when Candidate 3 is declared."
+)
+
+
+def is_morning_pair_paused() -> bool:
+    """True while no morning ranking candidate is open for grading (#13100 / 277: A)."""
+    raw = os.getenv(MORNING_PAIR_PAUSED_ENV, "true")
+    return raw.strip().lower() not in ("0", "false", "no", "off")
 # Stored through ranking_grades' grade check (shareable/interesting/neither), as
 # the grouping grades are: what a pick MEANS, never which side it was on.
 _PAIR_TO_DB_GRADE: dict[str, str] = {"candidate": "shareable", "none": "interesting", "served": "neither"}
@@ -1456,6 +1468,14 @@ async def get_pair(
 ) -> dict:
     """#11937 (171-A): two first tens for one slate, unlabelled, sides random."""
     _check_admin_secret(secret, request=request)
+    # #13100 (Ruling 277: A): Candidate 2 ended after one morning; the default
+    # morning link says nothing is open to grade until Candidate 3 is declared.
+    if (
+        slate in ("latest", "today")
+        and pair == DEFAULT_MORNING_PAIR
+        and is_morning_pair_paused()
+    ):
+        raise HTTPException(status_code=409, detail=MORNING_PAIR_PAUSED_DETAIL)
     lookup_ref = "latest" if slate in ("latest", "today") else slate
     row = slate_row_dict(await _slate_row(db, lookup_ref, surface))
     # Default morning link ("latest"/"today") must never serve yesterday's slate
@@ -1596,6 +1616,7 @@ async def get_pair_picks(
 # "does a count agree with his grades" is then a table.
 
 SURFACE_SCREENS = "screens"
+SURFACE_SCREENS_UNDONE = "screens_undone"
 SCREENS_PATH = Path(__file__).resolve().parents[1] / "data" / "screen_samples.json"
 SCREEN_GRADES = ("fun", "fine", "wall")
 _SCREEN_TO_DB_GRADE: dict[str, str] = {"fun": "shareable", "fine": "interesting", "wall": "neither"}
@@ -1654,6 +1675,12 @@ class ScreenGradeIn(BaseModel):
     grade: str
 
 
+class ScreenGradeUndoIn(BaseModel):
+    week: str = Field(..., min_length=8, max_length=8)
+    n: int = Field(..., ge=1)
+    grader: str = Field(..., min_length=1, max_length=40)
+
+
 @router.post("/screen-grades")
 async def post_screen_grade(
     body: ScreenGradeIn,
@@ -1698,6 +1725,50 @@ async def post_screen_grade(
     )
     await db.commit()
     return {"status": "ok"}
+
+
+@router.post("/screen-grades/undo")
+async def undo_last_screen_grade(
+    body: ScreenGradeUndoIn,
+    request: Request,
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db_rw),
+) -> dict:
+    """Undo only the grader's single most recent screen grade in this week's deck.
+
+    Fable follow-up on #12984 (Wed Nov 18): lets a phone grader fix an accidental
+    tap before moving on, while keeping "first grade stands" for anything older.
+    """
+    _check_admin_secret(secret, request=request)
+    if not ranking_snapshots_enabled():
+        raise HTTPException(status_code=409, detail="RANKING_SNAPSHOTS is off")
+    grader = " ".join(body.grader.split())
+    if not grader:
+        raise HTTPException(status_code=422, detail="grader needs a name")
+    screens = load_screen_samples().get(body.week)
+    if screens is None or body.n > len(screens):
+        raise HTTPException(status_code=404, detail="no such screen this week")
+    screen_id = str(screens[body.n - 1]["id"])
+    rows = (await db.execute(
+        select(RankingGrade).where(
+            RankingGrade.surface == SURFACE_SCREENS,
+            RankingGrade.slate_id == _screen_slate(body.week),
+            RankingGrade.grader == grader,
+        )
+    )).scalars().all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="no grade to undo")
+    latest = max(rows, key=lambda r: (r.graded_at or datetime.min, r.id or 0))
+    if latest.item_key != f"screen:{screen_id}":
+        raise HTTPException(
+            status_code=409,
+            detail="only the last grade can be undone; earlier grades stand",
+        )
+    # Non-destructive soft retraction: move the single newest row off the
+    # active screen surface so the audit trail stays intact and no row is deleted.
+    latest.surface = SURFACE_SCREENS_UNDONE
+    await db.commit()
+    return {"status": "undone", "n": body.n}
 
 
 @router.get("/screen-grades")

@@ -75,6 +75,9 @@ class GameActivitySnapshot:
     result: Result | None = None
     pregame_away_percent: int | None = None
     pregame_home_percent: int | None = None
+    # #13000 (250-A) — True only on a scoreless live game whose league has no
+    # live score feed; omitted otherwise to stay byte-identical for 1.0.6.
+    score_source_unavailable: bool | None = None
 
     def __post_init__(self) -> None:
         _integer(self.event_id, "event_id", minimum=1, maximum=_MAX_SWIFT_INT)
@@ -169,6 +172,16 @@ class GameActivitySnapshot:
             value = getattr(self, name)
             if value is not None:
                 _integer(value, name, minimum=0, maximum=100)
+        if self.score_source_unavailable is not None:
+            if (
+                self.score_source_unavailable is not True
+                or self.lifecycle != "live"
+                or self.home_score is not None
+                or self.away_score is not None
+            ):
+                raise ActivityKitPayloadError(
+                    "score_source_unavailable may only be True on a scoreless live game"
+                )
 
     @property
     def is_terminal(self) -> bool:
@@ -198,6 +211,7 @@ class GameActivitySnapshot:
             ("result", self.result),
             ("pregameAwayPercent", self.pregame_away_percent),
             ("pregameHomePercent", self.pregame_home_percent),
+            ("scoreSourceUnavailable", self.score_source_unavailable),
         ):
             if value is not None:
                 snapshot[key] = value

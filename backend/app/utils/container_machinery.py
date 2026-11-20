@@ -1110,14 +1110,57 @@ _CUMULATIVE_OUTCOME_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: Maximum age (days) for a market's newest live outcome observation before it is
+#: refused from computed groupings (#12288: prevents past-ceremony markets like #109566,
+#: last updated Mar 12 with all 16 prices withheld, from entering a grouping).
+_MAX_LIVE_OUTCOME_AGE_DAYS = 30
+_TITLE_FOUR_DIGIT_YEAR_RE = re.compile(r"\b(20\d{2})\b")
 
-def _market_matches_query(market: Mapping[str, Any], query: Mapping[str, Any]) -> bool:
+
+def _parse_iso_dt_utc(raw: Any) -> Optional[datetime]:
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo is not None else raw.replace(tzinfo=timezone.utc)
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _market_matches_query(
+    market: Mapping[str, Any],
+    query: Mapping[str, Any],
+    *,
+    now_dt: Optional[datetime] = None,
+) -> bool:
     status = str(market.get("status") or "open").lower()
     if status not in {"open", "active"}:
+        return False
+    if market.get("is_settled") or market.get("settled_winner"):
         return False
     title_low = str(market.get("name") or "").lower()
     if not title_low:
         return False
+
+    if now_dt is not None:
+        for date_key in ("resolution_date", "event_date"):
+            dt_val = _parse_iso_dt_utc(market.get(date_key))
+            if dt_val is not None and dt_val < now_dt:
+                return False
+        max_horizon = query.get("max_horizon_years")
+        if isinstance(max_horizon, (int, float)) and not isinstance(max_horizon, bool):
+            max_year = now_dt.year + int(max_horizon)
+            res_dt = _parse_iso_dt_utc(market.get("resolution_date"))
+            if res_dt is not None and res_dt.year > max_year:
+                return False
+            title_years = [int(y) for y in _TITLE_FOUR_DIGIT_YEAR_RE.findall(title_low)]
+            if title_years and max(title_years) > max_year:
+                return False
 
     req_tokens = [str(t).lower() for t in (query.get("title_all_tokens") or ()) if str(t).strip()]
     if any(tok not in title_low for tok in req_tokens):
@@ -1139,17 +1182,40 @@ def _market_matches_query(market: Mapping[str, Any], query: Mapping[str, Any]) -
     if any(tok in title_low for tok in excl_tokens):
         return False
 
-    raw_outcomes = market.get("top_outcomes") or market.get("outcomes") or ()
+    # Never fall back from an explicitly empty screened `top_outcomes` list to raw DB `outcomes`.
+    if "top_outcomes" in market and isinstance(market["top_outcomes"], (list, tuple)):
+        raw_outcomes = market["top_outcomes"]
+    else:
+        raw_outcomes = market.get("outcomes") or ()
     priced = [
         o
         for o in raw_outcomes
         if isinstance(o, Mapping)
+        and not o.get("price_withheld")
+        and not o.get("withheld_reason")
         and isinstance(o.get("probability"), (int, float))
+        and not isinstance(o.get("probability"), bool)
         and 0.0 < float(o["probability"]) < 1.0
         and not _PLACEHOLDER_OUTCOME_RE.match(str(o.get("name") or "").strip())
     ]
     if not priced:
         return False
+
+    if now_dt is not None:
+        obs_stamps = [
+            dt
+            for dt in (
+                _parse_iso_dt_utc(o.get("last_updated") or o.get("observed_at"))
+                for o in priced
+            )
+            if dt is not None
+        ]
+        if not obs_stamps:
+            mkt_obs = _parse_iso_dt_utc(market.get("newest_outcome_updated_at"))
+            if mkt_obs is not None:
+                obs_stamps.append(mkt_obs)
+        if obs_stamps and (now_dt - max(obs_stamps)) > timedelta(days=_MAX_LIVE_OUTCOME_AGE_DAYS):
+            return False
 
     shape = str(query.get("shape") or "any").lower()
     if shape == "two_way" and len(priced) != 2:
@@ -1254,7 +1320,10 @@ def _hydrate_market_visual_item(
     content_kind: Optional[str] = None,
 ) -> dict[str, Any]:
     mid = int(market["id"])
-    raw_outcomes = market.get("top_outcomes") or market.get("outcomes") or ()
+    if "top_outcomes" in market and isinstance(market["top_outcomes"], (list, tuple)):
+        raw_outcomes = market["top_outcomes"]
+    else:
+        raw_outcomes = market.get("outcomes") or ()
     mut_excl = bool(market.get("mutually_exclusive", True))
     canonical_rows, canon_by_oid, canon_by_key = _canonical_market_outcome_map(
         raw_outcomes,
@@ -1354,14 +1423,18 @@ def _hydrate_market_visual_item(
             "by_outcome_id": canon_by_oid,
             "by_outcome_key": canon_by_key,
         }
+    from app.services.paired_metric_register import clean_card_face_title
+
+    clean_raw_name = clean_card_face_title(str(market.get("name") or ""))
     card_copy = dict(market)
+    card_copy["name"] = clean_raw_name
     card_copy["content_kind"] = effective_kind
     card_copy["member_page_numbers"] = mpn
 
     return {
         "market_id": mid,
-        "title": _clean_section_market_label(str(market.get("name") or "")),
-        "raw_title": str(market.get("name") or ""),
+        "title": clean_card_face_title(_clean_section_market_label(clean_raw_name)),
+        "raw_title": clean_raw_name,
         "href": f"/futures/{mid}",
         "source": str(market.get("source") or ""),
         "lead_prob": lead_prob,
@@ -1632,6 +1705,121 @@ def _build_history_visual_item(
     }
 
 
+_CATEGORY_LLM_POOL: dict[str, tuple[str, ...]] = {
+    "economics": ("economics", "finance", "business", "macro", "politics", "other"),
+    "politics": ("politics", "geopolitics", "us_politics", "elections", "other"),
+    "entertainment": (
+        "entertainment",
+        "culture",
+        "social_media",
+        "awards",
+        "film",
+        "movies",
+        "pop_culture",
+        "other",
+    ),
+    "football": ("football", "nfl", "americanfootball_nfl", "other"),
+    "basketball": ("basketball", "nba", "basketball_nba", "other"),
+}
+
+
+def _category_llm_pool_for_definition(
+    definition: Mapping[str, Any],
+) -> Optional[tuple[str, ...]]:
+    """Return the scoped ``llm_sport_category`` pool for ``ix_fm_feed_open_sports``."""
+    cat = str(definition.get("category") or "").strip().lower()
+    if cat in _CATEGORY_LLM_POOL:
+        return _CATEGORY_LLM_POOL[cat]
+    sections_cfg = (definition.get("rule") or {}).get("sections") or ()
+    sport_keys = {
+        str(sec["atom_query"].get("sport_key") or "").strip().lower()
+        for sec in sections_cfg
+        if isinstance(sec, Mapping)
+        and isinstance(sec.get("atom_query"), Mapping)
+        and sec["atom_query"].get("kind") == "events"
+    }
+    if any(sk.startswith("americanfootball_") for sk in sport_keys):
+        return _CATEGORY_LLM_POOL["football"]
+    if any(sk.startswith("basketball_") for sk in sport_keys):
+        return _CATEGORY_LLM_POOL["basketball"]
+    return None
+
+
+def _market_title_matches_query(title: str, query: Mapping[str, Any]) -> bool:
+    """Fast pure-Python title token filter matching ``_market_matches_query``."""
+    title_low = str(title or "").lower()
+    if not title_low:
+        return False
+    req_tokens = [
+        str(t).lower() for t in (query.get("title_all_tokens") or ()) if str(t).strip()
+    ]
+    if any(tok not in title_low for tok in req_tokens):
+        return False
+    any_tokens = [
+        str(t).lower() for t in (query.get("any_tokens") or ()) if str(t).strip()
+    ]
+    if any_tokens and not any(tok in title_low for tok in any_tokens):
+        return False
+    excl_tokens = [
+        str(t).lower() for t in (query.get("exclude_tokens") or ()) if str(t).strip()
+    ]
+    explicitly_womens = any("women" in tok for tok in req_tokens + any_tokens)
+    if not explicitly_womens:
+        if "wnba" in excl_tokens:
+            excl_tokens.extend(
+                [
+                    "women's pro basketball",
+                    "womens pro basketball",
+                    "women\u2019s pro basketball",
+                ]
+            )
+        if "lpga" in excl_tokens:
+            excl_tokens.extend(
+                ["women's pro golf", "womens pro golf", "women\u2019s pro golf"]
+            )
+        if "nwsl" in excl_tokens:
+            excl_tokens.extend(
+                ["women's pro soccer", "womens pro soccer", "women\u2019s pro soccer"]
+            )
+    if any(tok in title_low for tok in excl_tokens):
+        return False
+    return True
+
+
+def _build_scoped_open_market_scan_stmt(cat_pool: tuple[str, ...]):
+    """Lightweight (id, name, volume) scan backed by ``ix_fm_feed_open_sports``.
+
+    Uses ``UNION ALL`` over ``llm_sport_category IN cat_pool`` and
+    ``llm_sport_category IS NULL`` (both under ``status = 'open' AND event_id IS NULL``)
+    so PostgreSQL walks the partial B-tree index instead of running multi-clause
+    ``ILIKE`` / ``NOT ILIKE`` text scans across hundreds of thousands of resolved
+    or game-linked rows.
+    """
+    from sqlalchemy import select, union_all
+
+    from app.models.models import FuturesMarket
+
+    arm_cat = select(
+        FuturesMarket.id,
+        FuturesMarket.name,
+        FuturesMarket.volume,
+    ).where(
+        FuturesMarket.status == "open",
+        FuturesMarket.event_id.is_(None),
+        FuturesMarket.llm_sport_category.in_(cat_pool),
+    )
+    arm_null = select(
+        FuturesMarket.id,
+        FuturesMarket.name,
+        FuturesMarket.volume,
+    ).where(
+        FuturesMarket.status == "open",
+        FuturesMarket.event_id.is_(None),
+        FuturesMarket.llm_sport_category.is_(None),
+    )
+    return union_all(arm_cat, arm_null)
+
+
 async def _load_snapshot_from_db(
     db: Any,
     definition: Mapping[str, Any],
@@ -1657,7 +1845,7 @@ async def _load_snapshot_from_db(
         }
 
     from sqlalchemy import and_, func, or_, select
-    from sqlalchemy.orm import joinedload, selectinload
+    from sqlalchemy.orm import joinedload
 
     from app.models.models import Event, FuturesMarket, FuturesOddsSnapshot, Sport
     from app.routes.futures import (
@@ -1668,8 +1856,8 @@ async def _load_snapshot_from_db(
         _game_container_leg_sides,
         _resolve_verified_title,
         _verified_title_market_stmt,
-        _withheld_price_outcome_ids,
         out_legs_by_market,
+        withheld_price_outcome_ids_for_markets,
     )
     from app.services.paired_metric_register import fold_outcome_key, load_live_paired_metric_sets
     from app.utils.hero_probability import resolve_hero
@@ -1799,7 +1987,8 @@ async def _load_snapshot_from_db(
     }
     paired_stage_mids: set[int] = set()
     if ceremonies:
-        all_paired = await load_live_paired_metric_sets(db)
+        paired_prefix = f"{next(iter(ceremonies))}-" if len(ceremonies) == 1 else None
+        all_paired = await load_live_paired_metric_sets(db, prefix=paired_prefix)
         paired_out.update(all_paired)
         for sec in sections_cfg:
             if not isinstance(sec, Mapping) or not isinstance(sec.get("atom_query"), Mapping):
@@ -1827,58 +2016,135 @@ async def _load_snapshot_from_db(
         and sec["atom_query"].get("kind") == "market_history"
     ]
     if needs_markets or paired_stage_mids:
-        m_rows: list[Any] = []
-        seen_mids: set[int] = set()
-        if needs_markets:
-            extra_clauses = []
-            has_unfiltered_market_section = False
-            for sec in sections_cfg:
-                if not isinstance(sec, Mapping) or not isinstance(sec.get("atom_query"), Mapping):
-                    continue
-                aq = sec["atom_query"]
-                if aq.get("kind") not in {"markets", "market_history"}:
-                    continue
-                all_toks = [str(t).strip() for t in (aq.get("title_all_tokens") or ()) if str(t).strip()]
-                any_toks = [str(t).strip() for t in (aq.get("any_tokens") or ()) if str(t).strip()]
-                excl_toks = [str(t).strip() for t in (aq.get("exclude_tokens") or ()) if str(t).strip()]
-                parts = [FuturesMarket.name.ilike(f"%{t}%") for t in all_toks]
-                if any_toks:
-                    parts.append(or_(*(FuturesMarket.name.ilike(f"%{t}%") for t in any_toks)))
-                for ex in excl_toks:
-                    parts.append(~FuturesMarket.name.ilike(f"%{ex}%"))
-                if parts:
-                    extra_clauses.append(and_(*parts))
+        market_sections: list[Mapping[str, Any]] = [
+            sec["atom_query"]
+            for sec in sections_cfg
+            if isinstance(sec, Mapping)
+            and isinstance(sec.get("atom_query"), Mapping)
+            and sec["atom_query"].get("kind") in {"markets", "market_history"}
+        ]
+        # Step 1: Lightweight index-backed candidate ID discovery via
+        # `ix_fm_feed_open_sports` (status='open' AND event_id IS NULL), fetching
+        # ONLY (id, name, volume) and filtering section title tokens in Python.
+        # Avoids multi-clause ILIKE/NOT ILIKE scans over hundreds of thousands of
+        # resolved or game-linked rows and eliminates the double FuturesMarket fetch.
+        title_matched_mids: set[int] = set()
+        title_volume_by_mid: dict[int, float] = {}
+        if needs_markets and market_sections:
+            cat_pool = _category_llm_pool_for_definition(definition)
+            lightweight_rows: list[tuple[int, str, float]] = []
+            if cat_pool is not None:
+                scan_rows = (
+                    await db.execute(_build_scoped_open_market_scan_stmt(cat_pool))
+                ).all()
+                seen_scan: set[int] = set()
+                for mid_val, name_val, vol_val in scan_rows:
+                    mid_i = int(mid_val)
+                    if mid_i in seen_scan:
+                        continue
+                    seen_scan.add(mid_i)
+                    lightweight_rows.append(
+                        (mid_i, str(name_val or ""), float(vol_val or 0.0))
+                    )
+
+            unmatched_sections: list[Mapping[str, Any]] = []
+            for aq in market_sections:
+                has_tokens = bool(
+                    (aq.get("title_all_tokens") or ())
+                    or (aq.get("any_tokens") or ())
+                    or (aq.get("exclude_tokens") or ())
+                )
+                cap_n = (
+                    max(int(aq.get("max_items", 4)) + 3, 6)
+                    if aq.get("kind") == "market_history"
+                    else max(int(aq.get("max_items", 4)) + 2, 4)
+                )
+                fetch_cap = max(cap_n * 3, 12) if has_tokens else 40
+                sec_hits = [
+                    row
+                    for row in lightweight_rows
+                    if (not has_tokens or _market_title_matches_query(row[1], aq))
+                ]
+                if not sec_hits:
+                    unmatched_sections.append(aq)
                 else:
-                    has_unfiltered_market_section = True
+                    sec_hits.sort(key=lambda r: (-r[2], r[0]))
+                    for mid_i, _nm, vol_f in sec_hits[:fetch_cap]:
+                        title_matched_mids.add(mid_i)
+                        title_volume_by_mid[mid_i] = vol_f
 
-            if extra_clauses:
-                targeted_stmt = (
-                    select(FuturesMarket)
-                    .options(selectinload(FuturesMarket.outcomes))
-                    .where(FuturesMarket.status == "open", or_(*extra_clauses))
-                    .order_by(FuturesMarket.volume.desc().nullslast(), FuturesMarket.id.asc())
-                    .limit(120)
+            # Safety fallback only for an uncategorized grouping or a required section
+            # whose target market carried an unexpected llm_sport_category (0 extra
+            # queries in steady state on all registered groupings). Still enforces
+            # `event_id IS NULL` and evaluates exclude_tokens in Python (never NOT ILIKE).
+            if unmatched_sections:
+                pos_clauses = []
+                for aq in unmatched_sections:
+                    all_toks = [
+                        str(t).strip()
+                        for t in (aq.get("title_all_tokens") or ())
+                        if str(t).strip()
+                    ]
+                    any_toks = [
+                        str(t).strip()
+                        for t in (aq.get("any_tokens") or ())
+                        if str(t).strip()
+                    ]
+                    parts = [FuturesMarket.name.ilike(f"%{t}%") for t in all_toks]
+                    if any_toks:
+                        parts.append(
+                            or_(*(FuturesMarket.name.ilike(f"%{t}%") for t in any_toks))
+                        )
+                    if parts:
+                        pos_clauses.append(and_(*parts))
+                fb_stmt = select(
+                    FuturesMarket.id, FuturesMarket.name, FuturesMarket.volume
+                ).where(FuturesMarket.event_id.is_(None), FuturesMarket.status == "open")
+                if pos_clauses:
+                    fb_stmt = fb_stmt.where(or_(*pos_clauses)).limit(80)
+                else:
+                    fb_stmt = fb_stmt.order_by(
+                        FuturesMarket.volume_24h.desc().nullslast()
+                    ).limit(120)
+                fb_rows = [
+                    (int(r[0]), str(r[1] or ""), float(r[2] or 0.0))
+                    for r in (await db.execute(fb_stmt)).all()
+                ]
+                for aq in unmatched_sections:
+                    cap_n = (
+                        max(int(aq.get("max_items", 4)) + 3, 6)
+                        if aq.get("kind") == "market_history"
+                        else max(int(aq.get("max_items", 4)) + 2, 4)
+                    )
+                    hits = [
+                        row for row in fb_rows if _market_title_matches_query(row[1], aq)
+                    ]
+                    hits.sort(key=lambda r: (-r[2], r[0]))
+                    for mid_i, _nm, vol_f in hits[: max(cap_n * 3, 12)]:
+                        title_matched_mids.add(mid_i)
+                        title_volume_by_mid[mid_i] = vol_f
+
+        # Step 2: Single PK fetch via `_verified_title_market_stmt()` for all matched
+        # market IDs + paired-stage market IDs (eliminates the second FuturesMarket fetch).
+        all_fetch_mids = title_matched_mids | paired_stage_mids
+        vt_rows_by_id: dict[int, Any] = {}
+        if all_fetch_mids:
+            fetched_vt_rows = (
+                await db.execute(
+                    _verified_title_market_stmt().where(
+                        FuturesMarket.id.in_(sorted(all_fetch_mids))
+                    )
                 )
-                for fm in (await db.execute(targeted_stmt)).scalars().all():
-                    if fm.id not in seen_mids:
-                        seen_mids.add(fm.id)
-                        m_rows.append(fm)
+            ).unique().scalars().all()
+            vt_rows_by_id = {int(fm.id): fm for fm in fetched_vt_rows}
 
-            if has_unfiltered_market_section or not extra_clauses:
-                m_stmt = (
-                    select(FuturesMarket)
-                    .options(selectinload(FuturesMarket.outcomes))
-                    .where(FuturesMarket.status == "open")
-                    .order_by(FuturesMarket.volume.desc().nullslast())
-                    .limit(400)
-                )
-                for fm in (await db.execute(m_stmt)).scalars().all():
-                    if fm.id not in seen_mids:
-                        seen_mids.add(fm.id)
-                        m_rows.append(fm)
-
+        ordered_title_mids = sorted(
+            (mid for mid in title_matched_mids if mid in vt_rows_by_id),
+            key=lambda mid: (-title_volume_by_mid.get(mid, 0.0), mid),
+        )
         prelim_markets: list[dict[str, Any]] = []
-        for fm in m_rows:
+        for mid in ordered_title_mids:
+            fm = vt_rows_by_id[mid]
             top_outs: list[dict[str, Any]] = []
             for o in fm.outcomes or ():
                 prob_val = getattr(o, "current_probability", None)
@@ -1908,52 +2174,55 @@ async def _load_snapshot_from_db(
                     "volume": float(fm.volume or 0.0),
                     "image_url": fm.image_url,
                     "llm_sport_category": fm.llm_sport_category,
+                    "resolution_date": (
+                        res_dt_raw.isoformat()
+                        if isinstance((res_dt_raw := getattr(fm, "resolution_date", None)), (datetime, date))
+                        else res_dt_raw
+                    ),
+                    "event_date": (
+                        ev_dt_raw.isoformat()
+                        if isinstance((ev_dt_raw := getattr(fm, "event_date", None)), (datetime, date))
+                        else ev_dt_raw
+                    ),
                     "top_outcomes": top_outs,
                 }
             )
 
-        # Slice 6 Item 2b: format every candidate member market through the exact same
-        # verified_title detail pipeline as GET /api/futures/{id}?representation=verified_title
-        # so every number on a card or page equals the member's own page at the same moment.
-        candidate_mids: set[int] = set(paired_stage_mids)
-        for sec in sections_cfg:
-            if not isinstance(sec, Mapping) or not isinstance(sec.get("atom_query"), Mapping):
-                continue
-            aq = sec["atom_query"]
-            if aq.get("kind") in {"markets", "market_history"}:
-                cap_n = (
-                    max(int(aq.get("max_items", 4)) + 3, 6)
-                    if aq.get("kind") == "market_history"
-                    else max(int(aq.get("max_items", 4)) + 2, 4)
-                )
-                matched_sec = [pm for pm in prelim_markets if _market_matches_query(pm, aq)]
-                for pm in matched_sec[:cap_n]:
-                    candidate_mids.add(int(pm["id"]))
+        # Slice 6 Item 2b + #12288 pre-flip guard: format EVERY candidate member market
+        # through the exact same verified_title detail + withhold pipeline as
+        # GET /api/futures/{id}?representation=verified_title so no unscreened raw DB
+        # market (like past-ceremony #109566 with all 16 prices withheld) can slip through.
+        candidate_mids: set[int] = set(paired_stage_mids) | set(ordered_title_mids)
 
         detail_by_mid: dict[int, dict[str, Any]] = {}
         mpn_by_mid: dict[int, dict[str, Any]] = {}
-        if candidate_mids:
-            vt_rows = (
-                await db.execute(
-                    _verified_title_market_stmt().where(
-                        FuturesMarket.id.in_(sorted(candidate_mids))
-                    )
-                )
-            ).unique().scalars().all()
-            out_map = await out_legs_by_market(list(vt_rows))
-            for fm in vt_rows:
-                unsupported_ids = await _withheld_price_outcome_ids(db, fm)
+        selected_vt_rows = [
+            vt_rows_by_id[mid] for mid in sorted(candidate_mids) if mid in vt_rows_by_id
+        ]
+        if selected_vt_rows:
+            out_map = await out_legs_by_market(selected_vt_rows)
+            # Constant-query-count batched withhold screen (<= 4 queries total vs N*2-3).
+            withheld_by_mid = await withheld_price_outcome_ids_for_markets(
+                db, selected_vt_rows
+            )
+            fleet_newest_by_source: dict[str, Any] = {}
+            for fm in selected_vt_rows:
+                unsupported_ids = withheld_by_mid.get(fm.id, set())
                 if getattr(fm, "source", None) == "polymarket" and not getattr(fm, "mutually_exclusive", True):
                     leg_sides = await _game_container_leg_sides(db, fm)
                     lead_leg = await _game_container_lead_leg(db, fm, leg_sides)
                 else:
                     leg_sides = {}
                     lead_leg = None
+                src_key = str(getattr(fm, "source", None) or "").strip().lower()
+                if src_key not in fleet_newest_by_source:
+                    fleet_newest_by_source[src_key] = await _fleet_newest_observation(db, fm)
+                fm_fleet = fleet_newest_by_source[src_key]
                 detail = _format_market_detail(
                     fm,
                     None,
                     unsupported_ids,
-                    fleet_newest_observation=await _fleet_newest_observation(db, fm),
+                    fleet_newest_observation=fm_fleet,
                     leg_sides=leg_sides,
                     lead_leg=lead_leg,
                     out_division_labels=out_map.get(fm.id),
@@ -1969,6 +2238,8 @@ async def _load_snapshot_from_db(
                 by_fold: dict[str, tuple[float, int]] = {}
                 formatted_outs: list[dict[str, Any]] = []
                 img_by_oid = {o.id: getattr(o, "image_url", None) for o in (fm.outcomes or ())}
+                upd_by_oid = {o.id: getattr(o, "last_updated", None) for o in (fm.outcomes or ())}
+                newest_live_upd: Optional[datetime] = None
                 for idx, row in enumerate(d_outs):
                     prob = row.get("probability")
                     if prob is None or not isinstance(prob, (int, float)) or not math.isfinite(float(prob)):
@@ -1994,6 +2265,9 @@ async def _load_snapshot_from_db(
                     fk = fold_outcome_key(r_name)
                     if fk and fk not in by_fold:
                         by_fold[fk] = (p_f, pct_int)
+                    o_upd_dt = _parse_iso_dt_utc(upd_by_oid.get(oid))
+                    if o_upd_dt is not None and (newest_live_upd is None or o_upd_dt > newest_live_upd):
+                        newest_live_upd = o_upd_dt
                     formatted_outs.append(
                         {
                             "id": oid,
@@ -2002,6 +2276,7 @@ async def _load_snapshot_from_db(
                             "rendered_percent": pct_int,
                             "opening_probability": row.get("opening_probability"),
                             "image_url": img_by_oid.get(oid),
+                            "last_updated": o_upd_dt.isoformat() if o_upd_dt is not None else None,
                         }
                     )
                 mpn = {
@@ -2012,15 +2287,21 @@ async def _load_snapshot_from_db(
                 mpn_by_mid[fm.id] = mpn
                 detail_by_mid[fm.id] = {
                     "top_outcomes": formatted_outs,
+                    "newest_outcome_updated_at": newest_live_upd.isoformat() if newest_live_upd is not None else None,
                     "by_oid_prob_pct": {int(o["id"]): (float(o["probability"]), int(o["rendered_percent"])) for o in formatted_outs},
                     "by_fold_prob_pct": by_fold,
                 }
 
         for pm in prelim_markets:
             mid = int(pm["id"])
-            if mid in detail_by_mid:
-                pm["top_outcomes"] = detail_by_mid[mid]["top_outcomes"]
-                pm["member_page_numbers"] = mpn_by_mid[mid]
+            if mid not in detail_by_mid:
+                continue
+            screened_outs = detail_by_mid[mid]["top_outcomes"]
+            if not screened_outs:
+                continue
+            pm["top_outcomes"] = screened_outs
+            pm["newest_outcome_updated_at"] = detail_by_mid[mid]["newest_outcome_updated_at"]
+            pm["member_page_numbers"] = mpn_by_mid[mid]
             markets_out.append(pm)
 
         # Sync paired_stage entries to their linked stage_1_market.id & stage_2_market.id member pages
@@ -2087,12 +2368,15 @@ async def _load_snapshot_from_db(
             and sec["atom_query"].get("kind") == "markets"
             and ((card_sec_key and str(sec.get("key") or "") == card_sec_key) or (not card_sec_key and idx == 0))
         ]
-        all_hist_queries = list(history_queries) + card_market_queries
+        all_hist_queries = [
+            (hq, max(int(hq.get("max_items", 4)) + 1, 3)) for hq in history_queries
+        ] + [
+            (hq, max(int(hq.get("max_items", 1)), 1)) for hq in card_market_queries
+        ]
         if all_hist_queries and markets_out:
             wanted_oids: set[int] = set()
-            max_hours = max([int(hq.get("hours") or 168) for hq in all_hist_queries] or [168])
-            for hq in all_hist_queries:
-                hist_cap = max(int(hq.get("max_items", 4)) + 2, 5)
+            max_hours = max([int(hq.get("hours") or 168) for hq, _ in all_hist_queries] or [168])
+            for hq, hist_cap in all_hist_queries:
                 matched_for_hq = [m_dict for m_dict in markets_out if _market_matches_query(m_dict, hq)]
                 for m_dict in matched_for_hq[:hist_cap]:
                     outs_sorted = sorted(
@@ -2168,26 +2452,52 @@ def _match_paired_set(
 
 
 def _twin_market_key(title: str) -> str:
-    """Canonicalize cross-venue twin titles (e.g. 'April 2027 Fed Decision' vs 'April Fed Decision')."""
-    low = title.strip().lower()
+    """Canonicalize cross-venue twin titles (e.g. 'Fed Decision in December?' vs 'Fed decision in Dec 2026?')."""
+    low = re.sub(r"[?!.,]+$", "", title.strip().lower()).strip()
     m_fomc = re.match(r"^([a-z]+)(?:\s+\d{4})?\s+fed\s+decision$", low)
     if m_fomc:
-        return f"fomc:{m_fomc.group(1)}"
+        return f"fomc:{_expand_month_token(m_fomc.group(1)).lower()}"
+    m_fomc_in = re.match(r"^fed\s+decision\s+in\s+([a-z]+)(?:\s+\d{4})?$", low)
+    if m_fomc_in:
+        return f"fomc:{_expand_month_token(m_fomc_in.group(1)).lower()}"
     m_unemp = re.match(r"^([a-z]+)(?:\s+\d{4})?\s+u\.s\.\s+unemployment(?:\s+rate)?$", low)
     if m_unemp:
         return f"us_unemp:{_expand_month_token(m_unemp.group(1)).lower()}"
+    m_gdp = re.match(r"^u\.?s\.?\s+(?:real\s+)?gdp\s+growth\s+in\s+(.+)$", low)
+    if m_gdp:
+        return f"us_gdp:{_norm_key(m_gdp.group(1))}"
+    if re.search(r"\boscars?\b", low) and not re.search(r"\bnomin", low):
+        m_oscar_cat = re.search(
+            r"\b(best\s+(?:picture|director|supporting\s+actor|supporting\s+actress|actor|actress|"
+            r"animated\s+feature|international\s+feature|documentary\s+feature|original\s+score|"
+            r"adapted\s+screenplay|original\s+screenplay))\b",
+            low,
+        )
+        if m_oscar_cat:
+            oscar_cat = " ".join(m_oscar_cat.group(1).split())
+            return f"oscars:{oscar_cat}"
     return _norm_key(title)
 
 
 def _dedupe_twin_markets(markets: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep the highest-liquidity canonical market when two venues list the same cleaned title."""
-    seen_titles: set[str] = set()
+    """Keep the highest-liquidity canonical market when two venues list the same cleaned title.
+
+    Every deduplicated twin's ``market_id`` is recorded on the kept item under
+    ``_twin_market_ids`` so Discover pruning treats unlinked cross-venue twins as
+    covered members of the grouping instead of showing the same race twice (#12288).
+    """
+    by_key: dict[str, dict[str, Any]] = {}
     out: list[dict[str, Any]] = []
     for m in markets:
         norm_t = _twin_market_key(str(m["title"]))
-        if norm_t in seen_titles:
+        existing = by_key.get(norm_t)
+        if existing is not None:
+            twins = existing.setdefault("_twin_market_ids", [])
+            mid = m.get("market_id")
+            if isinstance(mid, int) and not isinstance(mid, bool) and mid not in twins:
+                twins.append(mid)
             continue
-        seen_titles.add(norm_t)
+        by_key[norm_t] = m
         out.append(m)
     return out
 
@@ -2655,7 +2965,35 @@ async def produce_container_machinery(
     built_by_idx: dict[int, dict[str, Any]] = {}
     all_member_envelopes: list[dict[str, Any]] = []
     seen_member_keys: set[tuple[str, int]] = set()
+    seen_twin_keys: set[str] = set()
+    covered_twin_market_ids: list[int] = []
     lead_paired_set: Optional[dict[str, Any]] = None
+
+    def _record_covered_twins(item: Mapping[str, Any]) -> None:
+        t_key = _twin_market_key(str(item.get("title") or ""))
+        if t_key:
+            seen_twin_keys.add(t_key)
+        for twin_mid in item.get("_twin_market_ids") or ():
+            if (
+                isinstance(twin_mid, int)
+                and not isinstance(twin_mid, bool)
+                and twin_mid not in covered_twin_market_ids
+            ):
+                covered_twin_market_ids.append(twin_mid)
+                seen_member_keys.add((MEMBER_MARKET, twin_mid))
+
+    def _filter_unseen_twins(items_in: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+        kept: list[dict[str, Any]] = []
+        for it in items_in:
+            t_key = _twin_market_key(str(it.get("title") or ""))
+            if t_key and t_key in seen_twin_keys:
+                mid = it.get("market_id")
+                if isinstance(mid, int) and not isinstance(mid, bool) and mid not in covered_twin_market_ids:
+                    covered_twin_market_ids.append(mid)
+                _record_covered_twins(it)
+                continue
+            kept.append(it)
+        return kept
 
     indexed_cfg = [
         (idx, sec_cfg)
@@ -2687,7 +3025,10 @@ async def produce_container_machinery(
         initial_visible = min(3, int(aq.get("initial_visible_limit", 3)))
 
         if aq_kind == "paired_stage":
-            from app.services.paired_metric_register import fold_outcome_key
+            from app.services.paired_metric_register import (
+                clean_card_face_title,
+                fold_outcome_key,
+            )
 
             pset = _match_paired_set(paired_sets, aq)
             if pset is None:
@@ -2746,7 +3087,7 @@ async def produce_container_machinery(
                     }
                 synthetic_card = {
                     "id": mid,
-                    "name": str(m_meta.get("name") or sec_title),
+                    "name": clean_card_face_title(str(m_meta.get("name") or sec_title)),
                     "status": "open",
                     "source": str(m_meta.get("source") or "kalshi"),
                     "content_kind": "futures",
@@ -2903,9 +3244,9 @@ async def produce_container_machinery(
                 _hydrate_market_visual_item(m, max_outcomes=max_outcomes, resolver=resolver, content_kind="history")
                 for m in all_markets
                 if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys
-                and _market_matches_query(m, aq)
+                and _market_matches_query(m, aq, now_dt=now_dt)
             ]
-            matched_h = _dedupe_twin_markets(matched_h)
+            matched_h = _filter_unseen_twins(_dedupe_twin_markets(matched_h))
             order_by = str(aq.get("order_by") or "movement_desc")
             if order_by == "closeness_to_50":
                 matched_h.sort(key=lambda x: (x["closeness_to_50"], -x["lead_prob"]))
@@ -2913,10 +3254,12 @@ async def produce_container_machinery(
                 matched_h.sort(key=lambda x: (-x["lead_prob"], x["title"].casefold()))
             if len(matched_h) < min_items:
                 return RoundupRefusal((("container_machinery", f"too_few_history_markets:{sec_key}"),))
-            all_chart_items = [
-                _build_history_visual_item(hm, market_histories, now_dt=now_dt, hours=hours)
-                for hm in matched_h
-            ]
+            all_chart_items = []
+            for hm in matched_h:
+                ci = _build_history_visual_item(hm, market_histories, now_dt=now_dt, hours=hours)
+                if hm.get("_twin_market_ids"):
+                    ci["_twin_market_ids"] = list(hm["_twin_market_ids"])
+                all_chart_items.append(ci)
             moving_charts = [ci for ci in all_chart_items if _history_chart_moved(ci)]
             if order_by == "movement_desc":
                 moving_charts.sort(
@@ -2936,6 +3279,7 @@ async def produce_container_machinery(
                 sec_members = []
                 for ci in chart_items:
                     mid = int(ci["market_id"])
+                    _record_covered_twins(ci)
                     env = {
                         "type": MEMBER_MARKET,
                         "id": mid,
@@ -2956,7 +3300,7 @@ async def produce_container_machinery(
                         "form_id": form_id,
                         "initial_visible_limit": initial_visible,
                         "items": [
-                            {k: v for k, v in ci.items() if k != "card"}
+                            {k: v for k, v in ci.items() if k not in ("card", "_twin_market_ids")}
                             for ci in chart_items
                         ],
                     },
@@ -2982,6 +3326,7 @@ async def produce_container_machinery(
                 sec_members = []
                 for fm_it in fallback_matched:
                     mid = int(fm_it["market_id"])
+                    _record_covered_twins(fm_it)
                     env = {
                         "type": MEMBER_MARKET,
                         "id": mid,
@@ -3002,7 +3347,7 @@ async def produce_container_machinery(
                         "form_id": form_id,
                         "initial_visible_limit": initial_visible,
                         "items": [
-                            {k: v for k, v in fm_it.items() if k != "card"}
+                            {k: v for k, v in fm_it.items() if k not in ("card", "_twin_market_ids")}
                             for fm_it in fallback_matched
                         ],
                     },
@@ -3020,9 +3365,9 @@ async def produce_container_machinery(
             )
             for m in all_markets
             if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys
-            and _market_matches_query(m, aq)
+            and _market_matches_query(m, aq, now_dt=now_dt)
         ]
-        matched = _dedupe_twin_markets(matched)
+        matched = _filter_unseen_twins(_dedupe_twin_markets(matched))
         order_by = str(aq.get("order_by") or "lead_prob_desc")
         if order_by == "closeness_to_50":
             matched.sort(key=lambda x: (x["closeness_to_50"], -x["lead_prob"]))
@@ -3044,6 +3389,7 @@ async def produce_container_machinery(
         sec_members = []
         for it in matched:
             mid = it["market_id"]
+            _record_covered_twins(it)
             env = {
                 "type": MEMBER_MARKET,
                 "id": mid,
@@ -3065,7 +3411,7 @@ async def produce_container_machinery(
                 "form_id": form_id,
                 "initial_visible_limit": initial_visible,
                 "items": [
-                    {k: v for k, v in it.items() if k != "card"}
+                    {k: v for k, v in it.items() if k not in ("card", "_twin_market_ids")}
                     for it in matched
                 ],
             },
@@ -3239,6 +3585,7 @@ async def produce_container_machinery(
         parent_name=definition.get("parent_name"),
         paired_metric_set=card_paired_set,
         machinery_card=machinery_card,
+        covered_market_ids=covered_twin_market_ids,
     )
 
 

@@ -3493,7 +3493,7 @@ def _pregame_cutoff(tourn: dict, tourn_markets: list, redis_client) -> tuple[dat
 
 
 async def _attach_pregame(db, tournaments: list[dict], tournament_markets: dict, now: datetime) -> None:
-    """Serve ``pregame_probability`` per golfer and ``pregame_as_of`` per tournament.
+    """Serve each golfer's pregame probability and mark at the tournament cutoff.
 
     #12740. "Pregame" used to be the first reading ever stored, which can be
     weeks early or, for a market picked up late, mid-tournament. It is now the
@@ -3515,6 +3515,7 @@ async def _attach_pregame(db, tournaments: list[dict], tournament_markets: dict,
     for tourn in tournaments:
         for golfer in (tourn.get("_all_golfers") or []) + (tourn.get("golfers") or []):
             golfer["pregame_probability"] = None
+            golfer["pregame_source_mark"] = None
         tourn["pregame_as_of"] = None
         tourn["pregame_cutoff_basis"] = None
 
@@ -3546,13 +3547,18 @@ async def _attach_pregame(db, tournaments: list[dict], tournament_markets: dict,
         )
         if not as_of:
             continue
-        pregame_by_key = {}
+        pregame_by_key: dict[str, tuple[float, dict]] = {}
         for g in (as_of.get("_all_golfers") or as_of.get("golfers") or []):
             key = _match_key(g.get("name") or "")
             if key and g.get("probability") is not None:
-                pregame_by_key[key] = round(float(g["probability"]), 4)
+                pregame_by_key[key] = (
+                    round(float(g["probability"]), 4),
+                    g["source_mark"],
+                )
         for golfer in (tourn.get("_all_golfers") or []) + (tourn.get("golfers") or []):
-            golfer["pregame_probability"] = pregame_by_key.get(_match_key(golfer.get("name") or ""))
+            pregame = pregame_by_key.get(_match_key(golfer.get("name") or ""))
+            if pregame is not None:
+                golfer["pregame_probability"], golfer["pregame_source_mark"] = pregame
         tourn["pregame_as_of"] = cutoff.isoformat()
         tourn["pregame_cutoff_basis"] = basis
 
@@ -3991,6 +3997,8 @@ async def get_golf(
                     "tournament_name": tourn["name"],
                     "movement_24h": g["movement_24h"],
                     "probability": g["probability"],
+                    "source_mark": g.get("source_mark")
+                    or no_source_mark("source_evidence_incomplete"),
                 })
     all_movers.sort(key=lambda m: abs(m["movement_24h"]), reverse=True)
     biggest_movers = all_movers[:5]
@@ -4182,6 +4190,7 @@ def _build_current_event(t: dict) -> dict:
     triples.sort(key=_sort_key)
     sorted_ids = [t[0] for t in triples]
     sorted_names = [t[1] for t in triples]
+    leader = t["golfers"][0] if t["golfers"] else None
 
     return {
         "key": t["key"],
@@ -4192,8 +4201,13 @@ def _build_current_event(t: dict) -> dict:
         "end_date": t.get("end_date"),
         "venue": t.get("venue"),
         "golfer_count": len(t["golfers"]),
-        "leader": t["golfers"][0]["name"] if t["golfers"] else None,
-        "leader_probability": t["golfers"][0]["probability"] if t["golfers"] else None,
+        "leader": leader["name"] if leader else None,
+        "leader_probability": leader["probability"] if leader else None,
+        "source_mark": (
+            leader.get("source_mark") or no_source_mark("source_evidence_incomplete")
+            if leader
+            else no_source_mark("no_probability")
+        ),
         "top_golfers": t["golfers"][:5],
         "market_ids": sorted_ids,
         "market_names": sorted_names,

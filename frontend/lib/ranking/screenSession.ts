@@ -22,6 +22,11 @@ export interface ScreenWeek {
   screens: ScreenPicture[];
 }
 
+export interface LastScreenGrade {
+  n: number;
+  grade: ScreenGrade;
+}
+
 const WEEK = /^[0-9]{4}-w[0-9]{2}$/;
 
 /** ``?week=2026-w47`` when given and well formed; otherwise the newest week. */
@@ -40,4 +45,11 @@ export function nextScreen(total: number, answered: ReadonlySet<number>, n: numb
   for (let i = n + 1; i <= total; i++) if (!answered.has(i)) return i;
   for (let i = 1; i <= n; i++) if (!answered.has(i)) return i;
   return null;
+}
+
+/** Remove only the single last-saved screen from ``answered`` so the grader can re-grade it. */
+export function undoLastAnswered(answered: ReadonlySet<number>, last: LastScreenGrade): Set<number> {
+  const next = new Set(answered);
+  next.delete(last.n);
+  return next;
 }

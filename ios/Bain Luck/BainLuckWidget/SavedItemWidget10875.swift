@@ -482,8 +482,15 @@ struct SavedMessage10875: View {
             }
         case .accessoryRectangular:
             VStack(alignment: .leading, spacing: 1) {
-                Text(message.title).font(.headline).lineLimit(2)
-                Text(message.detail).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                Text(message.title)
+                    .font(.headline)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.75)
+                Text(message.lockScreenDetail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         #endif

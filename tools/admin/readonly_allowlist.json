@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "rule": "Ruling 247: A — read-only GET admin addresses with a standing yes. Adding an address needs Alex's yes once and Fable's look (this file is on ALWAYS_FABLE in tools/release/tier_b.cjs).",
+  "addresses": [
+    {
+      "name": "ranking_grades",
+      "path": "/api/admin/ranking/grades",
+      "templates": [],
+      "description": "Read-only export of Discover ranking grades (#11937)."
+    },
+    {
+      "name": "ranking_slates",
+      "path": "/api/admin/ranking/slates",
+      "templates": [
+        "/api/admin/ranking/slates/{ref}"
+      ],
+      "deny_paths": [
+        "/api/admin/ranking/slates/capture"
+      ],
+      "description": "Read-only list or single-slate fetch of captured ranking slates (#11937)."
+    }
+  ]
+}

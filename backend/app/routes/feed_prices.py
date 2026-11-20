@@ -123,7 +123,7 @@ async def _event_cards(db, ids, now):
                 data["hero_probability_observed_at"] = _iso(
                     newest_source_reading_time(view, require_complete=True)
                 )
-            if hero.source != "settled":
+            if hero.source != "settled" and "hero_probability_draw" not in data:
                 data["hero_probability_away"] = printable_away(
                     hero.away_probability, hero.home_probability,
                     view.sport.key if view.sport else None,

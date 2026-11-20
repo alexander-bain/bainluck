@@ -27,6 +27,7 @@ export interface Change {
   sent_back?: boolean;
   bot_update?: boolean;
   parked?: boolean;
+  held_for_108?: boolean;
   checks_running?: boolean;
   merge_announced_at?: string;
   live_posted_at?: string;

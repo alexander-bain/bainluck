@@ -4,6 +4,7 @@ import {
   SCREEN_GRADE_LABELS,
   nextScreen,
   screensPath,
+  undoLastAnswered,
   weekFromSearch,
 } from "@/lib/ranking/screenSession";
 
@@ -29,5 +30,12 @@ describe("screenSession (227-A point 6)", () => {
     expect(nextScreen(10, new Set([1, 2, 3]), 3)).toBe(4);
     expect(nextScreen(3, new Set([2, 3]), 3)).toBe(1);
     expect(nextScreen(3, new Set([1, 2, 3]), 2)).toBeNull();
+  });
+
+  it("undoes only the last answered screen without disturbing earlier ones", () => {
+    const before = new Set([1, 2]);
+    const after = undoLastAnswered(before, { n: 2, grade: "wall" });
+    expect([...after]).toEqual([1]);
+    expect([...before]).toEqual([1, 2]);
   });
 });

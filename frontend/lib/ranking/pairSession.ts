@@ -33,6 +33,9 @@ export interface PairDeck {
 export const MORNING_NOT_READY_MESSAGE =
   "This morning's cards are not ready yet. They arrive at 7:15 AM.";
 
+export const MORNING_PAIR_PAUSED_MESSAGE =
+  "Nothing to grade right now. Candidate 2 ended under Ruling 277: A; grading resumes when Candidate 3 is declared.";
+
 const PT_DATE_FORMAT = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/Los_Angeles",
   year: "numeric",
@@ -68,6 +71,7 @@ export function isCapturedTodayPt(
 
 /** Surface the plain-English morning-not-ready message cleanly without HTTP status noise. */
 export function normalizeMorningError(message: string): string {
+  if (message.includes(MORNING_PAIR_PAUSED_MESSAGE)) return MORNING_PAIR_PAUSED_MESSAGE;
   if (message.includes(MORNING_NOT_READY_MESSAGE)) return MORNING_NOT_READY_MESSAGE;
   return message;
 }

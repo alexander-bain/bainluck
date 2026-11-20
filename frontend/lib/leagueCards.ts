@@ -128,6 +128,7 @@ export function leagueGameToEvent(game: LeagueGameBrief): Event {
   }
   // #5811 — present only when true, so it travels only when present.
   if (game.venue_closed_no_winner === true) event.venue_closed_no_winner = true;
+  if (game.score_source_unavailable === true) event.score_source_unavailable = true;
 
   // #8515 — the provider's doubleheader facts travel as served. The card
   // decides whether they license a "Game N" mark (`providerGameNumber`); this
