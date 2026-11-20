@@ -74,7 +74,7 @@ sentry-sdk[fastapi,celery]>=2.0.0
 # Development
 pytest>=7.4.4
 pytest-asyncio>=0.23.3
-black>=24.1.0
+black>=26.10.1
 ruff>=0.1.13
 # Real Postgres parser for the staged-census contract guard (CAL-P164/P165).
 # `test_calibration_staged_census_contract_p164.py` reads the columns the frozen
