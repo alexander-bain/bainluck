@@ -1138,6 +1138,53 @@ def store_roundup_cache_sync(
         return False
 
 
+def verify_roundup_cache_sync(
+    rc: Any,
+    slug: str,
+) -> tuple[bool, Optional[int]]:
+    """Read back a just-written roundup cache key via sync Redis and verify TTL + decode.
+
+    Used by Celery prewarm workers only (never on the web event loop — #969, #12288).
+    Returns ``(ok, ttl_seconds)`` where ``ok`` is True only when the key exists,
+    decodes through the same JSON reader path as ``evaluate_roundup_producer``,
+    carries both ``feed_item`` and ``container_payload``, and (when ``rc.ttl`` is
+    available) has a positive TTL remaining.
+    """
+    if rc is None or not hasattr(rc, "get"):
+        return False, None
+    key = _redis_cache_key(slug)
+    try:
+        raw_val = rc.get(key)
+        if not raw_val:
+            return False, None
+        ttl_remaining: Optional[int] = None
+        if hasattr(rc, "ttl"):
+            raw_ttl = rc.ttl(key)
+            if isinstance(raw_ttl, (int, float)):
+                ttl_remaining = int(raw_ttl)
+                if ttl_remaining <= 0:
+                    return False, ttl_remaining
+        decoded = json.loads(
+            raw_val.decode("utf-8")
+            if isinstance(raw_val, (bytes, bytearray))
+            else raw_val
+        )
+        if not isinstance(decoded, dict):
+            return False, ttl_remaining
+        if not isinstance(decoded.get("built_at"), (int, float)):
+            return False, ttl_remaining
+        if decoded.get("feed_item") is None or decoded.get("container_payload") is None:
+            return False, ttl_remaining
+        return True, ttl_remaining
+    except Exception:  # noqa: BLE001 — verification is best-effort
+        logger.warning(
+            "roundup_containers: sync Redis read-back failed for %s",
+            slug,
+            exc_info=True,
+        )
+        return False, None
+
+
 async def _store_roundup_cache_entry(
     cache_key: tuple[str, Any],
     slug: str,
