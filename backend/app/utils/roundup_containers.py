@@ -3638,7 +3638,18 @@ def _splice_machinery_in_place(
             remove_indices.add(idx)
 
     # Pass 2: Covered standalone futures and theme bundles -> in-place takeover on dissolution
-    # or first covered standalone card; prune extra duplicates only.
+    # or first covered standalone card ONLY when it sits at or above where non-replacing
+    # groupings would seat on their own (Fable 12:16 PM PT & 4:37 AM PT on #12288:
+    # absorbing a far-down card like seat 95 never drags a grouping down to seat 95).
+    pre_pass2_standing_last = max(
+        (
+            i
+            for i, it in enumerate(result)
+            if _is_roundup_bundle_card(it) and not _is_machinery_roundup_item(it)
+        ),
+        default=-1,
+    )
+    own_seat_ceiling = max(initial_floor_idx, pre_pass2_standing_last + 2)
     for r_item in ordered_roundups:
         r_id = r_item["data"].get("id")
         covered_ids = _roundup_covered_market_ids(r_item)
@@ -3655,7 +3666,7 @@ def _splice_machinery_in_place(
                 and existing["data"].get("id") in covered_ids
             ):
                 changed = True
-                if r_id not in placed_rids:
+                if r_id not in placed_rids and idx <= own_seat_ceiling:
                     card = _hydrate_at(r_item, idx)
                     if idx < initial_floor_idx:
                         card["data"]["inherited_opening_seat"] = True
@@ -3687,7 +3698,7 @@ def _splice_machinery_in_place(
                     # `_prune_bundles_below_roundups` so a card never loses a row to
                     # a machinery grouping seated below it.
                     changed = True
-                    if r_id not in placed_rids:
+                    if r_id not in placed_rids and idx <= own_seat_ceiling:
                         card = _hydrate_at(r_item, idx)
                         if idx < initial_floor_idx:
                             card["data"]["inherited_opening_seat"] = True
@@ -3701,12 +3712,17 @@ def _splice_machinery_in_place(
             result.pop(idx)
 
     # Pass 3: Non-replacing machinery groupings seat strictly after the last standing
-    # round-up with non-adjacent spacing so zero standing round-ups shift.
+    # round-up (never counting already-placed machinery groupings!) with non-adjacent
+    # spacing so zero standing round-ups shift.
     unplaced = [r for r in ordered_roundups if r["data"].get("id") not in placed_rids]
     if unplaced:
         floor_idx = _opening_eligible_floor_index(result, seat_floor, now=now)
         last_standing_idx = max(
-            (i for i, it in enumerate(result) if _is_roundup_bundle_card(it)),
+            (
+                i
+                for i, it in enumerate(result)
+                if _is_roundup_bundle_card(it) and not _is_machinery_roundup_item(it)
+            ),
             default=-1,
         )
         next_desired = max(floor_idx, last_standing_idx + 2)
