@@ -1,0 +1,199 @@
+{
+  "passed": true,
+  "checks": [
+    "8 original views retained at 390px",
+    "10 round-two comparison views at 390px",
+    "fixed right edges in original normal-size states",
+    "no wrapped/overflowing cells",
+    "16px normal / 24px large numeric type",
+    "123 and >99% / <1%",
+    "draw has no score",
+    "no-projection slot blank",
+    "24px two-line teams keep four numeric columns onscreen without scrolling",
+    "Chance / Pregame labels",
+    "fixed / right-closed before slots",
+    "soccer decimal / whole projections"
+  ],
+  "reports": [
+    {
+      "variant": "A",
+      "sport": "nba",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    },
+    {
+      "variant": "A",
+      "sport": "nfl",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    },
+    {
+      "variant": "A",
+      "sport": "soccer",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    },
+    {
+      "variant": "A",
+      "sport": "tennis",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    },
+    {
+      "variant": "B",
+      "sport": "nba",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    },
+    {
+      "variant": "B",
+      "sport": "nfl",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    },
+    {
+      "variant": "B",
+      "sport": "soccer",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    },
+    {
+      "variant": "B",
+      "sport": "tennis",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    },
+    {
+      "variant": "A",
+      "comparison": "large",
+      "issues": [],
+      "pageWidth": 390
+    },
+    {
+      "variant": "A",
+      "comparison": "near",
+      "issues": [],
+      "pageWidth": 390
+    },
+    {
+      "variant": "A",
+      "comparison": "headers",
+      "issues": [],
+      "pageWidth": 390
+    },
+    {
+      "variant": "A",
+      "comparison": "slots",
+      "issues": [],
+      "pageWidth": 390
+    },
+    {
+      "variant": "A",
+      "comparison": "soccer",
+      "issues": [],
+      "pageWidth": 390
+    },
+    {
+      "variant": "B",
+      "comparison": "large",
+      "issues": [],
+      "pageWidth": 390
+    },
+    {
+      "variant": "B",
+      "comparison": "near",
+      "issues": [],
+      "pageWidth": 390
+    },
+    {
+      "variant": "B",
+      "comparison": "headers",
+      "issues": [],
+      "pageWidth": 390
+    },
+    {
+      "variant": "B",
+      "comparison": "slots",
+      "issues": [],
+      "pageWidth": 390
+    },
+    {
+      "variant": "B",
+      "comparison": "soccer",
+      "issues": [],
+      "pageWidth": 390
+    }
+  ]
+}
