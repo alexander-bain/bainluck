@@ -192,8 +192,8 @@ describe("grid 24h cell precision (#8474)", () => {
             s.name,
             {
               cell: `${s.change > 0 ? "▲" : "▼"}${mag}`,
-              suffix: "pts 24h",
-              title: `${s.chip} in 24h`,
+              suffix: "points 24h",
+              title: `${s.chip.replace(/ pts$/, " points")} in 24h`,
             },
           ];
         }),

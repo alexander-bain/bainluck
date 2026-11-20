@@ -162,7 +162,7 @@ function decodeEntities(s: string): string {
  * a strip that regressed to `%` throws here rather than quietly matching.
  */
 function magnitudeOf(delta: string): string {
-  const m = /^[▲▼]\s*(\d+(?:\.\d+)?) pts$/.exec(delta.trim());
+  const m = /^[▲▼]\s*(\d+(?:\.\d+)?) points?$/.exec(delta.trim());
   if (!m) {
     throw new Error(`badge did not print an arrow + magnitude + " pts": ${JSON.stringify(delta)}`);
   }
@@ -306,7 +306,7 @@ describe("UX-P274 — the strip agrees with the card 600px below it", () => {
       // above asserts that unit, and this test compares the two as it always
       // did: the UNIT agreement is the helper's job, the NUMBER agreement is
       // this assertion's.
-      const cardMatch = /([-+]?\d+\.\d+) pts today/.exec(decodeEntities(cardMarkup));
+      const cardMatch = /([-+]?\d+\.\d+) points today/.exec(decodeEntities(cardMarkup));
       expect(cardMatch).not.toBeNull();
       const card = String(Math.abs(Number(cardMatch![1])));
 
