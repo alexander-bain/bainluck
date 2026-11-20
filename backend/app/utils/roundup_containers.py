@@ -923,7 +923,7 @@ ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S = 300.0
 #: while background prewarm refreshes them, instead of hitting a 0.5 s cold DB
 #: timeout and dropping groupings from Discover (#12288).
 ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S = 1800.0
-ROUNDUP_MACHINERY_LIVE_STALE_TTL_S = 120.0
+ROUNDUP_MACHINERY_LIVE_STALE_TTL_S = 300.0
 #: Redis hash tracking `machinery-*` slugs that currently hold a live game (or one
 #: starting within `MACHINERY_IMMINENT_START_WINDOW_S`), read by the 30s realtime
 #: republisher (`_prewarm_live_feed_shapes`) so live slates never expire between
@@ -1049,6 +1049,54 @@ def _roundup_cache_stale_ttl_seconds(
     return _roundup_cache_ttl_seconds(slug, container_payload)
 
 
+def store_roundup_cache_sync(
+    rc: Any,
+    slug: str,
+    ts: float,
+    feed_item: Optional[dict[str, Any]],
+    container_payload: Optional[dict[str, Any]],
+) -> bool:
+    """Publish a roundup cache entry + live-slug registration via sync Redis.
+
+    Used by Celery prewarm workers (where `asyncio.run()` closes the event loop
+    between tasks and breaks process-global async Redis pools) and as the
+    fallback when `bounded_redis_call` returns `ERROR`/`TIMEOUT` (#12288).
+    """
+    if rc is None or not hasattr(rc, "set"):
+        return False
+    ttl_s = _roundup_cache_ttl_seconds(slug, container_payload)
+    stale_ttl_s = _roundup_cache_stale_ttl_seconds(slug, container_payload)
+    encoded = json.dumps(
+        {
+            "built_at": ts,
+            "ttl_s": ttl_s,
+            "stale_ttl_s": stale_ttl_s,
+            "feed_item": feed_item,
+            "container_payload": container_payload,
+        },
+        separators=(",", ":"),
+    )
+    try:
+        rc.set(_redis_cache_key(slug), encoded, ex=int(stale_ttl_s))
+        if _is_machinery_producer_slug(slug) and container_payload is not None:
+            if _roundup_payload_needs_live_rail(container_payload, now_ts=ts):
+                if hasattr(rc, "hset"):
+                    rc.hset(MACHINERY_LIVE_SLUGS_KEY, slug, str(ts))
+                if hasattr(rc, "expire"):
+                    rc.expire(MACHINERY_LIVE_SLUGS_KEY, MACHINERY_LIVE_SLUGS_TTL_S)
+            else:
+                if hasattr(rc, "hdel"):
+                    rc.hdel(MACHINERY_LIVE_SLUGS_KEY, slug)
+        return True
+    except Exception:  # noqa: BLE001 — cache write is best-effort
+        logger.warning(
+            "roundup_containers: sync Redis cache write failed for %s",
+            slug,
+            exc_info=True,
+        )
+        return False
+
+
 async def _store_roundup_cache_entry(
     cache_key: tuple[str, Any],
     slug: str,
@@ -1067,6 +1115,7 @@ async def _store_roundup_cache_entry(
         copy.deepcopy(container_payload),
     )
     if isinstance(db, AsyncSession):
+        wrote_async = False
         try:
             from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
@@ -1081,7 +1130,7 @@ async def _store_roundup_cache_entry(
                 separators=(",", ":"),
             )
             client = await get_shared_async_redis()
-            await bounded_redis_call(
+            set_res = await bounded_redis_call(
                 lambda: client.set(
                     _redis_cache_key(slug),
                     encoded,
@@ -1089,7 +1138,8 @@ async def _store_roundup_cache_entry(
                 ),
                 treat_none_as_miss=False,
             )
-            if _is_machinery_producer_slug(slug) and container_payload is not None:
+            wrote_async = bool(set_res.is_ok)
+            if wrote_async and _is_machinery_producer_slug(slug) and container_payload is not None:
                 if _roundup_payload_needs_live_rail(container_payload, now_ts=ts):
                     await bounded_redis_call(
                         lambda: client.hset(MACHINERY_LIVE_SLUGS_KEY, slug, str(ts)),
@@ -1112,6 +1162,19 @@ async def _store_roundup_cache_entry(
                 slug,
                 exc_info=True,
             )
+        if not wrote_async and _is_machinery_producer_slug(slug):
+            try:
+                from app.tasks.redis_state import get_redis_client
+
+                store_roundup_cache_sync(
+                    get_redis_client(), slug, ts, feed_item, container_payload
+                )
+            except Exception:  # noqa: BLE001 — sync fallback is best-effort
+                logger.warning(
+                    "roundup_containers: sync Redis fallback failed for %s",
+                    slug,
+                    exc_info=True,
+                )
 
 
 async def _cache_roundup_timeout_refusal(

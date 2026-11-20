@@ -1803,6 +1803,7 @@ async def _prewarm_machinery_roundups(
     deadline_s: float = 25.0,
     *,
     slugs: list[str] | set[str] | tuple[str, ...] | None = None,
+    rc: object | None = None,
 ) -> dict:
     """Warm registered `machinery-*` roundup caches into shared Redis in parallel."""
     import asyncio
@@ -1817,10 +1818,20 @@ async def _prewarm_machinery_roundups(
         _roundup_payload_has_live_event,
         ensure_optional_roundup_candidates,
         evaluate_roundup_producer,
+        store_roundup_cache_sync,
     )
 
     if not container_machinery_enabled() or not containers_read_enabled():
         return {"outcome": "disabled", "warmed": 0}
+
+    sync_rc = rc
+    if sync_rc is None:
+        try:
+            from app.tasks.redis_state import get_redis_client
+
+            sync_rc = get_redis_client()
+        except Exception:  # noqa: BLE001 — test environments without Redis
+            sync_rc = None
 
     ensure_optional_roundup_candidates()
     slug_filter = set(slugs) if slugs is not None else None
@@ -1848,10 +1859,16 @@ async def _prewarm_machinery_roundups(
                 )
                 elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
                 ok = fi is not None and cp is not None
+                redis_written = False
+                if ok and sync_rc is not None:
+                    redis_written = store_roundup_cache_sync(
+                        sync_rc, prod.slug, _time.time(), fi, cp
+                    )
                 return prod.slug, {
                     "outcome": "ok" if ok else "refused",
                     "elapsed_ms": elapsed_ms,
                     "live": bool(_roundup_payload_has_live_event(cp)) if ok else False,
+                    "redis_written": redis_written,
                 }
         except asyncio.TimeoutError:
             elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
@@ -1860,20 +1877,33 @@ async def _prewarm_machinery_roundups(
                 prod.slug,
                 deadline_s,
             )
-            return prod.slug, {"outcome": "timeout", "elapsed_ms": elapsed_ms, "live": False}
+            return prod.slug, {
+                "outcome": "timeout",
+                "elapsed_ms": elapsed_ms,
+                "live": False,
+                "redis_written": False,
+            }
         except Exception as exc:  # noqa: BLE001
             elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
             logger.warning("Machinery roundup pre-warm failed for %s: %s", prod.slug, exc)
-            return prod.slug, {"outcome": "error", "elapsed_ms": elapsed_ms, "live": False}
+            return prod.slug, {
+                "outcome": "error",
+                "elapsed_ms": elapsed_ms,
+                "live": False,
+                "redis_written": False,
+            }
 
     results = dict(await asyncio.gather(*(_warm_one(p) for p in producers)))
     wall_ms = round((_time.monotonic() - wall_started) * 1000.0, 1)
     total_db_ms = round(sum(float(v.get("elapsed_ms") or 0.0) for v in results.values()), 1)
     warmed = sum(1 for v in results.values() if v.get("outcome") == "ok")
+    redis_written_n = sum(1 for v in results.values() if v.get("redis_written"))
     logger.info(
-        "Machinery roundup pre-warm finished: %d/%d ok wall_ms=%.1f total_db_ms=%.1f (%s)",
+        "Machinery roundup pre-warm finished: %d/%d ok redis_written=%d/%d wall_ms=%.1f total_db_ms=%.1f (%s)",
         warmed,
         len(producers),
+        redis_written_n,
+        warmed,
         wall_ms,
         total_db_ms,
         {k: f"{v['outcome']}:{v['elapsed_ms']}ms" for k, v in results.items()},
@@ -1881,6 +1911,7 @@ async def _prewarm_machinery_roundups(
     return {
         "outcome": "ok" if warmed else "empty",
         "warmed": warmed,
+        "redis_written": redis_written_n,
         "wall_ms": wall_ms,
         "total_db_ms": total_db_ms,
         "slugs": results,
