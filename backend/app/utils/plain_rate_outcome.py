@@ -37,8 +37,28 @@ _SIGNED_SUFFIX_MOVE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_RANGE_PREFIX_MOVE_RE = re.compile(
+    rf"^(cut|cuts|decrease|lower|hike|hikes|increase|raise)\s*(?:by\s*)?({_NUM_CORE})\s*[-–—]\s*({_NUM_CORE})\s*(?:bps|basis\s+points?)$",
+    re.IGNORECASE,
+)
+
+_MORE_THAN_PREFIX_MOVE_RE = re.compile(
+    rf"^(cut|cuts|decrease|lower|hike|hikes|increase|raise)\s*(?:by\s*)?(?:more\s+than|over|above)\s+({_NUM_CORE})\s*(?:bps|basis\s+points?)$",
+    re.IGNORECASE,
+)
+
+_MORE_THAN_SUFFIX_MOVE_RE = re.compile(
+    rf"^(?:more\s+than|over|above)\s+({_NUM_CORE})\s*(?:bps|basis\s+points?)\s*(cut|cuts|decrease|hike|hikes|increase)$",
+    re.IGNORECASE,
+)
+
 _PLAIN_RATE_MOVE_RE = re.compile(
     r"^(quarter|half|three-quarter|full|\d+(?:\.\d+)?)-point(?:\s+(or\s+(?:larger|more|greater)))?\s+(cut|decrease|increase|hike)$",
+    re.IGNORECASE,
+)
+
+_PLAIN_OF_MOVE_RE = re.compile(
+    r"^(cut|increase)\s+of\s+(up\s+to|more\s+than)\s+(?:a\s+)?(quarter|half|three-quarter|full|\d+(?:\.\d+)?)\s+points?$",
     re.IGNORECASE,
 )
 
@@ -73,7 +93,24 @@ def plain_bps_step_words(val_bps: float) -> str:
         return "three-quarter point"
     if abs(rounded - 100.0) < 1e-6:
         return "full point"
-    return f"{val_bps / 100.0:g} points"
+    pts = val_bps / 100.0
+    if abs(pts - 1.0) < 1e-6:
+        return "1 point"
+    return f"{pts:g} points"
+
+
+def _plain_bps_step_with_article(val_bps: float) -> str:
+    """Format a basis-point step for prose after 'up to' / 'more than'."""
+    words = plain_bps_step_words(val_bps)
+    if words in {"quarter point", "half point", "three-quarter point", "full point"}:
+        return f"a {words}"
+    return words
+
+
+def _plain_rate_more_than_label(val_bps: float, direction: int) -> str:
+    """Format a strict '>' rate move without implying 'or larger' overlap (#13196)."""
+    lead = "Cut" if direction < 0 else "Increase"
+    return f"{lead} of more than {_plain_bps_step_with_article(val_bps)}"
 
 
 def plain_rate_move_label(val_bps: float, direction: int, is_open: bool) -> str:
@@ -155,6 +192,31 @@ def plain_rate_outcome_label(
                 return f"{cnt}{cnt_plus} {noun} ({step_txt})"
             return f"{cnt}{cnt_plus} ({step_txt})"
 
+    m_rng = _RANGE_PREFIX_MOVE_RE.match(trimmed)
+    if m_rng:
+        direction = -1 if m_rng.group(1).lower() in {"cut", "cuts", "decrease", "lower"} else 1
+        lo = _parse_float(m_rng.group(2))
+        hi = _parse_float(m_rng.group(3))
+        if math.isfinite(lo) and math.isfinite(hi) and hi >= lo:
+            lead = "Cut" if direction < 0 else "Increase"
+            if abs(lo - 1.0) < 1e-6 or lo == 0.0:
+                return f"{lead} of up to {_plain_bps_step_with_article(hi)}"
+            return f"{lead} of {_plain_bps_step_with_article(lo)} to {_plain_bps_step_with_article(hi)}"
+
+    m_mt_pre = _MORE_THAN_PREFIX_MOVE_RE.match(trimmed)
+    if m_mt_pre:
+        direction = -1 if m_mt_pre.group(1).lower() in {"cut", "cuts", "decrease", "lower"} else 1
+        val = _parse_float(m_mt_pre.group(2))
+        if math.isfinite(val):
+            return _plain_rate_more_than_label(val, direction)
+
+    m_mt_suf = _MORE_THAN_SUFFIX_MOVE_RE.match(trimmed)
+    if m_mt_suf:
+        direction = -1 if m_mt_suf.group(2).lower() in {"cut", "cuts", "decrease"} else 1
+        val = _parse_float(m_mt_suf.group(1))
+        if math.isfinite(val):
+            return _plain_rate_more_than_label(val, direction)
+
     m_pre = _SIGNED_PREFIX_MOVE_RE.match(trimmed)
     if m_pre:
         direction = -1 if m_pre.group(1).lower() in {"cut", "cuts", "decrease", "lower"} else 1
@@ -162,10 +224,14 @@ def plain_rate_outcome_label(
         plus_tok = (m_pre.group(4) or "").strip()
         val = _parse_float(m_pre.group(3))
         if math.isfinite(val):
-            # Strict '>' on the FOMC 25-bps grid ('Hike >25bps', 'Cut >25bps') means 50+ bps.
-            if op_tok.startswith(">") and not op_tok.startswith(">=") and abs(val - 25.0) < 1e-6:
+            is_strict_gt = op_tok.startswith(">") and not op_tok.startswith(">=")
+            # Strict '>' on the FOMC 25-bps grid ('Hike >25bps', 'Cut >25bps') means 50+ bps (Ruling 244: A).
+            # Any other strict '>' (e.g. 'Cut >50bps') must say 'more than', never 'or larger' (#13196).
+            if is_strict_gt and abs(val - 25.0) < 1e-6:
                 val = 50.0
                 is_open = True
+            elif is_strict_gt:
+                return _plain_rate_more_than_label(val, direction)
             else:
                 is_open = bool(op_tok or plus_tok)
             return plain_rate_move_label(val, direction, is_open)
@@ -178,9 +244,12 @@ def plain_rate_outcome_label(
         or_more = bool(re.search(r"\bor\s+(?:more|larger|greater)$", trimmed, re.IGNORECASE))
         val = _parse_float(m_suf.group(2))
         if math.isfinite(val):
-            if op_tok.startswith(">") and not op_tok.startswith(">=") and abs(val - 25.0) < 1e-6:
+            is_strict_gt = op_tok.startswith(">") and not op_tok.startswith(">=")
+            if is_strict_gt and abs(val - 25.0) < 1e-6:
                 val = 50.0
                 is_open = True
+            elif is_strict_gt:
+                return _plain_rate_more_than_label(val, direction)
             else:
                 is_open = bool(op_tok or plus_tok or or_more)
             return plain_rate_move_label(val, direction, is_open)
@@ -207,6 +276,18 @@ def parse_plain_rate_threshold(label: Optional[str]) -> Optional[tuple[float, st
             else _parse_float(mag_tok) * 100.0
         )
         direction = "above" if m_rate.group(2) else "exact"
+        return (val, "bps", direction)
+
+    m_of = _PLAIN_OF_MOVE_RE.match(trimmed)
+    if m_of:
+        qual = m_of.group(2).lower()
+        mag_tok = m_of.group(3).lower()
+        val = (
+            _PLAIN_MAGNITUDE_BPS[mag_tok]
+            if mag_tok in _PLAIN_MAGNITUDE_BPS
+            else _parse_float(mag_tok) * 100.0
+        )
+        direction = "above" if qual.startswith("more") else "exact"
         return (val, "bps", direction)
 
     m_cnt = _PLAIN_COUNT_STEP_RE.match(trimmed)

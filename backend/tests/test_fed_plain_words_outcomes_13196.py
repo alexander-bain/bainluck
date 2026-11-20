@@ -180,3 +180,42 @@ def test_feed_card_helpers_emit_plain_words_and_keep_raw_keys():
     assert all(not _BPS_RE.search(v) for v in display.values())
     # Raw ORM names untouched for matching
     assert o1.name == "25 bps increase"
+
+
+def test_remaining_eight_live_range_and_more_than_forms_plus_strict_gt():
+    """#13196 follow-up (Item 6): Israel/Russia/Thailand/Turkey range & 'more than' forms,
+    plus strict '>' never collapsing into 'or larger'."""
+    cases = {
+        "Cut 1-25bps": "Cut of up to a quarter point",
+        "Hike 1-25bps": "Increase of up to a quarter point",
+        "Cut more than 25bps": "Cut of more than a quarter point",
+        "Hike more than 25bps": "Increase of more than a quarter point",
+        "Cut 1-250bps": "Cut of up to 2.5 points",
+        "Hike 1-250bps": "Increase of up to 2.5 points",
+        "Cut more than 250bps": "Cut of more than 2.5 points",
+        "Hike more than 250bps": "Increase of more than 2.5 points",
+        # Strict '>' outside the FOMC >25bps special case must say "more than", never "or larger"
+        "Cut >50bps": "Cut of more than a half point",
+        "Hike >50bps": "Increase of more than a half point",
+        "Cut >250bps": "Cut of more than 2.5 points",
+        ">50 bps cut": "Cut of more than a half point",
+        # Inclusive operators keep "or larger"
+        "Cut >=50bps": "Half-point or larger cut",
+        "Hike 50+ bps": "Half-point or larger increase",
+        # FOMC 25-bps grid special case preserved (Ruling 244: A)
+        "Hike >25bps": "Half-point or larger increase",
+        "Cut >25bps": "Half-point or larger cut",
+    }
+    for raw, expected in cases.items():
+        got = plain_rate_outcome_label(raw)
+        assert got == expected, f"{raw!r} -> {got!r} != {expected!r}"
+        assert not _BPS_RE.search(got)
+
+    # Signed threshold parser recognizes the new "of up to / of more than" forms
+    from app.utils.plain_rate_outcome import parse_plain_rate_threshold
+
+    assert parse_plain_rate_threshold("Cut of up to a quarter point") == (25.0, "bps", "exact")
+    assert parse_plain_rate_threshold("Cut of more than a quarter point") == (25.0, "bps", "above")
+    assert parse_plain_rate_threshold("Increase of up to 2.5 points") == (250.0, "bps", "exact")
+    assert parse_plain_rate_threshold("Increase of more than 2.5 points") == (250.0, "bps", "above")
+
