@@ -811,3 +811,34 @@ class TestScoutDurabilityPreFlip13124:
         assert m is not None
         shown = int(m.group(1))
         assert 0 < shown < 1000
+
+
+class TestFrozenBenchmarkInput:
+    """#13102: Frozen Nov 19 benchmark input and fail-closed dry-run safety."""
+
+    def test_frozen_benchmark_fixture_loads_and_dry_runs_without_api_calls(
+        self, monkeypatch
+    ):
+        from scripts import run_fun_scout_benchmark_13102 as bench
+
+        def _forbid(*_a, **_k):
+            raise AssertionError("Paid model client must never be built in dry-run")
+
+        monkeypatch.setattr(bench, "build_scout_openai_client", _forbid)
+        monkeypatch.setattr(bench, "build_scout_anthropic_client", _forbid)
+
+        assert bench.DEFAULT_BENCHMARK_FIXTURE.is_file()
+        summary = bench.summarize_fixture_dry_run(
+            bench.DEFAULT_BENCHMARK_FIXTURE,
+            models=[CLAUDE_SONNET_MODEL, CLAUDE_OPUS_MODEL],
+        )
+        assert summary["total_markets"] == 3424
+        assert summary["passing_code_checks"] > 3000
+        assert summary["passing_by_source"]["kalshi"] > 1000
+        assert summary["passing_by_source"]["polymarket"] > 1000
+        assert summary["seed_markets_present"] >= 80
+        assert 0.0 < summary["combined_est_usd"] < 1.0
+
+        # Calling main with --dry-run OR without --execute stays zero-cost.
+        assert bench.main(["--dry-run"]) == 0
+        assert bench.main([]) == 0
