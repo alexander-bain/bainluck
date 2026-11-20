@@ -1110,14 +1110,57 @@ _CUMULATIVE_OUTCOME_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: Maximum age (days) for a market's newest live outcome observation before it is
+#: refused from computed groupings (#12288: prevents past-ceremony markets like #109566,
+#: last updated Mar 12 with all 16 prices withheld, from entering a grouping).
+_MAX_LIVE_OUTCOME_AGE_DAYS = 30
+_TITLE_FOUR_DIGIT_YEAR_RE = re.compile(r"\b(20\d{2})\b")
 
-def _market_matches_query(market: Mapping[str, Any], query: Mapping[str, Any]) -> bool:
+
+def _parse_iso_dt_utc(raw: Any) -> Optional[datetime]:
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo is not None else raw.replace(tzinfo=timezone.utc)
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _market_matches_query(
+    market: Mapping[str, Any],
+    query: Mapping[str, Any],
+    *,
+    now_dt: Optional[datetime] = None,
+) -> bool:
     status = str(market.get("status") or "open").lower()
     if status not in {"open", "active"}:
+        return False
+    if market.get("is_settled") or market.get("settled_winner"):
         return False
     title_low = str(market.get("name") or "").lower()
     if not title_low:
         return False
+
+    if now_dt is not None:
+        for date_key in ("resolution_date", "event_date"):
+            dt_val = _parse_iso_dt_utc(market.get(date_key))
+            if dt_val is not None and dt_val < now_dt:
+                return False
+        max_horizon = query.get("max_horizon_years")
+        if isinstance(max_horizon, (int, float)) and not isinstance(max_horizon, bool):
+            max_year = now_dt.year + int(max_horizon)
+            res_dt = _parse_iso_dt_utc(market.get("resolution_date"))
+            if res_dt is not None and res_dt.year > max_year:
+                return False
+            title_years = [int(y) for y in _TITLE_FOUR_DIGIT_YEAR_RE.findall(title_low)]
+            if title_years and max(title_years) > max_year:
+                return False
 
     req_tokens = [str(t).lower() for t in (query.get("title_all_tokens") or ()) if str(t).strip()]
     if any(tok not in title_low for tok in req_tokens):
@@ -1139,17 +1182,40 @@ def _market_matches_query(market: Mapping[str, Any], query: Mapping[str, Any]) -
     if any(tok in title_low for tok in excl_tokens):
         return False
 
-    raw_outcomes = market.get("top_outcomes") or market.get("outcomes") or ()
+    # Never fall back from an explicitly empty screened `top_outcomes` list to raw DB `outcomes`.
+    if "top_outcomes" in market and isinstance(market["top_outcomes"], (list, tuple)):
+        raw_outcomes = market["top_outcomes"]
+    else:
+        raw_outcomes = market.get("outcomes") or ()
     priced = [
         o
         for o in raw_outcomes
         if isinstance(o, Mapping)
+        and not o.get("price_withheld")
+        and not o.get("withheld_reason")
         and isinstance(o.get("probability"), (int, float))
+        and not isinstance(o.get("probability"), bool)
         and 0.0 < float(o["probability"]) < 1.0
         and not _PLACEHOLDER_OUTCOME_RE.match(str(o.get("name") or "").strip())
     ]
     if not priced:
         return False
+
+    if now_dt is not None:
+        obs_stamps = [
+            dt
+            for dt in (
+                _parse_iso_dt_utc(o.get("last_updated") or o.get("observed_at"))
+                for o in priced
+            )
+            if dt is not None
+        ]
+        if not obs_stamps:
+            mkt_obs = _parse_iso_dt_utc(market.get("newest_outcome_updated_at"))
+            if mkt_obs is not None:
+                obs_stamps.append(mkt_obs)
+        if obs_stamps and (now_dt - max(obs_stamps)) > timedelta(days=_MAX_LIVE_OUTCOME_AGE_DAYS):
+            return False
 
     shape = str(query.get("shape") or "any").lower()
     if shape == "two_way" and len(priced) != 2:
@@ -1254,7 +1320,10 @@ def _hydrate_market_visual_item(
     content_kind: Optional[str] = None,
 ) -> dict[str, Any]:
     mid = int(market["id"])
-    raw_outcomes = market.get("top_outcomes") or market.get("outcomes") or ()
+    if "top_outcomes" in market and isinstance(market["top_outcomes"], (list, tuple)):
+        raw_outcomes = market["top_outcomes"]
+    else:
+        raw_outcomes = market.get("outcomes") or ()
     mut_excl = bool(market.get("mutually_exclusive", True))
     canonical_rows, canon_by_oid, canon_by_key = _canonical_market_outcome_map(
         raw_outcomes,
@@ -1354,14 +1423,18 @@ def _hydrate_market_visual_item(
             "by_outcome_id": canon_by_oid,
             "by_outcome_key": canon_by_key,
         }
+    from app.services.paired_metric_register import clean_card_face_title
+
+    clean_raw_name = clean_card_face_title(str(market.get("name") or ""))
     card_copy = dict(market)
+    card_copy["name"] = clean_raw_name
     card_copy["content_kind"] = effective_kind
     card_copy["member_page_numbers"] = mpn
 
     return {
         "market_id": mid,
-        "title": _clean_section_market_label(str(market.get("name") or "")),
-        "raw_title": str(market.get("name") or ""),
+        "title": clean_card_face_title(_clean_section_market_label(clean_raw_name)),
+        "raw_title": clean_raw_name,
         "href": f"/futures/{mid}",
         "source": str(market.get("source") or ""),
         "lead_prob": lead_prob,
@@ -2101,23 +2174,17 @@ async def _load_snapshot_from_db(
                     "volume": float(fm.volume or 0.0),
                     "image_url": fm.image_url,
                     "llm_sport_category": fm.llm_sport_category,
+                    "resolution_date": getattr(fm, "resolution_date", None),
+                    "event_date": getattr(fm, "event_date", None),
                     "top_outcomes": top_outs,
                 }
             )
 
-        # Slice 6 Item 2b: format every candidate member market through the exact same
-        # verified_title detail pipeline as GET /api/futures/{id}?representation=verified_title
-        # so every number on a card or page equals the member's own page at the same moment.
-        candidate_mids: set[int] = set(paired_stage_mids)
-        for aq in market_sections:
-            cap_n = (
-                max(int(aq.get("max_items", 4)) + 3, 6)
-                if aq.get("kind") == "market_history"
-                else max(int(aq.get("max_items", 4)) + 2, 4)
-            )
-            matched_sec = [pm for pm in prelim_markets if _market_matches_query(pm, aq)]
-            for pm in matched_sec[:cap_n]:
-                candidate_mids.add(int(pm["id"]))
+        # Slice 6 Item 2b + #12288 pre-flip guard: format EVERY candidate member market
+        # through the exact same verified_title detail + withhold pipeline as
+        # GET /api/futures/{id}?representation=verified_title so no unscreened raw DB
+        # market (like past-ceremony #109566 with all 16 prices withheld) can slip through.
+        candidate_mids: set[int] = set(paired_stage_mids) | set(ordered_title_mids)
 
         detail_by_mid: dict[int, dict[str, Any]] = {}
         mpn_by_mid: dict[int, dict[str, Any]] = {}
@@ -2130,8 +2197,7 @@ async def _load_snapshot_from_db(
             withheld_by_mid = await withheld_price_outcome_ids_for_markets(
                 db, selected_vt_rows
             )
-            fleet_newest_cached: Any = None
-            fleet_newest_queried = False
+            fleet_newest_by_source: dict[str, Any] = {}
             for fm in selected_vt_rows:
                 unsupported_ids = withheld_by_mid.get(fm.id, set())
                 if getattr(fm, "source", None) == "polymarket" and not getattr(fm, "mutually_exclusive", True):
@@ -2140,13 +2206,10 @@ async def _load_snapshot_from_db(
                 else:
                     leg_sides = {}
                     lead_leg = None
-                if not fleet_newest_queried:
-                    fm_fleet = await _fleet_newest_observation(db, fm)
-                    if fm_fleet is not None:
-                        fleet_newest_cached = fm_fleet
-                        fleet_newest_queried = True
-                else:
-                    fm_fleet = fleet_newest_cached
+                src_key = str(getattr(fm, "source", None) or "").strip().lower()
+                if src_key not in fleet_newest_by_source:
+                    fleet_newest_by_source[src_key] = await _fleet_newest_observation(db, fm)
+                fm_fleet = fleet_newest_by_source[src_key]
                 detail = _format_market_detail(
                     fm,
                     None,
@@ -2167,6 +2230,8 @@ async def _load_snapshot_from_db(
                 by_fold: dict[str, tuple[float, int]] = {}
                 formatted_outs: list[dict[str, Any]] = []
                 img_by_oid = {o.id: getattr(o, "image_url", None) for o in (fm.outcomes or ())}
+                upd_by_oid = {o.id: getattr(o, "last_updated", None) for o in (fm.outcomes or ())}
+                newest_live_upd: Optional[datetime] = None
                 for idx, row in enumerate(d_outs):
                     prob = row.get("probability")
                     if prob is None or not isinstance(prob, (int, float)) or not math.isfinite(float(prob)):
@@ -2192,6 +2257,9 @@ async def _load_snapshot_from_db(
                     fk = fold_outcome_key(r_name)
                     if fk and fk not in by_fold:
                         by_fold[fk] = (p_f, pct_int)
+                    o_upd_dt = _parse_iso_dt_utc(upd_by_oid.get(oid))
+                    if o_upd_dt is not None and (newest_live_upd is None or o_upd_dt > newest_live_upd):
+                        newest_live_upd = o_upd_dt
                     formatted_outs.append(
                         {
                             "id": oid,
@@ -2200,6 +2268,7 @@ async def _load_snapshot_from_db(
                             "rendered_percent": pct_int,
                             "opening_probability": row.get("opening_probability"),
                             "image_url": img_by_oid.get(oid),
+                            "last_updated": o_upd_dt.isoformat() if o_upd_dt is not None else None,
                         }
                     )
                 mpn = {
@@ -2210,15 +2279,21 @@ async def _load_snapshot_from_db(
                 mpn_by_mid[fm.id] = mpn
                 detail_by_mid[fm.id] = {
                     "top_outcomes": formatted_outs,
+                    "newest_outcome_updated_at": newest_live_upd.isoformat() if newest_live_upd is not None else None,
                     "by_oid_prob_pct": {int(o["id"]): (float(o["probability"]), int(o["rendered_percent"])) for o in formatted_outs},
                     "by_fold_prob_pct": by_fold,
                 }
 
         for pm in prelim_markets:
             mid = int(pm["id"])
-            if mid in detail_by_mid:
-                pm["top_outcomes"] = detail_by_mid[mid]["top_outcomes"]
-                pm["member_page_numbers"] = mpn_by_mid[mid]
+            if mid not in detail_by_mid:
+                continue
+            screened_outs = detail_by_mid[mid]["top_outcomes"]
+            if not screened_outs:
+                continue
+            pm["top_outcomes"] = screened_outs
+            pm["newest_outcome_updated_at"] = detail_by_mid[mid]["newest_outcome_updated_at"]
+            pm["member_page_numbers"] = mpn_by_mid[mid]
             markets_out.append(pm)
 
         # Sync paired_stage entries to their linked stage_1_market.id & stage_2_market.id member pages
@@ -2369,14 +2444,30 @@ def _match_paired_set(
 
 
 def _twin_market_key(title: str) -> str:
-    """Canonicalize cross-venue twin titles (e.g. 'April 2027 Fed Decision' vs 'April Fed Decision')."""
-    low = title.strip().lower()
+    """Canonicalize cross-venue twin titles (e.g. 'Fed Decision in December?' vs 'Fed decision in Dec 2026?')."""
+    low = re.sub(r"[?!.,]+$", "", title.strip().lower()).strip()
     m_fomc = re.match(r"^([a-z]+)(?:\s+\d{4})?\s+fed\s+decision$", low)
     if m_fomc:
-        return f"fomc:{m_fomc.group(1)}"
+        return f"fomc:{_expand_month_token(m_fomc.group(1)).lower()}"
+    m_fomc_in = re.match(r"^fed\s+decision\s+in\s+([a-z]+)(?:\s+\d{4})?$", low)
+    if m_fomc_in:
+        return f"fomc:{_expand_month_token(m_fomc_in.group(1)).lower()}"
     m_unemp = re.match(r"^([a-z]+)(?:\s+\d{4})?\s+u\.s\.\s+unemployment(?:\s+rate)?$", low)
     if m_unemp:
         return f"us_unemp:{_expand_month_token(m_unemp.group(1)).lower()}"
+    m_gdp = re.match(r"^u\.?s\.?\s+(?:real\s+)?gdp\s+growth\s+in\s+(.+)$", low)
+    if m_gdp:
+        return f"us_gdp:{_norm_key(m_gdp.group(1))}"
+    if re.search(r"\boscars?\b", low) and not re.search(r"\bnomin", low):
+        m_oscar_cat = re.search(
+            r"\b(best\s+(?:picture|director|supporting\s+actor|supporting\s+actress|actor|actress|"
+            r"animated\s+feature|international\s+feature|documentary\s+feature|original\s+score|"
+            r"adapted\s+screenplay|original\s+screenplay))\b",
+            low,
+        )
+        if m_oscar_cat:
+            oscar_cat = " ".join(m_oscar_cat.group(1).split())
+            return f"oscars:{oscar_cat}"
     return _norm_key(title)
 
 
@@ -2866,10 +2957,14 @@ async def produce_container_machinery(
     built_by_idx: dict[int, dict[str, Any]] = {}
     all_member_envelopes: list[dict[str, Any]] = []
     seen_member_keys: set[tuple[str, int]] = set()
+    seen_twin_keys: set[str] = set()
     covered_twin_market_ids: list[int] = []
     lead_paired_set: Optional[dict[str, Any]] = None
 
     def _record_covered_twins(item: Mapping[str, Any]) -> None:
+        t_key = _twin_market_key(str(item.get("title") or ""))
+        if t_key:
+            seen_twin_keys.add(t_key)
         for twin_mid in item.get("_twin_market_ids") or ():
             if (
                 isinstance(twin_mid, int)
@@ -2877,6 +2972,20 @@ async def produce_container_machinery(
                 and twin_mid not in covered_twin_market_ids
             ):
                 covered_twin_market_ids.append(twin_mid)
+                seen_member_keys.add((MEMBER_MARKET, twin_mid))
+
+    def _filter_unseen_twins(items_in: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+        kept: list[dict[str, Any]] = []
+        for it in items_in:
+            t_key = _twin_market_key(str(it.get("title") or ""))
+            if t_key and t_key in seen_twin_keys:
+                mid = it.get("market_id")
+                if isinstance(mid, int) and not isinstance(mid, bool) and mid not in covered_twin_market_ids:
+                    covered_twin_market_ids.append(mid)
+                _record_covered_twins(it)
+                continue
+            kept.append(it)
+        return kept
 
     indexed_cfg = [
         (idx, sec_cfg)
@@ -2908,7 +3017,10 @@ async def produce_container_machinery(
         initial_visible = min(3, int(aq.get("initial_visible_limit", 3)))
 
         if aq_kind == "paired_stage":
-            from app.services.paired_metric_register import fold_outcome_key
+            from app.services.paired_metric_register import (
+                clean_card_face_title,
+                fold_outcome_key,
+            )
 
             pset = _match_paired_set(paired_sets, aq)
             if pset is None:
@@ -2967,7 +3079,7 @@ async def produce_container_machinery(
                     }
                 synthetic_card = {
                     "id": mid,
-                    "name": str(m_meta.get("name") or sec_title),
+                    "name": clean_card_face_title(str(m_meta.get("name") or sec_title)),
                     "status": "open",
                     "source": str(m_meta.get("source") or "kalshi"),
                     "content_kind": "futures",
@@ -3124,9 +3236,9 @@ async def produce_container_machinery(
                 _hydrate_market_visual_item(m, max_outcomes=max_outcomes, resolver=resolver, content_kind="history")
                 for m in all_markets
                 if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys
-                and _market_matches_query(m, aq)
+                and _market_matches_query(m, aq, now_dt=now_dt)
             ]
-            matched_h = _dedupe_twin_markets(matched_h)
+            matched_h = _filter_unseen_twins(_dedupe_twin_markets(matched_h))
             order_by = str(aq.get("order_by") or "movement_desc")
             if order_by == "closeness_to_50":
                 matched_h.sort(key=lambda x: (x["closeness_to_50"], -x["lead_prob"]))
@@ -3245,9 +3357,9 @@ async def produce_container_machinery(
             )
             for m in all_markets
             if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys
-            and _market_matches_query(m, aq)
+            and _market_matches_query(m, aq, now_dt=now_dt)
         ]
-        matched = _dedupe_twin_markets(matched)
+        matched = _filter_unseen_twins(_dedupe_twin_markets(matched))
         order_by = str(aq.get("order_by") or "lead_prob_desc")
         if order_by == "closeness_to_50":
             matched.sort(key=lambda x: (x["closeness_to_50"], -x["lead_prob"]))
