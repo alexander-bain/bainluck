@@ -3764,6 +3764,11 @@ def espn_abbreviation_may_be_written(
     return bool(match_was_exact or repointed_from or fuzzy_identical)
 
 
+_KNOWN_FRANCHISE_RENAMES: dict[str, str] = {
+    "utah hockey club": "utah mammoth",
+}
+
+
 def _espn_id_norm_basic(value: str) -> str:
     if not value:
         return ""
@@ -3772,12 +3777,16 @@ def _espn_id_norm_basic(value: str) -> str:
     ascii_val = (
         unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     )
+    # Treat "&" and "and" equivalently ("Brighton & Hove Albion" == "Brighton and Hove Albion")
+    # while keeping "Texas A&M" distinct from "Texas" ("texas a and m" != "texas").
+    ascii_val = ascii_val.replace("&", " and ")
     cleaned = re.sub(r"[^a-z0-9\s]", " ", ascii_val.lower().strip())
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def _espn_id_norm_expanded(value: str) -> str:
     s = _espn_id_norm_basic(value)
+    s = _KNOWN_FRANCHISE_RENAMES.get(s, s)
     s = re.sub(r"\bst\b", "state", s)
     s = re.sub(r"\bmt\b", "mount", s)
     s = re.sub(r"\bft\b", "fort", s)
@@ -3785,6 +3794,8 @@ def _espn_id_norm_expanded(value: str) -> str:
     s = re.sub(r"\bs\b", "south", s)
     s = re.sub(r"\be\b", "east", s)
     s = re.sub(r"\bw\b", "west", s)
+    s = re.sub(r"\bla\b", "los angeles", s)
+    s = re.sub(r"\bman\b", "manchester", s)
     return re.sub(r"\s+", " ", s).strip()
 
 

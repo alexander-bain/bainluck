@@ -460,6 +460,7 @@ class TestEspnIdNameAgreement:
             ("Tennessee Volunteers", "Tennessee", "Tennessee State Tigers", "Tennessee State"),
             ("Tennessee Volunteers", "Tennessee", "Tennessee Tech Golden Eagles", "Tennessee Tech"),
             ("Loyola Chicago Ramblers", "Loyola Chicago", "Loyola Maryland Greyhounds", "Loyola Maryland"),
+            ("Manchester United", "Manchester United", "Manchester City", "Manchester City"),
         ],
     )
     def test_namesake_schools_refuse_in_both_directions(
@@ -554,3 +555,27 @@ class TestNumberDifferenceRefusal:
         assert stats["fuzzy_media_refused"] == 2
         assert stats["espn_id_name_disagreement"] == 1
         assert espn_id_name_agrees("Columbus Crew 2", columbus_crew) is False
+
+    def test_legitimately_anchored_pro_and_soccer_variants_still_fill(self, monkeypatch):
+        brighton = _espn("331", "Brighton & Hove Albion", "Brighton", "BHA", location="Brighton & Hove Albion")
+        clippers = _espn("12", "LA Clippers", "Clippers", "LAC", location="LA")
+        man_utd = _espn("360", "Manchester United", "Man United", "MUN", location="Manchester United")
+        utah = _espn("129764", "Utah Mammoth", "Utah", "UTA", location="Utah")
+
+        t_bha = _team(9101, "Brighton and Hove Albion", espn_id="331", abbreviation=None)
+        t_lac = _team(9102, "Los Angeles Clippers", espn_id="12", abbreviation=None)
+        t_mun = _team(9103, "Man United", espn_id="360", abbreviation=None)
+        t_uta = _team(9104, "Utah Hockey Club", espn_id="129764", abbreviation=None)
+
+        stats = _run_pass(
+            monkeypatch,
+            [t_bha, t_lac, t_mun, t_uta],
+            [brighton, clippers, man_utd, utah],
+            sport_key="soccer_epl",
+        )
+        assert t_bha.abbreviation == "BHA"
+        assert t_lac.abbreviation == "LAC"
+        assert t_mun.abbreviation == "MUN"
+        assert t_uta.abbreviation == "UTA"
+        assert stats["espn_id_name_disagreement"] == 0
+        assert stats["teams_updated"] == 4
