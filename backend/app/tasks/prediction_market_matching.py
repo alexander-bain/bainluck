@@ -9657,6 +9657,35 @@ async def _record_no_match_reason(
     )
 
 
+#: Maximum kickoff gap between two rows representing the same fixture (e.g. a
+#: sportsbook row and an auto-created Polymarket/Kalshi twin whose start was
+#: stamped from venue metadata or UTC midnight) without conflating separate
+#: games in a multi-day series (#13142).
+_SAME_FIXTURE_TWIN_WINDOW_SECONDS = 24 * 3600
+
+
+def _is_sportsbook_row(event) -> bool:
+    """True when ``event`` is anchored to a real sportsbook/Odds API id.
+
+    Legacy ``pm_*`` strings are Polymarket placeholders, not sportsbook rows.
+    """
+    ext = getattr(event, "external_id", None)
+    return bool(ext) and not str(ext).startswith("pm_")
+
+
+def _same_fixture_twin(event_a, event_b) -> bool:
+    """True when two name-matched candidates are twins of one game (#13142)."""
+    sport_a = event_a.sport.key if getattr(event_a, "sport", None) else None
+    sport_b = event_b.sport.key if getattr(event_b, "sport", None) else None
+    if sport_a and sport_b and sport_a != sport_b:
+        return False
+    t_a = getattr(event_a, "commence_time", None)
+    t_b = getattr(event_b, "commence_time", None)
+    if t_a is not None and t_b is not None:
+        return abs((t_a - t_b).total_seconds()) <= _SAME_FIXTURE_TWIN_WINDOW_SECONDS
+    return True
+
+
 def _score_candidates(
     candidates, matchup, market, now, game_date_override=None, *, receipt=None,
     allow_unclassified_bucket: bool = False,
@@ -9670,6 +9699,8 @@ def _score_candidates(
     """
     if not candidates:
         return None
+
+    from app.utils.proven_duplicates import canonical_id_from_tags
 
     traces: list[CandidateTrace] = []
 
@@ -9715,9 +9746,16 @@ def _score_candidates(
     sport_prefix = _market_sport_prefix(market)
 
     best_match = None
+    best_event = None
     best_score = -1
+    considered_matches: list[tuple[Any, dict[str, Any]]] = []
 
     for event in candidates:
+        # #13142: a row tagged `provenance:duplicate-of:<id>` is suppressed on
+        # every public surface; never attach new markets to it.
+        if canonical_id_from_tags(getattr(event, "event_tags", None)) is not None:
+            _trace(event, "duplicate_of")
+            continue
         # #9117 / #9427: a row #4965's fixture guard would refuse is a
         # different game however it scores. The guard refuses it after the
         # fact, and the +8 for an Odds API id (32h of proximity) let Game 1's
@@ -9806,8 +9844,8 @@ def _score_candidates(
         if matchup.team_b:
             score += 10
 
-        # Prefer Odds API events (external_id set) over auto-created ones
-        if event.external_id:
+        # Prefer Odds API events (sportsbook external_id set) over auto-created ones
+        if _is_sportsbook_row(event):
             score += 8
 
         # Sport validation: hard-reject events from the wrong sport.
@@ -9838,16 +9876,41 @@ def _score_candidates(
 
         _trace(event, "considered", score=score)
 
-        if score > best_score:
+        candidate_entry = {
+            "event_id": event.id,
+            "home_team": event.home_team_name,
+            "away_team": event.away_team_name,
+            "yes_is_home": team_match["yes_is_home"],
+            "score": score,
+            "sport_id": event.sport_id,
+        }
+        considered_matches.append((event, candidate_entry))
+
+        if score > best_score or (
+            score == best_score
+            and best_event is not None
+            and _is_sportsbook_row(event)
+            and not _is_sportsbook_row(best_event)
+        ):
             best_score = score
-            best_match = {
-                "event_id": event.id,
-                "home_team": event.home_team_name,
-                "away_team": event.away_team_name,
-                "yes_is_home": team_match["yes_is_home"],
-                "score": score,
-                "sport_id": event.sport_id,
-            }
+            best_event = event
+            best_match = candidate_entry
+
+    # #13142: when both an auto-created id-less row and a sportsbook-anchored
+    # row exist for the same game (within 24h), always prefer the sportsbook
+    # row even if the id-less row happened to score higher on time proximity or
+    # live status. Separate dates of a multi-game series (>24h apart) are left
+    # alone so today's id-less game is never overridden by next week's slate.
+    if best_event is not None and not _is_sportsbook_row(best_event):
+        sportsbook_twins = [
+            (alt_event, alt_entry)
+            for alt_event, alt_entry in considered_matches
+            if _is_sportsbook_row(alt_event) and _same_fixture_twin(best_event, alt_event)
+        ]
+        if sportsbook_twins:
+            best_event, best_match = max(
+                sportsbook_twins, key=lambda pair: pair[1]["score"]
+            )
 
     # When we have no sport prefix (no ticker sport, no llm_sport_category),
     # require a higher confidence threshold to prevent cross-sport mismatches.
@@ -9937,6 +10000,12 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
         .limit(20)
     )
     candidates = event_result.scalars().all()
+    from app.utils.proven_duplicates import canonical_id_from_tags
+
+    candidates = [
+        ev for ev in candidates
+        if canonical_id_from_tags(getattr(ev, "event_tags", None)) is None
+    ]
 
     if len(candidates) == 1:
         # Unambiguous COUNT — exactly one event in that sport + time window.
@@ -9983,14 +10052,19 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
             abbrev_a, abbrev_b, _ = fragments
             best_event = None
             best_score = 0
+            best_is_sportsbook = False
             for event in candidates:
                 score = _score_fragment_match(
                     abbrev_a, abbrev_b,
                     event.home_team_name, event.away_team_name,
                 )
-                if score > best_score:
+                is_sb = _is_sportsbook_row(event)
+                if score > best_score or (
+                    score == best_score and score >= 2 and is_sb and not best_is_sportsbook
+                ):
                     best_score = score
                     best_event = event
+                    best_is_sportsbook = is_sb
             if best_score >= 2 and best_event:
                 logger.info(
                     "Fragment-matched %s → event %d (%s vs %s) [fragments=%s/%s, score=%d]",
@@ -10413,15 +10487,20 @@ async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
                     Event.external_id,
                     Event.statpal_fixture_id,
                     Event.status,
+                    Event.event_tags,
                 ).where(Event.id.in_(accepted))
             )
         ).all()
         if not rows:
             return None
+        from app.utils.proven_duplicates import canonical_id_from_tags
+
         preferred = min(
             rows,
             key=lambda r: (
+                canonical_id_from_tags(getattr(r, "event_tags", None)) is not None,
                 r.status not in _GROUP_SIBLING_OPEN_STATUSES,
+                not _is_sportsbook_row(r),
                 r.espn_id is None
                 and r.external_id is None
                 and r.statpal_fixture_id is None,
