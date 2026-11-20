@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowDown,
   ArrowLeft,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useAnalyticsContext } from "@/components/Analytics";
+import { CHALLENGE_SURFACES_ENABLED } from "@/lib/launchSurfaces";
 import { shareContent } from "@/lib/share";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { Button } from "@/components/ui/button";
@@ -98,9 +100,10 @@ export default function ChallengePage({ params }: ChallengePageProps) {
   useScrollDepth({ pageType: "friend_challenge" });
   useEngagementTime({ pageType: "friend_challenge" });
   const { track } = useAnalyticsContext();
+  const router = useRouter();
 
   const [challenge, setChallenge] = useState<ChallengeResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(CHALLENGE_SURFACES_ENABLED);
   const [error, setError] = useState<string | null>(null);
   // The machine-readable twin of `error`. The browser rail grades WHICH failure
   // rendered; a copy edit must not be able to change that answer, and a blank
@@ -122,6 +125,7 @@ export default function ChallengePage({ params }: ChallengePageProps) {
   const progressValue = challenge ? (isAccepted ? 100 : 50) : 0;
 
   const loadChallenge = useCallback(async () => {
+    if (!CHALLENGE_SURFACES_ENABLED) return;
     setLoading(true);
     setError(null);
     setErrorName(null);
@@ -158,8 +162,12 @@ export default function ChallengePage({ params }: ChallengePageProps) {
   }, [challengeCode]);
 
   useEffect(() => {
+    if (!CHALLENGE_SURFACES_ENABLED) {
+      router.replace("/discover");
+      return;
+    }
     loadChallenge();
-  }, [loadChallenge]);
+  }, [loadChallenge, router]);
 
   useEffect(() => {
     if (!challenge) return;
@@ -254,6 +262,28 @@ export default function ChallengePage({ params }: ChallengePageProps) {
         method,
       });
     } catch {}
+  }
+
+  if (!CHALLENGE_SURFACES_ENABLED) {
+    return (
+      <div className="min-h-screen bg-surface-deep" data-testid="challenge-held-back">
+        <header className="sticky top-0 z-20 bg-surface-card/80 backdrop-blur-lg border-b border-surface-border">
+          <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
+            <Link href="/discover" className="text-text-muted hover:text-text-primary">
+              &larr;
+            </Link>
+            <h1 className="text-lg font-black tracking-tight">Friend Challenge</h1>
+          </div>
+        </header>
+        <div className="max-w-4xl mx-auto px-4 py-20 text-center text-text-muted">
+          <p className="text-lg font-medium text-text-primary">Friend challenges are paused</p>
+          <p className="text-sm mt-2">We&apos;re making this part better. Anything you saved is still here.</p>
+          <Link href="/discover" className="inline-block mt-6 text-sm font-semibold text-accent-brand hover:underline">
+            Back to Discover
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   if (loading) {

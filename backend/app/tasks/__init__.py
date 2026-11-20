@@ -621,6 +621,26 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
 except Exception:  # pragma: no cover - defensive
     pass
 
+# #12042: per-task memory on worker-background (``app.tasks.task_memory``): the
+# child's RSS at start and end and its peak during the task, one line per task.
+try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
+    from celery.signals import task_postrun as _mem_postrun
+    from celery.signals import task_prerun as _mem_prerun
+
+    @_mem_prerun.connect
+    def _task_memory_start(sender=None, task_id=None, **_kwargs):
+        from app.tasks import task_memory
+
+        task_memory.task_started(task_id)
+
+    @_mem_postrun.connect
+    def _task_memory_finish(sender=None, task_id=None, task=None, **_kwargs):
+        from app.tasks import task_memory
+
+        task_memory.task_finished(task_id, getattr(sender, "name", None) or getattr(task, "name", None))
+except Exception:  # pragma: no cover - defensive
+    pass
+
 # =============================================================================
 # Queue routing: realtime vs background vs heavy workers
 #
@@ -775,6 +795,7 @@ celery_app.conf.task_routes = {
     # heavy task (main app, not `bainluck-heavy`).
     "app.tasks.assemble_theme_collections": {"queue": "background"},
     "app.tasks.rebuild_theme_snapshot": {"queue": "background"},
+    "app.tasks.refresh_awards_occasions": {"queue": "background"},
     "app.tasks.stamp_nhl_statpal_fixtures": {"queue": "background"},
     "app.tasks.stamp_mlb_statpal_fixtures": {"queue": "background"},
     "app.tasks.heartbeat": {"queue": "realtime"},
@@ -1006,6 +1027,10 @@ HEAVY_TASKS = {
     # placing it there would close the queue rather than share it. It cannot
     # collide with the :15 precompute, and it is the only heavy beat at :50.
     "app.tasks.refresh_stale_futures_prices",
+    # Decision 170 / 188 (Nov 13): the 15-minute re-read of the markets pages can
+    # show. The same writer as the entry above in identity-only mode, so it goes
+    # where that one goes, for the same reason.
+    "app.tasks.refresh_shown_futures_prices",
     # #3879, hourly :08. Here for the same plain reading as the entry above and
     # for no wider grant: its wall budget is 200s, which is precisely the
     # multi-minute beat the background note forbids on a queue with ~one
@@ -1360,7 +1385,7 @@ def poll_kalshi_markets(self, event_ticker=None):
                     max_retries=turns.POLL_MAX_RETRIES,
                 )
             logger.warning(
-                "poll_kalshi_markets: matcher still holds %s after %d retries; polling anyway",
+                "poll_kalshi_markets: %s still held after %d retries; polling anyway",
                 lease.key,
                 self.request.retries,
             )
@@ -1582,11 +1607,72 @@ def refresh_stale_futures_prices(self, budget: int = 0):
     """
     from app.tasks.futures_price_refresh import _refresh_stale_futures_prices
 
-    kwargs = (
-        {"kalshi_budget": budget, "polymarket_budget": budget} if budget else {}
-    )
+    # Both scheduled entry points share the per-market retry marker. Leaving
+    # this caller on the old 45-minute defaults suppresses the intervening
+    # shown-market passes, even when one quiet outcome is still old (#12633).
+    kwargs = _shown_refresh_windows()
+    if budget:
+        kwargs.update(kalshi_budget=budget, polymarket_budget=budget)
     return _tracked_run(
         "futures_price_refresh", _refresh_stale_futures_prices(**kwargs)
+    )
+
+
+#: Decision 170 / 188 (Alex, Nov 13): "We should be ensuring that we DON'T have
+#: stale numbers." Every market a page can show is re-read from its venue at
+#: least every 30 minutes. The hourly writer above cannot: it runs once an hour
+#: and reached 895 of 2,568 candidates on Nov 13 at 8:50 AM PT, and on that
+#: morning's Discover slate 70 of 95 Polymarket and 17 of 38 Kalshi cards were
+#: over 30 minutes old (#12633). This pass re-reads ONLY the identity rows (what
+#: Discover's page one, the category pages and the tournament register show,
+#: plus in-play markets) whose last read is older than this many minutes.
+# Ten minutes leaves four minutes of slack before the shortest (14-minute)
+# beat gap. Using the beat interval itself can skip the next pass when the
+# previous read finished late. Queue delays remain visible in task history.
+SHOWN_REFRESH_MINUTES = 10
+#: Beside the hourly :50 pass these give a re-read every 14-16 minutes, on
+#: minutes no other hourly heavy beat uses, and never beside :50.
+SHOWN_REFRESH_BEAT_MINUTES = (4, 19, 34)
+
+
+def _shown_refresh_windows() -> dict[str, int]:
+    """One identity/retry clock for the hourly and intervening passes."""
+    return {
+        "served_refresh_minutes": SHOWN_REFRESH_MINUTES,
+        "registered_refresh_minutes": SHOWN_REFRESH_MINUTES,
+        "category_page_refresh_minutes": SHOWN_REFRESH_MINUTES,
+        "in_play_refresh_minutes": SHOWN_REFRESH_MINUTES,
+    }
+
+
+@celery_app.task(
+    bind=True,
+    name="app.tasks.refresh_shown_futures_prices",
+    soft_time_limit=420,
+    time_limit=480,
+)
+def refresh_shown_futures_prices(self):
+    """Decision 170 / 188: re-read the futures markets pages can show, every ~15 min.
+
+    The same writer as ``refresh_stale_futures_prices`` with both class budgets
+    at 0, so ``_take_for_source`` takes every identity row and nothing else, and
+    with the served, registered and category-page clocks at
+    :data:`SHOWN_REFRESH_MINUTES`. Every price rule, refusal, retirement and the
+    venue-closed stamp are the writer's own; this adds no second writer. A market
+    the venue reports closed is stamped here and leaves Discover's candidate
+    pool on the next base build. Threshold-label work is the hourly pass's.
+    Recorded under its own name so the hourly pass's history stays its own.
+    """
+    from app.tasks.futures_price_refresh import _refresh_stale_futures_prices
+
+    return _tracked_run(
+        "shown_futures_refresh",
+        _refresh_stale_futures_prices(
+            kalshi_budget=0,
+            polymarket_budget=0,
+            **_shown_refresh_windows(),
+            threshold_label_per_run=0,
+        ),
     )
 
 
@@ -2586,8 +2672,9 @@ def backfill_market_shapes(self, limit: int = 40000, dry_run: bool = False):
 def match_prediction_markets(self, limit: int = 500):
     """Match game-level prediction markets to events and write win_prob_snapshots.
 
-    #12019: declines a tick while the full Kalshi poll runs or waits for the
-    dyno (`app.tasks.heavy_memory_turns`); the next tick is 15 minutes away.
+    #12019: declines a tick while the full Kalshi poll or the calibration beat
+    runs or waits for the dyno (`app.tasks.heavy_memory_turns`); the next tick
+    is 15 minutes away.
     """
     from app.tasks import heavy_memory_turns as turns
     from app.tasks.prediction_market_matching import _match_prediction_markets
@@ -2595,6 +2682,8 @@ def match_prediction_markets(self, limit: int = 500):
 
     if turns.poll_is_pending():
         return {"skipped": True, "reason": "kalshi_poll_pending", "task": turns.LEASE_TASK}
+    if turns.calibration_is_pending():
+        return {"skipped": True, "reason": "calibration_pending", "task": turns.LEASE_TASK}
     start_mb = turns.rss_mb()
     with single_flight(turns.LEASE_TASK, ttl_seconds=turns.MATCH_LEASE_TTL_S) as lease:
         if not lease.acquired:
@@ -3239,12 +3328,32 @@ def create_github_issue_for_bug_report_task(self, report_id: int):
 
             severity = compute_severity(report.description)
             title = format_issue_title(report.description)
+
+            screenshot_summary = None
+            if (report.app_state or {}).get("source") == "testflight" and report.screenshot_base64:
+                from app.services.testflight_feedback import summarize_testflight_screenshot
+                try:
+                    screenshot_summary = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            summarize_testflight_screenshot,
+                            report.screenshot_base64,
+                            report_id=report.id,
+                        ),
+                        timeout=10.0,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "TestFlight screenshot summary timed out or failed for report #%d (filing without it): %s",
+                        report.id, exc,
+                    )
+
             body = format_issue_body(
                 report_id=report.id,
                 description=report.description,
                 category=report.category,
                 app_state=report.app_state,
                 has_screenshot=bool(report.screenshot_base64),
+                screenshot_summary=screenshot_summary,
             )
             labels = build_labels(report.category, severity, is_owner=is_owner)
 
@@ -4145,6 +4254,14 @@ def update_max_movement(self, heavy: bool = True):
     would have left them ranked exactly as they are today.
     """
     async def _impl():
+        import time as _phase_time
+        _phase_t0 = _phase_time.monotonic()
+
+        def _mark(label):
+            # Where a run is when its 120 s soft limit hits: the traceback only
+            # shows the event loop waiting on the database (Nov 16, 6 of 6 runs).
+            logger.info("update_max_movement phase %s at %.1fs", label, _phase_time.monotonic() - _phase_t0)
+
         from decimal import Decimal
 
         from app.tasks.base import get_task_session
@@ -4230,6 +4347,7 @@ def update_max_movement(self, heavy: bool = True):
         # quote blocking. Release market locks here as well: carrying them
         # into the outcome sweeps would reverse the existing lock order.
         async with get_task_session() as session:
+            _mark("A10")
             # A10. LIST THE OPENINGS THAT WERE NEVER A PRICE (#8612).
             #
             #     A8's rule, applied to the lifetime baseline. A card says
@@ -4571,6 +4689,7 @@ def update_max_movement(self, heavy: bool = True):
                 "window_hours": MOVEMENT_WINDOW_HOURS,
                 "batch": STALE_DELTA_BATCH,
             }
+            _mark("A1")
             a_prepared_ids = await prepare("A", a_predicate, a_order, a_params)
             expired_rows = await retire_prepared(
                 """
@@ -4589,6 +4708,7 @@ def update_max_movement(self, heavy: bool = True):
                 "A",
             )
 
+            _mark("A2")
             # A2. Retire deltas on GRADED outcomes, whatever their stamp says.
             #
             #     A alone cannot reach these, and the reason is the whole defect
@@ -4657,6 +4777,7 @@ def update_max_movement(self, heavy: bool = True):
                 "A2",
             )
 
+            _mark("A3")
             # A3. Retire deltas that REFUTE THEMSELVES — the row's own two
             #     columns cannot both describe the same instant (#6536).
             #
@@ -4748,6 +4869,7 @@ def update_max_movement(self, heavy: bool = True):
                 {"batch": IMPOSSIBLE_PRIOR_BATCH},
             )
 
+            _mark("A4")
             # A4. Retire deltas claiming a move THE OUTCOME'S OWN SERIES CANNOT
             #     SUPPORT (#4079).
             #
@@ -4893,6 +5015,7 @@ def update_max_movement(self, heavy: bool = True):
                 "A4",
             )
 
+            _mark("A5")
             # A5. Retire the RANK claim on rows nothing has written inside the
             #     window — A's predicate, applied to A's forgotten twin.
             #
@@ -4944,6 +5067,7 @@ def update_max_movement(self, heavy: bool = True):
                 "A5",
             )
 
+            _mark("A6")
             # A6. Retire the RANK claim on GRADED outcomes — A2's predicate,
             #     applied to the same forgotten twin, and immune to A5 for
             #     precisely A2's reason: `backfill_winners` re-stamps
@@ -4989,6 +5113,7 @@ def update_max_movement(self, heavy: bool = True):
                 "A6",
             )
 
+            _mark("A7")
             # A7. Retire deltas whose DIRECTION a dated comparison contradicts
             #     (#4079). A4's sibling, lettered after A5/A6 to keep the list
             #     monotonic; it is a DELTA statement and runs before B like
@@ -5194,6 +5319,7 @@ def update_max_movement(self, heavy: bool = True):
                 # A8's carrier key, shared by A8-DG / A9-DG below.
                 bank_key = DATED_BASIS_METADATA_KEY
 
+                _mark("A8-DG")
                 # A8-DG. THE DATAGOLF BANK (#10248, D3).
                 #
                 #     DataGolf polls every 90 s in play and hourly before it, and
@@ -5321,6 +5447,7 @@ def update_max_movement(self, heavy: bool = True):
                     },
                 )
 
+                _mark("A9-DG")
                 # A9-DG. A DataGolf market that has left A8-DG's scope (closed, or
                 #     no priced leg with a previous price) loses its bank and mark.
                 #     A9's job for the arm A9 no longer covers.
@@ -5353,6 +5480,7 @@ def update_max_movement(self, heavy: bool = True):
                     """),
                 )
 
+                _mark("A8")
                 # A8. PUBLISH THE DATED EVIDENCE A "TODAY" CLAIM NEEDS.
                 #
                 #     Every statement above this one DELETES, except #10248's
@@ -5578,6 +5706,7 @@ def update_max_movement(self, heavy: bool = True):
                     },
                 )
 
+                _mark("A9")
                 # A9. A market that has left claim scope loses its bank.
                 #
                 #     The reader already fails closed on a bank nobody refreshes —
@@ -5641,6 +5770,7 @@ def update_max_movement(self, heavy: bool = True):
             # passes over locked eligible rows), so the flag reads `None`, not
             # `True`. Without them the only signal would be the strip quietly
             # getting better.
+            _mark("done")
             return {
                 "updated": updated,
                 "expired": expired_rows,
@@ -5845,6 +5975,26 @@ def grouping_sentinel(self, post=True, file_issues=True):
     )
 
 
+@celery_app.task(
+    bind=True,
+    soft_time_limit=840,
+    time_limit=900,
+    name="app.tasks.discover_fun_scout",
+)
+def discover_fun_scout(self, force=False):
+    """Nightly Fun Scout (#13102, Ruling 276: B): tag fun single markets on the
+    small model and propose novel cross-family sets on Claude under Decide 61-A
+    caps ($5/run, $30/month). Runs on ``bainluck``'s ``background`` queue where
+    ``ANTHROPIC_API_KEY_SCOUT`` is configured; no-ops while
+    ``DISCOVER_FUN_SCOUT_ENABLED`` is off unless ``force=True``."""
+    from app.tasks.discover_fun_scout import _run_discover_fun_scout
+
+    return _tracked_run(
+        "discover_fun_scout",
+        _run_discover_fun_scout(force=force),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900,
                  name="app.tasks.anchor_schedule_sentinel")
 def anchor_schedule_sentinel(self, file_issues=True):
@@ -5927,6 +6077,37 @@ def assemble_containers(self, apply=True, only=None):
         "assemble_containers",
         _run_assemble_containers(apply=apply, only=only),
     )
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=120,
+    time_limit=150,
+    name="app.tasks.refresh_awards_occasions",
+)
+def refresh_awards_occasions(self):
+    """Refresh ceremony evidence for enabled, reviewed definitions (#11935)."""
+    from app.tasks.awards_occasions import refresh_awards_occasions as refresh
+    from app.utils.roundup_containers import ROUNDUP_PRODUCERS
+    from app.utils.single_flight import single_flight
+
+    enabled = any(
+        (producer.rule or {}).get("producer") == "awards_ceremony"
+        and (producer.enabled is None or producer.enabled())
+        for producer in ROUNDUP_PRODUCERS.values()
+    )
+    if not enabled:
+        return {
+            "terminal": "skipped",
+            "reason": "ceremony_definitions_disabled",
+            "model_cost_usd": 0,
+        }
+    with single_flight("app.tasks.refresh_awards_occasions", ttl_seconds=180) as lease:
+        if not lease.acquired:
+            return lease.skipped_result()
+        if lease.reason == "redis_unavailable":
+            raise RuntimeError("Awards occasion evidence lease unavailable")
+        return _tracked_run("awards_occasions", refresh())
 
 
 @celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
@@ -6086,6 +6267,27 @@ def create_certain_postseason_games(self, apply=True):
         "create_certain_postseason_games",
         _run_create_certain_postseason_games(apply=apply),
     )
+
+
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.refresh_espn_predictor")
+def refresh_espn_predictor(self):
+    """ESPN's matchup predictor as the chance for unpriced scheduled games (#12824).
+
+    Bills at Patriots three weeks out showed no chance at all (TestFlight 5757):
+    no venue listed it and its two sportsbooks are under ruling 051's floor.
+    Reads ESPN's predictor for scheduled NFL, college football, NBA and college
+    basketball games in the next 4 weeks that carry no sportsbook or venue
+    price (or already carry an ESPN reading, so it never freezes) and writes it
+    as the existing `espn` source. A predictor ESPN has not updated in 7 days is
+    absent. See ``tasks/espn_predictor``. Lease: a run never laps the next."""
+    from app.tasks.espn_predictor import _run_refresh_espn_predictor
+    from app.utils.single_flight import single_flight
+
+    with single_flight("app.tasks.refresh_espn_predictor") as lease:
+        if not lease.acquired:
+            return lease.skipped_result()
+        return _tracked_run("refresh_espn_predictor", _run_refresh_espn_predictor())
 
 
 @celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
@@ -6907,9 +7109,35 @@ def send_morning_digest(self):
 # open) — this queue restores availability, not compute speed.
 @celery_app.task(bind=True, soft_time_limit=1500, time_limit=1560, name="app.tasks.precompute_calibration_main")
 def precompute_calibration_main(self):
-    """Precompute main /api/calibration response and cache in Redis (every 1h)."""
+    """Precompute main /api/calibration response and cache in Redis (every 1h).
+
+    #12019 (Nov 9): never starts beside the matcher on worker-heavy — each
+    reaches about 1 GB alone and the pair were R15-killed together. It takes the
+    poll's turn rules (`app.tasks.heavy_memory_turns`).
+    """
+    from app.tasks import heavy_memory_turns as turns
     from app.tasks.precompute_calibration import _precompute_calibration_main
-    return _tracked_run("precompute_calibration_main", _precompute_calibration_main())
+    from app.utils.single_flight import single_flight
+
+    start_mb = turns.rss_mb()
+    with single_flight(turns.LEASE_TASK, ttl_seconds=turns.CALIBRATION_LEASE_TTL_S) as lease:
+        if not lease.acquired:
+            if self.request.retries < turns.CALIBRATION_MAX_RETRIES:
+                turns.mark_calibration_pending()
+                raise self.retry(
+                    countdown=turns.CALIBRATION_RETRY_COUNTDOWN_S,
+                    max_retries=turns.CALIBRATION_MAX_RETRIES,
+                )
+            logger.warning(
+                "precompute_calibration_main: %s still held after %d retries; running anyway",
+                lease.key,
+                self.request.retries,
+            )
+        turns.clear_calibration_pending()
+        try:
+            return _tracked_run("precompute_calibration_main", _precompute_calibration_main())
+        finally:
+            turns.log_memory("precompute_calibration_main", start_mb)
 
 
 @celery_app.task(bind=True, soft_time_limit=1500, time_limit=1560,
@@ -7028,11 +7256,67 @@ def snapshot_coverage_metrics(self):
     return _tracked_run("coverage_metrics", _snapshot_coverage_metrics())
 
 
-@celery_app.task(bind=True, soft_time_limit=300, time_limit=360, name="app.tasks.precompute_category_pages")
+#: #12042: a section that finds the Discover base build running waits this long
+#: and asks again, up to this many times, then runs anyway (an hourly page is
+#: never skipped for an hour on account of a build that takes ~30 s).
+CATEGORY_SECTION_BASE_WAIT_S = 15
+CATEGORY_SECTION_BASE_WAIT_TRIES = 8
+
+#: #12042: the category precompute's sections, in run order, one beat entry each
+#: at :26, :27, ... after the :25 entry opens the hour's report. Declared here
+#: rather than imported (the module is imported lazily by these tasks); a test
+#: pins it equal to `precompute_category_pages.category_section_names()`. Each is
+#: its own beat entry, not dispatched by another task, so the result-retention
+#: rule (`test_no_task_dispatches_another_task`) still derives from the beat.
+CATEGORY_SECTION_BEAT_ORDER = (
+    "politics", "entertainment", "economics", "weather", "golf", "golf_schedule", "grids",
+)
+#: One minute per section, in order. :31 is skipped: it is the settlement-capture
+#: sweep's clear minute on `background` (10:31 UTC daily, CERT-418's gate in
+#: `test_settlement_sweep_beat`).
+CATEGORY_SECTION_MINUTES = (26, 27, 28, 29, 30, 32, 33)
+
+
+@celery_app.task(bind=True, soft_time_limit=60, time_limit=90, name="app.tasks.precompute_category_pages")
 def precompute_category_pages(self):
-    """Precompute category page responses and cache in Redis (every 1h)."""
-    from app.tasks.precompute_category_pages import _precompute_all_category_pages
-    return _tracked_run("precompute_category_pages", _precompute_all_category_pages())
+    """Open the hour's category precompute report (every 1h at :25).
+
+    #12042: the seven sections no longer run here. worker-background's prefork
+    children are checked against ``--max-memory-per-child`` only when a task
+    ends; with seven sections in one task a child ended near the sum of their
+    peaks, beside the every-2-minute Discover base build on the other child, and
+    the worker was killed (R15) with this task in flight at 2:28, 5:26 and
+    7:27 AM PT on Nov 12. Each section is now its own beat entry
+    (``precompute_category_section``, a minute apart from :26), so a child can be
+    recycled between sections and two sections rarely overlap. This entry opens
+    the report first, so a section that never lands reads ``not_attempted``,
+    never last hour's ``ok``.
+    """
+    from app.tasks.precompute_category_pages import start_section_report
+
+    start_section_report()
+    return {"status": "report_opened", "sections": list(CATEGORY_SECTION_BEAT_ORDER)}
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=300,
+    time_limit=360,
+    max_retries=CATEGORY_SECTION_BASE_WAIT_TRIES,
+    name="app.tasks.precompute_category_section",
+)
+def precompute_category_section(self, section: str):
+    """#12042: one section of the hourly category precompute."""
+    from app.tasks.precompute_category_pages import (
+        _precompute_all_category_pages,
+        discover_base_running,
+    )
+
+    if discover_base_running() and self.request.retries < CATEGORY_SECTION_BASE_WAIT_TRIES:
+        raise self.retry(countdown=CATEGORY_SECTION_BASE_WAIT_S)
+    return _tracked_run(
+        f"category_section_{section}", _precompute_all_category_pages(only=section)
+    )
 
 
 @celery_app.task(bind=True, soft_time_limit=240, time_limit=280, name="app.tasks.warm_event_concepts")
@@ -7510,11 +7794,19 @@ def refresh_league(self, sport_key: str, token: str | None = None):
 
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.precompute_discover_candidate_base")
 def precompute_discover_candidate_base(self):
-    """Precompute + publish the anonymous Discover candidate-ID base (Queue 285)."""
-    from app.tasks.precompute_category_pages import _precompute_discover_candidate_base
-    return _tracked_run(
-        "precompute_discover_candidate_base", _precompute_discover_candidate_base()
+    """Precompute + publish the anonymous Discover candidate-ID base (Queue 285).
+
+    #12042: holds a short running flag so a category section on the other child
+    waits instead of building beside it. The base itself never waits."""
+    from app.tasks.precompute_category_pages import (
+        _precompute_discover_candidate_base,
+        mark_discover_base_running,
     )
+
+    with mark_discover_base_running():
+        return _tracked_run(
+            "precompute_discover_candidate_base", _precompute_discover_candidate_base()
+        )
 
 
 #: #2236. The limits are derived from the period, not chosen: the hard limit is
@@ -7710,11 +8002,54 @@ def deliver_activitykit_updates():
     return result
 
 
+@celery_app.task(name="app.tasks.deliver_activitykit_starts", soft_time_limit=60,
+                 time_limit=90, max_retries=0)
+def deliver_activitykit_starts():
+    """One default-off sweep of kickoff Live Activity start pushes (#13052 / 254-A)."""
+    from app.tasks.activitykit_start import run_activitykit_start_dispatch
+
+    result = run_async(run_activitykit_start_dispatch())
+    if result["terminal"] in {"failed", "partial"}:
+        logger.warning("ActivityKit start dispatch incomplete: %s", result)
+        raise RuntimeError("ActivityKit start dispatch incomplete")
+    return result
+
+
+@celery_app.task(name="app.tasks.probe_live_tennis_scores", soft_time_limit=45,
+                 time_limit=60, max_retries=0)
+def probe_live_tennis_scores():
+    """Read-only 15-minute coverage probe of livetennisapi.com (#13000 / 257: B).
+
+    Off when LIVE_TENNIS_API_KEY is unset; never writes DB rows or reader data.
+    """
+    from app.tasks.live_tennis_probe import run_live_tennis_probe
+
+    return run_async(run_live_tennis_probe())
+
+
 celery_app.conf.beat_schedule = {
     "activitykit-runtime": {
+        # #10542 step 5: 15 s beat so pinned Live Activities read ESPN and push
+        # score changes within ~15 s instead of waiting behind the 60 s full-slate
+        # sync + 30 s sweep. When scanned == 0 (no active Live Activities), the
+        # task exits in ~0.2 s with zero ESPN calls.
         "task": "app.tasks.deliver_activitykit_updates",
+        "schedule": 15.0,
+        "options": {"queue": "realtime", "expires": 12},
+    },
+    "activitykit-start-push": {
+        "task": "app.tasks.deliver_activitykit_starts",
         "schedule": 30.0,
         "options": {"queue": "realtime", "expires": 25},
+    },
+    "probe-live-tennis-scores": {
+        # #13000 (Ruling 257: B): read-only coverage probe of livetennisapi.com,
+        # off when LIVE_TENNIS_API_KEY is unset, capped at <=96 requests/day.
+        # Runs on realtime (same `bainluck` app as LIVE_TENNIS_API_KEY, <1 ms
+        # when disabled, 1 read-only GET every 15 min when enabled) at :03/:18/:33/:48.
+        "task": "app.tasks.probe_live_tennis_scores",
+        "schedule": crontab(minute="3,18,33,48"),
+        "options": {"queue": "realtime", "expires": 840},
     },
     "poll-odds-adaptive": {
         "task": "app.tasks.poll_all_odds",
@@ -7795,7 +8130,9 @@ celery_app.conf.beat_schedule = {
     },
     "poll-futures-every-4h": {
         "task": "app.tasks.poll_futures_odds",
-        "schedule": crontab(minute=30, hour="*/4"),  # Every 4 hours — futures change very slowly, quota conservation
+        # Direction 215 (Nov 16 2026): every 4 h -> hourly. Futures were 0.2%
+        # of credits (792 in 7 days); hourly is ~4x that, still under 1%.
+        "schedule": crontab(minute=30),
     },
     "poll-kalshi": {
         "task": "app.tasks.poll_kalshi_markets",
@@ -7873,6 +8210,14 @@ celery_app.conf.beat_schedule = {
         # precompute there fires at :15 and cannot collide with :50.
         "task": "app.tasks.refresh_stale_futures_prices",
         "schedule": crontab(minute=50),
+        "options": {"queue": "heavy"},
+    },
+    "refresh-shown-futures-prices": {
+        # Decision 170 / 188: the markets pages can show, re-read every ~15 min
+        # (see `SHOWN_REFRESH_BEAT_MINUTES`). `heavy`, literally, for the hourly
+        # entry's reason: same writer, same venue reads.
+        "task": "app.tasks.refresh_shown_futures_prices",
+        "schedule": crontab(minute=",".join(str(m) for m in SHOWN_REFRESH_BEAT_MINUTES)),
         "options": {"queue": "heavy"},
     },
     # #3879. Hourly at :08, the served long tail the three other price rails
@@ -8483,11 +8828,8 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"limit": 125},
         "options": {"queue": "background"},
     },
-    "generate-discover-comparison-candidates": {
-        "task": "app.tasks.generate_discover_comparison_candidates",
-        "schedule": crontab(minute=20, hour=9),
-        "kwargs": {"limit": 60},
-    },
+    # "generate-discover-comparison-candidates" retired off its timer by #12372
+    # (2026-11-08, #12221 Part 1 §1): replaced by the offline sibling-family proposer.
     "evaluate-discover-with-llm-daily": {
         "task": "app.tasks.evaluate_discover_with_llm",
         "schedule": crontab(minute=35, hour=9),
@@ -8572,7 +8914,9 @@ celery_app.conf.beat_schedule = {
     },
     "precompute-category-pages": {
         "task": "app.tasks.precompute_category_pages",
-        "schedule": crontab(minute=25),  # Every hour at :25 — warm caches for politics/entertainment/economics/weather
+        # Every hour at :25. #12042: it opens the hour's report; the sections run
+        # as their own entries from :26 (added below the schedule literal).
+        "schedule": crontab(minute=25),
         "options": {"queue": "background"},
     },
     "warm-prop-families": {
@@ -9015,7 +9359,10 @@ celery_app.conf.beat_schedule = {
     },
     "precompute-backfill-progress": {
         "task": "app.tasks.precompute_backfill_progress",
-        "schedule": crontab(minute="*/15"),  # Every 15 min — #179/#1052 progress census (density + June ledger)
+        # 215-B (Fable, Nov 16 2026): admin precomputes give way to readers' price refreshes on heavy: every 15 min
+        # -> daily 10:45 UTC (3:45 AM PT). 250 s runs, twice in 8 min, held a
+        # heavy slot on Nov 16. An admin census; CACHE_TTL is 50 h to match.
+        "schedule": crontab(minute=45, hour=10),  # #179/#1052 progress census (density + June ledger)
         # RULING 110 (LAT-P077): moved background -> heavy under the scoped
         # two-task exception. Literal must match the effective queue, which
         # `test_heavy_beat_literals_match_their_effective_queue` reads from
@@ -9136,6 +9483,15 @@ celery_app.conf.beat_schedule = {
         # one of #233's morning alarms that need a guaranteed heavy slot.
         "task": "app.tasks.grouping_sentinel",
         "schedule": crontab(minute=0, hour=16, day_of_week=4),  # Weekly Thursday 16:00 UTC
+        "options": {"queue": "background"},
+    },
+    "discover-fun-scout-nightly": {
+        # #13102 (Ruling 276: B): nightly fun singles + set-writing scout on
+        # bainluck's background queue (where ANTHROPIC_API_KEY_SCOUT lives).
+        # Runs 09:00 UTC (1:00 AM PT), gated behind DISCOVER_FUN_SCOUT_ENABLED
+        # (default OFF until Wed Nov 25).
+        "task": "app.tasks.discover_fun_scout",
+        "schedule": crontab(minute=0, hour=9),  # Daily 09:00 UTC (1:00 AM PT)
         "options": {"queue": "background"},
     },
     "grid-register-sentinel-daily": {
@@ -9406,6 +9762,20 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=11),
         "options": {"queue": "background"},
     },
+    "refresh-espn-predictor": {
+        # #12824. About every 15 minutes: ESPN's predictor is served
+        # `max-age=900`, and direction 215 asks pregame numbers to be no older
+        # than our other pregame reads. :01/:16/:34/:49 (gaps 15/18/15/12 min)
+        # carried NO other background crontab, daily ones included, in the
+        # 2026-11-17 census; no exact quarter-hour set is free (:31 is the
+        # nightly settlement sweep's, `test_settlement_sweep_beat` G8). The work
+        # is one board read per (league, Eastern day) holding a candidate and
+        # one predictor read per matched game, with no DB session held across
+        # the reads; the soft limit (300 s) is inside the 15-minute period.
+        "task": "app.tasks.refresh_espn_predictor",
+        "schedule": crontab(minute="1,16,34,49"),
+        "options": {"queue": "background"},
+    },
     "stamp-soccer-statpal-fixtures-hourly": {
         # #3366 / #2867 / D50. The fifth StatPal stamper and the first whose
         # first pass had to be bought before it could be scheduled: soccer went
@@ -9601,6 +9971,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.assemble_theme_collections",
         "schedule": crontab(minute=59),
         "options": {"queue": "background"},
+    },
+    "refresh-awards-occasions-hourly": {
+        "task": "app.tasks.refresh_awards_occasions",
+        "schedule": crontab(minute=47),
+        "options": {"queue": "background", "expires": 3600},
     },
     # --- #2077 (queue 419): the settlement-capture sweep, on a schedule -------
     #
@@ -10098,16 +10473,14 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(hour=3, minute=0),  # 3:00 AM UTC daily
         "options": {"queue": "heavy"},
     },
-    "daily-challenge-push": {
-        "task": "app.tasks.send_daily_challenge_push",
-        "schedule": crontab(hour=14, minute=0),  # 2:00 PM UTC (10am ET / 7am PT)
-        "options": {"queue": "background"},
-    },
-    "big-move-alerts": {
-        "task": "app.tasks.send_big_move_alerts",
-        "schedule": crontab(minute="*/30"),  # Every 30 minutes
-        "options": {"queue": "background"},
-    },
+    # Ruling 179-A (Alex, Nov 13 2026): the two old push jobs are OFF.
+    # Switching one back is restoring its entry here, as it was:
+    #   "daily-challenge-push": app.tasks.send_daily_challenge_push,
+    #       crontab(hour=14, minute=0), queue background (7 AM PT)
+    #   "big-move-alerts": app.tasks.send_big_move_alerts,
+    #       crontab(minute="*/30"), queue background
+    # plus its line in test_tasks_wiring's allowlist and the background census.
+    # Both tasks stay registered. Guard: tests/test_old_push_jobs_off_179a.py.
     "morning-digest-daily": {
         # Queue #200: notifications v1 — one daily push of the 3-5 most
         # interesting probabilities to opted-in device tokens. Reuses cached
@@ -10119,7 +10492,13 @@ celery_app.conf.beat_schedule = {
     },
     "precompute-calibration-main": {
         "task": "app.tasks.precompute_calibration_main",
-        "schedule": crontab(minute=15),  # Every 1 hour at :15
+        # 215-B (Fable, Nov 16 2026): admin precomputes give way to readers'
+        # price refreshes on heavy. Hourly :15 -> daily 10:15 UTC (3:15 AM PT).
+        # One run held a heavy slot 21 min (11:30-11:51 AM Nov 16) while the
+        # 15-minute price pass queued. The main key lives 50 h
+        # (`_MAIN_CACHE_TTL`) so one missed night still serves; every
+        # cadence-derived constant moved with it.
+        "schedule": crontab(minute=15, hour=10),
         "options": {"queue": "heavy"},
     },
     "calibration-beat-gauge-sampler": {
@@ -10155,7 +10534,11 @@ celery_app.conf.beat_schedule = {
     },
     "precompute-source-intelligence": {
         "task": "app.tasks.precompute_source_intelligence",
-        "schedule": crontab(minute=30, hour="1,7,13,19"),  # Every 6 hours, offset 30min
+        # 215-B (Fable, Nov 16 2026): admin precomputes give way to readers' price refreshes on heavy: every 6 h -> daily 11:30 UTC
+        # (4:30 AM PT). It died at its 600 s limit at 11:52 AM Nov 16 on a full
+        # heavy; overnight it runs once on a quiet worker instead of dying 4x/day.
+        # The route's CACHE_TTL is 50 h to match.
+        "schedule": crontab(minute=30, hour=11),
         "options": {"queue": "heavy"},
     },
     # ── CADENCE ↔ TTL HYGIENE, LAT-P062 (Item 3). All three below cache at
@@ -10195,7 +10578,11 @@ celery_app.conf.beat_schedule = {
         # `warm_typeahead` hole. It is in HEAVY_TASKS, so the loop below the
         # beat schedule would pin this to heavy regardless — stated literally
         # here so the source reads true rather than relying on the override.
-        "schedule": crontab(minute="*/30"),
+        # 215-B (Fable, Nov 16 2026): admin precomputes give way to readers' price refreshes on heavy: */30 -> daily
+        # 11:00 UTC (4:00 AM PT). It died at its 120 s limit at 11:54 AM Nov 16;
+        # 48 attempts a day become one, on a quiet worker. Its key lives 50 h
+        # (`_ADMIN_LINK_RATE_CACHE_TTL`). Admin's link-rate tile can be a day old.
+        "schedule": crontab(minute=0, hour=11),
         "options": {"queue": "heavy"},
     },
     "precompute-admin-matured-linkage": {
@@ -10207,6 +10594,18 @@ celery_app.conf.beat_schedule = {
         "options": {"queue": "background"},
     },
 }
+
+# #12042: one beat entry per category section, a minute apart after the :25 entry
+# that opens the hour's report (see `precompute_category_pages`).
+for _section, _minute in zip(CATEGORY_SECTION_BEAT_ORDER, CATEGORY_SECTION_MINUTES, strict=True):
+    celery_app.conf.beat_schedule[
+        f"precompute-category-section-{_section.replace('_', '-')}"
+    ] = {
+        "task": "app.tasks.precompute_category_section",
+        "schedule": crontab(minute=_minute),
+        "kwargs": {"section": _section},
+        "options": {"queue": "background"},
+    }
 
 # Route the heavy grinder class onto the dedicated `heavy` worker. Beat entries
 # pin `options["queue"]` explicitly, which OVERRIDES task_routes at dispatch

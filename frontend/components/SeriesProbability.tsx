@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { teamTextColor } from "@/lib/teamColors";
+import { resolveMatchupTeamColors, teamTextColor } from "@/lib/teamColors";
 import { teamShortNames } from "@/lib/teamShortName";
 
 // ── Negative binomial series probability (ported from backend) ──
@@ -75,6 +75,7 @@ interface SeriesProbabilityProps {
   awayTeam: string;
   homeTeamColor?: string;
   awayTeamColor?: string;
+  awayTeamSecondaryColor?: string;
   className?: string;
 }
 
@@ -87,6 +88,7 @@ export default function SeriesProbability({
   awayTeam,
   homeTeamColor,
   awayTeamColor,
+  awayTeamSecondaryColor,
   className,
 }: SeriesProbabilityProps) {
   // #5671 — both ends of this bar are named by the one shared rule, the same
@@ -111,8 +113,13 @@ export default function SeriesProbability({
     return { homeSeriesProb, awaySeriesProb, stateLabel, totalGames };
   }, [homeWinProb, homeSeriesWins, awaySeriesWins, gamesToWin, homeShort]);
 
-  const homeColor = homeTeamColor || "#16a34a";
-  const awayColor = awayTeamColor || "#2563eb";
+  const resolvedColors = resolveMatchupTeamColors({
+    homePrimary: homeTeamColor,
+    awayPrimary: awayTeamColor,
+    awaySecondary: awayTeamSecondaryColor,
+  });
+  const homeColor = resolvedColors.home || "#16a34a";
+  const awayColor = resolvedColors.away || "#2563eb";
   // #5696 — the same colour is a FILL here (the win dots, the bar) and a TEXT
   // colour (the club abbreviations beside them). Only the text gets the #5165
   // contrast floor: flooring the fill would repaint the dots, which is a design

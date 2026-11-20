@@ -61,7 +61,7 @@ import { compactOutcomeCount, proofCohortFigures } from "@/lib/calibrationProofF
 import { ALL_COPY_BANS, SUPPLIER_PROSE_BANS, findBannedCopy } from "@/lib/copyBans";
 import { EVALS_COPY_RULES } from "@/lib/evals/copyRules";
 import { calibrationFixture, calibrationFixtureBuckets } from "@/lib/evals/fixtures/calibration";
-import { GAPS, GAPS_REVIEWED_AT } from "@/lib/evals/gaps";
+import { GAPS, GAP_TARGETS, GAPS_REVIEWED_AT } from "@/lib/evals/gaps";
 import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { loadRuns } from "@/lib/evals/runs";
 import { familyView, loadScoreboard, type Scoreboard } from "@/lib/evals/scoreboard";
@@ -184,15 +184,28 @@ describe("/evals S1 renders the shell", () => {
     ]);
   });
 
-  it("every gap row links the issue or pull request that owns it", async () => {
+  it("every gap row links its owning issue and prints its rough target from gap-targets.json (#12467)", async () => {
     const page = await mountPage();
     const rows = Array.from(page.querySelectorAll("[data-gap-id]"));
     expect(rows.map((r) => r.getAttribute("data-gap-id"))).toEqual(GAPS.map((g) => g.id));
+    expect(Object.keys(GAP_TARGETS.gaps).sort()).toEqual(GAPS.map((g) => g.id).sort());
     for (const row of rows) {
+      const id = row.getAttribute("data-gap-id")!;
+      const entry = GAP_TARGETS.gaps[id];
+      expect(entry).toBeDefined();
       const link = row.querySelector("a[data-evals-ref]");
-      expect(link?.getAttribute("href")).toMatch(
-        /^https:\/\/github\.com\/alexander-bain\/bainluck\/(issues|pull)\/\d+$/
+      expect(link?.getAttribute("href")).toBe(
+        `https://github.com/alexander-bain/bainluck/issues/${entry.issue}`
       );
+      const targetEl = row.querySelector("[data-gap-target]");
+      if (entry.target) {
+        expect(targetEl?.getAttribute("data-gap-target")).toBe(entry.target);
+        expect(targetEl?.textContent).toMatch(/Expected (November|December) 2026/);
+        expect(targetEl?.querySelector("time")?.getAttribute("dateTime")).toBe(entry.target.slice(0, 7));
+      } else {
+        expect(targetEl?.getAttribute("data-gap-target")).toBe("unscheduled");
+        expect(targetEl?.textContent).toContain("Not scheduled yet");
+      }
     }
   });
 
@@ -516,6 +529,33 @@ describe("S3: the forward record", () => {
     expect(meter?.textContent).toMatch(/^24\s*of\s*53\s*kinds of market come within\s*3\s*points of what happened\.$/);
   });
 
+  it("explains the slices outside the 3-point bar: thin slices say too few to say, explicit partly_ungraded links #12421, and unaccounted squares stay red", async () => {
+    const page = await mountPage();
+    const chapterPicture = page.querySelector('[data-evals-chapter="coming-true"] [data-chapter-picture="kinds"]');
+    expect(chapterPicture?.querySelector("[data-kinds-note]")?.textContent).toContain("#12421");
+    expect(chapterPicture?.querySelector('a[data-evals-ref]')?.getAttribute("href")).toBe(
+      "https://github.com/alexander-bain/bainluck/issues/12421"
+    );
+    // Unaccounted outside-bar squares (29 outside, 19 listed in fixture) remain "outside" (red), never defaulting to neutral.
+    expect(chapterPicture?.querySelectorAll('[data-kind-square="outside"]').length).toBeGreaterThanOrEqual(10);
+    const slices = page.querySelector('[data-testid="evals-forward-category-slices"]');
+    expect(slices).not.toBeNull();
+    const mlbPre = slices?.querySelector('[data-category-slice="baseball_mlb_preseason"]');
+    expect(mlbPre?.getAttribute("data-slice-status")).toBe("partly_ungraded");
+    expect(mlbPre?.textContent).toContain("outcomes partly ungraded");
+    expect(mlbPre?.querySelector('a[data-evals-ref]')?.getAttribute("href")).toBe(
+      "https://github.com/alexander-bain/bainluck/issues/12421"
+    );
+    const nfl = slices?.querySelector('[data-category-slice="americanfootball_nfl"]');
+    expect(nfl?.getAttribute("data-slice-status")).toBe("over_bar");
+    const chess = slices?.querySelector('[data-category-slice="chess"]');
+    expect(chess?.getAttribute("data-slice-status")).toBe("uncertain");
+    expect(chess?.textContent).toContain("too few to say");
+    const small = slices?.querySelector('[data-small-slice="tennis_atp_canadian_open"]');
+    expect(small?.getAttribute("data-slice-status")).toBe("uncertain");
+    expect(small?.textContent).toContain("too few to say");
+  });
+
   it("frozen inputs show the staleness sentence with the date the data was staged", async () => {
     const page = await mountPage();
     const line = page.querySelector('[data-testid="evals-forward-staleness"]');
@@ -751,7 +791,7 @@ describe("S5: checks that run on their own", () => {
     const page = await mountPage();
     const section = page.querySelector('[data-evals-section="watchers"]');
     expect(section?.getAttribute("data-truth-scope")).toBe("reviewed");
-    expect(section?.querySelector("[data-truth-chip]")?.textContent?.startsWith("LAST REVIEWED · NOV 6")).toBe(true);
+    expect(section?.querySelector("[data-truth-chip]")?.textContent?.startsWith("LAST REVIEWED · NOV 17")).toBe(true);
     const ids = Array.from(section?.querySelectorAll("[data-watcher]") ?? []).map((r) => r.getAttribute("data-watcher"));
     expect(ids).toEqual(list?.watchers.map((w) => w.id));
     expect(section?.querySelectorAll('[data-watcher-group="day"] [data-watcher]')).toHaveLength(2);
@@ -808,11 +848,17 @@ describe("S5: checks that run on their own", () => {
       expect(r?.getAttribute("data-verdict-state")).toBe(v.state);
       expect(r?.querySelector("[data-verdict-chip]")?.textContent).toBe(
         {
-          red_reporting: "Found problems, reported",
+          red_reporting: "Found problems and filed them",
           red_stopped: "Found problems, not reported",
           closed_fixed: "Found its problem fixed",
         }[v.state]
       );
+      if (v.state === "red_reporting") {
+        expect(r?.querySelector("[data-verdict-chip]")?.className).not.toMatch(/red|rose/);
+        expect(r?.querySelector("summary")?.textContent?.replace(/\s+/g, " ")).toContain(
+          `${v.issues.length} ${v.issues.length === 1 ? "issue" : "issues"}`
+        );
+      }
       const day = (pacificDayLabel(v.runAt) as string).toUpperCase();
       expect(r?.querySelector("[data-truth-chip]")?.textContent?.startsWith(`LAST RUN · ${day}`)).toBe(true);
       const context = [v.earlier, v.fix].filter((n): n is number => n !== null);
@@ -856,13 +902,14 @@ describe("S5: checks that run on their own", () => {
     expect(page.querySelectorAll('[data-verdict-state="red_stopped"]')).toHaveLength(1);
   });
 
-  it("a watcher with no public record of its last result says UNKNOWN, never green", async () => {
+  it("a watcher with no public record of its last result says UNKNOWN and since when, never green", async () => {
     const page = await mountPage();
     const unknown = Array.from(page.querySelectorAll('[data-verdict-state="unknown"]'));
     expect(unknown).toHaveLength((list?.watchers ?? []).filter((w) => !w.verdict).length);
     for (const r of unknown) {
       expect(r.querySelector('[data-result="unknown"]')?.textContent).toBe("UNKNOWN");
       expect(r.querySelector("[data-verdict-chip]")).toBeNull();
+      expect(r.textContent?.replace(/\s+/g, " ")).toContain("No result on record since Nov 6");
     }
     expect(page.querySelector('[data-evals-section="watchers"] [data-result="pass"]')).toBeNull();
   });
@@ -877,9 +924,20 @@ describe("S5: checks that run on their own", () => {
   });
 });
 
-describe("/evals is unlisted until Alex's phone look (Decide 43-A1)", () => {
-  it("noindex, nofollow", () => {
-    expect(metadata.robots).toEqual({ index: false, follow: false });
+describe("/evals is listed publicly (S10, Ruling 104, #12467)", () => {
+  it("is indexable (no noindex), while /daily keeps its own noindex", () => {
+    expect(metadata.robots).toBeUndefined();
+    const dailyLayout = require("@/app/daily/layout");
+    expect(dailyLayout.metadata.robots).toEqual({ index: false, follow: false });
+  });
+
+  it("is listed in sitemap.ts", () => {
+    const sitemap = require("@/app/sitemap").default;
+    const entries: Array<{ url: string; priority?: number; changeFrequency?: string }> = sitemap();
+    const evalsEntry = entries.find((e) => e.url.endsWith("/evals"));
+    expect(evalsEntry).toBeDefined();
+    expect(evalsEntry?.priority).toBe(0.7);
+    expect(evalsEntry?.changeFrequency).toBe("daily");
   });
 
   it("names itself as canonical and og:url, with the default share card", () => {

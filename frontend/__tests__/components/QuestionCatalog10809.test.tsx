@@ -102,7 +102,7 @@ describe("grouping keeps venue and question identity", () => {
       NOW,
     );
     expect(groups).toHaveLength(1);
-    expect(groups[0]).toMatchObject({ family: "Other", question: "Will there be a safety?" });
+    expect(groups[0]).toMatchObject({ family: "Other markets", question: "Will there be a safety?" });
     expect(groups[0].outcomes[0].probability).toBe(0.07);
   });
 
@@ -135,7 +135,7 @@ describe("grouping keeps venue and question identity", () => {
       "scheduled",
       NOW,
     );
-    expect(groups.map((g) => g.family)).toEqual(["Game lines", "Other"]);
+    expect(groups.map((g) => g.family)).toEqual(["Game lines", "Other markets"]);
   });
 });
 
@@ -239,7 +239,7 @@ describe("the catalog keeps the reader's place", () => {
     });
     render(<QuestionCatalog data={data} status="scheduled" />);
     click("Show all 9 outcomes");
-    click("Other");
+    click("Other markets");
     expect(host.textContent).toContain("Will there be a safety?");
     click("Player props");
     expect(host.querySelectorAll("li")).toHaveLength(9);

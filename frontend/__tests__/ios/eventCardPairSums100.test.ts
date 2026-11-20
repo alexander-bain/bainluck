@@ -236,19 +236,18 @@ describe("#3049 — every probability the card prints came from a pair", () => {
     expect(src).not.toMatch(/servedHome:[^\n]*awayRenderedPercent/);
   });
 
-  it("the opening line passes NO served values", () => {
-    // The served pair describes `current_odds` and nothing else. Handing that
-    // rounding to `opening_odds`' probabilities prints a mismatched pair that
-    // still sums to 100 — the one error a sum guard cannot see.
+  it("the live pregame context line reads PrematchReading.percents, never current_odds", () => {
+    // #12616: both the finished `Pregame` column and the live `Pregame` context
+    // clause read `PrematchReading.percents` (`[away, home]`), never reaching
+    // for `current_odds`'s served fields.
     const src = swiftCode(read(CARD));
-    expect(src).toMatch(/private var openingPercents: \[Int\?\]/);
-    expect(src).toMatch(
-      /openingPercents: \[Int\?\] \{\s*\n\s*renderedDuelPercents\(/,
-    );
-    // `openingPercents` must not reach for the served fields at all.
-    const body = src.slice(src.indexOf("private var openingPercents"));
+    expect(src).toMatch(/private var livePregameContext12616:/);
+    const body = src.slice(src.indexOf("private var livePregameContext12616"));
     const end = body.indexOf("\n    }");
-    expect(body.slice(0, end)).not.toContain("RenderedPercent");
+    const slice = body.slice(0, end);
+    expect(slice).toContain("reading.percents[0]");
+    expect(slice).toContain("reading.percents[1]");
+    expect(slice).not.toContain("RenderedPercent");
   });
 
   it("each side reads its own index — away is [0], home is [1]", () => {
@@ -258,7 +257,7 @@ describe("#3049 — every probability the card prints came from a pair", () => {
     const src = swiftCode(read(CARD));
     expect(src).toMatch(/side == \.home \? livePercents\[1\] : livePercents\[0\]/);
     // #8622: the finished row reads the resolved pre-match reading's pair
-    // (`PrematchReading.percents`, also `[away, home]`), not `openingPercents`.
+    // (`PrematchReading.percents`, also `[away, home]`).
     expect(src).toMatch(/reading\?\.percents\[side == \.home \? 1 : 0\]/);
     expect(src).not.toMatch(/side == \.home \? livePercents\[0\]/);
     expect(src).not.toMatch(/side == \.home \? openingPercents\[0\]/);
@@ -266,11 +265,11 @@ describe("#3049 — every probability the card prints came from a pair", () => {
   });
 
   it("the card keeps no second, private opinion about the pair", () => {
-    // The `Opened` line used to derive its own `openPcts` beside the two bare
-    // calls. Three derivations of one rule on one card is how they disagreed.
+    // `PrematchReading.resolve` owns the pregame pair derivation for both the
+    // live context line and the finished `Pregame` column (#8622 / #12616).
     const src = swiftCode(read(CARD));
     expect(src).not.toContain("openPcts");
-    expect(src.match(/renderedDuelPercents\(/g) ?? []).toHaveLength(1);
+    expect(src.match(/renderedDuelPercents\(/g) ?? []).toHaveLength(0);
   });
 });
 

@@ -11,7 +11,7 @@ names, and (b) that the statements the route executes carry the minimal groups.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -111,7 +111,7 @@ def _ilike_params(stmt):
     return sorted(v for v in params.values() if isinstance(v, str) and v.startswith("%"))
 
 
-async def _run_build(event, linked):
+async def _run_build(event, linked, *, statements=None):
     from app.main import app
     from app.routes.events import _event_detail_cache, _game_markets_cache
 
@@ -124,6 +124,8 @@ async def _run_build(event, linked):
         if "futures_markets" in s:
             if "futures_markets.group_id is not null" in s:
                 seen["poly_parent"] = _ilike_params(stmt)
+                if statements is not None:
+                    statements["poly_parent"] = stmt
                 return _result([])
             if "futures_markets.event_id is null" in s:
                 seen["unlinked"] = _ilike_params(stmt)
@@ -184,3 +186,25 @@ async def test_both_name_sweeps_carry_only_the_minimal_groups():
     expected = sorted(["%Aggies%", "%Utah%", "%Cougars%", "%Washington%"])
     assert seen["poly_parent"] == expected, seen["poly_parent"]
     assert seen["unlinked"] == expected, seen["unlinked"]
+
+
+@pytest.mark.asyncio
+async def test_parent_group_lookup_requires_the_fixtures_sport():
+    """New England/Miami names alone also describe an MLS fixture (#12633)."""
+    now = datetime.now(timezone.utc)
+    event = _make_event(
+        id=14969875, home_team="New England Patriots", away_team="Miami Dolphins",
+        status="completed", sport_key="americanfootball_nfl",
+    )
+    event.commence_time = now - timedelta(days=2)
+    event.sport_id = 90_126_331
+    statements = {}
+    await _run_build(event, [], statements=statements)
+
+    statement = statements["poly_parent"]
+    compiled = statement.compile(dialect=postgresql.dialect())
+    where = str(compiled).split("WHERE", 1)[1]
+    assert "futures_markets.sport_id =" in where
+    assert "futures_markets.llm_sport_category =" in where
+    assert 90_126_331 in compiled.params.values()
+    assert "football" in compiled.params.values()

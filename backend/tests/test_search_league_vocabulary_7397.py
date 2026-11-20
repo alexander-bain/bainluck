@@ -85,8 +85,9 @@ so its assertions are on the served payload. The typeahead's arm is an inline
 dict literal in an async route body with no seam, so it is guarded by source
 inspection — the house pattern for this exact block
 (`test_typeahead_futures_pool_ordering_4723`, and #7369 before this). That guard
-proves the CALL; the output is proven once on the helper, and both call sites are
-asserted to pass the same single argument so the two surfaces cannot drift.
+proves the CALL; the output is also checked on the real card serializer. A
+verified title translates its canonical display name, while an ordinary card
+continues to translate its own venue name.
 """
 
 import inspect
@@ -671,12 +672,33 @@ class TestBothSurfacesCallIt:
         src = inspect.getsource(events.typeahead_search)
         assert '"text": market.name,' not in src
 
-    def test_both_call_sites_pass_the_same_single_argument(self):
-        """So the dropdown and the card below it can never drift apart."""
-        ta = inspect.getsource(events.typeahead_search)
-        card = inspect.getsource(_format_futures_for_search)
-        call = "rewrite_venue_league_vocabulary(market.name)"
-        assert call in ta and call in card
+    @pytest.mark.parametrize("canonical", [None, "Pro Football: 2027 Champion"])
+    def test_the_card_translates_the_name_it_displays(self, canonical, monkeypatch):
+        """#12530 may redirect a proven alias; vocabulary still reaches its title."""
+        from app.utils.futures_verified_title import Composition
+
+        market = _Market("Pro Football: Chiefs vs. Raiders Season Series Winner")
+        verified = (
+            Composition(
+                question_identity={}, overlay={}, contributing_sources=[],
+                canonical_market_id=86832, canonical_market_name=canonical,
+                canonical_source="odds_api",
+            )
+            if canonical else None
+        )
+        seen = []
+
+        def translate(name):
+            seen.append(name)
+            return rewrite_venue_league_vocabulary(name)
+
+        monkeypatch.setattr(events, "rewrite_venue_league_vocabulary", translate)
+        card = _format_futures_for_search(market, verified=verified)
+        assert seen == [canonical or market.name]
+        assert card["name"] == (
+            "NFL: 2027 Champion" if canonical
+            else "NFL: Chiefs vs. Raiders Season Series Winner"
+        )
 
     def test_the_search_card_arm_is_the_real_serializer_not_a_copy(self):
         """Guards against the output assertions above going vacuous if the

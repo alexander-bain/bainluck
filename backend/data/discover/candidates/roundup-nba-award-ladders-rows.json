@@ -1,0 +1,87 @@
+{
+  "candidate_slug": "roundup-nba-award-ladders",
+  "producer": "league_award_ladders",
+  "captured_at": "2026-11-14T15:10:00+00:00",
+  "trading_guard_summary": "Seats all 4 actively trading major NBA season trophies (#65677953 Coach of the Year $8,337/24h, #66031970 MVP $109,599/24h, #52755649 Rookie of the Year $5,882/24h, #65677952 Defensive Player of the Year $7,584/24h). Excludes untraded combo/finalist props (#99660310 $0 24h volume).",
+  "input_markets": [
+    {
+      "id": 66031970,
+      "source": "polymarket",
+      "status": "open",
+      "category": "basketball_nba",
+      "name": "2026-2027 NBA MVP Winner",
+      "volume_24h": 109599.0,
+      "updated_at": "2026-11-14T07:45:00+00:00",
+      "outcomes": [
+        {"name": "Victor Wembanyama", "probability": 0.402},
+        {"name": "Luka Doncic", "probability": 0.337},
+        {"name": "Shai Gilgeous-Alexander", "probability": 0.142}
+      ]
+    },
+    {
+      "id": 65677952,
+      "source": "polymarket",
+      "status": "open",
+      "category": "basketball_nba",
+      "name": "2026-2027 NBA Defensive Player of the Year Winner",
+      "volume_24h": 7584.4,
+      "updated_at": "2026-11-14T06:29:00+00:00",
+      "outcomes": [
+        {"name": "Victor Wembanyama", "probability": 0.793},
+        {"name": "Chet Holmgren", "probability": 0.050},
+        {"name": "Evan Mobley", "probability": 0.041}
+      ]
+    },
+    {
+      "id": 52755649,
+      "source": "polymarket",
+      "status": "open",
+      "category": "basketball_nba",
+      "name": "2026-2027 NBA Rookie of the Year Winner",
+      "volume_24h": 5882.1,
+      "updated_at": "2026-11-14T13:12:00+00:00",
+      "outcomes": [
+        {"name": "Yaxel Lendeborg", "probability": 0.397},
+        {"name": "Darius Acuff Jr.", "probability": 0.240},
+        {"name": "AJ Dybantsa", "probability": 0.185}
+      ]
+    },
+    {
+      "id": 65677953,
+      "source": "polymarket",
+      "status": "open",
+      "category": "basketball_nba",
+      "name": "2026-2027 NBA Coach of the Year Winner",
+      "volume_24h": 8337.2,
+      "updated_at": "2026-11-14T06:29:00+00:00",
+      "outcomes": [
+        {"name": "Micah Nori", "probability": 0.104},
+        {"name": "Tuomas Iisalo", "probability": 0.085},
+        {"name": "Mitch Johnson", "probability": 0.081}
+      ]
+    },
+    {
+      "id": 99660310,
+      "source": "kalshi",
+      "status": "open",
+      "category": "basketball_nba",
+      "name": "NBA MVP Winner (untraded board)",
+      "volume_24h": 0.0,
+      "quiet_days": 11.0,
+      "updated_at": "2026-11-01T10:00:00+00:00",
+      "outcomes": [
+        {"name": "Victor Wembanyama", "probability": 0.39},
+        {"name": "Luka Doncic", "probability": 0.31}
+      ]
+    }
+  ],
+  "expected_member_ids": [
+    65677953,
+    66031970,
+    52755649,
+    65677952
+  ],
+  "excluded_ids": [
+    99660310
+  ]
+}

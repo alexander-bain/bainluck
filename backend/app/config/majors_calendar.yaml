@@ -257,6 +257,111 @@ majors:
     marquee: true
     date_confidence: approximate
 
+  # #12201: the next edition of the seven competitions whose calendar ran out.
+  # Fable read each date from the source named in its note on 2026-11-08 (this
+  # lane has no web access). Not yet announced => approximate, and the
+  # next-edition strip then prints the month, never a day.
+  - name: "MLB All-Star Game 2027"
+    slug: mlb-all-star-2027
+    competition: mlb-all-star-game
+    concept_key: null
+    domain: mlb
+    start: 2027-07-13
+    end: 2027-07-13
+    archetype: single_event
+    marquee: false
+    date_confidence: confirmed
+    notes: "Wrigley Field, Chicago. MLB press release, Aug 1 2025: 'will be played on
+      Tuesday, July 13th'."
+
+  - name: "The Open Championship 2027"
+    slug: the-open-championship-2027
+    competition: the-open-championship
+    concept_key: "event:golf:the-open-championship"
+    domain: golf
+    start: 2027-07-15
+    end: 2027-07-18
+    archetype: winner_field
+    marquee: true
+    date_confidence: confirmed
+    notes: "The 155th Open, St Andrews. theopen.com, Oct 22 2026: 'takes place from 11
+      to 18 July'. Dated by the four rounds (Thu-Sun), as the 2026 entry is. Same
+      durable concept key as 2026: the page resolves there, not at a year key, and
+      this later entry is the one calendar_entry_by_concept_key keeps."
+
+  - name: "US Open Tennis 2027"
+    slug: us-open-tennis-2027
+    competition: us-open-tennis
+    concept_key: "event:tennis:us-open-2027"
+    domain: tennis
+    start: 2027-08-30
+    end: 2027-09-12
+    archetype: bracket
+    marquee: true
+    date_confidence: approximate
+    notes: "Not confirmed by the USTA (only ticket resellers list dates). The
+      conventional window: 2026 ran Mon Aug 31 - Sun Sep 13."
+
+  - name: "Vuelta a España 2027"
+    slug: vuelta-2027
+    competition: vuelta-a-espana
+    concept_key: "event:cycling:vuelta-2027"
+    domain: cycling
+    start: 2027-09-04
+    end: 2027-09-26
+    archetype: winner_field
+    marquee: true
+    date_confidence: approximate
+    notes: "Starts in Galicia (Santiago de Compostela); later than usual because of
+      the 2027 'Super' World Championships. From the UCI 2027 WorldTour calendar as
+      reported by Cyclingnews, Jun 6 2026: '4-26 September: La Vuelta'. Approximate
+      until lavuelta.es lists 2027."
+
+  - name: "NFL Kickoff Game 2027"
+    slug: nfl-kickoff-2027
+    competition: nfl-kickoff-game
+    concept_key: null
+    fixture:
+      sport_key: americanfootball_nfl
+    domain: nfl
+    start: 2027-09-10
+    end: 2027-09-10
+    archetype: team_match
+    marquee: true
+    date_confidence: approximate
+    notes: "Not announced: the NFL sets it with its schedule release, usually in May.
+      Conventional: Thursday Sep 9, 2027 (after Labor Day, Mon Sep 6), dated by the
+      UTC day of a primetime kickoff, as the 2026 entry explains. Re-date it when the
+      schedule is out: these dates pick which game the fixture pin holds."
+
+  - name: "Emmy Awards 2027"
+    slug: emmys-2027
+    competition: emmy-awards
+    concept_key: "event:awards:emmys-2027"
+    domain: awards
+    start: 2027-09-12
+    end: 2027-09-12
+    archetype: ceremony
+    marquee: true
+    date_confidence: approximate
+    notes: "The 79th Emmys, on Prime Video. AP, Oct 6 2026: 'The ceremony will stay in
+      September in 2027'. No day announced; the second Sunday is a placeholder for
+      the horizon checks, and readers see September 2027."
+
+  - name: "F1 Season Finale 2027 (Abu Dhabi GP)"
+    slug: f1-abu-dhabi-2027
+    competition: abu-dhabi-grand-prix
+    concept_key: "event:f1:abu-dhabi-2027"
+    domain: f1
+    start: 2027-12-12
+    end: 2027-12-12
+    archetype: winner_field
+    marquee: true
+    date_confidence: confirmed
+    notes: "Round 24, the final round, with a sprint. formula1.com 2027 calendar:
+      '10 - 12 Dec'. Dated by race day, as the 2026 entry is. Reporting notes a Middle
+      East contingency plan, so it can still move."
+
   # ============================ QUADRENNIAL ANCHORS (2028-2030) ============================
   - name: "2028 Summer Olympics (Los Angeles)"
     slug: summer-olympics-2028

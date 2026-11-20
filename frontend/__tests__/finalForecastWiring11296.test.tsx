@@ -126,6 +126,18 @@ function bandLabel(html: string, testId: string): { cls: string; text: string } 
 }
 const DETAILS = "event-hero-final-forecast-details";
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the fixtures are what production served", () => {
   it("the NFL final carries the producer's object; the NHL final carries only its refusal", () => {
     const d = F.detail_14966179 as Event;
@@ -150,58 +162,34 @@ describe("the fixtures are what production served", () => {
   });
 });
 
-describe("the finished headline, Buccaneers 19 – Steelers 26", () => {
-  it("prints the named band, home first like the columns, rounded as the card rounds", () => {
+describe("the finished headline, Buccaneers 19 – Steelers 26 (Direction 199)", () => {
+  it("prints Pregame · Final with winner ticked and no forecast band", () => {
     const html = page(detail());
-    expect(stamp(html, HERO)).toBe("18-20 home-away");
-    expect(html).toContain(">Projection before scheduled start<");
-    expect(html).toMatch(/aria-label="Projection before scheduled start: [^"]+ 18, [^"]+ 20"/);
+    expect(html).toContain('data-phase="after"');
+    expect(html).toContain(">Final<");
+    expect(html).toContain(">✓<");
+    expect(stamp(html, HERO)).toBeNull();
+    expect(html).not.toMatch(ANY_BAND_LABEL);
   });
 
   it("keeps the actual result primary: both real scores still print, and no second score table", () => {
     const html = page(detail());
     expect(html).toMatch(/>19<\/span>/);
     expect(html).toMatch(/>26<\/span>/);
-    // The band holds the forecast only — never the actual pair again.
-    const at = html.indexOf(`data-testid="${HERO}"`);
-    const band = html.slice(at, html.indexOf(`data-testid="${DETAILS}"`, at));
-    expect(band).not.toMatch(/>19<|>26</);
+    expect(html).not.toContain(DETAILS);
   });
 
-  it("sits under the settled result, never the pre-game 'Projected final' line", () => {
+  it("never prints Projected final or Pregame projection on a finished game", () => {
     const html = page(detail());
     expect(stamp(html, "event-hero-projected-final")).toBeNull();
     expect(html).not.toContain(">Projected final<");
     expect(html).not.toContain("Pregame projection");
   });
 
-  it("does not grade the forecast: no win/loss colour on the band", () => {
-    const html = page(detail());
-    const at = html.indexOf(`data-testid="${HERO}"`);
-    const band = html.slice(at, html.indexOf(`data-testid="${DETAILS}"`, at));
-    expect(band).toContain("text-text-primary");
-    expect(band).not.toMatch(/accent-(positive|negative|success|danger|live)/);
-  });
-
-  it("puts source, recorded range and scheduled start in a closed Details, not the headline", () => {
-    const html = page(detail());
-    const at = html.indexOf(`data-testid="${DETAILS}"`);
-    expect(at).toBeGreaterThan(html.indexOf(`data-testid="${HERO}"`));
-    const open = html.lastIndexOf("<details", at);
-    const tag = html.slice(open, html.indexOf(">", at));
-    expect(tag).not.toMatch(/\sopen(=|\s|>)/);
-    expect(tag).toContain(`data-forecast-earliest="${SERVED.earliest_captured_at}"`);
-    expect(tag).toContain(`data-forecast-latest="${SERVED.latest_captured_at}"`);
-    expect(tag).toContain(`data-forecast-boundary="${SERVED.boundary_at}"`);
-    const body = html.slice(at, html.indexOf("</details>", at));
-    expect(body).toContain("21 sportsbooks");
-    expect(body).toContain("Lines recorded");
-    expect(body).toContain("Scheduled start");
-    expect(body).not.toMatch(/\bbooks?\b|bookmaker/i);
-  });
-
   it("closed is a final too (the canonical finished predicate)", () => {
-    expect(stamp(page(detail({ status: "closed" })), HERO)).toBe("18-20 home-away");
+    const html = page(detail({ status: "closed" }));
+    expect(html).toContain('data-phase="after"');
+    expect(stamp(html, HERO)).toBeNull();
   });
 
   it("an older payload without the key prints nothing in its place", () => {
@@ -291,10 +279,11 @@ describe("the cards", () => {
     expect(html).not.toMatch(ANY_BAND_LABEL);
   });
 
-  it("card and headline print the same pair for the same game", () => {
-    expect(stamp(card(searchRow(14966179)), "event-card-final-forecast")).toBe(
-      stamp(page(detail()), HERO),
-    );
+  it("EventCard and FeedCard print the same pair for the same game", () => {
+    expect(stamp(card(searchRow(14966179)), "event-card-final-forecast")).toBe("18-20 home-away");
+    expect(
+      stamp(feed(finishedFeedItem({ pregame_projection: SERVED } as Partial<FeedEventData>)), "feed-card-final-forecast"),
+    ).toBe("18-20 away-home");
   });
 
   it("FeedCard: away first like its rows, once the feed carries the key", () => {
@@ -318,7 +307,6 @@ describe("the longer label wraps inside its band (Design R1)", () => {
   // the card's numbers nor the headline's team columns lose room they had.
   // A class read cannot see geometry; it pins the decision so a revert is loud.
   const bands: Array<[string, () => string, string]> = [
-    ["headline", () => page(detail()), HERO],
     ["EventCard", () => card(searchRow(14966179)), "event-card-final-forecast"],
     [
       "FeedCard",
@@ -387,19 +375,18 @@ describe("the longer label wraps inside its band (Design R1)", () => {
       away_score: null,
     }) as Event;
 
-  it.each([
-    ["EventCard", () => card(eplBeforePlay()), "event-card-projected-final"],
-    ["headline", () => page(eplBeforePlay()), "event-hero-projected-final"],
-  ] as Array<[string, () => string, string]>)(
-    "soccer before play (%s): \"Projected final (90 min)\" prints uncapped",
-    (_name, render, id) => {
-      const html = render();
-      expect(stamp(html, id)).toBe("1-1 home-away");
-      const label = bandLabel(html, id)!;
-      expect(label.text).toBe("Projected final (90 min)");
-      expect(label.cls.split(/\s+/)).not.toContain("max-w-[8rem]");
-      expect(label.cls.split(/\s+/)).toContain("text-xs");
-      expect(html).not.toMatch(ANY_BAND_LABEL);
-    },
-  );
+  it("soccer before play (EventCard): \"Projected final (90 min)\" prints uncapped, and headline prints Proj.", () => {
+    const cardHtml = card(eplBeforePlay());
+    expect(stamp(cardHtml, "event-card-projected-final")).toBe("1-1 home-away");
+    const label = bandLabel(cardHtml, "event-card-projected-final")!;
+    expect(label.text).toBe("Projected final (90 min)");
+    expect(label.cls.split(/\s+/)).not.toContain("max-w-[8rem]");
+    expect(label.cls.split(/\s+/)).toContain("text-xs");
+    expect(cardHtml).not.toMatch(ANY_BAND_LABEL);
+
+    const pageHtml = page(eplBeforePlay());
+    expect(pageHtml).toContain(">Proj.<");
+    expect(pageHtml).toContain('data-projected-cell="home"');
+    expect(pageHtml).not.toMatch(ANY_BAND_LABEL);
+  });
 });

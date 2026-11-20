@@ -230,6 +230,26 @@ _WHOLE_NAME_FOLDS = {
     "los angeles fc": "lafc",
 }
 
+#: #12083: ESPN's spelling of a college club -> ours, as whole phrases of the
+#: normalized name, college feeds only. The first run on the full Division I
+#: board filed 2 critical EXTRA, each one real game under two spellings: our
+#: "Albany Great Danes" vs ESPN's "UAlbany Great Danes" (0.5 under the 0.60 bar)
+#: and "CSU Bakersfield Roadrunners" vs "Cal State Bakersfield Roadrunners"
+#: (0.4). Every pair is measured: our team row on one side, ESPN's board on the
+#: other; the last five are the replay residue behind #12381.
+_COLLEGE_NAME_FOLDS = {
+    "ualbany": "albany",
+    "cal state": "csu",
+    "long island university": "liu",
+    "george washington": "gw",
+    "iu indianapolis": "iupui",
+    "ut martin": "tenn martin",
+    "lopes": "antelopes",
+}
+_COLLEGE_FOLD_RE = re.compile(
+    r"\b(" + "|".join(sorted(map(re.escape, _COLLEGE_NAME_FOLDS), key=len, reverse=True)) + r")\b"
+)
+
 
 def _norm_name(s: Optional[str], college: bool = False) -> str:
     """Lowercase, strip punctuation to spaces, collapse whitespace.
@@ -258,7 +278,9 @@ def _norm_name(s: Optional[str], college: bool = False) -> str:
     filed a critical MISATTACHED against the right club. A leading ``st`` stays
     Saint ("St. John's"). College feeds only: in "FC St. Gallen" the ``st`` is
     not leading and is still Saint. It runs before the city expansion, so the
-    ``st`` a city fold writes ("stl" -> "st louis") is never touched."""
+    ``st`` a city fold writes ("stl" -> "st louis") is never touched. ESPN's
+    college spellings then fold to ours (``_COLLEGE_NAME_FOLDS``), after the
+    ``st`` rule so "Cal St" reaches "csu" too."""
     s = unicodedata.normalize("NFKD", s or "")
     s = "".join(c for c in s if not unicodedata.combining(c)).lower()
     s = re.sub(r"['‘’ʻ]", "", s)
@@ -266,6 +288,9 @@ def _norm_name(s: Optional[str], college: bool = False) -> str:
     tokens = s.split()
     if college:
         tokens = [college_state_expansion(i, t) or t for i, t in enumerate(tokens)]
+        tokens = _COLLEGE_FOLD_RE.sub(
+            lambda m: _COLLEGE_NAME_FOLDS[m.group(1)], " ".join(tokens)
+        ).split()
     s = expand_city_abbreviations(" ".join(tokens))
     return _WHOLE_NAME_FOLDS.get(s, s)
 

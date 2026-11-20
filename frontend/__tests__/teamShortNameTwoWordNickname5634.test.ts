@@ -14,6 +14,8 @@
 
 import {
   TWO_WORD_NICKNAMES,
+  collegeSchoolName,
+  isCollegeSport,
   teamShortName,
   teamShortNames,
   twoWordNickname,
@@ -76,9 +78,11 @@ describe("#5634 — a two-word nickname keeps both words", () => {
     ).toEqual({ home: "Red Sox", away: "Guardians" });
   });
 
-  it.each(PRODUCTION_NAMES)("%s · %s keeps its last two words", (sport, name) => {
+  it.each(PRODUCTION_NAMES)("%s · %s keeps its last two words (pro) or school (194-A college)", (sport, name) => {
     const lastTwo = name.split(/\s+/).slice(-2).join(" ");
-    expect(teamShortName(name, null, sport)).toBe(lastTwo);
+    expect(teamShortName(name, null, sport)).toBe(
+      isCollegeSport(sport) ? collegeSchoolName(name) : lastTwo,
+    );
     expect(teamShortName(name)).toBe(lastTwo);
   });
 

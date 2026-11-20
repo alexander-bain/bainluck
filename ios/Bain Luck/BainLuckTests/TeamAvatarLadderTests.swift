@@ -22,7 +22,7 @@ import SwiftUI
 /// ladder no surface calls is invisible from the outside.
 final class TeamAvatarLadderTests: XCTestCase {
 
-    private let dodgersESPN = "https://a.espncdn.com/combiner/i?img=/i/teamlogos/mlb/500/19.png&w=40&h=40&transparent=true"
+    private let dodgersESPN = "https://a.espncdn.com/combiner/i?img=/i/teamlogos/mlb/500/19.png&w=120&h=120&transparent=true"
     private let servedCrest = "https://cdn.example.com/crests/dodgers.png"
     private let servedFace = "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/Zverev.jpg"
 

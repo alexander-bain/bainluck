@@ -176,23 +176,16 @@ describe("#7165: the pin is one object in two treatments", () => {
 
 describe("#7165: what the hero's icon sat beside is NOT changed", () => {
   const PAGE = read("app/events/[id]/page.tsx");
+  const HEADLINE = read("components/event/EventPageHeadline199.tsx");
 
   test("the suspended badge keeps its sentence and its one state answer", () => {
-    // The issue asked for the copy to change too — "No result reported" being the
-    // wrong sentence for a game that is not over. It is the RIGHT sentence for this
-    // specimen: the AFL match kicked off at 04:35Z and was read four hours later,
-    // so its clock had long run out with nobody reporting an end, which is exactly
-    // the state `eventState.ts` defines and the words it chose for it.
-    //
-    // Held as a test because the descope has to survive me: a later pass reading
-    // #7165 and finding the icon fixed must not "finish the job" by editing shared
-    // card vocabulary that four other consumers of `isSuspended` depend on (#4015).
     const code = codeOnly(PAGE);
-    expect(code).toContain('data-testid="event-hero-suspended"');
+    const headlineCode = codeOnly(HEADLINE);
+    expect(headlineCode).toContain('"event-hero-suspended"');
     // #9634 — the call grew the served `started_without_result`; still ONE answer.
     expect(code).toMatch(
       /hasNoReportedResult\(\s*event\?\.status,\s*event\?\.commence_time,\s*undefined,\s*event\?\.started_without_result,?\s*\)/,
     );
-    expect(code).toContain("venueSettledSentence ??");
+    expect(code).toContain("venueSettledSentence,");
   });
 });

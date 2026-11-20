@@ -121,6 +121,7 @@ nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
     let status: String?
     let homeScore: Int?
     let awayScore: Int?
+    var scoreSourceUnavailable: Bool? = nil
     let metadata: EventMetadata?
     let espn: ESPNData?
     let winProbabilitySources: [String: WinProbSource]?
@@ -130,20 +131,25 @@ nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
     let bookmakerOdds: [BookmakerOdds]?
     let highlight: Highlight?
     let openingOdds: OpeningOdds?
-    /// The server's blended price for the HOME side, and its complement for the
-    /// away side (`routes/events.py` serves `hero_probability` from
-    /// `home_probability` and `hero_probability_away` from `away_probability`).
-    ///
-    /// #4967 — search serves these on rows that carry no `current_odds` at all,
-    /// and the model did not name them, so `Decodable` dropped them in silence
-    /// and the row drew no percentage. Named here as two plain optionals: the
-    /// struct has no `CodingKeys` and the client decodes with
-    /// `.convertFromSnakeCase`, so naming them IS the decode.
+    /// #4967 — search can serve a hero chance without a `current_odds` object.
     let heroProbability: Double?
     let heroProbabilityAway: Double?
+    /// #12824 — older search results can identify the hero pair as an opening line.
+    var heroProbabilitySource: String? = nil
     /// #5811 — `venue_closed_no_winner`, served by `/api/events/search`;
     /// present only when true. See `EventDetail.venueClosedNoWinner`.
     let venueClosedNoWinner: Bool?
+    var sportKey: String? = nil
+    var sportName: String? = nil
+    var prematchOdds: PrematchOdds? = nil
+    var pregameProjection: PregameProjection? = nil
+    var finalScorePeriod: String? = nil
+    var homeTeamData: TeamData? = nil
+    var awayTeamData: TeamData? = nil
+    var homeImageUrl: String? = nil
+    var awayImageUrl: String? = nil
+    var homeFlagUrl: String? = nil
+    var awayFlagUrl: String? = nil
 
     /// The TEAM-PAGE rails' own probability pair, and the two orientation fields
     /// that come with them (`routes/teams.py::_format_event_brief`).
@@ -183,6 +189,14 @@ nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
     /// owns that rule so no second surface has to rediscover it.
     let winProbability: Double?
     let pregameWinProbability: Double?
+    /// #12581 / #12926 / #12865 — server-owned source attribution marks.
+    /// On `/api/teams/{slug}`, `sourceMark` and `pregameSourceMark` describe this
+    /// page's team (`isHome`); on `/api/events/search`, `sourceMark` and
+    /// `awaySourceMark` describe the home and away sides.
+    var sourceMark: SourceMark? = nil
+    var awaySourceMark: SourceMark? = nil
+    var pregameSourceMark: SourceMark? = nil
+    var awayPregameSourceMark: SourceMark? = nil
     /// Served orientation. Preferred over comparing `homeTeam` to the page's team
     /// name: one name variant flips the row to the wrong side silently, and the
     /// payload states the answer outright.
@@ -243,6 +257,27 @@ nonisolated struct SearchFuturesMarket: Decodable, Identifiable, Sendable {
             )
         }
         return heatMapBetterThanEvenIndex(points).map { ordered[$0].0 }
+    }
+
+    /// Direction 228 (#12885) & #8834: on a numerical scale search row (which `/search`
+    /// may serve in threshold order with row 0 at 99%), quote the modal / crossing answer
+    /// rung rather than blindly assuming index 0 is the leader.
+    @MainActor var numericalLadderAnswer: SearchFuturesOutcome? {
+        guard status != "resolved", let outcomes = topOutcomes, outcomes.count > 1 else { return nil }
+        guard outcomes.first?.verdict(in: self) == nil,
+              outcomes.first(where: { $0.probability != nil })?.verdict(in: self) == nil else { return nil }
+        let probSum = outcomes.compactMap(\.probability).reduce(0, +)
+        let isCumulative = probSum > 1.35 || outcomes.allSatisfy {
+            let r = NumericalMarketScaleOrder228.parseLabelKey($0.name)?.relationRank ?? 0
+            return r <= -1 || r >= 2
+        }
+        return NumericalMarketScaleOrder228.orderedAll(
+            outcomes,
+            label: \.name,
+            probability: \.probability,
+            totalOutcomeCount: outcomeCount ?? outcomes.count,
+            isCumulative: isCumulative
+        )?.first(where: \.isLeader)?.element
     }
 
     private static func dateRungValue(_ label: String) -> Double? {
@@ -356,6 +391,8 @@ nonisolated struct FacetedFuturesMarket: Decodable, Identifiable, Sendable {
     let outcomeCount: Int?
     let imageUrl: String?
     let hookDescription: String?
+    var marketType: String? = nil
+    var mutuallyExclusive: Bool? = nil
 }
 
 /// Outcome row embedded in a faceted futures market.
@@ -365,6 +402,7 @@ nonisolated struct FacetedFuturesOutcome: Decodable, Identifiable, Sendable {
     let name: String
     let probability: Double?
     let movement: Double?
+    var sortKey: Double? = nil
 }
 
 /// Named facet value and count used by browse filters.
@@ -488,7 +526,7 @@ nonisolated struct RelatedGameListing: Decodable, Equatable, Sendable {
     let questionCount: Int
 
     var label: String {
-        "\(questionCount) \(questionCount == 1 ? "question" : "questions") on this game"
+        "\(questionCount) \(questionCount == 1 ? "market" : "markets") on this game"
     }
 }
 
@@ -501,6 +539,10 @@ nonisolated struct SearchTeam: Decodable, Identifiable, Sendable {
     let logo: String?
     let record: String?
     let sportKey: String?
+    /// The server's word that the search words name this team, not just share
+    /// a word with it ("Patriots" names New England and George Mason; it does
+    /// not name St Kitts & Nevis). Siri's team choice reads it (ruling 208-A).
+    let queryNamesTeam: Bool?
 }
 
 // MARK: - Team Page
@@ -514,12 +556,54 @@ nonisolated struct TeamPageResponse: Decodable, Sendable {
     let championshipPath: [ChampionshipPathEntry]
 }
 
+/// Roster player entry served on `/api/teams/{slug}` (`team.roster`).
+nonisolated struct TeamRosterMember: Decodable, Equatable, Sendable {
+    let name: String
+    let espnId: String?
+    let headshot: String?
+    let position: String?
+}
+
+/// Lenient wrapper around `/api/teams/{slug}`'s `team.roster` (`team.roster_players`).
+/// `roster_sync.py` appends plain ASCII-variant strings alongside rich player dicts for
+/// accented names, and legacy rows may hold plain strings or non-array payloads.
+/// Skips string/malformed elements and degrades non-array payloads to `[]` so `TeamPageResponse`
+/// never fails decoding because of `roster`.
+nonisolated struct LossyTeamRoster: Decodable, Equatable, Sendable {
+    let members: [TeamRosterMember]
+
+    private nonisolated struct AnyJSONValue: Decodable {
+        init(from decoder: Decoder) throws {}
+    }
+
+    init(members: [TeamRosterMember] = []) {
+        self.members = members
+    }
+
+    init(from decoder: Decoder) throws {
+        guard var container = try? decoder.unkeyedContainer() else {
+            self.members = []
+            return
+        }
+        var parsed: [TeamRosterMember] = []
+        while !container.isAtEnd {
+            if let member = try? container.decode(TeamRosterMember.self) {
+                parsed.append(member)
+            } else if (try? container.decode(AnyJSONValue.self)) == nil {
+                break
+            }
+        }
+        self.members = parsed
+    }
+}
+
 /// Team identity and display metadata for a team page.
 nonisolated struct TeamPageTeam: Decodable, Sendable {
     let id: Int
     let slug: String
     let name: String
     let abbreviation: String?
+    let location: String?
     let sportKey: String?
     let sportName: String?
     let primaryColor: String?
@@ -528,6 +612,11 @@ nonisolated struct TeamPageTeam: Decodable, Sendable {
     let logoLarge: String?
     let record: String?
     let standings: [String: AnyCodable]?
+    var roster: LossyTeamRoster? = nil
+
+    var rosterMembers: [TeamRosterMember] {
+        roster?.members ?? []
+    }
 }
 
 // TeamFutureItem defined in FuturesModels.swift (shared with team page + futures browsing)
@@ -543,6 +632,9 @@ nonisolated struct ChampionshipPathEntry: Decodable, Identifiable, Sendable {
     let movement: Double?
     /// #11493 — the grid's verdict for this step. See ``TeamGridVerdict``.
     var state: String? = nil
+    /// #12959 / #12581 — server-owned provenance mark for this step's displayed
+    /// chance or settled grid verdict. Optional and defaulted to `nil`.
+    var sourceMark: SourceMark? = nil
 
     var id: Int { tier }
 

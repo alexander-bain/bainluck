@@ -20,6 +20,10 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket
 from app.services import get_db
 from app.utils.futures_liveness import market_reads_settled
+from app.utils.discover_image_policy import (
+    resolve_discover_market_image,
+    sanitize_entertainment_response_images,
+)
 from app.utils.hook_staleness import is_hook_stale
 from app.utils.ladder_headline import ladder_median_row
 from app.utils.ladder_monotonicity import cumulative_outcome_ladder
@@ -462,6 +466,22 @@ def _market_row(
             )
             for d in outcome_dicts:
                 prob_by_id[d["_obj_id"]] = float(d["probability"])
+    _top_outcomes_payload = [
+        {
+            "name": (o.name or "").strip(),
+            "prob": round(prob_by_id[id(o)] * 100, 1),
+            "delta_24h": round(
+                float(o.probability_change_24h or 0) * 100, 1
+            ),
+        }
+        for o in top
+    ]
+    _resolved_img = resolve_discover_market_image(
+        name=market.name,
+        category=getattr(market, "llm_sport_category", None) or "entertainment",
+        top_outcomes=_top_outcomes_payload,
+        image_url=market.image_url,
+    )
     return {
         **_ladder_headline(market, priced),
         "q": market.name,
@@ -476,16 +496,7 @@ def _market_row(
         "market_id": market.id,
         "external_id": market.external_id,
         "kind": _classify_kind(market, outcome_count),
-        "top_outcomes": [
-            {
-                "name": (o.name or "").strip(),
-                "prob": round(prob_by_id[id(o)] * 100, 1),
-                "delta_24h": round(
-                    float(o.probability_change_24h or 0) * 100, 1
-                ),
-            }
-            for o in top
-        ],
+        "top_outcomes": _top_outcomes_payload,
         "outcome_count": outcome_count,
         "volume_24h": market.volume_24h,
         "resolution_date": (
@@ -502,7 +513,13 @@ def _market_row(
             if (_updated_at := getattr(market, "updated_at", None))
             else None
         ),
-        "image_url": market.image_url,
+        "image_url": _resolved_img["image_url"],
+        "image_presentation": _resolved_img["image_presentation"],
+        "image_monogram": _resolved_img["image_monogram"],
+        "image_credit": _resolved_img.get("image_credit"),
+        "image_author": _resolved_img.get("image_author"),
+        "image_license": _resolved_img.get("image_license"),
+        "image_source_page": _resolved_img.get("image_source_page"),
         # #5926: the same gate the Discover card and (since #5906) the futures
         # detail page run. This route served `market.hook_description` raw, so
         # /entertainment was the third and last unconverted call site of a rule
@@ -666,6 +683,12 @@ def _group_threshold_markets(markets: list[dict]) -> tuple[list[dict], list[dict
                 "title": title,
                 "image_url": next(
                     (r["image_url"] for r in rows if r.get("image_url")), None
+                ),
+                "image_monogram": next(
+                    (r["image_monogram"] for r in rows if r.get("image_monogram")), None
+                ),
+                "image_credit": next(
+                    (r["image_credit"] for r in rows if r.get("image_credit")), None
                 ),
                 "thresholds": [
                     {
@@ -1052,13 +1075,13 @@ async def get_entertainment_cached(db: AsyncSession = Depends(get_db)):
         cached = await rc.get("bainluck:category:entertainment")
         if cached:
             await rc.aclose()
-            return json.loads(cached)
+            return sanitize_entertainment_response_images(json.loads(cached))
         # Primary cache miss — try stale fallback
         stale = await rc.get("bainluck:category:entertainment:stale")
         await rc.aclose()
         if stale:
             logger.info("Entertainment: serving stale cache (primary miss)")
-            return json.loads(stale)
+            return sanitize_entertainment_response_images(json.loads(stale))
     except Exception:
         pass  # Fall through to live query
 

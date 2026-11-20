@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { TeamGameBrief } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { sportPricesADraw } from "@/lib/drawPricedWinner";
 import { suspendedSummary } from "@/lib/eventState";
 import { isGameLive, teamResult } from "@/lib/teamGames";
 import { teamShortNames } from "@/lib/teamShortName";
@@ -12,6 +13,8 @@ import {
   formatScheduledGameLabel,
   formatTbdStartLabel,
 } from "@/lib/gameTimeLabel";
+import EventCard183A, { buildUnifiedCardFromTeamGame } from "./EventCard183A";
+import { isWebGameCard183AEnabled } from "@/lib/gameCard183AFlag";
 
 // ---------------------------------------------------------------------------
 // Team-page game cards (L2-158). Extracted from the team page so the
@@ -37,18 +40,54 @@ export function UpcomingGameCard({
   game,
   teamName,
   teamColor,
+  teamSecondaryColor,
+  opponentColor,
+  opponentSecondaryColor,
+  teamLogo,
+  opponentLogo,
+  teamAbbrev,
+  opponentAbbrev,
   gameNo,
 }: {
   game: TeamGameBrief;
   teamName: string;
   teamColor: string | null;
+  teamSecondaryColor?: string | null;
+  opponentColor?: string | null;
+  opponentSecondaryColor?: string | null;
+  teamLogo?: string | null;
+  opponentLogo?: string | null;
+  teamAbbrev?: string | null;
+  opponentAbbrev?: string | null;
   gameNo?: number;
 }) {
+  if (isWebGameCard183AEnabled()) {
+    return (
+      <EventCard183A
+        card={buildUnifiedCardFromTeamGame(game, {
+          teamColor,
+          teamSecondaryColor,
+          opponentColor,
+          opponentSecondaryColor,
+          teamLogo,
+          opponentLogo,
+          teamAbbrev,
+          opponentAbbrev,
+        })}
+        surface="standard"
+      />
+    );
+  }
   const opponent = game.opponent || (game.is_home ? game.away_team : game.home_team);
   const live = isGameLive(game);
   const wp = game.win_probability; // team-relative, 0-1
   const teamPct = wp !== null && wp !== undefined ? Math.round(wp * 100) : null;
-  const oppPct = teamPct !== null ? 100 - teamPct : null;
+  // #11541: on a sport that prices a draw, 100 − team% is the opponent's chance
+  // PLUS the draw's: Arsenal's 67% against Dortmund printed "Dortmund 33%". We
+  // serve no opponent price here, so the card prints none, and the bar draws only
+  // the team's own share.
+  const oppPct =
+    teamPct !== null && !sportPricesADraw(game.sport_key) ? 100 - teamPct : null;
   // #5546: BOTH ENDS OF THE BAR ARE NAMED BY ONE RULE.
   //
   // This read `teamName.split(" ").pop()` on the left while the right printed
@@ -136,13 +175,17 @@ export function UpcomingGameCard({
                 backgroundColor: teamColor || undefined,
               }}
             />
-            <div className="bg-surface-border" style={{ width: `${oppPct}%` }} />
+            {oppPct !== null && (
+              <div className="bg-surface-border" style={{ width: `${oppPct}%` }} />
+            )}
           </div>
           <div className="flex justify-between text-[11px] text-text-muted mt-1">
             <span className="truncate">{teamShort}</span>
-            <span className="truncate ml-2">
-              {opponentShort} {oppPct}%
-            </span>
+            {oppPct !== null && (
+              <span className="truncate ml-2">
+                {opponentShort} {oppPct}%
+              </span>
+            )}
           </div>
         </>
       ) : null}
@@ -161,11 +204,44 @@ export function UpcomingGameCard({
  */
 export function RecentGameCard({
   game,
+  teamColor = null,
+  teamSecondaryColor,
+  opponentColor,
+  opponentSecondaryColor,
+  teamLogo,
+  opponentLogo,
+  teamAbbrev,
+  opponentAbbrev,
   gameNo,
 }: {
   game: TeamGameBrief;
+  teamColor?: string | null;
+  teamSecondaryColor?: string | null;
+  opponentColor?: string | null;
+  opponentSecondaryColor?: string | null;
+  teamLogo?: string | null;
+  opponentLogo?: string | null;
+  teamAbbrev?: string | null;
+  opponentAbbrev?: string | null;
   gameNo?: number;
 }) {
+  if (isWebGameCard183AEnabled()) {
+    return (
+      <EventCard183A
+        card={buildUnifiedCardFromTeamGame(game, {
+          teamColor,
+          teamSecondaryColor,
+          opponentColor,
+          opponentSecondaryColor,
+          teamLogo,
+          opponentLogo,
+          teamAbbrev,
+          opponentAbbrev,
+        })}
+        surface="standard"
+      />
+    );
+  }
   const opponent = game.opponent || (game.is_home ? game.away_team : game.home_team);
   const result = teamResult(game);
   const dateStr = formatSettledDate(game.completed_at || game.commence_time);

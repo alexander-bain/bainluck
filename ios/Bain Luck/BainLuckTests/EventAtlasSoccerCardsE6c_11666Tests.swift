@@ -236,7 +236,7 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
                 "observed_at": "2026-11-06T19:55:00Z",
                 "source": "kalshi",
                 "is_winner": false,
-                "resolution_source": "official_score"
+                "resolution_source": "api_settlement"
             },
             {
                 "_market_id": 601,
@@ -247,7 +247,7 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
                 "observed_at": "2026-11-06T19:55:00Z",
                 "source": "kalshi",
                 "is_winner": false,
-                "resolution_source": "official_score"
+                "resolution_source": "api_settlement"
             },
             {
                 "_market_id": 601,
@@ -258,7 +258,7 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
                 "observed_at": "2026-11-06T19:55:00Z",
                 "source": "kalshi",
                 "is_winner": true,
-                "resolution_source": "official_score"
+                "resolution_source": "api_settlement"
             },
             {
                 "_market_id": 601,
@@ -269,7 +269,7 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
                 "observed_at": "2026-11-06T19:55:00Z",
                 "source": "kalshi",
                 "is_winner": false,
-                "resolution_source": "official_score"
+                "resolution_source": "api_settlement"
             }
         ]
         """
@@ -348,15 +348,15 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
         let blendedSheet = EventAtlasSoccerCards11666.detailsModel(for: blendedCard.legs[0], card: blendedCard)
         XCTAssertEqual(blendedSheet.sourceLabel, "Blended")
 
-        // 2. Multiple unblended sources without a blended row withhold probabilities and grade disagreement as Pending
+        // 2. Multiple unblended sources without a blended row withhold probabilities and grade disagreement as Result not confirmed
         let multiDisagreeJSON = """
         [
-            {"_market_id": 710, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.50, "pregame_mark": 0.50, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "kalshi"},
-            {"_market_id": 710, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.25, "pregame_mark": 0.25, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "kalshi"},
-            {"_market_id": 710, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.25, "pregame_mark": 0.25, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "kalshi"},
-            {"_market_id": 711, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.56, "pregame_mark": 0.56, "observed_at": "2026-11-06T19:55:00Z", "source": "polymarket", "is_winner": false, "resolution_source": "polymarket"},
-            {"_market_id": 711, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.22, "pregame_mark": 0.22, "observed_at": "2026-11-06T19:55:00Z", "source": "polymarket", "is_winner": true, "resolution_source": "polymarket"},
-            {"_market_id": 711, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.22, "pregame_mark": 0.22, "observed_at": "2026-11-06T19:55:00Z", "source": "polymarket", "is_winner": false, "resolution_source": "polymarket"}
+            {"_market_id": 710, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.50, "pregame_mark": 0.50, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "api_settlement"},
+            {"_market_id": 710, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.25, "pregame_mark": 0.25, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+            {"_market_id": 710, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.25, "pregame_mark": 0.25, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+            {"_market_id": 711, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.56, "pregame_mark": 0.56, "observed_at": "2026-11-06T19:55:00Z", "source": "polymarket", "is_winner": false, "resolution_source": "clob_authoritative"},
+            {"_market_id": 711, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.22, "pregame_mark": 0.22, "observed_at": "2026-11-06T19:55:00Z", "source": "polymarket", "is_winner": true, "resolution_source": "clob_authoritative"},
+            {"_market_id": 711, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.22, "pregame_mark": 0.22, "observed_at": "2026-11-06T19:55:00Z", "source": "polymarket", "is_winner": false, "resolution_source": "clob_authoritative"}
         ]
         """
         let multiDisagreeRows = try decoder.decode([GameMarketOther].self, from: Data(multiDisagreeJSON.utf8))
@@ -379,7 +379,7 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
             XCTAssertNil(leg.pregameChance, "Unblended multi-source probabilities must be withheld")
             XCTAssertNil(leg.quotedChance)
         }
-        // Arsenal and Draw had disagreeing verdicts across Kalshi and Polymarket -> nil result -> "Pending" in sheet
+        // Arsenal and Draw had disagreeing verdicts across Kalshi and Polymarket -> nil result -> "Result not confirmed" in sheet
         XCTAssertNil(multiCard.legs[0].result)
         XCTAssertNil(multiCard.legs[1].result)
         // Chelsea was agreed .lost across both venues
@@ -387,7 +387,7 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
 
         let pendingSheet = EventAtlasSoccerCards11666.detailsModel(for: multiCard.legs[0], card: multiCard)
         XCTAssertEqual(pendingSheet.primaryReadingLabel, "Result")
-        XCTAssertEqual(pendingSheet.primaryReadingValue, "Pending")
+        XCTAssertEqual(pendingSheet.primaryReadingValue, "Result not confirmed")
         XCTAssertEqual(pendingSheet.sourceLabel, "2 sources, not blended")
     }
 
@@ -399,9 +399,9 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
         // 1. Settled Draw: Draw leg is .won, home/away legs are .lost, title reflects finished level
         let settledDrawJSON = """
         [
-            {"_market_id": 720, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.01, "pregame_mark": 0.45, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
-            {"_market_id": 720, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.99, "pregame_mark": 0.28, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "official_score"},
-            {"_market_id": 720, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.01, "pregame_mark": 0.27, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"}
+            {"_market_id": 720, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.01, "pregame_mark": 0.45, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+            {"_market_id": 720, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.99, "pregame_mark": 0.28, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "api_settlement"},
+            {"_market_id": 720, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.01, "pregame_mark": 0.27, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"}
         ]
         """
         let settledDrawRows = try decoder.decode([GameMarketOther].self, from: Data(settledDrawJSON.utf8))
@@ -491,7 +491,7 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
                     "observed_at": "2026-11-06T19:55:00Z",
                     "source": "kalshi",
                     "is_winner": \(isWinner ? "true" : "false"),
-                    "resolution_source": "official_score"
+                    "resolution_source": "api_settlement"
                 }
                 """)
             }
@@ -604,13 +604,13 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
                 ]
             },
             "other": [
-                {"_market_id": 901, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.99, "pregame_mark": 0.52, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "official_score"},
-                {"_market_id": 901, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.01, "pregame_mark": 0.26, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
-                {"_market_id": 901, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.01, "pregame_mark": 0.22, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
-                {"_market_id": 902, "market_name": "Exact Score", "outcome_name": "Draw 0-0", "probability": 0.01, "pregame_mark": 0.09, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
-                {"_market_id": 902, "market_name": "Exact Score", "outcome_name": "Arsenal wins 1-0", "probability": 0.01, "pregame_mark": 0.14, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
-                {"_market_id": 902, "market_name": "Exact Score", "outcome_name": "Draw 1-1", "probability": 0.01, "pregame_mark": 0.12, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
-                {"_market_id": 902, "market_name": "Exact Score", "outcome_name": "Arsenal wins 2-1", "probability": 0.99, "pregame_mark": 0.11, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "official_score"}
+                {"_market_id": 901, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.99, "pregame_mark": 0.52, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "api_settlement"},
+                {"_market_id": 901, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.01, "pregame_mark": 0.26, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+                {"_market_id": 901, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.01, "pregame_mark": 0.22, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+                {"_market_id": 902, "market_name": "Exact Score", "outcome_name": "Draw 0-0", "probability": 0.01, "pregame_mark": 0.09, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+                {"_market_id": 902, "market_name": "Exact Score", "outcome_name": "Arsenal wins 1-0", "probability": 0.01, "pregame_mark": 0.14, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+                {"_market_id": 902, "market_name": "Exact Score", "outcome_name": "Draw 1-1", "probability": 0.01, "pregame_mark": 0.12, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+                {"_market_id": 902, "market_name": "Exact Score", "outcome_name": "Arsenal wins 2-1", "probability": 0.99, "pregame_mark": 0.11, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "api_settlement"}
             ]
         }
         """
@@ -699,11 +699,11 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
         // 1. Exact score from gameMarkets.other with "Any other score" winning bucket
         let otherJSON = """
         [
-            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Draw 0-0", "probability": 0.01, "pregame_mark": 0.08, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
-            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Arsenal wins 1-0", "probability": 0.01, "pregame_mark": 0.14, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
-            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Draw 1-1", "probability": 0.01, "pregame_mark": 0.12, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
-            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Chelsea wins 2-1", "probability": 0.01, "pregame_mark": 0.09, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
-            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Any other score", "probability": 0.99, "pregame_mark": 0.04, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "official_score"}
+            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Draw 0-0", "probability": 0.01, "pregame_mark": 0.08, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Arsenal wins 1-0", "probability": 0.01, "pregame_mark": 0.14, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Draw 1-1", "probability": 0.01, "pregame_mark": 0.12, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Chelsea wins 2-1", "probability": 0.01, "pregame_mark": 0.09, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Any other score", "probability": 0.99, "pregame_mark": 0.04, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "api_settlement"}
         ]
         """
         let otherRows = try decoder.decode([GameMarketOther].self, from: Data(otherJSON.utf8))
@@ -1077,6 +1077,87 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
             try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
             try XCTUnwrap(img1.pngData()).write(to: dirURL.appendingPathComponent("soccer-exact-score-live-fresh-390px.png"))
             try XCTUnwrap(img2.pngData()).write(to: dirURL.appendingPathComponent("soccer-exact-score-live-aged-390px.png"))
+        }
+    }
+
+    @MainActor
+    func testDecide80AThreeWayAndExactScoreGradeOnlyAuthoritativeWinsAndShowResultNotConfirmedOnTier012() throws {
+        let now = try XCTUnwrap("2026-11-06T22:00:00Z".asDate)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        for nonAuthSource in ["binary_higher_wins", "clean_resolution", "game_score"] {
+            let json = """
+            [
+                {"_market_id": 990, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.99, "pregame_mark": 0.45, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "api_settlement"},
+                {"_market_id": 990, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.01, "pregame_mark": 0.28, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "\(nonAuthSource)"},
+                {"_market_id": 990, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.01, "pregame_mark": 0.27, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "\(nonAuthSource)"},
+                {"_market_id": 991, "market_name": "Exact Score", "outcome_name": "Arsenal wins 1-0", "probability": 0.99, "pregame_mark": 0.14, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "api_settlement"},
+                {"_market_id": 991, "market_name": "Exact Score", "outcome_name": "Draw 0-0", "probability": 0.01, "pregame_mark": 0.09, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "\(nonAuthSource)"},
+                {"_market_id": 991, "market_name": "Exact Score", "outcome_name": "Draw 1-1", "probability": 0.01, "pregame_mark": 0.12, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "\(nonAuthSource)"},
+                {"_market_id": 991, "market_name": "Exact Score", "outcome_name": "Arsenal wins 2-1", "probability": 0.01, "pregame_mark": 0.10, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "\(nonAuthSource)"},
+                {"_market_id": 991, "market_name": "Exact Score", "outcome_name": "Any other score", "probability": 0.01, "pregame_mark": 0.05, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "\(nonAuthSource)"}
+            ]
+            """
+            let rows = try decoder.decode([GameMarketOther].self, from: Data(json.utf8))
+            let threeWay = try XCTUnwrap(
+                EventAtlasSoccerCards11666.buildThreeWayCard(
+                    matrix: nil,
+                    otherMarkets: rows,
+                    status: "completed",
+                    commenceTime: "2026-11-06T20:00:00Z".asDate,
+                    homeTeam: "Arsenal FC",
+                    awayTeam: "Chelsea FC",
+                    homeShort: "Arsenal",
+                    awayShort: "Chelsea",
+                    now: now
+                )
+            )
+            XCTAssertEqual(
+                EventAtlasSoccerCards11666.detailsModel(for: threeWay.legs[0], card: threeWay).primaryReadingValue,
+                "✓ Won"
+            )
+            XCTAssertEqual(
+                EventAtlasSoccerCards11666.detailsModel(for: threeWay.legs[1], card: threeWay).primaryReadingValue,
+                "Result not confirmed",
+                "Tier 0/1/2 source \(nonAuthSource) with is_winner: false must read 'Result not confirmed'"
+            )
+            XCTAssertEqual(
+                EventAtlasSoccerCards11666.detailsModel(for: threeWay.legs[2], card: threeWay).primaryReadingValue,
+                "Result not confirmed",
+                "Tier 0/1/2 source \(nonAuthSource) with is_winner: false must read 'Result not confirmed'"
+            )
+
+            let exact = try XCTUnwrap(
+                EventAtlasSoccerCards11666.buildExactScoreCard(
+                    matrix: nil,
+                    otherMarkets: rows,
+                    status: "completed",
+                    commenceTime: "2026-11-06T20:00:00Z".asDate,
+                    homeTeam: "Arsenal FC",
+                    awayTeam: "Chelsea FC",
+                    homeShort: "Arsenal",
+                    awayShort: "Chelsea",
+                    now: now
+                )
+            )
+            let wonCell = try XCTUnwrap(exact.cells.first(where: { $0.key == "1-0" }))
+            XCTAssertEqual(
+                EventAtlasSoccerCards11666.detailsModel(for: wonCell, card: exact).primaryReadingValue,
+                "✓ Won"
+            )
+            let unconfirmedCell = try XCTUnwrap(exact.cells.first(where: { $0.key == "0-0" }))
+            XCTAssertEqual(
+                EventAtlasSoccerCards11666.detailsModel(for: unconfirmedCell, card: exact).primaryReadingValue,
+                "Result not confirmed",
+                "Tier 0/1/2 source \(nonAuthSource) with is_winner: false must read 'Result not confirmed'"
+            )
+            let otherCell = try XCTUnwrap(exact.otherCell)
+            XCTAssertEqual(
+                EventAtlasSoccerCards11666.detailsModel(for: otherCell, card: exact).primaryReadingValue,
+                "Result not confirmed",
+                "Tier 0/1/2 source \(nonAuthSource) with is_winner: false must read 'Result not confirmed'"
+            )
         }
     }
 }

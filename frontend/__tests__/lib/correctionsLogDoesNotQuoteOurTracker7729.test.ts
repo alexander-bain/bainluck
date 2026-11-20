@@ -120,7 +120,7 @@ const STILL_BYTE_IDENTICAL = [
   "Premature golf resolutions",
   "Prices nobody could have traded at",
   "A price ladder is one forecast, not forty",
-  "The one-question markets we were throwing away are now scored",
+  "The yes-or-no markets we were throwing away are now scored",
 ];
 
 /** Re-worded by #7734, listed here so this suite's universe stays the thirteen. */

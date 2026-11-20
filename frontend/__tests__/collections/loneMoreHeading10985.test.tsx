@@ -45,7 +45,7 @@ test("control: unclassified after real sections still prints \"More\"", () => {
   hub.sections.push({ class: "unclassified", count: 1, members: [question(73, null, "open", "americanfootball_nfl")] });
   hub.member_count = 7;
   const html = frame(hub);
-  expect(headings(html)).toEqual(["Games and winners", "Player and game questions", "Championship", "More"]);
+  expect(headings(html)).toEqual(["Games and winners", "Player and game props", "Championship", "More"]);
   expect(html).not.toMatch(/<section [^>]*aria-labelledby="collection-title"/);
 });
 

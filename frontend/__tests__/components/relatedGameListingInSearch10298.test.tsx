@@ -1,3 +1,7 @@
+/** @jest-environment jsdom */
+import { TextDecoder, TextEncoder } from "util";
+Object.assign(globalThis, { TextEncoder, TextDecoder });
+
 /**
  * #10298 — POLYMARKET'S GAME LISTING, BESIDE ITS OWN GAME, PRINTS NO FAVOURITE.
  *
@@ -14,13 +18,36 @@
  * exactly what it printed before.
  */
 
-import { renderToStaticMarkup } from "react-dom/server";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
 import FuturesCard from "../../components/FuturesCard";
 import SearchFamilyCard from "../../components/SearchFamilyCard";
 import type { FuturesFamily, FuturesMarket, FuturesOutcome } from "../../lib/types";
 import type { TypeaheadSuggestion } from "../../lib/api";
 import { countAnswersShown, futuresAnswer, suggestionSubtitle } from "../../lib/searchSuggestionDisplay";
 import { relatedGameListingText } from "../../lib/relatedGameListing";
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { renderToStaticMarkup } = require("react-dom/server") as typeof import("react-dom/server");
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
+
+function renderClientHtml(el: React.ReactElement): string {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  act(() => {
+    root.render(el);
+  });
+  const markup = host.innerHTML;
+  act(() => {
+    root.unmount();
+  });
+  host.remove();
+  return markup;
+}
 
 const GAME_ID = 14780566;
 const LISTING_ID = 61040985;
@@ -55,7 +82,7 @@ const family = (headline: FuturesMarket): FuturesFamily =>
 describe("Answers family row", () => {
   test("beside its game: the link, and no percentage anywhere on the row", () => {
     const html = renderToStaticMarkup(<SearchFamilyCard family={family(listing({ related_game_listing: KEY }))} />);
-    expect(html).toContain("4 questions on this game");
+    expect(html).toContain("4 markets on this game");
     expect(html).toContain("data-related-listing-link");
     expect(html).toContain(`href="/futures/${LISTING_ID}"`);
     expect(html).not.toMatch(/\d%/);
@@ -72,19 +99,19 @@ describe("flat Futures & Markets card", () => {
   beforeEach(() => { jest.useFakeTimers({ now: new Date("2026-10-03T07:40:00Z") }); });
   afterEach(() => { jest.useRealTimers(); });
   test("beside its game: the link replaces the rows, the price age and the corner count", () => {
-    const html = renderToStaticMarkup(<FuturesCard market={listing({ related_game_listing: KEY })} />);
-    expect(html).toContain("4 questions on this game");
+    const html = renderClientHtml(<FuturesCard market={listing({ related_game_listing: KEY })} />);
+    expect(html).toContain("4 markets on this game");
     expect(html).not.toMatch(/\d%/);
     expect(html).not.toContain("Spread -5.5");
     expect(html).not.toMatch(/>4<\/span>/);
-    expect(html).not.toContain("1h ago");
+    expect(html).not.toContain("As of");
   });
   test("control: the same card without the key draws its rows and count as before", () => {
-    const html = renderToStaticMarkup(<FuturesCard market={listing()} />);
+    const html = renderClientHtml(<FuturesCard market={listing()} />);
     expect(html).toContain("53%");
     expect(html).toContain("Spread -5.5");
     expect(html).toMatch(/>4<\/span>/);
-    expect(html).toContain("1h ago");
+    expect(html).toContain("As of ");
     expect(html).not.toContain("on this game");
   });
 });
@@ -97,7 +124,7 @@ describe("typeahead row", () => {
   } as TypeaheadSuggestion);
   test("beside its game row: the link text, no answer, not counted as an answer", () => {
     const keyed = row({ related_game_listing: KEY });
-    expect(suggestionSubtitle(keyed)).toEqual({ kind: "futures-label", text: "4 questions on this game" });
+    expect(suggestionSubtitle(keyed)).toEqual({ kind: "futures-label", text: "4 markets on this game" });
     expect(futuresAnswer(keyed)).toBeNull();
     expect(countAnswersShown([keyed])).toBe(0);
   });
@@ -110,9 +137,9 @@ describe("typeahead row", () => {
 });
 
 test("wording: singular, and an unusable count still says where the link goes", () => {
-  expect(relatedGameListingText({ event_id: GAME_ID, question_count: 1 })).toBe("1 question on this game");
-  expect(relatedGameListingText({ event_id: GAME_ID, question_count: 0 })).toBe("More questions on this game");
-  expect(relatedGameListingText({ event_id: GAME_ID, question_count: 2.5 })).toBe("More questions on this game");
+  expect(relatedGameListingText({ event_id: GAME_ID, question_count: 1 })).toBe("1 market on this game");
+  expect(relatedGameListingText({ event_id: GAME_ID, question_count: 0 })).toBe("More markets on this game");
+  expect(relatedGameListingText({ event_id: GAME_ID, question_count: 2.5 })).toBe("More markets on this game");
   expect(relatedGameListingText(null)).toBeNull();
   expect(relatedGameListingText(undefined)).toBeNull();
 });

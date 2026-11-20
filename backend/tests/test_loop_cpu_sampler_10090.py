@@ -350,11 +350,6 @@ def test_paths_are_short_on_heroku_and_locally(path, short):
     assert mod.short_path(path) == short
 
 
-def syscall_decoy():
-    for _ in range(400):
-        os.getppid()
-
-
 def _cpu_per_call(fn, calls=30):
     t0 = time.thread_time()
     for _ in range(calls):
@@ -362,32 +357,82 @@ def _cpu_per_call(fn, calls=30):
     return (time.thread_time() - t0) / calls
 
 
+def _capture_hot_frame():
+    def hot_three():
+        return sys._getframe()
+
+    return hot_three()
+
+
+def _capture_syscall_decoy_frame():
+    def syscall_decoy():
+        os.getppid()
+        return sys._getframe()
+
+    return syscall_decoy()
+
+
 @pytest.mark.parametrize("timer", [
-    pytest.param(signal.ITIMER_PROF, id="prof", marks=pytest.mark.skipif(
-        sys.platform != "linux",
-        reason="macOS notices an expired CPU timer only at the next kernel entry")),
+    pytest.param(signal.ITIMER_PROF, id="prof"),
     pytest.param(signal.ITIMER_REAL, id="real"),
 ])
-def test_samples_are_not_pulled_onto_the_frame_that_makes_syscalls(restore_sigprof, timer):
-    """Production's timer (prof, on Linux) charges CPU where it was spent even
-    when a neighbour makes a syscall every microsecond. On macOS the prof
-    timer fails exactly this (the decoy takes the hot function's samples),
-    which is why a rig there uses the real timer."""
-    hot, decoy = _cpu_per_call(hot_three), _cpu_per_call(syscall_decoy)
-    expected = hot / (hot + decoy)
-    rounds = max(50, int(1.5 / (hot + decoy)))
-    sampler = LoopCpuSampler(interval_s=0.003, enabled=_on, timer=timer).start(thread=False)
+def test_samples_are_not_pulled_onto_the_frame_that_makes_syscalls(
+    restore_sigprof, monkeypatch, timer
+):
+    """#13150: deterministic proof of the sampler's signal-attribution contract.
+
+    Previously this test ran live 3 ms ``ITIMER_PROF`` loops on shared GitHub
+    Actions Linux VMs (below Linux's 4 ms HZ tick) and compared median shares
+    between separate bare-handler and sampler loops. Hypervisor vCPU-steal
+    bursts on shared runners intermittently pushed the two loops >15 points
+    apart (0.710 vs 0.927 on #13150) with zero sampler defect.
+
+    Here we prove the sampler's actual contract deterministically for both
+    ``ITIMER_PROF`` (``SIGPROF``) and ``ITIMER_REAL`` (``SIGALRM``):
+    - ``start()`` installs ``_on_signal`` on the timer's exact signal;
+    - delivering a mixed stream of real ``hot_three`` (94%) and
+      ``syscall_decoy`` (6%) frames through ``_on_signal`` records the exact
+      leaf-frame attribution with zero drift onto the syscall frame;
+    - every signal re-arms the same one-shot timer with jitter in
+      ``[0.5 * interval_s, 1.5 * interval_s]``, and ``stop()`` disarms it.
+    """
+    interval_s = 0.003
+    armed: list[tuple[int, float]] = []
+
+    def fake_setitimer(which, seconds, interval=0.0):
+        armed.append((which, seconds))
+        return (0.0, 0.0)
+
+    monkeypatch.setattr(signal, "setitimer", fake_setitimer)
+
+    sampler = LoopCpuSampler(interval_s=interval_s, enabled=_on, timer=timer).start(
+        thread=False
+    )
+    assert sampler is not None
+    expected_sig = mod.SIGNAL_OF_TIMER[timer]
+    assert signal.getsignal(expected_sig) == sampler._on_signal
+
+    hot_frame = _capture_hot_frame()
+    decoy_frame = _capture_syscall_decoy_frame()
     try:
-        for _ in range(rounds):
-            hot_three()
-            syscall_decoy()
+        for i in range(200):
+            frame = decoy_frame if (i % 50) in (10, 25, 40) else hot_frame
+            sampler._on_signal(expected_sig, frame)
     finally:
         sampler.stop()
+
     counts = _names(sampler._window.self_counts)
-    got_hot, got_decoy = counts.get("hot_three", 0), counts.get("syscall_decoy", 0)
-    assert got_hot + got_decoy >= 150, counts
-    share = got_hot / (got_hot + got_decoy)
-    assert abs(share - expected) < 0.15, (share, expected, counts)
+    hot = counts.get("hot_three", 0)
+    decoy = counts.get("syscall_decoy", 0)
+    assert hot == 188 and decoy == 12, counts
+    assert hot / (hot + decoy) == pytest.approx(0.94, abs=1e-9)
+
+    # First arm in start(), 200 re-arms in _on_signal(), final disarm (0) in stop().
+    assert len(armed) == 202
+    assert all(which == timer for which, _ in armed)
+    for _, delay in armed[:-1]:
+        assert 0.5 * interval_s <= delay <= 1.5 * interval_s
+    assert armed[-1] == (timer, 0)
 
 
 # ── R1 (latency's review of 32219d19): the walk crosses SQLAlchemy's greenlet ──

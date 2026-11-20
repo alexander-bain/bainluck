@@ -33,6 +33,45 @@ enum SourceLabels {
         return marketSourceNames[source]
     }
 
+    /// Card-face source badge (`#11920`, `#12581`, Ruling 141):
+    /// - Multi-source markets (`sourceCount > 1`, `sources.count > 1`, or `source == "both"` / `"cross"` / `"merged"`)
+    ///   say the source count in words (`"2 sources"`, `"3 sources"`), matching web `FeedCard.tsx`.
+    /// - Single-venue prediction market sources (`"kalshi"`, `"polymarket"`) return `nil` on card faces;
+    ///   detail pages, deliberate comparison tables, and `ⓘ` source-mark sheets continue to name venues via `label(for:)`.
+    /// - Non-venue sources (`"odds_api"` → `"Sportsbooks"`, `"datagolf"` → `"DataGolf"`) resolve through `label(for:)`,
+    ///   and unknown raw keys still return `nil`.
+    static func cardFaceLabel(
+        for source: String?,
+        sources: [String]? = nil,
+        sourceCount: Int? = nil
+    ) -> String? {
+        if let count = sourceCount, count > 1 {
+            return "\(count) sources"
+        }
+        if let sources {
+            let distinct = Set(
+                sources
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                    .filter { !$0.isEmpty }
+            )
+            if distinct.count > 1 {
+                return "\(distinct.count) sources"
+            }
+        }
+        guard let raw = source?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !raw.isEmpty else {
+            return nil
+        }
+        switch raw {
+        case "both", "cross", "merged":
+            return "2 sources"
+        case "kalshi", "polymarket":
+            return nil
+        default:
+            return label(for: raw)
+        }
+    }
+
     // MARK: - Contributors (the `bookmakers` array on a futures detail payload)
 
     /// Outcome-level contributors that really are sportsbooks. This set, and

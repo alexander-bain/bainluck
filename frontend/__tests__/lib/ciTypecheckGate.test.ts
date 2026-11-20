@@ -46,6 +46,23 @@ const { parse, check } = require("../../scripts/tsc-census.js") as {
   check: (current: Census, baseline: Census) => number;
 };
 
+// `check()` reports through `console.error`, and its failure lines start with
+// `::error::`, a GitHub workflow command. Printed from inside this suite they
+// became annotations on every frontend-build, so a red caused by any other test
+// read as "1 new TypeScript error(s)" (master 962d9dc1, Nov 8: two iOS guard
+// failures were chased as a census mismatch). The suite keeps the lines and
+// asserts on them; it never lets them reach the log.
+let censusLines: string[] = [];
+beforeEach(() => {
+  censusLines = [];
+  const keep = (...args: unknown[]) => { censusLines.push(args.map(String).join(" ")); };
+  jest.spyOn(console, "error").mockImplementation(keep);
+  jest.spyOn(console, "log").mockImplementation(keep);
+});
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
 type Census = {
   total: number;
   byFile: Record<string, number>;
@@ -242,12 +259,14 @@ describe("L2-234: the census tool counts what it claims to", () => {
   it("passes when the census matches the baseline exactly", () => {
     const c = parse(SAMPLE);
     expect(check(c, c)).toBe(0);
+    expect(censusLines.some((l) => l.startsWith("::error::"))).toBe(false);
   });
 
   it("fails when a file gains an error", () => {
     const baseline = parse(SAMPLE);
     const worse = parse(`${SAMPLE}\ncomponents/Bar.tsx(9,1): error TS2322: new`);
     expect(check(worse, baseline)).toBe(1);
+    expect(censusLines.some((l) => l.includes("new TypeScript error"))).toBe(true);
   });
 
   it("fails when a NEW file has errors, even if the total is unchanged", () => {
@@ -266,5 +285,6 @@ describe("L2-234: the census tool counts what it claims to", () => {
     const baseline = parse(SAMPLE);
     const better = parse(SAMPLE.split("\n").filter((l) => !l.startsWith("components/Bar.tsx")).join("\n"));
     expect(check(better, baseline)).toBe(1);
+    expect(censusLines.some((l) => l.includes("were fixed but the baseline still counts them"))).toBe(true);
   });
 });

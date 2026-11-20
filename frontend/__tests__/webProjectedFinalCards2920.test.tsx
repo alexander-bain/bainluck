@@ -79,6 +79,18 @@ function stamp(html: string, testId: string): string | null {
   return m ? `${m[1]}-${m[2]} ${m[3]}` : null;
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the specimen, 14780563, before play", () => {
   it("the fixture is the photographed reading: 29.6 / 22.3 rounds to the 30 – 22 Alex saw", () => {
     const e = F.event_14780563 as Event;
@@ -146,10 +158,11 @@ describe("a missing or broken pair prints nothing", () => {
     expect(card(specimen({}, odds))).not.toContain("NaN");
   });
 
-  it("a level pair in a sport that cannot end level is refused, as the hero refuses it (#8156)", () => {
+  it("a level pair prints in every sport while an opposing chance-winner pair is refused (Ruling 240: A / #12992)", () => {
     const nba = searchRow(15195969);
-    expect(cardProjectedFinal({ projected_home_score: 110.4, projected_away_score: 110.2 }, nba.sport)).toBeNull();
-    // ...and an NFL tie is a legal result, so it stays.
+    expect(cardProjectedFinal({ projected_home_score: 110.6, projected_away_score: 111.1 }, nba.sport, { home: 0.505, away: 0.495 })).toEqual({ home: 111, away: 111 });
+    expect(cardProjectedFinal({ projected_home_score: 110.4, projected_away_score: 111.4 }, nba.sport, { home: 0.505, away: 0.495 })).toBeNull();
+    expect(cardProjectedFinal({ projected_home_score: 110.4, projected_away_score: 111.4 }, nba.sport, { home: 0.5, away: 0.5 })).toEqual({ home: 110, away: 111 });
     expect(cardProjectedFinal({ projected_home_score: 23.6, projected_away_score: 24.2 }, "americanfootball_nfl")).toEqual({ home: 24, away: 24 });
   });
 });

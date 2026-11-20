@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 _CACHE_TTL = 86400
 
 # Main calibration cache TTL: 2 hours (refreshed every 1h by beat)
-_MAIN_CACHE_TTL = 7200
+_MAIN_CACHE_TTL = 50 * 3600  # 215-B: the beat is daily; one missed night still serves
 
 # Queue 272 (#1459): the DURABLE last-good key. The main key (`bainluck:
 # calibration:main`, 2h TTL) is the FRESH surface; this parallel key is the
@@ -1332,7 +1332,7 @@ CALIBRATION_CORRECTIONS = [
         # title that merely NAMES the class ("the one-question markets we were
         # throwing away") discloses nothing to a web reader: it has to say what
         # changed on its own.
-        "title": "The one-question markets we were throwing away are now scored",
+        "title": "The yes-or-no markets we were throwing away are now scored",
         # D112 (#997, CAL-P1190). `rows` stays None on purpose: the only number
         # available before the first rebuild under the new rule is a population
         # upper bound (~3,046), and this panel states measured published counts
@@ -1345,10 +1345,10 @@ CALIBRATION_CORRECTIONS = [
                        "otherwise the price is marking its own homework. One "
                        "way a market settles is by every other answer losing, "
                        "and we used to throw all of those away as unsafe. But "
-                       "when a market asks exactly one yes-or-no question "
+                       "when a market is a single yes-or-no proposition "
                        "there is no other answer that could have decided it, "
                        "so the result comes from the exchange that ran the "
-                       "market and it is safe to score. Those questions are "
+                       "market and it is safe to score. Those markets are "
                        "now scored like any other; "
                        "at two answers or more nothing changes. Admitting only "
                        "half of this pair was its own distortion: those "
@@ -1357,7 +1357,7 @@ CALIBRATION_CORRECTIONS = [
                        "been picked out for having lost. Taken together they "
                        "come true 51% — the coin flip the prices said they "
                        "should be. This is the first change on this list that "
-                       "adds questions back rather than removing them, so "
+                       "adds markets back rather than removing them, so "
                        "earlier numbers here were incomplete rather than "
                        "wrong.",
     },
@@ -6579,6 +6579,13 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
         "(%d refined slot(s))",
         gen_digest, len(roster), len(chunks), len(cursor.unit_splits),
     )
+    # #12340: nothing below reads the roster. The units run off ``assignment`` and
+    # ``chunks``, so the list is released here instead of living through the unit
+    # loop and ``staged:finalize``, whose allocations then reuse its space rather
+    # than stacking on it. Lab, Nov 10 (2,162,152 rows, the real
+    # ``generation_fingerprint`` and ``plan_units``): RSS at a finalize stand-in
+    # 1,023 MB kept vs 971 MB released; the roster tuples are ~184 MB of heap.
+    del roster
     if not chunks:
         # An empty population is a real answer, not a failure, and it is
         # complete by definition. Returning [] lets the build publish the

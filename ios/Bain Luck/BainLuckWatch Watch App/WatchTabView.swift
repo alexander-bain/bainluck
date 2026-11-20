@@ -4,7 +4,10 @@ struct WatchTabView: View {
     var body: some View {
         NavigationStack {
             #if DEBUG
-            if ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_SEED_URL"] == "1",
+            if let look = ProcessInfo.processInfo.environment["BAINLUCK_WATCH_MATCHUP_LOOK_217"], !look.isEmpty {
+                // Direction 217 look sheet: one Matchup slot, no selection or networking.
+                WatchMatchupLookSheet217(stage: look)
+            } else if ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_SEED_URL"] == "1",
                WatchUIFixture.current != nil {
                 // Seed configuration only; do not initialize selection or networking.
                 Text("URL fixture ready").accessibilityIdentifier("watch.url-fixture-ready")
@@ -26,11 +29,16 @@ struct WatchTabView: View {
                ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_LARGE_TEXT"] == "1" {
                 // Layout stress only: watchOS Simulator cannot apply simctl content_size.
                 WatchSelectedGameView().dynamicTypeSize(.accessibility5)
-            } else {
+            } else if WatchUIFixture.current != nil {
                 WatchSelectedGameView()
+            } else if let preview = ProcessInfo.processInfo.environment["BAINLUCK_WATCH_PINS_FACE_PREVIEW_12640"],
+                      !preview.isEmpty {
+                WatchPinsFacePreviewFixture12640(scenario: preview)
+            } else {
+                WatchPinnedHomeView12640()
             }
             #else
-            WatchSelectedGameView()
+            WatchPinnedHomeView12640()
             #endif
         }
     }

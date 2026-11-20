@@ -345,6 +345,19 @@ def leader_deadline_clause(
     return f"{pct}% chance {DEADLINE_PREPOSITION} {label}"
 
 
+#: #12428 — the codes that state a resolution window. Each is keyed on the
+#: market's ONE stored `resolution_date`, which on a date ladder is the earliest
+#: rung's (#9782), so none may share a caption with a ladder rung's level.
+_RESOLUTION_WINDOW_CODES = frozenset(
+    {
+        "resolving_soon_1d",
+        "resolving_soon_2d",
+        "resolving_soon_7d",
+        "resolving_soon_30d",
+    }
+)
+
+
 def _deadline_fallback(
     leader_name: str | None,
     leader_probability: Optional[float],
@@ -352,6 +365,7 @@ def _deadline_fallback(
     *,
     leader_is_ladder_rung: bool,
     leader_deadline_preposition: str | None,
+    ranking_input: bool,
 ) -> str:
     """The level clause a generator prints INSTEAD of falling silent, or "".
 
@@ -361,12 +375,30 @@ def _deadline_fallback(
     widen this gate is three chances to print a deadline the venue never
     asserted.
 
-    ``leader_is_ladder_rung`` still wins. A proven cumulative ladder (#4640) is
-    refused here as well as above — its rungs nest, so the loosest is dearest by
-    arithmetic and a level clause would hand the reader the same non-contest with
-    a preposition in front of it.
+    ``leader_is_ladder_rung`` refuses in the HEADLINE only (``ranking_input``).
+    #4640 refuses a CONTEST: a ladder's loosest rung is dearest by arithmetic,
+    so calling it the favorite claims a race that does not exist. A level names
+    one rung's own price and claims nothing about any other rung, which is the
+    whole of #6470's safety argument, and on a cumulative deadline ladder the
+    rung it names is the board's own answer to "will it happen within this
+    window".
+
+    #12428 — this refusal used to cover all three slots, written when no date
+    board could be a ladder. #7667 made every board with two or more live date
+    rungs one, by reading the venue's "by" as the ladder's direction: the same
+    word that licenses this clause. The two rules cancelled on exactly #6470's
+    population, and "Bloomberg IPO?" and "Kimi (Moonshot AI) IPO?" sat in the
+    top three of Discover's futures with no caption at all.
+
+    The headline keeps the refusal because it is a RANKING input
+    (`explanation_score_rank` reads it, and reads neither caption). Lifting it
+    there would move these cards' order, a ranking change riding a copy fix,
+    which #4805 and #4842 declined for the same reason. Its slot stays empty
+    and falls through to `primary_reason` exactly as before.
     """
-    if leader_is_ladder_rung or leader_probability is None:
+    if leader_probability is None:
+        return ""
+    if leader_is_ladder_rung and ranking_input:
         return ""
     return leader_deadline_clause(
         leader_name,
@@ -2448,6 +2480,7 @@ def generate_futures_reason(
         rendered_leader_percent,
         leader_is_ladder_rung=leader_is_ladder_rung,
         leader_deadline_preposition=leader_deadline_preposition,
+        ranking_input=False,
     )
     # #6187: and likewise — may any template below use a comparative at all?
     # #7844 ANDs the second half of that question in, resolved in the same place
@@ -2659,7 +2692,7 @@ def generate_futures_reason(
             # title said "by <blank>" it can still be a DEADLINE, and the level
             # clause is the true sentence this rung was always owed. Empty
             # whenever that word is absent, i.e. every case that reached here
-            # before.
+            # before. A rung of a "by...?" ladder takes it too (#12428).
             return _deadline
         pct = _display_pct(leader_probability, rendered_leader_percent)
         # #6187 — the only leader template whose subject is followed by the
@@ -2721,12 +2754,15 @@ def generate_futures_headline(
     _no_leader_subject = _leader_is_unnameable(leader_name, leader_is_ladder_rung)
     # #6470: resolved once beside the refusal it answers, so a template can
     # never print the level clause without having consulted that refusal.
+    # #12428: the headline is the one slot `explanation_score_rank` reads, so
+    # it alone keeps the ladder refusal — see `_deadline_fallback`.
     _deadline = _deadline_fallback(
         leader_name,
         leader_probability,
         rendered_leader_percent,
         leader_is_ladder_rung=leader_is_ladder_rung,
         leader_deadline_preposition=leader_deadline_preposition,
+        ranking_input=True,
     )
     # #6187 + #7844: likewise — see `generate_futures_reason`.
     _lead_visible = lead_is_printable(
@@ -3054,12 +3090,21 @@ def generate_futures_context_summary(
         # resolves within a month"). Every other unnameable leader is as empty
         # as it was.
         if _leader_is_unnameable(leader_name, leader_is_ladder_rung):
+            # #12428 — except on a ladder rung WHERE A WINDOW SPEAKS. The
+            # suffixes are keyed on the market's one stored date, which on a
+            # date ladder is the EARLIEST rung's (#9782), while the level names
+            # the rung the card leads with. "38% chance by June 30, 2027;
+            # resolves within a week" would be two deadlines in one caption, so
+            # there the caption stays the bare window it was.
+            if leader_is_ladder_rung and reasons & _RESOLUTION_WINDOW_CODES:
+                return ""
             return _deadline_fallback(
                 leader_name,
                 leader_probability,
                 rendered_leader_percent,
                 leader_is_ladder_rung=leader_is_ladder_rung,
                 leader_deadline_preposition=leader_deadline_preposition,
+                ranking_input=False,
             )
         if leader_name and leader_probability is not None:
             return leader_standing_clause(

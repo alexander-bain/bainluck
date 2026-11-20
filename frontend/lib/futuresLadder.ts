@@ -17,6 +17,7 @@
  */
 
 import type { QuantityRung } from "@/components/QuantityGroup";
+import { numericalScaleOrderIndices } from "@/lib/numericalScaleOrder";
 
 /** The minimum an outcome must carry to become a rung. */
 export interface LadderOutcome {
@@ -344,9 +345,13 @@ export function buildOutcomeLadderRungs(
   outcomes: readonly LadderOutcome[],
   order: LadderOrder,
 ): QuantityRung[] {
-  const rows = [...outcomes];
+  // Direction 228 (#12885): any numerical-scale market (thresholds, ranges,
+  // counts, rates, signed moves) lists its rungs in ascending numerical order,
+  // never by probability — regardless of `mutually_exclusive`.
+  const scaleIdx = numericalScaleOrderIndices(outcomes);
+  const rows = scaleIdx ? scaleIdx.map((i) => outcomes[i]) : [...outcomes];
 
-  if (order === "cumulative") {
+  if (!scaleIdx && order === "cumulative") {
     // Ascending probability. Where the prices differ they decide, and that is
     // unchanged.
     //

@@ -249,7 +249,7 @@ final class LiveCardEarlierForecastA3Tests: XCTestCase {
             "LivePregameBaselineLine11296(comparison:liveBaseline,awayName:names.away,homeName:names.home,font:.caption2)"
             + ".dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling).padding(.top,4)"))
         // The current caption it matches: the same font and ceiling.
-        XCTAssertTrue(page.contains("label.font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.5)"
+        XCTAssertTrue(page.contains("label.font(.caption2).foregroundStyle(DS.textSecondaryReadable).lineLimit(1).minimumScaleFactor(0.5)"
                                     + ".dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)"))
         let helper = try source("Utilities/LivePregameComparison11296.swift")
         let start = try XCTUnwrap(helper.range(of: "structLivePregameBaselineLine11296:View{"))

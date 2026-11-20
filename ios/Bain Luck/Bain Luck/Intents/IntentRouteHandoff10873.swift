@@ -18,6 +18,9 @@ import Foundation
 ///
 /// Cancellation: an intent posts only after every parameter has resolved, so a
 /// reader who backs out of a "Which one?" list leaves nothing here.
+///
+/// The widget extension compiles this file too, for #12305's "My game" control,
+/// whose action the system performs in the app (`OpenSavedItemIntent12305`).
 @MainActor
 final class IntentRouteHandoff10873: ObservableObject {
     static let shared = IntentRouteHandoff10873()
@@ -53,7 +56,8 @@ final class IntentRouteHandoff10873: ObservableObject {
     }
 }
 
-/// The three links the intents may open. Each one is a case
+/// The four links the intents may open (`my-stuff`, `events/<id>`,
+/// `futures/<id>`, `search?q=<term>`). Each one is a case
 /// `NavigationCoordinator.handleURL` already routes.
 nonisolated enum IntentLinks10873 {
     static let myStuff = URL(string: "bainluck://my-stuff")!
@@ -68,13 +72,35 @@ nonisolated enum IntentLinks10873 {
         return URL(string: "bainluck://futures/\(id)")
     }
 
+    static func search(query: String) -> URL? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        var components = URLComponents()
+        components.scheme = "bainluck"
+        components.host = "search"
+        components.queryItems = [URLQueryItem(name: "q", value: trimmed)]
+        return components.url
+    }
+
     static func isIntentLink(_ url: URL) -> Bool {
         if url == myStuff { return true }
         guard url.scheme == "bainluck",
-              let host = url.host,
-              host == "events" || host == "futures" else { return false }
+              url.fragment == nil,
+              let host = url.host else { return false }
         let parts = url.pathComponents.filter { $0 != "/" }
-        guard parts.count == 1, let id = Int(parts[0]), id > 0 else { return false }
-        return url.query == nil && url.fragment == nil
+        if host == "search" {
+            guard parts.isEmpty,
+                  let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+                  items.count == 1,
+                  items[0].name == "q",
+                  let q = items[0].value?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !q.isEmpty else { return false }
+            return true
+        }
+        guard host == "events" || host == "futures",
+              parts.count == 1,
+              let id = Int(parts[0]),
+              id > 0 else { return false }
+        return url.query == nil
     }
 }

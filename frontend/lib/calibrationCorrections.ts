@@ -195,7 +195,7 @@ export const CORRECTION_TITLE_OVERRIDES: Readonly<Record<string, string>> = {
   // game, per-game winners, first-blood props) into one non-partition market …
   // neither sums to ~1.0 nor buckets as a clean prediction."
   "Esports match-bundle exclusion":
-    "Esports markets that pack a whole match into one question are no longer scored",
+    "Esports markets that bundle a whole match together are no longer scored",
 };
 
 /**

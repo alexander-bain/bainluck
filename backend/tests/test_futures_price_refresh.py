@@ -336,19 +336,20 @@ class TestSelectionPredicate:
         assert _normalise(LIVE_MARKET_SQL) in _normalise(fpr._CANDIDATE_SQL.text)
         assert "select count(*) from futures_markets fm" in source
 
-    def test_guard_endpoint_reads_snapshots_not_updated_at(self):
+    def test_guard_endpoint_requires_price_observation_not_market_metadata(self):
         """`futures_markets.updated_at` is what made this class invisible.
 
         The discovery polls stamp `updated_at` on rows they re-read while
         capturing no price, so a freshness check built on it reads green over a
-        month-dark market. Only `futures_odds_snapshots.captured_at` answers
-        whether a price was actually captured.
+        month-dark market. A chart point must also have a recent outcome
+        observation: a keepalive alone does not establish a venue price read.
         """
-        for name in ("_PRICE_DARK_SQL",):
+        for name in ("_PRICE_DARK_SQL", "_REGISTERED_SQL"):
             sql = _extract_sql_literal(_ADMIN_SRC, name)
             assert "futures_odds_snapshots" in sql
             assert "s.captured_at" in sql
-            assert "updated_at" not in sql
+            assert "fo.last_updated" in sql
+            assert "fm.updated_at" not in sql
 
 
 class TestOrderingHasNoFixedPoint:
@@ -822,6 +823,31 @@ class TestRegisteredMarketsAreReachable:
         assert "resolution_date > NOW()" in sql
         assert "NOT EXISTS" in sql
 
+    async def test_the_run_scans_midterms_even_when_they_are_absent_from_the_feed(self, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        from app.tasks import SHOWN_REFRESH_MINUTES, _shown_refresh_windows
+        from app.utils.feed_served_markets import SERVED_EMPTY, ServedSignal
+        from app.utils.midterms_collection import MARKET_IDS, REGISTERED_POLYMARKET_TWIN_IDS
+
+        tournament_id = 59172808
+        harness = _RunHarness(
+            signal=ServedSignal(state=SERVED_EMPTY, ids=[]),
+            class_rows=[],
+            registered_ids={tournament_id, 112905},
+        )
+        scan = AsyncMock(wraps=fpr._scan_registered_candidates)
+        monkeypatch.setattr(fpr, "_scan_registered_candidates", scan)
+
+        await harness.run(monkeypatch, **_shown_refresh_windows())
+
+        assert scan.await_count == 1
+        ids = scan.await_args.kwargs["market_ids"]
+        assert ids == sorted({tournament_id, *MARKET_IDS, *REGISTERED_POLYMARKET_TWIN_IDS})
+        assert 108629 in ids
+        assert 64546265 not in ids
+        assert scan.await_args.kwargs["stale_minutes"] == SHOWN_REFRESH_MINUTES
+
     def test_the_committed_us_open_register_reaches_its_curated_props(self):
         """Behavioural, against the real committed file — not a shape assertion.
 
@@ -1090,33 +1116,14 @@ class TestPolymarketAddressing:
         assert item["no"]["probability"] == pytest.approx(0.425)
 
     async def test_the_no_leg_complements_the_accepted_price_not_outcome_prices(self):
-        """The specimen this rule exists for, taken from live Gamma 2026-08-27.
+        """#12658: old raw .32/.68 beside a current .51/.55 book.
 
-        `alcaraz-semifinals` quoted `outcome_prices = [0.32, 0.68]` over an
-        untradeable 0.11/0.53 book. 0.32 IS the midpoint of that book, so #1578
-        refuses it and Yes resolves to the 0.53 last trade. Publishing 0.68 as
-        the No leg would print a card whose two sides sum to **1.21**, and 0.68
-        is the complement of the exact number the Yes side just rejected.
-
-        `1 - accepted` is the same binary CLOB addressed from the other token —
-        the reasoning `complementary_book` already applies to the book. It is
-        also lossless in the common case: measured over 92 live priced markets on
-        the four curated prop events, `outcome_prices` summed to exactly 1 every
-        time, so whenever Yes came from `outcome_prices` the two rules agree.
-
-        AMENDED BY Q432 (2026-08-28) — the specimen, not the claim. Q428 bounded
-        the last-trade escape hatch on Gamma's `volume24hr`, because
-        `lastTradePrice` carries no time and one $5 trade against a 7c/98c book
-        was putting Djokovic at 71% to reach the round of 16 above 79% to reach
-        the quarter-final. This specimen's own premise is a market that HAD
-        traded — a real 0.53 trade sitting at the ask of a live 2026-08-27 book —
-        so it now states the 24-hour volume it always implied. That restores the
-        specimen's fidelity to the row it was copied from; it does not relax the
-        bound. The twin below is the case that was silently riding on it.
+        The accepted quote is .53/.47. Its complement must not come from the
+        old raw pair. The historical .11/.53 wide book is now refused.
         """
         market = _poly_market("0xabc", 0.32, 0.68, volume_24h=1_450.0)
-        market.best_bid = 0.11
-        market.best_ask = 0.53
+        market.best_bid = 0.51
+        market.best_ask = 0.55
         market.last_trade_price = 0.53
         priced, _unpriced = await fpr._fetch_polymarket_prices(
             _FakePolyService(_poly_event("910171", [market])), ["910171"]
@@ -1176,7 +1183,7 @@ class TestPolymarketAddressing:
             # refused midpoint -> last trade, and only because the market was
             # still being traded. Its untraded twin is the test above, which
             # asserts the pair is never published at all rather than summing.
-            (0.32, 0.68, 0.11, 0.53, 0.53, 1_450.0),
+            (0.32, 0.68, 0.51, 0.55, 0.53, 1_450.0),
         ):
             market = _poly_market("0xabc", yes, no, volume_24h=vol)
             market.best_bid, market.best_ask, market.last_trade_price = bid, ask, last
@@ -1370,9 +1377,10 @@ class _RunHarness:
     classifies is the one production returns.
     """
 
-    def __init__(self, *, signal, class_rows):
+    def __init__(self, *, signal, class_rows, registered_ids=()):
         self.signal = signal
         self.class_rows = class_rows
+        self.registered_ids = set(registered_ids)
         self.snapshot_probabilities: list[float] = []
         self.marker_written = False
 
@@ -1437,7 +1445,7 @@ class _RunHarness:
 
         return CategoryServed(ids=[])
 
-    async def run(self, monkeypatch):
+    async def run(self, monkeypatch, **refresh_windows):
         import contextlib
 
         from app.tasks import futures_price_refresh as mod
@@ -1452,7 +1460,7 @@ class _RunHarness:
 
         monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
         monkeypatch.setattr(
-            "app.utils.tournament_register.registered_market_ids", lambda: set()
+            "app.utils.tournament_register.registered_market_ids", lambda: self.registered_ids
         )
         monkeypatch.setattr(
             "app.utils.feed_served_markets.served_signal", lambda: self.signal
@@ -1486,7 +1494,7 @@ class _RunHarness:
         # makes the whole polymarket batch raise, and the run reports `no_work`
         # rather than the price it was set up to write. #9399 added
         # `refuted_out` for the same reason.
-        async def _priced(service, event_ids, stats=None, refuted_out=None):
+        async def _priced(service, event_ids, stats=None, refuted_out=None, book_refused_out=None):
             return (
                 {
                     eid: [
@@ -1504,7 +1512,7 @@ class _RunHarness:
             )
 
         monkeypatch.setattr(mod, "_fetch_polymarket_prices", _priced)
-        return await mod._refresh_stale_futures_prices()
+        return await mod._refresh_stale_futures_prices(**refresh_windows)
 
 
 def _brazil_class_row():

@@ -77,6 +77,20 @@ nonisolated struct SavedWidgetReading10875: Equatable, Sendable {
     /// #698: a settled row whose result is unknown keeps its last price
     /// ("50%"), printed only as "Last recorded", never as a value or a result.
     var lastRecordedFigure: String? = nil
+    /// #12466 — what the chance bar draws: the same pair the figures above
+    /// were printed from, as shares. Nil wherever no figure is printed (a
+    /// result, an unknown result, a choice with no price), so a bar can never
+    /// show a chance the words don't.
+    var shares: Shares? = nil
+
+    nonisolated enum Shares: Equatable, Sendable {
+        /// A game, away first as every card. `away` is nil where the sport
+        /// prices a draw: the rest of the bar is "not the home team", never the
+        /// away team's (#5271).
+        case game(away: Double?, home: Double)
+        /// A market: the chosen or leading outcome's chance.
+        case outcome(Double)
+    }
 }
 
 /// Which side of a game the reader chose to follow, if any.
@@ -98,24 +112,29 @@ enum SavedWidgetReadingRules10875 {
 
     static func game(_ event: SavedWidgetEventDetail10875, side: SavedWidgetGameSide10875?,
                      now: Date = Date()) -> SavedWidgetReading10875 {
-        let subject = "\(event.awayTeam) vs \(event.homeTeam)"
+        let displayTeams = TeamShortName.isCollegeSport(sportKey: event.sport)
+            ? TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+            : (away: event.awayTeam, home: event.homeTeam)
+        let subject = "\(displayTeams.away) vs \(displayTeams.home)"
         let short = TeamShortName.abbreviationPair(
             away: event.awayTeam, home: event.homeTeam,
-            awayServed: event.awayTeamData?.abbreviation, homeServed: event.homeTeamData?.abbreviation)
+            awayServed: event.awayTeamData?.abbreviation, homeServed: event.homeTeamData?.abbreviation,
+            sportKey: event.sport)
         let shortSubject = "\(short.away) vs \(short.home)"
         let commence = SavedWidgetDetailDecoding10875.date(event.commenceTime)
 
         func row(_ isHome: Bool, figure: String?, verdict: String? = nil, emphasized: Bool = false) -> SavedWidgetReading10875.Row {
-            .init(label: isHome ? event.homeTeam : event.awayTeam,
+            .init(label: isHome ? displayTeams.home : displayTeams.away,
                   shortLabel: isHome ? short.home : short.away,
                   figure: figure, verdict: verdict, emphasized: emphasized)
         }
         func reading(_ phase: SavedWidgetReading10875.Phase, status: String, rows: [SavedWidgetReading10875.Row],
                      headline: SavedWidgetReading10875.Row?, caption: String? = nil, observedAt: Date? = nil,
-                     flipsAt: Date? = nil, spoken: String) -> SavedWidgetReading10875 {
+                     flipsAt: Date? = nil, spoken: String,
+                     shares: SavedWidgetReading10875.Shares? = nil) -> SavedWidgetReading10875 {
             .init(phase: phase, subject: subject, shortSubject: shortSubject, status: status, rows: rows,
                   headline: headline, priceCaption: caption, observedAt: observedAt,
-                  becomesLastRecordedAt: flipsAt, spoken: spoken)
+                  becomesLastRecordedAt: flipsAt, spoken: spoken, shares: shares)
         }
         // A score is printed only when both sides are held (`EventState`'s
         // partial-line rule): half a score is not a score.
@@ -123,7 +142,7 @@ enum SavedWidgetReadingRules10875 {
             guard let away = event.awayScore, let home = event.homeScore else { return nil }
             return (String(away), String(home))
         }()
-        let scoreSentence = scores.map { " \(event.awayTeam) \($0.away), \(event.homeTeam) \($0.home)." } ?? ""
+        let scoreSentence = scores.map { " \(displayTeams.away) \($0.away), \(displayTeams.home) \($0.home)." } ?? ""
 
         // 1. Finished: the verdict, never a price.
         if EventState.isFinished(event.status) {
@@ -146,7 +165,7 @@ enum SavedWidgetReadingRules10875 {
                 let homeWon = outcome == .home
                 let rows = [row(false, figure: scores?.away, verdict: homeWon ? "Lost" : "Won", emphasized: !homeWon),
                             row(true, figure: scores?.home, verdict: homeWon ? "Won" : "Lost", emphasized: homeWon)]
-                let winner = homeWon ? event.homeTeam : event.awayTeam
+                let winner = homeWon ? displayTeams.home : displayTeams.away
                 let headline: SavedWidgetReading10875.Row
                 if let side {
                     headline = side == .home ? rows[1] : rows[0]
@@ -200,10 +219,18 @@ enum SavedWidgetReadingRules10875 {
 
         var awayFigure: String?
         let homeFigure: String
+        // #12466: the bar draws the integers the two figures print, so a bar
+        // and its numbers can't disagree; the raw pair only where no integer is.
+        var shares = SavedWidgetReading10875.Shares.game(away: nil, home: pair.home)
         if let away = pair.away {
             let percents = heroPairPercents(shown, away: away, home: pair.home)
             awayFigure = formatProbability(away, renderedPercent: percents.away)
             homeFigure = formatProbability(pair.home, renderedPercent: percents.home)
+            if let a = percents.away, let h = percents.home, a + h > 0 {
+                shares = .game(away: Double(a) / 100, home: Double(h) / 100)
+            } else {
+                shares = .game(away: away, home: pair.home)
+            }
         } else {
             // Draw-priced: the lone home number, rounded alone (#5271).
             homeFigure = formatProbability(pair.home)
@@ -258,12 +285,11 @@ enum SavedWidgetReadingRules10875 {
         let when = observedAt == nil && phase == .lastRecorded ? " No time was recorded for it." : ""
         return reading(phase, status: status, rows: rows, headline: headline, caption: caption,
                        observedAt: shown.isOpeningLine ? nil : observedAt, flipsAt: flipsAt,
-                       spoken: "\(subject). \(caption): \(said).\(when) \(status).")
+                       spoken: "\(subject). \(caption): \(said).\(when) \(status).", shares: shares)
     }
 
-    /// The pair the hero prints — `OpeningLineHero.resolve`'s rule on this
-    /// decode. `nil` when the event carries no `current_odds` at all, which is
-    /// the hero's unavailable branch.
+    /// The pair the hero prints. Older detail bodies can still declare an
+    /// opening line. Only its explicitly historical pregame figure is usable.
     struct HeroPair: Equatable {
         let away: Double?
         let home: Double?
@@ -273,13 +299,13 @@ enum SavedWidgetReadingRules10875 {
     }
 
     static func heroPair(_ event: SavedWidgetEventDetail10875) -> HeroPair? {
-        guard let odds = event.currentOdds else { return nil }
-        if event.heroProbabilitySource == "opening",
-           event.status != "live", !EventState.isFinished(event.status),
-           let home = event.heroProbability, home.isFinite, home > 0, home < 1 {
+        if event.heroProbabilitySource == "opening" {
+            guard event.status != "live", !EventState.isFinished(event.status),
+                  let home = event.heroProbability, home.isFinite, home > 0, home < 1 else { return nil }
             return HeroPair(away: event.heroProbabilityAway.flatMap { $0.isFinite ? $0 : nil }, home: home,
                             awayRenderedPercent: nil, homeRenderedPercent: nil, isOpeningLine: true)
         }
+        guard let odds = event.currentOdds else { return nil }
         return HeroPair(away: odds.awayProbability, home: odds.homeProbability,
                         awayRenderedPercent: odds.awayRenderedPercent, homeRenderedPercent: odds.homeRenderedPercent,
                         isOpeningLine: false)
@@ -324,10 +350,12 @@ enum SavedWidgetReadingRules10875 {
         let standing = marketStatusText(market.status)
         func reading(_ phase: SavedWidgetReading10875.Phase, status: String, rows: [SavedWidgetReading10875.Row],
                      headline: SavedWidgetReading10875.Row?, caption: String? = nil, observedAt: Date? = nil,
-                     flipsAt: Date? = nil, spoken: String, lastRecorded: String? = nil) -> SavedWidgetReading10875 {
+                     flipsAt: Date? = nil, spoken: String, lastRecorded: String? = nil,
+                     shares: SavedWidgetReading10875.Shares? = nil) -> SavedWidgetReading10875 {
             .init(phase: phase, subject: market.name, shortSubject: market.name, status: status, rows: rows,
                   headline: headline, priceCaption: caption, observedAt: observedAt,
-                  becomesLastRecordedAt: flipsAt, spoken: spoken, lastRecordedFigure: lastRecorded)
+                  becomesLastRecordedAt: flipsAt, spoken: spoken, lastRecordedFigure: lastRecorded,
+                  shares: shares)
         }
 
         let chosen: SavedWidgetMarketOutcome10875?
@@ -383,9 +411,12 @@ enum SavedWidgetReadingRules10875 {
                            spoken: "\(market.name): Bain Luck has no price for \(outcome.name) right now.")
         }
 
-        let figure = formatProbability(probability, renderedPercent: renderedPercents(market.outcomes)[outcome.id])
+        let printed = renderedPercents(market.outcomes)[outcome.id]
+        let figure = formatProbability(probability, renderedPercent: printed)
         let row = SavedWidgetReading10875.Row(label: outcome.name, shortLabel: outcome.name, figure: figure,
                                               verdict: nil, emphasized: false)
+        // #12466: the bar draws the printed integer, as the game's bar does.
+        let shares = SavedWidgetReading10875.Shares.outcome(printed.map { Double($0) / 100 } ?? probability)
         // The outcome's own clock: a verified answer's oldest included
         // observation, otherwise the row's price stamp.
         let observedAt = SavedWidgetDetailDecoding10875.date(outcome.observedAt ?? outcome.lastUpdated)
@@ -397,14 +428,15 @@ enum SavedWidgetReadingRules10875 {
             return reading(.current, status: standing, rows: [row], headline: row, caption: nil,
                            observedAt: observedAt,
                            flipsAt: observedAt.addingTimeInterval(SavedWidgetStaleness10875.futuresStaleAfter),
-                           spoken: "\(market.name): \(outcome.name) \(figure).")
+                           spoken: "\(market.name): \(outcome.name) \(figure).", shares: shares)
         }
         let when = observedAt == nil ? " No time was recorded for it." : ""
         let closedSaid = resolved ? " has closed"
             : (isOpen || market.status == nil ? "" : " is \(standing.lowercased())")
         return reading(.lastRecorded, status: standing, rows: [row], headline: row,
                        caption: "Last recorded chance", observedAt: observedAt,
-                       spoken: "\(market.name)\(closedSaid): \(outcome.name) \(figure), last recorded chance.\(when)")
+                       spoken: "\(market.name)\(closedSaid): \(outcome.name) \(figure), last recorded chance.\(when)",
+                       shares: shares)
     }
 
     /// #698 — what a resolved market's row may say about its own result, the
@@ -501,10 +533,15 @@ nonisolated enum SavedLockScreenFit10875 {
     /// The longest word the circular widget's value line holds whole ("Unknown").
     static let ringLimit = 7
 
+    /// The ring has space for a bare value. Opening lines need their caption.
+    static func ringHeadline(_ reading: SavedWidgetReading10875) -> SavedWidgetReading10875.Row? {
+        reading.phase == .openingLine ? nil : reading.headline
+    }
+
     /// The circular widget's value: a figure, a verdict that fits, or a word
     /// standing for one that does not.
     static func ringValue(_ reading: SavedWidgetReading10875) -> String {
-        guard let headline = reading.headline else { return reading.phase == .noResult ? "Final" : "—" }
+        guard let headline = ringHeadline(reading) else { return reading.phase == .noResult ? "Final" : "—" }
         // Nothing to show for the choice (its label says why, e.g. "Not
         // listed"): a dash, never a sentence squeezed into the circle.
         if reading.phase == .unavailable { return "—" }

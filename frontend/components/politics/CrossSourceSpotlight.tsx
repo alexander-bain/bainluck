@@ -170,7 +170,7 @@ export function CrossSourceCard({ market }: { market: CrossSourceMatch }) {
           <span>
             Disagree by{" "}
             <b className={s.probNum} style={{ color: "#B45309" }}>
-              {delta.toFixed(1)}pp
+              {delta.toFixed(1)} points
             </b>
           </span>
         )}

@@ -33,6 +33,25 @@ struct GolfTournamentView: View {
         _vm = StateObject(wrappedValue: GolfTournamentViewModel(slug: slug))
     }
 
+    #if DEBUG
+    init(
+        slug: String,
+        displayName: String,
+        loadedPresentationForTest: GolfTournamentPresentation,
+        atlasDataForTest: EventAtlasGolfTournament11666.TournamentAtlasData = .init()
+    ) {
+        self.slug = slug
+        self.displayName = displayName
+        _vm = StateObject(
+            wrappedValue: GolfTournamentViewModel(
+                slug: slug,
+                loadedPresentation: loadedPresentationForTest,
+                atlasData: atlasDataForTest
+            )
+        )
+    }
+    #endif
+
     var body: some View {
         Group {
             switch vm.state {
@@ -60,9 +79,8 @@ struct GolfTournamentView: View {
     private func loaded(_ presentation: GolfTournamentPresentation) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                header(presentation)
-
                 if presentation.field.isEmpty {
+                    header(presentation)
                     // The tournament is real and the field is not published yet
                     // — a normal state for an event days out, and it is said in
                     // one short line rather than explained (notice 34).
@@ -71,14 +89,30 @@ struct GolfTournamentView: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 8)
+                } else if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                    atlasSection(presentation)
+                        .padding(.top, 8)
                 } else {
+                    header(presentation)
                     fieldSection(presentation)
                 }
             }
             .padding(.horizontal)
             .padding(.bottom, 40)
+            .frame(maxWidth: Self.readableDetailMaxWidth)
+            .frame(maxWidth: .infinity)
         }
         .refreshable { await vm.load() }
+    }
+
+    static let readableDetailMaxWidth: CGFloat = 720
+
+    @inline(never)
+    private func atlasSection(_ presentation: GolfTournamentPresentation) -> some View {
+        EventAtlasGolfTournamentSection11666(
+            presentation: presentation,
+            atlasData: vm.atlasData
+        )
     }
 
     /// The title bar already says the tournament's name, so this does not.
@@ -142,11 +176,22 @@ struct GolfTournamentView: View {
                     fieldRow(row)
                 }
                 ForEach(presentation.overflowOutcomes) { outcome in
-                    HStack {
+                    let outcomePriceText = outcome.renderedPercent.map { formatProbability(outcome.probability, renderedPercent: $0) } ?? String(format: "%.1f%%", outcome.probability * 100)
+                    HStack(spacing: 4) {
                         Text(outcome.name)
                         Spacer()
-                        Text(outcome.renderedPercent.map { formatProbability(outcome.probability, renderedPercent: $0) } ?? String(format: "%.1f%%", outcome.probability * 100))
+                        Text(outcomePriceText)
                             .monospacedDigit()
+                        if let mark = SourceMarkButton(
+                            outcome.sourceMark,
+                            number: outcome.sourceMark?.state == .settled ? nil : outcome.probability,
+                            subject: outcome.name,
+                            numberSize: 15,
+                            compactRow: true,
+                            showsTenths: outcomePriceText.contains(".")
+                        ) {
+                            mark
+                        }
                     }
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -197,11 +242,24 @@ struct GolfTournamentView: View {
 
             Spacer()
 
-            Text(row.probabilityLabel)
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .monospacedDigit()
-                .foregroundStyle(row.position == 1 ? .blue : .secondary)
+            HStack(spacing: 4) {
+                Text(row.probabilityLabel)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(row.position == 1 ? .blue : .secondary)
+
+                if let mark = SourceMarkButton(
+                    row.sourceMark,
+                    number: (row.isWinner == true || row.sourceMark?.state == .settled) ? nil : row.probability,
+                    subject: row.name,
+                    numberSize: 15,
+                    compactRow: true,
+                    showsTenths: row.probabilityLabel.contains(".")
+                ) {
+                    mark
+                }
+            }
         }
     }
 

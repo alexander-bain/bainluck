@@ -1343,7 +1343,44 @@ export default function DiscoverPage() {
       { rootMargin: "400px" }
     );
     observer.observe(sentinel);
+    // #13195: if the reader jumped straight to the bottom (End key or scrollbar drag)
+    // as the sentinel mounted, measure its band position immediately and on scroll/resize
+    // so a delayed or missed IntersectionObserver edge cannot leave the spinner stuck.
+    const SENTINEL_BAND_PX = 400;
+    const syncSentinelInBand = () => {
+      if (typeof sentinel.getBoundingClientRect !== "function") return;
+      const rect = sentinel.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) return;
+      const inBand =
+        rect.top <= window.innerHeight + SENTINEL_BAND_PX &&
+        rect.bottom >= -SENTINEL_BAND_PX;
+      setSentinelVisible(inBand);
+    };
+    let syncFrame: number | null = null;
+    const scheduleSync = () => {
+      if (typeof requestAnimationFrame === "function") {
+        syncFrame = requestAnimationFrame(syncSentinelInBand);
+      } else {
+        syncSentinelInBand();
+      }
+    };
+    const cancelSync = () => {
+      if (syncFrame !== null && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(syncFrame);
+        syncFrame = null;
+      }
+    };
+    scheduleSync();
+    const onScrollOrResize = () => {
+      cancelSync();
+      scheduleSync();
+    };
+    window.addEventListener("scroll", onScrollOrResize, { passive: true });
+    window.addEventListener("resize", onScrollOrResize, { passive: true });
     return () => {
+      cancelSync();
+      window.removeEventListener("scroll", onScrollOrResize);
+      window.removeEventListener("resize", onScrollOrResize);
       observer.disconnect();
       // 🔴 The sentinel is conditionally rendered (LAT-P172 gates it on
       // `!isLoading`, L2-238 swaps it for a retry). A disconnected observer
@@ -1352,10 +1389,11 @@ export default function DiscoverPage() {
       // would keep firing against a sentinel nobody can see.
       setSentinelVisible(false);
     };
-    // #5105 — ON, a newly adopted edition (a refresh from the end-of-feed card,
-    // where no sentinel is mounted, or a restart) re-arms the observer on the
-    // sentinel it mounts. Off, this is a constant and the list is today's.
-  }, [feedUnavailable, isLoading, editionEnabled ? editionDeck?.generation ?? null : null]);
+    // #5105 & #13195 — every gate that mounts/unmounts `<div ref={sentinelRef}>`
+    // (`isLoading`, `authLoading`, `savedDeckPreview`, `feedUnavailable`, `hasMore`,
+    // and edition generation) MUST be listed here so the observer never misses the
+    // sentinel mounting when e.g. `/api/feed` finishes before `authLoading` settles.
+  }, [feedUnavailable, isLoading, authLoading, savedDeckPreview, hasMore, editionEnabled ? editionDeck?.generation ?? null : null]);
 
   /**
    * #7417 — land the reader on the offset they left from, once the restored
@@ -1482,6 +1520,7 @@ export default function DiscoverPage() {
   }, []);
 
   const startChallenge = useCallback(() => {
+    if (!CHALLENGE_SURFACES_ENABLED) return;
     // Queue 309 Item 1 — playing the challenge is engagement: it spends the
     // orientation UI permanently, exactly as a tap or a like does.
     setEngagedThisSession(true);
@@ -2011,7 +2050,7 @@ export default function DiscoverPage() {
         </div>
       )}
 
-      {challengeOpen && (
+      {CHALLENGE_SURFACES_ENABLED && challengeOpen && (
         <ChallengeModal
           items={challengeItems}
           currentIndex={challengeIndex}

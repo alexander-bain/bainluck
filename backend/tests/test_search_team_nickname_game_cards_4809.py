@@ -69,6 +69,8 @@ def test_the_derived_event_expansions_are_exactly_these() -> None:
 
     assert team_nickname_event_expansions() == {
         "pats": ("Patriots", "americanfootball_nfl"),
+        "patroits": ("Patriots", "americanfootball_nfl"),
+        "chiefs": ("Chiefs", "americanfootball_nfl"),
         "revs": ("Revolution", "soccer_usa_mls"),
         "niners": ("49ers", "americanfootball_nfl"),
         "9ers": ("49ers", "americanfootball_nfl"),
@@ -146,9 +148,11 @@ def test_the_two_rails_diverge_only_where_their_matchers_do() -> None:
     # would add only 2 of 6, the other 4 carrying no category. Games + team card only.
     # #1757 added `milan` inside `Milano` (Olimpia Milano, Euroleague) — the 9ers
     # shape: the plain ILIKE futures rail reaches `%milan%` unaided.
+    # #12290 adds the complete token `chiefs` to give the team its owned short
+    # name even without a stored alias. The futures rail already matches it.
     assert only_events == {
         "9ers", "dbacks", "nucks", "noles", "horns", "huskers", "phins", "stros",
-        "riders", "milan",
+        "riders", "milan", "chiefs",
     }, (
         "the rails diverge somewhere new. Only an alias spelled inside its own "
         "token (`9ers`/`49ers`, `dbacks`/`Diamondbacks`, `nucks`/`Canucks`) may be "

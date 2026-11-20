@@ -85,6 +85,8 @@ const d = iosPresent ? describe : describe.skip;
 d("a draw is a result on iOS", () => {
   const canonical = () => readFileSync(CANONICAL, "utf8");
   const detail = () => readFileSync(join(IOS_ROOT, "Views/EventDetailView.swift"), "utf8");
+  const headline = () => readFileSync(join(IOS_ROOT, "Utilities/EventSportHeadlines12472.swift"), "utf8");
+  const headlineCard = () => readFileSync(join(IOS_ROOT, "Components/EventSportHeadlineCard12472.swift"), "utf8");
   const card = () => readFileSync(join(IOS_ROOT, "Components/EventCardView.swift"), "utf8");
   const models = () => readFileSync(join(IOS_ROOT, "Models/EventModels.swift"), "utf8");
 
@@ -115,23 +117,27 @@ d("a draw is a result on iOS", () => {
 
   it("the served verdict reaches the model and is what the hero asks with", () => {
     expect(models()).toMatch(/let heroSettledResult: String\?/);
-    // …and the hero passes it, rather than decoding it and ignoring it, which
-    // is the shape the web was in on the day this was filed.
+    // Both EventDetailView and the unified EventSportHeadlines12472 resolver pass
+    // `servedResult: event.heroSettledResult` to `EventOutcome.resolve`.
     expect(stripComments(detail())).toMatch(
+      /EventOutcome\.resolve\([\s\S]{0,240}servedResult: event\.heroSettledResult/
+    );
+    expect(stripComments(headline())).toMatch(
       /EventOutcome\.resolve\([\s\S]{0,240}servedResult: event\.heroSettledResult/
     );
   });
 
-  it("the hero prints the draw's own word instead of the bare status", () => {
-    const code = stripComments(detail());
+  it("the hero prints the draw's own word instead of treating both sides as losers", () => {
+    const code = stripComments(headline());
+    const cardView = stripComments(headlineCard());
 
-    // The verdict slot asks the outcome, and the draw arm comes FIRST — before
-    // the `{Team} Win` arm, which cannot name a side on a level result.
-    expect(code).toMatch(/if let drawLabel = outcome\.drawLabel \{/);
-    expect(code).toMatch(/Text\(drawLabel\)/);
-
-    // "Final" survives, but only for the state that has no verdict to print.
-    expect(code).toMatch(/outcome == \.undecided[\s\S]{0,120}Text\("Final"\)/);
+    // Direction 199 RE-ANCHORED: 3-way soccer renders an explicit `"Draw"` row
+    // (`role: .draw`) ticked with `✓` when `winnerRole == .draw`, and 2-row
+    // draws set `extraMetaOutcome = "Draw"` (`awayWon = nil`, `homeWon = nil`)
+    // while `EventSportHeadlineCard12472` dims ONLY `row.won == false`.
+    expect(code).toMatch(/CompetitorRow\(\s*role: \.draw,\s*fullName: "Draw"/);
+    expect(code).toMatch(/case \.draw:\s*awayWon = nil\s*homeWon = nil\s*extraMetaOutcome = "Draw"/);
+    expect(cardView).toMatch(/let isLoser = row\.won == false/);
   });
 
   it("the hero's grey is the LOSER's, not everyone-who-did-not-win's", () => {

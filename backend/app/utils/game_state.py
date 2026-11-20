@@ -103,14 +103,31 @@ def _baseball_inning_label(value: str | None) -> str | None:
     return None
 
 
+#: #11220: a period that says the game is over. ESPN resets the clock to the
+#: period length at the end ("Final" beside "12:00"), which is time left in
+#: nothing, so a finished game serves no clock.
+_FINISHED_PERIOD = re.compile(r"^\s*(final|ft|full[\s-]?time|ended|game over)\b", re.IGNORECASE)
+_FINISHED_STATUSES = frozenset({"completed", "closed"})
+
+
 def normalize_live_game_state(
     sport_key: str | None,
     period: str | None,
     game_clock: str | None,
+    *,
+    status: str | None = None,
 ) -> tuple[str | None, str | None]:
-    """Return display-safe ``(period, game_clock)`` for API payloads."""
+    """Return display-safe ``(period, game_clock)`` for API payloads.
+
+    #11220: a finished game (``status`` completed or closed, or a period that
+    says Final) serves its period and NO clock. Lakers at Hawks (15344868)
+    served "Final" beside "12:00" and the iPhone titled it "Final 12:00".
+    """
+    finished = (str(status or "").strip().lower() in _FINISHED_STATUSES) or bool(
+        period and _FINISHED_PERIOD.match(str(period))
+    )
     if not sport_key or not sport_key.startswith("baseball"):
-        return period, game_clock
+        return period, (None if finished else game_clock)
 
     # #9208: ESPN's stoppage word is not an inning, and baseball kept only
     # innings — so a called-off game served no period, and the web's

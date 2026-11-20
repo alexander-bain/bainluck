@@ -26,6 +26,8 @@ from app.utils.feed_market_quality import UFC_EVENT_STORY_PREFIX
 from app.utils.feed_market_quality import _story_key as compute_story_key
 from app.utils.feed_market_quality import classify_market_quality
 from app.utils.feed_market_quality import golf_tournament_display_name
+from app.utils.feed_market_quality import oscars_award_slot
+from app.utils.feed_market_quality import oscars_market_rank_key
 from app.utils.feed_market_quality import ufc_event_display_name
 
 logger = logging.getLogger(__name__)
@@ -76,7 +78,15 @@ AUTHORED_STORY_TITLES = {
     "story:aliens_disclosure": "Aliens & UFOs",
     # Culture / entertainment
     "story:major_entertainment_events": "Awards Season",
+    "story:oscars": "Oscars",
+    "story:grammys": "Grammys",
+    "story:emmys": "Emmys",
+    "story:golden_globes": "Golden Globes",
+    "story:met_gala": "Met Gala",
     "story:music_charts": "Music Charts",
+    "story:billboard_hot100": "Billboard Hot 100",
+    "story:billboard_200": "Billboard 200",
+    "story:spotify_charts": "Spotify Charts",
     "story:drake_iceman": "Drake",
     # Sport
     "story:fifa_world_cup": "World Cup",
@@ -288,7 +298,15 @@ AUTHORED_STORY_QUESTIONS = {
     "story:aliens_disclosure": "Does anyone confirm we are not alone?",
     # Culture / entertainment
     "story:major_entertainment_events": "Who wins awards season?",
+    "story:oscars": "Where do the Oscars races stand?",
+    "story:grammys": "Where do the Grammys races stand?",
+    "story:emmys": "Where do the Emmys races stand?",
+    "story:golden_globes": "Where do the Golden Globes races stand?",
+    "story:met_gala": "Who shows up at the Met Gala?",
     "story:music_charts": "Who tops the charts?",
+    "story:billboard_hot100": "Who tops the Billboard Hot 100?",
+    "story:billboard_200": "Who tops the Billboard 200?",
+    "story:spotify_charts": "Who tops the Spotify charts?",
     "story:drake_iceman": "How does the Drake record land?",
     # Sport
     "story:fifa_world_cup": "Who wins the World Cup?",
@@ -1007,7 +1025,16 @@ def _member_answers_story_question(story_key: str, item: dict[str, Any]) -> bool
 # refused MAIN item is not dropped — it falls through to its own card — while a
 # refused overflow-reserve row only loses the bundle seat (the reserve is not in
 # ``items`` and was never emittable standalone; see `_with_story_overflow`).
-_STORY_KEYS_REQUIRING_ENTERTAINMENT = frozenset({"story:major_entertainment_events"})
+_STORY_KEYS_REQUIRING_ENTERTAINMENT = frozenset(
+    {
+        "story:major_entertainment_events",
+        "story:oscars",
+        "story:grammys",
+        "story:emmys",
+        "story:golden_globes",
+        "story:met_gala",
+    }
+)
 
 
 def _member_fits_story(story_key: str, item: dict[str, Any]) -> bool:
@@ -1153,7 +1180,12 @@ def _make_theme_bundle_item(
     """
     # Members ranked by feed score (most feed-worthy leads the mini-ranked-peek);
     # the bundle competes for ONE slot scored by its best member.
-    ranked = sorted(items, key=lambda it: float(it.get("score") or 0), reverse=True)
+    # Ruling 275 (#13100): the Oscars card leads with Best Picture, then Director,
+    # Actor and Actress where held, ahead of craft categories on tied scores.
+    if story_key == "story:oscars":
+        ranked = sorted(items, key=oscars_market_rank_key)
+    else:
+        ranked = sorted(items, key=lambda it: float(it.get("score") or 0), reverse=True)
     if is_congress_control_story_key(story_key):
         if congress_control_bundle_members(story_key, ranked) is None:
             return None
@@ -1631,6 +1663,36 @@ _TENNIS_TOUR_STOP_RE = re.compile(
 )
 
 
+_LISTING_QUALIFIER_RE = re.compile(r"\s*\(([^()]*)\)\s*\Z")
+
+
+def _norm_title(data: dict[str, Any]) -> str:
+    return " ".join(str(data.get("name") or "").split()).casefold()
+
+
+def _same_listing_with_a_qualifier(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """One venue's two listings of ONE market, told apart only by a note in
+    brackets at the END of one title — Saturday's sheet, seat 26: "Anthropic IPO
+    Closing Market Cap" at 46% and "Anthropic IPO Closing Market Cap (Middle
+    Brackets)" at 51% in one card. Different bracket sets, so they cannot be
+    blended (Alex's "near"), but two rows for one market is the duplicate the
+    card exists to fold: the better-ranked one stays.
+
+    The rule is narrow on purpose: one title must be EXACTLY the other plus a
+    trailing "(...)". Brackets inside a title name the thing itself — Monday's
+    relegation card lists "Will Estudiantes (LP) be relegated ..." and "Will
+    Estudiantes (RC) ...", two different clubs — and "Men's ... (Tennis)" vs
+    "Women's ... (Tennis)" differ outside the brackets, so neither ever folds."""
+    if str(a.get("source") or "") != str(b.get("source") or ""):
+        return False
+    ta, tb = _norm_title(a), _norm_title(b)
+    if not ta or not tb or ta == tb:
+        return False
+    short, long_ = (ta, tb) if len(ta) < len(tb) else (tb, ta)
+    match = _LISTING_QUALIFIER_RE.search(long_)
+    return bool(match) and bool(match.group(1).strip()) and long_[: match.start()].strip() == short
+
+
 def _dedupe_same_question_members(
     members: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1684,11 +1746,14 @@ def _dedupe_same_question_members(
         data = _futures_data(item)
         source = str(data.get("source") or "")
         duplicate = any(
-            str(_futures_data(k).get("source") or "") != source
-            and is_same_question(
-                _comparison_title(_futures_data(k), data),
-                _comparison_title(data, _futures_data(k)),
+            (
+                str(_futures_data(k).get("source") or "") != source
+                and is_same_question(
+                    _comparison_title(_futures_data(k), data),
+                    _comparison_title(data, _futures_data(k)),
+                )
             )
+            or _same_listing_with_a_qualifier(_futures_data(k), data)
             for k in kept
         )
         (folded if duplicate else kept).append(item)
@@ -1906,6 +1971,9 @@ def assemble_story_theme_bundles(
 
     bundle_by_story: dict[str, dict[str, Any]] = {}
     represented_ids: set[str] = set()
+    # Duplicates folded into a survivor that goes out as its own card (no
+    # bundle formed): never emitted, so the survivor is the only copy.
+    folded_into_single: set[str] = set()
     for story_key, members in groups.items():
         if len(members) < min_items:
             continue
@@ -1915,10 +1983,31 @@ def assemble_story_theme_bundles(
         # one, which is what keeps the cap-1 and cap-2 dials (`drake_iceman`,
         # `russia_ukraine`, `ai`) meaning what they mean today.
         members = _with_story_overflow(members, story_key)
+        oscar_folded: list[dict[str, Any]] = []
+        if story_key == "story:oscars":
+            # Run Oscars major-slot dedup BEFORE `_dedupe_same_question_members`
+            # so a priced/newer market (e.g. 5869749) always beats an unpriced/older
+            # twin (e.g. 109566) claiming the same slot regardless of static score.
+            ordered_oscars = sorted(members, key=oscars_market_rank_key)
+            seen_oscar_slots: set[str] = set()
+            deduped_oscars: list[dict[str, Any]] = []
+            for oscar_item in ordered_oscars:
+                slot = oscars_award_slot(_futures_data(oscar_item).get("name"))
+                if slot is not None:
+                    if slot[1] in seen_oscar_slots:
+                        oscar_folded.append(oscar_item)
+                        continue
+                    seen_oscar_slots.add(slot[1])
+                deduped_oscars.append(oscar_item)
+            members = deduped_oscars
         # The same question from two venues is ONE row (#4446). Folded BEFORE the
         # cap so a duplicate does not spend a member slot the next distinct
         # question could have had.
         members, folded = _dedupe_same_question_members(members)
+        if oscar_folded:
+            folded = oscar_folded + folded
+        if story_key == "story:oscars":
+            members = sorted(members, key=oscars_market_rank_key)
         if is_congress_control_story_key(story_key):
             verified_members = congress_control_bundle_members(
                 story_key, members, folded
@@ -1927,6 +2016,16 @@ def assemble_story_theme_bundles(
                 continue
             members = verified_members
         if len(members) < min_items:
+            # Monday's render (Nov 16, seat 22): "IPOs" held only Polymarket's two
+            # Anthropic market-cap listings. Folding one left one member, no card
+            # formed, and BOTH came back as standalone cards at 45% and 51%. A
+            # venue's second listing of ONE market goes with the card: the
+            # survivor emits on its own below. Two venues' copies of a question
+            # keep #4446's floor (both ship) — that fold is not this one.
+            folded_into_single.update(
+                _item_id(f) for f in folded
+                if any(_same_listing_with_a_qualifier(_futures_data(k), _futures_data(f)) for k in members)
+            )
             continue
         chosen = members[:max_items_per_bundle]
         if len(chosen) < min_items:
@@ -1950,12 +2049,14 @@ def assemble_story_theme_bundles(
         # represent it.
         represented_ids.update(_item_id(item) for item in folded)
 
-    if not represented_ids:
+    if not represented_ids and not folded_into_single:
         return items
 
     emitted: set[str] = set()
     output: list[dict[str, Any]] = []
     for item in items:
+        if _item_id(item) in folded_into_single:
+            continue
         if _item_id(item) not in represented_ids:
             output.append(item)
             continue

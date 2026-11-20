@@ -1,0 +1,311 @@
+import { factoryEventKinds, factoryMoods, type FactoryData, type FloorEvent } from "./types";
+import { stationNames, stations } from "./activity";
+
+export const FACTORY_DATA_URL =
+  "https://github.com/alexander-bain/bainluck/releases/download/factory-data/factory.json";
+const MAX_CACHE_AGE_MS = 2 * 60_000;
+
+export interface FactoryRead {
+  data: FactoryData | null;
+  lastGoodAt: string | null;
+  readAt?: string;
+  readFailed: boolean;
+}
+
+interface VerifiedRead {
+  data: FactoryData;
+  checkedAt: number;
+}
+
+type LoadVerifiedRead = () => Promise<VerifiedRead>;
+
+function isProgress(done?: number, total?: number) {
+  return typeof done === "number" && typeof total === "number" &&
+    Number.isSafeInteger(done) && Number.isSafeInteger(total) &&
+    done >= 0 && total > 0 && done <= total;
+}
+
+function isEvent(event: FloorEvent) {
+  return event && /^[a-f0-9]{20}$/.test(event.id) &&
+    factoryEventKinds.includes(event.kind) &&
+    Number.isSafeInteger(event.number) && event.number > 0 &&
+    ["Server", "Website", "Apps"].includes(event.line) &&
+    typeof event.builder === "string" &&
+    ["S", "B", "C", "D", "E", "F", "W", "Other"].includes(event.builder) &&
+    stations.includes(event.station) &&
+    (event.from === undefined
+      ? event.kind !== "move" && event.kind !== "returned"
+      : stations.includes(event.from)) &&
+    Number.isFinite(Date.parse(event.at)) &&
+    Number.isFinite(Date.parse(event.observed_at)) &&
+    (event.kind !== "check" ||
+      (isProgress(event.done, event.total) &&
+        ["passed", "failed", "finished"].includes(event.outcome ?? "")));
+}
+
+function notesForSnapshot(payload: FactoryData) {
+  const note = payload.notes;
+  const plain = (text: unknown, cap: number) =>
+    typeof text === "string" &&
+    /^[A-Za-z0-9 #_,.'’!?-]+$/.test(text) &&
+    text.split(/\s+/).length <= cap;
+  if (
+    !note ||
+    note.snapshot_at !== payload.generated_at ||
+    !["counts", "model"].includes(note.source) ||
+    !plain(note.floor, 30) ||
+    !note.stations ||
+    !Object.entries(note.stations).every(
+      ([station, text]) =>
+        Object.values(stationNames).includes(station) && plain(text, 16),
+    )
+  )
+    return undefined;
+  return {
+    snapshot_at: note.snapshot_at,
+    source: note.source,
+    floor: note.floor,
+    stations: note.stations,
+  };
+}
+
+function speechForSnapshot(payload: FactoryData): FactoryData["speech"] {
+  const speech: FactoryData["speech"] = {};
+  for (const lane of ["S", "B", "C", "D", "E", "F", "W"] as const) {
+    const line = payload.speech?.[lane];
+    if (
+      line && typeof line.text === "string" && line.text.length <= 140 &&
+      /^[A-Za-z0-9 #_,.'’!?-]+$/.test(line.text) && factoryMoods.includes(line.mood) &&
+      (line.source === "model" || line.source === "facts")
+    ) speech[lane] = { text: line.text, mood: line.mood, source: line.source };
+  }
+  return Object.keys(speech).length ? speech : undefined;
+}
+
+function validateSnapshot(payload: FactoryData): FactoryData {
+  if (
+    payload.schema_version !== 1 ||
+    !Array.isArray(payload.changes) ||
+    !Array.isArray(payload.jams) ||
+    !Array.isArray(payload.coverage) ||
+    !payload.coverage.every((note: unknown) => typeof note === "string") ||
+    !payload.signals ||
+    (payload.injury_clock !== undefined &&
+      (!payload.injury_clock ||
+        !Number.isFinite(Date.parse(payload.injury_clock.from)) ||
+        typeof payload.injury_clock.available !== "boolean" ||
+        !Array.isArray(payload.injury_clock.events) ||
+        !payload.injury_clock.events.every((event) =>
+          event &&
+          ["switched-off", "wrong-number"].includes(event.kind) &&
+          Number.isSafeInteger(event.number) &&
+          event.number > 0 &&
+          Number.isFinite(Date.parse(event.at)),
+        ))) ||
+    !Array.isArray(payload.events ?? []) ||
+    !(payload.events ?? []).every(isEvent) ||
+    !Array.isArray(payload.transitions ?? []) ||
+    !(payload.transitions ?? []).every(
+      (transfer: NonNullable<FactoryData["transitions"]>[number]) =>
+        Number.isSafeInteger(transfer.number) &&
+        ["Server", "Website", "Apps"].includes(transfer.line) &&
+        ["Write", "Test", "Review", "Merge line", "Ship", "Live"].includes(
+          transfer.from,
+        ) &&
+        ["Write", "Test", "Review", "Merge line", "Ship", "Live"].includes(
+          transfer.to,
+        ) &&
+        Number.isFinite(Date.parse(transfer.at)) &&
+        (transfer.observed_at === undefined ||
+          Number.isFinite(Date.parse(transfer.observed_at))),
+    ) ||
+    !Array.isArray(payload.stops ?? []) ||
+    !(payload.stops ?? []).every(
+      (stop: NonNullable<FactoryData["stops"]>[number]) =>
+        [
+          "line-stalled",
+          "announced",
+          "hold",
+          "master",
+          "review-waiting",
+        ].includes(stop.kind) &&
+        (stop.line === null ||
+          ["Server", "Website", "Apps"].includes(stop.line)) &&
+        ["Write", "Test", "Review", "Merge line", "Ship", "Live"].includes(
+          stop.station,
+        ) &&
+        ["red", "amber"].includes(stop.level) &&
+        Number.isSafeInteger(stop.count) &&
+        stop.count >= 0 &&
+        Number.isFinite(Date.parse(stop.since)) &&
+        (stop.number === undefined ||
+          (Number.isSafeInteger(stop.number) && stop.number > 0)) &&
+        (stop.waiting_since === undefined ||
+          Number.isFinite(Date.parse(stop.waiting_since))) &&
+        (stop.machines === undefined ||
+          (Number.isSafeInteger(stop.machines.running) &&
+            stop.machines.running >= 0 &&
+            Number.isSafeInteger(stop.machines.waiting) &&
+            stop.machines.waiting > 0)),
+    ) ||
+    !payload.changes.every(
+      (change: FactoryData["changes"][number]) =>
+        Number.isSafeInteger(change.number) &&
+        change.number > 0 &&
+        typeof change.title === "string" &&
+        (change.check_progress === undefined ||
+          (change.check_progress !== null &&
+            isProgress(change.check_progress.done, change.check_progress.total))) &&
+        (change.approvals === undefined ||
+          (change.approvals !== null &&
+            [change.approvals.bot, change.approvals.fable].every(
+              (at) => at === undefined || Number.isFinite(Date.parse(at)),
+            ))) &&
+        (change.held_for_108 === undefined ||
+          typeof change.held_for_108 === "boolean") &&
+        ["Server", "Website", "Apps"].includes(change.line) &&
+        ["Write", "Test", "Review", "Merge line", "Ship", "Live"].includes(
+          change.station,
+        ) &&
+        Array.isArray(change.reasons) &&
+        Number.isFinite(Date.parse(change.last_activity)) &&
+        ["S", "B", "C", "D", "E", "F", "W", "Other"].includes(change.builder) &&
+        (change.testflight_build === undefined ||
+          (Number.isSafeInteger(change.testflight_build) &&
+            change.testflight_build > 0)) &&
+        [
+          change.merge_announced_at,
+          change.live_posted_at,
+          change.live_post_observed_at,
+          change.bench_seen_at,
+        ].every((at) => at === undefined || Number.isFinite(Date.parse(at))),
+    ) ||
+    !Number.isFinite(Date.parse(payload.generated_at)) ||
+    (payload.read_expires_at !== undefined &&
+      !Number.isFinite(Date.parse(payload.read_expires_at))) ||
+    !Number.isFinite(Date.parse(payload.observed_since))
+  )
+    throw new Error("Snapshot incomplete");
+  const notes = notesForSnapshot(payload);
+  const speech = speechForSnapshot(payload);
+  const usage = payload.model_usage;
+  const modelUsage = usage && /^\d{4}-\d{2}-\d{2}$/.test(usage.day) &&
+    Number.isSafeInteger(usage.calls) && usage.calls >= 0 && usage.calls <= 200
+    ? { day: usage.day, calls: usage.calls } : undefined;
+  return {
+    schema_version: payload.schema_version,
+    generated_at: payload.generated_at,
+    observed_since: payload.observed_since,
+    ...(payload.read_expires_at
+      ? { read_expires_at: payload.read_expires_at }
+      : {}),
+    ...(payload.transitions ? { transitions: payload.transitions } : {}),
+    ...(payload.events ? { events: payload.events } : {}),
+    ...(payload.injury_clock ? { injury_clock: payload.injury_clock } : {}),
+    ...(payload.stops ? { stops: payload.stops } : {}),
+    ...(notes ? { notes } : {}),
+    ...(speech ? { speech } : {}),
+    ...(modelUsage ? { model_usage: modelUsage } : {}),
+    changes: payload.changes,
+    jams: payload.jams,
+    signals: payload.signals,
+    coverage: payload.coverage,
+  };
+}
+
+async function readSnapshot(fetcher: typeof fetch, attempt: 1 | 2) {
+  const startedAt = performance.now();
+  // Cloud reads took up to 620 ms, and five production reads exceeded 800 ms.
+  const signal = AbortSignal.timeout(4000);
+  let outcome = "success";
+  let status: number | undefined;
+  try {
+    const response = await fetcher(FACTORY_DATA_URL, {
+      cache: "no-store",
+      signal,
+    });
+    status = response.status;
+    if (!response.ok) throw new Error("Snapshot unavailable");
+    return validateSnapshot(await response.json());
+  } catch (error) {
+    outcome =
+      signal.aborted ||
+      (error instanceof Error && error.name === "TimeoutError")
+        ? "timeout"
+        : "failed";
+    throw error;
+  } finally {
+    const receipt = {
+      attempt,
+      durationMs: Math.round(performance.now() - startedAt),
+      outcome,
+      status,
+    };
+    if (outcome === "success") console.info("Factory live read", receipt);
+    else console.warn("Factory live read", receipt);
+  }
+}
+
+export function createFactoryReader(
+  fetcher: typeof fetch = (...args) => fetch(...args),
+  cacheVerifiedRead: (load: LoadVerifiedRead) => LoadVerifiedRead = (load) =>
+    load,
+) {
+  let lastGood: VerifiedRead | null = null;
+  let lastFailureAt: number | null = null;
+  let pending: Promise<VerifiedRead> | null = null;
+
+  async function fetchWithRetry() {
+    try {
+      return await readSnapshot(fetcher, 1);
+    } catch {
+      return readSnapshot(fetcher, 2);
+    }
+  }
+
+  function refresh(): Promise<VerifiedRead> {
+    pending ??= fetchWithRetry()
+      .then(
+        (data) => {
+          lastGood = { data, checkedAt: Date.now() };
+          lastFailureAt = null;
+          return lastGood;
+        },
+        (error) => {
+          lastFailureAt = Date.now();
+          throw error;
+        },
+      )
+      .finally(() => {
+        pending = null;
+      });
+    return pending;
+  }
+
+  // A rejected refresh leaves the previous verified entry in Next's Data Cache.
+  const load = cacheVerifiedRead(refresh);
+
+  return async (): Promise<FactoryRead> => {
+    let readFailed: boolean;
+    try {
+      const read = await load();
+      if (!lastGood || read.checkedAt >= lastGood.checkedAt) lastGood = read;
+      // Next can return its old entry while refreshing. Wait for that same
+      // refresh before rendering after a quiet spell.
+      const verified =
+        Date.now() - lastGood.checkedAt > MAX_CACHE_AGE_MS
+          ? await refresh()
+          : lastGood;
+      readFailed =
+        lastFailureAt !== null && lastFailureAt >= verified.checkedAt;
+    } catch {
+      readFailed = true;
+    }
+    return {
+      data: lastGood?.data ?? null,
+      lastGoodAt: lastGood?.data.generated_at ?? null,
+      ...(lastGood ? { readAt: new Date(lastGood.checkedAt).toISOString() } : {}),
+      readFailed,
+    };
+  };
+}

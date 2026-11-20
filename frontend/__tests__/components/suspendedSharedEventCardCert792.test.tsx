@@ -109,6 +109,18 @@ function text(html: string): string {
 // footer). The specimen is away_score=1, home_score=2, so this reads "2-1".
 const EXPECTED = suspendedSummary(1, 2, "home-away");
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the shared EventCard renders the suspended state", () => {
   it("prints the shared summary", () => {
     // The control for every suppression below: if this card were not reaching

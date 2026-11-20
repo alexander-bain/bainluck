@@ -41,11 +41,19 @@ struct CardContextMenu: View {
         }
     }
 
+    static func copyableHomeProbability(for event: FeedEventData) -> Double? {
+        guard !EventState.isFinished(event.status),
+              event.heroProbabilitySource != "settled" else {
+            return nil
+        }
+        return OpeningLineHero.currentOddsForCard(event.currentOdds, heroSource: event.heroProbabilitySource)?.homeProbability
+    }
+
     @ViewBuilder
     private func eventMenu(_ event: FeedEventData) -> some View {
         let url = eventShareURL(event.id, style: shareURLStyle)
 
-        if let prob = event.currentOdds?.homeProbability {
+        if let prob = Self.copyableHomeProbability(for: event) {
             Button {
                 let text = "\(event.homeTeam): \(Int(prob * 100))%"
                 copyToClipboard(text)

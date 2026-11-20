@@ -216,7 +216,9 @@ class TestPrivateEvidenceNeverReachesTheWire:
         team = body["teams"][0]
         assert set(team) == {
             "id", "name", "slug", "abbreviation", "logo", "record", "sport_key",
+            "query_names_team",
         }
+        assert team["query_names_team"] is True
 
     async def test_search_event_concepts_carry_no_private_keys(self, seeded_client):
         """`grammys` mints a concept with no DB at all, so the concept bucket is

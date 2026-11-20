@@ -186,12 +186,31 @@ actor Stub: WatchSelectedGameTransport {
         }
         let cacheKey = "bainluck_watch_selected_game_snapshot_v1"
         func cache(_ reading: WatchSelectedGame, version: Int = 1) throws -> Data {
-            let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(reading))
+            var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(reading)) as! [String: Any]
+            object.removeValue(forKey: "openingChancePolicyChecked")
             return try JSONSerialization.data(withJSONObject: ["version": version, "game": object, "fetchedAt": clock.timeIntervalSinceReferenceDate])
         }
         defaults.set(1, forKey: "bainluck_watch_selected_event_id")
+        let legacyUndated = try event(extras: ",\"status\":\"live\",\"home_score\":72,\"away_score\":68,\"hero_probability\":0.58,\"hero_probability_away\":0.42,\"prematch_odds\":{\"home_probability\":0.58,\"away_probability\":0.42}")
+        defaults.set(try cache(legacyUndated), forKey: cacheKey)
+        let restoredLegacy = WatchSelectedGameStore(transport: transport, defaults: defaults)
+        precondition(restoredLegacy.isRestoredReading && restoredLegacy.game?.homeProbabilityText == nil,
+                     "An undated v1 forecast could be a normalized opening line")
+        precondition(restoredLegacy.game?.homeScore == 72 && restoredLegacy.game?.awayScore == 68)
+        precondition(restoredLegacy.game?.pregameRenderedPercents.home == 58,
+                     "Legacy scores and explicitly historical probabilities remain")
+        let refreshLegacy = Task { await restoredLegacy.refresh() }
+        await transport.waitFor(1)
+        let genuineUndated = try event(extras: ",\"status\":\"live\",\"hero_probability_source\":\"blend\",\"hero_probability\":0.32,\"hero_probability_away\":0.68")
+        await transport.finish(1, result: .success(genuineUndated))
+        await refreshLegacy.value
+        let restoredFresh = WatchSelectedGameStore(transport: transport, defaults: defaults)
+        precondition(restoredFresh.isRestoredReading && restoredFresh.game?.homeProbabilityText == "32%",
+                     "A newly validated forecast can survive restart without a producer clock")
         defaults.set(try cache(hero), forKey: cacheKey)
         let savedHero = WatchSelectedGameStore(transport: transport, defaults: defaults)
+        precondition(savedHero.game?.homeProbability == hero.homeProbability,
+                     "A legacy blend with its producer clock remains available")
         precondition(savedHero.game?.probabilityObservedAt == hero.probabilityObservedAt && savedHero.game?.scoreObservedAt == hero.scoreObservedAt && savedHero.isRestoredReading)
         let confirmation = Task { await savedHero.refresh() }
         await transport.waitFor(1)

@@ -13,7 +13,8 @@ import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import Link from "next/link";
-import { fetchEventConcept } from "@/lib/api";
+import { fetchEventConcept, fetchPairedMetricsByCeremony } from "@/lib/api";
+import AwardCategoryPairedCard from "@/components/discover/forms/AwardCategoryPairedCard";
 import {
   awardsRefreshInterval,
   marketsTracked,
@@ -174,6 +175,17 @@ export default function EventConceptPage() {
       refreshInterval: refreshInterval,
     },
   );
+
+  // #12577: Oscars event-concept page loads live paired Nominated % + Wins % category cards
+  const isOscarsConcept =
+    domain === "awards" &&
+    (slug === "oscars" || slug === "the-oscars" || slug.startsWith("oscars-"));
+  const { data: oscarsPairedData } = useSWR(
+    isOscarsConcept ? ["paired-metrics-ceremony", "oscars"] : null,
+    () => fetchPairedMetricsByCeremony("oscars"),
+    { revalidateOnFocus: false },
+  );
+  const oscarsPairedSets = oscarsPairedData?.sets ?? [];
 
   // L2-113: canonicalize + upgrade to the pretty, self-resolving slug the backend
   // supplies (combat: headliner+date). Discover/search cards link with the bare
@@ -435,6 +447,32 @@ export default function EventConceptPage() {
       <NextEditionStrip competition={data.competition} settled={isSettled} />
 
       <MoversStrip movers={movers} show={SHOW_MOVERS} />
+
+      {isOscarsConcept && oscarsPairedSets.length > 0 && (
+        <section
+          id="paired-award-categories"
+          data-testid="concept-paired-award-categories"
+          className="space-y-4"
+        >
+          <div className="space-y-0.5">
+            <h2 className="text-lg font-semibold text-text-primary">
+              Nominated &amp; Wins by Category
+            </h2>
+            <p className="text-sm text-text-secondary">
+              Each contender&apos;s chance of being nominated and chance of winning side by side.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-4">
+            {oscarsPairedSets.map((ps) => (
+              <AwardCategoryPairedCard
+                key={ps.set_id}
+                set={ps}
+                surface="collection"
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Hero: co-equal two-sided timeline (combat), soccer container hero (the live
           /next match duel), or the winner-field chart. L2-156 Item 5: a settled

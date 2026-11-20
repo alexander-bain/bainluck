@@ -166,8 +166,15 @@ final class WatchLiveViewModel: ObservableObject {
                 let homeTeam = e.homeTeam ?? "Home"
                 let awayTeam = e.awayTeam ?? "Away"
                 let awayProb = 1.0 - homeProb
-                let homeAbbrev = e.homeTeamData?.abbreviation ?? String(homeTeam.split(separator: " ").last ?? "")
-                let awayAbbrev = e.awayTeamData?.abbreviation ?? String(awayTeam.split(separator: " ").last ?? "")
+                let abbrevs = TeamShortName.abbreviationPair(
+                    away: awayTeam,
+                    home: homeTeam,
+                    awayServed: e.awayTeamData?.abbreviation,
+                    homeServed: e.homeTeamData?.abbreviation,
+                    sportKey: e.sport
+                )
+                let homeAbbrev = abbrevs.home
+                let awayAbbrev = abbrevs.away
                 // #4880 — see `PeriodLabel.liveStatusText`.
                 let clockText = PeriodLabel.liveStatusText(
                     period: e.espn?.period, gameClock: e.espn?.gameClock)

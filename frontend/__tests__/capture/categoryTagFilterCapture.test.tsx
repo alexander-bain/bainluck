@@ -154,6 +154,18 @@ function visibleText(markup: string): string {
 
 const EMPTY_LINE = "No soccer items right now";
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the BEFORE state, from the verbatim served payload", () => {
   it("the served payload really is empty — the fixture is not a strawman", () => {
     expect((SERVED_BEFORE as { total: number }).total).toBe(0);
@@ -171,7 +183,7 @@ describe("the BEFORE state, from the verbatim served payload", () => {
     // green capture was holding a listed debt in place. Anchored on the line
     // the page ships today and on the navigation affordance beside it.
     const text = visibleText(render(SERVED_BEFORE));
-    expect(text).toContain("This page lists open soccer questions");
+    expect(text).toContain("This page lists open soccer markets");
     expect(text).toContain("Browse other categories");
     expect(text).not.toContain("Failed");
     expect(text).not.toContain("Error");

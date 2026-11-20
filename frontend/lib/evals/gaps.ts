@@ -18,9 +18,23 @@
  *     again; it is the date the LAST REVIEWED chip prints.
  */
 
+import GAP_TARGETS_RAW from "@/lib/evals/data/gap-targets.json";
 import { issueRef, pullRef, type RepoRef } from "@/lib/evals/truth";
 
-export const GAPS_REVIEWED_AT = "2026-11-05";
+export interface GapTargetEntry {
+  issue: number;
+  target: string | null;
+}
+
+export interface GapTargetsRecord {
+  as_of: string;
+  project_id: string;
+  gaps: Record<string, GapTargetEntry>;
+}
+
+export const GAP_TARGETS: GapTargetsRecord = GAP_TARGETS_RAW;
+
+export const GAPS_REVIEWED_AT = GAP_TARGETS.as_of;
 
 export interface Gap {
   id: string;
@@ -32,51 +46,61 @@ export interface Gap {
   /** `YYYY-MM` or `YYYY-MM-DD` per `{name}` in `text`. */
   dates?: Record<string, string>;
   ref: RepoRef;
+  /** Target date (`YYYY-MM-DD`) on the owning issue's board item, or null when not scheduled yet. */
+  target?: string | null;
   /** Present only when the fix is being built; names what it waits on. */
   planned?: { waitingOn: string; ref: RepoRef };
+}
+
+function targetFor(id: keyof typeof GAP_TARGETS_RAW.gaps): { ref: RepoRef; target: string | null } {
+  const entry = GAP_TARGETS_RAW.gaps[id];
+  return {
+    ref: issueRef(entry.issue),
+    target: entry.target,
+  };
 }
 
 export const GAPS: readonly Gap[] = [
   {
     id: "combined-probability",
     text: "The combined probability on each card is not graded yet. We grade the sources it is made from, not the combined number itself.",
-    ref: issueRef(11850),
+    ...targetFor("combined-probability"),
   },
   {
     id: "rare-pair-kinds",
     text: "For some kinds of matching pairs there are too few never-seen examples for the AI matcher to earn permission to decide on its own.",
-    ref: pullRef(11951),
+    ...targetFor("rare-pair-kinds"),
   },
   {
     id: "code-reviewer",
     text: "The AI code reviewer's study is not finished, so how often it catches a hidden mistake is not known yet.",
-    ref: pullRef(11951),
+    ...targetFor("code-reviewer"),
   },
   {
     id: "feed-reviewer",
     text: "The AI that looks over the top of the Discover feed each day has not been compared with people's judgments.",
-    ref: issueRef(587),
+    ...targetFor("feed-reviewer"),
   },
   {
     id: "ranking-grades",
     text: "No change to the order of the feed has been scored against people's grades.",
-    ref: issueRef(12095),
+    ...targetFor("ranking-grades"),
     planned: { waitingOn: "the ranking scorer", ref: pullRef(12100) },
   },
   {
     id: "matching-audit",
     text: "Our full check of how markets are matched to events has no dated result since {since}.",
     dates: { since: "2026-07" },
-    ref: issueRef(2693),
+    ...targetFor("matching-audit"),
   },
   {
     id: "time-before-result",
     text: "We do not yet show accuracy by how far ahead a forecast was made, such as a week or a day before the result.",
-    ref: pullRef(11956),
+    ...targetFor("time-before-result"),
   },
   {
     id: "chance-failures",
     text: "Nothing measures how often a test fails by bad luck rather than a real problem.",
-    ref: issueRef(11939),
+    ...targetFor("chance-failures"),
   },
 ];

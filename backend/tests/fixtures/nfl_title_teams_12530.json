@@ -1,0 +1,497 @@
+{
+  "captured_at": "2026-11-11T15:19:21.642711+00:00",
+  "sql_sha256": "bd92c970346b00bcf522d98f16fb6d035d880cea86568de9e789ce13b3597ccf",
+  "market_id": 40533,
+  "market_external_id": "KXSB-27",
+  "roster": [
+    {
+      "id": 11,
+      "name": "New England Patriots",
+      "location": "New England",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "NE",
+      "alternate_names": [
+        "Patriots",
+        "pats"
+      ]
+    },
+    {
+      "id": 12,
+      "name": "Seattle Seahawks",
+      "location": "Seattle",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "SEA",
+      "alternate_names": [
+        "Seahawks"
+      ]
+    },
+    {
+      "id": 538,
+      "name": "Buffalo Bills",
+      "location": "Buffalo",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "BUF",
+      "alternate_names": [
+        "Bills"
+      ]
+    },
+    {
+      "id": 539,
+      "name": "Cincinnati Bengals",
+      "location": "Cincinnati",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "CIN",
+      "alternate_names": [
+        "Bengals"
+      ]
+    },
+    {
+      "id": 540,
+      "name": "Pittsburgh Steelers",
+      "location": "Pittsburgh",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "PIT",
+      "alternate_names": [
+        "Steelers"
+      ]
+    },
+    {
+      "id": 541,
+      "name": "Arizona Cardinals",
+      "location": "Arizona",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "ARI",
+      "alternate_names": [
+        "Cardinals"
+      ]
+    },
+    {
+      "id": 542,
+      "name": "Washington Commanders",
+      "location": "Washington",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "WSH",
+      "alternate_names": [
+        "Commanders"
+      ]
+    },
+    {
+      "id": 543,
+      "name": "Indianapolis Colts",
+      "location": "Indianapolis",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "IND",
+      "alternate_names": [
+        "Colts"
+      ]
+    },
+    {
+      "id": 544,
+      "name": "Los Angeles Rams",
+      "location": "Los Angeles",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "LAR",
+      "alternate_names": [
+        "Rams"
+      ]
+    },
+    {
+      "id": 545,
+      "name": "Carolina Panthers",
+      "location": "Carolina",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "CAR",
+      "alternate_names": [
+        "Panthers"
+      ]
+    },
+    {
+      "id": 546,
+      "name": "San Francisco 49ers",
+      "location": "San Francisco",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "SF",
+      "alternate_names": [
+        "9ers",
+        "49ers",
+        "niners"
+      ]
+    },
+    {
+      "id": 547,
+      "name": "New York Giants",
+      "location": "New York",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "NYG",
+      "alternate_names": [
+        "Giants"
+      ]
+    },
+    {
+      "id": 548,
+      "name": "Tennessee Titans",
+      "location": "Tennessee",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "TEN",
+      "alternate_names": [
+        "Titans"
+      ]
+    },
+    {
+      "id": 549,
+      "name": "Philadelphia Eagles",
+      "location": "Philadelphia",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "PHI",
+      "alternate_names": [
+        "Eagles"
+      ]
+    },
+    {
+      "id": 550,
+      "name": "New York Jets",
+      "location": "New York",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "NYJ",
+      "alternate_names": [
+        "Jets"
+      ]
+    },
+    {
+      "id": 551,
+      "name": "New Orleans Saints",
+      "location": "New Orleans",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "NO",
+      "alternate_names": [
+        "Saints"
+      ]
+    },
+    {
+      "id": 552,
+      "name": "Dallas Cowboys",
+      "location": "Dallas",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "DAL",
+      "alternate_names": [
+        "Cowboys"
+      ]
+    },
+    {
+      "id": 553,
+      "name": "Atlanta Falcons",
+      "location": "Atlanta",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "ATL",
+      "alternate_names": [
+        "Falcons"
+      ]
+    },
+    {
+      "id": 554,
+      "name": "Tampa Bay Buccaneers",
+      "location": "Tampa Bay",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "TB",
+      "alternate_names": [
+        "bucs",
+        "Buccaneers"
+      ]
+    },
+    {
+      "id": 555,
+      "name": "Minnesota Vikings",
+      "location": "Minnesota",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "MIN",
+      "alternate_names": [
+        "Vikings"
+      ]
+    },
+    {
+      "id": 556,
+      "name": "Los Angeles Chargers",
+      "location": "Los Angeles",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "LAC",
+      "alternate_names": [
+        "Chargers"
+      ]
+    },
+    {
+      "id": 557,
+      "name": "Las Vegas Raiders",
+      "location": "Las Vegas",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "LV",
+      "alternate_names": [
+        "Raiders"
+      ]
+    },
+    {
+      "id": 558,
+      "name": "Baltimore Ravens",
+      "location": "Baltimore",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "BAL",
+      "alternate_names": [
+        "Ravens"
+      ]
+    },
+    {
+      "id": 559,
+      "name": "Green Bay Packers",
+      "location": "Green Bay",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "GB",
+      "alternate_names": [
+        "Packers"
+      ]
+    },
+    {
+      "id": 560,
+      "name": "Kansas City Chiefs",
+      "location": "Kansas City",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "KC",
+      "alternate_names": [
+        "Chiefs"
+      ]
+    },
+    {
+      "id": 561,
+      "name": "Chicago Bears",
+      "location": "Chicago",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "CHI",
+      "alternate_names": [
+        "Bears"
+      ]
+    },
+    {
+      "id": 562,
+      "name": "Cleveland Browns",
+      "location": "Cleveland",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "CLE",
+      "alternate_names": [
+        "Browns"
+      ]
+    },
+    {
+      "id": 563,
+      "name": "Houston Texans",
+      "location": "Houston",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "HOU",
+      "alternate_names": [
+        "Texans"
+      ]
+    },
+    {
+      "id": 564,
+      "name": "Jacksonville Jaguars",
+      "location": "Jacksonville",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "JAX",
+      "alternate_names": [
+        "Jaguars",
+        "jags"
+      ]
+    },
+    {
+      "id": 565,
+      "name": "Miami Dolphins",
+      "location": "Miami",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "MIA",
+      "alternate_names": [
+        "phins",
+        "Dolphins",
+        "fins"
+      ]
+    },
+    {
+      "id": 566,
+      "name": "Denver Broncos",
+      "location": "Denver",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "DEN",
+      "alternate_names": [
+        "Broncos"
+      ]
+    },
+    {
+      "id": 567,
+      "name": "Detroit Lions",
+      "location": "Detroit",
+      "sport_key": "americanfootball_nfl",
+      "abbreviation": "DET",
+      "alternate_names": [
+        "Lions"
+      ]
+    }
+  ],
+  "outcomes": [
+    {
+      "id": 643827,
+      "name": "Seattle",
+      "external_id": "KXSB-27-SEA"
+    },
+    {
+      "id": 643828,
+      "name": "Los Angeles R",
+      "external_id": "KXSB-27-LAR"
+    },
+    {
+      "id": 643829,
+      "name": "San Francisco",
+      "external_id": "KXSB-27-SF"
+    },
+    {
+      "id": 643830,
+      "name": "Philadelphia",
+      "external_id": "KXSB-27-PHI"
+    },
+    {
+      "id": 643831,
+      "name": "New England",
+      "external_id": "KXSB-27-NE"
+    },
+    {
+      "id": 643832,
+      "name": "Los Angeles C",
+      "external_id": "KXSB-27-LAC"
+    },
+    {
+      "id": 643833,
+      "name": "Buffalo",
+      "external_id": "KXSB-27-BUF"
+    },
+    {
+      "id": 643834,
+      "name": "Kansas City",
+      "external_id": "KXSB-27-KC"
+    },
+    {
+      "id": 643835,
+      "name": "Jacksonville",
+      "external_id": "KXSB-27-JAC"
+    },
+    {
+      "id": 643836,
+      "name": "Houston",
+      "external_id": "KXSB-27-HOU"
+    },
+    {
+      "id": 643837,
+      "name": "Green Bay",
+      "external_id": "KXSB-27-GB"
+    },
+    {
+      "id": 643838,
+      "name": "Detroit",
+      "external_id": "KXSB-27-DET"
+    },
+    {
+      "id": 643839,
+      "name": "Denver",
+      "external_id": "KXSB-27-DEN"
+    },
+    {
+      "id": 643840,
+      "name": "Chicago",
+      "external_id": "KXSB-27-CHI"
+    },
+    {
+      "id": 643841,
+      "name": "Baltimore",
+      "external_id": "KXSB-27-BAL"
+    },
+    {
+      "id": 643842,
+      "name": "Tampa Bay",
+      "external_id": "KXSB-27-TB"
+    },
+    {
+      "id": 643843,
+      "name": "Pittsburgh",
+      "external_id": "KXSB-27-PIT"
+    },
+    {
+      "id": 643844,
+      "name": "New York G",
+      "external_id": "KXSB-27-NYG"
+    },
+    {
+      "id": 643845,
+      "name": "Minnesota",
+      "external_id": "KXSB-27-MIN"
+    },
+    {
+      "id": 643846,
+      "name": "Indianapolis",
+      "external_id": "KXSB-27-IND"
+    },
+    {
+      "id": 643847,
+      "name": "Dallas",
+      "external_id": "KXSB-27-DAL"
+    },
+    {
+      "id": 643848,
+      "name": "Cincinnati",
+      "external_id": "KXSB-27-CIN"
+    },
+    {
+      "id": 643849,
+      "name": "Atlanta",
+      "external_id": "KXSB-27-ATL"
+    },
+    {
+      "id": 643850,
+      "name": "Tennessee",
+      "external_id": "KXSB-27-TEN"
+    },
+    {
+      "id": 643851,
+      "name": "Washington",
+      "external_id": "KXSB-27-WAS"
+    },
+    {
+      "id": 643852,
+      "name": "New York J",
+      "external_id": "KXSB-27-NYJ"
+    },
+    {
+      "id": 643853,
+      "name": "New Orleans",
+      "external_id": "KXSB-27-NO"
+    },
+    {
+      "id": 643854,
+      "name": "Miami",
+      "external_id": "KXSB-27-MIA"
+    },
+    {
+      "id": 643855,
+      "name": "Las Vegas",
+      "external_id": "KXSB-27-LV"
+    },
+    {
+      "id": 643856,
+      "name": "Cleveland",
+      "external_id": "KXSB-27-CLE"
+    },
+    {
+      "id": 643857,
+      "name": "Carolina",
+      "external_id": "KXSB-27-CAR"
+    },
+    {
+      "id": 643858,
+      "name": "Arizona",
+      "external_id": "KXSB-27-ARI"
+    }
+  ]
+}

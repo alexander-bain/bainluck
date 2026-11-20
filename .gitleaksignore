@@ -124,3 +124,45 @@ aeeb6fe11415997b649e57a6beee611d26d1f459:artifacts/web-event-quotes-9484/INDEPEN
 # #12102: SHA256 of frozen adjudicated labels, not a credential.
 # Exact historical finding; recomputed from the original private JSON.
 d54c97d3403d8973d11dd640a39ee7105c74e638:frontend/lib/evals/data/twin-exam-2026-11-05.json:generic-api-key:246
+
+# #11935: the settled-champion fixture contains a result-provenance constant.
+# Exact historical finding from gitleaks run 42534884899.
+05cc7ced000adb545e7c1290ffb1c9ffa7233d6d:backend/tests/test_field_selection_11935.py:generic-api-key:131
+
+# #11666 / #10868: SwiftUI accessibility identifier constants in combat presentation
+# views, not credentials. Exact historical findings from gitleaks run 42598377257.
+7379c1ebe40fd8c21763c664dde9802f8eb39829:ios/Bain Luck/Bain Luck/Components/CombatRoundPresentation10868.swift:generic-api-key:1136
+7379c1ebe40fd8c21763c664dde9802f8eb39829:ios/Bain Luck/Bain Luck/Components/CombatDurationPresentation10868.swift:generic-api-key:1178
+
+# #11666: sportKey parameter literal ("cricket_international_t20"), not a credential.
+# Exact historical findings from gitleaks run 42613076969.
+3d552281ed303532becac7fb00d38063e26138e7:ios/Bain Luck/Bain Luck/Components/EventAtlasCricketCards11666.swift:generic-api-key:908
+3d552281ed303532becac7fb00d38063e26138e7:ios/Bain Luck/Bain Luck/Components/EventAtlasCricketCards11666.swift:generic-api-key:1109
+3d552281ed303532becac7fb00d38063e26138e7:ios/Bain Luck/BainLuckTests/EventAtlasCricketCards11666Tests.swift:generic-api-key:13
+3d552281ed303532becac7fb00d38063e26138e7:ios/Bain Luck/BainLuckTests/EventAtlasCricketCards11666Tests.swift:generic-api-key:20
+3d552281ed303532becac7fb00d38063e26138e7:ios/Bain Luck/BainLuckTests/EventAtlasCricketCards11666Tests.swift:generic-api-key:27
+
+# #12577: TypeScript property access expression in VisualFormLookSheet.tsx, not a credential.
+# Exact historical findings from gitleaks run 42978644637 (removed in subsequent commit).
+75b2aea66f2a1a8404068a0475c06625cd2eb9ce:frontend/components/discover/forms/VisualFormLookSheet.tsx:generic-api-key:2078
+75b2aea66f2a1a8404068a0475c06625cd2eb9ce:frontend/components/discover/forms/VisualFormLookSheet.tsx:generic-api-key:2089
+
+# #9937: grouping-exam item keys (public slugs such as
+# "nfl-qbs-3500-passing-yards-2026-27"), not credentials. Exact findings from
+# gitleaks run 43056326115 on PR #12590.
+d6ebef9997e3cb2aec9d2c5947855748b67b5d09:evals/ranking/grades/2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json:generic-api-key:32
+d6ebef9997e3cb2aec9d2c5947855748b67b5d09:evals/ranking/grades/2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json:generic-api-key:67
+d6ebef9997e3cb2aec9d2c5947855748b67b5d09:evals/ranking/grades/2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json:generic-api-key:123
+
+# #9937: the same three exam item-key slugs, at their line numbers in #12590's
+# squash commit on master (one lower, after `graded_on`). Exact findings from
+# gitleaks run 43078241574.
+82991146764941c51a9e1366d9cc3c957db72b4a:evals/ranking/grades/2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json:generic-api-key:33
+82991146764941c51a9e1366d9cc3c957db72b4a:evals/ranking/grades/2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json:generic-api-key:68
+82991146764941c51a9e1366d9cc3c957db72b4a:evals/ranking/grades/2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json:generic-api-key:124
+
+# #13036: Polymarket public game slug ("cwbb-sou-nd-2026-11-18") in test fixture
+# beside constant name POLYMARKET_EVENT_SLUG_KEY (ends with _KEY); not a credential.
+# Exact findings from gitleaks run 44461617146 on PR #13037; renamed to SLUG_FIELD in follow-up commit.
+67845ab2138ce91077ff5fb1351a9cd857aef194:backend/tests/test_wbb_auto_create_orientation.py:generic-api-key:37
+67845ab2138ce91077ff5fb1351a9cd857aef194:backend/tests/test_wbb_auto_create_orientation.py:generic-api-key:50

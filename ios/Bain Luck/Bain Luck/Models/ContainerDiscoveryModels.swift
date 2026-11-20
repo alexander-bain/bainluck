@@ -89,7 +89,7 @@ nonisolated struct ContainerDiscoveryEntry: Identifiable, Sendable {
             parts.append("\(collection.gameCount) \(collection.gameCount == 1 ? "game" : "games")")
         }
         if collection.questionCount > 0 {
-            parts.append("\(collection.questionCount) \(collection.questionCount == 1 ? "question" : "questions")")
+            parts.append("\(collection.questionCount) \(collection.questionCount == 1 ? "market" : "markets")")
         }
         return parts.joined(separator: " · ")
     }

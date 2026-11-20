@@ -88,31 +88,24 @@ d("#4094 — the settled card's footer is not drawn when it is empty", () => {
     const body = footerBody();
     expect(body).toMatch(/reason: reason/);
     expect(body).toMatch(/isLive: isLive/);
+    expect(body).toMatch(/isFinished: isFinished/);
     expect(body).toMatch(/awayOpening: event\.openingOdds\?\.awayProbability/);
     expect(body).toMatch(/homeOpening: event\.openingOdds\?\.homeProbability/);
   });
 
   it("the helper still mirrors the row it is standing in for", () => {
-    // `hasContent` earns its place only while it agrees with `footerRow`'s two
-    // branches. If the row grows a third thing to draw, this fails and the
-    // helper has to learn about it — rather than the gap coming back silently
-    // on whatever rows the new branch covers.
+    // `hasContent` earns its place only while it agrees with `footerRow`.
+    // #12616 moved the live `Pregame` starting chance into the single quiet
+    // grey context line (`Projected 118–109 · Pregame 54%–46%`), so `footerRow`
+    // draws only a non-finished non-empty served `reason`.
     const source = code();
     const start = source.indexOf("static func hasContent(");
     expect(start).toBeGreaterThan(-1);
-    const helper = source.slice(start, source.indexOf("\n    }", start));
-    expect(helper).toMatch(/if let reason, !reason\.isEmpty \{ return true \}/);
-    // #5363 — the row this mirrors grew a second branch: on a draw-priced
-    // sport `footerRow` draws a NAMED single-sided caption ("Opened Boca 68%"),
-    // so HOME alone is content there and the gate has to agree. Both arms are
-    // pinned, in both directions: drop the guard and a dead card draws a
-    // footer, drop the rule and a live soccer card hides one it draws.
+    const helper = source.slice(start, source.indexOf("\n        }", start));
     expect(helper).toMatch(
-      /guard isLive, homeOpening != nil else \{ return false \}/
+      /guard !isFinished, let reason, !reason\.isEmpty else \{ return false \}/
     );
-    expect(helper).toMatch(
-      /return awayOpening != nil \|\| DrawPricedWinner\.sportPricesADraw\(sport\)/
-    );
+    expect(helper).toMatch(/return true/);
   });
 
   it("the slice is the right one, and the mutant is still detectable inside it", () => {

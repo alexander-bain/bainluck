@@ -283,6 +283,61 @@ async def _surviving_market_ids_parent(conn, event_sport_id):
 
 @needs_postgres
 @pytest.mark.asyncio
+async def test_parent_name_rescue_refuses_mls_props_on_an_nfl_fixture(pg_engine):
+    """Execute the route's real query over the New England/Miami collision."""
+    from app.models.models import FuturesMarket
+    from tests.integration.test_route_events_seeded import _make_event
+    from tests.test_game_markets_or_group_minimal_10820 import _run_build
+
+    async with pg_engine.connect() as conn:
+        transaction = await conn.begin()
+        try:
+            nfl = await _sport_id(conn, "americanfootball_nfl", "NFL", 90_126_331)
+            mls = await _sport_id(conn, "soccer_usa_mls", "MLS", 90_126_332)
+            assert nfl != mls
+            now = dt.datetime.now(dt.timezone.utc)
+            event = _make_event(
+                id=14969875, home_team="New England Patriots", away_team="Miami Dolphins",
+                status="completed", sport_key="americanfootball_nfl",
+            )
+            event.sport_id = nfl
+            event.commence_time = now - dt.timedelta(days=2)
+            statements = {}
+            await _run_build(event, [], statements=statements)
+
+            # The soccer parent is exactly at the old name/time rescue's +6h
+            # edge. Unknown sport is not positive identity; a known football
+            # category remains the established fallback for a missing sport id.
+            for offset, sport, category, group, name in (
+                (0, nfl, None, "audit12633:nfl", "New England Patriots vs Miami Dolphins"),
+                (1, mls, "soccer", "audit12633:mls", "New England Revolution vs Inter Miami CF"),
+                (2, None, None, "audit12633:unknown", "New England vs Miami"),
+                (3, None, "football", "audit12633:category", "New England vs Miami"),
+            ):
+                await conn.execute(
+                    text(
+                        "INSERT INTO futures_markets (id, sport_id, llm_sport_category, "
+                        "name, external_id, category, source, status, mutually_exclusive, "
+                        "group_id, group_type, commence_time) VALUES "
+                        "(:id, :sport, :category, :name, :group, 'game_prop', 'polymarket', "
+                        "'resolved', false, :group, 'polymarket_event', :commence)"
+                    ),
+                    {"id": 90_126_341 + offset, "sport": sport, "category": category,
+                     "name": name, "group": group,
+                     "commence": event.commence_time + dt.timedelta(hours=6)},
+                )
+            # Isolate this fixture from other gates sharing the CI database.
+            statement = statements["poly_parent"].where(
+                FuturesMarket.id.in_(range(90_126_341, 90_126_345))
+            )
+            groups = set((await conn.execute(statement)).scalars().all())
+            assert groups == {"audit12633:nfl", "audit12633:category"}
+        finally:
+            await transaction.rollback()
+
+
+@needs_postgres
+@pytest.mark.asyncio
 async def test_a_null_category_market_on_a_cross_key_ghost_reaches_the_page(pg_engine):
     """The row the #6221 census does not cover still reaches the reader.
 

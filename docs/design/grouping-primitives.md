@@ -55,6 +55,8 @@ A **kind** is a selector with its parameters left open (`same_deadline_board`, `
 
 Invariant: **a set is reproducible from its selector.** Given the same atoms and the same definition, two runs produce the same members, in the same order, with the same reasons. A definition that cannot explain why a member is in or out is not a definition.
 
+Content mix (**227: A**, Alex, Nov 17 — adopted report-only in #12288 slice 2; becomes a condition for turning groupings on in 1.0.8 once its counts agree with Alex's grades): where a topic has more than one kind of content (games, futures, props, history), the set shows at least 2 kinds, and no single kind fills more than about 60% of the page.
+
 ### 4. Presentations
 
 A set is rendered at one of two sizes:
@@ -65,6 +67,14 @@ A set is rendered at one of two sizes:
 The rule that ties the two: **one definition yields both renderings.** The card is the container's summary; tapping the card opens the container; a container can be "the one the card opened" rather than the canonical page for its topic (Alex, Oct 7 and Nov 5).
 
 Captions and commentary are a presentation step. An LLM may write them under the evals rule: it never writes a number; every figure on the page is read from the set, labelled with when it is true and linked to its source.
+
+Visual diversity (**227: A**, Alex, Nov 17 — adopted report-only in #12288 slice 2; becomes a condition for turning groupings on in 1.0.8 once its counts agree with Alex's grades), counted per 390 px phone screen on any surface (Discover, team pages, containers, category pages, search):
+
+1. **A picture on every screen:** every phone screen carries a real crest, headshot, poster, photo or chart (never placeholder letters; where no verified art exists, the row carries none).
+2. **No long runs:** never more than 3 rows or cards in a row drawn the same way.
+3. **Several forms:** a container with 6 or more members uses at least 3 forms; Discover's first ten cards use at least 4.
+4. **Fit before variety:** a form is used only where it suits the data. Variety never excuses a wrong form.
+5. **Alex's eye:** ten sampled screens a week, three buttons (*fun*, *fine*, *wall of numbers*). A count stays in the standard only if it agrees with his grades.
 
 ### 5. Triggers
 

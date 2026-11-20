@@ -187,7 +187,7 @@ describe("#7368 — the accuracy page's answer to 'how do we know who won?'", ()
     // Without this the copy becomes its own over-claim: price-derived truth IS
     // accepted on a market with exactly one captured outcome.
     expect(text).toContain("How do we know who won?");
-    expect(text).toContain("a single yes-or-no question");
+    expect(text).toContain("a single yes-or-no market");
   });
 
   it("hands no price the authority to say what happened — any wording of it", () => {

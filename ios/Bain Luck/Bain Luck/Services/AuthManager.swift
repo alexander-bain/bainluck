@@ -28,6 +28,7 @@ final class AuthManager: ObservableObject {
     /// account and never crosses a logout/switch boundary (#1465).
     @Published var user: AuthUser? {
         didSet {
+            GroupingMachineryGate12288.setActiveUser(user)
             #if os(iOS) && canImport(ActivityKit)
             GameActivityRegistrationCoordinator.shared.setSession(
                 owner: user?.id,
@@ -74,6 +75,11 @@ final class AuthManager: ObservableObject {
     var isAdmin: Bool {
         guard let email = user?.email?.lowercased() else { return false }
         return Self.adminEmails.contains(email)
+    }
+
+    /// True ONLY for Alex's owner account (`#12288`).
+    var isOwnerAccount: Bool {
+        GroupingMachineryGate12288.isOwnerUser(user)
     }
 
     init() {

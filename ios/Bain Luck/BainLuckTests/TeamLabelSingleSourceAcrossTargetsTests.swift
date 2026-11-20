@@ -60,10 +60,7 @@ final class TeamLabelSingleSourceAcrossTargetsTests: XCTestCase {
     /// would be type-checked, but could not be exercised on a watch by anyone
     /// here, and would need membership added to targets no gate can build.
     /// That is the reason for the deferral — not invisibility. Tracked on #5709.
-    private let knownOutstanding = [
-        "BainLuckWatch Watch App/WatchFeedModels.swift",
-        "BainLuckWatch Watch App/WatchLiveView.swift",
-    ]
+    private let knownOutstanding: [String] = []
 
     /// Every Swift file in the project, as (path-relative-to-root, contents).
     private func swiftSources() throws -> [(String, String)] {
@@ -110,9 +107,8 @@ final class TeamLabelSingleSourceAcrossTargetsTests: XCTestCase {
         }
         // Control on the PATTERN, not just the files: the matcher must actually
         // fire on the known defect, or a typo in it would pass everything.
-        let watch = try XCTUnwrap(sources.first { $0.0 == "BainLuckWatch Watch App/WatchFeedModels.swift" })
         XCTAssertTrue(
-            watch.1.split(separator: "\n").contains { shortensATeamName(String($0)) },
+            shortensATeamName("let abbr = String(event.homeTeam.split(separator: \" \").last ?? \"\")"),
             "the matcher no longer recognises the defect it was written for"
         )
     }

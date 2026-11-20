@@ -120,6 +120,12 @@ class StatPalFixture:
     away_score: Optional[int] = None
     home_q_scores: Optional[dict] = None  # {"q1": 24, "q2": 31, ...}
     away_q_scores: Optional[dict] = None
+    # Tennis's current game is separate from games per set and sets won.
+    home_game_score: Optional[str] = None
+    away_game_score: Optional[str] = None
+    home_serving: Optional[bool] = None
+    away_serving: Optional[bool] = None
+    tennis_tiebreak: Optional[bool] = None
     venue: Optional[str] = None
     league: Optional[str] = None
     season: Optional[str] = None
@@ -1591,6 +1597,11 @@ class StatPalAPIService(BaseAPIClient):
             away_score=_safe_int(away.get("totalscore")),
             home_q_scores=_tennis_set_scores(home),
             away_q_scores=_tennis_set_scores(away),
+            home_game_score=str(home.get("game_score") or "").strip() or None,
+            away_game_score=str(away.get("game_score") or "").strip() or None,
+            home_serving=_tennis_bool(home.get("serve")),
+            away_serving=_tennis_bool(away.get("serve")),
+            tennis_tiebreak=_tennis_bool(item.get("tb")),
             league=tournament.get("name"),
             tournament_id=str(tournament.get("id", "")) or None,
         )
@@ -2450,6 +2461,12 @@ def _error_body(payload) -> Optional[str]:
         if err:
             return str(err)
     return None
+
+
+def _tennis_bool(value) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    return {"true": True, "false": False}.get(str(value).strip().lower())
 
 
 def _tennis_set_scores(player: dict) -> Optional[dict]:

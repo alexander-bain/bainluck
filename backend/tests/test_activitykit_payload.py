@@ -59,7 +59,7 @@ def test_update_matches_swift_content_state_default_date_wire_contract():
                 "probabilityObservedAt": 812894390,
             }
         },
-        "stale-date": 1791201690,
+        "stale-date": 1791201930,  # the score's clock (30 s old) + 6 min
     }
     assert push.headers == {
         "apns-push-type": "liveactivity",
@@ -92,10 +92,10 @@ def test_unknown_displayed_clock_is_omitted_and_marks_stale_now(missing):
 
 
 def test_old_reading_does_not_get_fresh_expiry_from_send_time():
-    reading = snapshot(score_observed_at=SENT - timedelta(minutes=5))
+    reading = snapshot(score_observed_at=SENT - timedelta(minutes=7))
     first = aps(build_activitykit_update(reading, sent_at=SENT))
     later = aps(build_activitykit_update(reading, sent_at=SENT + timedelta(minutes=1)))
-    assert first["stale-date"] == 1791201420 < first["timestamp"]
+    assert first["stale-date"] == 1791201540 < first["timestamp"]
     assert later["stale-date"] == first["stale-date"]
     assert later["content-state"] == first["content-state"]
     assert later["timestamp"] > first["timestamp"]
@@ -104,7 +104,7 @@ def test_old_reading_does_not_get_fresh_expiry_from_send_time():
 def test_probability_only_reading_uses_its_clock_not_an_absent_score_clock():
     reading = snapshot(home_score=None, away_score=None, score_observed_at=None)
     result = aps(build_activitykit_update(reading, sent_at=SENT))
-    assert result["stale-date"] == 1791201710
+    assert result["stale-date"] == 1791201950  # no score: the chance's clock + 6 min
     assert "homeScore" not in result["content-state"]["snapshot"]
     assert "scoreObservedAt" not in result["content-state"]["snapshot"]
 
@@ -112,9 +112,20 @@ def test_probability_only_reading_uses_its_clock_not_an_absent_score_clock():
 def test_score_only_reading_uses_its_clock_and_never_invents_probability():
     reading = snapshot(home_rendered_percent=None, probability_observed_at=None)
     result = aps(build_activitykit_update(reading, sent_at=SENT))
-    assert result["stale-date"] == 1791201690
+    assert result["stale-date"] == 1791201930
     assert "homeRenderedPercent" not in result["content-state"]["snapshot"]
     assert "probabilityObservedAt" not in result["content-state"]["snapshot"]
+
+
+def test_an_older_chance_never_makes_a_live_score_stale():
+    """#10542 step 4: during play the score's clock decides. A chance last moved
+    five minutes ago prints its own age; it doesn't turn the activity stale."""
+    reading = snapshot(
+        score_observed_at=SENT - timedelta(seconds=20),
+        probability_observed_at=SENT - timedelta(minutes=5),
+    )
+    result = aps(build_activitykit_update(reading, sent_at=SENT))
+    assert result["stale-date"] == 1791201600 - 20 + 360
 
 
 @pytest.mark.parametrize("lifecycle", ["suspended", "unknown"])
@@ -274,3 +285,60 @@ def test_utf8_payload_size_is_bounded_in_bytes_and_boundary_is_inclusive():
 def test_invalid_unicode_never_escapes_as_an_undeliverable_body():
     with pytest.raises(ActivityKitPayloadError):
         build_activitykit_update(snapshot(home_team="\ud800"), sent_at=SENT)
+
+
+def test_full_headline_payload_is_compact_validated_and_backwards_compatible():
+    """#12999 — full headline push stays well under 4 KiB and rejects malformed display fields."""
+    from app.services.activitykit_observation import decode_snapshot, encode_snapshot
+
+    full = snapshot(
+        home_team="Florida Gators",
+        away_team="Houston Cougars",
+        home_score=54,
+        away_score=58,
+        home_rendered_percent=39,
+        away_rendered_percent=61,
+        home_headline_tenths=386,
+        sport="basketball_ncaab",
+        home_abbreviation="FLA",
+        away_abbreviation="HOU",
+        home_color_hex="#0021A5",
+        away_color_hex="#C8102E",
+        away_secondary_color_hex="#960C22",
+        period_label="2nd Half",
+    )
+    push = build_activitykit_update(full, sent_at=SENT)
+    assert len(push.body) < 1024
+    wire = aps(push)["content-state"]["snapshot"]
+    assert wire["awayRenderedPercent"] == 61
+    assert wire["homeHeadlineTenths"] == 386
+    assert wire["sport"] == "basketball_ncaab"
+    assert wire["periodLabel"] == "2nd Half"
+    assert decode_snapshot(encode_snapshot(full)) == full
+
+    # Legacy 9-field persisted observation still decodes cleanly.
+    legacy = {
+        "schema": 1,
+        "snapshot": {
+            "event_id": 101,
+            "home_team": "Giants",
+            "away_team": "Dodgers",
+            "lifecycle": "live",
+            "home_score": 3,
+            "away_score": 2,
+            "home_rendered_percent": 46,
+            "score_observed_at": (SENT - timedelta(seconds=30)).isoformat(),
+            "probability_observed_at": (SENT - timedelta(seconds=10)).isoformat(),
+        },
+    }
+    assert decode_snapshot(legacy).sport is None
+
+    # Invalid display fields fail closed.
+    for bad in (
+        {"home_headline_tenths": 386},  # missing away_rendered_percent
+        {"home_color_hex": "red"},
+        {"pregame_away_percent": 48, "pregame_home_percent": None},
+        {"result": "home"},  # live lifecycle cannot carry final result
+    ):
+        with pytest.raises(ActivityKitPayloadError):
+            snapshot(**bad)

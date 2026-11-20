@@ -242,3 +242,19 @@ def test_the_deploy_gate_is_untouched():
     deploy = _jobs()["deploy"]
     assert "native-backend-readers" not in deploy["needs"]
     assert "native" not in deploy["if"]
+
+
+def test_the_native_job_runs_the_ios_guard_suites():
+    """Fable, Nov 9: frontend-build is skipped on native, and it was the only job
+    running frontend/__tests__/ios (the jest suites that read Swift sources).
+    #12436, #12441 and #12443 skipped them; the native job now runs them."""
+    steps = _jobs()["native-backend-readers"]["steps"]
+    node = [s for s in steps if str(s.get("uses", "")).startswith("actions/setup-node@")]
+    assert node and node[0]["with"]["cache-dependency-path"].split("/") == ["frontend", "package-lock.json"]
+    run = next(s for s in steps if s.get("name") == "Run the iOS guard suites (frontend/__tests__/ios)")
+    assert run["working-directory"] == "frontend"
+    assert "npm ci" in run["run"]
+    assert re.search(r"npx jest --ci __tests__/ios/\s*$", run["run"])
+    # No escape hatches: a red guard is a red native job, so a red required context.
+    assert "continue-on-error" not in run and "--passWithNoTests" not in run["run"]
+    assert steps.index(node[0]) < steps.index(run)

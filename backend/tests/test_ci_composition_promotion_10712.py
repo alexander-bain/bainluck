@@ -50,7 +50,7 @@ DEPLOY_IF = (
     "needs.change-scope.result == 'success' && needs.fast-gate.result == 'success' && "
     "needs.backend-tests.result == 'success' && needs.e2e-contract.result == 'success' && "
     "(needs.change-scope.outputs.live == 'true' || (needs.shard-completeness.result == 'success' && "
-    "needs.search-recall.result == 'success' && needs.frontend-build.result == 'success'))"
+    "needs.database-integration.result == 'success' && needs.frontend-build.result == 'success'))"
 )
 
 # Exact approved shell grammar prevents overwriting FILES, component-only tests
@@ -72,7 +72,9 @@ python -m pytest $FILES -q --durations=0
 # Decide 55-A: the ONE reviewed PYTEST_ADDOPTS — the shared tail re-runs a failed
 # test once and every other group gets nothing. Any other value (e.g. `-k`, which
 # would deselect tests) is still an unreviewed environment.
-RETRY_ONCE_ADDOPTS = "${{ matrix.group == 'shared-tail' && '--reruns 1 -rR' || '' }}"
+# Fable, Nov 18: the shared tail runs on two runners (split at #4586's full reset); both
+# halves are "the shared tail" and keep the one retry.
+RETRY_ONCE_ADDOPTS = "${{ (matrix.group == 'shared-tail' || matrix.group == 'shared-tail-2') && '--reruns 1 -rR' || '' }}"
 
 # #12252 item 2: the quarantine list and the retry file are admitted ONLY at these exact
 # reviewed values (data from change-scope, a fixed path); any other value is unreviewed.
@@ -127,6 +129,16 @@ STEP_ENV_KEYS = {
         "#10090 a lock-held KALSHI price row stamps the received quote; "
         "a restart cannot undo it (real Postgres)",
     ): {"EVENT_FRAME_REDIS_SERVER", "EVENT_FRAME_REDIS_REQUIRED"},
+    # #12612: the four start-placeholder files gate on their own variable; the
+    # step points it at the job's bl_searchtest (TEMP tables only); no secret.
+    (
+        "database-integration",
+        "#8841 start-placeholder tag rewrites (real Postgres)",
+    ): {"START_PLACEHOLDER_DATABASE_URL"},
+    (
+        "database-integration",
+        "#12612 calibration real-Postgres contracts",
+    ): {"CALIBRATION_TEST_DATABASE_URL"},
     ("search-recall", "Every database integration group passed"): {
         "SCOPE_RESULT",
         "INTEGRATION_RESULT",
@@ -147,6 +159,10 @@ STEP_ENV_KEYS[("change-scope", "Extend change-scope with impacted tests for live
 }
 STEP_ENV_KEYS[("change-scope", "Record the deployed gate for the watchdog")] = {"LIVE_MODE"}
 STEP_ENV_KEYS[("change-scope", "Flaky quarantine (#12252)")] = {"GH_TOKEN"}
+# #3497 / #12797 (Fable, 9:35 PM Nov 17): change-scope decides the shard timings ONCE
+# per run (three calls); the token only reads the run and lists and downloads the
+# master `ci-shard-durations` artifact. The shards download the run artifact, no token.
+STEP_ENV_KEYS[("change-scope", "Decide this run's shard timings (once)")] = {"GH_TOKEN"}
 STEP_ENV_KEYS[("fast-gate", "Python 3.11 syntax, smoke test and change-scope selected tests")] = {
     "SELECTED_TESTS",
 }
@@ -277,14 +293,29 @@ def _validate_current_composed_promotion(
                      or (name == "change-scope" and step.get("with", {}).get("name")
                          == "release-loop-mode-${{ github.run_id }}-${{ github.run_attempt }}"))
             ) or (
+                # #12797 (Fable, 9:35 PM Nov 17): change-scope decides the shard timings once
+                # per run and hands them to the shards. Balance hints only: each shard writes
+                # just `scripts/ci_shard_durations.json` from it after validating it (adopt),
+                # and shard-completeness still proves the partition total and disjoint.
+                name == "change-scope"
+                and step.get("uses") == "actions/upload-artifact@v4"
+                and step.get("with", {}).get("name") == "ci-shard-timings-run"
+            ) or (
+                name in ("backend-tests", "shard-completeness")
+                and step.get("uses") == "actions/download-artifact@v4"
+                and step.get("with") == {"name": "ci-shard-timings-run", "path": "${{ runner.temp }}/shard-timings"}
+            ) or (
                 # #12252 item 2: the shared tail's 55-A retry list, read by the flake
                 # sentinel only; nothing downloads it as evidence for a commit.
                 name == "database-integration"
                 and step.get("uses") == "actions/upload-artifact@v4"
-                and step.get("id") == "db_flaky_retries_upload"
-                and step.get("with") == {"name": "flaky-retries-${{ github.run_attempt }}",
-                                         "path": "/tmp/flaky-retries.txt",
-                                         "if-no-files-found": "ignore", "retention-days": 8}
+                # Nov 18: the second tail runner uploads its own list under its own name.
+                and (step.get("id"), step.get("with", {}).get("name")) in (
+                    ("db_flaky_retries_upload", "flaky-retries-${{ github.run_attempt }}"),
+                    ("db_flaky_retries_upload_2", "flaky-retries-shared-tail-2-${{ github.run_attempt }}"),
+                )
+                and {k: v for k, v in step.get("with", {}).items() if k != "name"}
+                == {"path": "/tmp/flaky-retries.txt", "if-no-files-found": "ignore", "retention-days": 8}
             ), "only explicit compose test-provenance upload; no build artifact credit"
     for name in ("backend-tests", "shard-completeness", "database-integration"):
         job = jobs[name]
@@ -307,7 +338,23 @@ def _validate_current_composed_promotion(
     assert backend["steps"].index(_step(backend, "Install dependencies")) < backend[
         "steps"
     ].index(command)
-    assert len(backend["steps"]) == 11, "new source preparation needs review"
+    assert len(backend["steps"]) == 13, "new source preparation needs review"  # #12797: download + adopt
+    # #3497 (Nov 16), the second reviewed addition: the newest master shard
+    # timings. It rewrites only `scripts/ci_shard_durations.json`, the balance
+    # hints; the partition is total and disjoint whatever the weights say
+    # (shard-completeness), so it moves files between shards but never selects
+    # or drops one. It runs no git and installs nothing.
+    # #12797: the shard downloads the timings change-scope decided once for the run
+    # into a temp folder, and `adopt` writes only the validated hints file.
+    hints = _step(backend, "This run's shard timings (decided once in change-scope)")
+    adopt = _step(backend, "Apply this run's shard timings")
+    assert hints.get("if") == RUNS and adopt.get("if") == RUNS
+    assert hints["uses"] == "actions/download-artifact@v4"
+    assert hints["with"] == {"name": "ci-shard-timings-run", "path": "${{ runner.temp }}/shard-timings"}
+    assert adopt["run"].strip() == 'python scripts/ci_shard_hints_fetch.py adopt "$RUNNER_TEMP/shard-timings/ci_shard_durations.json"'
+    assert "git " not in adopt["run"] and "pip install" not in adopt["run"]
+    steps_ = backend["steps"]
+    assert steps_.index(hints) < steps_.index(adopt) < steps_.index(command)
     # #10090 attempt163, the one reviewed addition: a test binary supplied
     # outside the checkout. It runs no git and installs nothing, so it cannot
     # change the source, the dependencies or the test selection under test.

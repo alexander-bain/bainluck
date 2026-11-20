@@ -60,7 +60,7 @@ final class DiscoverCardsKeepWholeWordsAtAccessibilitySizes10313Tests: XCTestCas
 
     func testARunnerPercentNeverWrapsItsPercentSign() throws {
         let text = collapsed(try source("DiscoverTournamentCard.swift"))
-        let percent = "Text(FeedProbabilityScale.percentLabel(fromFraction: golfer.probability))"
+        let percent = "Text(golfer.renderedPercent.map { formatProbability(golfer.probability, renderedPercent: $0) } ?? FeedProbabilityScale.percentLabel(fromFraction: golfer.probability))"
             + " .font(.caption.bold()) .foregroundStyle(.white.opacity(0.9))"
         XCTAssertEqual(occurrences(of: percent, in: text), 1, "one runner percent in the strip")
         XCTAssertEqual(

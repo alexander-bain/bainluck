@@ -107,6 +107,12 @@ describe("#7738 — the footer names the accuracy page in reader words", () => {
     expect(toAccuracy[0].label).toBe("Accuracy");
   });
 
+  test("the link to /evals is labelled 'How we test' (#12467)", () => {
+    const toEvals = LINKS.filter((link) => link.href === "/evals");
+    expect(toEvals).toHaveLength(1);
+    expect(toEvals[0].label).toBe("How we test");
+  });
+
   test("and the route it points at did NOT move", () => {
     // (2) above. The label is the whole change; `/calibration` keeps its
     // sitemap entry and its canonical.

@@ -104,11 +104,13 @@ enum ProjectedFinalPointsMount {
         }
         let admission = Admission(legacyRowsAdmitted: pagePhase == .after, asOf: asOf)
         var scoreFloor: Date?
+        var opening: ProjectedFinalPointsSeries.Actual?
         if pagePhase != .before {
             // A floor after the reader's clock is not yet a game state they can see.
             guard let observed = observedHistoryFloor(history, sportKey: sportKey),
                   observed.at <= asOf else { return nil }
             scoreFloor = observed.at
+            opening = openingScore(observed, history: history)
         }
         var actuals: [ProjectedFinalPointsSeries.Actual] = []
         if pagePhase != .before {
@@ -132,7 +134,8 @@ enum ProjectedFinalPointsMount {
                 sportKey: sportKey, sourceKey: sourceKey,
                 basis: .sameBookSameCaptureFullGameSpreadAndTotal,
                 pairs: pairs, actuals: actuals, kickoffAt: nil, scoreObservationStartAt: scoreFloor,
-                finalAt: finalAt, asOf: asOf, windowStartAt: nil, requestCutoffAt: nil)
+                finalAt: finalAt, asOf: asOf, windowStartAt: nil, requestCutoffAt: nil,
+                openingScore: opening)
         }
         guard let sourceKey = pickSportsbook(history.bookmakerHistory, seriesInput: seriesInput) else { return nil }
         return seriesInput(sourceKey)
@@ -220,6 +223,26 @@ enum ProjectedFinalPointsMount {
         }
         return firstPeriodSighting(history.espnHistory, sportKey: sportKey)
             .map { ObservedFloor(at: $0, basis: .espnFirstPeriodSighting) }
+    }
+
+    /// #12578 — the score at the floor, by the floor's own evidence. A
+    /// first-period start marker's `not_before` is before play began, so the
+    /// score there is 0–0. An ESPN first-period sighting carries the score it
+    /// saw, and that reading is used as served; one without both scores says
+    /// nothing, and neither does any other floor.
+    static func openingScore(_ floor: ObservedFloor, history: EventHistoryResponse) -> ProjectedFinalPointsSeries.Actual? {
+        switch floor.basis {
+        case .periodMarkerStart:
+            return .init(at: floor.at, home: 0, away: 0)
+        case .espnFirstPeriodSighting:
+            let readings = (history.espnHistory ?? []).filter { $0.timestamp.asDate == floor.at }
+            guard let reading = readings.first, let home = reading.homeScore, let away = reading.awayScore,
+                  home >= 0, away >= 0,
+                  // Two readings at the floor instant must agree on the score.
+                  readings.allSatisfy({ $0.homeScore == home && $0.awayScore == away })
+            else { return nil }
+            return .init(at: floor.at, home: Double(home), away: Double(away))
+        }
     }
 
     /// The time of the earliest ESPN reading that names a period, when that

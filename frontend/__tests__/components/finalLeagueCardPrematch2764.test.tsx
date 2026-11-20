@@ -194,6 +194,18 @@ function testid(html: string, id: string): string | null {
   return null;
 }
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#2764 — the league/team/search FINAL card", () => {
   it("prints a pre-match percent beside EACH team", () => {
     const html = render(makeEvent());
@@ -220,7 +232,7 @@ describe("#2764 — the league/team/search FINAL card", () => {
     // doing both jobs, so the test could not have caught the id being printed
     // at a reader: it was asserting exactly that. The next assertion still
     // pins the id on the attribute, where it belongs.
-    expect(testid(html, "event-card-prematch-label")).toBe(`Pre-match · ${BOOKS_LABEL}`);
+    expect(testid(html, "event-card-prematch-label")).toBe(`Pregame · ${BOOKS_LABEL}`);
     // ONE label for the pair, not one per row.
     expect(html.split('data-testid="event-card-prematch-label"')).toHaveLength(2);
   });

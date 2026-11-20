@@ -1248,9 +1248,29 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     # #12231: `grouping-sentinel-weekly` names background; census on the tree
     # rebased onto f3798ba3b0 (C-1 on master) printed explicit 103 implicit 39
     # total 142.
-    assert explicit == 104, f"explicitly-routed background beats moved: {explicit}"
-    assert implicit == 39, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 143
+    # #11935: refresh-awards-occasions-hourly names background. The assembled
+    # configuration on the owned branch based on 46851401d3 reads explicit 105,
+    # implicit 39, total 144. Its enabled/disabled wiring is guarded separately.
+    # #12372: `generate-discover-comparison-candidates` (default queue) taken
+    # off its timer; census on the tree rebased onto ec6b8b3f04 printed
+    # explicit 104 implicit 38 total 142.
+    # #11935 composed with a68d05abe1: the assembled configuration reads
+    # explicit 105 implicit 38 total 143, retaining the timer removal.
+    # #12042 (precompute_category_pages split): seven `precompute-category-section-*`
+    # entries name background; census on the tree branched from 62522482aa printed
+    # explicit 112 implicit 38 total 150.
+    # Ruling 179-A: `daily-challenge-push` and `big-move-alerts` (both named
+    # background) taken off their timers; census on the tree branched from
+    # c9f17454d0 printed explicit 110 implicit 38 total 148.
+    # #12824: `refresh-espn-predictor` names background; census on the tree
+    # merged with 2e276ac262 (179-A composed) printed explicit 111 implicit 38
+    # total 149.
+    # #13102 (Ruling 276: B): `discover-fun-scout-nightly` names background once
+    # daily at 09:00 UTC (gated OFF behind DISCOVER_FUN_SCOUT_ENABLED); census
+    # printed explicit 112 implicit 38 total 150.
+    assert explicit == 112, f"explicitly-routed background beats moved: {explicit}"
+    assert implicit == 38, f"default-queue fall-through moved: {implicit}"
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 150
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

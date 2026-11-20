@@ -1,0 +1,55 @@
+{
+  "candidate_slug": "roundup-cfp-selected-field-2026",
+  "producer": "field_selection",
+  "captured_at": "2026-11-14T15:10:00+00:00",
+  "trading_guard_summary": "Calendar-gated Selection-Sunday successor (valid_from 2026-12-06T00:00:00-08:00) to already-live roundup-cfp-picture. On Sat Nov 14, #227 (KXNCAAFPLAYOFF-26) and #226 (KXNCAAF-27) are actively trading pre-Selection-Sunday, so select_field_selection cleanly refuses with venue_result_pending until all 12 playoff qualifiers settle on Selection Sunday (Dec 6), while passing its post-Selection-Sunday settlement + active championship board eval.",
+  "live_pre_selection_markets": {
+    "227": {
+      "id": 227,
+      "source": "kalshi",
+      "external_id": "KXNCAAFPLAYOFF-26",
+      "status": "open",
+      "mutually_exclusive": false,
+      "name": "College Football Playoff 2026-27 Qualifiers",
+      "volume_24h": 48920.0,
+      "updated_at": "2026-11-14T14:55:00+00:00",
+      "outcomes": [
+        {"id": 22701, "name": "Indiana", "probability": 0.99, "is_winner": null, "resolution_source": null},
+        {"id": 22702, "name": "Ohio State", "probability": 0.98, "is_winner": null, "resolution_source": null},
+        {"id": 22703, "name": "Texas A&M", "probability": 0.97, "is_winner": null, "resolution_source": null},
+        {"id": 22704, "name": "Oregon", "probability": 0.95, "is_winner": null, "resolution_source": null},
+        {"id": 22705, "name": "Notre Dame", "probability": 0.89, "is_winner": null, "resolution_source": null},
+        {"id": 22706, "name": "Texas Tech", "probability": 0.88, "is_winner": null, "resolution_source": null},
+        {"id": 22707, "name": "Alabama", "probability": 0.75, "is_winner": null, "resolution_source": null},
+        {"id": 22708, "name": "Georgia", "probability": 0.72, "is_winner": null, "resolution_source": null},
+        {"id": 22709, "name": "Oklahoma", "probability": 0.67, "is_winner": null, "resolution_source": null},
+        {"id": 22710, "name": "Miami", "probability": 0.56, "is_winner": null, "resolution_source": null},
+        {"id": 22711, "name": "BYU", "probability": 0.43, "is_winner": null, "resolution_source": null},
+        {"id": 22712, "name": "Utah", "probability": 0.36, "is_winner": null, "resolution_source": null}
+      ]
+    },
+    "226": {
+      "id": 226,
+      "source": "kalshi",
+      "external_id": "KXNCAAF-27",
+      "status": "open",
+      "mutually_exclusive": true,
+      "name": "College Football National Championship Winner",
+      "volume_24h": 62410.0,
+      "updated_at": "2026-11-14T14:55:00+00:00",
+      "outcomes": [
+        {"id": 22601, "name": "Ohio State", "probability": 0.30, "last_updated": "2026-11-14T14:55:00+00:00"},
+        {"id": 22602, "name": "Indiana", "probability": 0.17, "last_updated": "2026-11-14T14:55:00+00:00"},
+        {"id": 22603, "name": "Oregon", "probability": 0.11, "last_updated": "2026-11-14T14:55:00+00:00"},
+        {"id": 22604, "name": "Notre Dame", "probability": 0.09, "last_updated": "2026-11-14T14:55:00+00:00"},
+        {"id": 22605, "name": "Georgia", "probability": 0.09, "last_updated": "2026-11-14T14:55:00+00:00"},
+        {"id": 22606, "name": "Texas A&M", "probability": 0.08, "last_updated": "2026-11-14T14:55:00+00:00"}
+      ]
+    }
+  },
+  "expected_live_refusal": "venue_result_pending",
+  "expected_post_selection_member_ids": [
+    227,
+    226
+  ]
+}

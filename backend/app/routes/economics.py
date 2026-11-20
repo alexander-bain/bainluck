@@ -35,7 +35,7 @@ from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 from app.utils.inflation_release_identity import fold_same_release
 from app.utils.ladder_monotonicity import INC, cumulative_outcome_ladder, parse_threshold
 from app.utils.feed_market_quality import book_bounds_nothing, is_fabricated_midpoint
-from app.utils.futures_liveness import market_reads_settled
+from app.utils.futures_liveness import leg_is_graded, market_reads_settled
 from app.utils.economics_headline import (
     LadderCandidate,
     RecessionCandidate,
@@ -285,7 +285,9 @@ def _leader_name(market: FuturesMarket, outcome, outcomes: list) -> str | None:
         enumerated = sum(1 for o in outcomes if _appears_in(o.name, market.name))
         if enumerated < 2 and not _VERSUS_RE.search(market.name or ""):
             return None
-    return name
+    from app.utils.plain_rate_outcome import plain_rate_outcome_label
+
+    return plain_rate_outcome_label(name, market_name=getattr(market, "name", None)) or name
 
 
 def _market_row(market: FuturesMarket) -> dict | None:
@@ -868,6 +870,21 @@ def _ladder_rungs_in_threshold_order(market: FuturesMarket) -> list:
     return out
 
 
+def _ladder_rung_is_reached(outcome) -> bool:
+    """True when the venue has authoritatively settled this threshold rung as won (#12093)."""
+    if outcome is None:
+        return False
+    if getattr(outcome, "is_winner", None) is True:
+        return True
+    return (
+        leg_is_graded(
+            getattr(outcome, "is_winner", None),
+            getattr(outcome, "resolution_source", None),
+        )
+        and float(getattr(outcome, "current_probability", None) or 0) >= 1.0
+    )
+
+
 def _distribution_row(
     market: FuturesMarket, *, min_outcomes: int = 6
 ) -> dict | None:
@@ -887,27 +904,43 @@ def _distribution_row(
     outcomes = list(market.outcomes)
     if len(outcomes) < min_outcomes:
         return None
-    if not any(float(o.current_probability or 0) > 0 for o in outcomes):
+    if not any(
+        float(o.current_probability or 0) > 0 or _ladder_rung_is_reached(o)
+        for o in outcomes
+    ):
         return None
 
+    reached_labels: list[str] = []
     if _is_cumulative_ladder(market):
         kind = "ladder"
-        rows = [
-            [round(float(o.current_probability or 0) * 100, 1), (o.name or "").strip()]
-            for o in _ladder_rungs_in_threshold_order(market)
-            if (o.name or "").strip()
-        ]
+        rows = []
+        for o in _ladder_rungs_in_threshold_order(market):
+            label = (o.name or "").strip()
+            if not label:
+                continue
+            if _ladder_rung_is_reached(o):
+                reached_labels.append(label)
+                rows.append([100.0, label])
+                continue
+            if not _rung_is_quoted(o):
+                continue
+            rows.append([round(float(o.current_probability or 0) * 100, 1), label])
+        if not rows:
+            return None
     else:
         kind = "brackets"
         rows = _brackets_from_outcomes(market)
 
-    return {
+    payload = {
         "q": market.name,
         "kind": kind,
         "rows": rows,
         "src": _source(market) or None,
         "market_id": market.id,
     }
+    if reached_labels:
+        payload["reached_labels"] = reached_labels
+    return payload
 
 
 def _brackets_from_outcomes(market: FuturesMarket, normalize: bool = True) -> list[list]:
@@ -929,16 +962,19 @@ def _brackets_from_outcomes(market: FuturesMarket, normalize: bool = True) -> li
         o.current_probability is not None and bool((o.name or "").strip())
         for o in raw_outcomes
     )
+    from app.utils.plain_rate_outcome import plain_rate_outcome_label
+
     outcome_dicts = []
     for idx, o in enumerate(sorted_outcomes):
         label = (o.name or "").strip()
         if not label:
             field_complete = False
             continue
+        display_label = plain_rate_outcome_label(label, market_name=getattr(market, "name", None)) or label
         outcome_dicts.append(
             {
                 "id": getattr(o, "id", idx),
-                "name": label,
+                "name": display_label,
                 "probability": float(o.current_probability or 0),
                 "is_winner": getattr(o, "is_winner", None),
                 "resolution_source": getattr(o, "resolution_source", None),
@@ -1519,6 +1555,7 @@ async def get_economics(db: AsyncSession):
 
     fomc_meetings = []
     rate_cuts = []
+    rate_cuts_market_id: int | None = None
     rate_side = []
 
     # ─── The rate-path heatmap picks its own columns (#2870) ────────────────
@@ -1651,6 +1688,7 @@ async def get_economics(db: AsyncSession):
         name_lower = (m.name or "").lower()
         if "how many" in name_lower and ("cut" in name_lower or "hike" in name_lower):
             rate_cuts = _brackets_from_outcomes(m)
+            rate_cuts_market_id = m.id
         else:
             _row = _market_row(m)
             if _row:
@@ -2062,6 +2100,7 @@ async def get_economics(db: AsyncSession):
             "count": _fed_section_count,
             "fomc_meetings": fomc_meetings[:8],
             "rate_cuts": rate_cuts,
+            "rate_cuts_market_id": rate_cuts_market_id,
             "side_markets": rate_side[:6],
         },
         "inflation": {

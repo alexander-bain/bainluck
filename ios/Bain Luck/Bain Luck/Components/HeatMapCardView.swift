@@ -21,6 +21,7 @@ struct HeatMapCardView: View {
     /// Dynamic-type-aware label size so the threshold labels respect the user's
     /// text-size setting instead of a hardcoded 11pt.
     @ScaledMetric(relativeTo: .caption) private var labelFontSize: CGFloat = 12
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     // MARK: - Derived data
 
@@ -93,32 +94,43 @@ struct HeatMapCardView: View {
 
             // Market name
             Text(data.name)
-                .font(.system(size: 15, weight: .semibold))
-                .lineLimit(3)
+                .font(dynamicTypeSize.isAccessibilitySize ? .headline : .system(size: 15, weight: .semibold))
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 16)
 
-            // Cell grid
-            HStack(spacing: 3) {
-                ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
-                    cellView(cell)
+            if dynamicTypeSize.isAccessibilitySize {
+                // At accessibility text sizes, stack each threshold rung on its own
+                // full-width row so 4–5 numeric thresholds ("1430+"…"1460+") never
+                // squeeze into 60pt columns and truncate to identical "14…".
+                VStack(spacing: 6) {
+                    ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
+                        accessibilityCellRow(cell)
+                    }
                 }
-            }
+            } else {
+                // Cell grid
+                HStack(spacing: 3) {
+                    ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
+                        cellView(cell)
+                    }
+                }
 
-            // Threshold labels — readable size, wrap to 2 lines instead of
-            // truncating, and respect Dynamic Type (#902-follow-up).
-            HStack(alignment: .top, spacing: 3) {
-                ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
-                    Text(cell.label)
-                        .font(.system(size: labelFontSize, weight: .medium, design: .monospaced))
-                        .foregroundStyle(DS.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.85)
+                // Threshold labels — readable size, wrap to 2 lines instead of
+                // truncating, and respect Dynamic Type (#902-follow-up).
+                HStack(alignment: .top, spacing: 3) {
+                    ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
+                        Text(cell.label)
+                            .font(.system(size: labelFontSize, weight: .medium, design: .monospaced))
+                            .foregroundStyle(DS.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.85)
+                    }
                 }
+                .padding(.top, 7)
             }
-            .padding(.top, 7)
 
             // Summary footer
             Divider()
@@ -172,8 +184,12 @@ struct HeatMapCardView: View {
                 ) {
                     mark
                 }
-                // #4351: named, or not drawn.
-                if let src = SourceLabels.label(for: data.source) {
+                // #4351: named, or not drawn. Card faces omit Kalshi/Polymarket.
+                if let src = SourceLabels.cardFaceLabel(
+                    for: data.source,
+                    sources: data.sources,
+                    sourceCount: data.sourceCount
+                ) {
                     Text(src)
                         .font(.system(size: 9, weight: .heavy))
                         .foregroundStyle(.blue)
@@ -226,6 +242,28 @@ struct HeatMapCardView: View {
         .frame(maxWidth: .infinity)
         .frame(height: 56)
         .background(cellBackground(cell.probability), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    @ViewBuilder
+    private func accessibilityCellRow(_ cell: HeatMapCell) -> some View {
+        let pct = Int((cell.probability * 100).rounded())
+        let color: Color = cell.probability >= 0.50 ? .white : (cell.probability >= 0.30 ? .primary : .secondary)
+        HStack(spacing: 8) {
+            Text(cell.label)
+                .font(.caption.monospaced())
+                .foregroundStyle(DS.textSecondary)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Text("\(pct)%")
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundColor(color)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(cellBackground(cell.probability), in: RoundedRectangle(cornerRadius: 6))
+        }
     }
 
     // MARK: - Color ramp

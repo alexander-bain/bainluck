@@ -30,8 +30,8 @@ Two consequences, and the second is why the first is not the whole story:
 * even if one HAD returned, it could not have written anything. The apply loop
   resolves outcomes as `(market_id, conditionId)`, and a sub-market's outcomes
   are keyed `<conditionId>_yes` / `<conditionId>_no` (measured: market 60911044
-  on production), so the lookup misses by construction. The prices those rows
-  do carry come from elsewhere.
+  on production), so the old lookup missed by construction. #12633 now admits
+  both verified binary sides; the shared-response guarantees stay here.
 
 So the cost was never missing prices — it was **~59 wasted venue calls a
 pass**, charged to the window the #5767 floor exists to ration; **~59 needless
@@ -243,6 +243,8 @@ class _Session:
             return _Result(self._population.rows)
         if kind == "outcomes":
             return _Result(self._population.outcomes)
+        if kind == "update" and stmt.table.name == "futures_outcomes":
+            return _Result([(_now(),)])
         return _Result()
 
     async def commit(self):
@@ -326,6 +328,9 @@ async def _run(monkeypatch, session, poly, *, sleeps=None):
         return None
 
     monkeypatch.setattr(pmm, "get_task_session", _fake_session)
+    # These rows are plain doubles; real ORM synchronization and conditional
+    # writes are exercised against PostgreSQL by the #12633 integration test.
+    monkeypatch.setattr(pmm, "set_committed_value", setattr)
     monkeypatch.setattr(asyncio, "sleep", _record_sleep)
     monkeypatch.setattr(
         "app.services.polymarket_api.PolymarketAPIService", lambda *a, **kw: poly
@@ -362,8 +367,8 @@ def _production_shaped_beat() -> _Population:
             # reader's derivative prices actually come from.
             _Outcome(10, 1, COND_A, "O/U 1.5"),
             _Outcome(11, 1, COND_B, "O/U 2.5"),
-            # The sub-markets' outcomes: suffixed, and therefore unreachable by
-            # the `(market_id, conditionId)` lookup whatever we fetch.
+            # The sub-markets' outcomes: suffixed. #12633 now prices both sides
+            # from the same response while retaining the parent read.
             _Outcome(20, 2, f"{COND_A}_yes", "Over"),
             _Outcome(21, 2, f"{COND_A}_no", "Under"),
             _Outcome(30, 3, f"{COND_B}_yes", "Over"),
@@ -431,7 +436,11 @@ class TestTheBeatStopsAskingGammaForConditionIds:
             "the parent's derivative prices were skipped because a sibling row "
             "had already fetched their event"
         )
-        assert stats["outcomes_updated"] == 2
+        children = [o for o in beat.outcomes if o.market_id != 1]
+        assert [o.current_probability for o in children] == pytest.approx(
+            [0.78, 0.22, 0.78, 0.22]
+        )
+        assert stats["outcomes_updated"] == 6
 
     async def test_a_dead_event_is_asked_once_not_once_per_row(self, monkeypatch):
         """A failed fetch is cached as None.

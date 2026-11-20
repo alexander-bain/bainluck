@@ -50,7 +50,11 @@ nonisolated enum SavedWidgetDetailPayload10875: Equatable, Sendable {
 
     var title: String {
         switch self {
-        case .game(let event): return "\(event.awayTeam) vs \(event.homeTeam)"
+        case .game(let event):
+            let displayTeams = TeamShortName.isCollegeSport(sportKey: event.sport)
+                ? TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+                : (away: event.awayTeam, home: event.homeTeam)
+            return "\(displayTeams.away) vs \(displayTeams.home)"
         case .market(let market): return market.name
         }
     }
@@ -255,6 +259,9 @@ enum SavedWidgetTimeline10875 {
 nonisolated struct SavedWidgetMessage10875: Equatable, Sendable {
     let title: String
     let detail: String
+    /// Short single-line detail for the rectangular Lock Screen widget (#13065)
+    /// so it never clips with an ellipsis at default or accessibility text sizes.
+    let lockScreenDetail: String
 
     var spoken: String { "\(title). \(detail)" }
 
@@ -263,24 +270,31 @@ nonisolated struct SavedWidgetMessage10875: Equatable, Sendable {
         case .notConfigured:
             title = "Choose a saved game or market"
             detail = "Touch and hold, then Edit Widget."
+            lockScreenDetail = "Edit to choose"
         case .openApp:
             title = "Open Bain Luck"
             detail = "Your saved games and markets will appear here."
+            lockScreenDetail = "View saved items"
         case .otherAccount:
             title = "Saved on another account"
             detail = "Edit the widget to choose from your saved items."
+            lockScreenDetail = "Edit to choose"
         case .removed(let name):
             title = name ?? "No longer saved"
             detail = name == nil ? "Edit the widget to choose another." : "No longer saved. Edit the widget to choose another."
+            lockScreenDetail = name == nil ? "Edit to choose" : "No longer saved"
         case .gone:
             title = "No longer listed"
             detail = "Edit the widget to choose another."
+            lockScreenDetail = "Edit to choose"
         case .unreachable:
             title = "Can't reach Bain Luck"
             detail = "This will update when you're back online."
+            lockScreenDetail = "Back online soon"
         case .detail:
             title = ""
             detail = ""
+            lockScreenDetail = ""
         }
     }
 }

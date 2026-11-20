@@ -17,6 +17,7 @@ from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import get_current_user
 from app.models.activitykit import ActivityKitRegistration
+from app.models.push_device import PushDevice
 from app.models.models import (
     BugReport,
     DeviceToken,
@@ -58,6 +59,9 @@ _ACCOUNT_OWNED_ROWS = [
     (UserPin, UserPin.user_id),
     (UserFavorite, UserFavorite.user_id),
     (DeviceToken, DeviceToken.user_id),
+    # 177-A: a signed-in phone's pins and push tokens; its phone-owned
+    # ActivityKit registrations cascade from the row.
+    (PushDevice, PushDevice.user_id),
     (OscarsPoolMember, OscarsPoolMember.user_id),
     (UserPrediction, UserPrediction.user_id),
     (UserSeenMarket, UserSeenMarket.user_id),

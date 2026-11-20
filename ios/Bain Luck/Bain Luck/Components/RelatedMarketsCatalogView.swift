@@ -10,7 +10,7 @@ import SwiftUI
 /// before this they had no way onto the page.
 enum RelatedMarketsCatalog {
     /// The family a served `display_category` is browsed under. A category
-    /// with no entry, or no category at all, is "More questions" — a row is
+    /// with no entry, or no category at all, is "Other markets" — a row is
     /// never given a classification the server did not make.
     static let familyNames: [String: String] = [
         "playoff_path": "Season outcomes",
@@ -19,9 +19,9 @@ enum RelatedMarketsCatalog {
         "award": "Awards",
         "series": "Series",
         "trade": "Next team",
-        "novelty": "More questions",
+        "novelty": "Other markets",
     ]
-    static let fallbackFamily = "More questions"
+    static let fallbackFamily = "Other markets"
     /// Pill order. Families not listed sort after these, by name.
     static let familyOrder = [
         "Season outcomes", "Conference", "Awards", "Season totals", "Series", "Next team",
@@ -82,7 +82,17 @@ struct RelatedMarketsCatalogView: View {
 
     /// Closed by default: the catalog is complete, so it is long, and the
     /// sections above already carry the picture. One tap opens it (D102).
-    @State private var isOpen = LaunchRig.expandsCollapsedSections()
+    @State private var isOpen: Bool
+
+    init(
+        rows: [RelatedMarketsCatalog.Row],
+        accent: Color = DS.purple,
+        initiallyOpen: Bool = LaunchRig.expandsCollapsedSections()
+    ) {
+        self.rows = rows
+        self.accent = accent
+        self._isOpen = State(initialValue: initiallyOpen)
+    }
 
     var body: some View {
         if !rows.isEmpty {
@@ -126,25 +136,26 @@ struct RelatedMarketsCatalogView: View {
 
     private func catalogRow(_ row: RelatedMarketsCatalog.Row) -> some View {
         let future = row.future
-        return NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(future.cleanLabel ?? future.marketName)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(future.outcomeName)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 8)
-                if row.printsPrice, let probability = future.probability {
-                    VStack(alignment: .trailing, spacing: 4) {
-                        Text(formatProbability(probability))
-                            .font(.subheadline.weight(.bold))
-                            .monospacedDigit()
+        return HStack(alignment: .center, spacing: 8) {
+            NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(future.cleanLabel ?? future.marketName)
+                            .font(.subheadline.weight(.medium))
                             .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(future.outcomeName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    if row.printsPrice, let probability = future.probability {
+                        VStack(alignment: .trailing, spacing: 4) {
+                            Text(formatProbability(probability))
+                                .font(.subheadline.weight(.bold))
+                                .monospacedDigit()
+                                .foregroundStyle(.primary)
                         Capsule()
                             .fill(Color.secondary.opacity(0.1))
                             .frame(width: 56, height: 4)
@@ -156,18 +167,32 @@ struct RelatedMarketsCatalogView: View {
                             .accessibilityHidden(true)
                     }
                 }
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
             }
-            .padding(.vertical, 10)
-            .frame(minHeight: 44)
             .contentShape(Rectangle())
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(Color.barTrack.opacity(0.5)).frame(height: 0.5)
             }
+            .buttonStyle(.plain)
+
+            if row.printsPrice,
+               let probability = future.probability,
+               let mark = SourceMarkButton(
+                   future.sourceMark,
+                   number: future.sourceMark?.state == .settled ? nil : probability,
+                   subject: future.outcomeName,
+                   numberSize: 15,
+                   compactRow: true
+               ) {
+                mark.buttonStyle(.borderless)
+            }
+
+            Image(systemName: "chevron.right")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 10)
+        .frame(minHeight: 44)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.barTrack.opacity(0.5)).frame(height: 0.5)
+        }
     }
 }

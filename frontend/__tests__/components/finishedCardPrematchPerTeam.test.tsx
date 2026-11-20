@@ -116,6 +116,18 @@ const KALSHI_FINAL = makeData({
 
 // ── /sports and every other FeedCard list ───────────────────────────────────
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the /sports FINAL card", () => {
   it("prints a pre-match percent beside EACH team, off the winning rung", () => {
     // 60/40 is Kalshi's; 55/45 is the books' `opening_odds` on the same payload.
@@ -162,8 +174,8 @@ describe("the /sports FINAL card", () => {
     );
 
     expect(printedPercent(books, "feed-card-prematch-home")).toBe(60);
-    expect(books).toContain("Pre-match · sportsbooks");
-    expect(renderFeedCard(KALSHI_FINAL)).not.toContain("Pre-match ·");
+    expect(books).toContain("Pregame · sportsbooks");
+    expect(renderFeedCard(KALSHI_FINAL)).not.toContain("Pregame ·");
   });
 
   it("speaks one venue-free sentence, whichever rung the number came from", () => {
@@ -207,7 +219,7 @@ describe("the /sports FINAL card", () => {
     );
 
     expect(books).toContain('data-prematch-source="books"');
-    expect(books).toContain("Pre-match · sportsbooks");
+    expect(books).toContain("Pregame · sportsbooks");
     expect(renderFeedCard(KALSHI_FINAL)).toContain('data-prematch-source="kalshi"');
   });
 
@@ -251,7 +263,7 @@ describe("the Discover FINAL card", () => {
 
     expect(printedPercent(html, "event-card-prematch-away")).toBe(40);
     expect(printedPercent(html, "event-card-prematch-home")).toBe(60);
-    expect(html).toContain("Pre-match");
+    expect(html).toContain("Pregame");
   });
 
   it("keeps the winner line the pre-match numbers sit under", () => {
@@ -267,7 +279,7 @@ describe("the Discover FINAL card", () => {
       })
     );
 
-    expect(html).toContain("Pre-match · sportsbooks");
+    expect(html).toContain("Pregame · sportsbooks");
   });
 
   it("speaks the same venue-free sentence as /sports, on both rungs", () => {

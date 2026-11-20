@@ -1,5 +1,6 @@
 import SwiftUI
 #if canImport(CoreSpotlight)
+import AppIntents
 import CoreSpotlight
 import UniformTypeIdentifiers
 #endif
@@ -34,6 +35,10 @@ final class SpotlightSystemIndexClient10874: SpotlightIndexClient10874 {
         attributes.title = item.title
         attributes.contentDescription = item.detail.isEmpty ? nil : item.detail
         attributes.keywords = item.keywords
+        // #12315 — the entry is this game or market to Siri and Shortcuts too.
+        if #available(iOS 18.0, *), let entity = SpotlightIndexPlan10874.entity(for: item) {
+            attributes.associateAppEntity(entity)
+        }
         let searchable = CSSearchableItem(uniqueIdentifier: item.identifier, domainIdentifier: item.domain,
                                           attributeSet: attributes)
         searchable.expirationDate = item.expiration
@@ -146,7 +151,9 @@ private struct SpotlightSavedContent10874: ViewModifier {
             switch answer {
             case .event(let e) where pin.type == "event":
                 if let subject = SpotlightSubject10874.game(id: e.id, away: e.awayTeam, home: e.homeTeam,
-                                                            sportKey: e.sport, commenceTime: e.commenceTime) {
+                                                            sportKey: e.sport, commenceTime: e.commenceTime,
+                                                            awayAbbreviation: e.awayTeamData?.abbreviation,
+                                                            homeAbbreviation: e.homeTeamData?.abbreviation) {
                     answers[destination] = .described(subject)
                 }
             case .market(let f) where pin.type == "future":

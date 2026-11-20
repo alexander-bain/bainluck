@@ -13,11 +13,13 @@ export function RoundupHeader({
   kicker,
   tag,
   title,
+  subtitle,
   longHeadline,
 }: {
   kicker: string;
   tag: string | null;
   title: string;
+  subtitle?: string | null;
   longHeadline: boolean;
 }) {
   return (
@@ -42,6 +44,14 @@ export function RoundupHeader({
       >
         {title}
       </h3>
+      {subtitle ? (
+        <p
+          className="-mt-[6px] text-[13px] font-medium leading-[1.35] text-text-secondary"
+          data-testid="roundup-subtitle"
+        >
+          {subtitle}
+        </p>
+      ) : null}
     </>
   );
 }

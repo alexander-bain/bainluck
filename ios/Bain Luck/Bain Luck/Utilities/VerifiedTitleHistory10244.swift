@@ -92,6 +92,24 @@ nonisolated enum VerifiedTitleHistory {
         detail == .verifiedTitle || response == .verifiedTitle
     }
 
+    /// #12633 — whether a source-mode `/probability-timeline` response needs
+    /// `/api/futures/{id}/history`'s canonical scale-checked lines.
+    ///
+    /// On a source-fallback field such as `108629` ("Closest Governor race in 2026"),
+    /// `/probability-timeline` serves raw `venue_yes_probability_raw` points (`96.25%`
+    /// for Kansas) without `/history`'s `_venue_scale_refusal` / full-field display
+    /// normalization (`88.91%`, matching the detail headline and row). Reusing
+    /// `/history` keeps the headline, contender row, chart `Prob` column, and plotted
+    /// series on one canonical basis without rescaling old points by today's sum.
+    static func needsCanonicalHistory(for response: ProbabilityTimelineResponse) -> Bool {
+        guard response.venueHistory?.scale == "venue_yes_probability_raw",
+              let served = response.venueHistory?.pointsServed,
+              served > 0 else {
+            return false
+        }
+        return true
+    }
+
     /// The timeline response with its lines replaced by `/history`'s.
     ///
     /// A line joins its row by outcome id and takes the row's name, because the

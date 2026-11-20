@@ -1,4 +1,11 @@
 import Foundation
+// Watch builds never link the iOS `Bain_Luck` module (they compile `TeamShortName.swift`
+// directly via target membership); this conditional import exists solely when `BainLuckTests`
+// compiles `WatchFeedModels.swift` alongside `@testable import Bain_Luck`, matching
+// `WatchPinsModels12640.swift`.
+#if DEBUG && canImport(Bain_Luck)
+@testable import Bain_Luck
+#endif
 
 // MARK: - Watch-Specific Feed Models
 //
@@ -109,13 +116,14 @@ nonisolated struct WatchFeedEvent: Decodable, Identifiable, Sendable {
     let sportName: String?
     let commenceTime: String?
     let temporalBadge: String?
+    let heroProbabilitySource: String?
     let currentOdds: WatchCurrentOdds?
     let homeTeamData: WatchTeamData?
     let awayTeamData: WatchTeamData?
     let espn: WatchESPNData?
 
     var isLive: Bool { status == "live" }
-    var isSettled: Bool { status == "completed" || status == "closed" }
+    var isSettled: Bool { status == "completed" || status == "closed" || heroProbabilitySource == "settled" }
 
     /// Short live-game clock string ("Q3 4:21" / "T7"), when available.
     ///
@@ -125,13 +133,36 @@ nonisolated struct WatchFeedEvent: Decodable, Identifiable, Sendable {
         PeriodLabel.liveStatusText(period: espn?.period, gameClock: espn?.gameClock)
     }
 
-    /// Best-effort abbreviation for a side, falling back to the last name token.
+    /// Display names for the two sides, using school names for college sports
+    /// (Ruling 194-A) and raw provider names otherwise.
+    func displayTeams() -> (away: String, home: String) {
+        let rawAway = awayTeam ?? ""
+        let rawHome = homeTeam ?? ""
+        guard TeamShortName.isCollegeSport(sportKey: sport) else {
+            return (away: rawAway, home: rawHome)
+        }
+        return TeamShortName.shortPair(away: rawAway, home: rawHome, sportKey: sport)
+    }
+
+    /// Best-effort abbreviation for a side via the shared `TeamShortName` rule.
     func homeAbbrev() -> String {
-        homeTeamData?.abbreviation ?? String(homeTeam?.split(separator: " ").last ?? "")
+        TeamShortName.abbreviationPair(
+            away: awayTeam ?? "",
+            home: homeTeam ?? "",
+            awayServed: awayTeamData?.abbreviation,
+            homeServed: homeTeamData?.abbreviation,
+            sportKey: sport
+        ).home
     }
 
     func awayAbbrev() -> String {
-        awayTeamData?.abbreviation ?? String(awayTeam?.split(separator: " ").last ?? "")
+        TeamShortName.abbreviationPair(
+            away: awayTeam ?? "",
+            home: homeTeam ?? "",
+            awayServed: awayTeamData?.abbreviation,
+            homeServed: homeTeamData?.abbreviation,
+            sportKey: sport
+        ).away
     }
 }
 

@@ -160,7 +160,7 @@ def select_register_closest(
     min_open_races: int = 3,
     card_rows: int = 3,
     section_title: str = "Open races",
-    footer: str = "Combined probability · both sources where paired",
+    footer: str = "One winner per race.",
     title: Optional[str] = None,
     kicker: Optional[str] = None,
 ) -> Any:
@@ -499,9 +499,11 @@ async def produce_register_closest(
         }
     elif hasattr(db, "execute") and callable(db.execute):
         from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import AsyncSession
         from sqlalchemy.orm import selectinload
 
         from app.models import FuturesMarket
+        from app.routes.futures import withheld_price_outcome_ids_for_markets
 
         all_ids: set[int] = set()
         for entry in MIDTERMS_TWIN_BY_KALSHI_ID.values():
@@ -517,11 +519,25 @@ async def produce_register_closest(
         res = await db.execute(stmt)
         scalars_obj = res.scalars() if hasattr(res, "scalars") and callable(res.scalars) else None
         rows = list(scalars_obj.all()) if scalars_obj is not None and hasattr(scalars_obj, "all") else []
+        orm_rows = [
+            m
+            for m in rows
+            if not isinstance(m, Mapping)
+            and isinstance(getattr(m, "id", None), int)
+            and not isinstance(getattr(m, "id", None), bool)
+        ]
+        withheld: dict[int, set[int]] = {}
+        if orm_rows and (
+            isinstance(db, AsyncSession)
+            or getattr(db, "apply_withheld_prices", False)
+        ):
+            withheld = await withheld_price_outcome_ids_for_markets(db, orm_rows)
         by_id = {}
         for m in rows:
             mid = getattr(m, "id", None)
             if not isinstance(mid, int) or isinstance(mid, bool):
                 continue
+            mid_withheld = withheld.get(int(mid), set())
             by_id[int(mid)] = {
                 "id": int(mid),
                 "name": getattr(m, "name", None),
@@ -535,9 +551,13 @@ async def produce_register_closest(
                         "id": int(o.id),
                         "name": o.name,
                         "probability": (
-                            float(o.current_probability)
-                            if o.current_probability is not None
-                            else None
+                            None
+                            if int(o.id) in mid_withheld
+                            else (
+                                float(o.current_probability)
+                                if o.current_probability is not None
+                                else None
+                            )
                         ),
                         "is_winner": getattr(o, "is_winner", None),
                         "resolution_source": getattr(o, "resolution_source", None),
@@ -573,7 +593,7 @@ async def produce_register_closest(
         card_rows=int(rule.get("card_rows", 3)),
         section_title=str(definition.get("section_title") or "Open races"),
         footer=str(
-            definition.get("footer") or "Combined probability · both sources where paired"
+            definition.get("footer") or "One winner per race."
         ),
         title=str(definition.get("name") or "") or None,
         kicker=str(definition.get("kicker") or "") or None,
@@ -627,6 +647,9 @@ def build_register_closest_producer(
         tag=str(definition.get("tag") or "POLITICS"),
         kicker=str(definition.get("kicker") or "CLOSEST RACES"),
         story_key=story_key,
+        parent_slug=definition.get("parent_slug"),
+        parent_name=definition.get("parent_name"),
+        children=definition.get("children"),
         enabled=enabled if enabled is not None else register_closest_enabled,
     )
 

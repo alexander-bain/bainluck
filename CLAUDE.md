@@ -31,18 +31,16 @@ Architecture work may only ride an already queued user-visible ship.
 
 ## Product rules
 
-- Refer to markets, futures markets, props and events by their appropriate names.
-  Reserve "question" for an actual interrogative sentence.
+- Refer to markets, futures markets, props and events by name; reserve "question" for an interrogative sentence.
 - **never run LLM calls inside `GET /api/feed`**; enrichment is async, bounded and cached.
   Deterministic explanations are first-class; page-one comprehension must not depend on LLM hooks.
 - Personalization is bounded and latency-safe: left-swipe is a soft downrank, never a hard dismissal.
-- Equivalent markets across sources produce one blended probability per outcome.
 - Calibration uses `COALESCE(calibration_probability, opening_probability)`.
-  Settled heroes show winners, cards show results, props show grades, charts show the completed journey.
-- Anonymous submission must keep working for bug reports.
-- No fresh matching measurement means no accuracy claim. **RED means REAL.**
-- Credentials NEVER go in tracked files. Keep secrets in untracked environment files or service
-  secrets; gitleaks is the backstop. A leak requires rotation, because history retains it.
+- Anonymous bug-report submission must keep working. No fresh matching measurement = no accuracy claim. **RED means REAL.**
+- Never commit credentials (gitleaks) or open `.env` files; never print, log or store tokens. A leak requires rotation.
+  Read-only admin reads on `tools/admin/readonly_allowlist.json` (via `tools/admin/readonly_read.py`,
+  posting its one-line log on the issue) need no ask; a new address needs Alex's yes once; anything
+  that writes, deletes or changes a setting goes to Alex every time (142-A / 247-A).
 
 ## Code Style
 
@@ -62,10 +60,10 @@ Every frontend page needs 3 GA4 hooks before any conditional return: `usePageTra
 
 One branch and one PR per change. CI is the only integrator.
 Nothing reaches master except through a merged PR.
-Tier A merges on green. Tier B and policy: claude[bot] at head + Fable ACCEPT; author window merges.
+Tier A merges on green. Tier B: claude[bot] at head; Fable ACCEPT if reader-visible/destructive/eval (119-A); author window merges.
 Tier C requires Alex's tap.
 `live-path` is the two-minute lane for live delivery fixes.
-NOW #11852 is the only priority list and status line.
+NOW #11852 is the priority list; status lines: #12779.
 Runner inboxes, YOUR-TURN.md and artifacts/ are retired.
 Gates prove something about the commit you tested, not the commit you push.
 

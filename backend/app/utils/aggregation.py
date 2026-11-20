@@ -44,6 +44,7 @@ from app.utils.probability_eligibility import (
     EligibilityRecord,
     is_refused,
 )
+from app.utils.scheduled_start import loaded_price_admission_kickoff
 from app.utils.source_divergence import (
     SourceDivergence,
     assess_divergence,
@@ -279,6 +280,7 @@ def stamp_source_reading(
     now: Optional[datetime] = None,
     eligibility: Optional[EligibilityRecord] = None,
     observed_basis: Optional[dict] = None,
+    price_read_at: Optional[datetime] = None,
 ) -> dict:
     """Write one source into ``win_probability_sources`` WITH its write time.
 
@@ -338,6 +340,15 @@ def stamp_source_reading(
     else:
         entry.pop(OBSERVED_BASIS_KEY, None)
         entry.pop(OBSERVED_VALUE_KEY, None)
+    # #12581: publication and generic outcome-touch clocks are not upstream
+    # reads. A recompute may retain an existing read only for the exact same
+    # value AND contributor versions; it cannot give that read a newer date.
+    read = make_price_read(value, price_read_at, observed_basis)
+    if price_read_at is None and observed_basis:
+        read = retained_price_read(existing, value, observed_basis)
+    entry.pop(PRICE_READ_KEY, None)
+    if read is not None:
+        entry[PRICE_READ_KEY] = read
     updated[source] = entry
     return updated
 
@@ -427,6 +438,128 @@ OBSERVED_BASIS_KEY = "observed_basis"
 #: The value the basis dates. A basis is trusted only while this still equals
 #: the entry's ``value`` — see `stored_observation_basis`.
 OBSERVED_VALUE_KEY = "observed_value"
+
+# Explicit upstream-read provenance, independent of ordering/publication clocks.
+# This additive JSONB member needs no schema change and never affects pricing.
+PRICE_READ_KEY = "price_read"
+
+
+def make_price_read(
+    value: Any, read_at: Optional[datetime], basis: Optional[dict] = None,
+) -> Optional[dict]:
+    """Bind a successful upstream read to its selected price and contributors.
+
+    Only the producer which received the price may pass ``read_at``. A later
+    row read, keepalive or calculation is not a new observation. Nonvenue
+    producers can date a complete freshly received consensus without an
+    outcome basis; such evidence cannot be retained by a database recompute.
+    """
+    if not _finite_number(value) or not 0 <= value <= 1:
+        return None
+    if not isinstance(read_at, datetime) or read_at.tzinfo is None:
+        return None
+    if basis is not None and (
+        not isinstance(basis, dict) or not basis
+        or any(not isinstance(k, str) or not _finite_number(v) or v <= 0
+               for k, v in basis.items())
+    ):
+        return None
+    return {
+        "value": value,
+        "observed_at": read_at.astimezone(timezone.utc).isoformat(),
+        "basis": dict(basis) if basis is not None else None,
+    }
+
+
+def stored_price_read(entry: Any, value: Any) -> Optional[dict]:
+    """Read only evidence bound to this entry's exact value and row versions."""
+    if not isinstance(entry, dict) or not _finite_number(value):
+        return None
+    read = entry.get(PRICE_READ_KEY)
+    if not isinstance(read, dict):
+        return None
+    if any(not _finite_number(v) or v != value
+           for v in (entry.get("value"), read.get("value"))):
+        return None
+    basis = read.get("basis")
+    if basis is not None and (
+        basis != entry.get(OBSERVED_BASIS_KEY)
+        or not _finite_number(entry.get(OBSERVED_VALUE_KEY))
+        or entry[OBSERVED_VALUE_KEY] != value
+    ):
+        return None
+    raw_at = read.get("observed_at")
+    if not isinstance(raw_at, str):
+        return None
+    try:
+        at = datetime.fromisoformat(raw_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return make_price_read(value, at, basis)
+
+
+def retained_price_read(entry: Any, value: Any, basis: Optional[dict]) -> Optional[dict]:
+    """A recompute retains an identical input read, never dates it anew."""
+    read = stored_price_read(entry, value)
+    return read if read is not None and basis and read["basis"] == basis else None
+
+
+def source_price_read_time(
+    sources: Optional[dict], source: str, value: float, *, now: Optional[datetime] = None,
+) -> Optional[datetime]:
+    """A served age may date only the price which the hero actually admitted."""
+    if not isinstance(sources, dict):
+        return None
+    read = stored_price_read(sources.get(source), value)
+    if read is None:
+        return None
+    at = _coerce_timestamp(read["observed_at"])
+    reference = now if now is not None else datetime.now(timezone.utc)
+    # Clock skew must not become a fresh-looking age or a page-time clamp.
+    return at if at is not None and at <= reference else None
+
+
+@dataclass(frozen=True)
+class PricedOutcomeRead:
+    """One successful upstream price and the exact outcome version it wrote.
+
+    Kept only for the existing bounded poll pass. Commit/recovery owns whether
+    a witness is admitted; a later row read must still match all these fields.
+    """
+
+    market_id: int
+    external_id: str
+    probability: float
+    row_time: datetime
+    received_at: datetime
+
+
+def priced_outcome_read_time(
+    rows: Any, witnessed: dict[int, PricedOutcomeRead],
+) -> Optional[datetime]:
+    """Oldest actual read of every input, or unknown for any unmatched input."""
+    times = []
+    for row in rows:
+        read = witnessed.get(getattr(row, "id", None))
+        probability = getattr(row, "current_probability", None)
+        try:
+            probability = None if isinstance(probability, bool) else float(probability)
+        except (TypeError, ValueError, OverflowError):
+            probability = None
+        if (
+            not isinstance(read, PricedOutcomeRead)
+            or not _finite_number(probability)
+            or not _finite_number(read.probability)
+            or round(probability, 6) != round(read.probability, 6)
+            or getattr(row, "market_id", None) != read.market_id
+            or getattr(row, "external_id", None) != read.external_id
+            or _coerce_timestamp(getattr(row, "last_updated", None)) != read.row_time
+            or not isinstance(read.received_at, datetime)
+            or read.received_at.tzinfo is None
+        ):
+            return None
+        times.append(read.received_at)
+    return min(times) if times else None
 
 
 def observation_basis(rows: Any, now: Optional[datetime] = None) -> Optional[dict]:
@@ -1310,7 +1443,8 @@ _EXCLUDE_WHEN_COMPLETED = {"kalshi", "polymarket"}
 
 
 def _tier1_readings(
-    event, event_status: Optional[str] = None
+    event, event_status: Optional[str] = None, *, now: Optional[datetime] = None,
+    pregame_refusals: Optional[set[str]] = None,
 ) -> tuple[dict[str, float], dict[str, datetime]]:
     """The ``win_probability_sources`` entries tier 1 will actually use.
 
@@ -1335,6 +1469,11 @@ def _tier1_readings(
     is_finished = status in ("completed", "closed")
 
     wps = getattr(event, "win_probability_sources", None) or {}
+    kickoff = loaded_price_admission_kickoff(event) if status == "live" else None
+    if kickoff is not None:
+        now = now if now is not None else datetime.now(timezone.utc)
+        if kickoff > now:
+            kickoff = None
     prob_readings: dict[str, float] = {}
     stamps: dict[str, datetime] = {}
     for k, v in wps.items():
@@ -1347,10 +1486,62 @@ def _tier1_readings(
         value, updated_at = parse_source_entry(v)
         if value is None:
             continue
+        if kickoff is not None and k != "final_result":
+            # A publication can restamp a quote. Compare only the observation
+            # bound to this exact price so an undated socket quote keeps its policy.
+            read_at = source_price_read_time(wps, k, value, now=now)
+            if read_at is not None and read_at < kickoff:
+                if pregame_refusals is not None:
+                    pregame_refusals.add(k)
+                continue
         prob_readings[k] = value
         if updated_at is not None:
             stamps[k] = updated_at
     return prob_readings, stamps
+
+
+def witnessed_pregame_price_sources(event, *, now: datetime) -> set[str]:
+    """Sources whose exact price live admission refused as pregame."""
+    refusals: set[str] = set()
+    _tier1_readings(event, now=now, pregame_refusals=refusals)
+    return refusals
+
+
+def has_dated_price_source(sources: dict, *, now: datetime) -> bool:
+    """Does a stored quote carry a price-bound clock before kickoff filtering?"""
+    for source, entry in sources.items():
+        if source == "final_result" or source not in SOURCE_WEIGHTS or is_refused(entry):
+            continue
+        price, _ = parse_source_entry(entry)
+        if price is not None and source_price_read_time(sources, source, price, now=now) is not None:
+            return True
+    return False
+
+
+def pregame_blend_rests_on_espn_alone(event, event_status: Optional[str] = None) -> bool:
+    """A scheduled game whose chance is ESPN's pregame predictor and nothing else.
+
+    #12824, Alex's ruling 226: A. ESPN's predictor fills in only while nothing
+    else prices a game (`tasks/espn_predictor`), and the run after a book or a
+    venue arrives withdraws it. Two consequences for anything that measures a
+    MOVE (Fable's item 4, Tue Nov 17):
+
+    * while ESPN alone carries the number, it is a model, not a market: its
+      distance from the stored opening line is two different sources
+      disagreeing, never a line that moved, so "odds shifted N% since open"
+      and the swing bonus must not be computed from it;
+    * the step from ESPN's number to the market's is a change of SOURCE. Every
+      move reader compares the market with the market's own opening (or its
+      own history); none compares it with ESPN, and this predicate is how the
+      callers that diff "current" against "opening" leave ESPN out.
+
+    Read over the same tier-1 population the blend uses (`_tier1_readings`).
+    """
+    status = event_status or getattr(event, "status", None)
+    if status != "scheduled":
+        return False
+    values, _ = _tier1_readings(event, status)
+    return set(values) == {"espn"}
 
 
 def newest_source_reading_time(
@@ -1365,7 +1556,7 @@ def newest_source_reading_time(
     never to justify one by its absence.
 
     Tier 1 only, deliberately. ``compute_aggregate_probability`` falls through to
-    ESPN and then to the opening line, and neither of those carries a time — so a
+    the bare ESPN field, which carries no time — so a
     hero resting on a fallback tier honestly has no observation time, and saying
     so is the whole point.
 
@@ -1580,7 +1771,8 @@ def _gate_population(
 
 
 def _live_average_inputs(
-    event, event_status: Optional[str] = None
+    event, event_status: Optional[str] = None, *,
+    source_keys: Optional[list[str]] = None,
 ) -> Optional[tuple[list[float], list[float]]]:
     """The readings the LIVE weighted average may use, or ``None`` (#1829).
 
@@ -1628,6 +1820,8 @@ def _live_average_inputs(
     weights = cap_weight_shares(
         weights, exempt=[src in _UNCAPPED_SOURCES for src in keys]
     )
+    if source_keys is not None:
+        source_keys.extend(keys)
     return values, weights
 
 
@@ -1691,12 +1885,8 @@ def _live_gate_population(
     return _gate_population(keys, values, weights, floored - refused)
 
 
-#: The three tiers ``compute_aggregate_probability_tiered`` can answer from, in
-#: the order it tries them. The names are a caller-visible vocabulary, not a
-#: debug string: ``TIER_OPENING`` is the one that says "this number is not a
-#: blend of anything — it is the line as it was posted, and nobody has quoted it
-#: since". See ``compute_aggregate_probability_tiered`` for why that is worth a
-#: return value.
+#: Current tiers, in the order tried. TIER_OPENING remains import-compatible for older
+#: callers that explicitly reject historical lines; it is no longer returned.
 TIER_SOURCES = "sources"
 TIER_ESPN = "espn"
 TIER_OPENING = "opening"
@@ -1705,51 +1895,29 @@ TIER_OPENING = "opening"
 def compute_aggregate_probability(
     event, event_status: Optional[str] = None
 ) -> Optional[float]:
-    """Compute aggregate home win probability from all available sources.
-
-    A thin wrapper over ``compute_aggregate_probability_tiered`` that drops the
-    tier. Every existing caller reads only the number and is unchanged by the
-    split — the value this returns is computed by exactly the same code that
-    produced it before, because it IS that code.
-    """
+    """Return the admitted current home chance, without its source tier."""
     return compute_aggregate_probability_tiered(event, event_status)[0]
 
 
 def compute_aggregate_probability_tiered(
-    event, event_status: Optional[str] = None
+    event, event_status: Optional[str] = None, *,
+    source_inputs: Optional[list[tuple[str, float]]] = None,
+    source_method: Optional[list[str]] = None,
 ) -> tuple[Optional[float], Optional[str]]:
     """``(probability, tier)`` — the number AND which tier answered.
 
-    WHY THE TIER IS A RETURN VALUE (#6694). The three tiers are not three ways
-    of computing one thing; they are three different CLAIMS, and only the first
-    is a blend. Tier 3 returns ``opening_home_probability`` — a record of where
-    the line opened, which is a perfectly good last resort and a very bad thing
-    to describe as a live consensus.
+    Tier 1 uses the existing source admission and blend rules; tier 2 uses the
+    ESPN field. The first stored line is never a current chance (#12824).
+    Historical readers access ``opening_*`` explicitly.
 
-    Because the number alone cannot say which tier produced it, every caller
-    that wanted to distinguish them had to re-derive the ordering from the same
-    attributes this function reads — and the one caller that needed it most
-    (``resolve_hero``) instead had a whole arm rendered unreachable by it: its
-    ``opening`` arm sits BELOW a blend arm that Tier 3 already answers, so on
-    2026-09-19 all 486 opening-only events in a two-day window were served as
-    ``hero_probability_source: "blend"``, one of them (15314578, live) printing
-    64% captioned as a live blend over a chart drawing 78%.
+    Finished games exclude prediction-market prices through the existing source
+    rules. This helper accepts an Event model or a plain object with the same
+    source fields.
 
-    The fix is not to copy the cascade into the caller. It is for the cascade to
-    say what it did. Returning the tier keeps ONE implementation of the ordering
-    and makes "was this actually a blend?" answerable without asking the
-    attributes a second time and hoping the two walks agree.
-
-    Uses SOURCE_WEIGHTS to produce a weighted average of all available
-    probability readings on the event model.  Falls back through three
-    tiers of decreasing richness.
-
-    When event_status is "completed" or "closed", prediction market sources
-    (Kalshi, Polymarket) are excluded — their prices go stale post-final
-    and drag the aggregate away from the resolved sportsbook/ESPN values.
-
-    Works on any object with win_probability_sources, espn_win_prob_home,
-    and opening_home_probability attributes (typically an Event model).
+    ``source_inputs`` records the inputs selected by THIS calculation for
+    #12581. It contains no weights or inferred clocks. In particular a
+    divergence refusal records only its primary, and a zero-weight live arm
+    is absent. Callers must not reconstruct this set from the JSONB bag.
     """
     # Tier 1: win_probability_sources JSONB (live games — multiple sources).
     # Readings, decay and cap all live in `effective_source_weights` so the
@@ -1774,27 +1942,57 @@ def compute_aggregate_probability_tiered(
             )
         )
         if divergence is not None:
+            if source_method is not None:
+                source_method.append("One source")
+            if source_inputs is not None:
+                source_inputs.append(
+                    (divergence.primary_source, divergence.primary_value)
+                )
             return round(divergence.primary_value, 6), TIER_SOURCES
 
         if any(w > 0 for w in weights):
+            live_keys: list[str] = []
             live_inputs = (
-                _live_average_inputs(event, event_status) if live else None
+                _live_average_inputs(event, event_status, source_keys=live_keys)
+                if live else None
             )
             blend = (
                 _weighted_average(*live_inputs)
                 if live_inputs is not None
                 else _weighted_median(values, weights)
             )
+            if source_method is not None:
+                used_weights = live_inputs[1] if live_inputs is not None else weights
+                source_method.append(
+                    "One source" if sum(weight > 0 for weight in used_weights) == 1
+                    else "Bain Luck blend · a weighted average of these sources"
+                    if live_inputs is not None
+                    else "Bain Luck blend · the weighted middle of these sources"
+                )
+            if source_inputs is not None:
+                used_keys = live_keys if live_inputs is not None else keys
+                used_values, used_weights = (
+                    live_inputs if live_inputs is not None else (values, weights)
+                )
+                source_inputs.extend(
+                    (key, value)
+                    for key, value, weight in zip(
+                        used_keys, used_values, used_weights
+                    )
+                    if weight > 0
+                )
             return round(blend, 6), TIER_SOURCES
 
     # Tier 2: ESPN win probability (live games, single source)
     espn_prob = getattr(event, "espn_win_prob_home", None)
     if espn_prob is not None:
+        if source_method is not None:
+            source_method.append("One source")
+        if source_inputs is not None:
+            source_inputs.append(("espn", float(espn_prob)))
         return round(float(espn_prob), 6), TIER_ESPN
 
-    # Tier 3: Opening probability (Odds API sportsbook consensus)
-    opening_prob = getattr(event, "opening_home_probability", None)
-    if opening_prob is not None:
-        return round(float(opening_prob), 6), TIER_OPENING
-
+    # #12824 / 225-A: the first stored line is historical evidence, never a
+    # current chance. In particular, it cannot replace a source that ruling
+    # 051 refused. Historical readers use opening_* explicitly.
     return None, None

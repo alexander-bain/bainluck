@@ -1,0 +1,381 @@
+"""Observed movement and stoppages. No discussion text leaves this module."""
+
+import re
+from datetime import datetime, timedelta
+
+LINES = ("Server", "Website", "Apps")
+TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
+
+
+def moment(value):
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def test_file(path):
+    parts = path.split("/")
+    return any(
+        p in {"tests", "__tests__", "__snapshots__"} or p.endswith("Tests")
+        for p in parts[:-1]
+    ) or bool(re.search(r"\.(?:test|spec)\.[cm]?[jt]sx?$", parts[-1]))
+
+
+# A live line with no explicit slot uses the builder's standing merge lane.
+LIVE_LINES = {
+    "Speed": ("Server",),
+    "Builder B": ("Server",),
+    "Builder C": ("Apps",),
+    "Atlas": ("Server", "Website"),
+    "Builder E": ("Server",),
+    "Builder F": ("Apps",),
+    "Apple": ("Apps",),
+}
+AUTHORS = (*LIVE_LINES, "Fable", "Alex", "Wee-Bey")
+AUTHOR = "|".join(map(re.escape, AUTHORS))
+BYLINE = re.compile(
+    rf"^\**({AUTHOR})\**(?: \([^)]{{1,35}}\))?\s*:\s*|^\**(Fable|Alex)\b\**(?=[ ,—–])"
+)
+SIGNED = re.compile(rf"^[^—–]{{0,100}}[—–]\s*\**({AUTHOR})\b")
+HOLD_OVER = re.compile(
+    r"\bhold\b\s+(?:(?:is|was|has been)\s+)?(?:cleared|lifted|over)\b"
+    r"|\b(?:clears?|cleared|clearing|lifts?|lifted|lifting)\b.{0,60}\bhold\b",
+    re.I,
+)
+TEST_NAME = re.compile(r"\btest_[A-Za-z0-9_]{1,90}\b", re.ASCII)
+BUILD = re.compile(
+    r"\bTestFlight\s+build[\s*`#]+([1-9][0-9]{0,9})\b"
+    r"|\bTestFlight[*`]*\s+[*`]*[0-9]+\.[0-9]+\.[0-9]+\s+\(([1-9][0-9]{0,9})\)",
+    re.I,
+)
+CHANGE_NUMBER = re.compile(r"#[1-9][0-9]{0,9}\b")
+SHELF_FLAGS = ("held_for_108", "parked", "bot_update", "side_track")
+
+
+def testflight_number(text):
+    numbers = {int(a or b) for a, b in BUILD.findall(text)}
+    return numbers.pop() if len(numbers) == 1 else None
+
+
+def named_lines(text):
+    return [line for line in LINES if re.search(rf"\b{line}\b", text, re.I)]
+
+
+def delivery_lines(text):
+    slots = {slot.strip() for slot in re.split(r"[+,/]|\band\b", text.lower())}
+    labels = {line.lower() for line in LINES}
+    # Workflows can share a turn but have no delivery line on the floor.
+    if not all(slot in labels or slot == "workflows" for slot in slots):
+        return []
+    return [line for line in LINES if line.lower() in slots]
+
+
+def on_floor(change):
+    return change["station"] != "Live" and not any(
+        change.get(flag) for flag in SHELF_FLAGS
+    )
+
+
+def commands_from(comments):
+    commands = []
+    for comment in comments:
+        if comment.get("author_association") not in TRUSTED:
+            continue
+        for raw in comment.get("body", "").splitlines():
+            line = raw.strip()
+            byline = BYLINE.match(line)
+            signed = SIGNED.match(line)
+            author = (
+                (byline[1] or byline[2]) if byline else (signed[1] if signed else None)
+            )
+            status = line[byline.end() :] if byline and byline[1] else line
+            status = status.lstrip("* ")
+            at = comment["created_at"]
+            clearing = HOLD_OVER.search(line)
+            slots = named_lines(line)
+
+            if (
+                re.match(r"^stuck\b", line.lstrip("* "), re.I)
+                and re.search(r"\bHOLD\b", line)
+                and not clearing
+            ):
+                # Prefer the slot named next to HOLD over incidental references.
+                named = re.search(
+                    r"\bHOLD\s*\(([^)]+)\)|\b(server|website|apps)\s+HOLD\b",
+                    line,
+                    re.I,
+                )
+                targets = (
+                    named_lines(named[1] or named[2])
+                    if named
+                    else slots if len(slots) == 1 else []
+                )
+                origin = author or (
+                    "Repository owner"
+                    if comment.get("author_association") == "OWNER"
+                    else None
+                )
+                identifier = comment.get("id")
+                if origin and type(identifier) is int and identifier > 0:
+                    for target in targets:
+                        hold = {
+                            "kind": "hold",
+                            "line": target,
+                            "at": at,
+                            "source": {"id": identifier, "author": origin},
+                        }
+                        tests = TEST_NAME.findall(line)
+                        if tests:
+                            hold["test"] = tests[-1]
+                        commands.append(hold)
+                continue
+
+            if clearing and author in {"Fable", "Alex"}:
+                for target in slots or [None]:
+                    commands.append({"kind": "resume", "line": target, "at": at})
+
+            live = re.match(r"^live\b[\s:]*", status, re.I)
+            if live:
+                prefix, _, suffix = status[live.end() :].partition("(")
+                delivery, _, _ = suffix.partition(")")
+                targets = delivery_lines(delivery) or LIVE_LINES.get(author, ())
+                # The byline can appear before the numbered change on a live post.
+                prefix = re.sub(
+                    rf"^\s*[—–]\s*\**(?:{AUTHOR})\**\s*,\s*(?=#)", "", prefix
+                )
+                prefix = re.split(r"\s+[—–]\s+", prefix, maxsplit=1)[0]
+                numbers = re.split(r"[\s,+]+", prefix.strip())
+                ids = (
+                    [int(n[1:]) for n in numbers]
+                    if all(CHANGE_NUMBER.fullmatch(n) for n in numbers)
+                    else []
+                )
+                for target in targets:
+                    event = {"kind": "live", "line": target, "at": at, "numbers": ids}
+                    if target == "Apps":
+                        build = testflight_number(status)
+                        if build:
+                            event["build"] = build
+                    commands.append(event)
+            elif BUILD.match(status) and (build := testflight_number(status)):
+                commands.append(
+                    {"kind": "build", "line": "Apps", "at": at, "build": build}
+                )
+
+            if re.match(r"^stuck\b", status, re.I) and not clearing:
+                for token in dict.fromkeys(CHANGE_NUMBER.findall(status)):
+                    commands.append(
+                        {
+                            "kind": "stuck",
+                            "line": None,
+                            "numbers": [int(token[1:])],
+                            "at": at,
+                        }
+                    )
+
+            merging = re.match(r"^merging\b", status, re.I)
+            if merging:
+                numbers, _, suffix = status[merging.end() :].partition("(")
+                target, closed, _ = suffix.partition(")")
+                tokens = re.split(r"[\s,+]+", numbers.strip())
+                if closed and all(CHANGE_NUMBER.fullmatch(n) for n in tokens):
+                    for slot in delivery_lines(target):
+                        commands.append(
+                            {
+                                "kind": "merging",
+                                "line": slot,
+                                "numbers": list(
+                                    dict.fromkeys(int(n[1:]) for n in tokens)
+                                ),
+                                "at": at,
+                            }
+                        )
+    return sorted(commands, key=lambda command: moment(command["at"]))
+
+
+def resolve_holds(commands, changes, master, now, previous=None):
+    """Keep the original NOW line and the earliest evidence that released it."""
+    previous = previous or {}
+    events = sorted([*commands, *previous.values()], key=lambda c: moment(c["at"]))
+    holds = {}
+    for event in events:
+        at = moment(event["at"])
+        if at > now:
+            continue
+        slot = event["line"]
+        if event["kind"] == "resume" and slot is None:
+            active = [
+                h
+                for h in holds.values()
+                if moment(h["at"]) < at
+                and (not h["ended_at"] or moment(h["ended_at"]) > at)
+            ]
+            if len(active) == 1:
+                active[0]["ended_at"] = event["at"]
+            continue
+        if event["kind"] != "hold" or not event.get("source"):
+            continue
+        last = holds.get(slot)
+        if last and (not last["ended_at"] or moment(last["ended_at"]) > at):
+            continue  # Repeating the warning does not move the start time.
+
+        releases = [
+            c["at"]
+            for c in events
+            if c["kind"] in {"live", "resume"} and c["line"] == slot
+        ]
+        releases.extend(
+            c["live_at"]
+            for c in changes
+            if c["line"] == slot
+            and c["station"] == "Live"
+            and c.get("merged_at")
+            and c.get("live_at")
+        )
+        releases.extend(
+            run["finished_at"]
+            for run in master.get("successful_runs", [])
+            if moment(run["started_at"]) > at
+        )
+        saved = previous.get(slot)
+        if (
+            saved
+            and saved["source"] == event["source"]
+            and saved["at"] == event["at"]
+            and saved["ended_at"]
+        ):
+            releases.append(saved["ended_at"])
+        holds[slot] = {
+            **event,
+            "ended_at": min(
+                (value for value in releases if at < moment(value) <= now),
+                default=None,
+                key=moment,
+            ),
+        }
+    return holds
+
+
+def reader_behind(published_at, now):
+    return now - moment(published_at) > timedelta(minutes=15)
+
+
+def longest_wait(changes):
+    dated = [c for c in changes if c.get("station_since") and c.get("number")]
+    oldest = min(
+        dated, key=lambda c: (moment(c["station_since"]), c["number"]), default=None
+    )
+    return (
+        {"number": oldest["number"], "waiting_since": oldest["station_since"]}
+        if oldest
+        else {}
+    )
+
+
+def stopped_rules(
+    changes, commands, master, last_merges, observed_since, now, holds=None
+):
+    if holds is None:
+        holds = resolve_holds(commands, changes, master, now)
+    commands = sorted(commands, key=lambda command: command["at"])
+    stops = []
+    merged = {c["number"]: c.get("merged_at") for c in changes}
+    off_floor = {c["number"] for c in changes if any(c.get(f) for f in SHELF_FLAGS)}
+    refused = {
+        number: moment(command["at"])
+        for command in commands
+        if command["kind"] == "stuck" and moment(command["at"]) <= now
+        for number in command["numbers"]
+    }
+    active = [c for c in changes if on_floor(c)]
+    for line in LINES:
+        waiting = [
+            c for c in active if c["line"] == line and c["station"] == "Merge line"
+        ]
+        since = last_merges.get(line) or observed_since
+        if waiting and now - moment(since) >= timedelta(minutes=30):
+            stops.append(
+                {
+                    "kind": "line-stalled",
+                    "line": line,
+                    "station": "Merge line",
+                    "since": since,
+                    "count": len(waiting),
+                    "level": "amber",
+                    **longest_wait(waiting),
+                }
+            )
+        announcements = [
+            c
+            for c in commands
+            if c["line"] == line and c["kind"] == "merging" and moment(c["at"]) <= now
+        ]
+        if announcements:
+            latest = announcements[-1]
+            at = moment(latest["at"])
+            standing = [
+                n
+                for n in latest["numbers"]
+                if n not in off_floor and refused.get(n, at) <= at
+            ]
+            any_merged = latest.get("resolved", False) or any(
+                merged.get(n) and moment(merged[n]) >= at for n in latest["numbers"]
+            )
+            if standing and not any_merged and now - at >= timedelta(minutes=15):
+                stops.append(
+                    {
+                        "kind": "announced",
+                        "line": line,
+                        "station": "Merge line",
+                        "since": latest["at"],
+                        "count": len(standing),
+                        "level": "amber",
+                        "number": standing[0],
+                    }
+                )
+        hold = holds.get(line)
+        if hold and not hold["ended_at"]:
+            stops.append(
+                {
+                    "kind": "hold",
+                    "line": line,
+                    "station": "Merge line",
+                    "since": hold["at"],
+                    "count": len(waiting),
+                    "level": "red",
+                    "source": hold["source"],
+                    **longest_wait(waiting),
+                    **({"test": hold["test"]} if hold.get("test") else {}),
+                }
+            )
+        reviewing = [
+            c
+            for c in active
+            if c["line"] == line
+            and c["station"] == "Review"
+            and c.get("station_since")
+            and timedelta(0) <= now - moment(c["last_activity"]) <= timedelta(hours=48)
+            and now - moment(c["station_since"]) > timedelta(hours=2)
+        ]
+        if reviewing:
+            stops.append(
+                {
+                    "kind": "review-waiting",
+                    "line": line,
+                    "station": "Review",
+                    "since": min((c["station_since"] for c in reviewing), key=moment),
+                    "count": len(reviewing),
+                    "level": "amber",
+                    **longest_wait(reviewing),
+                }
+            )
+    if master.get("tests") == "failing":
+        stops.append(
+            {
+                "kind": "master",
+                "line": None,
+                "station": "Test",
+                "since": master.get("tests_at") or observed_since,
+                "count": len({c["number"] for c in active if c["station"] == "Test"}),
+                "level": "amber",
+            }
+        )
+    return stops

@@ -718,7 +718,7 @@ class TestWarmer:
 
         from app.tasks import precompute_category_pages as mod
 
-        src = inspect.getsource(mod._precompute_all_category_pages)
+        src = inspect.getsource(mod._category_sections)  # #12042: the section list moved here
         assert '("golf_schedule", _precompute_golf_schedule)' in src
         assert src.index('("golf_schedule"') < src.index('("grids"')
 

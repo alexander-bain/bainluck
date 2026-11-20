@@ -269,7 +269,7 @@ export default function TournamentExtensions({
       )}
 
       {hasProps && (
-        <SectionErrorBoundary label="Match questions" resetKey={eventId}>
+        <SectionErrorBoundary label="Match props" resetKey={eventId}>
           <MatchProps payload={data} />
         </SectionErrorBoundary>
       )}

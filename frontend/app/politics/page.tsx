@@ -17,6 +17,8 @@ import type {
 import ErrorState from "@/components/ErrorState";
 import PoliticsSkeleton from "@/components/skeletons/PoliticsSkeleton";
 import Sparkline from "@/components/Sparkline";
+import { AsOfStamp } from "@/components/AsOfStamp";
+import { manyWayChartCeiling, manyWayChartYTicks } from "@/lib/chartScaleRule201";
 import { NEVER_A_HOLE_MS, seriesFreshness, seriesWindowLabel } from "@/lib/seriesFreshness";
 import s from "./politics.module.css";
 import { SourceBadge } from "@/components/politics/atoms";
@@ -449,10 +451,11 @@ function PresEvolution({ candidates, sourceMode }: {
 
   const allVals = series.flatMap((sr) => sr.pts.map((p) => p.p));
   if (allVals.length === 0) return null;
-  const yMax = Math.max(...allVals) * 1.15;
+  const ceiling = manyWayChartCeiling(Math.max(...allVals) / 100);
+  const yMax = ceiling * 100;
   const yMin = 0;
 
-  const gridLines = [5, 10, 15, 20, 25, 30, 40, 50].filter((v) => v <= yMax);
+  const gridLines = manyWayChartYTicks(ceiling).filter((v) => v > yMin);
 
   return (
     <div className={s.evoWrap}>
@@ -722,10 +725,6 @@ export default function PoliticsPage() {
     other: t.other?.count || 0,
   };
 
-  const updatedAgo = data.updated_at
-    ? formatTimeAgo(data.updated_at)
-    : "just now";
-
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className={`${s.page} -mx-3 md:-mx-6 -mt-4`}>
@@ -750,9 +749,14 @@ export default function PoliticsPage() {
             <span>
               <b className={s.metaNum}>2</b> sources
             </span>
-            <span>
-              Updated <b className={s.metaNum}>{updatedAgo}</b>
-            </span>
+            <AsOfStamp
+              iso={data.updated_at}
+              render={(label) => (
+                <span>
+                  <b className={s.metaNum}>{label}</b>
+                </span>
+              )}
+            />
           </div>
         </div>
       </div>
@@ -821,18 +825,4 @@ export default function PoliticsPage() {
     </div>
     </ErrorBoundary>
   );
-}
-
-// ─────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────
-
-function formatTimeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins} min ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
 }

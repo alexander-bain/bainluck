@@ -27,7 +27,7 @@ interface EventHeaderProps {
    * standing concept (the Ryder Cup) has null start/end dates, so without this
    * the page states no date at all.
    */
-  nextEdition?: { start?: string | null; end?: string | null } | null;
+  nextEdition?: { start?: string | null; end?: string | null; date_confidence?: string | null } | null;
 }
 
 export default function EventHeader({

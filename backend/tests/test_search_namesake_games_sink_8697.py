@@ -13,7 +13,9 @@ database.
 
 from __future__ import annotations
 
+import ast
 import inspect
+import textwrap
 
 from sqlalchemy.dialects import postgresql
 
@@ -86,12 +88,23 @@ class TestTheHandlerWiring:
         assert read < key < order
 
     def test_the_key_sits_under_the_day_boost_and_over_status(self):
-        start = self.SRC.index("_day_boost = _intent_day_order_key(_intent, now)")
-        block = self.SRC[start:start + 900]
-        day = block.index("(_day_boost,)")
-        key = block.index("(_teamless_sport_key,)")
-        status = block.index("status_order,")
-        assert day < key < status
+        # #12366 adds an intervening franchise key. Inspect the ordering call
+        # itself, so comments or another key cannot truncate this assertion.
+        tree = ast.parse(textwrap.dedent(self.SRC))
+        ordering = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "order_by"
+            and any(isinstance(arg, ast.Name) and arg.id == "status_order" for arg in node.args)
+        )
+        positions = {
+            name.id: index
+            for index, argument in enumerate(ordering.args)
+            for name in ast.walk(argument)
+            if isinstance(name, ast.Name)
+        }
+        assert positions["_day_boost"] < positions["_teamless_sport_key"] < positions["status_order"]
 
     def test_the_evidence_read_is_shed_safe(self):
         start = self.SRC.index("_early_team_rows: list | None = None")

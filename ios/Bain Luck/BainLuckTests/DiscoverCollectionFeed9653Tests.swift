@@ -87,7 +87,7 @@ final class DiscoverCollectionFeed9653Tests: XCTestCase {
             let payload = card(league: league)
             let feed = try item(envelope(payload))
             let entry = try XCTUnwrap(DiscoverCollectionFeed.entry(for: feed.collection))
-            XCTAssertEqual(entry.subtitle, "2 games · 3 questions")
+            XCTAssertEqual(entry.subtitle, "2 games · 3 markets")
             XCTAssertEqual(entry.route, .containerHub(slug: entry.collection.slug, name: entry.collection.name))
             let browse = try decoder().decode(ContainerDiscoveryResponse.self,
                 from: JSONSerialization.data(withJSONObject: ["collections": [payload]]))

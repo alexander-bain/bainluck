@@ -16,6 +16,13 @@ from app.utils.activitykit_payload import (
 )
 
 Kind = Literal["update", "terminal", "stop"]
+
+#: #10542 step 3: a reading that changes nothing on screen (only its clocks moved)
+#: waits until this long after the last push, then goes as one priority-5
+#: refresh that carries the newest clocks forward. A quiet stretch costs 30 pushes
+#: an hour instead of 120, and the stale date (score clock + 6 min) only arrives
+#: if a phone misses two refreshes or the score really stops updating.
+QUIET_REFRESH_SECONDS = 120
 Failure = Literal["transient", "permanent", "unavailable"]
 
 
@@ -79,6 +86,26 @@ class Attempt:
         return self.command.kind
 
 
+def reader_view(snapshot: GameActivitySnapshot) -> tuple:
+    """The parts of a reading that earn a priority-10 push: the game state,
+    both scores, whole-percent chances, period label, settled result and
+    pregame pair. Clocks and tenths-only moves (``home_headline_tenths``) are
+    kept out so tenths jitter flows on the priority-5 quiet refresh instead of
+    consuming priority-10 budget (#10542 / #12999)."""
+    return (
+        snapshot.lifecycle,
+        snapshot.home_score,
+        snapshot.away_score,
+        snapshot.home_rendered_percent,
+        snapshot.away_rendered_percent,
+        snapshot.period_label,
+        snapshot.result,
+        snapshot.pregame_away_percent,
+        snapshot.pregame_home_percent,
+        snapshot.score_source_unavailable,
+    )
+
+
 @dataclass(frozen=True)
 class DeliveryState:
     activity_id: str
@@ -96,6 +123,11 @@ class DeliveryState:
     stopped: bool = False
     ended: bool = False
     halted: str | None = None
+    #: What the reader saw in the last update dispatched (``reader_view``). An
+    #: update that changes it goes at priority 10; one that only re-dates the
+    #: same screen goes at 5 (#10542). None before the first send, and for state
+    #: persisted before this field existed: that first update goes at 10.
+    sent_view: tuple | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.activity_id, str) or not self.activity_id.strip():
@@ -187,14 +219,32 @@ class DeliveryState:
         # APNs ordering has second precision. Wait instead of fabricating a future send time.
         if timestamp <= self.last_timestamp:
             return self, None
+        if (
+            self.pending == "update"
+            and self.sent_view is not None
+            and reader_view(self.snapshot) == self.sent_view
+            and timestamp < self.last_timestamp + QUIET_REFRESH_SECONDS
+        ):
+            # Same screen, recent push: hold (still pending) for the quiet refresh.
+            return self, None
         sent_at = now
+        sent_view = self.sent_view
         if self.pending == "update":
-            push = build_activitykit_update(self.snapshot, sent_at=sent_at)
+            # #10542: priority 10 when the screen changes, 5 for a refresh.
+            view = reader_view(self.snapshot)
+            push = build_activitykit_update(
+                self.snapshot,
+                sent_at=sent_at,
+                priority="10" if view != self.sent_view else "5",
+            )
+            sent_view = view
         else:
+            # The final score is news (10); a reader's own stop shows nothing new (5).
             push = build_activitykit_end(
                 self.snapshot,
                 sent_at=sent_at,
                 reason="stop" if self.pending == "stop" else "terminal",
+                priority="5" if self.pending == "stop" else "10",
             )
         command = DeliveryCommand(
             f"{self.activity_id}:{self.accepted_revision}:{timestamp}:{self.pending}",
@@ -203,7 +253,11 @@ class DeliveryState:
         )
         return (
             replace(
-                self, pending=None, last_timestamp=timestamp, attempt=Attempt(command)
+                self,
+                pending=None,
+                last_timestamp=timestamp,
+                attempt=Attempt(command),
+                sent_view=sent_view,
             ),
             Attempt(command),
         )

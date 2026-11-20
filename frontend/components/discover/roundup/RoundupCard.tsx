@@ -3,7 +3,13 @@
 import Link from "next/link";
 import { useState } from "react";
 import { PriceAgeMark } from "@/components/event/PriceAgeMark";
-import { buildRoundupCardModel } from "@/lib/discover/roundupCard";
+import AwardCategoryPairedCard from "@/components/discover/forms/AwardCategoryPairedCard";
+import {
+  MachineryDiscoverCard,
+  isMachinerySlice1Enabled,
+  machineryCardOpenLabel,
+} from "@/components/collections/MachinerySectionRenderer";
+import { buildRoundupCardModel, compactStripDateLabel } from "@/lib/discover/roundupCard";
 import type { FeedItem, FeedRoundupContract, FeedThemeCollectionRef } from "@/lib/types";
 import { BundleActionBar } from "../BundleActionBar";
 import { admitCollectionRef, rememberThemeCollectionReturn } from "../shared";
@@ -32,6 +38,7 @@ export function RoundupCard({
   storyKey,
   positionIndex,
   nowMs,
+  previewOnly = false,
 }: {
   title: string;
   contract: FeedRoundupContract | null | undefined;
@@ -42,49 +49,118 @@ export function RoundupCard({
   positionIndex?: number;
   /** Fixed clock for guards; production passes nothing and reads it once. */
   nowMs?: number;
+  /** When true (e.g. `/grade/groupings`), renders the card shell without requiring a live collection route or action bar. */
+  previewOnly?: boolean;
 }) {
   const [clock] = useState(() => nowMs ?? Date.now());
   const now = nowMs ?? clock;
+  const destination = previewOnly ? null : admitCollectionRef(collectionRef);
+  if (!previewOnly && !destination) return null;
+
+  // #12577: Award category paired-metric card (Nominated % + Wins %, with TMDB posters & expander).
+  // Checked before legacy `buildRoundupCardModel` because machinery groupings (#12288)
+  // carry their own card contract and intentionally omit the legacy roundup `footer`.
+  if (contract?.paired_metric_set) {
+    const paired = contract.paired_metric_set;
+    if (
+      !paired.title?.trim() ||
+      !Array.isArray(paired.entries) ||
+      paired.entries.length === 0
+    ) {
+      return null;
+    }
+    return (
+      <div data-testid="roundup-card-slot">
+        <AwardCategoryPairedCard
+          set={paired}
+          surface="discover"
+        />
+        {isMachinerySlice1Enabled() && destination && contract?.machinery_card && (
+          <Link
+            href={destination.href}
+            data-testid="paired-card-machinery-link"
+            className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-card border border-surface-border bg-surface-card px-3.5 py-2 text-xs font-semibold text-accent-brand transition-colors hover:bg-surface-elevated"
+          >
+            <span className="min-w-0 text-text-secondary">{destination.name}</span>
+            <span className="ml-auto shrink-0 whitespace-nowrap">
+              {machineryCardOpenLabel(contract.machinery_card)}
+            </span>
+          </Link>
+        )}
+        {!previewOnly && (
+          <div className="mt-[10px]">
+            <BundleActionBar
+              items={items}
+              title={paired.title || title}
+              sharedQuestion={paired.title || title}
+              storyKey={storyKey ?? bundleId}
+              positionIndex={positionIndex}
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // #12288 Direction 223 / Decision 224: topic-free container machinery visual Discover card.
+  // Checked before legacy `buildRoundupCardModel` so empty legacy `footer` never drops the card.
+  if (isMachinerySlice1Enabled() && contract?.machinery_card) {
+    return (
+      <div data-testid="roundup-card-slot">
+        <MachineryDiscoverCard card={contract.machinery_card} />
+        {!previewOnly && (
+          <div className="mt-[10px]">
+            <BundleActionBar
+              items={items}
+              title={contract.machinery_card.title || title}
+              sharedQuestion={contract.machinery_card.title || title}
+              storyKey={storyKey ?? bundleId}
+              positionIndex={positionIndex}
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
+
   const { model } = buildRoundupCardModel(title, contract, now);
-  const destination = admitCollectionRef(collectionRef);
-  if (!model || !destination) return null;
+  if (!model) return null;
 
   const label = `${model.title}. ${model.rows
     .map((r) => `${r.label}, ${r.marker === "<" ? "under " : r.marker === ">" ? "over " : ""}${r.digits}%`)
     .join("; ")}.${model.countLine ? ` ${model.countLine}.` : ""} ${model.footer}`;
 
-  return (
-    <div data-testid="roundup-card-slot">
-      <Link
-        href={destination.href}
-        onClick={() => rememberThemeCollectionReturn(bundleId, false)}
-        aria-label={label}
-        data-testid="roundup-card"
-        data-bundle-id={bundleId}
-        className="grid min-w-0 gap-[14px] rounded-2xl border border-surface-border bg-surface-card pb-[13px] pl-[18px] pr-[18px] pt-[18px] text-left no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--series-1)]"
-      >
-        <RoundupHeader kicker={model.kicker} tag={model.tag} title={model.title} longHeadline={model.longHeadline} />
-        {model.presentation === "strip" ? (
-          <div className="grid grid-cols-3 gap-2.5" data-testid="roundup-rows" data-presentation="strip">
+  const innerContent = (
+    <>
+      <RoundupHeader
+        kicker={model.kicker}
+        tag={model.tag}
+        title={model.title}
+        subtitle={model.subtitle}
+        longHeadline={model.longHeadline}
+      />
+      {model.presentation === "strip" ? (
+        <div className="roundup-strip-container">
+          <div className="roundup-strip-grid -mx-2 grid grid-cols-3 gap-1" data-testid="roundup-rows" data-presentation="strip">
             {model.rows.map((row) => (
               <div
                 key={row.marketId}
-                className="flex min-w-0 flex-col justify-between rounded-xl border border-surface-border bg-surface-elevated/40 p-2.5"
+                className="roundup-strip-box flex min-w-0 flex-col justify-between rounded-xl border border-surface-border bg-surface-elevated/40 px-[3px] py-2.5"
                 data-testid="roundup-row"
                 data-market-id={row.marketId}
               >
                 <div className="min-w-0" data-testid="roundup-row-label">
-                  <div className="truncate text-[13px] font-medium leading-[1.25] text-text-primary">
+                  <div className="roundup-strip-opponent whitespace-normal break-words text-[13px] font-medium leading-[1.25] tracking-[-0.025em] text-text-primary">
                     {row.opponentLabel ?? row.label}
                   </div>
                   {row.dateLabel ? (
-                    <div className="mt-0.5 truncate text-[11.5px] leading-[1.2] text-text-secondary">
-                      {row.dateLabel}
+                    <div className="roundup-strip-date mt-0.5 whitespace-nowrap text-[11.5px] leading-[1.2] text-text-secondary">
+                      {compactStripDateLabel(row.dateLabel)}
                     </div>
                   ) : null}
                 </div>
                 <div className="mt-2.5">
-                  <div className="flex items-baseline justify-between gap-1">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-1 gap-y-0.5">
                     <span className="font-mono text-[18px] font-bold leading-[1.15] tracking-[-0.03em] text-text-primary tabular-nums">
                       {row.marker}
                       {row.digits}
@@ -108,27 +184,57 @@ export function RoundupCard({
               </div>
             ))}
           </div>
-        ) : (
-          <div className="grid gap-[14px]" data-testid="roundup-rows">
-            {model.rows.map((row) => (
-              <RoundupRow key={row.marketId} row={row} nowMs={now} />
-            ))}
-          </div>
-        )}
-        {model.countLine ? (
-          <div className="text-[12px] text-text-secondary" data-testid="roundup-count-line">
-            {model.countLine}
-          </div>
-        ) : null}
-        <div
-          className="flex items-center justify-between gap-2 border-t border-surface-border pt-[10px] text-[11.5px] text-text-secondary"
-          data-testid="roundup-footer"
-        >
-          <span>{model.footer}</span>
-          {model.cardMarkObservedAt ? (
-            <PriceAgeMark observedAt={model.cardMarkObservedAt} nowMs={now} cadence={model.cadence} scope="card" />
-          ) : null}
         </div>
+      ) : (
+        <div className="grid gap-[14px]" data-testid="roundup-rows">
+          {model.rows.map((row) => (
+            <RoundupRow key={row.marketId} row={row} nowMs={now} />
+          ))}
+        </div>
+      )}
+      {model.countLine ? (
+        <div className="text-[12px] text-text-secondary" data-testid="roundup-count-line">
+          {model.countLine}
+        </div>
+      ) : null}
+      <div
+        className="flex items-center justify-between gap-2 border-t border-surface-border pt-[10px] text-[11.5px] text-text-secondary"
+        data-testid="roundup-footer"
+      >
+        <span>{model.footer}</span>
+        {model.cardMarkObservedAt ? (
+          <PriceAgeMark observedAt={model.cardMarkObservedAt} nowMs={now} cadence={model.cadence} scope="card" />
+        ) : null}
+      </div>
+    </>
+  );
+
+  if (previewOnly) {
+    return (
+      <div data-testid="roundup-card-slot">
+        <div
+          aria-label={label}
+          data-testid="roundup-card"
+          data-bundle-id={bundleId}
+          className="grid min-w-0 gap-[14px] rounded-2xl border border-surface-border bg-surface-card pb-[13px] pl-[18px] pr-[18px] pt-[18px] text-left"
+        >
+          {innerContent}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div data-testid="roundup-card-slot">
+      <Link
+        href={destination!.href}
+        onClick={() => rememberThemeCollectionReturn(bundleId, false)}
+        aria-label={label}
+        data-testid="roundup-card"
+        data-bundle-id={bundleId}
+        className="grid min-w-0 gap-[14px] rounded-2xl border border-surface-border bg-surface-card pb-[13px] pl-[18px] pr-[18px] pt-[18px] text-left no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--series-1)]"
+      >
+        {innerContent}
       </Link>
       <div className="mt-[10px]">
         <BundleActionBar

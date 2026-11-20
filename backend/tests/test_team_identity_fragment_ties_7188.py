@@ -587,6 +587,7 @@ class TestRefusalIsNotRegistered:
 
             async def record(session, team_id, *args, **kwargs):
                 registered.append(team_id)
+                return True
 
             calls = []
 

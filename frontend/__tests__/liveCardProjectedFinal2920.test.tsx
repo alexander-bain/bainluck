@@ -126,6 +126,18 @@ const BAND_CARD = "event-card-projected-final";
 const BAND_FEED = "feed-card-projected-final";
 const withoutBand = (html: string) => html.replace(/<div role="group"[^]*?<\/div>/, "");
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("the fixtures are the readings they claim", () => {
   it("Georgia 21 – 0 live, the in-play pair dated after kickoff", () => {
     expect(UGA.status).toBe("live");
@@ -406,9 +418,18 @@ describe("a broken or impossible in-play pair prints nothing", () => {
     expect(liveCardProjectedFinal({ live_projection: UGA_IN_PLAY }, UGA.sport, UGA.commence_time, { home: 38, away: 11 })).toBeNull();
   });
 
-  it("a level pair in a sport that cannot end level (#8156)", () => {
+  it("a level pair prints in basketball and an opposing chance-winner pair is refused (Ruling 240: A / #12992)", () => {
     const nba = { ...UGA_IN_PLAY, projected_home_score: 110.4, projected_away_score: 110.2 };
-    expect(liveCardProjectedFinal({ live_projection: nba }, "basketball_nba", UGA.commence_time, { home: 100, away: 100 })).toBeNull();
+    expect(liveCardProjectedFinal({ live_projection: nba }, "basketball_nba", UGA.commence_time, { home: 100, away: 100 })).toEqual({ home: 110, away: 110 });
+    expect(
+      liveCardProjectedFinal(
+        { live_projection: { ...nba, projected_home_score: 79.0, projected_away_score: 80.4 } },
+        "basketball_nba",
+        UGA.commence_time,
+        { home: 60, away: 62 },
+        { home: 0.511, away: 0.489 },
+      ),
+    ).toBeNull();
     expect(liveCardProjectedFinal({ live_projection: { ...nba, projected_away_score: 104.1 } }, "basketball_nba", UGA.commence_time, { home: 100, away: 100 })).toEqual({ home: 110, away: 104 });
   });
 });

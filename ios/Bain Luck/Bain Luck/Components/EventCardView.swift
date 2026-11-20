@@ -6,10 +6,53 @@ struct EventCardView: View {
     let reason: String?
     var personalizationReasons: [String]? = nil
     var headline: String? = nil
+    /// Ruling 183-A Size S (Team schedule & recent results): same crests,
+    /// colours, bookmark pin, and column headers without sub-captions or bottom bar.
+    var compactScheduleStyle: Bool = false
+    /// True when `/api/teams/{slug}` already resolved a draw-priced sport's
+    /// away probability via `_away_three_way_price` (#11541).
+    var awayReadingIsServerVerified: Bool = false
+
+    init(
+        event: FeedEventData,
+        reason: String?,
+        personalizationReasons: [String]? = nil,
+        headline: String? = nil,
+        compactScheduleStyle: Bool = false,
+        awayReadingIsServerVerified: Bool = false
+    ) {
+        var cardEvent = event
+        cardEvent.currentOdds = CompactGameCard12616.currentOddsForCard(event)
+        self.event = cardEvent
+        self.reason = reason
+        self.personalizationReasons = personalizationReasons
+        self.headline = headline
+        self.compactScheduleStyle = compactScheduleStyle
+        self.awayReadingIsServerVerified = awayReadingIsServerVerified
+    }
 
     /// #11325 — selects the finished card's accessibility arm; see
     /// `FinishedCardAccessibility11325`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Unified onto `HeadlineStyleTable199` (`.card`) so team names, scores, and chances
+    /// share one size and weight family across every surface.
+    @ScaledMetric(relativeTo: .body) private var compactNameSize: CGFloat = HeadlineStyleTable199.nameBaseSize(.card)
+    @ScaledMetric(relativeTo: .caption2) private var compactHeaderSize: CGFloat = HeadlineStyleTable199.headerBaseSize(.card)
+    @ScaledMetric(relativeTo: .body) private var compactScoreSize: CGFloat = HeadlineStyleTable199.secondNumberBaseSize(.card, prominent: false)
+    @ScaledMetric(relativeTo: .subheadline) private var compactPregameSize: CGFloat = HeadlineStyleTable199.pregameNumberBaseSize(.card)
+    @ScaledMetric(relativeTo: .title3) private var compactLargeSize: CGFloat = HeadlineStyleTable199.nowBaseSize(.card)
+    @ScaledMetric(relativeTo: .body) private var compactLiveScoreWidth: CGFloat = 44
+    @ScaledMetric(relativeTo: .body) private var compactProjectedWidth: CGFloat = 78
+    @ScaledMetric(relativeTo: .subheadline) private var compactPregameWidth: CGFloat = 58
+    @ScaledMetric(relativeTo: .title3) private var compactLargeChanceWidth: CGFloat = 82
+    @ScaledMetric(relativeTo: .title3) private var compactLargeFinalWidth: CGFloat = 60
+    @ScaledMetric(relativeTo: .subheadline) private var finishedAccessibilityNameSize: CGFloat = 15
+    @State private var measuredCardWidth: CGFloat = 0
+
+    private let scoreToPregameGutter: CGFloat = 18
+    private let pregameToNowGap: CGFloat = 10
 
     private var isLive: Bool { event.status == "live" }
     private var isFinished: Bool { EventState.isFinished(event.status) }
@@ -94,14 +137,30 @@ struct EventCardView: View {
     /// unit test of the helper can see: a revert to
     /// `ProbabilityBarPalette.colors(awayHex:homeHex:)` compiles, renders and
     /// leaves every contrast test green. A test drives this on a real payload.
+    /// Light-mode test seam preserved for existing contrast wiring assertions;
+    /// rendered card colours resolve through `barColorHexes(for: colorScheme)`.
     var barColorHexes: (away: String, home: String) {
-        TeamTextContrast.cardColorHexes(
+        barColorHexes(for: .light)
+    }
+
+    func barColorHexes(for scheme: ColorScheme) -> (away: String, home: String) {
+        if scheme == .dark {
+            return TeamTextContrast.darkSurfaceColorHexes(
+                awayHex: event.awayTeamData?.primaryColor,
+                homeHex: event.homeTeamData?.primaryColor,
+                awaySecondaryHex: event.awayTeamData?.secondaryColor,
+                homeSecondaryHex: event.homeTeamData?.secondaryColor
+            )
+        }
+        return TeamTextContrast.cardColorHexes(
             awayHex: event.awayTeamData?.primaryColor,
-            homeHex: event.homeTeamData?.primaryColor
+            homeHex: event.homeTeamData?.primaryColor,
+            awaySecondaryHex: event.awayTeamData?.secondaryColor
         )
     }
+
     private var barColors: (away: Color, home: Color) {
-        let hexes = barColorHexes
+        let hexes = barColorHexes(for: colorScheme)
         return (Color(hex: hexes.away), Color(hex: hexes.home))
     }
     private var awayColor: Color { barColors.away }
@@ -169,9 +228,18 @@ struct EventCardView: View {
         VStack(alignment: .leading, spacing: 8) {
             topBar
             teamsAndOdds
-            footer
+            if !compactScheduleStyle {
+                footer
+            }
         }
         .padding(.vertical, 6)
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { measuredCardWidth = geo.size.width }
+                    .onChange(of: geo.size.width) { _, w in measuredCardWidth = w }
+            }
+        )
         .contentShape(Rectangle())
         #if os(macOS)
         .background(isHovered ? Color.primary.opacity(0.04) : Color.clear)
@@ -217,8 +285,10 @@ struct EventCardView: View {
     /// the guard has to be able to fail in both directions.
     enum EventCardHeadlinePill {
         static func isDrawn(headline: String?, isLive: Bool) -> Bool {
-            guard let headline, !headline.isEmpty else { return false }
-            return !isLive
+            // Ruling 182-A — game cards remove the records bubble and use a
+            // capsule ONLY for live status; a real reason to care is a plain
+            // grey line in `footerRow`, never a top-bar pill.
+            return false
         }
     }
 
@@ -234,6 +304,10 @@ struct EventCardView: View {
     }
 
     private var statusBadge: some View {
+        statusBadgeView(leadingDot: !usesFinishedAccessibilityLayout)
+    }
+
+    private func statusBadgeView(leadingDot: Bool) -> some View {
         StatusBadge(
             status: event.status,
             commenceTime: event.commenceTime,
@@ -241,7 +315,9 @@ struct EventCardView: View {
             period: event.espn?.period,
             startIsTbd: event.startIsTbd == true,
             // #5811 — served on `/api/feed`, so the card can say it.
-            venueClosedNoWinner: event.venueClosedNoWinner == true
+            venueClosedNoWinner: event.venueClosedNoWinner == true,
+            gameCardPlain182: true,
+            gameCardLeadingDot: leadingDot
         )
     }
 
@@ -254,80 +330,267 @@ struct EventCardView: View {
         }
     }
 
+    @ViewBuilder
+    private var trailingTopBarMeta: some View {
+        if let broadcast = event.espn?.broadcast?.split(separator: ",").first.map(String.init),
+           !broadcast.isEmpty, isScheduled || isLive {
+            HStack(spacing: 2) {
+                Image(systemName: "tv")
+                    .font(.system(size: 8))
+                Text(broadcast.trimmingCharacters(in: .whitespaces))
+                    .font(.caption2)
+            }
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+        }
+        if isFinished {
+            // Finished: Show date once ("Nov 8") as plain text
+            formattedDate
+                .fixedSize(horizontal: true, vertical: false)
+        } else if isSuspended, let detail = EventState.suspendedCardDetail(
+            away: event.awayScore, home: event.homeScore, date: formattedDateString,
+            authorityPeriod: event.espn?.period) {
+            // live/048: no start time, no Final. The words themselves now sit
+            // in the `StatusBadge` six points to the left — this slot carried
+            // a verbatim second copy of them on 1,786 of 1,788 suspended rows
+            // (both scores null ⇒ `suspendedSummary` IS `suspendedLabel`).
+            // `suspendedCardDetail` is where that reasoning lives, along with
+            // why the date arrives here and not from `formattedDateTime`.
+            Text(detail)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+    }
+
+    static func resolvedCardSourceMark(
+        event: FeedEventData,
+        canStillBeGraded: Bool,
+        currentAwayIsWithheld: Bool,
+        prematch: PrematchReading?,
+        prematchAwayIsWithheld: Bool
+    ) -> (mark: SourceMark, number: Double?, subject: String?, isPregame: Bool)? {
+        let names = TeamShortName.shortPair(
+            away: event.awayTeam,
+            home: event.homeTeam,
+            sportKey: event.sport
+        )
+        if canStillBeGraded {
+            let homeCand: (SourceMark, Double, String)? = {
+                guard let m = event.sourceMark, m.draws,
+                      let p = event.currentOdds?.homeProbability else { return nil }
+                return (m, p, names.home)
+            }()
+            let awayCand: (SourceMark, Double, String)? = {
+                guard !currentAwayIsWithheld,
+                      let m = event.awaySourceMark, m.draws,
+                      let p = event.currentOdds?.awayProbability else { return nil }
+                return (m, p, names.away)
+            }()
+            if let h = homeCand, let a = awayCand {
+                return a.1 > h.1
+                    ? (a.0, a.1, a.2, false)
+                    : (h.0, h.1, h.2, false)
+            }
+            if let chosen = homeCand ?? awayCand {
+                return (chosen.0, chosen.1, chosen.2, false)
+            }
+            return nil
+        }
+
+        let homePreCand: (SourceMark, Double, String)? = {
+            guard let m = event.pregameSourceMark, m.draws,
+                  let p = prematch?.homeProbability else { return nil }
+            return (m, p, names.home)
+        }()
+        let awayPreCand: (SourceMark, Double, String)? = {
+            guard !prematchAwayIsWithheld,
+                  let m = event.awayPregameSourceMark, m.draws,
+                  let p = prematch?.awayProbability else { return nil }
+            return (m, p, names.away)
+        }()
+        if let h = homePreCand, let a = awayPreCand {
+            return a.1 > h.1
+                ? (a.0, a.1, a.2, true)
+                : (h.0, h.1, h.2, true)
+        }
+        if let chosen = homePreCand ?? awayPreCand {
+            return (chosen.0, chosen.1, chosen.2, true)
+        }
+        let homeSettled = (event.sourceMark?.state == .settled && event.sourceMark?.draws == true)
+            ? event.sourceMark : nil
+        let awaySettled = (event.awaySourceMark?.state == .settled && event.awaySourceMark?.draws == true)
+            ? event.awaySourceMark : nil
+        if let awaySettled, awaySettled.settled?.result == "Won", homeSettled?.settled?.result != "Won" {
+            return (awaySettled, nil, names.away, false)
+        }
+        if let homeSettled, homeSettled.settled?.result == "Won", awaySettled?.settled?.result != "Won" {
+            return (homeSettled, nil, names.home, false)
+        }
+        if let h = event.homeScore, let a = event.awayScore {
+            if a > h, let awaySettled { return (awaySettled, nil, names.away, false) }
+            if h > a, let homeSettled { return (homeSettled, nil, names.home, false) }
+        }
+        if let homeSettled {
+            return (homeSettled, nil, names.home, false)
+        }
+        if let awaySettled {
+            return (awaySettled, nil, names.away, false)
+        }
+        return nil
+    }
+
+    struct CardSourceMarkPresentation: Equatable {
+        let mark: SourceMark
+        let number: Double?
+        let subject: String?
+        let isPregame: Bool
+        let showsTenths: Bool
+    }
+
+    static func alignNumberToPrintedTenths(_ raw: Double?, printedText: String?) -> Double? {
+        guard let raw,
+              let printedText,
+              printedText.contains("."),
+              printedText.hasSuffix("%"),
+              SourceMarkSheet.formatSheetProbability(raw, showsTenths: true) != printedText,
+              let parsedPercent = Double(printedText.dropLast()) else {
+            return raw
+        }
+        return parsedPercent / 100.0
+    }
+
+    /// Single game-card source-mark resolver shared across Sports, League, Search,
+    /// Team, Hub (`EventCardView`) and Discover (`DiscoverCompactSingleGameCard190C`).
+    /// Where the live `Now` cell prints tenths (`"96.0%"`), the sheet opens in tenths too.
+    static func resolvedCardSourceMarkPresentation(
+        event rawEvent: FeedEventData,
+        canStillBeGraded: Bool,
+        currentAwayIsWithheld: Bool,
+        prematch: PrematchReading?,
+        prematchAwayIsWithheld: Bool
+    ) -> CardSourceMarkPresentation? {
+        var event = rawEvent
+        event.currentOdds = CompactGameCard12616.currentOddsForCard(rawEvent)
+        guard let resolved = Self.resolvedCardSourceMark(
+            event: event,
+            canStillBeGraded: canStillBeGraded,
+            currentAwayIsWithheld: currentAwayIsWithheld,
+            prematch: prematch,
+            prematchAwayIsWithheld: prematchAwayIsWithheld
+        ) else {
+            return nil
+        }
+
+        guard canStillBeGraded,
+              !resolved.isPregame,
+              event.status == "live",
+              resolved.number != nil else {
+            return CardSourceMarkPresentation(
+                mark: resolved.mark,
+                number: resolved.number,
+                subject: resolved.subject,
+                isPregame: resolved.isPregame,
+                showsTenths: false
+            )
+        }
+
+        let liveTenths = CompactGameCard12616.liveTenthsStrings(
+            away: event.currentOdds?.awayProbability,
+            home: event.currentOdds?.homeProbability,
+            awayIsWithheld: currentAwayIsWithheld
+        )
+        let hasHomeCandidate = event.sourceMark?.draws == true && event.currentOdds?.homeProbability != nil
+        let hasAwayCandidate = !currentAwayIsWithheld
+            && event.awaySourceMark?.draws == true
+            && event.currentOdds?.awayProbability != nil
+        let choseAway: Bool = {
+            if hasHomeCandidate && hasAwayCandidate {
+                return (event.currentOdds?.awayProbability ?? 0) > (event.currentOdds?.homeProbability ?? 0)
+            }
+            return hasAwayCandidate
+        }()
+        let printedCell = choseAway ? liveTenths.away : liveTenths.home
+        let showsTenths = printedCell?.contains(".") == true
+        let alignedNumber = showsTenths
+            ? alignNumberToPrintedTenths(resolved.number, printedText: printedCell)
+            : resolved.number
+
+        return CardSourceMarkPresentation(
+            mark: resolved.mark,
+            number: alignedNumber,
+            subject: resolved.subject,
+            isPregame: resolved.isPregame,
+            showsTenths: showsTenths
+        )
+    }
+
+    @ViewBuilder
+    private var cardSourceMarkButton: some View {
+        if let resolved = Self.resolvedCardSourceMarkPresentation(
+            event: event,
+            canStillBeGraded: canStillBeGraded,
+            currentAwayIsWithheld: currentAwayIsWithheld,
+            prematch: prematch,
+            prematchAwayIsWithheld: prematchAwayIsWithheld
+        ),
+        let button = SourceMarkButton(
+            resolved.mark,
+            number: resolved.number,
+            subject: resolved.subject,
+            isPregame: resolved.isPregame,
+            numberSize: 17,
+            showsTenths: resolved.showsTenths
+        ) {
+            button
+                .padding(.vertical, -8)
+        }
+    }
+
     private var singleRowTopBar: some View {
-        HStack(spacing: 6) {
-            Text(leagueName)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            statusBadge
-            if !isFinished, let ei = event.ei ?? event.pulse {
-                EIBadgeView(ei: ei, size: .sm)
-            }
-            // #490: confidence signal (1-3 bars) — renders nothing when absent.
-            SignalBarsView(tier: event.confidenceTier)
-            if let badge = personalizationBadge {
-                badge
-            }
-            if EventCardHeadlinePill.isDrawn(headline: headline, isLive: isLive), let headline {
-                Text(headline)
-                    .font(.caption2)
-                    .fontWeight(.semibold)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.blue.opacity(0.12))
-                    .foregroundStyle(.blue)
-                    .clipShape(Capsule())
-            }
-            Spacer()
-            if let broadcast = event.espn?.broadcast?.split(separator: ",").first.map(String.init),
-               !broadcast.isEmpty, isScheduled || isLive {
-                HStack(spacing: 2) {
-                    Image(systemName: "tv")
-                        .font(.system(size: 8))
-                    Text(broadcast.trimmingCharacters(in: .whitespaces))
-                        .font(.caption2)
-                }
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            }
-            if isScheduled {
-                // Upcoming: Show "Today 7:00 PM" or "Mar 8 7:00 PM"
-                formattedDateTime
-            } else if isFinished {
-                // Finished: Show date only "Mar 5"
-                formattedDate
-            } else if isSuspended, let detail = EventState.suspendedCardDetail(
-                away: event.awayScore, home: event.homeScore, date: formattedDateString,
-                authorityPeriod: event.espn?.period) {
-                // live/048: no start time, no Final. The words themselves now sit
-                // in the `StatusBadge` six points to the left — this slot carried
-                // a verbatim second copy of them on 1,786 of 1,788 suspended rows
-                // (both scores null ⇒ `suspendedSummary` IS `suspendedLabel`).
-                // `suspendedCardDetail` is where that reasoning lives, along with
-                // why the date arrives here and not from `formattedDateTime`.
-                Text(detail)
-                    .font(.caption2)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                Text(leagueName)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                statusBadge
+                    .fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 4)
+                trailingTopBarMeta
+                cardSourceMarkButton
+                PinButton(type: "event", id: event.id, compact: true)
             }
-            PinButton(type: "event", id: event.id, compact: true)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .top, spacing: 6) {
+                    Text(leagueName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 6)
+                    cardSourceMarkButton
+                    PinButton(type: "event", id: event.id, compact: true)
+                }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        statusBadgeView(leadingDot: false)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: 4)
+                        trailingTopBarMeta
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        statusBadgeView(leadingDot: false)
+                        trailingTopBarMeta
+                    }
+                }
+            }
         }
     }
 
     /// #11325 — the finished card's top bar at accessibility sizes.
-    ///
-    /// One row held the league, FINAL, the date and the pin, so at AX5 on a
-    /// 320pt phone the row squeezed the badge until "FINAL" broke as "FI-/NAL"
-    /// and the league broke mid-word beside it. Here the league takes the full
-    /// width and wraps only between words; FINAL sits whole on the row below,
-    /// with the date and pin at trailing, and the date drops to its own line
-    /// when the three cannot share one. The badge itself is the shared
-    /// `StatusBadge`, unchanged — the caller gives it the room.
-    ///
-    /// A finished card draws no EI badge, broadcast or suspended detail (each
-    /// is gated off `isFinished` above), so the only optional pieces are the
-    /// confidence bars, the personalization badge and the headline pill, which
-    /// keep their exact conditions on the rows beneath.
     private var finishedAccessibilityTopBar: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(leagueName)
@@ -340,124 +603,499 @@ struct EventCardView: View {
                     statusBadge.fixedSize()
                     Spacer(minLength: 6)
                     formattedDate
+                    cardSourceMarkButton
                     PinButton(type: "event", id: event.id, compact: true)
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         statusBadge.fixedSize()
                         Spacer(minLength: 6)
+                        cardSourceMarkButton
                         PinButton(type: "event", id: event.id, compact: true)
                     }
                     formattedDate
                 }
             }
-            if hasTopBarMetadata {
+        }
+    }
+
+    // MARK: - Teams + Odds (161-B compact two-column card)
+
+    private var shortTeamNames: (away: String, home: String) {
+        TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+    }
+
+    private var scheduledProjection12616: ScheduledCardProjectedFinal12616.Pair? {
+        guard isScheduled else { return nil }
+        return ScheduledCardProjectedFinal12616.card(event)
+    }
+
+    private var showsScheduledInlineProjectionColumn12616: Bool {
+        scheduledProjection12616 != nil && !dynamicTypeSize.isAccessibilitySize
+    }
+
+    private var scheduledAccessibilityProjectedLine12616: (visible: String, spoken: String)? {
+        guard isScheduled, dynamicTypeSize.isAccessibilitySize, let pair = scheduledProjection12616 else {
+            return nil
+        }
+        let abbrevs = TeamShortName.abbreviationPair(
+            away: event.awayTeam,
+            home: event.homeTeam,
+            awayServed: event.awayTeamData?.abbreviation,
+            homeServed: event.homeTeamData?.abbreviation,
+            sportKey: event.sport
+        )
+        return (
+            visible: "Projected: \(abbrevs.away) \(pair.away) \u{2013} \(abbrevs.home) \(pair.home)",
+            spoken: "Projected final: \(event.awayTeam) \(pair.away), \(event.homeTeam) \(pair.home)"
+        )
+    }
+
+    private var hasDrawableScore250A: Bool {
+        event.scoreSourceUnavailable != true && (event.awayScore != nil || event.homeScore != nil)
+    }
+
+    var compactHeadersForTest250A: CompactGameCard12616.ColumnHeaders {
+        compactHeaders12616
+    }
+
+    private var compactHeaders12616: CompactGameCard12616.ColumnHeaders {
+        let hasCurrent = event.currentOdds?.homeProbability != nil
+            || (!currentAwayIsWithheld && event.currentOdds?.awayProbability != nil)
+        let reading = prematch
+        let hasPrematch = reading?.homeProbability != nil
+            || (!prematchAwayIsWithheld && reading?.awayProbability != nil)
+        let hasScore = hasDrawableScore250A
+        return CompactGameCard12616.columnHeaders(
+            isScheduled: isScheduled,
+            isLive: isLive,
+            isFinished: isFinished,
+            isSuspended: isSuspended,
+            hasProjectedBefore: showsScheduledInlineProjectionColumn12616,
+            hasCurrentChance: hasCurrent,
+            hasPrematchChance: hasPrematch,
+            hasScore: hasScore,
+            hasProjectedLive: showsInlineLiveProjected204C
+        )
+    }
+
+    private var teamsAndOdds: some View {
+        let drawChance = usesFinishedAccessibilityLayout
+            ? nil
+            : CompactGameCard12616.drawChanceText(
+                event: event,
+                isScheduled: isScheduled,
+                isLive: isLive,
+                isFinished: isFinished,
+                isSuspended: isSuspended
+            )
+
+        return VStack(spacing: 6) {
+            if !usesFinishedAccessibilityLayout && compactHeaders12616.hasAny {
+                compactHeaderRow
+            }
+
+            if usesFinishedAccessibilityLayout || usesLiveAccessibilityRowStack204C {
+                teamRow(
+                    name: event.awayTeam,
+                    avatar: event.avatar(home: false),
+                    color: awayColor,
+                    record: event.awayTeamData?.record,
+                    score: (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.awayScore : nil,
+                    won: awayWon,
+                    side: .away
+                )
+
+                if !compactScheduleStyle && usesFinishedAccessibilityLayout {
+                    probabilityBar
+                }
+
+                teamRow(
+                    name: event.homeTeam,
+                    avatar: event.avatar(home: true),
+                    color: homeColor,
+                    record: event.homeTeamData?.record,
+                    score: (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.homeScore : nil,
+                    won: homeWon,
+                    side: .home
+                )
+            } else if isThreeWayCard13121 {
+                threeWayCompetitorStack13121(drawChance: drawChance)
+            } else {
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 6) { topBarMetadata }
-                    VStack(alignment: .leading, spacing: 4) { topBarMetadata }
+                    compactCompetitorStack(rowWidth: 358, drawChance: drawChance, isFallback: false)
+                    compactCompetitorStack(rowWidth: 304, drawChance: drawChance, isFallback: false)
+                    compactCompetitorStack(rowWidth: 272, drawChance: drawChance, isFallback: false)
+                    compactCompetitorStack(rowWidth: 236, drawChance: drawChance, isFallback: true)
+                }
+            }
+
+            if !compactScheduleStyle && !usesFinishedAccessibilityLayout {
+                probabilityBar
+            }
+
+            if !compactScheduleStyle,
+               let livePregameSummary = LivePregameCardSummary213A.resolve(event: event) {
+                LivePregameSummaryRow214A1(
+                    summary: livePregameSummary,
+                    surface: .card,
+                    colors: (away: awayColor, home: homeColor),
+                    accessibilityIdentifier: "eventCard.livePregameSummary"
+                )
+            }
+
+            if !compactScheduleStyle, let scheduledProjectedLine = scheduledAccessibilityProjectedLine12616 {
+                CompactProjectedContextLine12616(
+                    text: scheduledProjectedLine.visible,
+                    spokenText: scheduledProjectedLine.spoken,
+                    accessibilityId: "eventCard.scheduledProjectedLine"
+                )
+            }
+
+            if !compactScheduleStyle {
+                if let finalForecast = finalForecast11296 {
+                    if usesFinishedAccessibilityLayout {
+                        FinalForecastLine11296(
+                            comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
+                            // Under the team names, past the 24pt crest and the row's 8pt gap.
+                            .padding(.leading, 32)
+                    } else {
+                        CompactProjectedContextLine12616(
+                            text: CompactGameCard12616.finalContextText(finalForecast),
+                            spokenText: FinalForecastComparison11296.spokenText(
+                                finalForecast, awayName: event.awayTeam, homeName: event.homeTeam),
+                            accessibilityId: FinalForecastLine11296.accessibilityIdentifier
+                        )
+                    }
                 }
             }
         }
     }
 
-    private var hasTopBarMetadata: Bool {
-        Confidence.normalize(event.confidenceTier) != nil
-            || personalizationBadge != nil
-            || EventCardHeadlinePill.isDrawn(headline: headline, isLive: isLive)
-    }
-
-    @ViewBuilder
-    private var topBarMetadata: some View {
-        SignalBarsView(tier: event.confidenceTier)
-        if let badge = personalizationBadge {
-            badge
-        }
-        if EventCardHeadlinePill.isDrawn(headline: headline, isLive: isLive), let headline {
-            Text(headline)
-                .font(.caption2)
-                .fontWeight(.semibold)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(.blue.opacity(0.12))
-                .foregroundStyle(.blue)
-                .clipShape(Capsule())
-        }
-    }
-
-    // MARK: - Personalization Badge
-
-    private var personalizationBadge: AnyView? {
-        guard let reasons = personalizationReasons, !reasons.isEmpty else { return nil }
-        // Parse first matching reason from "your_team:0.80" format
-        for reason in reasons {
-            let key = reason.split(separator: ":").first.map(String.init) ?? reason
-            switch key {
-            case "your_team":
-                return AnyView(badgeCapsule(text: "Your Team", color: .blue))
-            case "local":
-                return AnyView(badgeCapsule(text: "Local", color: .green))
-            case "alma_mater":
-                return AnyView(badgeCapsule(text: "Alma Mater", color: .purple))
-            case "rival_losing":
-                return AnyView(badgeCapsule(text: "Rival Losing", color: .orange))
-            default:
-                continue
-            }
-        }
-        return nil
-    }
-
-    private func badgeCapsule(text: String, color: Color) -> some View {
-        Text(text)
-            .font(.caption2)
-            .fontWeight(.semibold)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.12))
-            .foregroundStyle(color)
-            .clipShape(Capsule())
-    }
-
-    // MARK: - Teams + Odds (with inline scores)
-
-    private var teamsAndOdds: some View {
-        VStack(spacing: 6) {
-            teamRow(
+    private func compactCompetitorStack(
+        rowWidth: CGFloat,
+        drawChance: String?,
+        isFallback: Bool
+    ) -> some View {
+        let fontSize = sharedCompactTeamNameFontSize(forRowWidth: rowWidth)
+        return VStack(spacing: 6) {
+            singleRowTeamRow(
                 name: event.awayTeam,
                 avatar: event.avatar(home: false),
                 color: awayColor,
                 record: event.awayTeamData?.record,
-                score: (isLive || isFinished || isSuspended) ? event.awayScore : nil,
+                score: (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.awayScore : nil,
                 won: awayWon,
-                side: .away
+                side: .away,
+                nameFontSize: fontSize,
+                preventSingleWordTruncation: !isFallback
             )
-
-            probabilityBar
-
-            teamRow(
+            if let drawChance {
+                compactDrawRow(drawChance: drawChance, nameFontSize: fontSize)
+            }
+            singleRowTeamRow(
                 name: event.homeTeam,
                 avatar: event.avatar(home: true),
                 color: homeColor,
                 record: event.homeTeamData?.record,
-                score: (isLive || isFinished || isSuspended) ? event.homeScore : nil,
+                score: (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.homeScore : nil,
                 won: homeWon,
-                side: .home
+                side: .home,
+                nameFontSize: fontSize,
+                preventSingleWordTruncation: !isFallback
             )
+        }
+    }
 
-            if let finalForecast = finalForecast11296 {
-                FinalForecastLine11296(
-                    comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
-                    // Under the team names, past the 24pt crest and the row's 8pt gap.
-                    .padding(.leading, 32)
+    private var liveProjectedLabels204C: (away: String, home: String)? {
+        CompactGameCard12616.liveProjectedColumnLabels(
+            printed: liveProjectedFinal2920,
+            awayScore: event.awayScore,
+            homeScore: event.homeScore
+        )
+    }
+
+    private var showsInlineLiveProjected204C: Bool {
+        guard isLive, !isSuspended, liveProjectedLabels204C != nil else { return false }
+        if dynamicTypeSize.isAccessibilitySize {
+            return true
+        }
+        return CompactGameCard12616.liveInlinePregameFits(
+            awayShortName: shortTeamNames.away,
+            homeShortName: shortTeamNames.home,
+            typeSize: dynamicTypeSize
+        )
+    }
+
+    private var usesLiveAccessibilityRowStack204C: Bool {
+        isLive && !isSuspended && dynamicTypeSize.isAccessibilitySize && showsInlineLiveProjected204C
+    }
+
+    private var showsMediumColumn12616: Bool {
+        if isSuspended {
+            return hasDrawableScore250A
+        }
+        return compactHeaders12616.medium != nil
+    }
+
+    private var showsLargeColumn12616: Bool {
+        if isSuspended {
+            return prematch != nil
+        }
+        return compactHeaders12616.large != nil
+    }
+
+    private var effectiveMediumColWidth: CGFloat {
+        if isScheduled {
+            return min(compactProjectedWidth, 92)
+        }
+        if isFinished {
+            return min(max(compactPregameWidth, 60), 70)
+        }
+        return min(compactLiveScoreWidth, 52)
+    }
+
+    private var effectiveLiveProjectedColWidth204C: CGFloat {
+        min(compactLiveScoreWidth, 52)
+    }
+
+    private var effectiveLargeColWidth: CGFloat {
+        if isFinished { return min(compactLiveScoreWidth, 50) }
+        if isSuspended { return min(compactPregameWidth, 66) }
+        return min(compactLargeChanceWidth, 90)
+    }
+
+    private var pregameColumnLeadingGap12616: CGFloat {
+        showsMediumColumn12616 ? scoreToPregameGutter : 0
+    }
+
+    private var largeColumnLeadingGap12616: CGFloat {
+        if showsInlineLiveProjected204C {
+            return pregameToNowGap + 4
+        }
+        return showsMediumColumn12616 ? scoreToPregameGutter : 0
+    }
+
+    private var trailingColumnsClusterWidth12616: CGFloat {
+        let medW = showsMediumColumn12616 ? effectiveMediumColWidth : 0
+        let projW = showsInlineLiveProjected204C ? effectiveLiveProjectedColWidth204C + pregameColumnLeadingGap12616 : 0
+        let lrgW = showsLargeColumn12616 ? effectiveLargeColWidth + largeColumnLeadingGap12616 : 0
+        return medW + projW + lrgW
+    }
+
+    private var twoWayStandardNameFontSize13121: CGFloat {
+        min(compactNameSize, 21)
+    }
+
+    var isThreeWayCard13121: Bool {
+        DrawPricedWinner.sportPricesADraw(event.sport)
+            || CompactGameCard12616.hasExplicitThreeWayCurrent(event)
+            || CompactGameCard12616.hasExplicitThreeWayPrematch(event)
+    }
+
+    var resolvedCompactTeamNameFontSizeForTest13121: CGFloat {
+        isThreeWayCard13121 ? twoWayStandardNameFontSize13121 : sharedCompactTeamNameFontSize(forRowWidth: measuredCardWidth > 0 ? measuredCardWidth : 334)
+    }
+
+    private func threeWayNeedsStackedRow13121(cardWidth: CGFloat) -> Bool {
+        let reservedChrome: CGFloat = isFinished ? 59 : 42
+        let availableInlineNameWidth = cardWidth - reservedChrome - trailingColumnsClusterWidth12616
+        guard availableInlineNameWidth > 0 else { return true }
+        let maxWord = CardTeamNameSizing.maxSingleWordWidth(
+            names: [shortTeamNames.away, shortTeamNames.home],
+            fontSize: twoWayStandardNameFontSize13121,
+            weight: .bold
+        )
+        return maxWord > availableInlineNameWidth
+    }
+
+    @ViewBuilder
+    private func threeWayCompetitorStack13121(drawChance: String?) -> some View {
+        let fontSize = twoWayStandardNameFontSize13121
+        let effectiveWidth = measuredCardWidth > 0 ? measuredCardWidth : 334
+        let stacked = threeWayNeedsStackedRow13121(cardWidth: effectiveWidth)
+        let awayScore = (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.awayScore : nil
+        let homeScore = (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.homeScore : nil
+
+        VStack(spacing: 6) {
+            if stacked {
+                threeWayStackedTeamRow13121(
+                    name: event.awayTeam,
+                    avatar: event.avatar(home: false),
+                    color: awayColor,
+                    score: awayScore,
+                    won: awayWon,
+                    side: .away,
+                    nameFontSize: fontSize
+                )
+            } else {
+                singleRowTeamRow(
+                    name: event.awayTeam,
+                    avatar: event.avatar(home: false),
+                    color: awayColor,
+                    record: event.awayTeamData?.record,
+                    score: awayScore,
+                    won: awayWon,
+                    side: .away,
+                    nameFontSize: fontSize,
+                    unboundedWrap13121: true
+                )
             }
 
-            if let liveProjection = liveProjectedFinal2920 {
-                LiveProjectedFinalLine2920(
-                    printed: liveProjection, awayName: event.awayTeam, homeName: event.homeTeam,
-                    sportKey: event.sport)
-                    .padding(.leading, 32)
+            if let drawChance {
+                compactDrawRow(drawChance: drawChance, nameFontSize: fontSize)
             }
+
+            if stacked {
+                threeWayStackedTeamRow13121(
+                    name: event.homeTeam,
+                    avatar: event.avatar(home: true),
+                    color: homeColor,
+                    score: homeScore,
+                    won: homeWon,
+                    side: .home,
+                    nameFontSize: fontSize
+                )
+            } else {
+                singleRowTeamRow(
+                    name: event.homeTeam,
+                    avatar: event.avatar(home: true),
+                    color: homeColor,
+                    record: event.homeTeamData?.record,
+                    score: homeScore,
+                    won: homeWon,
+                    side: .home,
+                    nameFontSize: fontSize,
+                    unboundedWrap13121: true
+                )
+            }
+        }
+    }
+
+    private func threeWayStackedTeamRow13121(
+        name: String,
+        avatar: ParticipantAvatar,
+        color: Color,
+        score: Int?,
+        won: Bool,
+        side: TeamSide,
+        nameFontSize: CGFloat
+    ) -> some View {
+        let displayName = side == .away ? shortTeamNames.away : shortTeamNames.home
+        let isLoser = isFinished && !won && outcome != .draw
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .center, spacing: 6) {
+                TeamLogoView(
+                    url: avatar.url,
+                    teamName: name,
+                    color: color,
+                    size: 28,
+                    sportKey: event.sport,
+                    isPhotograph: avatar.isPhotograph,
+                    opponentName: side == .away ? event.homeTeam : event.awayTeam,
+                    abbreviation: side == .away ? event.awayTeamData?.abbreviation : event.homeTeamData?.abbreviation,
+                    opponentAbbreviation: side == .away ? event.homeTeamData?.abbreviation : event.awayTeamData?.abbreviation
+                )
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(displayName)
+                        .font(HeadlineStyleTable199.names(.card, isLoser: isLoser, scaledSize: nameFontSize))
+                        .foregroundStyle(won ? .primary : (isFinished && outcome != .draw ? .secondary : .primary))
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if isFinished, won {
+                        Text("\u{2713}")
+                            .font(HeadlineStyleTable199.secondNumbers(
+                                .card,
+                                prominent: true,
+                                scaledSize: min(nameFontSize, 18) * 0.85
+                            ))
+                            .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .accessibilityHidden(true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                Spacer(minLength: 0)
+                if showsMediumColumn12616 {
+                    reservedTrailingColumn13121(width: effectiveMediumColWidth) {
+                        mediumSlotView(score: score, won: won, side: side)
+                    }
+                }
+                if showsInlineLiveProjected204C {
+                    reservedTrailingColumn13121(width: effectiveLiveProjectedColWidth204C) {
+                        liveInlineProjectedSlotView(for: side)
+                    }
+                    .padding(.leading, pregameColumnLeadingGap12616)
+                }
+                if showsLargeColumn12616 {
+                    reservedTrailingColumn13121(width: effectiveLargeColWidth) {
+                        largeSlotView(score: score, won: won, side: side)
+                    }
+                    .padding(.leading, largeColumnLeadingGap12616)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var sharedCompactTeamNameFontSize: CGFloat {
+        sharedCompactTeamNameFontSize(forRowWidth: 330)
+    }
+
+    private func sharedCompactTeamNameFontSize(forRowWidth rowWidth: CGFloat) -> CGFloat {
+        let reservedChrome: CGFloat = isFinished ? 59 : 44
+        let availableWidth = max(rowWidth - reservedChrome - trailingColumnsClusterWidth12616, 48)
+        return CardTeamNameSizing.sharedWordSafeFontSize(
+            names: [shortTeamNames.away, shortTeamNames.home],
+            baseSize: min(compactNameSize, 21),
+            weight: .bold,
+            availableWidth: availableWidth,
+            minimumScale: 0.48
+        )
+    }
+
+    private var compactHeaderFont12616: Font {
+        HeadlineStyleTable199.headers(.card, scaledSize: min(compactHeaderSize, 13)).monospacedDigit()
+    }
+
+    private var compactHeaderRow: some View {
+        let headers = compactHeaders12616
+        return VStack(spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                Spacer(minLength: 0)
+                if showsMediumColumn12616 {
+                    Text(headers.medium ?? "")
+                        .font(compactHeaderFont12616)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(width: effectiveMediumColWidth, alignment: .trailing)
+                }
+                if showsInlineLiveProjected204C {
+                    Text(headers.pregame ?? "")
+                        .font(compactHeaderFont12616)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(width: effectiveLiveProjectedColWidth204C, alignment: .trailing)
+                        .padding(.leading, pregameColumnLeadingGap12616)
+                }
+                if showsLargeColumn12616 {
+                    Text(headers.large ?? "")
+                        .font(compactHeaderFont12616)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(width: effectiveLargeColWidth, alignment: .trailing)
+                        .padding(.leading, largeColumnLeadingGap12616)
+                }
+            }
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: 0.5)
         }
     }
 
@@ -491,58 +1129,329 @@ struct EventCardView: View {
         if usesFinishedAccessibilityLayout {
             finishedAccessibilityTeamRow(
                 name: name, avatar: avatar, color: color, score: score, won: won, side: side)
+        } else if usesLiveAccessibilityRowStack204C {
+            liveAccessibilityTeamRow204C(
+                name: name, avatar: avatar, color: color, score: score, won: won, side: side)
         } else {
             singleRowTeamRow(
                 name: name, avatar: avatar, color: color, record: record, score: score, won: won, side: side)
         }
     }
 
-    private func singleRowTeamRow(name: String, avatar: ParticipantAvatar, color: Color, record: String?, score: Int?, won: Bool, side: TeamSide) -> some View {
-        HStack(spacing: 8) {
+    private var accessibilityDisplayLabels: (away: String, home: String) {
+        if TeamShortName.isCollegeSport(sportKey: event.sport) {
+            return shortTeamNames
+        }
+        return (away: event.awayTeam, home: event.homeTeam)
+    }
+
+    private func sharedAccessibilityNameFontSize(
+        baseSize: CGFloat,
+        weight: Font.Weight,
+        reservedHorizontal: CGFloat
+    ) -> CGFloat {
+        let cardW = measuredCardWidth > 0 ? measuredCardWidth : 361
+        let labels = accessibilityDisplayLabels
+        return CardTeamNameSizing.sharedUnboundedWordSafeFontSize(
+            names: [labels.away, labels.home],
+            baseSize: baseSize,
+            weight: weight,
+            availableWidth: max(cardW - reservedHorizontal, 120),
+            minimumScale: 0.55
+        )
+    }
+
+    private func liveAccessibilityTeamRow204C(
+        name: String,
+        avatar: ParticipantAvatar,
+        color: Color,
+        score: Int?,
+        won: Bool,
+        side: TeamSide
+    ) -> some View {
+        let displayLabel = side == .away ? accessibilityDisplayLabels.away : accessibilityDisplayLabels.home
+        let nameSize = sharedAccessibilityNameFontSize(
+            baseSize: compactNameSize,
+            weight: .semibold,
+            reservedHorizontal: 0
+        )
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(displayLabel)
+                .font(.system(size: nameSize, weight: .semibold))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(alignment: .center, spacing: 8) {
+                TeamLogoView(
+                    url: avatar.url,
+                    teamName: name,
+                    color: color,
+                    size: 24,
+                    sportKey: event.sport,
+                    isPhotograph: avatar.isPhotograph,
+                    opponentName: side == .away ? event.homeTeam : event.awayTeam,
+                    abbreviation: side == .away ? event.awayTeamData?.abbreviation : event.homeTeamData?.abbreviation,
+                    opponentAbbreviation: side == .away ? event.homeTeamData?.abbreviation : event.awayTeamData?.abbreviation
+                )
+                Spacer(minLength: 0)
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    if showsMediumColumn12616 {
+                        reservedTrailingColumn13121(width: effectiveMediumColWidth) {
+                            mediumSlotView(score: score, won: won, side: side)
+                        }
+                    }
+                    if showsInlineLiveProjected204C {
+                        reservedTrailingColumn13121(width: effectiveLiveProjectedColWidth204C) {
+                            liveInlineProjectedSlotView(for: side)
+                        }
+                        .padding(.leading, pregameColumnLeadingGap12616)
+                    }
+                    if showsLargeColumn12616 {
+                        reservedTrailingColumn13121(width: effectiveLargeColWidth) {
+                            largeSlotView(score: score, won: won, side: side)
+                        }
+                        .padding(.leading, largeColumnLeadingGap12616)
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func reservedTrailingColumn13121<Content: View>(
+        width: CGFloat,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        ZStack(alignment: .trailing) {
+            Text("0")
+                .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactScoreSize, 20)))
+                .opacity(0)
+                .accessibilityHidden(true)
+            content()
+        }
+        .frame(width: width, alignment: .trailing)
+    }
+
+    private func singleRowTeamRow(
+        name: String,
+        avatar: ParticipantAvatar,
+        color: Color,
+        record: String?,
+        score: Int?,
+        won: Bool,
+        side: TeamSide,
+        nameFontSize: CGFloat? = nil,
+        preventSingleWordTruncation: Bool = false,
+        unboundedWrap13121: Bool = false
+    ) -> some View {
+        let resolvedNameFontSize = nameFontSize ?? sharedCompactTeamNameFontSize
+        let displayName = side == .away ? shortTeamNames.away : shortTeamNames.home
+        return HStack(spacing: 6) {
             TeamLogoView(
                 url: avatar.url,
                 teamName: name,
                 color: color,
-                size: isLive ? 28 : 24,
+                size: 28,
                 sportKey: event.sport,
                 isPhotograph: avatar.isPhotograph,
                 // #4720 — this card stacks both rows, so each circle is resolved
                 // against the other side rather than on its own.
-                opponentName: side == .away ? event.homeTeam : event.awayTeam
+                opponentName: side == .away ? event.homeTeam : event.awayTeam,
+                abbreviation: side == .away ? event.awayTeamData?.abbreviation : event.homeTeamData?.abbreviation,
+                opponentAbbreviation: side == .away ? event.homeTeamData?.abbreviation : event.awayTeamData?.abbreviation
             )
-            Text(name)
-                .font(.subheadline)
-                .fontWeight(won ? .bold : .medium)
-                // #4915 — `!won` was standing in for "lost", and on a level
-                // result both sides are `!won`, so a finished draw greyed BOTH
-                // teams. The draw is exempted rather than the rule rewritten:
-                // a finished row we hold no score for keeps today's settled dim,
-                // which is a different treatment answering a different question.
-                .foregroundStyle(won ? .primary : (isFinished && outcome != .draw ? .secondary : .primary))
-                // #9483 — "Pregame" costs the row width; on a narrow phone it
-                // would cut a name that used to fit, so a finished card with a
-                // pre-game reading lets the name take a second line instead.
-                // One line whenever it fits; every other card is unchanged.
-                .lineLimit(isFinished && prematch != nil ? 2 : 1)
-            if let record, !isFinished {
-                Text(record)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+            let singleWord = !displayName.contains(" ")
+            let isLoser = isFinished && !won && outcome != .draw
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(displayName)
+                    .font(HeadlineStyleTable199.names(.card, isLoser: isLoser, scaledSize: resolvedNameFontSize))
+                    // #4915 — `!won` was standing in for "lost", and on a level
+                    // result both sides are `!won`, so a finished draw greyed BOTH
+                    // teams.
+                    .foregroundStyle(won ? .primary : (isFinished && outcome != .draw ? .secondary : .primary))
+                    .lineLimit(unboundedWrap13121 ? nil : (singleWord ? 1 : 2))
+                    .allowsTightening(!unboundedWrap13121)
+                    .fixedSize(horizontal: !unboundedWrap13121 && singleWord && preventSingleWordTruncation, vertical: true)
+                if isFinished {
+                    Text("\u{2713}")
+                        .font(HeadlineStyleTable199.secondNumbers(
+                            .card,
+                            prominent: true,
+                            scaledSize: min(resolvedNameFontSize, 18) * 0.85
+                        ))
+                        .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .opacity(won ? 1 : 0)
+                        .accessibilityHidden(true)
+                }
             }
-            Spacer()
+            Spacer(minLength: 8)
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                if showsMediumColumn12616 {
+                    reservedTrailingColumn13121(width: effectiveMediumColWidth) {
+                        mediumSlotView(score: score, won: won, side: side)
+                    }
+                }
+                if showsInlineLiveProjected204C {
+                    reservedTrailingColumn13121(width: effectiveLiveProjectedColWidth204C) {
+                        liveInlineProjectedSlotView(for: side)
+                    }
+                    .padding(.leading, pregameColumnLeadingGap12616)
+                }
+                if showsLargeColumn12616 {
+                    reservedTrailingColumn13121(width: effectiveLargeColWidth) {
+                        largeSlotView(score: score, won: won, side: side)
+                    }
+                    .padding(.leading, largeColumnLeadingGap12616)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func liveInlineProjectedSlotView(for side: TeamSide) -> some View {
+        let label = side == .home ? liveProjectedLabels204C?.home : liveProjectedLabels204C?.away
+        if let label {
+            Text(label)
+                .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactScoreSize, 20)))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    @ViewBuilder
+    private func mediumSlotView(score: Int?, won: Bool, side: TeamSide) -> some View {
+        if isScheduled {
+            if let pair = scheduledProjection12616 {
+                let value = side == .home ? pair.home : pair.away
+                Text("\(value)")
+                    .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactScoreSize, 20)))
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        } else if isFinished {
+            settledMediumOddsLabel(for: side)
+        } else if let score {
+            Text("\(score)")
+                .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactScoreSize, 20)))
+                // #4915 — a SUSPENDED row's scores keep their dim; the draw is
+                // the one settled arm that moves.
+                .foregroundStyle(isLive ? .primary : (won || outcome == .draw ? .primary : .secondary))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    private func settledMediumOddsLabel(for side: TeamSide) -> some View {
+        preGameOddsLabel(for: side)
+    }
+
+    @ViewBuilder
+    private func largeSlotView(score: Int?, won: Bool, side: TeamSide) -> some View {
+        if isFinished {
             if let score {
+                let prominent = won || outcome == .draw
                 Text("\(score)")
-                    .font(isLive ? .title3.monospacedDigit() : .subheadline.monospacedDigit())
-                    .fontWeight(isLive ? .bold : (won ? .bold : .regular))
-                    // #4915 — same exemption, and only that: a SUSPENDED row's
-                    // scores keep their dim (neither side has won anything yet),
-                    // so the draw is the one arm that moves.
-                    .foregroundStyle(isLive ? .primary : (won || outcome == .draw ? .primary : .secondary))
+                    .font(HeadlineStyleTable199.secondNumbers(
+                        .card,
+                        prominent: prominent,
+                        scaledSize: prominent ? min(compactLargeSize, 24) : min(compactScoreSize, 20)
+                    ))
+                    .foregroundStyle(prominent ? .primary : .secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
-            if canStillBeGraded {
-                probabilityWithMovement(for: side)
-            } else {
-                preGameOddsLabel(for: side)
+        } else {
+            chanceSlotView(for: side)
+        }
+    }
+
+    @ViewBuilder
+    private func chanceSlotView(for side: TeamSide) -> some View {
+        if canStillBeGraded {
+            probabilityWithMovement(for: side)
+        } else {
+            preGameOddsLabel(for: side)
+        }
+    }
+
+    private func compactDrawRow(drawChance: String, nameFontSize: CGFloat? = nil) -> some View {
+        let resolvedNameFontSize = nameFontSize ?? sharedCompactTeamNameFontSize
+        let drawWon = isFinished && outcome == .draw
+        return HStack(spacing: 6) {
+            ZStack {
+                Circle()
+                    .fill(Color.secondary.opacity(0.16))
+                    .frame(width: 28, height: 28)
+                Text("=")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(DS.textSecondaryReadable)
+            }
+            .accessibilityHidden(true)
+
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("Draw")
+                    .font(HeadlineStyleTable199.names(.card, isLoser: isFinished && !drawWon, scaledSize: resolvedNameFontSize))
+                    .foregroundStyle(isFinished ? (drawWon ? .primary : .secondary) : .primary)
+                    .lineLimit(1)
+                if isFinished {
+                    Text("\u{2713}")
+                        .font(HeadlineStyleTable199.secondNumbers(
+                            .card,
+                            prominent: true,
+                            scaledSize: min(resolvedNameFontSize, 18) * 0.85
+                        ))
+                        .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .opacity(drawWon ? 1 : 0)
+                        .accessibilityHidden(true)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                if showsMediumColumn12616 {
+                    reservedTrailingColumn13121(width: effectiveMediumColWidth) {
+                        if isFinished {
+                            Text(drawChance)
+                                .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactPregameSize, 18)))
+                                .foregroundStyle(DS.textSecondaryReadable)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                    }
+                }
+
+                if showsInlineLiveProjected204C {
+                    Color.clear
+                        .frame(width: effectiveLiveProjectedColWidth204C, height: 1)
+                        .padding(.leading, pregameColumnLeadingGap12616)
+                }
+
+                if showsLargeColumn12616 {
+                    Group {
+                        if isFinished {
+                            Text("0")
+                                .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactScoreSize, 20)))
+                                .opacity(0)
+                                .accessibilityHidden(true)
+                        } else {
+                            Text(drawChance)
+                                .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
+                                .foregroundStyle(DS.textSecondaryReadable)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                    }
+                    .frame(width: effectiveLargeColWidth, alignment: .trailing)
+                    .padding(.leading, largeColumnLeadingGap12616)
+                }
             }
         }
     }
@@ -566,20 +1475,28 @@ struct EventCardView: View {
     /// downward rather than squeezing the number. Same selection, rounding,
     /// withholding and colour as the single row; no number, no block.
     private func finishedAccessibilityTeamRow(name: String, avatar: ParticipantAvatar, color: Color, score: Int?, won: Bool, side: TeamSide) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        let displayLabel = side == .away ? accessibilityDisplayLabels.away : accessibilityDisplayLabels.home
+        let crestSize: CGFloat = isLive ? 28 : 24
+        let nameSize = sharedAccessibilityNameFontSize(
+            baseSize: finishedAccessibilityNameSize,
+            weight: .bold,
+            reservedHorizontal: crestSize + 8
+        )
+        return VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .top, spacing: 8) {
                 TeamLogoView(
                     url: avatar.url,
                     teamName: name,
                     color: color,
-                    size: isLive ? 28 : 24,
+                    size: crestSize,
                     sportKey: event.sport,
                     isPhotograph: avatar.isPhotograph,
-                    opponentName: side == .away ? event.homeTeam : event.awayTeam
+                    opponentName: side == .away ? event.homeTeam : event.awayTeam,
+                    abbreviation: side == .away ? event.awayTeamData?.abbreviation : event.homeTeamData?.abbreviation,
+                    opponentAbbreviation: side == .away ? event.homeTeamData?.abbreviation : event.awayTeamData?.abbreviation
                 )
-                Text(name)
-                    .font(.subheadline)
-                    .fontWeight(won ? .bold : .medium)
+                Text(displayLabel)
+                    .font(.system(size: nameSize, weight: won ? .bold : .medium))
                     .foregroundStyle(won ? .primary : (isFinished && outcome != .draw ? .secondary : .primary))
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -625,35 +1542,27 @@ struct EventCardView: View {
         static func hasContent(
             reason: String?,
             isLive: Bool,
-            awayOpening: Double?,
-            homeOpening: Double?,
-            sport: String?
+            isFinished: Bool = false,
+            awayOpening: Double? = nil,
+            homeOpening: Double? = nil,
+            sport: String? = nil
         ) -> Bool {
-            if let reason, !reason.isEmpty { return true }
-            // #5363 — a draw-priced sport draws the named single-sided caption
-            // ("Opened Boca 68%"), so HOME alone is content there. Taking the
-            // sport rather than a pre-computed Bool keeps this function's
-            // agreement with `footerRow` decidable from the same inputs the
-            // view has; the guard test pins both arms in both directions.
-            guard isLive, homeOpening != nil else { return false }
-            // Mirrors `footerRow`'s two branches: the "Opened X/Y" pair needs
-            // BOTH sides priced, and the named single-sided caption needs the
-            // rule to fire. Home alone on a two-way sport still renders
-            // nothing, so it is still not content.
-            return awayOpening != nil || DrawPricedWinner.sportPricesADraw(sport)
+            // #12616 / Ruling 182-A + Direction 199 / Ruling 204-C — live and
+            // finished game cards draw no grey sentence under the bar; records
+            // captions ("TOR 77-80 · BAL 76-81") are dropped so `footerRow` draws
+            // only a real pre-game reason to care.
+            guard !isFinished, let reason, !reason.isEmpty else { return false }
+            guard !isLive else { return false }
+            guard !CompactGameCard12616.isRecordsCaption(reason) else { return false }
+            return true
         }
 
         /// #11422 — whether the served reason already says where the game
         /// STARTED. Every live claim `feed_reasons.py` writes carries the
         /// kickoff price ("New Orleans Pelicans leading after starting at 44%",
-        /// "… chance rose from 46% to 87%", "… chance fell from …"), and the
-        /// footer then printed "Opened 56%/44%" beside it: the same fact twice,
-        /// one of them as a pair the reader has to map back onto the sentence.
-        /// When the reason says it, the caption steps aside.
-        ///
-        /// Pinned to the TEMPLATE's words around the number, never a bare
-        /// keyword, for the reason `reasonStyle` gives: the sentence has a team
-        /// name in it, and "after starting at 44%" is the part no name can forge.
+        /// "… chance rose from 46% to 87%", "… chance fell from …"). When the
+        /// reason says it, the live `pregame` label steps aside so the
+        /// card never states the start twice.
         static func reasonStatesTheOpening(_ reason: String?) -> Bool {
             guard let reason, !reason.isEmpty else { return false }
             return reason.range(
@@ -667,6 +1576,7 @@ struct EventCardView: View {
         if EventCardFooter.hasContent(
             reason: reason,
             isLive: isLive,
+            isFinished: isFinished,
             awayOpening: event.openingOdds?.awayProbability,
             homeOpening: event.openingOdds?.homeProbability,
             sport: event.sport
@@ -677,75 +1587,22 @@ struct EventCardView: View {
 
     private var footerRow: some View {
         HStack(spacing: 6) {
-            if let reason, !reason.isEmpty {
-                reasonBadge(reason)
+            if !isFinished, !isLive, let cleaned = CompactGameCard12616.sanitizedReason(reason), !cleaned.isEmpty {
+                reasonBadge(cleaned)
             }
-            Spacer()
-            // UX-P166 — both sides of one question in fixed positions is a DUEL,
-            // and rounding the two independently printed 101. Measured on
-            // production 2026-08-29: all 24,117 events carrying an opening line
-            // are complement pairs and 207 of them print 101, none 99.
-            //
-            // This line claimed "same rule and same helper as the `currentOdds`
-            // strip" while that strip was still rounding per side (#3049) — it was
-            // the only site on the card that HAD the rule. It now reads the shared
-            // `openingPercents`, so the claim is true and there is one derivation
-            // per odds source rather than a third copy.
-            //
-            // #5363 — `opening_odds` is a complement pair too
-            // (`opening_away_probability or round(1 - home, 4)`), so on a
-            // draw-priced sport this caption told the same lie the strip did.
-            // The withheld arm is the event page's, word for word: a caption
-            // that has lost one of its pair has lost the positional attribution
-            // that let the other go unnamed, so it NAMES the side (#3430 —
-            // via the pair, because "Tigers" is not a name when both shorten
-            // to it).
-            if isLive, !EventCardFooter.reasonStatesTheOpening(reason),
-               let opened = DrawPricedWinner.printablePair(
-                away: event.openingOdds?.awayProbability,
-                home: event.openingOdds?.homeProbability,
-                sport: event.sport) {
-                if let awayOpen = opened.away {
-                    Text("Opened \(formatProbability(awayOpen, renderedPercent: openingPercents[0]))/\(formatProbability(opened.home, renderedPercent: openingPercents[1]))")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                } else {
-                    let named = TeamShortName.shortPair(
-                        away: event.awayTeam, home: event.homeTeam,
-                        sportKey: event.sport
-                    )
-                    Text("Opened \(named.home) \(formatProbability(opened.home))")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
+            Spacer(minLength: 0)
         }
     }
 
     private func reasonBadge(_ text: String) -> some View {
-        let (icon, color) = reasonStyle(text)
-        return HStack(spacing: 3) {
-            if let icon {
-                Image(systemName: icon)
-                    .font(.system(size: 9, weight: .semibold))
-            }
-            Text(text)
-                .font(.caption2)
-                .fontWeight(.medium)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .foregroundStyle(color)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(color.opacity(0.1))
-        // #11422 — a Capsule's radius is half its height, so a sentence that
-        // wrapped to three lines had its first and last letters cut off by its
-        // own ends. A fixed radius reads as the same pill on one line and
-        // leaves every letter of a wrapped one inside the shape.
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        // The sentence outranks the "Opened" caption beside it for the width.
-        .layoutPriority(1)
+        // Ruling 182-A — a capsule is ONLY for live status; a real reason to
+        // care is a plain readable-grey line, never a coloured icon pill.
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(DS.textSecondaryReadable)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .layoutPriority(1)
     }
 
     /// Which badge family a served reason belongs to. (#5749)
@@ -847,25 +1704,52 @@ struct EventCardView: View {
         )
     }
 
-    /// The two percents the OPENING line prints, `[away, home]`.
-    ///
-    /// No served values: `current_odds.{away,home}_rendered_percent` describes
-    /// `current_odds` and nothing else, and handing that rounding to another
-    /// source's probability prints a mismatched pair that still sums to 100 — the
-    /// one error a sum guard cannot see (`RenderedPercent.swift`).
-    private var openingPercents: [Int?] {
-        renderedDuelPercents(
-            away: event.openingOdds?.awayProbability,
-            home: event.openingOdds?.homeProbability
-        )
-    }
-
-    /// #8622 — the pre-match reading a finished row prints: the server's
-    /// ladder rung (`prematch_odds`), which its reason line is written from,
-    /// with `opening_odds` only as the fallback. The live footer's "Opened"
-    /// caption keeps `openingPercents`: that one IS the opening line.
+    /// #8622 / #12616 — the pre-match reading that BOTH the finished `Pregame`
+    /// column AND the live `Pregame` context line + bar notch read: the server's
+    /// ladder rung (`prematch_odds`), with `opening_odds` as the fallback.
     private var prematch: PrematchReading? {
         PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds)
+    }
+
+    /// #12616 (161-B) — the live card's starting-chance clause in the one quiet
+    /// grey context line (`"Pregame 54%–46%"`, away then home like the rows, or
+    /// `"Pregame Boca 68%"` when away is a two-way soccer complement under #5363),
+    /// derived from `prematch` so it always agrees with the bar's pregame notch.
+    /// Steps aside when the served `reason` already states the opening (#11422).
+    private var livePregameContext12616: (visible: String, spoken: String)? {
+        guard isLive, !isSuspended,
+              !EventCardFooter.reasonStatesTheOpening(reason),
+              let reading = prematch else { return nil }
+        if CompactGameCard12616.hasExplicitThreeWayPrematch(event) {
+            let awayText = formatProbability(reading.awayProbability, renderedPercent: reading.percents[0])
+            let homeText = formatProbability(reading.homeProbability, renderedPercent: reading.percents[1])
+            return (
+                visible: "Pregame \(awayText)\u{2013}\(homeText)",
+                spoken: "Pregame \(event.awayTeam) \(awayText), \(event.homeTeam) \(homeText)"
+            )
+        }
+        guard let opened = DrawPricedWinner.printablePair(
+            away: reading.awayProbability,
+            home: reading.homeProbability,
+            sport: event.sport
+        ) else { return nil }
+        if let awayOpen = opened.away {
+            let awayText = formatProbability(awayOpen, renderedPercent: reading.percents[0])
+            let homeText = formatProbability(opened.home, renderedPercent: reading.percents[1])
+            return (
+                visible: "Pregame \(awayText)\u{2013}\(homeText)",
+                spoken: "Pregame \(event.awayTeam) \(awayText), \(event.homeTeam) \(homeText)"
+            )
+        }
+        let named = TeamShortName.shortPair(
+            away: event.awayTeam, home: event.homeTeam,
+            sportKey: event.sport
+        )
+        let homeText = formatProbability(opened.home)
+        return (
+            visible: "Pregame \(named.home) \(homeText)",
+            spoken: "Pregame \(event.homeTeam) \(homeText)"
+        )
     }
 
     /// #5363 — whether this card may print an AWAY probability at all.
@@ -882,34 +1766,50 @@ struct EventCardView: View {
     /// The rows are already named — logo, then team, then the number — so the
     /// withheld side simply renders nothing, and nothing has to be renamed. The
     /// collapse-to-one-number surfaces are the ones that name their survivor.
-    private var awayIsWithheld: Bool {
+    /// #5363 / #12616 — whether each reading on this card may print an AWAY
+    /// probability. Decided per reading (`current_odds` vs `prematch`) so a
+    /// three-way pregame reading never un-withholds a two-way live complement
+    /// (`1 - home`), nor vice versa on a finished card.
+    private var currentAwayIsWithheld: Bool {
         DrawPricedWinner.sportPricesADraw(event.sport)
+            && !CompactGameCard12616.hasExplicitThreeWayCurrent(event)
+            && !awayReadingIsServerVerified
+    }
+
+    private var prematchAwayIsWithheld: Bool {
+        DrawPricedWinner.sportPricesADraw(event.sport)
+            && !CompactGameCard12616.hasExplicitThreeWayPrematch(event)
+            && !awayReadingIsServerVerified
+    }
+
+    private var liveTenthsPair12616: (away: String?, home: String?) {
+        CompactGameCard12616.liveTenthsStrings(
+            away: event.currentOdds?.awayProbability,
+            home: event.currentOdds?.homeProbability,
+            awayIsWithheld: currentAwayIsWithheld
+        )
     }
 
     @ViewBuilder
     private func probabilityWithMovement(for side: TeamSide) -> some View {
         let prob: Double? = side == .home
             ? event.currentOdds?.homeProbability
-            : (awayIsWithheld ? nil : event.currentOdds?.awayProbability)
-        let openProb: Double? = side == .home
-            ? event.openingOdds?.homeProbability
-            : (awayIsWithheld ? nil : event.openingOdds?.awayProbability)
+            : (currentAwayIsWithheld ? nil : event.currentOdds?.awayProbability)
         let color = side == .home ? homeColor : awayColor
 
         if let prob {
-            HStack(spacing: 3) {
-                if isLive, let openProb {
-                    let shift = prob - openProb
-                    if abs(shift) > 0.02 {
-                        Image(systemName: shift > 0 ? "arrow.up" : "arrow.down")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(shift > 0 ? Color.green : Color.red)
-                    }
-                }
-                Text(formatProbability(prob, renderedPercent: side == .home ? livePercents[1] : livePercents[0]))
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
+            if isLive, let tenths = (side == .home ? liveTenthsPair12616.home : liveTenthsPair12616.away) {
+                Text(tenths)
+                    .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                     .foregroundStyle(color)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            } else {
+                Text(formatProbability(prob, renderedPercent: side == .home ? livePercents[1] : livePercents[0]))
+                    .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         }
     }
@@ -942,30 +1842,20 @@ struct EventCardView: View {
     @ViewBuilder
     private func preGameOddsLabel(for side: TeamSide, labelled: Bool = false) -> some View {
         let reading = prematch
-        // #5363 — the settled row's pre-game number is the same complement.
+        // #5363 — the settled row's pre-game number is gated on the pre-match reading itself.
         let prob: Double? = side == .home
             ? reading?.homeProbability
-            : (awayIsWithheld ? nil : reading?.awayProbability)
+            : (prematchAwayIsWithheld ? nil : reading?.awayProbability)
         if let prob {
-            let wasHeavyFavorite = prob > 0.7
-            let won = (side == .home && homeWon) || (side == .away && awayWon)
-            // #9490 — against the side it beat on the same reading, not a
-            // fixed cut: on a three-way board 39.5% can be the favourite.
-            let isUpset = won && (reading?.winnerWasUnderdog(
-                homeWon: homeWon, awayWon: awayWon, pricesADraw: awayIsWithheld) ?? false)
-
-            let number = HStack(spacing: 2) {
-                Text(formatProbability(prob, renderedPercent: reading?.percents[side == .home ? 1 : 0]))
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
-            }
-            .foregroundStyle(
-                isUpset ? .orange :
-                (won && wasHeavyFavorite) ? .secondary :
-                .secondary.opacity(0.7)
-            )
+            let text = formatProbability(prob, renderedPercent: reading?.percents[side == .home ? 1 : 0])
             if labelled {
+                let number = HStack(spacing: 2) {
+                    Text(text)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
+                }
+                .foregroundStyle(DS.textSecondaryReadable)
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Pregame win chance")
                         .font(.caption)
@@ -975,39 +1865,45 @@ struct EventCardView: View {
                         .fixedSize()
                 }
             } else if isFinished {
-                HStack(spacing: 4) {
-                    Text("Pregame")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    number
-                }
-                .fixedSize()
+                Text(text)
+                    .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactPregameSize, 18)))
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .lineLimit(1)
+                    .fixedSize()
             } else {
-                number
+                Text(text)
+                    .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactPregameSize, 18)))
+                    .foregroundStyle(.secondary.opacity(0.7))
+                    .lineLimit(1)
             }
         }
     }
 
     @ViewBuilder
     private var probabilityBar: some View {
+        let reading = prematch
+        let prematchThreeWayDraw = CompactGameCard12616.hasExplicitThreeWayPrematch(event)
+            ? event.prematchOdds?.drawProbability
+            : nil
+        let currentThreeWayDraw = CompactGameCard12616.hasExplicitThreeWayCurrent(event)
+            ? event.currentOdds?.drawProbability
+            : nil
+        let activeBarThreeWay = isFinished
+            ? (prematchThreeWayDraw != nil)
+            : (currentThreeWayDraw != nil)
+        let notch = CompactGameCard12616.pregameBarNotch(
+            prematch: reading,
+            prematchDraw: prematchThreeWayDraw,
+            barShowsThreeWayDraw: activeBarThreeWay,
+            sportPricesADraw: DrawPricedWinner.sportPricesADraw(event.sport),
+            isLive: isLive,
+            isFinished: isFinished,
+            isSuspended: isSuspended
+        )
         if isFinished {
-            if let reading = prematch {
-                ProbabilityBar(
-                    awayProb: reading.awayProbability,
-                    homeProb: reading.homeProbability,
-                    // #5363 — the bar KEEPS its remainder, because the two
-                    // segments are a partition and "not the home team" is a
-                    // true quantity. What it is not is the away team, so it
-                    // loses that team's colour along with its number and reads
-                    // as the neutral rest of the whole. The event page settled
-                    // this in #5271; the card family follows it exactly.
-                    awayColor: awayIsWithheld
-                        ? Color.secondary.opacity(0.25)
-                        : awayColor.opacity(0.5),
-                    homeColor: homeColor.opacity(0.5),
-                    height: 5
-                )
-            }
+            // One layout per state: finished cards print Pregame · Final with the
+            // tick after the winner's score and no probability bar.
+            EmptyView()
         } else if isSuspended {
             // live/048 — no bar. It would be the last live blend on a match
             // nothing is reporting on, drawn at full width and full colour: the
@@ -1020,13 +1916,15 @@ struct EventCardView: View {
             ProbabilityBar(
                 awayProb: away,
                 homeProb: home,
+                drawProb: currentThreeWayDraw,
                 // #5363 — see the settled bar above: the remainder survives, the
                 // away team's colour does not.
-                awayColor: awayIsWithheld ? Color.secondary.opacity(0.25) : awayColor,
+                awayColor: currentAwayIsWithheld ? Color.secondary.opacity(0.25) : awayColor,
                 homeColor: homeColor,
-                height: isLive ? 10 : 8,
+                height: 6,
                 animated: isLive,
-                glowing: isLive
+                glowing: isLive,
+                notchProb: currentAwayIsWithheld ? nil : notch
             )
         }
     }

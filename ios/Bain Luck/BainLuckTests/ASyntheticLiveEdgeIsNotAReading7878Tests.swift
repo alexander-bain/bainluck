@@ -134,15 +134,20 @@ final class ASyntheticLiveEdgeIsNotAReading7878Tests: XCTestCase {
         XCTAssertEqual(segments.map(\.count), [3])
     }
 
-    /// An interior hole still breaks, and the edge after it still follows the
-    /// trailing rule — the two judgements are independent.
+    /// Under Decision 164 (#12639), an interior hole joins into one connected
+    /// series, while the trailing `live_edge` still follows the trailing support rule.
     func testAnInteriorHoleStillBreaksWithAnEdgePresent() {
         let readings = real([60, 180, 300, 420, 540, 12_000, 12_120])
-        let segments = OddsChartView.observationSegments(
+        let supported = OddsChartView.observationSegments(
             readings + [edge(12_200)], gameStart: Self.commence)
 
-        XCTAssertEqual(segments.map(\.count), [5, 3])
-        XCTAssertEqual(segments.last?.last?.isLiveEdge, true)
+        XCTAssertEqual(supported.map(\.count), [8])
+        XCTAssertEqual(supported.last?.last?.isLiveEdge, true)
+
+        let unsupported = OddsChartView.observationSegments(
+            readings + [edge(15_000)], gameStart: Self.commence)
+        XCTAssertEqual(unsupported.map(\.count), [7])
+        XCTAssertFalse(unsupported.joined().contains(where: \.isLiveEdge))
     }
 
     // MARK: - Score Differential

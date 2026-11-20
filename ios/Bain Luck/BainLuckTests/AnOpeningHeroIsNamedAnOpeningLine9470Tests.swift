@@ -1,8 +1,8 @@
 import XCTest
 @testable import Bain_Luck
 
-/// #9470 — an event whose server hero is `hero_probability_source: "opening"`
-/// is printed as an opening line, not as a current "Win Probability".
+/// #9470 pins the legacy opening-line resolver. #12824 keeps its historical
+/// odds out of the current chance on the unified headline.
 ///
 /// The specimen is production's 14780556 (Packers v Bears, Oct 11) as served
 /// 2026-09-28 22:5xZ: hero 0.5996 from `opening`, `current_odds` the same
@@ -13,7 +13,7 @@ import XCTest
 final class AnOpeningHeroIsNamedAnOpeningLine9470Tests: XCTestCase {
     private func event(
         status: String = "scheduled", source: String = "opening",
-        hero: Double = 0.5996, heroAway: String = "0.4004",
+        hero: Double? = 0.5996, heroAway: String = "0.4004",
         current: Double = 0.5996
     ) throws -> EventDetail {
         let decoder = JSONDecoder()
@@ -25,7 +25,7 @@ final class AnOpeningHeroIsNamedAnOpeningLine9470Tests: XCTestCase {
            "home_rendered_percent":\(Int((current * 100).rounded())),
            "away_rendered_percent":\(Int(((1 - current) * 100).rounded())),
            "captured_at":"2026-09-13T15:10:39.053494+00:00","bookmaker_count":2},
-         "hero_probability":\(hero),"hero_probability_away":\(heroAway),
+         "hero_probability":\(hero.map { String($0) } ?? "null"),"hero_probability_away":\(heroAway),
          "hero_probability_source":"\(source)","hero_probability_observed_at":null,
          "win_probability_sources":{"betting_book_count":{"value":1.0,"display_name":"betting_book_count","type":"model"}}}
         """.utf8))
@@ -72,31 +72,56 @@ final class AnOpeningHeroIsNamedAnOpeningLine9470Tests: XCTestCase {
         XCTAssertEqual(hero.homeProbability, 0.78)
     }
 
-    func testAnUnusableHeroFallsBackToCurrentOdds() throws {
-        for bad in [0.0, 1.0] {
-            let hero = try resolve(event(hero: bad, heroAway: "null", current: 0.55))
-            XCTAssertFalse(hero.isOpeningLine, "\(bad)")
-            XCTAssertEqual(hero.homeProbability, 0.55)
+    func testAnUnusableOpeningHeroDoesNotPromoteCachedOdds() throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-11T19:25:00Z"))
+        for bad: Double? in [nil, 0, 1] {
+            let event = try event(hero: bad, heroAway: "null", current: 0.55)
+            let hero = try resolve(event)
+            XCTAssertFalse(hero.isOpeningLine)
+            XCTAssertNil(hero.homeProbability)
+            XCTAssertNil(hero.awayProbability)
+            XCTAssertNil(hero.homeRenderedPercent)
+            XCTAssertNil(hero.awayRenderedPercent)
+
+            let answer = ProbabilityAnswer10873.gameBothSides(event, now: now)
+            XCTAssertEqual(answer.kind, .unavailable)
+            XCTAssertFalse(answer.text.contains("55%"))
+
+            let sheet = EventAtlasDetailsSheetModel11666.fromHeadline(
+                event: event, phase: nil, observedAt: nil, liveStatus: .awaitingUpdate, now: now
+            )
+            XCTAssertEqual(sheet.primaryReadingValue, "No recent probability")
         }
     }
 
-    /// The view reads the resolved pair, drops the bars and the since-open
-    /// caption on the opening arm, and prints the caption constant.
-    func testTheHeroIsWiredThroughTheResolver() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let page = try String(contentsOf: root.appendingPathComponent("Bain Luck/Views/EventDetailView.swift"),
-                              encoding: .utf8)
-        let start = try XCTUnwrap(page.range(of: "} else if let odds = event.currentOdds,"))
-        let end = try XCTUnwrap(page.range(of: "// Projected final score.", range: start.upperBound..<page.endIndex))
-        let hero = String(page[start.upperBound..<end.lowerBound])
-        XCTAssertTrue(hero.contains("case let shown = OpeningLineHero.resolve(odds, for: event),"))
-        XCTAssertFalse(hero.contains("odds.homeProbability"), "the pair comes from the resolver")
-        XCTAssertFalse(hero.contains("odds.homeRenderedPercent"), "so do its served percents")
-        let sinceOpen = try XCTUnwrap(hero.range(of: "if carriesContext, let caption = SinceOpenCaption.caption("))
-        let sinceOpenBody = hero[sinceOpen.upperBound...].prefix(1200)
-        XCTAssertTrue(sinceOpenBody.contains("!shown.isOpeningLine {"), "the since-open caption is gated off an opening line")
-        XCTAssertTrue(hero.contains("if shown.isOpeningLine {"))
-        XCTAssertTrue(hero.contains("Text(OpeningLineHero.caption)"))
-        XCTAssertEqual(OpeningLineHero.caption, "Opening line")
+    func testTheHeadlineWithholdsTheCopiedOpeningOddsFromChance() throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-11T19:25:00Z"))
+
+        func headline(_ event: EventDetail) -> EventSportHeadlines12472.Model {
+            EventSportHeadlines12472.resolve(
+                event: event,
+                awayFullName: event.awayTeam,
+                homeFullName: event.homeTeam,
+                liveStatusText: nil,
+                hasScore: false,
+                numberStreams: false,
+                now: now
+            )
+        }
+
+        let opening = try event()
+        XCTAssertEqual(opening.heroProbabilitySource, "opening")
+        XCTAssertEqual(opening.currentOdds?.homeProbability, 0.5996)
+        let withheld = headline(opening)
+        XCTAssertEqual(withheld.kind, .nflBeforeGame)
+        XCTAssertEqual(withheld.away.winChanceText, "")
+        XCTAssertEqual(withheld.home.winChanceText, "")
+        XCTAssertEqual(withheld.rows.map(\.rawProbability), [nil, nil])
+        XCTAssertNil(withheld.bottomBar)
+
+        let current = headline(try event(source: "blend", hero: 0.64, heroAway: "0.36", current: 0.78))
+        XCTAssertEqual(current.away.winChanceText, "22%")
+        XCTAssertEqual(current.home.winChanceText, "78%")
+        XCTAssertNotNil(current.bottomBar)
     }
 }

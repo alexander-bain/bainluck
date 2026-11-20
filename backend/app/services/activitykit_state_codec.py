@@ -53,6 +53,9 @@ def decode_state(value: dict) -> DeliveryState:
         )
         for name in ("score_fence", "probability_fence"):
             data[name] = date(data[name])
+        # #10542: state saved before `sent_view` existed decodes as "nothing sent yet".
+        view = data.get("sent_view")
+        data["sent_view"] = tuple(view) if view is not None else None
         if data["snapshot"] is not None:
             snapshot = dict(data["snapshot"])
             for name in ("score_observed_at", "probability_observed_at"):
@@ -64,7 +67,8 @@ def decode_state(value: dict) -> DeliveryState:
             body = base64.b64decode(command["push"]["body"], validate=True)
             if not 0 < len(body) <= MAX_PAYLOAD_BYTES:
                 raise ValueError()
-            command["push"] = ActivityKitPush(body)
+            # A push saved before priorities existed was sent at "5"; a retry keeps it.
+            command["push"] = ActivityKitPush(body, command["push"].get("priority", "5"))
             attempt["command"] = DeliveryCommand(**command)
             attempt["retry_at"] = date(attempt["retry_at"])
             data["attempt"] = Attempt(**attempt)

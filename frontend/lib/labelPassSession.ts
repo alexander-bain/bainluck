@@ -207,7 +207,7 @@ export function verdictRefusal(err: unknown): VerdictRefusal | null {
 export function refusalMessage(reason: VerdictRefusal): string {
   switch (reason) {
     case "card_drifted":
-      return "This question re-priced while you were reading it — nothing was recorded. The refreshed card is below.";
+      return "This market re-priced while you were reading it — nothing was recorded. The refreshed card is below.";
     case "card_fingerprint_missing":
       return "This page was loaded before the card it posted — nothing was recorded. Reload to grade the current card.";
     case "duplicate_verdict":

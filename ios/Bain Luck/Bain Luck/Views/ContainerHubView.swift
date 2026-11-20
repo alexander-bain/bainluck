@@ -1,11 +1,40 @@
 import SwiftUI
 
+private enum ContainerHubThemeTokens {
+    static func surface(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color.groupedBackground : DS.surface
+    }
+    static func cardBg(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color.cardBackground : DS.cardBg
+    }
+    static func subtleBg(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color.groupedBackground : DS.surface
+    }
+    static func border(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? HeadlineStyleTable199.cardBorderInk : DS.border
+    }
+    static func textPrimary(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color.primary : DS.textPrimary
+    }
+    static func textSecondary(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? DS.textSecondaryReadable : DS.textSecondary
+    }
+}
+
 /// #9652: the selected sensible-group treatment, using ordinary card routes.
 /// It stays in its caller's NavigationStack, so Back reveals the same StateObject
 /// and scroll binding rather than constructing a replacement hub.
 struct ContainerHubView: View {
     let displayName: String
     @StateObject private var vm: ContainerHubViewModel
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var hubSurface: Color { ContainerHubThemeTokens.surface(colorScheme) }
+    private var hubCardBg: Color { ContainerHubThemeTokens.cardBg(colorScheme) }
+    private var hubSubtleBg: Color { ContainerHubThemeTokens.subtleBg(colorScheme) }
+    private var hubBorder: Color { ContainerHubThemeTokens.border(colorScheme) }
+    private var hubTextPrimary: Color { ContainerHubThemeTokens.textPrimary(colorScheme) }
+    private var hubTextSecondary: Color { ContainerHubThemeTokens.textSecondary(colorScheme) }
 
     init(slug: String, displayName: String, service: any ContainerHubLoading = ContainerHubService()) {
         self.displayName = displayName
@@ -25,8 +54,8 @@ struct ContainerHubView: View {
                 status(message, retry: true)
             }
         }
-        .background(DS.surface)
-        .navigationTitle(displayName)
+        .background(hubSurface)
+        .navigationTitle(effectiveNavigationTitle)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
@@ -38,26 +67,45 @@ struct ContainerHubView: View {
         }
     }
 
+    private var effectiveNavigationTitle: String {
+        if GroupingMachineryGate12288.isMachineryCandidateSlug(vm.slug), displayName.count > 28 {
+            return ""
+        }
+        return displayName
+    }
+
     private func hub(_ presentation: ContainerHubPresentation) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 if let title = presentation.title {
-                    Text(title).font(.title2.weight(.bold)).foregroundStyle(DS.textPrimary)
+                    Text(title)
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(hubTextPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let subtitle = presentation.subtitle {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(hubTextSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if let note = presentation.note {
-                    Text(note).font(.subheadline).foregroundStyle(DS.textSecondary)
+                    Text(note)
+                        .font(.subheadline)
+                        .foregroundStyle(hubTextSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if presentation.response.edition?.isTheme == true, presentation.isPartial {
                     Button("Retry unavailable markets") { Task { await vm.load() } }
                         .disabled(vm.isRefreshing)
                 }
                 if let counts = presentation.countLabel {
-                    Text(counts).font(.subheadline).foregroundStyle(DS.textSecondary)
+                    Text(counts).font(.subheadline).foregroundStyle(hubTextSecondary)
                         .accessibilityIdentifier("hub.loadedCount")
                 }
                 if vm.refreshError != nil {
                     Text("Couldn’t refresh. Showing the last loaded collection.")
-                        .font(.subheadline).foregroundStyle(DS.textSecondary)
+                        .font(.subheadline).foregroundStyle(hubTextSecondary)
                     Button("Try refresh again") { Task { await vm.load() } }
                 }
                 ForEach(presentation.children) { child in
@@ -67,30 +115,86 @@ struct ContainerHubView: View {
                             Spacer()
                             Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                         }
-                        .foregroundStyle(DS.textPrimary)
+                        .foregroundStyle(hubTextPrimary)
                         .padding(16)
-                        .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
+                        .background(hubCardBg, in: RoundedRectangle(cornerRadius: 12))
                     }
                     .buttonStyle(.plain)
                     .id("container:\(child.slug)")
                 }
+                if !vm.pairedMetricSets.isEmpty {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if vm.isOscarsHub {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Nominated & Wins by Category")
+                                    .font(.headline)
+                                    .foregroundStyle(hubTextPrimary)
+                                Text("Each contender’s chance of being nominated and chance of winning side by side.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(hubTextSecondary)
+                            }
+                            .padding(.top, 4)
+                        }
+                        ForEach(vm.pairedMetricSets) { pairedSet in
+                            DiscoverPairedMetricCardView(
+                                set: pairedSet,
+                                form: .pairedBarsTop5Expandable,
+                                initialExpanded: !vm.isOscarsHub && vm.pairedMetricSets.count == 1,
+                                allowsRouteLinks: true,
+                                isOscarsCollectionSurface: vm.isOscarsHub
+                            )
+                        }
+                    }
+                    .accessibilityIdentifier("hub.pairedAwardCategories")
+                }
                 // Standalone cards retain published section order. Questions
                 // linked to a rendered event are reached through that game's page.
+                let coveredIds = vm.pairedCoveredMarketIds
                 ForEach(presentation.displaySections) { section in
-                    Section {
-                        ForEach(section.members) { member in
-                            memberCard(member, presentation: presentation)
-                                .id(member.id)
-                        }
-                    } header: {
-                        Text(presentation.sectionTitle(section.sectionClass))
-                            .font(.headline)
-                            .foregroundStyle(DS.textPrimary)
+                    if let visualBlock = section.visualBlock {
+                        Section {
+                            MachinerySectionBlockView(
+                                visualBlock: visualBlock,
+                                members: section.members
+                            )
+                        } header: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(presentation.resolvedSectionTitle(section))
+                                    .font(.headline)
+                                    .foregroundStyle(hubTextPrimary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let sectionNote = section.note?.trimmingCharacters(in: .whitespacesAndNewlines),
+                                   !sectionNote.isEmpty {
+                                    Text(sectionNote)
+                                        .font(.subheadline)
+                                        .foregroundStyle(hubTextSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
                             .padding(.top, 8)
+                        }
+                    } else {
+                        let visibleMembers = coveredIds.isEmpty
+                            ? section.members
+                            : section.members.filter { !($0.type == "market" && coveredIds.contains($0.memberId)) }
+                        if !visibleMembers.isEmpty {
+                            Section {
+                                ForEach(visibleMembers) { member in
+                                    memberCard(member, presentation: presentation)
+                                        .id(member.id)
+                                }
+                            } header: {
+                                Text(presentation.resolvedSectionTitle(section))
+                                    .font(.headline)
+                                    .foregroundStyle(hubTextPrimary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .padding(.top, 8)
+                            }
+                        }
                     }
                 }
                 if vm.pageError != nil {
-                    Text("Couldn’t load more markets. Try again.").font(.subheadline).foregroundStyle(DS.textSecondary)
+                    Text("Couldn’t load more markets. Try again.").font(.subheadline).foregroundStyle(hubTextSecondary)
                 }
                 if presentation.response.state == .published, presentation.response.page?.nextCursor != nil {
                     Button {
@@ -136,10 +240,10 @@ struct ContainerHubView: View {
                             Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                         }
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(DS.textSecondary)
+                        .foregroundStyle(hubTextSecondary)
                         .padding(.vertical, 10)
                         .padding(.horizontal, 12)
-                        .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+                        .background(hubSubtleBg, in: RoundedRectangle(cornerRadius: 8))
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -148,8 +252,8 @@ struct ContainerHubView: View {
                 }
             }
             .padding(14)
-            .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.border, lineWidth: 0.5))
+            .background(hubCardBg, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(hubBorder, lineWidth: 0.5))
         case .question(let feed, let search):
             questionCard(member, feed: feed, search: search)
         case .unsupported:
@@ -170,33 +274,43 @@ struct ContainerHubView: View {
                 if ContainerHubPresentation.questionNeedsVerdictRows(search) {
                     Text(search.name).font(.subheadline.weight(.semibold))
                         .fixedSize(horizontal: false, vertical: true)
-                    ForEach(search.topOutcomes ?? []) { outcome in
-                        HStack(alignment: .firstTextBaseline) {
+                    let rawVerdictOutcomes = search.topOutcomes ?? []
+                    let verdictOutcomes = NumericalMarketScaleOrder228.orderedAll(
+                        rawVerdictOutcomes,
+                        label: \.name,
+                        probability: \.probability
+                    )?.map(\.element) ?? rawVerdictOutcomes
+                    ForEach(verdictOutcomes) { outcome in
+                        let outcomeMark = feed.topOutcomes?.first(where: { $0.id == outcome.id || $0.name == outcome.name })?.sourceMark ?? feed.sourceMark
+                        HStack(alignment: .center, spacing: 4) {
                             Text(outcome.name).font(.caption)
                             Spacer(minLength: 8)
                             Text(ContainerHubPresentation.outcomeLabel(outcome, market: search))
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(outcome.verdict(in: search) == .won ? DS.emerald : DS.textSecondary)
+                                .foregroundStyle(outcome.verdict(in: search) == .won ? DS.emerald : hubTextSecondary)
+                            if let mark = SourceMarkButton(outcomeMark, number: nil, numberSize: 12, compactRow: true) {
+                                mark
+                            }
                         }
                     }
                     if search.topOutcomes?.isEmpty != false {
-                        Text("Result unavailable").font(.caption).foregroundStyle(DS.textSecondary)
+                        Text("Result unavailable").font(.caption).foregroundStyle(hubTextSecondary)
                     }
                 } else {
                     // This existing compact card omits missing prices rather
                     // than the Discover hero's current `nil -> 0%` treatment.
                     FuturesCardView(futures: feed)
                     if search.topOutcomes?.isEmpty != false {
-                        Text("Prices aren't available right now.").font(.caption).foregroundStyle(DS.textSecondary)
+                        Text("Prices aren't available right now.").font(.caption).foregroundStyle(hubTextSecondary)
                     } else if search.topOutcomes?.contains(where: { $0.probability == nil }) == true {
-                        Text("Some prices aren't available right now.").font(.caption).foregroundStyle(DS.textSecondary)
+                        Text("Some prices aren't available right now.").font(.caption).foregroundStyle(hubTextSecondary)
                     }
                 }
             }
-            .foregroundStyle(DS.textPrimary)
+            .foregroundStyle(hubTextPrimary)
             .padding(14)
-            .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.border, lineWidth: 0.5))
+            .background(hubCardBg, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(hubBorder, lineWidth: 0.5))
         }
         .buttonStyle(.plain)
         .simultaneousGesture(TapGesture().onEnded { vm.opened(member) })
@@ -204,7 +318,7 @@ struct ContainerHubView: View {
 
     private func status(_ message: String, retry: Bool) -> some View {
         VStack(spacing: 16) {
-            Text(message).font(.subheadline).foregroundStyle(DS.textSecondary)
+            Text(message).font(.subheadline).foregroundStyle(hubTextSecondary)
                 .multilineTextAlignment(.center)
             if retry {
                 Button("Try Again") { Task { await vm.load() } }.buttonStyle(.borderedProminent)
@@ -219,6 +333,7 @@ struct ContainerHubView: View {
 /// they place it. Deep links reach the same screen independently of placement.
 struct ContainerHubCollectionLink: View {
     let collection: ContainerHubCollection
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if collection.canOpen {
@@ -228,9 +343,9 @@ struct ContainerHubCollectionLink: View {
                     Spacer()
                     Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                 }
-                .foregroundStyle(DS.textPrimary)
+                .foregroundStyle(ContainerHubThemeTokens.textPrimary(colorScheme))
                 .padding(16)
-                .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
+                .background(ContainerHubThemeTokens.cardBg(colorScheme), in: RoundedRectangle(cornerRadius: 12))
             }
             .buttonStyle(.plain)
         }

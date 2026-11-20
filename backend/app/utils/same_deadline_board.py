@@ -1309,12 +1309,14 @@ def build_same_deadline_board_producer(
     tag = "" if raw_tag is None else str(raw_tag)
     _validate_narrative_copy(name, footer, section_title, kicker, tag)
 
-    async def _produce(db: Any) -> Any:
+    default_now = now
+
+    async def _produce(db: Any, *, now: Optional[datetime] = None) -> Any:
         return await produce_same_deadline_board(
             db,
             definition=definition,
             load_markets=load_markets,
-            now=now,
+            now=now if now is not None else default_now,
         )
 
     return RoundupProducer(
@@ -1332,6 +1334,9 @@ def build_same_deadline_board_producer(
         tag=tag,
         kicker=kicker,
         story_key=f"roundup:{slug.removeprefix('roundup-')}",
+        parent_slug=definition.get("parent_slug"),
+        parent_name=definition.get("parent_name"),
+        children=definition.get("children"),
         enabled=enabled,
     )
 

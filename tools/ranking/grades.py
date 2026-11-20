@@ -6,6 +6,8 @@
 
     # 3. Copy grades made on the /grade page into the same store:
     python3 tools/ranking/grades.py export [--slate <slate id>] [--days 14]
+    #    ... or grouping grades (/grade/groupings), adults' rows only (#9937):
+    python3 tools/ranking/grades.py export --surface grouping --slate <slate id> --adults-only
 
     # 2. Turn its opening ten into a grading sheet for one grader:
     python3 tools/ranking/grades.py sheet --slate evals/ranking/slates/<file>.json --grader alex
@@ -46,6 +48,11 @@ REPO = Path(__file__).resolve().parents[2]
 SLATES_DIR = REPO / "evals" / "ranking" / "slates"
 GRADES_DIR = REPO / "evals" / "ranking" / "grades"
 GRADES = ("shareable", "interesting", "neither")
+#: #9937: grouping grades (/grade/groupings) use their own words.
+GROUPING_GRADES = ("amazing", "fine", "no")
+GRADES_BY_SURFACE = {"discover": GRADES, "grouping": GROUPING_GRADES}
+#: Where ``export`` reads each surface's grades.
+EXPORT_ENDPOINTS = {"discover": "/api/admin/ranking/grades", "grouping": "/api/admin/ranking/grouping-grades"}
 PT = ZoneInfo("America/Los_Angeles")
 #: A kid's grader id: ``kid1`` (hand sheets) or ``kid-<6 hex>`` (export's
 #: pseudonym for a name typed on the /grade page). Never a child's name.
@@ -114,12 +121,15 @@ def fetch_slate(ref: str, surface: str) -> dict:
 EXPORT_SOURCE = "grade-page"
 
 
-def export_documents(grades: list[dict]) -> list[dict]:
+def export_documents(grades: list[dict], *, adults_only: bool = False) -> list[dict]:
     """The /grade page's grades as grades files: one per (slate, grader), the
-    same shape ``sheet`` makes, in position order."""
+    same shape ``sheet`` makes, in position order. ``adults_only`` leaves every
+    kid's row out entirely (#9937)."""
     docs: dict[tuple, dict] = {}
     for g in grades:
         expert = g.get("expert") is True
+        if adults_only and not expert:
+            continue
         # A kid's typed name never reaches the public repo: it becomes a pseudonym.
         grader = g["grader"] if expert else kid_pseudonym(g["grader"])
         key = (g["slate_id"], grader)
@@ -139,7 +149,8 @@ def export_documents(grades: list[dict]) -> list[dict]:
         # database and is not exported; an adult's note is.
         note = (g.get("note") or "") if expert else ""
         doc["items"].append(
-            {"position": g["position"], "item_key": g["item_key"], "grade": g["grade"], "note": note}
+            {"position": g["position"], "item_key": g["item_key"], "grade": g["grade"], "note": note,
+             "graded_at": g.get("graded_at")}
         )
     for doc in docs.values():
         doc["items"].sort(key=lambda i: i["position"])
@@ -236,11 +247,12 @@ def validate_grades(doc: dict) -> list[str]:
         problems.append("`expert` must be true or false")
     elif doc["expert"] is False and not KID_ID.match(str(doc.get("grader") or "")):
         problems.append(f"kid grader {doc.get('grader')!r} must be a pseudonym like kid1")
+    allowed = GRADES_BY_SURFACE.get(doc.get("surface") or "discover", GRADES)
     for item in doc.get("items") or ():
         raw = item.get("grade")
         grade = str(raw).strip().lower() if raw is not None else None
-        if grade and grade not in GRADES:
-            problems.append(f"position {item.get('position')}: grade {raw!r} not in {GRADES}")
+        if grade and grade not in allowed:
+            problems.append(f"position {item.get('position')}: grade {raw!r} not in {allowed}")
     return problems
 
 
@@ -259,6 +271,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     e = sub.add_parser("export")
     e.add_argument("--slate", default=None)
     e.add_argument("--days", type=int, default=14)
+    e.add_argument("--surface", choices=sorted(EXPORT_ENDPOINTS), default="discover")
+    e.add_argument("--adults-only", action="store_true")
     e.add_argument("--out", type=Path, default=GRADES_DIR)
     v = sub.add_parser("check")
     v.add_argument("files", nargs="+", type=Path)
@@ -288,7 +302,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.cmd == "export":
         query = f"?days={args.days}" + (f"&slate_id={urllib.parse.quote(args.slate)}" if args.slate else "")
         args.out.mkdir(parents=True, exist_ok=True)
-        for doc in export_documents(_admin_get(f"/api/admin/ranking/grades{query}")["grades"]):
+        grades = _admin_get(f"{EXPORT_ENDPOINTS[args.surface]}{query}")["grades"]
+        for doc in export_documents(grades, adults_only=args.adults_only):
             path = export_path(args.out, doc)
             path.write_text(json.dumps(doc, indent=1) + "\n")
             print(f"{path} ({len(doc['items'])} grades)")

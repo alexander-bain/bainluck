@@ -36,12 +36,19 @@ from app.routes.futures import (
 from app.services import get_db
 from app.services.anchor_channel import market_born_duplicates_on_page
 from app.services.same_instant_refutation import same_instant_refuted_on_page
-from app.utils.aggregation import compute_aggregate_probability
+from app.utils.aggregation import compute_aggregate_probability_tiered
+from app.utils.draw_priced_winner import sport_prices_a_draw
 from app.utils.outcome_display import normalize_display_probs
 from app.utils.futures_market_snapshot import (
     normalized_field_comparisons,
     reader_change_24h,
 )
+from app.utils.futures_source_mark import (
+    describe_field_normalization,
+    futures_outcome_source_mark,
+)
+from app.utils.event_completion import served_commence_time
+from app.utils.score_source_availability import score_source_unavailable_fields
 from app.utils.event_rails import (
     commence_time_was_never_a_kickoff,
     live_first_order,
@@ -81,6 +88,7 @@ from app.utils.proven_duplicates import (
     not_a_proven_duplicate,
 )
 from app.utils.rail_competition_share import equal_share_by_competition
+from app.utils.source_mark import blended_source_marks
 from app.utils.sport_keys import (
     SPORT_HIERARCHY,
     TOUR_LEAGUES_INCLUDING_TOURNAMENTS,
@@ -105,6 +113,9 @@ LEAGUE_PRIMARY_TTL = 300
 #: shortening it would have traded a 24-hour lie for a shorter one while leaving
 #: the missing revalidation — the actual defect — in place.
 LEAGUE_STALE_TTL = 86400
+
+# Cache-only stamp for game rails built after #12824 removed the opening fallback.
+_GAME_PRICE_POLICY = "no_opening_as_current"
 
 #: How old a mirror carrying GAME ROWS may be and still be served (#3389).
 #:
@@ -1557,7 +1568,12 @@ def refuted_by_a_weekly_final(
         return unreported
 
 
-def _event_probability(event: Event) -> float | None:
+def _event_probability(
+    event: Event,
+    *,
+    source_inputs: list[tuple[str, float]] | None = None,
+    source_method: list[str] | None = None,
+) -> float | None:
     """The blended home win probability, or None when we never measured one.
 
     Calls the canonical blend — it does NOT roll its own mean over sources.
@@ -1591,7 +1607,10 @@ def _event_probability(event: Event) -> float | None:
     """
     if not isinstance(event.win_probability_sources, (dict, type(None))):
         return None
-    return compute_aggregate_probability(event)
+    probability, _ = compute_aggregate_probability_tiered(
+        event, source_inputs=source_inputs, source_method=source_method
+    )
+    return probability
 
 
 async def _attach_venue_settlement(
@@ -1700,10 +1719,33 @@ async def _attach_pregame_projections(
         attach_pregame_projection(brief, answers.get(event_id))
 
 
+def _order_upcoming_briefs(briefs: list[dict]) -> list[dict]:
+    """Keep live cards in SQL `live_first_order`, sort non-live by served start (#13000)."""
+    live = [g for g in briefs if g.get("status") == "live"]
+    scheduled = [g for g in briefs if g.get("status") != "live"]
+
+    def _start_ts(card: dict) -> float:
+        raw = card.get("commence_time")
+        if not isinstance(raw, str) or not raw:
+            return float("inf")
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except ValueError:
+            return float("inf")
+
+    scheduled.sort(key=_start_ts)
+    return live + scheduled
+
+
 def _format_game_brief(
     event: Event,
     sport_key: str | None = None,
     team_lookup: dict | None = None,
+    *,
+    three_way_books: tuple[float, float] | None = None,
 ) -> dict:
     """League-rail shape for one game — the SHARED event card's contract.
 
@@ -1732,8 +1774,39 @@ def _format_game_brief(
     the iOS decoder already types; dropping it to "clean up" would silently retier
     every league.
     """
-    home_prob = _event_probability(event)
-    away_prob = round(1.0 - home_prob, 6) if home_prob is not None else None
+    _now = datetime.now(timezone.utc)
+    _served_status = served_event_status(event.status, event.commence_time, _now)
+    # #13000 / #9634: a scheduled row held on StatPal's later-session start
+    # (`upcoming_rail_condition` -> `statpal_later_session_rows`) must serve
+    # StatPal's start here too, matching `/api/events/{id}` instead of printing
+    # the stale venue stamp from an earlier day.
+    _served_start = served_commence_time(
+        _served_status,
+        event.commence_time,
+        getattr(event, "win_probability_sources", None),
+        _now,
+    )
+
+    from app.utils.hero_probability import resolve_hero
+    from app.utils.settled_hero import is_finished_status, settled_current_chance
+    from app.utils.source_mark import headline_source_marks
+
+    _is_finished = is_finished_status(_served_status)
+    _finished_hero = None
+    _finished_sc = None
+    source_inputs: list[tuple[str, float]] = []
+    source_method: list[str] = []
+    home_prob = None
+    away_prob = None
+    if _is_finished:
+        _finished_hero = resolve_hero(event)
+        _finished_sc = settled_current_chance(_finished_hero, sport_key=sport_key)
+        home_prob = _finished_sc.home_probability if _finished_sc.resolved else None
+    else:
+        home_prob = _event_probability(
+            event, source_inputs=source_inputs, source_method=source_method
+        )
+        away_prob = round(1.0 - home_prob, 6) if home_prob is not None else None
 
     brief: dict = {
         "id": event.id,
@@ -1741,7 +1814,7 @@ def _format_game_brief(
         "sport": sport_key,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
-        "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+        "commence_time": _served_start.isoformat() if _served_start else None,
         # A FINAL card prefers this over commence_time for its date (gotcha #22
         # family): a Kalshi-sourced commence_time can be a close/resolution stamp.
         "completed_at": (
@@ -1758,23 +1831,85 @@ def _format_game_brief(
         # routed through this helper — served the same two rows as `scheduled`.
         # One row, two answers, and the one the league page drew was the wrong
         # one. Admin/debug surfaces deliberately keep the raw value.
-        "status": served_event_status(
-            event.status, event.commence_time, datetime.now(timezone.utc)
-        ),
+        "status": _served_status,
         "home_score": event.home_score,
         "away_score": event.away_score,
+        **score_source_unavailable_fields(
+            event, sport_key=sport_key, status=_served_status
+        ),
         "home_win_probability": home_prob,
     }
 
-    # THE ONE BLEND. `home_probability` here is the same number
-    # `home_win_probability` carries — the same `compute_aggregate_probability`
-    # call, not a second derivation — because the shared card reads `current_odds`
-    # and the census reads the flat key, and the two must never be able to differ.
-    if home_prob is not None:
-        brief["current_odds"] = {
-            "home_probability": home_prob,
-            "away_probability": away_prob,
-        }
+    # THE ONE BLEND (or the resolved result on finished games, #13172 Option B).
+    # `home_probability` here is the same number `home_win_probability` carries
+    # because the shared card reads `current_odds` and the census reads the flat
+    # key, and the two must never be able to differ.
+    if _is_finished:
+        _draw_priced = sport_prices_a_draw(sport_key)
+        if _finished_sc is not None and _finished_sc.resolved:
+            _co: dict = {
+                "home_probability": _finished_sc.home_probability,
+                "away_probability": _finished_sc.away_probability,
+                "home_rendered_percent": _finished_sc.home_rendered_percent,
+                "away_rendered_percent": _finished_sc.away_rendered_percent,
+            }
+            if _draw_priced:
+                _co["draw_probability"] = _finished_sc.draw_probability
+                _co["draw_rendered_percent"] = _finished_sc.draw_rendered_percent
+            brief["current_odds"] = _co
+        brief["source_mark"], brief["away_source_mark"] = headline_source_marks(
+            event, _finished_hero, []
+        )
+    elif home_prob is not None:
+        from app.utils.draw_priced_winner import (
+            rendered_three_way_percents,
+            resolve_three_way_probabilities,
+        )
+
+        _draw_priced = sport_prices_a_draw(sport_key)
+        _brief_3 = None
+        if _draw_priced and _served_status in ("live", "scheduled"):
+            if _served_status == "live":
+                _bh, _ba = three_way_books if three_way_books is not None else (None, None)
+            else:
+                _oh = getattr(event, "opening_home_probability", None)
+                _oa = getattr(event, "opening_away_probability", None)
+                _bh = float(_oh) if _oh is not None else None
+                _ba = float(_oa) if _oa is not None else None
+            _brief_3 = resolve_three_way_probabilities(
+                home_prob,
+                books_home=_bh,
+                books_away=_ba,
+                sport_key=sport_key,
+            )
+        if _brief_3 is not None:
+            _h3, _a3, _d3 = _brief_3
+            _hp, _dp, _ap = rendered_three_way_percents(_h3, _d3, _a3)
+            brief["current_odds"] = {
+                "home_probability": _h3,
+                "away_probability": _a3,
+                "draw_probability": _d3,
+                "home_rendered_percent": _hp,
+                "away_rendered_percent": _ap,
+                "draw_rendered_percent": _dp,
+            }
+            brief["source_mark"], brief["away_source_mark"] = blended_source_marks(
+                event,
+                source_inputs,
+                method=source_method[0] if source_method else None,
+                away_available=True,
+            )
+        else:
+            brief["current_odds"] = {
+                "home_probability": home_prob,
+                "away_probability": away_prob,
+            }
+            brief["source_mark"], brief["away_source_mark"] = blended_source_marks(
+                event,
+                source_inputs,
+                method=source_method[0] if source_method else None,
+                away_available=not _draw_priced,
+            )
 
     # Opening line — the card's live footer says "Opened 62/38" from this, and a
     # settled card falls back to it. Both columns are on the row already.
@@ -1799,8 +1934,18 @@ def _format_game_brief(
         # football games, in week 4) and North Texas from its women's basketball
         # row ("19-13"). `sport_key` is the argument this whole payload is built
         # for, so the rail always knows which league it is rendering.
-        home_team = _team_for_event(team_lookup, event.home_team_name, sport_key)
-        away_team = _team_for_event(team_lookup, event.away_team_name, sport_key)
+        home_team = _team_for_event(
+            team_lookup,
+            event.home_team_name,
+            sport_key,
+            team_id=getattr(event, "home_team_id", None),
+        )
+        away_team = _team_for_event(
+            team_lookup,
+            event.away_team_name,
+            sport_key,
+            team_id=getattr(event, "away_team_id", None),
+        )
         if home_team and (home_team.primary_color or home_team.logo_url_small):
             brief["home_team_data"] = _format_team_data(home_team)
         if away_team and (away_team.primary_color or away_team.logo_url_small):
@@ -1815,6 +1960,7 @@ def _format_game_brief(
             sport_key,
             getattr(event, "period", None),
             getattr(event, "game_clock", None),
+            status=getattr(event, "status", None),
         )
         if display_period:
             espn["period"] = display_period
@@ -1910,11 +2056,9 @@ def _redis_or_none():
 def _read_league_slot(rc, key: str) -> dict | None:
     """Read one league cache slot, or None.
 
-    Deliberately NOT `event_concept_cache.read_slot`: that helper validates the
-    stamped `cache` envelope and reads an unstamped payload as a MISS, so adopting
-    it here would silently invalidate every live league entry and, worse, couple a
-    revalidation fix to a payload-shape migration. The keys are shared; the codec
-    is this tier's own until it adopts the envelope deliberately.
+    Pre-#12824 game rails could store the opening as current odds without a
+    source tag. Require a pricing policy stamp before serving any cached games,
+    including the outage fallback. Futures-only mirrors need no game price stamp.
     """
     if rc is None:
         return None
@@ -1930,7 +2074,12 @@ def _read_league_slot(rc, key: str) -> dict | None:
     except Exception:
         logger.warning("league cache: refusing undecodable payload for %s", key)
         return None
-    return payload if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    game_price_policy = payload.pop("_game_price_policy", None)
+    if has_games(payload) and game_price_policy != _GAME_PRICE_POLICY:
+        return None
+    return payload
 
 
 def _write_league_payload(rc, keys: ConceptCacheKeys, payload: dict) -> None:
@@ -1938,6 +2087,8 @@ def _write_league_payload(rc, keys: ConceptCacheKeys, payload: dict) -> None:
     if rc is None:
         return
     try:
+        if has_games(payload):
+            payload = {**payload, "_game_price_policy": _GAME_PRICE_POLICY}
         encoded = json.dumps(payload, default=str)
         rc.setex(keys.primary, LEAGUE_PRIMARY_TTL, encoded)
         rc.setex(keys.stale, LEAGUE_STALE_TTL, encoded)
@@ -2852,7 +3003,18 @@ def _serialize_outcomes(
             row["opening_probability"] = None
             row["movement_24h"] = None
 
-    return rows[:10]
+    preview = rows[:10]
+    for outcome, row in zip(ordered[:10], preview, strict=True):
+        mark = futures_outcome_source_mark(
+            market, outcome, row, served_settled=row["settled"]
+        )
+        describe_field_normalization(
+            mark,
+            input_probability=outcome.current_probability,
+            displayed_probability=row["probability"],
+        )
+        row["source_mark"] = mark
+    return preview
 
 
 def _competition_echoes_name(competition: str, market_name: str | None) -> bool:
@@ -3691,6 +3853,17 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         # that works) and before the formatter, which is the only reader.
         _tag_folded = await _tag_folded_rows(db, [*_g_events, *_r_events, *_u_events])
 
+        from app.routes.events import latest_odds_per_bookmaker_query
+        from app.utils.draw_priced_winner import read_live_three_way_books
+
+        _live_three_way = await read_live_three_way_books(
+            db,
+            [*_g_events, *_r_events, *_u_events],
+            datetime.now(timezone.utc),
+            sport_key_override=sport_key,
+            latest_odds_query=latest_odds_per_bookmaker_query,
+        )
+
         # Per-item, not per-rail (gotcha #42: "one bad item must never wipe a
         # whole scoring pass"). This formatter reads twice as many columns since
         # UX-P074, and the whole rails block sits under ONE except — so a single
@@ -3718,6 +3891,7 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
                             ),
                             sport_key,
                             _teams,
+                            three_way_books=_live_three_way.get(int(_e.id)),
                         )
                     )
                 except Exception:
@@ -3729,6 +3903,7 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             return out
 
         _grows = _format_all(_g_events)
+        _grows = _order_upcoming_briefs(_grows)
         # `or _more_games` (#3872): the share hands back at most the cap, so the
         # +1 that used to declare "there are more" is gone by the time we get
         # here. The count taken from the full candidate list above still knows.

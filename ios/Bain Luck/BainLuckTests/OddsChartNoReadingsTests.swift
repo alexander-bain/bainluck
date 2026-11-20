@@ -162,13 +162,13 @@ final class OddsChartNoReadingsTests: XCTestCase {
         let framed = try renderedHeight("one-reading-frame", try oneReadingPayload())
         let drawable = try renderedHeight("drawable-frame", try drawablePayload())
 
-        // Not equal to the drawn chart — a drawn chart also carries the legend row
-        // under the plot, which the sentence state has never had (measured 325.3pt
-        // against 348.7pt, both unchanged by this fix). The property is that the
-        // sentence state still reserves a FULL frame: close to the drawn chart, and
-        // nowhere near the collapse.
+        // Not equal to the drawn chart — a drawn chart also carries the E2
+        // scrub/legend header bar above the plot and the legend row under it,
+        // which the sentence state has never had (384.0pt against 464.7pt =
+        // 82.6%). The property is that the sentence state still reserves a FULL
+        // frame: close to the drawn chart, and nowhere near the collapse.
         XCTAssertGreaterThan(
-            framed, drawable * 0.85,
+            framed, drawable * 0.80,
             "a payload with one reading (\(framed)pt) no longer reserves a frame "
             + "comparable to a drawn chart (\(drawable)pt) — #3278's honest empty "
             + "frame has been collapsed by mistake")

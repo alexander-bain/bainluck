@@ -114,10 +114,13 @@ describe("admitted: the band, its label and its details", () => {
     expect(finalForecastComparison(nfl({ projection: p }))?.forecast).toEqual(
       cardProjectedFinal(p, "americanfootball_nfl"),
     );
-    // A level NBA forecast is refused by the card (#8156), so it is refused here.
+    // Ruling 240: A (#12992): a level NBA forecast prints ("110" and "110").
     const level = projection({ projected_home_score: 110.4, projected_away_score: 110.2 });
-    expect(cardProjectedFinal(level, "basketball_nba")).toBeNull();
-    expect(finalForecastComparison(nba({ projection: level }))).toBeNull();
+    expect(cardProjectedFinal(level, "basketball_nba")).toEqual({ home: 110, away: 110 });
+    expect(finalForecastComparison(nba({ projection: level }))?.forecast).toEqual({
+      home: 110,
+      away: 110,
+    });
   });
 
   it("carries no grading: no winner, hit/miss or colour field", () => {

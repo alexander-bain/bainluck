@@ -118,9 +118,7 @@ async def load_midterms_cards(
             }
         )
     all_markets = {m.id: m for m in primary}
-    all_markets.update(
-        {c.id: c for c in candidates if any(c.id in v for v in twins.values())}
-    )
+    all_markets.update({c.id: c for c in candidates})
     withheld = await withheld_price_outcome_ids_for_markets(
         db, list(all_markets.values())
     )

@@ -217,6 +217,17 @@ def min_cycle_interval_min() -> int:
     return round(24 * 60 / ACCEPTED_CYCLES_PER_DAY)
 
 
+#: 234: A (Alex, Wed Nov 18 2026, 10:21 AM PT; Builder E's proposal on #12779).
+#: The floor above stops applying to a sync whose diff since heavy's deployed
+#: commit touches what heavy SCHEDULES or RUNS: beat entries (and heavy routing)
+#: in `backend/app/tasks/__init__.py`, or the module of a task that runs on
+#: `queue: heavy`. The band stays, and so does this daily cap: an exempt sync may
+#: not take heavy past this many releases in the last 24 hours. Measured before
+#: the ruling: on Tue Nov 17 heavy synced 6 times while main deployed 30+, and
+#: #12843's beat entry waited 2h32m for the floor (live 2:14 PM, synced 4:46 PM).
+DAILY_CYCLE_CAP = 12
+
+
 #: The band recurs once an hour because the rebuild it is derived against is
 #: hourly (:data:`REBUILD_START_MIN`). Named so the licence below is counted in
 #: BANDS — the unit the veto's own message promises in — rather than in minutes
@@ -596,6 +607,30 @@ def _is_sha(value: str | None) -> bool:
     )
 
 
+def floor_exemption(floor_exempt: bool | None, heavy_releases_24h: int | None) -> tuple[bool, str]:
+    """234: A — may this sync skip the cycle floor? ``(exempt, note for the verdict)``.
+
+    THE OPPOSITE POLARITY TO THE COST GATES, ON PURPOSE. An unreadable age
+    proceeds (see :func:`decide`), but this is a LOOSENING: it may only apply when
+    both of its facts are proven. An unreadable diff or an unreadable release
+    count leaves the floor exactly where it was, so the worst a broken reader can
+    do is cost the old wait, never an extra cycle.
+    """
+    if floor_exempt is not True:
+        return False, ""
+    if heavy_releases_24h is None:
+        return False, "the diff touches what heavy runs, but heavy's releases in the last 24 h are unreadable, so the floor stands"
+    if heavy_releases_24h >= DAILY_CYCLE_CAP:
+        return False, (
+            f"the diff touches what heavy runs, but heavy already has {heavy_releases_24h} "
+            f"releases in the last 24 h (cap {DAILY_CYCLE_CAP}, 234: A), so the floor stands"
+        )
+    return True, (
+        f"floor waived (234: A): the diff touches what heavy schedules or runs; "
+        f"{heavy_releases_24h} of {DAILY_CYCLE_CAP} releases in the last 24 h"
+    )
+
+
 def decide(
     *,
     main_live: str | None,
@@ -604,6 +639,8 @@ def decide(
     dispatched: bool = False,
     heavy_release_age_min: int | None = None,
     now: datetime | None = None,
+    floor_exempt: bool | None = None,
+    heavy_releases_24h: int | None = None,
 ) -> Decision:
     """Judge one sync opportunity. Pure apart from the clock it reads itself.
 
@@ -655,16 +692,21 @@ def decide(
         )
 
     floor = min_cycle_interval_min()
-    if not dispatched and heavy_release_age_min is not None and heavy_release_age_min < floor:
+    exempt, exempt_note = floor_exemption(floor_exempt, heavy_releases_24h)
+    inside_floor = heavy_release_age_min is not None and heavy_release_age_min < floor
+    if not dispatched and inside_floor and not exempt:
         return Decision(
             HOLD,
             "HOLD",
             f"heavy was released {heavy_release_age_min} min ago, inside the {floor}-min "
             f"cycle floor ({ACCEPTED_CYCLES_PER_DAY} cycles/day) — a release cycles "
-            "worker-heavy, so the trigger rate is not the cycle rate",
+            "worker-heavy, so the trigger rate is not the cycle rate"
+            + (f"; {exempt_note}" if exempt_note else ""),
         )
 
     why_now = "attended run: window bypassed" if dispatched else f"inside :{opens}-:{closes}"
+    if not dispatched and inside_floor and exempt:
+        why_now += f"; {exempt_note}"
     return Decision(
         PUSH,
         "PUSH",
@@ -680,6 +722,8 @@ def wait_seconds(
     dispatched: bool = False,
     heavy_release_age_min: int | None = None,
     now: datetime | None = None,
+    floor_exempt: bool | None = None,
+    heavy_releases_24h: int | None = None,
 ) -> int:
     """Seconds to sleep so THIS run reaches the band; ``0`` when waiting cannot help.
 
@@ -803,7 +847,9 @@ def wait_seconds(
     if dispatched:
         return 0
     opens_in = seconds_until_window_opens(now)
-    secs = max(opens_in, seconds_until_floor_clears(heavy_release_age_min))
+    # 234: A — an exempt sync does not wait for the floor, only for the band.
+    exempt, _ = floor_exemption(floor_exempt, heavy_releases_24h)
+    secs = max(opens_in, 0 if exempt else seconds_until_floor_clears(heavy_release_age_min))
     if secs <= 0:
         return 0
     # `>=` and not `>`: the deadline is the band's closing EDGE, and the final band
@@ -838,6 +884,8 @@ def wait_seconds(
         dispatched=False,
         heavy_release_age_min=projected_age,
         now=now + timedelta(seconds=secs),
+        floor_exempt=floor_exempt,
+        heavy_releases_24h=heavy_releases_24h,
     )
     return secs if at_target.code == PUSH else 0
 
@@ -1222,6 +1270,152 @@ def poll_readback(
     return verdict
 
 
+# ---------------------------------------------------------------------------
+# 234: A — DOES THIS DIFF TOUCH WHAT HEAVY SCHEDULES OR RUNS?
+# ---------------------------------------------------------------------------
+
+#: Top-level statements of `backend/app/tasks/__init__.py` that decide what heavy
+#: schedules (beat runs on heavy, so EVERY beat entry, whichever queue it names)
+#: or what it runs (HEAVY_TASKS and the routing applied from it).
+SCHEDULE_MARKERS = (BEAT_SCHEDULE_ATTR, HEAVY_TASKS_NAME, "task_routes")
+def schedule_statements(source: str) -> list[str] | None:
+    """The parsed top-level statements that touch the beat schedule or heavy routing.
+
+    Compared as ``ast.dump`` so a comment or a reflow is not a change, and a
+    changed beat entry, a new one, or a task added to HEAVY_TASKS is. ``None``
+    when the file does not parse: unreadable is not "unchanged".
+    """
+    import ast
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    out = []
+    for node in tree.body:
+        segment = ast.get_source_segment(source, node) or ""
+        if any(marker in segment for marker in SCHEDULE_MARKERS):
+            out.append(ast.dump(node))
+    return out
+
+
+def heavy_entrypoints(source: str, tasks) -> dict[str, tuple[str, frozenset]] | None:
+    """``{task: (parsed wrapper, app modules it imports)}`` for every task in ``tasks``
+    declared in ``source`` as ``@celery_app.task(name="app.tasks.x")``.
+
+    Every task that runs on heavy is declared in `tasks/__init__.py` as a thin
+    wrapper that imports its real code inside the body (measured Nov 18: 38 of 38),
+    e.g. ``from app.tasks.precompute_calibration import _compute_fair_fight_comparison``.
+    So "task code routed to queue heavy" is the wrapper plus the modules it imports.
+    ``None`` when the file does not parse.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    out = {}
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        names = {
+            kw.value.value
+            for deco in node.decorator_list if isinstance(deco, ast.Call)
+            for kw in deco.keywords
+            if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)
+        }
+        for task in names & set(tasks):
+            modules = set()
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.ImportFrom) and not sub.level and (sub.module or "").startswith("app."):
+                    modules.add(sub.module)
+                    # `from app.tasks import heavy_memory_turns as turns` imports a module too
+                    modules.update(f"{sub.module}.{a.name}" for a in sub.names)
+                elif isinstance(sub, ast.Import):
+                    modules.update(a.name for a in sub.names if a.name.startswith("app."))
+            out[task] = (ast.dump(node), frozenset(modules))
+    return out
+
+
+def module_paths(module: str) -> tuple[str, str]:
+    """The two files an `app.x.y` import can be: `backend/app/x/y.py` or its package."""
+    base = "backend/" + module.replace(".", "/")
+    return f"{base}.py", f"{base}/__init__.py"
+
+
+def floor_exempt_reasons(
+    *,
+    changed: list[str] | None,
+    old_tasks_source: str | None,
+    new_tasks_source: str | None,
+) -> list[str] | None:
+    """Why the diff touches what heavy schedules or runs; ``[]`` when it does not.
+
+    ``None`` when any input is unreadable — never ``[]``, which would read as
+    "nothing heavy changed" (gotcha #53). The caller treats ``None`` as no
+    exemption, so the floor applies as before.
+    """
+    if None in (changed, old_tasks_source, new_tasks_source):
+        return None
+    before, after = schedule_statements(old_tasks_source), schedule_statements(new_tasks_source)
+    heavy_before, heavy_after = heavy_task_names(old_tasks_source), heavy_task_names(new_tasks_source)
+    if None in (before, after, heavy_before, heavy_after):
+        return None
+    reasons = []
+    if before != after:
+        reasons.append(f"{HEAVY_TASKS_SOURCE}: beat entries or heavy routing changed")
+    runs_on_heavy = set(heavy_before) | set(heavy_after)
+    for source in (old_tasks_source, new_tasks_source):
+        runs_on_heavy |= set(heavy_queue_beat_tasks(source) or ())
+    old_entry = heavy_entrypoints(old_tasks_source, runs_on_heavy)
+    new_entry = heavy_entrypoints(new_tasks_source, runs_on_heavy)
+    if old_entry is None or new_entry is None:
+        return None
+    moved = sorted(t for t in runs_on_heavy if old_entry.get(t, (None,))[0] != new_entry.get(t, (None,))[0])
+    if moved:
+        reasons.append(f"{HEAVY_TASKS_SOURCE}: heavy task {', '.join(moved[:3])}"
+                       + (f" and {len(moved) - 3} more" if len(moved) > 3 else "") + " changed")
+    paths = set()
+    for entry in (old_entry, new_entry):
+        for _, modules in entry.values():
+            for module in modules:
+                paths.update(module_paths(module))
+    paths.discard(HEAVY_TASKS_SOURCE)  # judged statement by statement above
+    reasons += [f"{path}: code a heavy task imports" for path in sorted(paths & set(changed))]
+    return reasons
+
+
+def _git(repo: str, *args: str) -> str:
+    import subprocess
+
+    done = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=120)
+    if done.returncode != 0:
+        raise RuntimeError(f"git {args[0]} exited {done.returncode}: {done.stderr.strip()[:200]}")
+    return done.stdout
+
+
+def floor_exempt_between(heavy_live: str, main_live: str, repo: str = ".") -> tuple[bool | None, str]:
+    """``(exempt, why)`` for the diff heavy_live..main_live; ``None`` when unreadable."""
+    if not (_is_sha(heavy_live) and _is_sha(main_live)):
+        return None, "a live ref is not a full sha"
+    try:
+        changed = [p for p in _git(repo, "diff", "--name-only", heavy_live, main_live).splitlines() if p]
+        old_src = _git(repo, "show", f"{heavy_live}:{HEAVY_TASKS_SOURCE}")
+        new_src = _git(repo, "show", f"{main_live}:{HEAVY_TASKS_SOURCE}")
+    except Exception as exc:  # noqa: BLE001 — unreadable is no exemption, never a crash
+        return None, f"diff unreadable ({type(exc).__name__}: {exc})"
+    try:
+        reasons = floor_exempt_reasons(changed=changed, old_tasks_source=old_src, new_tasks_source=new_src)
+    except Exception as exc:  # noqa: BLE001 — same: no exemption, never a crash
+        return None, f"diff check failed ({type(exc).__name__}: {exc})"
+    if reasons is None:
+        return None, "a schedule or HEAVY_TASKS parse failed"
+    if not reasons:
+        return False, f"{len(changed)} changed files; none is what heavy schedules or runs"
+    return True, "; ".join(reasons[:5]) + (f" and {len(reasons) - 5} more" if len(reasons) > 5 else "")
+
+
 def _heroku_get(path: str, token: str, extra: dict | None = None):
     """One Platform API read. Stdlib only — this script imports nothing external
     and must stay that way so it runs on a bare runner before any `pip install`.
@@ -1282,6 +1476,33 @@ def heroku_release_age_min(app: str, token: str, now: datetime | None = None) ->
     # A release stamped in the FUTURE (clock skew between the API and the runner)
     # reads as age 0, never as a negative that would sail under the floor.
     return max(0, int((now - when).total_seconds() // 60))
+
+
+def heroku_releases_last_24h(app: str, token: str, now: datetime | None = None) -> int | None:
+    """How many releases the app had in the last 24 hours (234: A's daily cap).
+
+    Every release counts, config-only ones included, for :func:`heroku_release_age_min`'s
+    reason: each one cycles worker-heavy. ``None`` when unreadable, and the caller
+    then grants no exemption.
+    """
+    releases = _heroku_get(
+        f"apps/{app}/releases", token, {"Range": f"version ..; order=desc, max={DAILY_CYCLE_CAP * 4}"}
+    )
+    if not isinstance(releases, list):
+        return None
+    now = now or datetime.now(timezone.utc)
+    count = 0
+    for release in releases:
+        stamp = str((release or {}).get("created_at") or "").strip().replace("Z", "+00:00")
+        try:
+            when = datetime.fromisoformat(stamp)
+        except ValueError:
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if now - when <= timedelta(hours=24):
+            count += 1
+    return count
 
 
 def heroku_release_commit(app: str, token: str) -> str | None:
@@ -1355,6 +1576,18 @@ def main(argv: list[str] | None = None) -> int:
         help="minutes since heavy's current release. Empty or unparseable means "
         "UNREADABLE, which does not hold — see the cost-gate polarity in decide().",
     )
+    d.add_argument(
+        "--floor-exempt",
+        default="",
+        help="true|false from `floor-exempt` (234: A). Anything else is unreadable and "
+        "grants no exemption: the floor stands.",
+    )
+    d.add_argument(
+        "--heavy-releases-24h",
+        default="",
+        help="heavy's releases in the last 24 h, from `releases-24h`. Empty or "
+        "unparseable is unreadable and grants no exemption.",
+    )
     f = sub.add_parser(
         "inflight",
         help="hold while a job is running on worker-heavy — HEAVY_TASKS plus any "
@@ -1421,6 +1654,30 @@ def main(argv: list[str] | None = None) -> int:
         help="minutes since heavy's current release. Projected forward to the "
         "band's opening edge before the cycle floor is asked about it.",
     )
+    w.add_argument(
+        "--floor-exempt",
+        default="",
+        help="true|false from `floor-exempt` (234: A). Anything else is unreadable and "
+        "grants no exemption: the floor stands.",
+    )
+    w.add_argument(
+        "--heavy-releases-24h",
+        default="",
+        help="heavy's releases in the last 24 h, from `releases-24h`. Empty or "
+        "unparseable is unreadable and grants no exemption.",
+    )
+    e = sub.add_parser(
+        "floor-exempt",
+        help="234: A — print true/false: does the diff heavy-live..main-live touch what "
+        "heavy schedules or runs? Empty when unreadable. Always exits 0.",
+    )
+    e.add_argument("--from", dest="from_sha", required=True, help="heavy's live sha (40 hex)")
+    e.add_argument("--to", dest="to_sha", required=True, help="main's live sha (40 hex)")
+    r = sub.add_parser(
+        "releases-24h",
+        help="print the app's release count in the last 24 h (empty if unreadable)",
+    )
+    r.add_argument("--app", required=True, help="the Heroku app, e.g. bainluck-heavy")
     a = sub.add_parser(
         "age", help="print minutes since the app's current release (empty if unreadable)"
     )
@@ -1505,6 +1762,8 @@ def main(argv: list[str] | None = None) -> int:
             heavy_is_ancestor=_bool_arg(args.heavy_is_ancestor),
             dispatched=args.dispatched,
             heavy_release_age_min=_age_arg(args.heavy_release_age_min),
+            floor_exempt=_bool_arg(args.floor_exempt),
+            heavy_releases_24h=_age_arg(args.heavy_releases_24h),
         )
         opens, closes = window_bounds()
         if secs:
@@ -1549,6 +1808,31 @@ def main(argv: list[str] | None = None) -> int:
         # would let the wait's own deadline fail a job that has nothing wrong
         # with it. The clock is read in this process (there is no `--now`).
         print(band_seconds_left())
+        return 0
+
+    if args.command == "floor-exempt":
+        # `age`'s contract: the VALUE ALONE on stdout, the why on stderr, exit 0.
+        # Unreadable prints nothing, and `decide` reads nothing as no exemption.
+        exempt, why = floor_exempt_between(args.from_sha, args.to_sha)
+        print(f"floor-exempt: {why}", file=sys.stderr)
+        if exempt is not None:
+            print("true" if exempt else "false")
+        return 0
+
+    if args.command == "releases-24h":
+        import os
+
+        token = os.environ.get("HEROKU_API_KEY", "")
+        if not token:
+            print("HEROKU_API_KEY is not set, so no release count can be read", file=sys.stderr)
+            return 0
+        try:
+            count = heroku_releases_last_24h(args.app, token)
+        except Exception as exc:  # noqa: BLE001 - any read failure is "unreadable"
+            print(f"release count unreadable ({type(exc).__name__}: {exc})", file=sys.stderr)
+            return 0
+        if count is not None:
+            print(count)
         return 0
 
     if args.command == "age":
@@ -1597,6 +1881,8 @@ def main(argv: list[str] | None = None) -> int:
         heavy_is_ancestor=_bool_arg(args.heavy_is_ancestor),
         dispatched=args.dispatched,
         heavy_release_age_min=_age_arg(args.heavy_release_age_min),
+        floor_exempt=_bool_arg(args.floor_exempt),
+        heavy_releases_24h=_age_arg(args.heavy_releases_24h),
     )
     print(f"{decision.verdict}: {decision.reason}")
     return decision.code

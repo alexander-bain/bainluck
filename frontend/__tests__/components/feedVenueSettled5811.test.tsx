@@ -76,6 +76,18 @@ const slotText = (html: string) =>
   html.match(/max-w-\[46%\]"[^>]*>([^<]*)<\/span>/)?.[1] ?? null;
 const DATE = / · [A-Z][a-z]{2} \d{1,2}$/;
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("A · CONTROL — the corpus is the shape every arm assumes", () => {
   test("both bouts are scoreless `suspended` rows with the keys absent as captured", () => {
     for (const id of [SETTLED_ID, VOID_ID]) {

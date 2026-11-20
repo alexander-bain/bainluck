@@ -18,7 +18,7 @@ struct MLBFinalCardView11284: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if ReleaseSurfaces.isEventPageAtlasEnabled() {
+            if ReleaseSurfaces.isEventPageAtlasEnabled(), card.family != .totals {
                 EventAtlasStoryCardMarkKeyView11666(items: EventAtlasMlbCards11666.markKey(for: card))
             }
             switch card {
@@ -31,7 +31,8 @@ struct MLBFinalCardView11284: View {
                     color: PlayerPropsTeam.color(for: milestone.side, home: homeColor, away: awayColor),
                     state: state, expanded: expanded)
             case .totals(let totals):
-                MLBTotalsCardView11284(card: totals, color: homeColor, state: state, expanded: expanded)
+                MLBTotalsCardView11284(card: totals, color: homeColor, awayColor: awayColor,
+                                       state: state, expanded: expanded)
             case .extraInnings(let extra):
                 MLBExtraInningsCardView11284(card: extra, state: state, expanded: expanded)
             case .series(let series):
@@ -315,15 +316,18 @@ struct MLBMilestoneCardView11284: View {
 
     private func chart(selected: MLBMilestoneCard11284.Target?) -> some View {
         let milestones = card.targets.map { Double($0.milestone) }
+        let yScale = ChartScaleRule201.manyWayWindow(values: card.targets.compactMap(\.pregame))
         return Chart {
             if let final = card.finalCount {
                 RuleMark(x: .value("Final", Double(final)))
                     .foregroundStyle(Color.primary)
                     .lineStyle(StrokeStyle(lineWidth: 2))
             }
-            RuleMark(y: .value("Chance", 0.5))
-                .foregroundStyle(Color.secondary.opacity(0.35))
-                .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+            if yScale.domain.contains(0.5) {
+                RuleMark(y: .value("Chance", 0.5))
+                    .foregroundStyle(Color.secondary.opacity(0.35))
+                    .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+            }
             ForEach(card.targets.filter { $0.pregame != nil }) { target in
                 let isSelected = target.rowID == selected?.rowID
                 PointMark(x: .value("Count", Double(target.milestone)), y: .value("Chance", target.pregame ?? 0))
@@ -336,9 +340,9 @@ struct MLBMilestoneCardView11284: View {
             }
         }
         .chartXScale(domain: domain)
-        .chartYScale(domain: 0...1)
+        .chartYScale(domain: yScale.domain)
         .chartYAxis {
-            AxisMarks(position: .leading, values: [0, 0.5, 1]) { value in
+            AxisMarks(position: .leading, values: yScale.ticks) { value in
                 AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
                 AxisValueLabel {
                     if let chance = value.as(Double.self) { Text("\(Int((chance * 100).rounded()))%") }
@@ -378,6 +382,7 @@ struct MLBMilestoneCardView11284: View {
 struct MLBTotalsCardView11284: View {
     let card: MLBTotalsCard11284
     let color: Color
+    var awayColor: Color = .secondary
     @ObservedObject var state: NFLCardDeckState9483
     var expanded = false
     @Environment(\.dynamicTypeSize) private var size
@@ -404,6 +409,26 @@ struct MLBTotalsCardView11284: View {
 
     var body: some View {
         let selected = selectedIndex.map { card.lines[$0] }
+        if ReleaseSurfaces.isEventPageAtlasEnabled() {
+            MLBTotalTargetsCardView11284(
+                card: card,
+                selectedOptionKey: selected?.optionKey,
+                homeName: card.homeName,
+                awayName: card.awayName,
+                homeColor: color,
+                awayColor: awayColor,
+                homeScore: card.homeScore,
+                awayScore: card.awayScore,
+                expanded: expanded,
+                onSelect: { state.selectMLB($0, slot: slot) },
+                onDetails: { state.detailsRowID = $0 }
+            )
+        } else {
+            legacyBody(selected: selected)
+        }
+    }
+
+    private func legacyBody(selected: MLBTotalsCard11284.Line?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             MLBStoryHeading11284(kicker: "Runs · final result", title: "Where the total finished",
                                  reason: card.reason)

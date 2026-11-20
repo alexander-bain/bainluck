@@ -423,13 +423,26 @@ def _group_members(
 
 def _is_roundup_bundle(card: Any) -> bool:
     """Standing round-up bundles (#10357 / #11902) have a seat floor of
-    ``OPENING_SEATS`` (index >= 10, seat >= 11) and never fill an opening seat."""
-    return (
+    ``OPENING_SEATS`` (index >= 10, seat >= 11) and never fill an opening seat,
+    unless explicitly seated in a returning-reader novelty seat (#12376, Decide 32-C)
+    or inheriting an opening seat from an older card it took over (#12288)."""
+    if not (
         isinstance(card, dict)
         and card.get("type") == "bundle"
         and isinstance(card.get("data"), dict)
         and card["data"].get("kind") == "roundup"
-    )
+    ):
+        return False
+    data = card["data"]
+    if data.get("novelty_seat") is True or data.get("inherited_opening_seat") is True:
+        return False
+    roundup = data.get("roundup")
+    if isinstance(roundup, dict) and (
+        roundup.get("novelty_seat") is True
+        or roundup.get("inherited_opening_seat") is True
+    ):
+        return False
+    return True
 
 
 def seat_opening(items: list, *, now: datetime) -> OpeningSeatingOutcome:

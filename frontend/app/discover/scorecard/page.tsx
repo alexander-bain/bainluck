@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ScorecardAnalytics } from "./ScorecardAnalytics";
+import { CHALLENGE_SURFACES_ENABLED } from "@/lib/launchSurfaces";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { buildScorecardShareSentence, readScorecardStats } from "@/lib/share";
 
@@ -59,6 +61,30 @@ export async function generateMetadata({ searchParams }: ScorecardPageProps): Pr
 }
 
 export default async function ScorecardPage({ searchParams }: ScorecardPageProps) {
+  if (!CHALLENGE_SURFACES_ENABLED) {
+    redirect("/discover");
+    return (
+      <div className="min-h-screen bg-surface-deep" data-testid="scorecard-held-back">
+        <ScorecardAnalytics />
+        <header className="sticky top-0 z-20 bg-surface-card/80 backdrop-blur-lg border-b border-surface-border">
+          <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
+            <Link href="/discover" className="text-text-muted hover:text-text-primary">
+              &larr;
+            </Link>
+            <h1 className="text-lg font-black tracking-tight">Prediction Scorecard</h1>
+          </div>
+        </header>
+        <div className="max-w-4xl mx-auto px-4 py-20 text-center text-text-muted">
+          <p className="text-lg font-medium text-text-primary">Prediction scorecards are paused</p>
+          <p className="text-sm mt-2">We&apos;re making this part better. Anything you saved is still here.</p>
+          <Link href="/discover" className="inline-block mt-6 text-sm font-semibold text-accent-brand hover:underline">
+            Back to Discover
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   const params = await searchParams;
   const accuracy = parseInt(params.accuracy || "0") || 0;
   const total = parseInt(params.total || "0") || 0;

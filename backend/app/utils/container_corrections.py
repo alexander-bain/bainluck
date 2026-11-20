@@ -60,9 +60,13 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from time import monotonic
 from typing import Any, Optional
+from weakref import WeakKeyDictionary
 
 from sqlalchemy import text
+from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.utils.container_graph import (
     validate_correction,
@@ -228,6 +232,29 @@ async def correction_schema_present(session) -> CorrectionSchema:
     if not row:
         return CorrectionSchema(ledger=False, columns=False)
     return CorrectionSchema(ledger=bool(row[0]), columns=bool(row[1]))
+
+
+_READ_SCHEMA_TTL_SECONDS = 60.0
+_read_schema_cache: WeakKeyDictionary[
+    Engine | Connection, tuple[float, CorrectionSchema]
+] = WeakKeyDictionary()
+
+
+async def _schema_for_published_read(session) -> CorrectionSchema:
+    """Reuse a recently verified schema for this database bind."""
+    if not isinstance(session, AsyncSession):
+        return await correction_schema_present(session)
+
+    bind = session.get_bind()
+    now = monotonic()
+    cached = _read_schema_cache.get(bind)
+    if cached is not None and now < cached[0]:
+        return cached[1]
+
+    schema = await correction_schema_present(session)
+    if schema.complete:
+        _read_schema_cache[bind] = (now + _READ_SCHEMA_TTL_SECONDS, schema)
+    return schema
 
 
 # ---------------------------------------------------------------------------
@@ -772,6 +799,7 @@ class PublishedRead:
     container_id: Optional[int] = None
     reason: Optional[str] = None
     members: list = field(default_factory=list)
+    header_rows: list[tuple] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -785,17 +813,18 @@ class PublishedRead:
         }
 
 
-async def read_published(session, slug: str) -> PublishedRead:
+async def read_published(
+    session, slug: str, *, include_headers: bool = False, inline_schema: bool = False
+) -> PublishedRead:
     """The hub's published membership, from ONE statement, so ONE snapshot.
 
     Under READ COMMITTED every statement gets its own snapshot; reading the
     revision and the members in two statements could straddle an assembly
     commit and hand a reader revision N's number with revision N+1's members.
-    One statement cannot. Draws are included one level down, as the existing
-    route does, except a draw that is itself ``withdrawn``.
+    One statement cannot. Draws are included one level down, except when
+    withdrawn. The generic route also takes headers from this snapshot.
     """
-    schema = await correction_schema_present(session)
-    if not schema.columns:
+    if not inline_schema and not (await _schema_for_published_read(session)).columns:
         exists = (
             await session.execute(
                 text("SELECT 1 FROM containers WHERE slug = :slug"), {"slug": slug}
@@ -807,25 +836,54 @@ async def read_published(session, slug: str) -> PublishedRead:
             reason="publication_schema_absent" if exists else None,
         )
 
+    # A compact NFL week can read the two publication fields with the members.
+    # A field that predates the migration reads as NULL from the JSON record.
+    pub_field = PUBLICATION_COLUMN
+    revision_field = REVISION_COLUMN
+    child_pub_field = f"c.{PUBLICATION_COLUMN}"
+    revision_filter = ""
+    if inline_schema:
+        pub_field = f"to_jsonb(containers)->>'{PUBLICATION_COLUMN}'"
+        revision_field = f"(to_jsonb(containers)->>'{REVISION_COLUMN}')::integer"
+        child_pub_field = f"to_jsonb(c)->>'{PUBLICATION_COLUMN}'"
+        revision_filter = " AND hub.rev IS NOT NULL"
+
+    # Append one row with typed headers. Each membership row carries only a
+    # NULL in the extra column, even in collections with thousands of members.
+    headers_column = ", NULL::record[] AS header_rows" if include_headers else ""
+    headers_row = (
+        f"""
+        UNION ALL
+        SELECT hub.id, hub.pub, hub.rev, NULL, NULL, NULL, NULL, NULL, NULL,
+               (SELECT array_agg(ROW(c.id, c.kind, c.name, c.slug, c.category,
+                                     c.status, c.window_start, c.window_end,
+                                     c.parent_container_id, {child_pub_field})
+                                 ORDER BY (c.id = hub.id) DESC, c.name, c.id)
+                  FROM parts JOIN containers c ON c.id = parts.id)
+        FROM hub WHERE hub.pub = 'published'{revision_filter}
+        """
+        if include_headers else ""
+    )
     rows = (
         await session.execute(
             text(
                 "WITH hub AS ("
-                f"  SELECT id, {PUBLICATION_COLUMN} AS pub, {REVISION_COLUMN} AS rev "
+                f"  SELECT id, {pub_field} AS pub, {revision_field} AS rev "
                 "  FROM containers WHERE slug = :slug"
                 "), parts AS ("
                 "  SELECT id FROM hub "
                 "  UNION ALL "
                 "  SELECT c.id FROM containers c JOIN hub ON c.parent_container_id = hub.id "
-                f"  WHERE c.{PUBLICATION_COLUMN} <> 'withdrawn'"
+                f"  WHERE {child_pub_field} <> 'withdrawn'"
                 ") "
                 "SELECT hub.id, hub.pub, hub.rev, e.class, e.child_type, e.child_id, "
-                "       e.parent_id, e.source, e.confidence "
+                f"      e.parent_id, e.source, e.confidence{headers_column} "
                 "FROM hub LEFT JOIN event_edges e "
-                "  ON hub.pub = 'published' AND e.kind = 'contains' "
+                f"  ON hub.pub = 'published'{revision_filter} AND e.kind = 'contains' "
                 " AND e.parent_type = 'container' "
                 " AND e.parent_id IN (SELECT id FROM parts) "
-                "ORDER BY e.class, e.child_id"
+                f"{headers_row}"
+                "ORDER BY class, child_id"
             ),
             {"slug": slug},
         )
@@ -834,6 +892,8 @@ async def read_published(session, slug: str) -> PublishedRead:
         return PublishedRead(state=READ_UNAVAILABLE, slug=slug)
 
     head = rows[0]
+    if inline_schema and (head[1] is None or head[2] is None):
+        return PublishedRead(state=READ_UNPUBLISHED, slug=slug, reason="publication_schema_absent")
     members = [
         {
             "class": r[3],
@@ -855,4 +915,5 @@ async def read_published(session, slug: str) -> PublishedRead:
         revision=int(head[2]),
         container_id=int(head[0]),
         members=members,
+        header_rows=next((r[9] for r in rows if r[9] is not None), []) if include_headers else [],
     )

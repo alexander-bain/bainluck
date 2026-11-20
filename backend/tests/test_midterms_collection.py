@@ -5,6 +5,55 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.mark.parametrize("market_id,name,title", [
+    (109085, "Adam Hamilton", "Adam Hamilton (pastor)"),
+    (109085, "Roger Marshall", "Roger Marshall"),
+    (109088, "Josh Turek", "Josh Turek"),
+    (109088, "Ashley Hinson", "Ashley Hinson"),
+    (109082, "Troy Jackson", "Troy Jackson"),
+    (109082, "Susan Collins", "Susan Collins"),
+    (109065, "James Talarico", "James Talarico"),
+    (109065, "Ken Paxton", "Ken Paxton"),
+    (109072, "Sherrod Brown", "Sherrod Brown"),
+    (109072, "Jon Husted", "Jon Husted"),
+    (109068, "Darline Graham Nordone (R)", "Darline Graham"),
+    (109068, "Annie Andrews", "Annie Andrews"),
+    (109081, "Abdul El-Sayed", "Abdul El-Sayed"),
+    (109081, "Mike Rogers", "Mike Rogers (Michigan politician)"),
+    (108645, "Keisha Lance Bottoms", "Keisha Lance Bottoms"),
+    (108645, "Rick Jackson", "Rick Jackson (businessman)"),
+])
+@pytest.mark.parametrize("settled", [False, True])
+def test_registered_image_identity_survives_blending_and_official_settlement(market_id, name, title, settled):
+    from copy import deepcopy
+    from app.utils.midterms_collection import blend_card
+    from app.utils.venue_settlement import VENUE_SETTLEMENT_SOURCE
+
+    primary = card(market_id)
+    primary["top_outcomes"][0]["name"] = name
+    primary["top_outcomes"][1]["name"] = "Unregistered replacement"
+    if settled:
+        primary["top_outcomes"][0].update(is_winner=True, resolution_source=VENUE_SETTLEMENT_SOURCE)
+    before = deepcopy(primary)
+    result = blend_card(primary, [primary])
+    assert result["top_outcomes"][0]["image_title"] == title
+    assert result["top_outcomes"][0]["name"] == name
+    assert "image_title" not in result["top_outcomes"][1]
+    assert primary == before
+    if settled:
+        assert result["settled_winner"] == name
+        assert result["top_outcomes"][0]["probability"] is None
+    else:
+        assert result["top_outcomes"][0]["probability"] == 0.52
+
+
+def test_same_name_outside_its_reviewed_race_does_not_borrow_a_portrait():
+    from app.utils.midterms_collection import blend_card
+    primary = card(109085)
+    primary["top_outcomes"][0]["name"] = "Mike Rogers"
+    assert "image_title" not in blend_card(primary, [primary])["top_outcomes"][0]
+
+
 def card(mid, source="kalshi", probabilities=(0.52, 0.48)):
     return {
         "id": mid,

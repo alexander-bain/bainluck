@@ -17,22 +17,42 @@ final class GolfTournamentViewModel: ObservableObject {
     }
 
     @Published private(set) var state: State = .loading
+    @Published private(set) var atlasData: EventAtlasGolfTournament11666.TournamentAtlasData = .init()
 
     let slug: String
+    private var skipNetworkLoad = false
 
     init(slug: String) {
         self.slug = slug
     }
 
+    #if DEBUG
+    init(
+        slug: String,
+        loadedPresentation: GolfTournamentPresentation,
+        atlasData: EventAtlasGolfTournament11666.TournamentAtlasData = .init()
+    ) {
+        self.slug = slug
+        self.state = .loaded(loadedPresentation)
+        self.atlasData = atlasData
+        self.skipNetworkLoad = true
+    }
+    #endif
+
     @MainActor
     func load() async {
+        guard !skipNetworkLoad else { return }
         // A refresh keeps the last good screen up while it runs. Dropping back
         // to a skeleton on every pull-to-refresh is how a live page flickers.
         if case .loaded = state {} else { state = .loading }
 
         do {
             let response = try await APIClient.shared.fetchGolfTournament(slug: slug)
-            state = .loaded(GolfTournamentPresentation(response: response))
+            let presentation = GolfTournamentPresentation(response: response)
+            state = .loaded(presentation)
+            if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                atlasData = await Self.loadAtlasData(for: response, includeDefaultLeaderboard: true)
+            }
             logger.info("Golf tournament \(self.slug, privacy: .public) loaded")
         } catch {
             if case .loaded = state {
@@ -44,6 +64,141 @@ final class GolfTournamentViewModel: ObservableObject {
                 logger.error("Golf tournament \(self.slug, privacy: .public) error: \(error)")
             }
         }
+    }
+
+    nonisolated static func loadAtlasData(
+        for response: GolfTournamentDetailResponse,
+        fetchMarket: @Sendable @escaping (Int) async throws -> FuturesMarketDetail = { id in
+            try await APIClient.shared.fetchFuturesDetail(id: id)
+        },
+        fetchTimeline: @Sendable @escaping (Int) async throws -> ProbabilityTimelineResponse = { id in
+            try await APIClient.shared.fetchProbabilityTimeline(
+                marketId: id,
+                top: 20,
+                hours: 168,
+                fullRange: true
+            )
+        },
+        fetchLeaderboard: (@Sendable (String) async throws -> GolfLeaderboardResponse)? = nil,
+        includeDefaultLeaderboard: Bool = false
+    ) async -> EventAtlasGolfTournament11666.TournamentAtlasData {
+        var out = EventAtlasGolfTournament11666.TournamentAtlasData()
+        let winnerId = response.evolutionMarketId
+            ?? response.markets.first(where: { $0.type == "winner" })?.marketIds.first
+        let top5Id = response.markets.first(where: { $0.type == "top_5" })?.marketIds.first
+        let top10Id = response.markets.first(where: { $0.type == "top_10" })?.marketIds.first
+        let top20Id = response.markets.first(where: { $0.type == "top_20" })?.marketIds.first
+        let makeCutId = response.markets.first(where: { $0.type == "make_cut" })?.marketIds.first
+        out.hasMakeCutMarket = (makeCutId != nil)
+
+        let rawStatus = response.tournament.scheduleStatus?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let isSettledOrFinished = EventState.isFinished(rawStatus)
+            || SettledQuote.isSettled(rawStatus)
+            || response.golfers.contains(where: { ($0.isWinner == true) || ($0.won == true) })
+        let effectiveLeaderboardFetcher: (@Sendable (String) async throws -> GolfLeaderboardResponse)? = {
+            if let fetchLeaderboard { return fetchLeaderboard }
+            if includeDefaultLeaderboard {
+                return { tour in try await APIClient.shared.fetchGolfLeaderboard(tour: tour) }
+            }
+            return nil
+        }()
+        let requestedTour = (response.tournament.tour?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
+            $0.isEmpty ? nil : $0
+        } ?? "pga"
+
+        async let winnerOutcome: (FuturesMarketDetail?, Bool) = {
+            guard let id = winnerId else { return (nil, false) }
+            do {
+                return (try await fetchMarket(id), false)
+            } catch {
+                logger.error("Golf tournament winner market \(id, privacy: .public) fetch failed: \(error)")
+                return (nil, true)
+            }
+        }()
+        async let timelineOutcome: (ProbabilityTimelineResponse?, Bool) = {
+            guard let id = winnerId else { return (nil, false) }
+            do {
+                return (try await fetchTimeline(id), false)
+            } catch {
+                logger.error("Golf tournament timeline \(id, privacy: .public) fetch failed: \(error)")
+                return (nil, true)
+            }
+        }()
+        async let top5Outcome: (FuturesMarketDetail?, Bool) = {
+            guard let id = top5Id else { return (nil, false) }
+            do {
+                return (try await fetchMarket(id), false)
+            } catch {
+                logger.error("Golf tournament top5 market \(id, privacy: .public) fetch failed: \(error)")
+                return (nil, true)
+            }
+        }()
+        async let top10Outcome: (FuturesMarketDetail?, Bool) = {
+            guard let id = top10Id else { return (nil, false) }
+            do {
+                return (try await fetchMarket(id), false)
+            } catch {
+                logger.error("Golf tournament top10 market \(id, privacy: .public) fetch failed: \(error)")
+                return (nil, true)
+            }
+        }()
+        async let top20Outcome: (FuturesMarketDetail?, Bool) = {
+            guard let id = top20Id else { return (nil, false) }
+            do {
+                return (try await fetchMarket(id), false)
+            } catch {
+                logger.error("Golf tournament top20 market \(id, privacy: .public) fetch failed: \(error)")
+                return (nil, true)
+            }
+        }()
+        async let makeCutOutcome: (FuturesMarketDetail?, Bool) = {
+            guard let id = makeCutId else { return (nil, false) }
+            do {
+                return (try await fetchMarket(id), false)
+            } catch {
+                logger.error("Golf tournament makeCut market \(id, privacy: .public) fetch failed: \(error)")
+                return (nil, true)
+            }
+        }()
+        async let leaderboardOutcome: GolfLeaderboardResponse? = {
+            guard !isSettledOrFinished, let fetcher = effectiveLeaderboardFetcher else { return nil }
+            do {
+                return try await fetcher(requestedTour)
+            } catch {
+                logger.error("Golf live leaderboard (\(requestedTour, privacy: .public)) fetch failed: \(error)")
+                return nil
+            }
+        }()
+
+        let (winMkt, winFailed) = await winnerOutcome
+        let (tlResp, tlFailed) = await timelineOutcome
+        let (t5Mkt, t5Failed) = await top5Outcome
+        let (t10Mkt, t10Failed) = await top10Outcome
+        let (t20Mkt, t20Failed) = await top20Outcome
+        let (mcMkt, mcFailed) = await makeCutOutcome
+        let lbResp = await leaderboardOutcome
+
+        out.winnerMarket = winMkt
+        out.winnerTimeline = tlResp
+        out.winnerTimelineFailed = tlFailed
+        out.top5Market = t5Mkt
+        out.top10Market = t10Mkt
+        out.top20Market = t20Mkt
+        out.makeCutMarket = mcMkt
+        if let lbResp {
+            out.liveLeaderboard = EventAtlasGolfTournament11666.buildLiveLeaderboardCard(
+                for: response.tournament,
+                from: lbResp
+            )
+        }
+
+        if winFailed { out.failedMarketSlots.insert("win") }
+        if t5Failed { out.failedMarketSlots.insert("top5") }
+        if t10Failed { out.failedMarketSlots.insert("top10") }
+        if t20Failed { out.failedMarketSlots.insert("top20") }
+        if mcFailed { out.failedMarketSlots.insert("makeCut") }
+
+        return out
     }
 }
 
@@ -59,6 +214,11 @@ nonisolated struct GolfTournamentPresentation: Equatable, Sendable {
     let dateRange: String?
     let isMajor: Bool
     let tourLabel: String?
+    var scheduleStatus: String? = nil
+    var commenceTime: String? = nil
+    var evolutionMarketId: Int? = nil
+    var markets: [GolfTournamentMarketGroup] = []
+    var roundTopGroups: [GolfRoundTopGroup] = []
 
     /// The field, ranked, favourite first.
     let field: [GolfTournamentFieldRow]
@@ -75,6 +235,11 @@ nonisolated struct GolfTournamentPresentation: Equatable, Sendable {
         dateRange = formatDateRange(start: t.startDate, end: t.endDate)
         isMajor = t.isMajor == true
         tourLabel = t.tourLabel
+        scheduleStatus = t.scheduleStatus
+        commenceTime = t.commenceTime ?? t.startDate
+        evolutionMarketId = response.evolutionMarketId
+        markets = response.markets
+        roundTopGroups = response.roundTopGroups
         overflowOutcomes = response.overflowOutcomes
 
         // ORDERED HERE, NOT TRUSTED FROM THE WIRE. The server sends rank 1..n
@@ -100,7 +265,10 @@ nonisolated struct GolfTournamentPresentation: Equatable, Sendable {
                     // the disagreement this whole sort exists to prevent.
                     position: index + 1,
                     movement24h: golfer.movement24h,
-                    renderedPercent: golfer.renderedPercent
+                    renderedPercent: golfer.renderedPercent,
+                    openingProbability: golfer.openingProbability,
+                    isWinner: (golfer.isWinner == true) || (golfer.won == true) ? true : golfer.isWinner,
+                    sourceMark: golfer.sourceMark
                 )
             }
     }
@@ -112,6 +280,9 @@ nonisolated struct GolfTournamentFieldRow: Equatable, Identifiable, Sendable {
     let position: Int
     let movement24h: Double?
     var renderedPercent: Int? = nil
+    var openingProbability: Double? = nil
+    var isWinner: Bool? = nil
+    var sourceMark: SourceMark? = nil
 
     var probabilityLabel: String {
         renderedPercent.map { formatProbability(probability, renderedPercent: $0) } ?? String(format: "%.1f%%", probability * 100)

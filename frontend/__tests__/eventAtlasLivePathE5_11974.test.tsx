@@ -326,14 +326,19 @@ describe("Event-page Atlas Step E5 — live path (EKG, previews, tenths) & 390 p
     expect(settledKeyHtml).toContain(ATLAS_STATE_COPY.wonWithCheck);
   });
 
-  it("wires resolveAtlasHeadlineObservedAt and data-atlas-mode in app/events/[id]/page.tsx", () => {
+  it("wires resolveAtlasHeadlineObservedAt and data-atlas-mode in app/events/[id]/page.tsx and EventPageHeadline199.tsx", () => {
     const pageSrc = readFileSync(
       join(__dirname, "..", "app", "events", "[id]", "page.tsx"),
+      "utf8",
+    );
+    const headlineSrc = readFileSync(
+      join(__dirname, "..", "components", "event", "EventPageHeadline199.tsx"),
       "utf8",
     );
     expect(pageSrc).toContain(
       "const atlasObservedAt = resolveAtlasHeadlineObservedAt({",
     );
-    expect(pageSrc).toContain('data-atlas-mode={atlasOptIn ? "true" : undefined}');
+    expect(pageSrc).toContain("atlasMode={atlasOptIn}");
+    expect(headlineSrc).toContain('data-atlas-mode={atlasMode ? "true" : undefined}');
   });
 });

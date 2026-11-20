@@ -1121,19 +1121,21 @@ async def register_espn_team_identities(
     from app.services.team_identity import team_identity_service
 
     if home_team and ee.home_team and (home_team.id, "espn") not in identity_cache:
-        await team_identity_service.register_team_identity(
+        admitted = await team_identity_service.register_team_identity(
             session, home_team.id, "espn", sport_key,
             source_id=str(ee.home_team.espn_id) if ee.home_team.espn_id else None,
             source_name=ee.home_team.display_name or ee.home_team.name,
         )
-        identity_cache.add((home_team.id, "espn"))
+        if admitted:
+            identity_cache.add((home_team.id, "espn"))
     if away_team and ee.away_team and (away_team.id, "espn") not in identity_cache:
-        await team_identity_service.register_team_identity(
+        admitted = await team_identity_service.register_team_identity(
             session, away_team.id, "espn", sport_key,
             source_id=str(ee.away_team.espn_id) if ee.away_team.espn_id else None,
             source_name=ee.away_team.display_name or ee.away_team.name,
         )
-        identity_cache.add((away_team.id, "espn"))
+        if admitted:
+            identity_cache.add((away_team.id, "espn"))
 
 
 # ---------------------------------------------------------------------------

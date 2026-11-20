@@ -100,17 +100,30 @@ function card(ev: Event): string {
   );
 }
 
-// #2920: both surfaces print through `ProjectedFinalLine`, which stamps the
-// pair home-away on `data-projected-final` whatever order its names read in.
+// Direction 199: EventPageHeadline199 prints `Proj.` per row (`data-projected-cell`);
+// EventCard prints through `ProjectedFinalLine` (`data-projected-final`).
 function heroPair(html: string): string | null {
-  const m = html.match(/data-testid="event-hero-projected-final" data-projected-final="(\d+)-(\d+)"/);
-  return m ? `${m[1]}-${m[2]}` : null;
+  const h = html.match(/data-projected-cell="home"[^>]*>([^<]+)<\/span>/)?.[1];
+  const a = html.match(/data-projected-cell="away"[^>]*>([^<]+)<\/span>/)?.[1];
+  return h && a ? `${Math.round(Number(h))}-${Math.round(Number(a))}` : null;
 }
 
 function cardPair(html: string): string | null {
   const m = html.match(/data-testid="event-card-projected-final" data-projected-final="(\d+)-(\d+)"/);
   return m ? `${m[1]}-${m[2]}` : null;
 }
+
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
 
 describe("#9034 — card and hero print one projected final", () => {
   it("the specimen: the card and the page print the same pair, the card's", () => {
@@ -127,7 +140,15 @@ describe("#9034 — card and hero print one projected final", () => {
   });
 
   it("agreement holds for any disagreeing pair, not just the specimen's numbers", () => {
-    const ev = event({}, { projected_home_score: 24.4, projected_away_score: 20.6 });
+    const ev = event(
+      { hero_probability: 0.62, hero_probability_away: 0.38 } as Partial<Event>,
+      {
+        home_probability: 0.62,
+        away_probability: 0.38,
+        projected_home_score: 24.4,
+        projected_away_score: 20.6,
+      },
+    );
     expect(cardPair(card(ev))).toBe("24-21");
     expect(heroPair(page(ev, { home_score: 27.9, away_score: 16.2 }))).toBe("24-21");
   });
@@ -159,8 +180,15 @@ describe("#9034 — where the card prints no projection, the page keeps the ladd
         sport: "baseball_mlb",
         home_team: "Los Angeles Dodgers",
         away_team: "San Diego Padres",
+        hero_probability: 0.62,
+        hero_probability_away: 0.38,
       } as Partial<Event>,
-      { projected_home_score: 4.6, projected_away_score: 3.1 },
+      {
+        home_probability: 0.62,
+        away_probability: 0.38,
+        projected_home_score: 4.6,
+        projected_away_score: 3.1,
+      },
     );
     expect(cardPair(card(ev))).toBeNull();
     expect(heroPair(page(ev, { home_score: 5.2, away_score: 3.3 }))).toBe("5-3");

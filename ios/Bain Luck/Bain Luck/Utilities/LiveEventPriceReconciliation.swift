@@ -87,6 +87,8 @@ nonisolated enum LiveEventPriceReconciliation {
         kept.heroProbabilityObservedAt = held.heroProbabilityObservedAt
         kept.winProbabilitySources = held.winProbabilitySources
         kept.blendFoldRevision = held.blendFoldRevision
+        kept.sourceMark = held.sourceMark
+        kept.awaySourceMark = held.awaySourceMark
         return kept
     }
 
@@ -246,6 +248,8 @@ nonisolated enum LiveEventPriceReconciliation {
         event.heroProbabilityObservedAt = quote.heroProbabilityObservedAt
         event.blendFoldRevision = ServedFoldRevision(quote.blendFoldRevision)
         event.winProbabilitySources = quote.winProbabilitySources
+        event.sourceMark = nil
+        event.awaySourceMark = nil
     }
 
     static func shouldPreserve(_ frame: LiveStreamFrame?, over polled: EventDetail, streamRecoverable: Bool) -> Bool {
@@ -295,6 +299,8 @@ nonisolated enum LiveEventPriceReconciliation {
         if frame.rev?.revision != nil || event.blendFoldRevision?.revision != nil {
             event.blendFoldRevision = ServedFoldRevision(frame.rev?.revision)
         }
+        event.sourceMark = nil
+        event.awaySourceMark = nil
     }
 
     /// #9051 — web's `chartRevisionRefreshKey`. A removal can advance the fold

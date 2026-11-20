@@ -19,6 +19,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { path: "/sports", priority: 0.8, changeFrequency: "hourly" },
     { path: "/about", priority: 0.7, changeFrequency: "monthly" },
     { path: "/calibration", priority: 0.7, changeFrequency: "daily" },
+    { path: "/evals", priority: 0.7, changeFrequency: "daily" },
     { path: "/politics", priority: 0.6, changeFrequency: "daily" },
     { path: "/economics", priority: 0.6, changeFrequency: "daily" },
     { path: "/entertainment", priority: 0.6, changeFrequency: "daily" },

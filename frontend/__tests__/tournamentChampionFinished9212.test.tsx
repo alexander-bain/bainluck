@@ -115,7 +115,7 @@ describe("#9212 — the card leads with the champion", () => {
     const t = text(card(frenchOpen(null)));
     expect(t).toContain("LIVE");
     expect(t).toContain("Leader");
-    expect(t).toContain("+17.9 pts today");
+    expect(t).toContain("+17.9 points today");
     expect(t).not.toContain("Champion");
   });
 

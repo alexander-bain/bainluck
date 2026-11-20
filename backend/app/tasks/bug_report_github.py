@@ -14,7 +14,7 @@ import re
 
 import httpx
 
-from app.utils.issue_labels import ensure_taxonomy, priority_label
+from app.utils.issue_labels import ensure_taxonomy, priority_label, triage_at_birth
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +99,8 @@ def format_issue_body(
     category: str | None,
     app_state: dict | None,
     has_screenshot: bool,
+    *,
+    screenshot_summary: str | None = None,
 ) -> str:
     desc = description or "(no description)"
     severity = compute_severity(description)
@@ -115,7 +117,7 @@ def format_issue_body(
     user_id = state.get("user_id", "")
     user_display = user_name if user_name and user_name != "anonymous" else (f"user {user_id}" if user_id else "anonymous")
 
-    admin_url = f"{FRONTEND_URL}/admin/bug-reports"
+    admin_url = f"{FRONTEND_URL}/admin/bug-reports?id={report_id}"
 
     lines = [
         "## Bug Report",
@@ -137,13 +139,33 @@ def format_issue_body(
         "",
     ]
 
+    crash_log = state.get("crash_log") if state.get("source") == "testflight" else None
+    if crash_log:
+        head = "\n".join(str(crash_log).splitlines()[:60]).replace("`", "'")
+        lines += ["<details><summary>Crash log (first 60 lines)</summary>", "", "```", head, "```", "</details>", ""]
+
+    cleaned_summary = (screenshot_summary or "").strip()
+    if cleaned_summary:
+        lines.append("### Screenshot description")
+        lines.append("*Written by a model from the screenshot (the image itself stays private in Admin).*")
+        lines.append("")
+        lines.append(cleaned_summary)
+        lines.append("")
+
     if has_screenshot:
         lines.append("### Screenshot")
-        lines.append(f"[View screenshot + full app state →]({admin_url})")
+        lines.append(f"[View screenshot + full app state (report #{report_id}) →]({admin_url})")
         lines.append("")
 
     lines.append("---")
-    lines.append(f"*Auto-created from rage shake (report #{report_id}). [Admin detail →]({admin_url})*")
+    if state.get("source") == "testflight":
+        kind = "crash" if state.get("testflight_kind") == "crash" else "screenshot"
+        lines.append(
+            f"*Auto-created from TestFlight {kind} feedback (report #{report_id}); "
+            f"the full submission is in App Store Connect. [Admin detail →]({admin_url})*"
+        )
+    else:
+        lines.append(f"*Auto-created from rage shake (report #{report_id}). [Admin detail →]({admin_url})*")
 
     return "\n".join(lines)
 
@@ -214,6 +236,10 @@ def compute_fingerprint(
     cat = (category or "other").strip().lower()
     diagnosis = compute_root_cause(description).strip().lower()
     raw = f"{page}|{cat}|{diagnosis}"
+    # 220-A: a TestFlight report carries no screen name, so page+category would
+    # fold every tester's report into one issue. Each submission files its own.
+    if state.get("source") == "testflight" and state.get("testflight_submission_id"):
+        raw = f"testflight|{state['testflight_submission_id']}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
@@ -323,7 +349,12 @@ def create_github_issue(title: str, body: str, labels: list[str]) -> tuple[int, 
     when a rail supplied nothing, which is what happened for the weekly digest and
     for any cockpit filing whose severity field was blank. Enforcing it at the one
     chokepoint rather than in each of the eight callers is deliberate: a rail added
-    next month inherits the floor without anyone remembering to."""
+    next month inherits the floor without anyone remembering to.
+
+    #12539 (121-A): the same chokepoint refuses to BIRTH an issue at P1. A rail's
+    ``priority:p1`` is filed as ``needs-triage`` at the P2 floor, and the morning
+    triage promotes it. Re-observations never come through here, so a P1 a human
+    set is untouched."""
     resp = httpx.post(
         f"https://api.github.com/repos/{REPO}/issues",
         headers={
@@ -331,7 +362,8 @@ def create_github_issue(title: str, body: str, labels: list[str]) -> tuple[int, 
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         },
-        json={"title": title, "body": body, "labels": ensure_taxonomy(labels)},
+        # 121-A (#12539): a new issue is never born at P1; it files needs-triage.
+        json={"title": title, "body": body, "labels": ensure_taxonomy(triage_at_birth(labels))},
         timeout=30,
     )
     resp.raise_for_status()

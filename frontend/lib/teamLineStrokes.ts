@@ -7,7 +7,12 @@
  */
 
 import { colorDistance } from "./probabilityBarPair";
-import { hexToRgb, teamTextColor } from "./teamColors";
+import {
+  SLATE_TEAM_FALLBACK,
+  hexToRgb,
+  sameColorFamily,
+  teamTextColor,
+} from "./teamColors";
 
 /**
  * #10547 — two team lines this close read as one line. Redmean distance, the
@@ -27,8 +32,11 @@ const HOME_FALLBACK = "#111827"; // --text-primary
  * Where a too-close side goes: existing tokens a team name can be printed in
  * (every one clears `teamTextColor`'s 3:1 floor; a test asserts it). Not the
  * bar ladder's `#9CA3AF`, which is too faint to be text.
+ * Ruling 197 leads with `SLATE_TEAM_FALLBACK` (`#64748B`, 4.76:1) when away
+ * switches without a qualifying `secondary_color`.
  */
 export const LINE_RESCUE_COLORS = [
+  SLATE_TEAM_FALLBACK,
   AWAY_FALLBACK,
   "#4F46E5", // the bar ladder's indigo
   "#EF4444", // --accent-danger
@@ -47,24 +55,48 @@ function withHash(hex: string): string {
 }
 
 /**
- * #10547 — the two teams' colours, decided as a pair. The team name, its solid
- * projection and its dashed score all take the one colour returned here, so the
- * names above the plot stay the key to the lines.
+ * #10547 + Ruling 197 — the two teams' colours, decided as a pair. The team
+ * name, its solid projection and its dashed score all take the one colour
+ * returned here, so the names above the plot stay the key to the lines.
  *
- * A readable supplied colour is kept unless the pair is too close. Then a real
- * colour is kept over a fallback and, between two real ones, the away side is
- * kept (arbitrary, but fixed, so one game never renders two ways). The other
- * side takes the rescue colour farthest from the kept one.
+ * When both teams supply readable colours that collide (either closer than
+ * `MIN_LINE_PAIR_DISTANCE` or sharing a chromatic hue family per Ruling 197),
+ * the home team keeps its colour and the away team switches to `awaySecondary`
+ * (when readable, outside home's hue family, and `>= MIN_LINE_PAIR_DISTANCE`
+ * from home), else `SLATE_TEAM_FALLBACK` (`#64748B`, or the farthest rescue
+ * colour when home itself sits near `#64748B`). When only one side has a real
+ * colour, that real colour is kept and the fallback side moves.
  */
 export function projectedTeamStrokes(
   homeColor?: string | null,
   awayColor?: string | null,
+  awaySecondary?: string | null,
 ): { home: string; away: string } {
   const homeReal = teamTextColor(homeColor);
   const awayReal = teamTextColor(awayColor);
   const home = homeReal ? withHash(homeReal) : HOME_FALLBACK;
   const away = awayReal ? withHash(awayReal) : AWAY_FALLBACK;
-  if (lineDistance(home, away) >= MIN_LINE_PAIR_DISTANCE) return { home, away };
+  const sharedHue = Boolean(homeReal && awayReal && sameColorFamily(home, away));
+  if (!sharedHue && lineDistance(home, away) >= MIN_LINE_PAIR_DISTANCE) {
+    return { home, away };
+  }
+  if (homeReal && awayReal) {
+    const secReal = teamTextColor(awaySecondary);
+    if (secReal) {
+      const sec = withHash(secReal);
+      if (!sameColorFamily(sec, home) && lineDistance(sec, home) >= MIN_LINE_PAIR_DISTANCE) {
+        return { home, away: sec };
+      }
+    }
+    if (lineDistance(SLATE_TEAM_FALLBACK, home) >= MIN_LINE_PAIR_DISTANCE) {
+      return { home, away: SLATE_TEAM_FALLBACK };
+    }
+    let best: string = LINE_RESCUE_COLORS[0];
+    for (const c of LINE_RESCUE_COLORS) {
+      if (lineDistance(c, home) > lineDistance(best, home)) best = c;
+    }
+    return { home, away: best };
+  }
   const keepHome = !!homeReal && !awayReal;
   const kept = keepHome ? home : away;
   let best: string = LINE_RESCUE_COLORS[0];

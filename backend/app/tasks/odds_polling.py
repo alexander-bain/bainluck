@@ -30,7 +30,8 @@ from app.utils.odds_math import (
     project_scores,
     sportsbook_spread_is_a_margin,
 )
-from app.utils.book_consensus import median_invents_its_answer
+from app.utils.book_consensus import BETTING_BOOK_FLOOR, median_invents_its_answer
+from app.utils.odds_filtering import LIVE_LINE_CURRENT_SECONDS, live_line_is_current
 from app.utils.name_normalization import names_match, normalize_name
 from app.utils.polling_config import compute_effective_interval
 from app.utils.score_observation import (
@@ -77,18 +78,6 @@ logger = logging.getLogger(__name__)
 #: window has no margin at all — which is what the 72h floor sized off
 #: ``SUSPENDED_RESUME_WINDOW`` alone happened to be.
 ODDS_SCORES_LOOKBACK = timedelta(days=3)
-
-# Ruling 051 (#1841), Alex 2026-08-14: the sportsbook consensus floors at THREE
-# books. At or above the floor `betting` is written as the median; below it the
-# key is DROPPED from `Event.win_probability_sources` and the blend re-weights
-# over whatever remains fresh. Never frozen at a last value.
-#
-# Three, and not two, because the measured failure had three books left and was
-# already broken: fanduel 0.0140, betmgm 0.0288, rebet 0.1347 — a 10x spread in
-# which the median still had to pick one of them. Two books cannot have a median
-# at all in any meaningful sense. Below three there is no consensus to report,
-# and reporting one anyway is what produced 87-13 on event 15192596.
-BETTING_BOOK_FLOOR = 3
 
 
 def tier_adjusted_interval(base_interval: float, tier: str, sport_key: str) -> float:
@@ -657,9 +646,15 @@ async def _maybe_set_opening_odds(
     home_spread: float | None,
     over_under: float | None,
     commence_time: datetime | None = None,
+    lines_fetched: bool = True,
 ):
     """
     Update opening odds for a scheduled event.
+
+    ``lines_fetched=False`` (#11286 review): the fetch asked for the moneyline
+    only, so its spread and total are absent, not withdrawn. The moneyline,
+    probabilities and favourite update as always; the opening spread and total
+    keep the last value a lines-carrying fetch wrote instead of going to NULL.
 
     Opening odds represent the last pregame consensus — they keep updating
     on every poll while the game is still scheduled. Once the game starts,
@@ -693,16 +688,18 @@ async def _maybe_set_opening_odds(
     opening_favorite = favorite_from_pair(home_prob, away_prob)
 
     # Update opening odds (keeps updating until game starts)
+    values = {
+        "opening_home_probability": home_prob,
+        "opening_away_probability": away_prob,
+        "opening_favorite": opening_favorite,
+    }
+    if lines_fetched:
+        values["opening_home_spread"] = home_spread
+        values["opening_over_under"] = over_under
     await session.execute(
         Event.__table__.update()
         .where(Event.id == event_id)
-        .values(
-            opening_home_probability=home_prob,
-            opening_away_probability=away_prob,
-            opening_home_spread=home_spread,
-            opening_over_under=over_under,
-            opening_favorite=opening_favorite,
-        )
+        .values(**values)
     )
 
 
@@ -805,6 +802,38 @@ async def _create_snapshot(
     return snapshot
 
 
+def _is_live_game(event, commence_time: Optional[datetime]) -> bool:
+    """Started and not finished: the window ruling 233: A's live rule covers."""
+    if commence_time is None:
+        return False
+    if commence_time.tzinfo is None:
+        commence_time = commence_time.replace(tzinfo=timezone.utc)
+    if commence_time > datetime.now(timezone.utc):
+        return False
+    return getattr(event, "status", None) not in ("completed", "closed")
+
+
+async def _game_state_changed_at(
+    session, event_id: int, commence_time: Optional[datetime]
+) -> Optional[datetime]:
+    """The game's last score change, or its start when none is recorded (#12938).
+
+    `score_snapshots` gets a row when a writer sees the score change, so its
+    newest row is the last change we know of. A change recorded before the
+    start (a stale pregame row) does not count: the start is later.
+    """
+    from app.utils.live_line_clock import game_state_clock
+
+    last_score = (
+        await session.execute(
+            select(func.max(ScoreSnapshot.captured_at)).where(
+                ScoreSnapshot.event_id == event_id
+            )
+        )
+    ).scalar()
+    return game_state_clock(last_score, commence_time)
+
+
 async def _ingest_event_odds(
     session,
     event,
@@ -815,6 +844,7 @@ async def _ingest_event_odds(
     update_opening: bool = True,
     drop_below_floor: bool = True,
     received_at: Optional[float] = None,
+    lines_fetched: bool = True,
 ) -> int:
     """Create odds snapshots for every bookmaker of one event, then update the
     event's opening-odds consensus and win_probability_sources['betting'].
@@ -867,6 +897,7 @@ async def _ingest_event_odds(
     # #4971: the exact population behind the consensus, book by book, kept
     # only in the publication record (never re-derived from history later).
     book_population: list[dict] = []
+    quotes: list[dict] = []
     snapshots_processed = 0
     # #10090: per-book version witnesses for a traced event only (None otherwise).
     from app.utils.nonvenue_trace import nonvenue_trace
@@ -887,14 +918,19 @@ async def _ingest_event_odds(
         if is_new:
             session.add(snapshot)
         # Collect values from ALL bookmakers (new or existing) for consensus.
+        # #12938: in a live game they are filtered to the current lines below.
         if snapshot.home_win_probability:
-            all_home_probs.append(float(snapshot.home_win_probability))
-            book_population.append(
-                {
-                    "book": bookmaker.get("key"),
-                    "home_probability": float(snapshot.home_win_probability),
-                }
-            )
+            quotes.append({
+                "book": bookmaker.get("key"),
+                "home": float(snapshot.home_win_probability),
+                "away": (float(snapshot.away_win_probability)
+                         if snapshot.away_win_probability else None),
+                "spread": (float(snapshot.home_spread)
+                           if snapshot.home_spread is not None else None),
+                "ou": (float(snapshot.over_under)
+                       if snapshot.over_under is not None else None),
+                "changed_at": getattr(snapshot, "captured_at", None),
+            })
             if _trace_books is not None:
                 _trace_books["books"].append({
                     "book": bookmaker.get("key"),
@@ -905,13 +941,83 @@ async def _ingest_event_odds(
                     "new_snapshot": bool(is_new),
                     "bookmaker_last_update": bookmaker.get("last_update"),
                 })
-            if snapshot.away_win_probability:
-                all_away_probs.append(float(snapshot.away_win_probability))
-            if snapshot.home_spread is not None:
-                all_spreads.append(float(snapshot.home_spread))
-            if snapshot.over_under is not None:
-                all_ous.append(float(snapshot.over_under))
         snapshots_processed += 1
+
+    # ── #12938 / ruling 233: A: IN A LIVE GAME, ONLY CURRENT LINES COUNT ─────
+    # A book that stops updating its in-game line stays in The Odds API's
+    # response at its last price, so it used to stay in the median: UC Irvine at
+    # Stanford (15350027) served Sportsbooks 81% from eight lines last moved by
+    # 9:07 PM while Polymarket read 99.5% at 9:15. `live_line_is_current` is the
+    # rule; below the floor the existing ruling-051 drop takes Sportsbooks out
+    # of Now. Pregame is unchanged: a resting pregame line is still the book's
+    # opinion.
+    live_rule: Optional[dict] = None
+    if quotes and _is_live_game(event, commence_time):
+        now = datetime.now(timezone.utc)
+        state_changed_at = await _game_state_changed_at(session, event_id, commence_time)
+        quoting = len(quotes)
+        quotes = [
+            q for q in quotes
+            if live_line_is_current(
+                q["changed_at"], now=now, state_changed_at=state_changed_at
+            )
+        ]
+        live_rule = {
+            "rule": "live_current_lines",
+            "window_seconds": LIVE_LINE_CURRENT_SECONDS,
+            "state_changed_at": (
+                state_changed_at.isoformat() if state_changed_at else None
+            ),
+            "quoting": quoting,
+            "current": len(quotes),
+        }
+    for q in quotes:
+        all_home_probs.append(q["home"])
+        book_population.append({"book": q["book"], "home_probability": q["home"]})
+        if q["away"] is not None:
+            all_away_probs.append(q["away"])
+        if q["spread"] is not None:
+            all_spreads.append(q["spread"])
+        if q["ou"] is not None:
+            all_ous.append(q["ou"])
+    # The page and cards build the projected final from the same current lines,
+    # reading this clock from the bag instead of reading the scores again
+    # (#12938, Fable option A: the card pair's read stays one statement).
+    live_clock_metadata: dict = {}
+    if live_rule is not None and live_rule["state_changed_at"] is not None:
+        from app.utils.live_line_clock import LIVE_STATE_CLOCK_KEY
+        live_clock_metadata = {LIVE_STATE_CLOCK_KEY: live_rule["state_changed_at"]}
+    # The Sportsbooks number is as old as its oldest counted line (#12938):
+    # dated by the poll it would claim to be fresh while built from lines that
+    # stopped moving minutes ago. Pregame keeps the receipt clock.
+    lines_read_at = (
+        min(q["changed_at"] for q in quotes) if live_rule is not None and quotes else None
+    )
+
+    if live_rule is not None and not quotes and drop_below_floor:
+        # Every quoting book has gone quiet: the same absence as ruling 051's
+        # floor, reached with zero current lines. Without this the branch
+        # below never runs and the last consensus stays in place, frozen.
+        from app.utils.nonvenue_live_push import write_nonvenue_probability
+        logger.info(
+            "event %s: betting DROPPED — %d book(s) quote a moneyline, none "
+            "current in a live game (#12938 / ruling 233: A)",
+            event_id, live_rule["quoting"],
+        )
+        await write_nonvenue_probability(
+            session, event, "betting", None,
+            metadata={"betting_book_count": 0, **live_clock_metadata},
+            received_at=received_at,
+            evidence={
+                "rule": "median",
+                "floor": BETTING_BOOK_FLOOR,
+                "decision": "below_floor",
+                "median": None,
+                "split_pair": None,
+                "population": [],
+                "live": live_rule,
+            },
+        )
 
     # Update opening odds with consensus across all bookmakers
     # (keeps updating on every poll while the game is scheduled).
@@ -949,6 +1055,7 @@ async def _ingest_event_odds(
                 avg_home, avg_away,
                 avg_spread, avg_ou,
                 commence_time=commence_time,
+                lines_fetched=lines_fetched,
             )
 
         # Write betting consensus to win_probability_sources so the multi-source
@@ -1078,7 +1185,7 @@ async def _ingest_event_odds(
             await write_nonvenue_probability(
                 session, event, "betting",
                 _betting_value,
-                metadata={"betting_book_count": _book_count},
+                metadata={"betting_book_count": _book_count} | live_clock_metadata,
                 received_at=received_at,
                 evidence={
                     "rule": "median",
@@ -1093,7 +1200,10 @@ async def _ingest_event_odds(
                         list(_split_books) if _split_books is not None else None
                     ),
                     "population": book_population,
+                    **({"live": live_rule} if live_rule is not None else {}),
                 },
+                # Only when the live rule dated it: every other write is unchanged.
+                **({"price_read_at": lines_read_at} if lines_read_at is not None else {}),
                 trace_inputs=None if _trace_books is None else (
                     lambda: {**_trace_books, "select_end": nonvenue_trace().clock(),
                              "upstream_clock_domain": "ODDS_API_BOOKMAKER_LAST_UPDATE"}),
@@ -1104,6 +1214,9 @@ async def _ingest_event_odds(
         # same silence today, because both simply skip the write and leave a
         # stale `betting` in place. Naming the first one is the prerequisite for
         # ever treating them differently.
+        # #12938: books that quote but are not current were handled above.
+        if live_rule is not None:
+            return snapshots_processed
         logger.info(
             "event %s: %d bookmaker snapshot(s) processed but NO moneyline "
             "quoted by any book — market closed, not a polling gap (#1841). "
@@ -1655,7 +1768,11 @@ async def _poll_all_odds():
                     api_markets = "h2h,spreads,totals"
                     api_regions = "us,us2" if sport_tier == 1 else "us"
                 else:  # "later" — h2h only, primary US only (saves ~83% vs live)
-                    api_markets = "h2h"
+                    # #11286 (138: A): NFL and NBA also get spreads and totals,
+                    # once an hour per league, sharing discovery's stamp.
+                    from app.utils.scheduled_full_markets import scheduled_markets
+
+                    api_markets = scheduled_markets(sport_key, r, now.timestamp())
                     api_regions = "us"
 
                 # Per-sport region override (e.g., MLB -> us only for quota savings)
@@ -1671,6 +1788,14 @@ async def _poll_all_odds():
                         markets=api_markets,
                     )
                     received_at = datetime.now(timezone.utc).timestamp()
+                    if tier == "later" and not quota_conservation:
+                        from app.utils.scheduled_full_markets import (
+                            SCHEDULED_FULL_MARKETS,
+                            record_full_fetch,
+                        )
+
+                        if api_markets == SCHEDULED_FULL_MARKETS:
+                            record_full_fetch(sport_key, r, received_at)
                     all_events_data.extend(events_data)
                     sports_polled += 1
 
@@ -1680,7 +1805,7 @@ async def _poll_all_odds():
                         record_odds_api_quota(
                             service.last_requests_remaining,
                             service.last_requests_used or 0,
-                            "poll_odds",
+                            "poll_odds" if tier == "live" else f"poll_odds_{tier}",
                             pre_call_used=pre_used,
                             sport_key=sport_key,
                         )
@@ -1751,6 +1876,10 @@ async def _poll_all_odds():
                         total_snapshots += await _ingest_event_odds(
                             session, event, event_data, commence_time, snapshot_cache,
                             received_at=received_at,
+                            # #11286 review (bot): a fetch that didn't ask for
+                            # lines still writes the opening moneyline, but must
+                            # not write the opening spread and total to NULL.
+                            lines_fetched="spreads" in api_markets,
                         )
                         # #10090: commit AND publish this game before the next
                         # game's registry lookup and snapshot bookkeeping. The
@@ -2081,6 +2210,21 @@ async def _poll_all_odds():
 
                             # Parse scores from the API response
                             event_scores = score_event.get("scores")
+                            # #12379: the scores feed flips home/away the way the
+                            # odds feed does (#8530), and each score is read off
+                            # the FEED's home_team, so a flip put every score on
+                            # the other club: San Diego St 66, Colorado 77 for a
+                            # game San Diego State won 77-66 (15343426 flipped
+                            # mid-game, 32-14 to 17-33). The scores are listed by
+                            # NAME, so orienting the two names to the row is the
+                            # whole fix, exactly as it is for the prices.
+                            _score_row = _score_events_by_ext.get(external_id)
+                            if _score_row is not None:
+                                score_event = _orient_feed_to_row(
+                                    score_event,
+                                    _score_row.home_team_name,
+                                    _score_row.away_team_name,
+                                )
                             home_team = score_event.get("home_team")
                             away_team = score_event.get("away_team")
 
@@ -2590,10 +2734,6 @@ async def _poll_all_odds():
                                             else None
                                         ),
                                     )
-                                    if (stat_wp is not None and pregame_spread is None
-                                            and home_score == 0 and away_score == 0
-                                            and event_obj.opening_home_probability is not None):
-                                        stat_wp = float(event_obj.opening_home_probability)
                                     if stat_wp is not None:
                                         from app.utils.nonvenue_live_push import write_nonvenue_probability
                                         await write_nonvenue_probability(

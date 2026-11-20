@@ -260,6 +260,7 @@ struct SearchView: View {
     private func consumePendingSearchQuery() {
         guard navCoordinator.selectedTab == .search,
               let query = navCoordinator.consumeSearchQuery() else { return }
+        if !path.isEmpty { path = NavigationPath() }
         viewModel.query = query
         Task { await viewModel.search() }
     }
@@ -952,7 +953,7 @@ struct SearchView: View {
                             Button {
                                 path.append(Route.eventDetail(id: event.id))
                             } label: {
-                                searchEventRow(event)
+                                searchEventCard183A(event)
                             }
                             .macKeyboardRow(.eventDetail(id: event.id), in: keyboardSelection)
                             .macResultMenu(.eventDetail(id: event.id))
@@ -961,7 +962,7 @@ struct SearchView: View {
                     } else {
                         ForEach(results.results) { event in
                             NavigationLink(value: Route.eventDetail(id: event.id)) {
-                                searchEventRow(event)
+                                searchEventCard183A(event)
                             }
                             .macKeyboardRow(.eventDetail(id: event.id), in: keyboardSelection)
                             .macResultMenu(.eventDetail(id: event.id))
@@ -1197,6 +1198,15 @@ struct SearchView: View {
 
     // MARK: - Event Row
 
+    private func searchEventCard183A(_ event: SearchEvent) -> some View {
+        let sportLabel = sportKeyDisplayName(event.sport, facets: viewModel.sportFacets)
+        let adapted = SearchEventCardAdapter183A.fromSearchResult(event, sportDisplayName: sportLabel)
+        return EventCardView(
+            event: adapted,
+            reason: event.highlight?.label
+        )
+    }
+
     private func searchEventRow(_ event: SearchEvent) -> some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
@@ -1331,8 +1341,15 @@ struct SearchView: View {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color.secondary.opacity(0.2))
                     .frame(width: 32, height: 32)
-                    // #4720 — same served-first fallback as TeamDetailView.
-                    .overlay(Text(team.abbreviation ?? TeamShortName.abbreviation(team.name)).font(.caption2).bold())
+                    // #4720 — same served-first fallback as TeamDetailView; fixed
+                    // badge font + minimumScaleFactor prevents "K..." / "G..." at .xxxLarge.
+                    .overlay(
+                        Text(team.abbreviation ?? TeamShortName.abbreviation(team.name))
+                            .font(.system(size: 10, weight: .bold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                            .padding(.horizontal, 2)
+                    )
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(team.name).font(.subheadline).fontWeight(.medium)
@@ -1448,7 +1465,7 @@ struct SearchView: View {
 
             if let listing = market.relatedGameListing {
                 relatedGameListingText(listing, font: .caption)
-            } else if let top = market.dateLadderAnswer ?? market.topOutcomes?.first {
+            } else if let top = market.dateLadderAnswer ?? market.numericalLadderAnswer ?? market.topOutcomes?.first {
                 HStack(spacing: 4) {
                     Text(top.name)
                         .font(.caption)
@@ -1488,13 +1505,11 @@ struct SearchView: View {
 
     @ViewBuilder
     private func searchSourceBadge(_ source: String) -> some View {
-        if let label = SourceLabels.label(for: source) {
+        if let label = SourceLabels.cardFaceLabel(for: source) {
             let color: Color = {
                 switch source {
-                case "polymarket": return .blue
-                case "kalshi": return Color(hex: "#22c55e")
                 case "odds_api": return Color(hex: "#d97706")
-                default: return .gray
+                default: return .secondary
                 }
             }()
             Text(label)

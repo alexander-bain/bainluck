@@ -310,9 +310,9 @@ describe("UX-1052 item 8 — the board that stays", () => {
     expect(html.split("+5.0").length - 1).toBe(1);
   });
 
-  it("prints the venue badge — which is what makes a MERGED board legible", () => {
-    expect(html).toContain("Kalshi");
-    expect(html).toContain("Polymarket");
+  it("prints no venue badge on card faces", () => {
+    expect(html).not.toContain("Kalshi");
+    expect(html).not.toContain("Polymarket");
   });
 
   it("draws no bar at all for an unpriced question, and says so in the product's words", () => {
@@ -341,7 +341,7 @@ describe("UX-1052 item 8 — the board that stays", () => {
       partitionLeagueMarkets([binaryMarket(100 + i, `Question ${i}`, 0.5 - i * 0.01, "props")]).binaries[0],
     );
     const wall = renderToStaticMarkup(<LeagueBinaryBoard binaries={many} />);
-    expect(wall).toContain("Show 18 more questions");
+    expect(wall).toContain("Show 18 more markets");
     expect(wall).toContain("Question 0");
     expect(wall).not.toContain("Question 25");
     // The count in the header states the WHOLE board, not the visible slice.

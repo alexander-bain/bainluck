@@ -6475,6 +6475,19 @@ async def _ensure_futures_outcomes_external_id_index():
             pass
 
 
+# #12042: events per settled page. Each event arrives with every nested market,
+# so a 200-event page of a dense prop series is tens of thousands of market dicts
+# held at once, plus the per-page ticker lists built from them, on a worker whose
+# two children share a 512 MB quota. Since the Nov 11 switch (144-A) the worker
+# was killed (R15) at every scheduled slot of this task while it was in flight,
+# and it logged no success in three days. A smaller page bounds that peak; the
+# page cap and the empty-page exit scale with it, so one run still reads each
+# series as deep as before.
+_SETTLED_PAGE_EVENTS = 25
+_SETTLED_PAGES_PER_SERIES = 200 * 200 // _SETTLED_PAGE_EVENTS
+_SETTLED_EMPTY_PAGE_EXIT = 5 * 200 // _SETTLED_PAGE_EVENTS
+
+
 async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str] | None = None):
     """Recover historical prices and fix market status from Kalshi settled events.
 
@@ -6732,7 +6745,7 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                     series_snapshots = 0
                     _empty_pages = 0
 
-                    for page_num in range(200):
+                    for page_num in range(_SETTLED_PAGES_PER_SERIES):
                         _page_t0 = _time.monotonic()  # #969 diag: per-page timing
                         # #969: inner time-budget guard. The outer per-series
                         # check (above) wasn't enough — a single deep series can
@@ -6767,7 +6780,7 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                                     status="settled",
                                     series_ticker=series,
                                     with_nested_markets=True,
-                                    limit=200,
+                                    limit=_SETTLED_PAGE_EVENTS,
                                     cursor=cursor,
                                     deadline=_deadline,
                                 )
@@ -7201,7 +7214,7 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                             _rc.delete(_cursor_key)
                             break
                         # Early exit: 5 consecutive pages with 0 results
-                        if _empty_pages >= 5:
+                        if _empty_pages >= _SETTLED_EMPTY_PAGE_EXIT:
                             logger.info(
                                 "Settled events: %s early exit after %d empty pages at page %d",
                                 series,
@@ -7211,7 +7224,9 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                             _rc.setex(_cursor_key, 86400 * 7, cursor)
                             break
                         _rc.setex(_cursor_key, 86400 * 7, cursor)
-                        await asyncio.sleep(0.1)
+                        # #12042: the pause scales with the page, so a series
+                        # pauses as long per 200 events as it did before.
+                        await asyncio.sleep(0.1 * _SETTLED_PAGE_EVENTS / 200)
 
                     if (
                         series_resolved > 0

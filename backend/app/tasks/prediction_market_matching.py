@@ -17,7 +17,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import select, or_, and_, func, delete, case, cast, update, text, bindparam, String
 from sqlalchemy.ext.compiler import compiles
@@ -107,6 +107,8 @@ from app.utils.live_blend import (
     select_primary_market as _select_primary_market,
 )
 from app.utils.venue_competition import (
+    POLYMARKET_EVENT_SLUG_KEY,
+    polymarket_league_code,
     venue_named_league,
     venue_named_sport_family,
     venue_refuses_placement,
@@ -560,6 +562,66 @@ class _LinkedMarketRef:
         # fight winner (kxufcfight/kxboxing) — so the fight-winner is preferred
         # over its card's props when picking the group's primary market.
         return feeds_win_prob_blend(self.external_id)
+
+
+def _phase2_linked_select(now: datetime):
+    """Phase 2's load: every venue market linked to a live-or-recent event.
+
+    #12042: only the columns `_LinkedMarketRef` copies. Whole FuturesMarket +
+    Event ORM rows (22,328 of them on Nov 9) took the matcher from 212 to 612 MB
+    at this load. The decoded `market_metadata` dicts are ~108 MB of that (#9348
+    needs them); the rest was ORM state for columns Phase 2 never reads.
+    """
+    from app.models.models import Event, FuturesMarket
+
+    return (
+        select(
+            FuturesMarket.id.label("market_id"),
+            FuturesMarket.source,
+            FuturesMarket.external_id,
+            FuturesMarket.name,
+            FuturesMarket.status,
+            FuturesMarket.market_metadata,
+            Event.id.label("event_id"),
+            Event.commence_time.label("event_commence_time"),
+            Event.home_team_name,
+            Event.away_team_name,
+            Event.completed_at.label("event_completed_at"),
+        )
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(
+            FuturesMarket.source.in_(["kalshi", "polymarket"]),
+            FuturesMarket.event_id.isnot(None),
+            or_(
+                Event.status.in_(["scheduled", "live"]),
+                and_(
+                    Event.status.in_(["completed", "closed"]),
+                    Event.commence_time >= now - timedelta(hours=24),
+                ),
+            ),
+        )
+    )
+
+
+def _linked_ref_from_row(row) -> _LinkedMarketRef:
+    """One `_phase2_linked_select` row as the scalar copy Phase 2 loops over."""
+    return _LinkedMarketRef(
+        market_id=row.market_id,
+        source=row.source,
+        external_id=row.external_id,
+        name=row.name,
+        event_id=row.event_id,
+        event_commence_time=row.event_commence_time,
+        home_team_name=row.home_team_name,
+        away_team_name=row.away_team_name,
+        status=row.status,
+        market_metadata=row.market_metadata,  # #9348
+        # #5820. Measured from the row that is already joined here, so the
+        # clause costs no query. False is the armed state and it is the honest
+        # reading of this join: a scheduled or live event with no
+        # `completed_at` is one we have no result for.
+        event_has_result=row.event_completed_at is not None,
+    )
 
 
 def _derive_sport_category(external_id: str | None) -> str | None:
@@ -3289,40 +3351,70 @@ async def _check_duplicate_kalshi_linkage(
 
 INVERSION_THRESHOLD = 0.30  # 30% — if flipping brings it 30%+ closer to consensus
 
-# Peer-consensus fallback (#1112): when the sportsbook consensus is ambiguous
-# (~0.5) or missing — the mid-game case where the only OddsSnapshot is a stale
-# pregame line — consult already-written INDEPENDENT live sources on the event.
-# These sources derive from the game itself, not the prediction-market linkage,
-# so they cannot share the yes_is_home orientation bug we are guarding against.
-# Kalshi/polymarket are excluded: they can carry the SAME inversion.
+# Independent sources may help spot an extreme mirror (#1112). Venue peers
+# are excluded because they can share the same side-assignment error.
 _PEER_CONSENSUS_SOURCES = ("stat_model", "mlb", "espn", "betting")
 _PEER_EXTREME_HI = 0.80
 _PEER_EXTREME_LO = 0.20
-_PEER_MIN_VOTES = 2  # require >=2 extreme peers agreeing before we trust them
+_PEER_MIN_VOTES = 2
+
+
+def _live_inversion_context(event, now: datetime) -> tuple[bool, datetime | None]:
+    """Whether only live evidence may orient a quote, and its kickoff cutoff."""
+    from app.utils.prematch_reading import opening_consensus_has_frozen
+    from app.utils.settled_hero import is_finished_status
+
+    status = getattr(event, "status", None)
+    if is_finished_status(status) or getattr(event, "completed_at", None) is not None:
+        return False, None
+
+    kickoff = getattr(event, "commence_time", None)
+    if isinstance(kickoff, datetime) and kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=timezone.utc)
+    if not opening_consensus_has_frozen(kickoff, status, now):
+        return False, None
+    return True, kickoff if isinstance(kickoff, datetime) and kickoff <= now else None
+
+
+def _live_inversion_price(
+    sources: dict, source: str, kickoff: datetime, now: datetime,
+) -> tuple[float, datetime] | None:
+    from app.utils.aggregation import MAX_STALENESS, parse_source_entry, source_price_read_time
+
+    if source == "betting":
+        from app.utils.book_consensus import BETTING_BOOK_FLOOR
+
+        count = sources.get("betting_book_count")
+        if type(count) is not int or count < BETTING_BOOK_FLOOR:
+            return None
+
+    value, _ = parse_source_entry(sources.get(source))
+    if value is None or not 0 <= value <= 1:
+        return None
+    observed_at = source_price_read_time(sources, source, value, now=now)
+    if observed_at is None or observed_at < kickoff:
+        return None
+    expires_at = observed_at + timedelta(seconds=MAX_STALENESS)
+    return (value, expires_at) if now < expires_at else None
 
 
 def _peer_consensus_side(win_probability_sources: dict, exclude_source: str):
-    """Return 'home' / 'away' if >=2 independent live peers are extreme and
-    unanimous on a side, else None. Peers on opposite extremes cancel to None."""
+    """Return the side favored by at least two unanimous extreme peers."""
+    from app.utils.aggregation import parse_source_entry
+
     if not win_probability_sources:
         return None
     home_votes = 0
     away_votes = 0
-    for ps in _PEER_CONSENSUS_SOURCES:
-        if ps == exclude_source:
+    for peer in _PEER_CONSENSUS_SOURCES:
+        if peer == exclude_source:
             continue
-        # #1829: read through the shared parser. `float({"value": 0.9})` raises
-        # TypeError, and the except below SWALLOWS it — so once the writers
-        # started stamping, every peer would have dropped out silently,
-        # `_PEER_MIN_VOTES` would never be reached, and the #1112 inversion
-        # guard would have stopped firing forever with nothing in any log.
-        from app.utils.aggregation import parse_source_entry
-        pv, _ = parse_source_entry(win_probability_sources.get(ps))
-        if pv is None:
+        value, _ = parse_source_entry(win_probability_sources.get(peer))
+        if value is None:
             continue
-        if pv >= _PEER_EXTREME_HI:
+        if value >= _PEER_EXTREME_HI:
             home_votes += 1
-        elif pv <= _PEER_EXTREME_LO:
+        elif value <= _PEER_EXTREME_LO:
             away_votes += 1
     if home_votes >= _PEER_MIN_VOTES and away_votes == 0:
         return "home"
@@ -3557,51 +3649,70 @@ async def _orient_blend_reading(session, event_id: int, reading, source: str) ->
     )
 
 
+@dataclass(frozen=True)
+class _InversionDecision:
+    home_probability: float
+    evidence_expires_at: datetime | None = None
+    context: tuple[bool, datetime | None] | None = None
+
+
 async def _check_and_fix_inversion(
-    session, event_id: int, home_prob: float, source: str,
+    session, event_id: int, home_prob: float, source: str, *, historical: bool = False,
 ) -> float:
-    """
-    Compare prediction market home_prob against sportsbook consensus.
-    If the probability appears inverted (flipping it brings it much closer
-    to consensus), return the flipped value. Otherwise return as-is.
+    decision = await _inversion_decision(
+        session, event_id, home_prob, source, historical=historical,
+    )
+    return decision.home_probability
 
-    This catches systematic inversions from yes_is_home mismatches,
-    outcome-order bugs, and matchup parsing errors.
 
-    Two independent checks:
-      1. Sportsbook consensus (primary): flip if flipping lands far closer to
-         the latest/opening OddsSnapshot line.
-      2. Peer consensus (#1112 fallback): when the sportsbook line is ambiguous
-         (~0.5) or missing — the mid-game stale-pregame case where check (1)
-         cannot fire — flip when this source is the extreme MIRROR of >=2
-         unanimous, independent live peers (stat_model/mlb/espn/betting).
+async def _inversion_decision(
+    session, event_id: int, home_prob: float, source: str, *, historical: bool = False,
+) -> _InversionDecision:
+    """Correct an unproven mirror using independent evidence from the right phase.
+
+    #12824: once underway, only a price observed at or after kickoff may decide
+    a venue quote's side. A single raw sportsbook row is not the admitted
+    aggregate, and a peer's publication clock does not date its input.
     """
     from app.models.models import Event, OddsSnapshot
 
     event = await session.get(Event, event_id)
     if not event:
-        return home_prob
-
-    # Get sportsbook consensus: latest odds snapshot first, opening odds as fallback
+        return _InversionDecision(home_prob)
+    sources = getattr(event, "win_probability_sources", None)
+    if not isinstance(sources, dict):
+        sources = {}
+    now = datetime.now(timezone.utc)
+    live, kickoff = (False, None) if historical else _live_inversion_context(event, now)
     consensus = None
-
-    # Try latest odds snapshot (most accurate for live/recent games)
-    latest_snap = await session.execute(
-        select(OddsSnapshot.home_win_probability)
-        .where(
-            OddsSnapshot.event_id == event_id,
-            OddsSnapshot.home_win_probability.isnot(None),
+    consensus_expires_at = None
+    if not live:
+        latest_snap = await session.execute(
+            select(OddsSnapshot.home_win_probability)
+            .where(
+                OddsSnapshot.event_id == event_id,
+                OddsSnapshot.home_win_probability.isnot(None),
+            )
+            .order_by(OddsSnapshot.captured_at.desc())
+            .limit(1)
         )
-        .order_by(OddsSnapshot.captured_at.desc())
-        .limit(1)
-    )
-    snap_prob = latest_snap.scalar_one_or_none()
-    if snap_prob is not None:
-        consensus = float(snap_prob)
-
-    # Fallback to opening odds (always available, set pre-game)
-    if consensus is None and event.opening_home_probability is not None:
-        consensus = float(event.opening_home_probability)
+        if not historical:
+            # A pregame lookup may finish after kickoff.
+            now = datetime.now(timezone.utc)
+            live, kickoff = _live_inversion_context(event, now)
+        if not live:
+            snap_prob = latest_snap.scalar_one_or_none()
+            if snap_prob is not None:
+                consensus = float(snap_prob)
+            elif event.opening_home_probability is not None:
+                consensus = float(event.opening_home_probability)
+    context = (live, kickoff)
+    if live:
+        if kickoff is None:
+            return _InversionDecision(home_prob, context=context)
+        price = _live_inversion_price(sources, "betting", kickoff, now)
+        if price is not None:
+            consensus, consensus_expires_at = price
 
     # Primary check: sportsbook consensus (only when it is reliable, i.e. extreme
     # enough to disambiguate a flip).
@@ -3620,31 +3731,41 @@ async def _check_and_fix_inversion(
                 event_id, source, home_prob, consensus, flipped,
                 raw_diff, INVERSION_THRESHOLD, flipped_diff,
             )
-            return flipped
+            return _InversionDecision(flipped, consensus_expires_at, context)
 
-    # Fallback check: peer consensus (#1112). Only meaningful when THIS source is
-    # itself extreme — a mirror is an extreme value on the wrong side. This never
-    # fires pregame (peers are not extreme until the game decides).
+    # Fallback check (#1112): only an extreme reading can mirror extreme peers.
     if home_prob <= _PEER_EXTREME_LO or home_prob >= _PEER_EXTREME_HI:
-        peer_side = _peer_consensus_side(
-            event.win_probability_sources or {}, exclude_source=source,
-        )
+        peer_expires_at = None
+        peer_values = sources
+        if kickoff is not None:
+            live_peers = [
+                (peer, price)
+                for peer in _PEER_CONSENSUS_SOURCES if peer != source
+                if (price := _live_inversion_price(sources, peer, kickoff, now)) is not None
+            ]
+            peer_values = {peer: price for peer, (price, _) in live_peers}
+            peer_expires_at = min(
+                (expires_at for _, (price, expires_at) in live_peers
+                 if price <= _PEER_EXTREME_LO or price >= _PEER_EXTREME_HI),
+                default=None,
+            )
+        peer_side = _peer_consensus_side(peer_values, exclude_source=source)
         if peer_side == "home" and home_prob <= _PEER_EXTREME_LO:
             logger.warning(
                 "Peer-consensus inversion for event %d source=%s: raw=%.3f is the "
                 "mirror of >=2 unanimous home-extreme peers. Using flipped value.",
                 event_id, source, home_prob,
             )
-            return 1.0 - home_prob
+            return _InversionDecision(1.0 - home_prob, peer_expires_at, context)
         if peer_side == "away" and home_prob >= _PEER_EXTREME_HI:
             logger.warning(
                 "Peer-consensus inversion for event %d source=%s: raw=%.3f is the "
                 "mirror of >=2 unanimous away-extreme peers. Using flipped value.",
                 event_id, source, home_prob,
             )
-            return 1.0 - home_prob
+            return _InversionDecision(1.0 - home_prob, peer_expires_at, context)
 
-    return home_prob
+    return _InversionDecision(home_prob, context=context)
 
 
 # SQL LIKE patterns for Kalshi game tickers (e.g., "kxnbagame%")
@@ -4240,7 +4361,9 @@ async def _phase1_pass2_general_scan(
     _time_remaining,
 ) -> None:
     """Phase 1 Pass 2: scan non-ticker game markets (Polymarket + edge cases)."""
-    from app.models.models import FuturesMarket
+    from app.models.models import FuturesMarket, MarketMatchReceipt
+    from app.services.polymarket_api import GAMMA_FULL_CONTEST_WINNER_TYPES
+    from app.utils.content_understanding import CONTENT_UNDERSTANDING_KEY
 
     _matchup_base_where = [
         FuturesMarket.source.in_(["kalshi", "polymarket"]),
@@ -4253,11 +4376,49 @@ async def _phase1_pass2_general_scan(
         FuturesMarket.name.ilike("% – %"),
     )
 
+    # #12072: a fixture can arrive after a winner market's last refusal. The
+    # recency prefix may never revisit that market, and Pass 3's never-attempted
+    # prefix can fill its budget first. Reserve at most a fifth of these same
+    # slots for dated, venue-labelled winners, oldest receipt first. The date
+    # only prioritises an attempt; the ordinary fixture and identity gates
+    # still decide every link. Legacy rows retain the recency/backlog paths.
+    retry_budget = min(100, max(0, limit // 5))
+    retry_ids: list[int] = []
+    if retry_budget > 0:
+        retry_result = await session.execute(
+            select(FuturesMarket.id)
+            .join(
+                MarketMatchReceipt,
+                MarketMatchReceipt.market_id == FuturesMarket.id,
+            )
+            .where(
+                *_matchup_base_where,
+                _matchup_name_filter,
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.market_metadata[CONTENT_UNDERSTANDING_KEY][
+                    "venue_type"
+                ].astext.in_(GAMMA_FULL_CONTEST_WINNER_TYPES),
+                FuturesMarket.resolution_date >= now - timedelta(hours=6),
+                FuturesMarket.resolution_date <= now + timedelta(hours=48),
+                MarketMatchReceipt.last_attempted_at <= now - timedelta(minutes=15),
+            )
+            .order_by(
+                MarketMatchReceipt.last_attempted_at.asc(),
+                FuturesMarket.id.asc(),
+            )
+            .limit(retry_budget)
+        )
+        retry_ids = [int(mid) for mid in retry_result.scalars().all()]
+
     matchup_result = await session.execute(
         select(FuturesMarket.id)
-        .where(*_matchup_base_where, _matchup_name_filter)
+        .where(
+            *_matchup_base_where,
+            _matchup_name_filter,
+            FuturesMarket.id.notin_(retry_ids),
+        )
         .order_by(FuturesMarket.updated_at.desc())
-        .limit(limit)
+        .limit(max(0, limit - len(retry_ids)))
     )
     matchup_ids = [int(mid) for mid in matchup_result.scalars().all()]
 
@@ -4272,11 +4433,17 @@ async def _phase1_pass2_general_scan(
         )
         remaining_ids = [int(mid) for mid in remaining_result.scalars().all()]
 
-    unlinked_ids = matchup_ids + remaining_ids
+    # One retry followed by four fresh matchups also preserves fresh-ingest
+    # headroom when the time reserve stops the pass before its row cap.
+    unlinked_ids = list(matchup_ids)
+    for index, market_id in enumerate(retry_ids):
+        unlinked_ids.insert(index * 5, market_id)
+    unlinked_ids.extend(remaining_ids)
     stats["funnel"]["general_scan_count"] = len(unlinked_ids)
     stats["funnel"]["pass2_yielded_to_backlog"] = False
-    stats["funnel"]["matchup_scan_count"] = len(matchup_ids)
+    stats["funnel"]["matchup_scan_count"] = len(matchup_ids) + len(retry_ids)
     stats["funnel"]["remaining_scan_count"] = len(remaining_ids)
+    stats["funnel"]["winner_retry_scan_count"] = len(retry_ids)
 
     receipts: list[MatchReceipt] = []
     try:
@@ -8418,6 +8585,9 @@ async def _match_prediction_markets(limit: int = 500):
     }
 
     import time as _time
+
+    # #12042: which phase grows the pass to ~1 GB (see `mark_memory`).
+    from app.tasks.heavy_memory_turns import mark_memory as _mem
     _task_start = _time.monotonic()
 
     def _time_remaining() -> float:
@@ -8435,13 +8605,16 @@ async def _match_prediction_markets(limit: int = 500):
         # visiting, and a record of an exclusion that only gets written when
         # there is budget left over is a record that reliably goes missing on
         # exactly the busy nights it is wanted for.
+        _mem(stats, "start")
         await _settled_sweep(session, stats, now, _time_remaining)
+        _mem(stats, "settled_sweep")
 
         # Phase 1, Pass 1: Kalshi ticker scan
         logger.info("Phase 1 starting — %.0fs budget remaining", _time_remaining())
         processed_ids = await _phase1_pass1_ticker_scan(
             session, stats, now, polymarket_backfill_queue, _time_remaining,
         )
+        _mem(stats, "pass1_ticker_scan")
 
         # Phase 1, Pass 2: General scan
         stats["funnel"]["total_unlinked"] = (
@@ -8452,6 +8625,7 @@ async def _match_prediction_markets(limit: int = 500):
             polymarket_backfill_queue, _time_remaining,
         )
         stats["funnel"]["total_unlinked"] += stats["funnel"].get("general_scan_count", 0)
+        _mem(stats, "pass2_general_scan")
 
         # Phase 1, Pass 3: the backlog sweep (#2705). Passes 1 and 2 are
         # recency-ordered and capped, so the tail of the unlinked population is
@@ -8464,6 +8638,7 @@ async def _match_prediction_markets(limit: int = 500):
             session, stats, now, processed_ids,
             polymarket_backfill_queue, _time_remaining,
         )
+        _mem(stats, "pass3_backlog_scan")
 
         # Phase 1.5: Re-validate linked markets
         logger.info("Phase 1 done (%d scanned, %d linked) — %.0fs remaining",
@@ -8482,6 +8657,7 @@ async def _match_prediction_markets(limit: int = 500):
         await _flush_pass_receipts(
             session, link_changes, stats, _receipts.PHASE_PHASE15_REVALIDATE,
         )
+        _mem(stats, "phase15_revalidate")
 
         # #944: correct Kalshi game markets that collapsed onto the last game's
         # event (commence_time = resolution date). Idempotent + write-on-change,
@@ -8494,6 +8670,7 @@ async def _match_prediction_markets(limit: int = 500):
         stats["funnel"]["kalshi_segment_reconcile"] = (
             await _reconcile_kalshi_match_segments(session)
         )
+        _mem(stats, "relink_and_reconcile")
 
         # ── Phase 2: Write win_prob_snapshots for active linked markets ────
         #
@@ -8513,22 +8690,11 @@ async def _match_prediction_markets(limit: int = 500):
             logger.info("Skipping Phase 2 — only %.0fs remaining", _time_remaining())
             stats["funnel"]["phase2_skipped_budget"] = True
         else:
-            linked_result = await session.execute(
-                select(FuturesMarket, Event)
-                .join(Event, FuturesMarket.event_id == Event.id)
-                .where(
-                    FuturesMarket.source.in_(["kalshi", "polymarket"]),
-                    FuturesMarket.event_id.isnot(None),
-                    or_(
-                        Event.status.in_(["scheduled", "live"]),
-                        and_(
-                            Event.status.in_(["completed", "closed"]),
-                            Event.commence_time >= now - timedelta(hours=24),
-                        ),
-                    ),
-                )
-            )
+            linked_result = await session.execute(_phase2_linked_select(now))
             linked_rows = linked_result.all()
+            # #12042: this load was the whole climb (212 -> 612 MB, Nov 9 22:13Z,
+            # loop +3 MB). The mark stays so the narrowed load stays measured.
+            _mem(stats, "phase2_load")
 
         # DEDUP: Kalshi creates separate binary markets per team outcome
         # (e.g., "Celtics win?" and "76ers win?" for the same game). If both
@@ -8536,26 +8702,7 @@ async def _match_prediction_markets(limit: int = 500):
         # home probabilities to cancel out vig. Pick a primary market for
         # processing (matchup extraction, ticker validation), and store all
         # sibling markets for probability averaging.
-        linked_refs = [
-            _LinkedMarketRef(
-                market_id=market.id,
-                source=market.source,
-                external_id=market.external_id,
-                name=market.name,
-                event_id=event.id,
-                event_commence_time=event.commence_time,
-                home_team_name=event.home_team_name,
-                away_team_name=event.away_team_name,
-                status=market.status,
-                market_metadata=getattr(market, "market_metadata", None),  # #9348
-                # #5820. Measured from the row that is already joined here, so
-                # the clause costs no query. False is the armed state and it is
-                # the honest reading of this join: a scheduled or live event
-                # with no `completed_at` is one we have no result for.
-                event_has_result=event.completed_at is not None,
-            )
-            for market, event in linked_rows
-        ]
+        linked_refs = [_linked_ref_from_row(row) for row in linked_rows]
 
         all_per_event_source: dict[tuple[int, str], list[_LinkedMarketRef]] = {}
         for market_ref in linked_refs:
@@ -8811,6 +8958,7 @@ async def _match_prediction_markets(limit: int = 500):
                     stats["errors"].append(f"market {market.market_id}: {err_str[:100]}")
                 continue
 
+        _mem(stats, "phase2")
         # ── Phase 2b: the completed cohort Phase 2's 24-hour window aged past ─
         # Blend key only, holes only, bounded at both ends — see the helper.
         try:
@@ -8832,6 +8980,7 @@ async def _match_prediction_markets(limit: int = 500):
         except Exception as e:
             await session.rollback()
             stats["errors"].append(f"phase2c: {str(e)[:100]}")
+        _mem(stats, "phase2b_2c")
 
     # Published after the matcher's session is closed, on the receipts' own
     # session. Phase 2 commits each unlink inline, so by here every claim in the
@@ -8868,6 +9017,8 @@ async def _match_prediction_markets(limit: int = 500):
                 except Exception as e:
                     stats["errors"].append(f"backfill_{market_id}: {str(e)[:100]}")
 
+    _mem(stats, "phase3_backfill")
+
     # ── #1163: self-heal phantom blend sources ─────────────────────────────
     # Sweep events whose win_probability_sources carries a kalshi/polymarket key
     # with no linked market of that source (orphans left by pre-guard unlinks).
@@ -8884,6 +9035,7 @@ async def _match_prediction_markets(limit: int = 500):
         except Exception as e:
             stats["errors"].append(f"phantom_cleanup: {str(e)[:100]}")
 
+    _mem(stats, "phantom_cleanup")
     logger.info(
         "Prediction market matching: scanned=%d, linked=%d, "
         "snapshots_written=%d, deduped=%d, stale_refused=%d, errors=%d, "
@@ -9505,6 +9657,78 @@ async def _record_no_match_reason(
     )
 
 
+#: Maximum kickoff gap between two rows representing the same fixture (#13142).
+#: Back-to-back games in a series routinely sit 18–24 hours apart, so normal
+#: timestamps require a tight 4-hour window; only an id-less row carrying a
+#: date-only/midnight placeholder stamp gets a wider 16-hour window (strictly
+#: below 18 hours so back-to-back games can never cross).
+_SAME_FIXTURE_TWIN_WINDOW_SECONDS = 4 * 3600
+_SAME_FIXTURE_PLACEHOLDER_WINDOW_SECONDS = 16 * 3600
+_OPEN_TWIN_STATUSES = frozenset({"scheduled", "live"})
+
+
+def _is_sportsbook_row(event) -> bool:
+    """True when ``event`` is anchored to a real sportsbook/Odds API id.
+
+    Legacy ``pm_*`` strings are Polymarket placeholders, not sportsbook rows.
+    """
+    ext = getattr(event, "external_id", None)
+    return bool(ext) and not str(ext).startswith("pm_")
+
+
+def _is_placeholder_start(event) -> bool:
+    """True when an id-less row's start time is a date-only/midnight placeholder."""
+    tags = getattr(event, "event_tags", None) or ()
+    if any(
+        isinstance(t, str) and "placeholder" in t.lower()
+        for t in tags
+    ):
+        return True
+    src = getattr(event, "commence_time_source", None)
+    if isinstance(src, str) and src in (
+        TICKER_DERIVED_COMMENCE_SOURCE,
+        KALSHI_TICKER_TIME_COMMENCE_SOURCE,
+    ):
+        return True
+    t = getattr(event, "commence_time", None)
+    return (
+        t is not None
+        and t.hour == 0
+        and t.minute == 0
+        and t.second == 0
+    )
+
+
+def _same_fixture_twin(idless_event, sportsbook_event) -> bool:
+    """True when two name-matched candidates are twins of one game (#13142).
+
+    A finished row is never the twin of an open game, missing start times
+    never match, normal starts must fall within 4 hours, and a placeholder
+    midnight/date-only stamp on the id-less row allows up to 16 hours.
+    """
+    sport_a = idless_event.sport.key if getattr(idless_event, "sport", None) else None
+    sport_b = sportsbook_event.sport.key if getattr(sportsbook_event, "sport", None) else None
+    if sport_a and sport_b and sport_a != sport_b:
+        return False
+
+    status_a = getattr(idless_event, "status", None)
+    status_b = getattr(sportsbook_event, "status", None)
+    if (status_a in _OPEN_TWIN_STATUSES) != (status_b in _OPEN_TWIN_STATUSES):
+        return False
+
+    t_a = getattr(idless_event, "commence_time", None)
+    t_b = getattr(sportsbook_event, "commence_time", None)
+    if t_a is None or t_b is None:
+        return False
+
+    max_gap = (
+        _SAME_FIXTURE_PLACEHOLDER_WINDOW_SECONDS
+        if _is_placeholder_start(idless_event)
+        else _SAME_FIXTURE_TWIN_WINDOW_SECONDS
+    )
+    return abs((t_a - t_b).total_seconds()) <= max_gap
+
+
 def _score_candidates(
     candidates, matchup, market, now, game_date_override=None, *, receipt=None,
     allow_unclassified_bucket: bool = False,
@@ -9518,6 +9742,8 @@ def _score_candidates(
     """
     if not candidates:
         return None
+
+    from app.utils.proven_duplicates import canonical_id_from_tags
 
     traces: list[CandidateTrace] = []
 
@@ -9563,9 +9789,16 @@ def _score_candidates(
     sport_prefix = _market_sport_prefix(market)
 
     best_match = None
+    best_event = None
     best_score = -1
+    considered_matches: list[tuple[Any, dict[str, Any]]] = []
 
     for event in candidates:
+        # #13142: a row tagged `provenance:duplicate-of:<id>` is suppressed on
+        # every public surface; never attach new markets to it.
+        if canonical_id_from_tags(getattr(event, "event_tags", None)) is not None:
+            _trace(event, "duplicate_of")
+            continue
         # #9117 / #9427: a row #4965's fixture guard would refuse is a
         # different game however it scores. The guard refuses it after the
         # fact, and the +8 for an Odds API id (32h of proximity) let Game 1's
@@ -9654,8 +9887,8 @@ def _score_candidates(
         if matchup.team_b:
             score += 10
 
-        # Prefer Odds API events (external_id set) over auto-created ones
-        if event.external_id:
+        # Prefer Odds API events (sportsbook external_id set) over auto-created ones
+        if _is_sportsbook_row(event):
             score += 8
 
         # Sport validation: hard-reject events from the wrong sport.
@@ -9686,16 +9919,42 @@ def _score_candidates(
 
         _trace(event, "considered", score=score)
 
-        if score > best_score:
+        candidate_entry = {
+            "event_id": event.id,
+            "home_team": event.home_team_name,
+            "away_team": event.away_team_name,
+            "yes_is_home": team_match["yes_is_home"],
+            "score": score,
+            "sport_id": event.sport_id,
+        }
+        considered_matches.append((event, candidate_entry))
+
+        if score > best_score or (
+            score == best_score
+            and best_event is not None
+            and _is_sportsbook_row(event)
+            and not _is_sportsbook_row(best_event)
+            and _same_fixture_twin(best_event, event)
+        ):
             best_score = score
-            best_match = {
-                "event_id": event.id,
-                "home_team": event.home_team_name,
-                "away_team": event.away_team_name,
-                "yes_is_home": team_match["yes_is_home"],
-                "score": score,
-                "sport_id": event.sport_id,
-            }
+            best_event = event
+            best_match = candidate_entry
+
+    # #13142: when both an auto-created id-less row and a sportsbook-anchored
+    # row exist for the same game (within 24h), always prefer the sportsbook
+    # row even if the id-less row happened to score higher on time proximity or
+    # live status. Separate dates of a multi-game series (>24h apart) are left
+    # alone so today's id-less game is never overridden by next week's slate.
+    if best_event is not None and not _is_sportsbook_row(best_event):
+        sportsbook_twins = [
+            (alt_event, alt_entry)
+            for alt_event, alt_entry in considered_matches
+            if _is_sportsbook_row(alt_event) and _same_fixture_twin(best_event, alt_event)
+        ]
+        if sportsbook_twins:
+            best_event, best_match = max(
+                sportsbook_twins, key=lambda pair: pair[1]["score"]
+            )
 
     # When we have no sport prefix (no ticker sport, no llm_sport_category),
     # require a higher confidence threshold to prevent cross-sport mismatches.
@@ -9785,6 +10044,12 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
         .limit(20)
     )
     candidates = event_result.scalars().all()
+    from app.utils.proven_duplicates import canonical_id_from_tags
+
+    candidates = [
+        ev for ev in candidates
+        if canonical_id_from_tags(getattr(ev, "event_tags", None)) is None
+    ]
 
     if len(candidates) == 1:
         # Unambiguous COUNT — exactly one event in that sport + time window.
@@ -9831,14 +10096,19 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
             abbrev_a, abbrev_b, _ = fragments
             best_event = None
             best_score = 0
+            best_is_sportsbook = False
             for event in candidates:
                 score = _score_fragment_match(
                     abbrev_a, abbrev_b,
                     event.home_team_name, event.away_team_name,
                 )
-                if score > best_score:
+                is_sb = _is_sportsbook_row(event)
+                if score > best_score or (
+                    score == best_score and score >= 2 and is_sb and not best_is_sportsbook
+                ):
                     best_score = score
                     best_event = event
+                    best_is_sportsbook = is_sb
             if best_score >= 2 and best_event:
                 logger.info(
                     "Fragment-matched %s → event %d (%s vs %s) [fragments=%s/%s, score=%d]",
@@ -10261,15 +10531,20 @@ async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
                     Event.external_id,
                     Event.statpal_fixture_id,
                     Event.status,
+                    Event.event_tags,
                 ).where(Event.id.in_(accepted))
             )
         ).all()
         if not rows:
             return None
+        from app.utils.proven_duplicates import canonical_id_from_tags
+
         preferred = min(
             rows,
             key=lambda r: (
+                canonical_id_from_tags(getattr(r, "event_tags", None)) is not None,
                 r.status not in _GROUP_SIBLING_OPEN_STATUSES,
+                not _is_sportsbook_row(r),
                 r.espn_id is None
                 and r.external_id is None
                 and r.statpal_fixture_id is None,
@@ -10332,6 +10607,122 @@ def matchup_names_one_competitor(team_a: str, team_b: str) -> bool:
     from app.utils.name_normalization import names_match, shared_token_rivals
 
     return names_match(team_a, team_b) and not shared_token_rivals(team_a, team_b)
+
+
+_WOMENS_SUFFIX_RE = re.compile(r"\s*\(W\)\s*$", re.IGNORECASE)
+_ROAD_AT_HOME_RE = re.compile(r"\s+at\s+", re.IGNORECASE)
+
+
+def strip_womens_suffix(name: str) -> tuple[str, bool]:
+    """Strip a trailing Polymarket/Kalshi ``(W)`` women's marker from a team name.
+
+    Returns ``(cleaned_name, had_suffix)``. Leaving ``(W)`` on ``team_b`` both
+    polluted stored team names ("Notre Dame Fighting Irish (W)") and prevented
+    club-based placement from resolving ``basketball_wncaab``, stranding 126 of
+    146 live/scheduled women's college basketball rows in ``basketball_other``.
+    """
+    cleaned, count = _WOMENS_SUFFIX_RE.subn("", (name or "").strip())
+    return cleaned.strip(), count > 0
+
+
+def _market_uses_away_at_home(market_name: str, team_a: str, team_b: str) -> bool:
+    """True when ``market_name`` explicitly spells ``<team_a> at <team_b>``."""
+    if not market_name or not team_a or not team_b:
+        return False
+    a_low, b_low = team_a.lower(), team_b.lower()
+    if " at " in a_low or " at " in b_low:
+        return False
+    m = _ROAD_AT_HOME_RE.search(market_name)
+    if not m:
+        return False
+    before = market_name[: m.start()].lower()
+    after = market_name[m.end() :].lower()
+    return a_low in before and b_low in after
+
+
+def orient_auto_created_matchup(
+    team_a: str,
+    team_b: str,
+    *,
+    sport_key: str,
+    market_name: str = "",
+    has_womens_suffix: bool = False,
+    market_metadata: object = None,
+    existing_home: Optional[str] = None,
+    existing_away: Optional[str] = None,
+) -> tuple[str, str]:
+    """Return ``(home_team, away_team)`` for an auto-created event row.
+
+    Women's college basketball markets on both Polymarket (``cwbb-*``,
+    ``"<Away> vs. <Home> (W)"``) and Kalshi (``KXNCAAWBGAME``,
+    ``"<Away> at <Home>"``) list the away team first (128 of 128 ESPN-matched
+    ``(W)`` rows on production were reversed). Prefer an existing schedule-backed
+    row's orientation when one is already present; otherwise apply US away-first
+    orientation for women's college basketball / ``(W)`` / ``cwbb`` / explicit
+    ``"<Away> at <Home>"`` wording, leaving all other sports on ``(team_a, team_b)``.
+    """
+    if existing_home and existing_away:
+        return existing_home, existing_away
+    slug = (
+        market_metadata.get(POLYMARKET_EVENT_SLUG_KEY)
+        if isinstance(market_metadata, dict)
+        else None
+    )
+    is_wbb = (
+        sport_key == "basketball_wncaab"
+        or has_womens_suffix
+        or polymarket_league_code(slug) == "cwbb"
+    )
+    if is_wbb or _market_uses_away_at_home(market_name, team_a, team_b):
+        return team_b, team_a
+    return team_a, team_b
+
+
+async def _lookup_existing_wbb_orientation(
+    session,
+    team_a: str,
+    team_b: str,
+    commence_time: datetime,
+) -> Optional[tuple[str, str]]:
+    """Find an existing ``basketball_wncaab`` row's ``(home, away)`` within ±36h.
+
+    Prefers non-synthetic (Odds API / ESPN schedule-backed) rows over market-born
+    rows so an already-correct schedule row always dictates orientation.
+    """
+    from app.utils.name_normalization import names_match as _names_match
+
+    window_start = commence_time - timedelta(hours=36)
+    window_end = commence_time + timedelta(hours=36)
+    result = await session.execute(
+        select(
+            Event.home_team_name,
+            Event.away_team_name,
+            Event.external_id,
+        )
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(
+            Sport.key == "basketball_wncaab",
+            Event.commence_time >= window_start,
+            Event.commence_time <= window_end,
+        )
+    )
+    candidates = result.all()
+    fallback: Optional[tuple[str, str]] = None
+    for home_name, away_name, ext_id in candidates:
+        if not home_name or not away_name:
+            continue
+        same_pair = (
+            (_names_match(team_a, home_name) and _names_match(team_b, away_name))
+            or (_names_match(team_a, away_name) and _names_match(team_b, home_name))
+        )
+        if not same_pair:
+            continue
+        is_schedule_backed = bool(ext_id) and not str(ext_id).startswith("pm_")
+        if is_schedule_backed:
+            return home_name, away_name
+        if fallback is None:
+            fallback = (home_name, away_name)
+    return fallback
 
 
 async def _create_event_from_prediction_market(session, matchup, market, now):
@@ -10492,10 +10883,14 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         )
         return None
 
-    # Clean team names: strip sport name prefixes ("Ice Hockey USA" → "USA")
-    # and championship suffixes that may leak through ("Canada Medal" → "Canada")
+    # Clean team names: strip sport name prefixes ("Ice Hockey USA" → "USA"),
+    # championship suffixes ("Canada Medal" → "Canada"), and trailing "(W)"
+    # women's markers ("Notre Dame Fighting Irish (W)" → "Notre Dame Fighting Irish").
     team_a = _strip_championship_suffix(_strip_sport_name_prefix(matchup.team_a.strip())).strip()
     team_b = _strip_championship_suffix(_strip_sport_name_prefix((matchup.team_b or "").strip())).strip()
+    team_a, had_w_a = strip_womens_suffix(team_a)
+    team_b, had_w_b = strip_womens_suffix(team_b)
+    has_womens_suffix = had_w_a or had_w_b
 
     # Determine sport key from ticker or category
     sport_key = get_sport_prefix_from_ticker(market.external_id) if market.external_id else None
@@ -10742,13 +11137,40 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     status = auto_create_status(commence_time, commence_source, now)
     external_id = f"pm_{market.source}_{market.external_id}"
 
+    # Orient home vs away before creating the Event row. Women's college
+    # basketball venues (Polymarket `cwbb-*` "(W)" and Kalshi `KXNCAAWBGAME`
+    # "at") list Away first and Home second.
+    market_meta = getattr(market, "market_metadata", None)
+    slug_code = (
+        polymarket_league_code(market_meta.get(POLYMARKET_EVENT_SLUG_KEY))
+        if isinstance(market_meta, dict)
+        else None
+    )
+    existing_orientation: Optional[tuple[str, str]] = None
+    if session is not None and (
+        sport_key == "basketball_wncaab" or has_womens_suffix or slug_code == "cwbb"
+    ):
+        existing_orientation = await _lookup_existing_wbb_orientation(
+            session, team_a, team_b, commence_time
+        )
+    home_team, away_team = orient_auto_created_matchup(
+        team_a,
+        team_b,
+        sport_key=sport_key,
+        market_name=market.name or "",
+        has_womens_suffix=has_womens_suffix,
+        market_metadata=market_meta,
+        existing_home=existing_orientation[0] if existing_orientation else None,
+        existing_away=existing_orientation[1] if existing_orientation else None,
+    )
+
     from app.services.event_registry import (
         find_or_create_event, EventIdentity, EventClaim,
     )
     identity = EventIdentity(
         sport_key=sport_key,
-        home_team_name=team_a,
-        away_team_name=team_b,
+        home_team_name=home_team,
+        away_team_name=away_team,
         commence_time=commence_time,
         # #2020: say where the time came from. `kalshi_ticker` is a strictly
         # better provenance than the bare source name, because it records that
@@ -10786,20 +11208,20 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         )
         return None
 
-    # Determine yes_is_home mapping
-    team_match = match_teams_to_event(matchup, team_a, team_b, external_id=external_id)
+    # Determine yes_is_home mapping against the oriented (home_team, away_team).
+    team_match = match_teams_to_event(matchup, home_team, away_team, external_id=external_id)
     yes_is_home = team_match["yes_is_home"] if team_match else True
 
     logger.info(
-        "Auto-created event %d for %s market '%s': %s vs %s [sport=%s, status=%s]",
+        "Auto-created event %d for %s market '%s': %s (home) vs %s (away) [sport=%s, status=%s]",
         event.id, market.source, market.name,
-        team_a, team_b, sport_key, status,
+        home_team, away_team, sport_key, status,
     )
 
     return {
         "event_id": event.id,
-        "home_team": team_a,
-        "away_team": team_b,
+        "home_team": home_team,
+        "away_team": away_team,
         "yes_is_home": yes_is_home,
         "auto_created": True,
     }
@@ -10808,6 +11230,187 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
 # =============================================================================
 # Live Game Price Polling
 # =============================================================================
+
+
+def _live_polymarket_outcome_rows(
+    market: Any, condition_id: str, outcome_lookup: dict[tuple[int, str], Any]
+) -> tuple[list[tuple[Any, int | None]], str | None]:
+    """Reach the existing parent or both binary children, within this market.
+
+    The live poll used only the bare condition key. Decomposed game props are
+    stored as condition_yes/condition_no, so a successful fetch left both
+    visible sides unchanged. No identity is inferred and no outcome is created.
+    """
+    if not isinstance(condition_id, str) or not condition_id:
+        return [], "missing_condition_id"
+    bare = outcome_lookup.get((market.id, condition_id))
+    yes = outcome_lookup.get((market.id, condition_id + "_yes"))
+    no = outcome_lookup.get((market.id, condition_id + "_no"))
+    if bare is not None:
+        if yes is not None or no is not None:
+            return [], "mixed_outcome_keys"
+        return [(bare, None)], None
+    if yes is None and no is None:
+        return [], "outcomes_absent"
+    if market.external_id != condition_id:
+        return [], "condition_mismatch"
+    if yes is None or no is None:
+        return [], "incomplete_binary"
+    return [(yes, 0), (no, 1)], None
+
+
+def _live_polymarket_side(
+    market: dict, outcome_name: str | None, expected_side: int | None = None
+) -> int | None:
+    """Verify a named side against its token position before using its book."""
+    import json
+
+    names = market.get("outcomes", [])
+    try:
+        names = json.loads(names) if isinstance(names, str) else names
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if (
+        not isinstance(names, list)
+        or len(names) != 2
+        or not all(isinstance(n, str) for n in names)
+    ):
+        return None
+    names = [name.strip() for name in names]
+    if expected_side is not None and (
+        not all(names) or names[0].casefold() == names[1].casefold()
+    ):
+        return None
+    side = 0 if expected_side is None else expected_side
+    if names[0].lower() not in ("yes", "no", ""):
+        matches = [
+            i
+            for i, name in enumerate(names)
+            if outcome_name and _fuzzy_team_match(outcome_name, name)
+        ]
+        if len(matches) != 1:
+            return None
+        side = matches[0]
+    elif outcome_name and outcome_name.strip().lower() in ("yes", "no"):
+        matches = [
+            i
+            for i, name in enumerate(names)
+            if name.lower() == outcome_name.strip().lower()
+        ]
+        if len(matches) != 1:
+            return None
+        side = matches[0]
+    if expected_side is not None and side != expected_side:
+        return None
+    return side
+
+
+def _live_polymarket_quote(
+    market: dict, outcome_name: str | None, *, expected_side: int | None = None
+) -> tuple[float, float, float, int] | None:
+    """Price the named binary side from the same book as the hourly writer."""
+    from app.utils.polymarket_quote import current_polymarket_quote
+
+    if market.get("closed"):
+        return None
+    probability = current_polymarket_quote(market.get("bestBid"), market.get("bestAsk"))
+    if probability is None:
+        return None
+    side = _live_polymarket_side(market, outcome_name, expected_side)
+    if side is None:
+        return None
+    bid = 0.0 if market.get("bestBid") is None else float(market["bestBid"])
+    ask = 1.0 if market.get("bestAsk") is None else float(market["bestAsk"])
+    if side == 1:
+        return 1 - probability, 1 - ask, 1 - bid, side
+    return probability, bid, ask, side
+
+
+async def _write_live_polymarket_child(
+    session: Any,
+    outcome: Any,
+    condition_id: str,
+    values: dict[str, Any],
+    *,
+    last_price: float | None = None,
+) -> bool:
+    """Conditionally write a quote and its observation in the caller's transaction."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
+    from app.utils.price_change_stamp import price_changed_at_value
+
+    statement = (
+        update(FuturesOutcome)
+        .where(
+            FuturesOutcome.id == outcome.id,
+            FuturesOutcome.market_id == outcome.market_id,
+            FuturesOutcome.external_id == outcome.external_id,
+            FuturesOutcome.name.is_not_distinct_from(outcome.name),
+            FuturesOutcome.current_probability.is_not_distinct_from(
+                outcome.current_probability
+            ),
+            FuturesOutcome.current_yes_bid.is_not_distinct_from(
+                outcome.current_yes_bid
+            ),
+            FuturesOutcome.current_yes_ask.is_not_distinct_from(
+                outcome.current_yes_ask
+            ),
+            FuturesOutcome.last_updated.is_not_distinct_from(outcome.last_updated),
+            FuturesOutcome.price_changed_at.is_not_distinct_from(
+                getattr(outcome, "price_changed_at", None)
+            ),
+            FuturesOutcome.is_winner.is_not(True),
+            FuturesOutcome.resolution_source.is_distinct_from("api_settlement"),
+            select(FuturesMarket.id)
+            .where(
+                FuturesMarket.id == outcome.market_id,
+                FuturesMarket.external_id == condition_id,
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.status == "open",
+            )
+            .exists(),
+        )
+        .values(
+            current_probability=values["current_probability"],
+            current_american_odds=values["current_american_odds"],
+            current_yes_bid=values["current_yes_bid"],
+            current_yes_ask=values["current_yes_ask"],
+            last_updated=values["last_updated"],
+            probability_change_24h=values["probability_change_24h"],
+            price_changed_at=price_changed_at_value(
+                FuturesOutcome.current_probability,
+                FuturesOutcome.price_changed_at,
+                values["current_probability"],
+            ),
+        )
+        .returning(FuturesOutcome.price_changed_at)
+        .execution_options(synchronize_session=False)
+    )
+    result = await session.execute(statement)
+    written = result.first()
+    if written is None:
+        return False
+    # The same helper owns the delta and its evidence. A refused write records
+    # neither, and the existing caller rollback removes both on any failure.
+    await session.execute(
+        pg_insert(FuturesOddsSnapshot).values(
+            outcome_id=outcome.id,
+            bookmaker="polymarket",
+            probability=values["current_probability"],
+            american_odds=values["current_american_odds"],
+            yes_bid=values["current_yes_bid"],
+            yes_ask=values["current_yes_ask"],
+            last_price=last_price,
+            captured_at=values["last_updated"],
+        )
+    )
+    # The Core write is authoritative; never flush a second, unguarded ORM
+    # assignment over a socket update before the existing market commit.
+    for key, value in values.items():
+        set_committed_value(outcome, key, value)
+    set_committed_value(outcome, "price_changed_at", written[0])
+    return True
 
 
 def _clear_outcome_price(outcome, now) -> bool:
@@ -11501,6 +12104,12 @@ async def _poll_live_prediction_market_prices():
     # the older price and puts these legs back, so the pin cannot take the
     # restored number as this poll's.
     polymarket_cleared_since_commit: set[int] = set()
+    # #12581: only successful price writes may date a headline input. Keep
+    # immutable witnesses with this already bounded pass, not on ORM objects.
+    from app.utils.aggregation import PricedOutcomeRead, priced_outcome_read_time
+
+    committed_price_reads: dict[int, PricedOutcomeRead] = {}
+    pending_price_reads: dict[int, PricedOutcomeRead] = {}
 
     now = datetime.now(timezone.utc)
 
@@ -11765,6 +12374,8 @@ async def _poll_live_prediction_market_prices():
             """
             await session.commit()
             stats["commits"] += 1
+            committed_price_reads.update(pending_price_reads)
+            pending_price_reads.clear()
             committed_counts.update({k: stats[k] for k in _durable_counters})
             polymarket_cleared_since_commit.clear()
             # #10090 item 4: a stamp's frame goes out now that it is durable.
@@ -11788,6 +12399,7 @@ async def _poll_live_prediction_market_prices():
             # CERT-3652: the rollback restores each such leg's older price, so
             # the leg is unpriced again.
             polymarket_unpriced_reads.update(polymarket_cleared_since_commit)
+            pending_price_reads.clear()
             polymarket_cleared_since_commit.clear()
             if "deadlock" in str(exc).lower():
                 stats["deadlocks"] += 1
@@ -11880,6 +12492,7 @@ async def _poll_live_prediction_market_prices():
                             ),
                             timeout=_LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS,
                         )
+                        kalshi_read_at = datetime.now(timezone.utc)
                         stats["kalshi_fetched"] += 1
 
                         # Update outcomes with fresh prices.
@@ -12036,6 +12649,10 @@ async def _poll_live_prediction_market_prices():
                             outcome.last_updated = now
                             stats["outcomes_updated"] += 1
                             stats["kalshi_outcomes_updated"] += 1
+                            pending_price_reads[outcome.id] = PricedOutcomeRead(
+                                market_id=outcome.market_id, external_id=outcome.external_id,
+                                probability=prob, row_time=now, received_at=kalshi_read_at,
+                            )
 
                             # Write FuturesOddsSnapshot for chart history
                             await session.execute(
@@ -12134,6 +12751,7 @@ async def _poll_live_prediction_market_prices():
                 #   genuinely dead event would be re-requested once per row it
                 #   owns, which is the same waste arriving by the other road.
                 seen_events: dict = {}
+                seen_event_times: dict[str, datetime] = {}
                 for _seen, market_id in enumerate(polymarket_ids):
                     if _out_of_budget(
                         "polymarket_fetch",
@@ -12155,6 +12773,7 @@ async def _poll_live_prediction_market_prices():
                             event_data = await poly_service.get_event_by_id(
                                 poly_event_id
                             )
+                            seen_event_times[poly_event_id] = datetime.now(timezone.utc)
                             stats["polymarket_fetched"] += 1
                             seen_events[poly_event_id] = event_data
                         else:
@@ -12171,232 +12790,173 @@ async def _poll_live_prediction_market_prices():
                         for pm in poly_markets:
                             condition_id = pm.get("conditionId", "")
 
-                            # Parse outcomePrices and outcomes (both stringified JSON arrays)
-                            prices_raw = pm.get("outcomePrices", "[]")
-                            outcomes_raw = pm.get("outcomes", "[]")
-                            try:
-                                prices = json.loads(prices_raw) if isinstance(prices_raw, str) else prices_raw
-                                outcomes_names = json.loads(outcomes_raw) if isinstance(outcomes_raw, str) else outcomes_raw
-                            except (json.JSONDecodeError, TypeError):
-                                continue
-
-                            if not prices:
-                                continue
-
-                            # Find matching outcome by condition_id (batch-loaded)
-                            outcome = pop.outcome_lookup.get((market_id, condition_id))
-                            if not outcome:
-                                continue
-
-                            # #9083 (CERT-3639): record the book as this read
-                            # reports it, BEFORE any refusal below, so an omitted
-                            # side reads as absent here and not as the stale value
-                            # still on the row.
-                            _fresh_bid = pm.get("bestBid")
-                            _fresh_ask = pm.get("bestAsk")
-                            polymarket_fresh_books[outcome.id] = (
-                                None if _fresh_bid is None else float(_fresh_bid),
-                                None if _fresh_ask is None else float(_fresh_ask),
+                            matched, refusal = _live_polymarket_outcome_rows(
+                                market, condition_id, pop.outcome_lookup
                             )
-                            # Cleared below only where this read's price is
-                            # written; every `continue` between leaves it set,
-                            # and `_recover` re-adds it if that write is rolled
-                            # back (CERT-3652).
-                            polymarket_unpriced_reads.add(outcome.id)
-
-                            # Determine the correct price for this outcome.
-                            #
-                            # Polymarket outcomePrices is parallel to outcomes:
-                            #   outcomes: ["Team A", "Team B"]  →  prices: [0.6, 0.4]
-                            #
-                            # For NegRisk events, each sub-market has outcomes
-                            # ["Yes", "No"] where prices[0] = "Yes" probability
-                            # for that specific team. prices[0] is always correct.
-                            #
-                            # For non-NegRisk binary markets with team-name outcomes
-                            # (e.g., outcomes: ["Warriors", "Celtics"]), prices[0]
-                            # corresponds to the FIRST listed team, not necessarily
-                            # the team our outcome record represents. We must match
-                            # by name to get the right price.
-                            ltp = pm.get("lastTradePrice")
-                            best_bid = pm.get("bestBid")
-                            best_ask = pm.get("bestAsk")
-
-                            # Skip entirely if no trading activity — stale price from
-                            # hours/days ago is worse than no data.
-                            if ltp is None and (best_bid is None or float(best_bid) == 0):
+                            if refusal:
+                                key = "polymarket_identity_" + refusal
+                                stats[key] = stats.get(key, 0) + 1
                                 continue
-
-                            prob = float(prices[0])  # default: outcomePrices midpoint
-
-                            # Prefer lastTradePrice when bid/ask spread is wide (>15pp).
-                            # During blowouts, the order book becomes illiquid and the
-                            # midpoint is meaningless (e.g., bid=0.34 ask=0.43 → mid=0.385
-                            # but the game is effectively over).
-                            if (ltp is not None
-                                and best_bid is not None and best_ask is not None):
-                                spread = abs(float(best_ask) - float(best_bid))
-                                if spread > 0.15 and 0 < float(ltp) < 1:
-                                    prob = float(ltp)
-
-                            if (
-                                len(outcomes_names) >= 2
-                                and len(prices) >= 2
-                                and outcome.name
-                                and outcomes_names[0].lower().strip() not in ("yes", "no", "")
+                            if any(
+                                token_side is not None
+                                and _live_polymarket_side(pm, outcome.name, token_side)
+                                is None
+                                for outcome, token_side in matched
                             ):
-                                # Non-generic outcome names — find which price
-                                # index corresponds to this outcome's team
-                                outcome_name_lower = outcome.name.lower().strip()
-                                for idx, oname in enumerate(outcomes_names):
-                                    if idx < len(prices) and _fuzzy_team_match(
-                                        outcome_name_lower, oname
+                                stats["polymarket_identity_side_mismatch"] = (
+                                    stats.get("polymarket_identity_side_mismatch", 0)
+                                    + 1
+                                )
+                                continue
+                            for outcome, token_side in matched:
+                                # The new binary-child path must not revive a
+                                # confirmed winner or a venue-graded loser.
+                                if token_side is not None and (
+                                    getattr(market, "status", "open") != "open"
+                                    or outcome.is_winner is True
+                                    or getattr(outcome, "resolution_source", None)
+                                    == "api_settlement"
+                                ):
+                                    stats["polymarket_children_settled"] = (
+                                        stats.get("polymarket_children_settled", 0) + 1
+                                    )
+                                    continue
+                                # #9083 (CERT-3639): record the book as this read
+                                # reports it, BEFORE any refusal below, so an omitted
+                                # side reads as absent here and not as the stale value
+                                # still on the row.
+                                _fresh_bid = pm.get("bestBid")
+                                _fresh_ask = pm.get("bestAsk")
+                                _read_book = (
+                                    None if _fresh_bid is None else float(_fresh_bid),
+                                    None if _fresh_ask is None else float(_fresh_ask),
+                                )
+                                if token_side == 1:
+                                    _read_book = (
+                                        (
+                                            None
+                                            if _read_book[1] is None
+                                            else 1 - _read_book[1]
+                                        ),
+                                        (
+                                            None
+                                            if _read_book[0] is None
+                                            else 1 - _read_book[0]
+                                        ),
+                                    )
+                                polymarket_fresh_books[outcome.id] = _read_book
+                                # Cleared below only where this read's price is
+                                # written; every `continue` between leaves it set,
+                                # and `_recover` re-adds it if that write is rolled
+                                # back (CERT-3652).
+                                polymarket_unpriced_reads.add(outcome.id)
+
+                                # #12658: raw outcomePrices can alternate between the
+                                # book and an undated trade. Use the hourly writer's
+                                # book policy, preserving the named side's orientation.
+                                quote = _live_polymarket_quote(
+                                    pm, outcome.name, expected_side=token_side
+                                )
+                                if quote is None:
+                                    stats["polymarket_quotes_refused"] = (
+                                        stats.get("polymarket_quotes_refused", 0) + 1
+                                    )
+                                    continue
+                                prob, best_bid, best_ask, side = quote
+                                polymarket_fresh_books[outcome.id] = (
+                                    best_bid,
+                                    best_ask,
+                                )
+                                ltp = pm.get("lastTradePrice")
+                                if ltp is not None and side == 1:
+                                    ltp = 1 - float(ltp)
+                                from app.utils.polymarket_quote import (
+                                    quoted_price_change_value,
+                                )
+
+                                american = (
+                                    probability_to_american(prob)
+                                    if 0 < prob < 1
+                                    else None
+                                )
+                                values = {
+                                    "current_probability": prob,
+                                    "current_american_odds": american,
+                                    "current_yes_bid": best_bid,
+                                    "current_yes_ask": best_ask,
+                                    "last_updated": now,
+                                    "probability_change_24h": quoted_price_change_value(
+                                        outcome.current_probability,
+                                        outcome.current_yes_bid,
+                                        outcome.current_yes_ask,
+                                        prob,
+                                    ),
+                                }
+                                if token_side is not None:
+                                    if not await _write_live_polymarket_child(
+                                        session, outcome, condition_id, values,
+                                        last_price=(
+                                            float(ltp) if ltp is not None else None
+                                        ),
                                     ):
-                                        prob = float(prices[idx])
-                                        break
-
-                            if prob <= 0 or prob >= 1:
-                                continue
-
-                            # #6676 — THE THIRD WRITER. The Kalshi arm of this
-                            # same beat states the principle at its own price
-                            # call ("One price policy per venue: the same spread
-                            # guard the 2-hour poll uses ... so a wide one-sided
-                            # book cannot fabricate a ~0.50 quote here that the
-                            # full poll would have refused"). It keeps that
-                            # promise by DELEGATING to `_kalshi_yes_probability`.
-                            # This arm reimplements a price policy inline
-                            # instead, so it never picked up the two midpoint
-                            # predicates the Polymarket ingest writer applies in
-                            # `_resolve_market_probability_with_source` and
-                            # `_parent_outcome_data`, and it runs every two
-                            # minutes rather than hourly.
-                            #
-                            # Measured on production 2026-09-17 16:45Z, at the
-                            # LIVE bound (`EMPTY_BOOK_MAX_BID` is 0.05 since
-                            # #5333, not the 0.02 this class was first sized on):
-                            # 21 legs / 16 markets / 14 events stamped in 40
-                            # minutes. NINETEEN of the 21 carry this beat's
-                            # fingerprint — a strict 2-minute cadence with a
-                            # shared sub-second (…:19:22.842264, :23:22.844279,
-                            # :31:22.846291, :33:22.842150, :43:22.846327,
-                            # :45:22.850504), one batch writer per stamp — not
-                            # the hourly poll's (`last_success_at` 16:16:03Z).
-                            # The honest remainder: 2 legs (16:15:14.937991 and
-                            # 16:42:03.951022) sit off that cadence with a
-                            # different sub-second and are SOMEBODY ELSE'S write.
-                            # This guard does not claim them and they are still
-                            # open on #6676.
-                            #
-                            # Rows kept appearing AFTER the 16:27:33Z release
-                            # that carries the ingest guards, which is why
-                            # #6676's residual survived it. They reach a reader:
-                            # `/api/futures/61246736` served outcomes 230621538 /
-                            # 230492518 / 230621548 at `probability: 0.5` —
-                            # three Sao Paulo Open set lines on a live match —
-                            # each with a 1c bid / 99c ask behind it.
-                            #
-                            # DECLINE, DO NOT WITHDRAW, and that is the house
-                            # answer rather than a preference:
-                            # `_unpriced_leg_external_ids` retires only legs with
-                            # no bid AND no trade, excluding this exact class by
-                            # name ("a real bid — we refused it, the venue did
-                            # not"), because retiring a refused quote would
-                            # un-price live markets. Declining also leaves the
-                            # stored bid/ask/probability triple intact, so the
-                            # read-side predicate (#5247) can still recognise the
-                            # row; writing a NULL would destroy the evidence that
-                            # identifies it. `is_empty_book_midpoint`'s own
-                            # docstring is explicit that nothing may mutate a
-                            # stored price on its account.
-                            #
-                            # NOT DONE HERE, deliberately: delegating this arm to
-                            # `_resolve_market_probability_with_source` outright.
-                            # That resolver takes a Gamma dataclass and this loop
-                            # holds raw dicts, and its #151 evidence gate and
-                            # volume-gated last-trade exception would re-price
-                            # honest legs this beat prices correctly today. One
-                            # class, not a pricing rewrite.
-                            #
-                            # Both predicates are imported, not restated — no
-                            # threshold is introduced here.
-                            #
-                            # 🪤 ORDERING, AND WHAT IT DOES **NOT** BUY. A genuine
-                            # blowout survives because the VENUE's own
-                            # `outcomePrices` tracks the trade and so sits far
-                            # from the book's midpoint (0.93 against a 1c/99c book
-                            # is 0.43 away) — not because the wide-spread
-                            # `lastTradePrice` preference above protects it. It
-                            # does not: the name-index block between that
-                            # preference and this test reassigns
-                            # `prob = float(prices[idx])` unconditionally, so for
-                            # any leg whose outcome names are not yes/no — every
-                            # Over/Under prop — the midpoint is put back and the
-                            # trade is discarded. An earlier draft of this comment
-                            # claimed the opposite; the guard test's own
-                            # `test_the_name_index_match_clobbers_the_last_trade_preference`
-                            # falsified it, and pins today's behaviour.
-                            #
-                            # On that leg this guard turns "published 0.5 while the
-                            # book last traded 0.93" into "published nothing" —
-                            # better, but 0.93 was available and is now dropped.
-                            # Recovering it is a reordering of a pricing policy
-                            # over legs this class never measured, so it is recorded on
-                            # #6676 as a known limit rather than fixed here.
-                            if is_fabricated_midpoint(
-                                prob, best_bid, best_ask
-                            ) or is_empty_book_midpoint(prob, best_bid, best_ask):
-                                stats["polymarket_phantom_midpoints_refused"] = (
-                                    stats.get("polymarket_phantom_midpoints_refused", 0) + 1
-                                )
-                                continue
-
-                            # Update outcome probability
-                            outcome.current_probability = prob
-                            polymarket_unpriced_reads.discard(outcome.id)
-                            polymarket_cleared_since_commit.add(outcome.id)
-                            american = probability_to_american(prob) if 0 < prob < 1 else None
-                            outcome.current_american_odds = american
-
-                            # Parse bid/ask if available
-                            best_bid = pm.get("bestBid")
-                            best_ask = pm.get("bestAsk")
-                            if best_bid is not None:
-                                outcome.current_yes_bid = float(best_bid)
-                            if best_ask is not None:
-                                outcome.current_yes_ask = float(best_ask)
-
-                            outcome.last_updated = now
-                            stats["outcomes_updated"] += 1
-
-                            # Write FuturesOddsSnapshot for chart history
-                            best_bid_val = float(best_bid) if best_bid is not None else None
-                            best_ask_val = float(best_ask) if best_ask is not None else None
-                            ltp_val = float(ltp) if ltp is not None else None
-                            await session.execute(
-                                pg_insert(FuturesOddsSnapshot).values(
-                                    outcome_id=outcome.id,
-                                    bookmaker="polymarket",
+                                        stats["polymarket_children_changed_row"] = (
+                                            stats.get(
+                                                "polymarket_children_changed_row", 0
+                                            )
+                                            + 1
+                                        )
+                                        continue
+                                else:
+                                    outcome.current_probability = prob
+                                    outcome.current_american_odds = american
+                                    outcome.current_yes_bid = best_bid
+                                    outcome.current_yes_ask = best_ask
+                                    outcome.last_updated = now
+                                    outcome.probability_change_24h = values[
+                                        "probability_change_24h"
+                                    ]
+                                polymarket_unpriced_reads.discard(outcome.id)
+                                polymarket_cleared_since_commit.add(outcome.id)
+                                stats["outcomes_updated"] += 1
+                                pending_price_reads[outcome.id] = PricedOutcomeRead(
+                                    market_id=outcome.market_id,
+                                    external_id=outcome.external_id,
                                     probability=prob,
-                                    american_odds=american,
-                                    yes_bid=best_bid_val,
-                                    yes_ask=best_ask_val,
-                                    last_price=ltp_val,
-                                    captured_at=now,
+                                    row_time=now,
+                                    received_at=seen_event_times[poly_event_id],
                                 )
-                            )
-                            stats["futures_snapshots_written"] += 1
+
+                                # Children already recorded this observation in
+                                # their conditional writer; the bare row retains
+                                # its existing snapshot in this transaction.
+                                if token_side is None:
+                                    await session.execute(
+                                        pg_insert(FuturesOddsSnapshot).values(
+                                            outcome_id=outcome.id,
+                                            bookmaker="polymarket",
+                                            probability=prob,
+                                            american_odds=american,
+                                            yes_bid=best_bid,
+                                            yes_ask=best_ask,
+                                            last_price=(
+                                                float(ltp) if ltp is not None else None
+                                            ),
+                                            captured_at=now,
+                                        )
+                                    )
+                                stats["futures_snapshots_written"] += 1
 
                         # #6598 / CERT-3182 — the Polymarket arm's copy of the
                         # Kalshi branch's re-rank, for the same reason and in
                         # the same position.
-                        stats["ranks_rederived"] = stats.get(
-                            "ranks_rederived", 0
-                        ) + (
-                            await session.execute(
-                                rerank_market_field_stmt(market_id)
-                            )
-                        ).rowcount
+                        stats["ranks_rederived"] = (
+                            stats.get("ranks_rederived", 0)
+                            + (
+                                await session.execute(
+                                    rerank_market_field_stmt(market_id)
+                                )
+                            ).rowcount
+                        )
 
                         # #5682: durable before the next fetch, same reason as
                         # the Kalshi branch — one Polymarket event's deadlock
@@ -12663,6 +13223,10 @@ async def _poll_live_prediction_market_prices():
                         reading.contributing_outcomes or (reading.outcome,)
                     ),
                     observed_basis=_basis_of_reading2,
+                    price_read_at=priced_outcome_read_time(
+                        reading.contributing_outcomes or (reading.outcome,),
+                        committed_price_reads,
+                    ),
                 )
                 # #10090 item 4: this commit published nothing, so the move
                 # reached an open page only when another writer next published
@@ -13063,7 +13627,7 @@ async def _backfill_polymarket_win_prob_history(
                     else:
                         sample_home = 1.0 - sample_yes
                     checked = await _check_and_fix_inversion(
-                        session, event_id, sample_home, "polymarket",
+                        session, event_id, sample_home, "polymarket", historical=True,
                     )
                     needs_flip = abs(checked - sample_home) > 0.01
 

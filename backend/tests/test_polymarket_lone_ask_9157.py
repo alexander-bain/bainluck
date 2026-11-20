@@ -6,9 +6,10 @@ card at 47% on every score line. Every one of those legs was written by the hour
 resolver's ask-only fallback from a Gamma leg reading ``outcomePrices ["0","1"]``,
 no bid, no trade, and a lone ask.
 
-These drive the PRODUCTION parser and the production resolver on the specimen's
-own encoding (Gamma event 1078378, read 2026-09-28 ~05Z), and carry same-shape
-controls so the refusal cannot be passing for a reason other than the missing bid.
+These drive the production parser and resolver on the specimen's own encoding
+(Gamma event 1078378, read 2026-09-28 ~05Z). #12658 now bounds a missing bid by
+zero: a spread below 20 points prices at its midpoint, never at the lone ask or
+an undated trade. Wider books remain refused.
 """
 
 from __future__ import annotations
@@ -52,22 +53,21 @@ def _select(raw):
 SPECIMEN = dict(prices=["0", "1"], bid=None, ask=0.19)
 
 
-class TestTheLoneAskIsRefused:
-    def test_the_presidents_cup_specimen_is_not_priced(self):
-        """Was ``(0.19, 'best_ask')`` — the number on 20 golfers' rows."""
-        assert _select(_gamma("Scottie Scheffler", **SPECIMEN)) == (None, None)
+class TestTheLoneAskIsNeverThePrice:
+    def test_the_presidents_cup_specimen_uses_the_bounded_midpoint(self):
+        """The 19-point book prices at 9.5%, not the old 19% ask fallback."""
+        assert _select(_gamma("Scottie Scheffler", **SPECIMEN)) == (0.095, "bid_ask_midpoint")
 
     def test_the_correct_score_specimen_is_not_priced(self):
         """Market 62400489: explicit zero bid, 0.47 ask, no trade. Was ``(0.47, 'best_ask')``."""
         assert _select(_gamma("AE Prat 1-0", ["0", "1"], 0, 0.47)) == (None, None)
 
     def test_absent_outcome_prices_do_not_reopen_the_fallback(self):
-        """No ``outcomePrices`` at all reaches the same final branch."""
-        assert _select(_gamma("Adam Scott", None, None, 0.19)) == (None, None)
+        """A missing raw price still uses the book, never the lone ask."""
+        assert _select(_gamma("Adam Scott", None, None, 0.19)) == (0.095, "bid_ask_midpoint")
 
-    def test_a_field_of_lone_asks_writes_no_legs(self):
-        """The negRisk parent path (one leg per sub-market) prices through the
-        resolver too — the whole 20-leg column must come back empty, not at 19%."""
+    def test_a_field_of_lone_asks_uses_the_same_bounded_midpoint(self):
+        """The negRisk parent path uses the same rule on every carried leg."""
         names = ["Scottie Scheffler", "Xander Schauffele", "Justin Thomas", "Adam Scott"]
         event = PolymarketAPIService()._parse_event({
             "id": "1078378",
@@ -79,7 +79,9 @@ class TestTheLoneAskIsRefused:
             ],
         })
         assert event is not None
-        assert _parent_outcome_data(event) == []
+        rows = _parent_outcome_data(event)
+        assert {row["external_id"] for row in rows} == {f"0x{i}" for i in range(len(names))}
+        assert all(row["prob"] == 0.095 for row in rows)
 
 
 class TestWhatStillPrices:
@@ -95,15 +97,13 @@ class TestWhatStillPrices:
         prob, source = _select(_gamma("Bid", ["0", "1"], 0.15, 0.19))
         assert (round(prob, 6), source) == (0.17, "bid_ask_midpoint")
 
-    def test_a_trade_on_the_same_book_prices_off_the_trade(self):
-        """Same no-bid book, plus a trade the book does not refute: priced."""
+    def test_a_trade_on_the_same_book_cannot_replace_the_midpoint(self):
+        """An undated trade inside the book does not change its midpoint."""
         assert _select(_gamma("Traded", ["0", "1"], None, 0.19, last=0.12)) == (
-            0.12, "last_trade_price"
+            0.095, "bid_ask_midpoint"
         )
 
-    def test_a_venue_price_beside_a_lone_ask_is_untouched(self):
-        """#151's "real sub-max ask with no bid" case: Gamma's own price is returned
-        before the removed branch was ever reached, so #9157 does not move it."""
+    def test_a_raw_venue_price_cannot_replace_the_bounded_midpoint(self):
         assert _select(_gamma("Venue", ["0.1", "0.9"], None, 0.19)) == (
-            0.1, "outcome_prices"
+            0.095, "bid_ask_midpoint"
         )

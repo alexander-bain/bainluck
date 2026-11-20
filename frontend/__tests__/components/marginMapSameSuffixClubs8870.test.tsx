@@ -109,12 +109,12 @@ describe("marginSideLabels", () => {
       "americanfootball_ncaaf"
     );
     expect(labels.home.toLowerCase()).not.toBe(labels.away.toLowerCase());
-    expect(labels).toEqual({ home: "Georgia Bulldogs", away: "Mississippi State Bulldogs" });
+    expect(labels).toEqual({ home: "Georgia", away: "Mississippi State" });
   });
 
   it("two identical served codes also fall back", () => {
     const labels = marginSideLabels("Georgia Bulldogs", "Fresno State Bulldogs", "UGA", "uga", "americanfootball_ncaaf");
-    expect(labels).toEqual({ home: "Georgia Bulldogs", away: "Fresno State Bulldogs" });
+    expect(labels).toEqual({ home: "Georgia", away: "Fresno State" });
   });
 
   it("distinct served codes are untouched", () => {

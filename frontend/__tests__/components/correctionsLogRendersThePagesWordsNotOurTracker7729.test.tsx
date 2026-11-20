@@ -106,7 +106,7 @@ const CORRECTIONS = [
   { date: "2026-07-13", title: SPECIMEN, rows: null, description: "" },
   {
     date: "2026-09-13",
-    title: "The one-question markets we were throwing away are now scored",
+    title: "The yes-or-no markets we were throwing away are now scored",
     rows: null,
     description: "",
   },
@@ -198,7 +198,7 @@ describe("#7729 — what the corrections log puts on a reader's screen", () => {
     const text = visibleText(correctionsMarkup(renderPage()));
     for (const title of [
       "Premature golf resolutions",
-      "The one-question markets we were throwing away are now scored",
+      "The yes-or-no markets we were throwing away are now scored",
     ]) {
       expect(text).toContain(title);
     }

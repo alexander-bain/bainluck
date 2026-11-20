@@ -278,8 +278,8 @@ const SITES: Site[] = [
     file: "app/categories/[slug]/page.tsx",
     emptyState: "category-no-items",
     // Anchors read as `renderableText` yields them: `{categoryName.toLowerCase()}`
-    // is data, not copy, so it elides. The reader sees "…open football questions."
-    states: "This page lists open questions.",
+    // is data, not copy, so it elides. The reader sees "…open football markets."
+    states: "This page lists open markets.",
     retired: "Check back soon or browse other categories",
   },
   {

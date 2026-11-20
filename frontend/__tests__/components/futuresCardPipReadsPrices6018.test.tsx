@@ -1,3 +1,4 @@
+/** @jest-environment jsdom */
 /**
  * #6018 — THE FUTURES CARD'S AGE PIP, READ OFF RENDERED MARKUP.
  *
@@ -24,10 +25,15 @@
  * "a test anchor must not branch on the clock".
  */
 
-import { renderToStaticMarkup } from "react-dom/server";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
 import FuturesCard from "../../components/FuturesCard";
 import type { FuturesMarket, FuturesOutcome } from "../../lib/types";
 import specimen from "../fixtures/futures114175PricelessTail6803.json";
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 /** The minute of the screenshot, so every relative string below is fixed. */
 const SHOT = new Date("2026-09-13T22:47:00.000Z");
@@ -77,7 +83,17 @@ function card(over: Partial<FuturesMarket>): FuturesMarket {
 
 /** The card's footer pip, or null when it renders nothing. */
 function pip(market: FuturesMarket): string | null {
-  const html = renderToStaticMarkup(<FuturesCard market={market} />);
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  act(() => {
+    root.render(<FuturesCard market={market} />);
+  });
+  const html = host.innerHTML;
+  act(() => {
+    root.unmount();
+  });
+  host.remove();
   // The footer is the last `text-micro text-text-muted` span on the card.
   const spans = [...html.matchAll(/class="text-micro text-text-muted"[^>]*>([^<]*)</g)];
   if (spans.length === 0) return null;
@@ -105,8 +121,8 @@ describe("#6018 the pip speaks for the prices", () => {
       ],
     });
 
-    expect(pip(market)).toBe("5h ago");
-    expect(pip(market)).not.toBe("Jul 21");
+    expect(pip(market)).toMatch(/^As of \d{1,2}:50\s?[AP]M$/);
+    expect(pip(market)).not.toBe("As of Jul 21");
   });
 
   it("a five-week-old ladder on a row touched minutes ago no longer prints 13m ago", () => {
@@ -121,7 +137,7 @@ describe("#6018 the pip speaks for the prices", () => {
       ],
     });
 
-    expect(pip(market)).toBe("Aug 7");
+    expect(pip(market)).toBe("As of Aug 7");
   });
 
   it("the detail payload's own per-row stamps carry a pinned card", () => {
@@ -137,10 +153,9 @@ describe("#6018 the pip speaks for the prices", () => {
       ],
     });
 
-    // The FLOOR of the two drawn rows, not the fresher one — the card's own
-    // vocabulary for a day is "1d ago" (`formatRelativeTime`), not "yesterday".
-    expect(pip(market)).toBe("1d ago");
-    expect(pip(market)).not.toBe("5h ago"); // the newer of the two rows
+    // The FLOOR of the two drawn rows, not the fresher one — stamped with 'As of'.
+    expect(pip(market)).toBe("As of Sep 12");
+    expect(pip(market)).not.toMatch(/^As of \d{1,2}:50/); // the newer of the two rows
   });
 });
 
@@ -155,7 +170,7 @@ describe("#6018 what it refuses to say", () => {
     });
 
     const printed = pip(market);
-    expect(printed).not.toBe("31m ago"); // what `updated_at` would have given
+    expect(printed).not.toContain("As of"); // what `updated_at` would have given
     expect(printed === null || printed === "").toBe(true);
   });
 
@@ -215,10 +230,10 @@ describe("#6803 a priceless rung does not date the pinned card", () => {
       outcomes: ladder(),
     });
 
-    expect(pip(market)).toBe("3h ago");
+    expect(pip(market)).toMatch(/^As of \d{1,2}:50\s?[AP]M$/);
     // What the reader actually saw: 128 days of understatement, bought from
     // five rungs that display no number at all.
-    expect(pip(market)).not.toBe("May 12");
+    expect(pip(market)).not.toBe("As of May 12");
   });
 
   it("a ladder of nothing but placeholders prints no pip rather than May 12", () => {

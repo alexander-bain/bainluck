@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import EntityImage from '@/components/EntityImage';
 import { formatProbabilityPercent } from '@/lib/probabilityDisplay';
 import AtlasDetailsSheet from './AtlasDetailsSheet';
 import {
@@ -51,6 +52,7 @@ export interface AtlasCategoryOutcome {
   observedAt?: string | null;
   party?: 'D' | 'R' | 'I' | string | null;
   imageUrl?: string | null;
+  imageTitle?: string | null;
   isWinner?: boolean | null;
   isSettled?: boolean;
   settledResult?: 'won' | 'lost' | 'void' | 'unavailable' | null;
@@ -911,7 +913,9 @@ export function RaceCard({
         <div className="mt-3" data-testid="atlas-race-settled">
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2.5">
-              {winnerOutcome.imageUrl ? (
+              {winnerOutcome.imageTitle ? (
+                <EntityImage type="wikipedia" name={winnerOutcome.label} imageTitle={winnerOutcome.imageTitle} size={32} />
+              ) : winnerOutcome.imageUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={winnerOutcome.imageUrl}
@@ -970,6 +974,9 @@ export function RaceCard({
               <div key={c.id ?? `${c.label}-${idx}`} className="space-y-1">
                 <div className="flex items-baseline justify-between gap-2 text-xs">
                   <div className="flex min-w-0 items-center gap-1.5">
+                    {idx === 0 && c.imageTitle && (
+                      <EntityImage type="wikipedia" name={c.label} imageTitle={c.imageTitle} size={20} showFallback={false} />
+                    )}
                     {pLetter && pClass && (
                       <span
                         className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-bold ${pClass}`}

@@ -427,22 +427,20 @@ def test_W1_named_replay_the_poll_writer_does_not_store_the_print(which):
     [
         # A leg that really ran to 0.989: the book is up there with it.
         (dict(outcomePrices='["0.989", "0.011"]', bestBid=0.985, bestAsk=0.992,
-              lastTradePrice=0.989, volume24hr=90000.0), 0.989),
-        # Gotcha #19's blowout: the ask side CLEARED, so Gamma's 0.85 is a phantom
-        # midpoint and the last trade substitutes. SAME 0.989 print as the named
-        # tick — kept, because no offer anywhere prices it out.
+              lastTradePrice=0.989, volume24hr=90000.0), 0.9885),
+        # #12658: a cleared ask cannot date the 0.989 print; no current quote.
         (dict(outcomePrices='["0.85", "0.15"]', bestBid=0.70, bestAsk=1,
-              lastTradePrice=0.989, volume24hr=90000.0), 0.989),
-        # Wide book, recent trade INSIDE it: Q428's exception, untouched.
+              lastTradePrice=0.989, volume24hr=90000.0), None),
+        # Positive daily volume also cannot date a trade inside a wide book.
         (dict(outcomePrices='["0.6", "0.4"]', bestBid=0.30, bestAsk=0.90,
-              lastTradePrice=0.62, volume24hr=500.0), 0.62),
+              lastTradePrice=0.62, volume24hr=500.0), None),
     ],
     ids=["quoted-at-0.989", "cleared-ask-blowout-0.989", "trade-inside-wide-book"],
 )
-def test_W2_genuine_moves_are_still_written_by_the_same_writer(fields, written):
+def test_W2_supported_extreme_is_written_but_undated_trades_are_refused(fields, written):
     _arun(_poll_write(_with_larson(_real_event(), **fields)))
     rows = _arun(_rows(_LARSON_SNAPSHOTS, eid=EVENT_ID, cond=LARSON_CONDITION))
-    assert [r[0] for r in rows] == [written]
+    assert [r[0] for r in rows] == ([] if written is None else [written])
 
 
 def test_W3_the_hourly_refresh_writer_shares_the_refusal():

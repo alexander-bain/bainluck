@@ -203,6 +203,42 @@ nonisolated struct DiscoverInteractionEvent: Encodable, Sendable {
 
 // MARK: - Feed Item (Polymorphic)
 
+/// Deterministic monogram metadata served on `/api/feed` (`image_monogram`, #12659 / #12840).
+nonisolated struct DiscoverImageMonogram: Decodable, Equatable, Sendable {
+    let initials: String
+    let label: String
+    let kind: String
+    let bgHex: String
+    let accentHex: String
+
+    private enum CodingKeys: String, CodingKey {
+        case initials, label, kind, bgHex, accentHex
+        case bgHexSnake = "bg_hex"
+        case accentHexSnake = "accent_hex"
+    }
+
+    init(initials: String, label: String, kind: String, bgHex: String, accentHex: String) {
+        self.initials = initials
+        self.label = label
+        self.kind = kind
+        self.bgHex = bgHex
+        self.accentHex = accentHex
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        initials = try c.decode(String.self, forKey: .initials)
+        label = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? ""
+        kind = (try? c.decodeIfPresent(String.self, forKey: .kind)) ?? "topic"
+        bgHex = (try? c.decodeIfPresent(String.self, forKey: .bgHex))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .bgHexSnake))
+            ?? "#1e293b"
+        accentHex = (try? c.decodeIfPresent(String.self, forKey: .accentHex))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .accentHexSnake))
+            ?? "#475569"
+    }
+}
+
 /// Polymorphic feed card wrapper for either a sports event or a futures market.
 nonisolated struct FeedBundle: Decodable, Sendable {
     let id: String
@@ -215,27 +251,102 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     /// #9925: the published collection this theme's whole preview sits on, as
     /// the server proved it. Absent = no link; the card never guesses one.
     let collectionRef: FeedThemeCollectionRef?
+    /// #12642: optional paired-metric grouped card payload (`paired_bars_top5_expandable` / `podium_and_tiers`).
+    let pairedMetricSet: PairedMetricSet?
+    let visualForm: String?
+    /// Discover round-up contract (`data.roundup`) for `kind == "roundup"` containers.
+    let roundupContract: FeedRoundupContract?
+    /// #12840 / #12825: bundle-level verified banner art (`image_url`, `image_presentation`, `image_monogram`).
+    let imageUrl: String?
+    let imagePresentation: String?
+    let imageMonogram: DiscoverImageMonogram?
+
+    private nonisolated struct RoundupPairedEnvelope: Decodable {
+        let pairedMetricSet: PairedMetricSet?
+        let visualForm: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case pairedMetricSet
+            case pairedMetricSetSnake = "paired_metric_set"
+            case visualForm
+            case visualFormSnake = "visual_form"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet))
+                ?? (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSetSnake))
+            visualForm = (try? c.decodeIfPresent(String.self, forKey: .visualForm))
+                ?? (try? c.decodeIfPresent(String.self, forKey: .visualFormSnake))
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case id, title, sharedQuestion, items, kind, comparisonTheme, collectionRef
+        case sharedQuestionSnake = "shared_question"
+        case comparisonThemeSnake = "comparison_theme"
+        case collectionRefSnake = "collection_ref"
+        case pairedMetricSet
+        case pairedMetricSetSnake = "paired_metric_set"
+        case visualForm
+        case visualFormSnake = "visual_form"
+        case roundup
+        case imageUrl
+        case imageUrlSnake = "image_url"
+        case imagePresentation
+        case imagePresentationSnake = "image_presentation"
+        case imageMonogram
+        case imageMonogramSnake = "image_monogram"
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
-        sharedQuestion = try c.decodeIfPresent(String.self, forKey: .sharedQuestion)
-        items = try c.decodeIfPresent([FeedItem].self, forKey: .items) ?? []
+        sharedQuestion = (try? c.decodeIfPresent(String.self, forKey: .sharedQuestion))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .sharedQuestionSnake))
+        items = (try? c.decodeIfPresent([FeedItem].self, forKey: .items)) ?? []
         kind = try c.decodeIfPresent(String.self, forKey: .kind)
-        comparisonTheme = try c.decodeIfPresent(String.self, forKey: .comparisonTheme)
+        comparisonTheme = (try? c.decodeIfPresent(String.self, forKey: .comparisonTheme))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .comparisonThemeSnake))
         // Optional enrichment: a malformed ref costs the link, never the bundle.
-        collectionRef = (try? c.decodeIfPresent(FeedThemeCollectionRef.self, forKey: .collectionRef)) ?? nil
+        collectionRef = (try? c.decodeIfPresent(FeedThemeCollectionRef.self, forKey: .collectionRef))
+            ?? (try? c.decodeIfPresent(FeedThemeCollectionRef.self, forKey: .collectionRefSnake))
+        let nestedRoundup = (try? c.decodeIfPresent(RoundupPairedEnvelope.self, forKey: .roundup)) ?? nil
+        roundupContract = (try? c.decodeIfPresent(FeedRoundupContract.self, forKey: .roundup)) ?? nil
+        pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet))
+            ?? (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSetSnake))
+            ?? nestedRoundup?.pairedMetricSet
+        visualForm = (try? c.decodeIfPresent(String.self, forKey: .visualForm))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .visualFormSnake))
+            ?? nestedRoundup?.visualForm
+            ?? pairedMetricSet?.preferredVisualForm
+        imageUrl = (try? c.decodeIfPresent(String.self, forKey: .imageUrl))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .imageUrlSnake))
+        imagePresentation = (try? c.decodeIfPresent(String.self, forKey: .imagePresentation))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .imagePresentationSnake))
+        imageMonogram = (try? c.decodeIfPresent(DiscoverImageMonogram.self, forKey: .imageMonogram))
+            ?? (try? c.decodeIfPresent(DiscoverImageMonogram.self, forKey: .imageMonogramSnake))
     }
 
     /// Memberwise init so a sanitized bundle can be rebuilt with a lifecycle-
     /// admitted child list while preserving identity, title, kind, and comparison
     /// theme (C29 P2 — see `withItems`).
-    init(id: String, title: String, items: [FeedItem], kind: String?, comparisonTheme: String?, sharedQuestion: String? = nil, collectionRef: FeedThemeCollectionRef? = nil) {
+    init(
+        id: String,
+        title: String,
+        items: [FeedItem],
+        kind: String?,
+        comparisonTheme: String?,
+        sharedQuestion: String? = nil,
+        collectionRef: FeedThemeCollectionRef? = nil,
+        pairedMetricSet: PairedMetricSet? = nil,
+        visualForm: String? = nil,
+        roundupContract: FeedRoundupContract? = nil,
+        imageUrl: String? = nil,
+        imagePresentation: String? = nil,
+        imageMonogram: DiscoverImageMonogram? = nil
+    ) {
         self.id = id
         self.title = title
         self.sharedQuestion = sharedQuestion
@@ -243,6 +354,12 @@ nonisolated struct FeedBundle: Decodable, Sendable {
         self.kind = kind
         self.comparisonTheme = comparisonTheme
         self.collectionRef = collectionRef
+        self.pairedMetricSet = pairedMetricSet
+        self.visualForm = visualForm
+        self.roundupContract = roundupContract
+        self.imageUrl = imageUrl
+        self.imagePresentation = imagePresentation
+        self.imageMonogram = imageMonogram
     }
 
     /// Rebuild the bundle with a new child list, preserving all other metadata
@@ -251,13 +368,40 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     /// every consumer derives its primary/category from the first ELIGIBLE child,
     /// never a stale raw first child.
     func withItems(_ newItems: [FeedItem]) -> FeedBundle {
-        FeedBundle(id: id, title: title, items: newItems, kind: kind, comparisonTheme: comparisonTheme, sharedQuestion: sharedQuestion, collectionRef: collectionRef)
+        FeedBundle(
+            id: id,
+            title: title,
+            items: newItems,
+            kind: kind,
+            comparisonTheme: comparisonTheme,
+            sharedQuestion: sharedQuestion,
+            collectionRef: collectionRef,
+            pairedMetricSet: pairedMetricSet,
+            visualForm: visualForm,
+            roundupContract: roundupContract,
+            imageUrl: imageUrl,
+            imagePresentation: imagePresentation,
+            imageMonogram: imageMonogram
+        )
     }
 
     /// #9925: the link a grouped card may draw. Theme bundles only, as on web
     /// (`ThemeBundleCard`); a comparison bundle never links, whatever it carries.
     var themeCollectionRef: FeedThemeCollectionRef? {
         kind == "theme" ? collectionRef : nil
+    }
+
+    /// Verified container link for `kind == "roundup"` cards (`RoundupCard`).
+    var roundupCollectionRef: FeedThemeCollectionRef? {
+        kind == "roundup" ? collectionRef : nil
+    }
+
+    /// True when this `roundup` bundle has both a verified `collection_ref` and a
+    /// readable `FeedRoundupContract` or `MachineryCardContract` (`RoundupCard`: no container, no card).
+    var admitsRoundupCard: Bool {
+        guard kind == "roundup", roundupCollectionRef != nil else { return false }
+        if roundupContract?.machineryCard != nil { return true }
+        return DiscoverRoundupCardModel.build(title: title, contract: roundupContract) != nil
     }
 }
 
@@ -275,6 +419,7 @@ nonisolated struct FeedThemeCollectionRef: Decodable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case slug, name, revision, collectionCount
+        case collectionCountSnake = "collection_count"
     }
 
     init?(slug: String, name: String, revision: Int, collectionCount: Int) {
@@ -288,11 +433,17 @@ nonisolated struct FeedThemeCollectionRef: Decodable, Equatable, Sendable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let count: Int
+        if let camel = try? c.decode(Int.self, forKey: .collectionCount) {
+            count = camel
+        } else {
+            count = try c.decode(Int.self, forKey: .collectionCountSnake)
+        }
         guard let ref = FeedThemeCollectionRef(
             slug: try c.decode(String.self, forKey: .slug),
             name: try c.decode(String.self, forKey: .name),
             revision: try c.decode(Int.self, forKey: .revision),
-            collectionCount: try c.decode(Int.self, forKey: .collectionCount)
+            collectionCount: count
         ) else {
             throw DecodingError.dataCorrupted(.init(codingPath: c.codingPath, debugDescription: "collection_ref fails admission"))
         }
@@ -327,6 +478,29 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     let bundle: FeedBundle?
     /// Optional #9653 producer card in the ordinary data envelope.
     let collection: ContainerHubCollection?
+    /// #12642: paired-metric grouped card payload (`paired_bars_top5_expandable` / `podium_and_tiers`).
+    let pairedMetricSet: PairedMetricSet?
+    let visualForm: String?
+
+    private nonisolated struct PairedItemDataEnvelope: Decodable {
+        let pairedMetricSet: PairedMetricSet?
+        let visualForm: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case pairedMetricSet
+            case pairedMetricSetSnake = "paired_metric_set"
+            case visualForm
+            case visualFormSnake = "visual_form"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet))
+                ?? (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSetSnake))
+            visualForm = (try? c.decodeIfPresent(String.self, forKey: .visualForm))
+                ?? (try? c.decodeIfPresent(String.self, forKey: .visualFormSnake))
+        }
+    }
 
     // Personalization fields
     let personalized: Bool?
@@ -347,6 +521,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         // bundles sharing a title.
         if let b = bundle { return "bundle-\(b.id)" }
         if let c = collection { return "collection-\(c.slug)" }
+        if let p = pairedMetricSet { return "paired-metric-\(p.setId)" }
         return [
             "feed",
             type,
@@ -371,12 +546,16 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     enum CodingKeys: String, CodingKey {
         case type, score, reason, headline, contextSummary, data
         case personalized, baseScore, multiplier, personalizationReasons
+        case visualForm
+        case visualFormSnake = "visual_form"
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         type = try c.decode(String.self, forKey: .type)
-        score = try c.decodeIfPresent(Int.self, forKey: .score) ?? 0
+        score = (try? c.decodeIfPresent(Int.self, forKey: .score))
+            ?? (try? c.decodeIfPresent(Double.self, forKey: .score)).map { Int($0.rounded()) }
+            ?? 0
         reason = try c.decodeIfPresent(String.self, forKey: .reason)
         headline = try c.decodeIfPresent(String.self, forKey: .headline)
         contextSummary = try c.decodeIfPresent(String.self, forKey: .contextSummary)
@@ -384,11 +563,25 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         baseScore = try c.decodeIfPresent(Double.self, forKey: .baseScore)
         multiplier = try c.decodeIfPresent(Double.self, forKey: .multiplier)
         personalizationReasons = try c.decodeIfPresent([String].self, forKey: .personalizationReasons)
+        let topLevelForm = (try? c.decodeIfPresent(String.self, forKey: .visualForm))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .visualFormSnake))
 
         // Optional/malformed collection data never prevents siblings decoding.
         collection = type == "collection" ? (try? c.decodeIfPresent(ContainerHubCollection.self, forKey: .data)) : nil
 
         if type == "collection" {
+            event = nil
+            futures = nil
+            tournament = nil
+            concept = nil
+            bundle = nil
+            pairedMetricSet = nil
+            visualForm = topLevelForm
+        } else if type == "paired_metric" {
+            let envelope = (try? c.decodeIfPresent(PairedItemDataEnvelope.self, forKey: .data)) ?? nil
+            let direct = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .data)) ?? nil
+            pairedMetricSet = envelope?.pairedMetricSet ?? direct
+            visualForm = topLevelForm ?? envelope?.visualForm ?? pairedMetricSet?.preferredVisualForm
             event = nil
             futures = nil
             tournament = nil
@@ -400,12 +593,16 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             tournament = nil
             concept = nil
             bundle = nil
+            pairedMetricSet = nil
+            visualForm = topLevelForm
         } else if type == "tournament" {
             tournament = try c.decodeIfPresent(FeedTournamentData.self, forKey: .data)
             event = nil
             futures = nil
             concept = nil
             bundle = nil
+            pairedMetricSet = nil
+            visualForm = topLevelForm
         } else if type == "bundle" {
             // #1886: bundles arrive as `{"type":"bundle","data":{…}}` — MEASURED,
             // twice: 0 of 83 live items (2026-08-14) and 0 of 60 (2026-08-17)
@@ -426,7 +623,10 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             // a tolerated second wire shape is the same "two rules" defect the
             // cycle-80 classifier unification removed, and it is what let every
             // bundle fixture in the suite agree with the bug for so long.
-            bundle = try c.decodeIfPresent(FeedBundle.self, forKey: .data)
+            let decodedBundle = try c.decodeIfPresent(FeedBundle.self, forKey: .data)
+            bundle = decodedBundle
+            pairedMetricSet = decodedBundle?.pairedMetricSet
+            visualForm = topLevelForm ?? decodedBundle?.visualForm
             event = nil
             futures = nil
             tournament = nil
@@ -442,12 +642,16 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             futures = nil
             tournament = nil
             bundle = nil
+            pairedMetricSet = nil
+            visualForm = topLevelForm
         } else {
             futures = try c.decodeIfPresent(FeedFuturesData.self, forKey: .data)
             event = nil
             tournament = nil
             concept = nil
             bundle = nil
+            pairedMetricSet = nil
+            visualForm = topLevelForm
         }
     }
 
@@ -468,7 +672,9 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         baseScore: Double?,
         multiplier: Double?,
         personalizationReasons: [String]?,
-        collection: ContainerHubCollection? = nil
+        collection: ContainerHubCollection? = nil,
+        pairedMetricSet: PairedMetricSet? = nil,
+        visualForm: String? = nil
     ) {
         self.type = type
         self.score = score
@@ -481,6 +687,8 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         self.concept = concept
         self.bundle = bundle
         self.collection = collection
+        self.pairedMetricSet = pairedMetricSet ?? bundle?.pairedMetricSet
+        self.visualForm = visualForm ?? bundle?.visualForm
         self.personalized = personalized
         self.baseScore = baseScore
         self.multiplier = multiplier
@@ -507,7 +715,33 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             baseScore: baseScore,
             multiplier: multiplier,
             personalizationReasons: personalizationReasons,
-            collection: collection
+            collection: collection,
+            pairedMetricSet: pairedMetricSet ?? newBundle.pairedMetricSet,
+            visualForm: visualForm ?? newBundle.visualForm
+        )
+    }
+
+    /// Converts a childless paired-metric bundle into a standalone `.single` `paired_metric` item
+    /// so `DiscoverView` renders `DiscoverPairedMetricCardView` without dropping it on empty `items`.
+    func asPairedMetricItem() -> FeedItem {
+        FeedItem(
+            type: "paired_metric",
+            score: score,
+            reason: reason,
+            headline: headline ?? bundle?.title,
+            contextSummary: contextSummary,
+            event: nil,
+            futures: nil,
+            tournament: nil,
+            concept: nil,
+            bundle: nil,
+            personalized: personalized,
+            baseScore: baseScore,
+            multiplier: multiplier,
+            personalizationReasons: personalizationReasons,
+            collection: nil,
+            pairedMetricSet: pairedMetricSet ?? bundle?.pairedMetricSet,
+            visualForm: visualForm ?? bundle?.visualForm
         )
     }
 }
@@ -647,6 +881,9 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     /// Score observations order independently of probability folds (#10582).
     var scoreSource: String? = nil
     var scoreObservedAt: String? = nil
+    /// #13000 (`250: A`) — `score_source_unavailable: bool` when no score source
+    /// carries this match (distinguished from `"no score yet"` before kickoff).
+    var scoreSourceUnavailable: Bool? = nil
     let blendFoldRevision: ServedFoldRevision?
     let heroProbabilitySource: String?
     let heroProbabilityObservedAt: String?
@@ -720,6 +957,13 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     /// PRESENT ONLY WHEN TRUE: absent means "not established", never "still
     /// going". Read it through ``EventState/showsVenueClosedNoWinner(_:venueSettled:venueClosedNoWinner:commenceTime:now:)``.
     let venueClosedNoWinner: Bool?
+    /// #12581 / #12926 / #12864 / #12865 / #12961 — server-owned source attribution
+    /// marks for home (`sourceMark` / `pregameSourceMark`) and away (`awaySourceMark` /
+    /// `awayPregameSourceMark`) probabilities.
+    var sourceMark: SourceMark? = nil
+    var awaySourceMark: SourceMark? = nil
+    var pregameSourceMark: SourceMark? = nil
+    var awayPregameSourceMark: SourceMark? = nil
 }
 
 /// What a card should draw in one participant's avatar slot, and how.
@@ -783,7 +1027,11 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let canonicalMarketKey: String?
     let groupId: String?
     let groupType: String?
+    var marketType: String? = nil
+    var mutuallyExclusive: Bool? = nil
     let imageUrl: String?
+    var imagePresentation: String? = nil
+    var imageMonogram: DiscoverImageMonogram? = nil
     let hookDescription: String?
     let matchedOutcomes: [MatchedOutcome]?
     let discoverCard: FeedDiscoverCard?
@@ -831,6 +1079,54 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     /// the served answer agrees with a local derivation on all 98. `CardSum.swift`
     /// carries the full reasoning.
     let cardSumReason: String?
+    /// #11920 / #12581 (137-A): server-owned source attribution mark for collection and feed cards.
+    var sourceMark: SourceMark? = nil
+    /// #12884: cumulative deadline member contract carrying independent `Yes` (`sourceMark`) and `No` (`noSourceMark`) attribution.
+    var deadlineMember: FeedDeadlineMemberContract? = nil
+
+    /// Resolves the served `SourceMark` for a specific outcome (or the card's primary outcome when `outcome` is nil),
+    /// checking outcome-level `sourceMark`, cumulative deadline `Yes`/`No` marks (`#12884`), and market-level `sourceMark`.
+    func resolvedSourceMark(for outcome: FeedFuturesOutcome?) -> SourceMark? {
+        if let mark = outcome?.sourceMark, mark.draws {
+            return mark
+        }
+        if let dm = deadlineMember {
+            if let outcome {
+                let normalized = outcome.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if normalized == "yes" {
+                    return dm.sourceMark
+                }
+                if normalized == "no" || normalized.hasPrefix("not ") {
+                    return dm.noSourceMark
+                }
+                if let p = outcome.probability,
+                   let yesP = dm.yesProbability,
+                   let noP = dm.noProbability,
+                   abs(yesP - noP) > 1e-6 {
+                    let dYes = abs(p - yesP)
+                    let dNo = abs(p - noP)
+                    if min(dYes, dNo) <= 0.025 {
+                        return dYes <= dNo ? dm.sourceMark : dm.noSourceMark
+                    }
+                }
+            } else {
+                return dm.sourceMark
+            }
+        }
+        if outcome == nil || (topOutcomes?.count ?? 0) <= 1 {
+            return sourceMark
+        }
+        return nil
+    }
+}
+
+/// #12884: cumulative deadline member attribution carried on `FeedFuturesData.deadline_member`.
+nonisolated struct FeedDeadlineMemberContract: Decodable, Equatable, Sendable {
+    let yesProbability: Double?
+    let yesRenderedPercent: Int?
+    let noProbability: Double?
+    let sourceMark: SourceMark?
+    let noSourceMark: SourceMark?
 }
 
 // MARK: - Discover Card Archetype
@@ -878,6 +1174,8 @@ nonisolated struct FeedDiscoverDistributionOutcome: Decodable, Sendable {
     /// `nil` on the "No release by…" residual and on every other board. The year
     /// is the server's (venue labels read `October 27`), never guessed here.
     var date: String? = nil
+    var sortKey: Double? = nil
+    var sourceMark: SourceMark? = nil
 }
 
 // MARK: - Feed Tournament Data
@@ -918,6 +1216,7 @@ nonisolated struct FeedTournamentGolfer: Decodable, Identifiable, Sendable {
     var renderedPercent: Int? = nil
     let rank: Int
     let movement24h: Double?
+    var sourceMark: SourceMark? = nil
 
     var id: String { name }
 
@@ -942,6 +1241,7 @@ nonisolated struct FeedTournamentGolfer: Decodable, Identifiable, Sendable {
     enum CodingKeys: String, CodingKey {
         case name, probability, renderedPercent, rank
         case movement24h = "movement24H"
+        case sourceMark
     }
 }
 
@@ -964,10 +1264,23 @@ nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
     let priceObservedAt: String?
     let rank: Int?
     let movement: Double?
+    /// #11920 / #12581 (137-A): server-owned per-outcome source attribution mark.
+    var sourceMark: SourceMark? = nil
+    var sortKey: Double? = nil
 
-    init(id: Int, name: String, probability: Double?, rank: Int?, movement: Double?, priceObservedAt: String? = nil) {
+    init(
+        id: Int,
+        name: String,
+        probability: Double?,
+        rank: Int?,
+        movement: Double?,
+        priceObservedAt: String? = nil,
+        sourceMark: SourceMark? = nil,
+        sortKey: Double? = nil
+    ) {
         self.id = id; self.name = name; self.probability = probability
         self.rank = rank; self.movement = movement; self.priceObservedAt = priceObservedAt
+        self.sourceMark = sourceMark; self.sortKey = sortKey
     }
 
 }

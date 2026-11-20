@@ -1,0 +1,88 @@
+{
+  "candidate_slug": "roundup-ai-race",
+  "producer": "tech_ai_race",
+  "captured_at": "2026-11-14T15:10:00+00:00",
+  "trading_guard_summary": "Seats the 4 actively trading single-winner AI model benchmark leaderboards (#61329163 Overall Nov $133,389/24h, #32127334 Overall 2026 $29,984/24h, #109623 Coding Arena 2026 $14,769/24h, #68626832 LiveBench Coding Dec $2,115/24h). Excludes untraded/stale benchmark boards (#60635399 $0 24h volume, Oct 21 quote) and non-single-winner company reach props.",
+  "input_markets": [
+    {
+      "id": 61329163,
+      "source": "polymarket",
+      "status": "open",
+      "category": "tech",
+      "name": "Which company has the best AI model end of November?",
+      "volume_24h": 133389.4,
+      "updated_at": "2026-11-14T13:12:00+00:00",
+      "outcomes": [
+        {"name": "Google", "probability": 0.88},
+        {"name": "Anthropic", "probability": 0.10},
+        {"name": "OpenAI", "probability": 0.01}
+      ]
+    },
+    {
+      "id": 32127334,
+      "source": "polymarket",
+      "status": "open",
+      "category": "tech",
+      "name": "Which company will have the best AI model at the end of 2026?",
+      "volume_24h": 29984.2,
+      "updated_at": "2026-11-13T21:28:00+00:00",
+      "outcomes": [
+        {"name": "Google", "probability": 0.74},
+        {"name": "Anthropic", "probability": 0.20},
+        {"name": "OpenAI", "probability": 0.03}
+      ]
+    },
+    {
+      "id": 109623,
+      "source": "kalshi",
+      "status": "open",
+      "category": "tech",
+      "name": "Which company will have the best coding model at the end of 2026?",
+      "volume_24h": 14769.0,
+      "updated_at": "2026-11-14T04:20:00+00:00",
+      "outcomes": [
+        {"name": "Anthropic", "probability": 0.67},
+        {"name": "Google", "probability": 0.15},
+        {"name": "OpenAI", "probability": 0.13}
+      ]
+    },
+    {
+      "id": 68626832,
+      "source": "polymarket",
+      "status": "open",
+      "category": "tech",
+      "name": "Which company has best AI model on LiveBench (Coding) end of December?",
+      "volume_24h": 2115.6,
+      "updated_at": "2026-11-14T08:46:00+00:00",
+      "outcomes": [
+        {"name": "Anthropic", "probability": 0.58},
+        {"name": "Google", "probability": 0.13},
+        {"name": "OpenAI", "probability": 0.11}
+      ]
+    },
+    {
+      "id": 60635399,
+      "source": "kalshi",
+      "status": "open",
+      "category": "tech",
+      "name": "Which company has the best AI model end of December?",
+      "volume_24h": 0.0,
+      "quiet_days": 14.0,
+      "updated_at": "2026-10-21T09:00:00+00:00",
+      "outcomes": [
+        {"name": "Google", "probability": 0.71},
+        {"name": "Anthropic", "probability": 0.19},
+        {"name": "OpenAI", "probability": 0.08}
+      ]
+    }
+  ],
+  "expected_member_ids": [
+    61329163,
+    32127334,
+    109623,
+    68626832
+  ],
+  "excluded_ids": [
+    60635399
+  ]
+}

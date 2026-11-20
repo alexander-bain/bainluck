@@ -566,9 +566,9 @@ export default function SearchBar({
 
 /**
  * Stable-partition typeahead suggestions so team pages matching the query rank
- * first (L2-158 Item 3, frontend half). A team "strongly matches" when the
- * query is a prefix of (or prefixed by) the team name, is contained in the name
- * (>=3 chars), or exactly equals the abbreviation. Relative order is preserved
+ * first. #12290 uses the server's owned-name verdict, including aliases. An
+ * older cached response falls back to the prior name/abbreviation heuristic.
+ * Relative order is preserved
  * within both the promoted and non-promoted groups; when nothing matches the
  * list is returned unchanged.
  */
@@ -580,6 +580,9 @@ export function rankTeamsFirst(
   if (!q) return list;
   const isStrongTeam = (s: TypeaheadSuggestion): boolean => {
     if (s.type !== "team") return false;
+    // #12290: the server owns aliases that the public response does not carry.
+    // Keep the old fallback for responses cached before this additive field.
+    if (typeof s.query_names_team === "boolean") return s.query_names_team;
     const name = (s.text || "").toLowerCase();
     if (!name) return false;
     if (name.startsWith(q) || q.startsWith(name)) return true;

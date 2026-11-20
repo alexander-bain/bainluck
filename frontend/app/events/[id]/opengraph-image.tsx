@@ -4,7 +4,7 @@ import { UnfurlCard } from "@/components/og/UnfurlCard";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { getSportLabel } from "@/lib/sportCategories";
 import { shippableCrestBadge } from "@/lib/teamShortName";
-import { teamTextColor } from "@/lib/teamColors";
+import { resolveMatchupTeamColors, teamTextColor } from "@/lib/teamColors";
 import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
 import { unfurlImageOptions } from "@/lib/unfurlImageCache";
@@ -317,12 +317,13 @@ export default async function Image({ params }: { params: { id: string } }) {
   // opening line; the rest get `null` here and say so by saying nothing.
   const prematch = forecastWithheld
     ? prematchReading({
-        // #8315 — served on a settled event since the page's hero needed it;
-        // absent on every other status, which keeps the fallback below.
         prematch_odds: event.prematch_odds,
         opening_odds: event.opening_odds,
       })
     : null;
+  // When the pregame reading occupies the main probability slots, name it
+  // for every source. On final cards the score occupies those slots.
+  const showPregameLabel = prematch?.awayPercent != null && (!final || prematch.label !== null);
 
   // THE BIG SLOT. On a live or scheduled game it is the probability, unchanged.
   // On a finished one it is the SCORE — "the score + bold winner tell the
@@ -420,8 +421,14 @@ export default async function Image({ params }: { params: { id: string } }) {
   // "nobody won". A tie reaches here the same way: `resolveEventOutcome`
   // returns `null` on equal scores rather than crowning the home side.
   const decided = final && outcome?.winnerSide != null;
-  const homeColor = event.home_team_data?.primary_color || "#2563eb";
-  const awayColor = event.away_team_data?.primary_color || "#dc2626";
+  const resolvedTeamColors = resolveMatchupTeamColors({
+    homePrimary: event.home_team_data?.primary_color,
+    awayPrimary: event.away_team_data?.primary_color,
+    homeSecondary: event.home_team_data?.secondary_color,
+    awaySecondary: event.away_team_data?.secondary_color,
+  });
+  const homeColor = resolvedTeamColors.home || "#2563eb";
+  const awayColor = resolvedTeamColors.away || "#dc2626";
   // #5696 — the crest tiles and the split bar keep the raw brand colour as a
   // FILL; the two big percents are TEXT and take #5165's floor. This canvas is
   // `#f8fafc` rather than `--surface-card`'s `#FFFFFF`, so the helper's ratio
@@ -498,7 +505,11 @@ export default async function Image({ params }: { params: { id: string } }) {
                 fontWeight: 900,
               }}
             >
-              {shippableCrestBadge(awayTeam, event.sport_key || event.sport)}
+              {shippableCrestBadge(
+                awayTeam,
+                event.sport_key || event.sport,
+                event.away_team_data?.abbreviation,
+              )}
             </div>
             <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05, color: awayNameColor }}>{awayTeam}</div>
             {awayHero !== null && (
@@ -535,7 +546,11 @@ export default async function Image({ params }: { params: { id: string } }) {
                 fontWeight: 900,
               }}
             >
-              {shippableCrestBadge(homeTeam, event.sport_key || event.sport)}
+              {shippableCrestBadge(
+                homeTeam,
+                event.sport_key || event.sport,
+                event.home_team_data?.abbreviation,
+              )}
             </div>
             <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05, textAlign: "right", color: homeNameColor }}>{homeTeam}</div>
             {homeHero !== null && (
@@ -589,18 +604,8 @@ export default async function Image({ params }: { params: { id: string } }) {
                   ? `${eventStatus(event)} · ${outcome.resultLine}`
                   : eventStatus(event)}
               </div>
-              {/* The rung, named once. `prematchReading` only ever sets this for
-                  a non-prediction-market reading, and Alex's rule is that such a
-                  number says so ("labelled when not a prediction market") — an
-                  unlabelled sportsbook median is the old footnote in a new
-                  shape. `sportsbooks` and never a venue name (notice 33). */}
-              {/* #6105 — `forecastWithheld`, so a no-result card's pair is
-                  labelled as the pre-match reading it is. On that card the pair
-                  is the BIG number rather than a footnote under a score, which
-                  makes the label load-bearing rather than a caveat: unlabelled,
-                  96px of "54%" over "No result reported" reads as a live call. */}
-              {forecastWithheld && prematch?.label && prematch.awayPercent != null && (
-                <div style={{ fontSize: 20 }}>{`Pre-match · ${prematch.label}`}</div>
+              {showPregameLabel && (
+                <div style={{ fontSize: 20 }}>Pregame</div>
               )}
             </div>
             {/* #4957: the bare wordmark, matching the other three share cards. This card is

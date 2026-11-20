@@ -724,10 +724,21 @@ async def test_the_live_pass_stamps_with_each_boards_own_read_clock(monkeypatch)
 def test_the_statpal_livescore_clock_is_the_boards_read():
     """`_now` is pass entry; each sport's board is read later than that."""
     src = (BACKEND / "app/tasks/statpal_sync.py").read_text()
-    fetch = src.index("live_fixtures = await service.get_live_scores(statpal_sport)")
-    bound = src.index("_read_at = datetime.now(timezone.utc)")
-    assert fetch < bound < fetch + 400
+    tree = ast.parse(src)
+    function = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)
+                    and n.name == "_sync_statpal_livescores")
+    fetch = next(n for n in ast.walk(function) if isinstance(n, ast.Assign)
+                 and any(isinstance(t, ast.Name) and t.id == "live_fixtures" for t in n.targets))
+    calls = [n.value for n in ast.walk(fetch.value) if isinstance(n, ast.Await)]
+    assert {c.func.attr for c in calls if isinstance(c.func, ast.Attribute)} == {
+        "get_live_fixtures", "get_live_scores",
+    }
+    bound = next(n for n in ast.walk(function) if isinstance(n, ast.Assign)
+                 and any(isinstance(t, ast.Name) and t.id == "_read_at" for t in n.targets))
+    assert fetch.end_lineno < bound.lineno <= fetch.end_lineno + 5
+    assert ast.unparse(bound.value) == "datetime.now(timezone.utc)"
     assert "observed_at=_read_at" in src
+    assert "statpal_tennis_values(event, live_fixtures, _read_at)" in src
 
 
 def test_the_clears_drop_the_stamp_with_the_score():

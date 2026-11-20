@@ -9,6 +9,11 @@ struct SavedItemWidgetEntry10875: TimelineEntry {
     let date: Date
     let selection: SavedWidgetSelection10875?
     let content: SavedWidgetContent10875
+    /// #12466 — the look this widget draws, and for a game in a new look its
+    /// colours and crests.
+    var art: SavedWidgetArt12466? = nil
+    var logos = SavedWidgetLogos12466.Pair()
+    var look: SavedWidgetLook12466 = .shipping
 
     /// The reading at this entry's own date, when there is a detail.
     var reading: SavedWidgetReading10875? {
@@ -41,28 +46,38 @@ struct SavedItemWidgetProvider10875: AppIntentTimelineProvider {
 
     func snapshot(for configuration: SelectSavedItemIntent10875, in context: Context) async -> SavedItemWidgetEntry10875 {
         if context.isPreview && configuration.selection == nil {
-            return SavedItemWidgetEntry10875(date: Date(), selection: nil, content: .notConfigured)
+            return SavedItemWidgetEntry10875(date: Date(), selection: nil, content: .notConfigured,
+                                             look: configuration.look12466)
         }
-        return await entry(for: configuration.selection, at: Date())
+        return await entry(for: configuration.selection, look: configuration.look12466, at: Date())
     }
 
     func timeline(for configuration: SelectSavedItemIntent10875, in context: Context) async -> Timeline<SavedItemWidgetEntry10875> {
         let now = Date()
         let selection = configuration.selection
-        let first = await entry(for: selection, at: now)
+        let first = await entry(for: selection, look: configuration.look12466, at: now)
         let entries = SavedWidgetTimeline10875.entryDates(first.content, selection: selection, now: now)
-            .map { SavedItemWidgetEntry10875(date: $0, selection: selection, content: first.content) }
+            .map { SavedItemWidgetEntry10875(date: $0, selection: selection, content: first.content,
+                                             art: first.art, logos: first.logos, look: first.look) }
         let next = SavedWidgetTimeline10875.nextRequest(first.content, selection: selection, now: now)
         return Timeline(entries: entries, policy: .after(next))
     }
 
-    private func entry(for selection: SavedWidgetSelection10875?, at date: Date) async -> SavedItemWidgetEntry10875 {
+    private func entry(for selection: SavedWidgetSelection10875?, look: SavedWidgetLook12466,
+                       at date: Date) async -> SavedItemWidgetEntry10875 {
         let content = await SavedWidgetTimeline10875.resolve(
             selection,
             readBridge: { SavedItemWidgetFetch10875.bridge },
             fetch: { try await SavedItemWidgetFetch10875.data(for: $0) },
             cache: SavedItemWidgetFetch10875.cache)
-        return SavedItemWidgetEntry10875(date: date, selection: selection, content: content)
+        var entry = SavedItemWidgetEntry10875(date: date, selection: selection, content: content, look: look)
+        // #12466: only a new look draws crests, so today's look fetches nothing new.
+        if look != .today, case .detail(.game(let event), _) = content {
+            let art = SavedWidgetArt12466.game(event)
+            entry.art = art
+            entry.logos = await SavedWidgetLogos12466.load(away: art.away.logoURL, home: art.home.logoURL)
+        }
+        return entry
     }
 }
 
@@ -72,7 +87,6 @@ struct SavedItemWidget10875: Widget {
                                intent: SelectSavedItemIntent10875.self,
                                provider: SavedItemWidgetProvider10875()) { entry in
             SavedItemWidgetView10875(entry: entry)
-                .containerBackground(.fill.tertiary, for: .widget)
                 .widgetURL(entry.url)
         }
         .configurationDisplayName("Saved game or market")
@@ -94,25 +108,91 @@ struct SavedItemWidget10875: Widget {
 
 struct SavedItemWidgetView10875: View {
     @Environment(\.widgetFamily) private var family
+    @Environment(\.colorScheme) private var colorScheme
     let entry: SavedItemWidgetEntry10875
 
+    /// #12466: a new look draws over a reading; every message keeps today's.
+    private var drawnLook: SavedWidgetLook12466 { entry.reading == nil ? .today : entry.look }
+    private var lookModel: SavedLookModel12466? {
+        entry.reading.map { SavedLookModel12466(reading: $0, entry: entry) }
+    }
+
     var body: some View {
+        if drawnLook == .today {
+            content.containerBackground(.fill.tertiary, for: .widget)
+        } else {
+            content.containerBackground(for: .widget) {
+                SavedLookBackground12466(look: drawnLook, model: lookModel)
+            }
+        }
+    }
+
+    private var content: some View {
         Group {
-            if let reading = entry.reading {
+            if let reading = entry.reading, let model = lookModel {
                 switch family {
                 #if os(iOS)
-                case .accessoryCircular: SavedCircular10875(reading: reading)
-                case .accessoryRectangular: SavedRectangular10875(reading: reading, entry: entry)
+                case .accessoryCircular:
+                    if entry.look == .today {
+                        SavedCircular10875(reading: reading)
+                    } else {
+                        SavedLockCircle12466(model: model)
+                    }
+                case .accessoryRectangular:
+                    if entry.look == .today || reading.shares == nil {
+                        SavedRectangular10875(reading: reading, entry: entry)
+                    } else {
+                        SavedLockRectangle12466(model: model)
+                    }
                 #endif
-                case .systemMedium: SavedMedium10875(reading: reading, entry: entry)
-                default: SavedSmall10875(reading: reading, entry: entry)
+                case .systemMedium:
+                    if entry.look == .today {
+                        SavedMedium10875(reading: reading, entry: entry)
+                    } else {
+                        SavedLookView12466(look: entry.look, model: model, family: family)
+                    }
+                default:
+                    if entry.look == .today {
+                        SavedSmall10875(reading: reading, entry: entry)
+                    } else {
+                        SavedLookView12466(look: entry.look, model: model, family: family)
+                    }
                 }
             } else {
-                SavedMessage10875(message: SavedWidgetMessage10875(entry.content), family: family)
+                message
             }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
+        // #12305 — ↻ outside the combined reading, so it is its own element.
+        .overlay(alignment: .bottomTrailing) {
+            if showsRefresh { refreshButton }
+        }
+    }
+
+    @ViewBuilder private var message: some View {
+        #if os(iOS)
+        if family == .accessoryCircular, entry.look != .today {
+            SavedLockCircleMessage12466(content: entry.content)
+        } else {
+            SavedMessage10875(message: SavedWidgetMessage10875(entry.content), family: family)
+        }
+        #else
+        SavedMessage10875(message: SavedWidgetMessage10875(entry.content), family: family)
+        #endif
+    }
+
+    /// The ↻ in the ink of the look's background.
+    @ViewBuilder private var refreshButton: some View {
+        if let ink = SavedLookView12466.ink(drawnLook, model: lookModel, colorScheme: colorScheme) {
+            SavedRefreshButton12305().foregroundStyle(ink)
+        } else {
+            SavedRefreshButton12305()
+        }
+    }
+
+    private var showsRefresh: Bool {
+        (family == .systemSmall || family == .systemMedium) && entry.isRefreshable12305
     }
 
     private var accessibilityText: String {
@@ -137,7 +217,10 @@ enum SavedClock10875 {
     static func caption(_ reading: SavedWidgetReading10875, entry: SavedItemWidgetEntry10875) -> String? {
         // R3: a reading with no clock (a settled game) says only "Offline",
         // never a stand-in phrase for a time it does not have.
-        if entry.isOffline { return text(reading.observedAt, relativeTo: entry.date).map { "Offline · \($0)" } ?? "Offline" }
+        if entry.isOffline {
+            if reading.phase == .openingLine { return "Opening line · Offline" }
+            return text(reading.observedAt, relativeTo: entry.date).map { "Offline · \($0)" } ?? "Offline"
+        }
         switch reading.phase {
         case .current:
             return text(reading.observedAt, relativeTo: entry.date).map { "As of \($0)" }
@@ -208,6 +291,7 @@ struct SavedSmall10875: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
+                .padding(.trailing, entry.isRefreshable12305 ? 24 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
@@ -218,6 +302,10 @@ struct SavedMedium10875: View {
     let entry: SavedItemWidgetEntry10875
 
     var body: some View {
+        let caption = SavedClock10875.caption(reading, entry: entry)
+        // #12305: with no caption line (a result, or no chance to show) the
+        // last row is the bottom line, so the rows keep clear of the ↻ there.
+        let clearsRefresh = caption == nil && entry.isRefreshable12305
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(reading.subject)
@@ -248,13 +336,16 @@ struct SavedMedium10875: View {
                         Text("—").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
+                .padding(.trailing, clearsRefresh ? 24 : 0)
             }
-            if let caption = SavedClock10875.caption(reading, entry: entry) {
-                Text(reading.priceCaption.map { "\($0) · \(caption)" } ?? caption)
+            if let caption {
+                let prefix = reading.phase == .openingLine ? nil : reading.priceCaption
+                Text(prefix.map { "\($0) · \(caption)" } ?? caption)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
+                    .padding(.trailing, entry.isRefreshable12305 ? 24 : 0)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -361,7 +452,7 @@ struct SavedCircular10875: View {
             VStack(spacing: 0) {
                 // The name the number belongs to, shortest form, so the
                 // percentage is never shown without its subject.
-                Text(reading.headline?.shortLabel ?? reading.shortSubject)
+                Text(SavedLockScreenFit10875.ringHeadline(reading)?.shortLabel ?? reading.shortSubject)
                     .font(.system(size: 9, weight: .semibold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
@@ -394,9 +485,15 @@ struct SavedMessage10875: View {
                     .accessibilityLabel(message.title)
             }
         case .accessoryRectangular:
-            VStack(alignment: .leading, spacing: 1) {
-                Text(message.title).font(.headline).lineLimit(2)
-                Text(message.detail).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            // #13080 + #13194 (284: B): keep both title and lockScreenDetail whole without "…"
+            // at both default and .xxxLarge Dynamic Type on the Lock Screen rectangle.
+            ViewThatFits(in: .vertical) {
+                accessoryMessageTier(titleSize: nil, detailSize: nil, spacing: 1)
+                accessoryMessageTier(titleSize: 17, detailSize: 12, spacing: 1)
+                accessoryMessageTier(titleSize: 15, detailSize: 11, spacing: 1)
+                accessoryMessageTier(titleSize: 12.5, detailSize: 10.5, spacing: 1)
+                accessoryMessageTier(titleSize: 11, detailSize: 9.5, spacing: 0.5)
+                accessoryMessageTier(titleSize: 9.5, detailSize: 8.5, spacing: 0.5)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         #endif
@@ -409,4 +506,36 @@ struct SavedMessage10875: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
+
+    #if os(iOS)
+    private func accessoryMessageTier(titleSize: CGFloat?, detailSize: CGFloat?, spacing: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: spacing) {
+            Group {
+                if let titleSize {
+                    Text(message.title)
+                        .font(HeadlineStyleTable199.names(.widget, scaledSize: titleSize))
+                } else {
+                    Text(message.title)
+                        .font(.headline)
+                }
+            }
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Group {
+                if let detailSize {
+                    Text(message.lockScreenDetail)
+                        .font(HeadlineStyleTable199.quietText(.widget, scaledSize: detailSize))
+                } else {
+                    Text(message.lockScreenDetail)
+                        .font(.caption2)
+                }
+            }
+            .foregroundStyle(.secondary)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    #endif
 }

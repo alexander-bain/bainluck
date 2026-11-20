@@ -114,7 +114,7 @@ describe("both theme edition shapes are accepted for their own slug", () => {
   test("Oscars: edition identity, award sections — never the sports 'Championship'/'Advancement' titles", () => {
     const hub = parseCollection(OSC_P2(), "oscars-2027");
     expect(hub.edition).toBe("Oscars · 2027");
-    expect(hub.sections.map((s) => s.title)).toEqual(["Nominations", "More questions"]);
+    expect(hub.sections.map((s) => s.title)).toEqual(["Nominations", "Other markets"]);
     expect(parseCollection(OSC_P1(), "oscars-2027").sections.map((s) => s.title)).toEqual(["Award winners"]);
   });
   test("`member_count` is the page, not the collection: two cards of six is not a partial collection", () => {
@@ -164,7 +164,7 @@ describe("Load more sends the cursor with its revision and appends only the same
     let hub = (await refresh("oscars-2027")).hub!;
     respond([200, OSC_P2()]);
     hub = await loadMore("oscars-2027", hub);
-    expect(hub.sections.map((s) => [s.title, s.members.map((m) => m.id)])).toEqual([["Award winners", [201, 202]], ["Nominations", [203]], ["More questions", [204]]]);
+    expect(hub.sections.map((s) => [s.title, s.members.map((m) => m.id)])).toEqual([["Award winners", [201, 202]], ["Nominations", [203]], ["Other markets", [204]]]);
     expect(new Set(hub.sections.map((s) => s.key)).size).toBe(3);
   });
   test("revision moved during Load more: the new first page REPLACES — no revision-5 card survives beside revision 6", async () => {
@@ -541,7 +541,7 @@ describe("NFL and MLB readers are untouched", () => {
   test.each([["nfl-2026-week-4", nflHub], ["mlb-2026-postseason", mlbHub]] as const)("%s parses with no pager and no theme state", (slug, hub) => {
     const parsed = parseCollection(hub(), slug);
     expect(parsed.theme).toBeNull();
-    expect(parsed.sections.map((s) => s.title)).toEqual(slug.startsWith("nfl") ? ["Games and winners", "Player and game questions", "Championship"] : ["Games and winners", "Championship"]);
+    expect(parsed.sections.map((s) => s.title)).toEqual(slug.startsWith("nfl") ? ["Games and winners", "Player and game props", "Championship"] : ["Games and winners", "Championship"]);
     settleCollectionRead(slug, { hub: parsed });
     const html = frame(slug);
     expect(html).not.toContain("Load more");

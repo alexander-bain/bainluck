@@ -365,7 +365,7 @@ export function shapeBreakdownNote(panels: readonly ProviderPanel[]): string | n
   // is the whole job of this sentence; the shape/curve distinction is made
   // where the reader lands, by `shapeBreakoutCaption`.
   return (
-    `${names} publishes more than one question shape. Each panel is the ` +
+    `${names} publishes more than one market shape. Each panel is the ` +
     `provider's outcomes pooled and measured together; open “Break out the ` +
     `curves” inside it to see them separately, each with its own curve, ` +
     `its own published error and its own per-bucket examples.`
@@ -501,19 +501,19 @@ export function shapeBreakoutCaption(sources: readonly string[]): string {
     "number the table reports.";
   if (!repeated.length) {
     return (
-      "Each curve here is a different question, so they are not comparable to " +
+      "Each curve here is a different market shape, so they are not comparable to " +
       `each other — only to the same shape elsewhere. ${pooled}`
     );
   }
   const pairs = repeated
     .map(
       r =>
-        `${listLabels(r.labels)} are the same question — the ${r.name} — ` +
+        `${listLabels(r.labels)} measure the same market — the ${r.name} — ` +
         `measured ${countWord(r.labels.length)} ways`
     )
     .join("; ");
   return (
-    "Curves of different shapes answer different questions and are not " +
+    "Curves of different shapes measure different kinds of markets and are not " +
     `comparable to each other. ${capitalise(pairs)}, so those curves are. ` +
     pooled
   );

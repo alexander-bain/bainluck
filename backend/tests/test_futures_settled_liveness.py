@@ -291,6 +291,7 @@ class _PolyEvent:
         self.id = event_id
         self.markets = markets
         self.closed = closed
+        self.archived = False
         self.neg_risk = neg_risk
 
 

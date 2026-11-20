@@ -143,7 +143,8 @@ class TestOneDefinitionPathFolderRegistration:
             },
         ]
 
-        cards = await roundup_feed_items(pool)
+        now_nov_8 = datetime(2026, 11, 8, 18, 0, tzinfo=timezone.utc)
+        cards = await roundup_feed_items(pool, now=now_nov_8)
         assert len(cards) == 1
         card = cards[0]
         assert card["type"] == "bundle"
@@ -165,7 +166,7 @@ class TestOneDefinitionPathFolderRegistration:
         ]
 
         reset_roundup_cache_for_tests()
-        container = await serve_roundup(slug, pool)
+        container = await serve_roundup(slug, pool, now=now_nov_8)
         assert container is not None
         assert container["state"] == "published"
         assert container["slug"] == slug
@@ -174,7 +175,7 @@ class TestOneDefinitionPathFolderRegistration:
         assert container["member_count"] == 3
 
     def test_every_producer_kind_in_containers_dir_builds_via_unified_builder(self) -> None:
-        """All 9 producer kinds in backend/data/containers/ build cleanly via build_roundup_producer_from_definition."""
+        """Every producer kind in the folder builds through the shared factory."""
         defs = load_roundup_definitions_from_dir(CONTAINERS_DATA_DIR)
         assert len(defs) >= 18
         seen_kinds: set[str] = set()
@@ -191,6 +192,8 @@ class TestOneDefinitionPathFolderRegistration:
             "yardstick_pair",
             "field_leaders",
             "field_band",
+            "field_selection",
+            "awards_ceremony",
             "week_events",
             "window_events_closest",
             "register_closest",

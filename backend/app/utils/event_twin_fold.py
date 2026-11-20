@@ -300,6 +300,111 @@ def _squash(name: Optional[str]) -> str:
     return _VENUE_SQUASHED.get(squashed, squashed)
 
 
+# #13142: US college sportsbook feeds (The Odds API) abbreviate "State" as "St"
+# ("New Mexico St Aggies", "Oklahoma St Cowgirls", "Appalachian St Mountaineers")
+# and "North Carolina State" as "NC State", while Polymarket and ESPN spell them
+# out ("New Mexico State Aggies", "North Carolina State Wolfpack"). Normalizing
+# those unambiguous college abbreviations inside NCAA leagues puts both rows in
+# the exact strict key so live and scheduled cards fold cleanly without widening
+# non-NCAA sports or Saint schools ("St. John's", "Mount St. Mary's").
+_COLLEGE_SAINT_PREV: frozenset[str] = frozenset(
+    {"mount", "mt", "of", "the", "college", "university"}
+)
+_COLLEGE_SAINT_NEXT: frozenset[str] = frozenset(
+    {
+        "agnes",
+        "ambrose",
+        "anselm",
+        "augustine",
+        "benedict",
+        "bernard",
+        "bonaventure",
+        "catherine",
+        "charles",
+        "clair",
+        "cloud",
+        "edward",
+        "edwards",
+        "elizabeth",
+        "fe",
+        "francis",
+        "john",
+        "johns",
+        "joseph",
+        "josephs",
+        "kate",
+        "katherine",
+        "lawrence",
+        "leo",
+        "louis",
+        "martin",
+        "martins",
+        "mary",
+        "marys",
+        "michael",
+        "michaels",
+        "norbert",
+        "olaf",
+        "paul",
+        "peter",
+        "peters",
+        "rose",
+        "scholastica",
+        "thomas",
+        "vincent",
+        "xavier",
+    }
+)
+
+
+def _college_squash(name: Optional[str]) -> str:
+    """Squash an NCAA team name with ``St`` -> ``State`` and ``NC State`` expansion."""
+    if not name:
+        return ""
+    cleaned = strip_diacritics(name).lower().replace("'", "").replace("\u2019", "")
+    tokens = re.findall(r"[a-z0-9]+", cleaned)
+    if not tokens:
+        return ""
+    expanded: list[str] = []
+    idx = 0
+    while idx < len(tokens):
+        tok = tokens[idx]
+        if (
+            idx == 0
+            and tok == "nc"
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1] in ("st", "state")
+        ):
+            expanded.extend(("north", "carolina", "state"))
+            idx += 2
+            continue
+        if (
+            tok == "st"
+            and idx > 0
+            and tokens[idx - 1] not in _COLLEGE_SAINT_PREV
+            and (idx + 1 >= len(tokens) or tokens[idx + 1] not in _COLLEGE_SAINT_NEXT)
+        ):
+            expanded.append("state")
+        else:
+            expanded.append(tok)
+        idx += 1
+    squashed = "".join(expanded)
+    return _VENUE_SQUASHED.get(squashed, squashed)
+
+
+def _is_ncaa_college_league(league: Any) -> bool:
+    if not isinstance(league, str):
+        return False
+    low = league.lower()
+    return "ncaa" in low or "college-" in low
+
+
+def _squash_for_league(name: Optional[str], league: Any) -> str:
+    if _is_ncaa_college_league(league):
+        return _college_squash(name)
+    return _squash(name)
+
+
 team_name_fold_key = _squash
 """The fold's own notion of "the same team name", exported for SELECTORS.
 
@@ -451,11 +556,9 @@ def twin_fold_key(event: Any, identities: Optional[dict] = None) -> Optional[tup
     strictness, still exact minute equality — it simply now sees the instant the
     row's twin already holds instead of one three hours later.
     """
-    home = _squash(getattr(event, "home_team_name", None))
-    away = _squash(getattr(event, "away_team_name", None))
     commence = getattr(event, "commence_time", None)
     sport_id = getattr(event, "sport_id", None)
-    if not home or not away or commence is None or sport_id is None:
+    if commence is None or sport_id is None:
         return None
     # The batch map first (it is the one answer every row of this `sport_id`
     # gets), then this row's own sport for a standalone caller such as
@@ -464,6 +567,10 @@ def twin_fold_key(event: Any, identities: Optional[dict] = None) -> Optional[tup
     league = (identities or {}).get(sport_id) or league_identity(
         loaded_sport_key(event)
     )
+    home = _squash_for_league(getattr(event, "home_team_name", None), league)
+    away = _squash_for_league(getattr(event, "away_team_name", None), league)
+    if not home or not away:
+        return None
     return (
         league or sport_id,
         away,
@@ -3276,7 +3383,7 @@ def _combat_sport(members: list) -> Optional[str]:
 #: `betting` object carries. A key outside this set is a shape nobody has
 #: checked, so the reading is refused rather than guessed at.
 _FLIPPABLE_READING_KEYS = frozenset(
-    {"value", "observed_value", "updated_at", "eligibility", "observed_basis"}
+    {"value", "observed_value", "updated_at", "eligibility", "observed_basis", "price_read"}
 )
 _ORIENTED_READING_KEYS = ("value", "observed_value")
 
@@ -3314,6 +3421,15 @@ def _flipped_reading(name: str, reading: Any) -> tuple[bool, Any]:
             if flipped is None:
                 return False, None
             out[key] = flipped
+    if "price_read" in reading:
+        from app.utils.aggregation import stored_price_read
+
+        # #12581: the exact upstream observation follows the same number onto
+        # the other axis. Invalid age evidence cannot make a valid price vanish.
+        read = stored_price_read(reading, reading["value"])
+        out.pop("price_read", None)
+        if read is not None:
+            out["price_read"] = {**read, "value": _flipped_chance(read["value"])}
     return True, out
 
 

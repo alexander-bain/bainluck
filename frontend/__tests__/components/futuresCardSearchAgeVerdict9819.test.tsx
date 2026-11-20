@@ -1,3 +1,4 @@
+/** @jest-environment jsdom */
 /**
  * #9819 — A SEARCH CARD'S AGE DESCRIBES THE PRICES IT ACTUALLY PRINTS.
  *
@@ -16,10 +17,15 @@
  * The clock is frozen at 2026-10-02 12:00Z, so every relative string is fixed.
  */
 
-import { renderToStaticMarkup } from "react-dom/server";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
 import FuturesCard from "../../components/FuturesCard";
 import type { FuturesMarket } from "../../lib/types";
 import wire from "../fixtures/searchAge9819.json";
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NOW = new Date("2026-10-02T12:00:00.000Z");
 
@@ -51,7 +57,18 @@ function card(board: Board): FuturesMarket {
 }
 
 function html(board: Board): string {
-  return renderToStaticMarkup(<FuturesCard market={card(board)} />);
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  act(() => {
+    root.render(<FuturesCard market={card(board)} />);
+  });
+  const markup = host.innerHTML;
+  act(() => {
+    root.unmount();
+  });
+  host.remove();
+  return markup;
 }
 
 /** The card's footer pip, or null when it renders nothing. */
@@ -86,13 +103,13 @@ describe("#9819 the footer covers the printed prices and no printed result", () 
     expect(rowText(wire.nlds, "San Diego Padres")).toMatch(/^\s*79%/);
     // Padres/Braves/Cubs were written 2026-09-30 11:48Z; the Won rows on 09-29.
     expect(wire.nlds.prices_updated_at).toBe("2026-09-30T11:48:14+00:00");
-    expect(pip(wire.nlds)).toBe("2d ago");
+    expect(pip(wire.nlds)).toBe("As of Sep 30");
   });
 
   it("ALCS (open): Toronto prints a numeric 0%, so its Sep 23 age stays on the card", () => {
     expect(rowText(wire.alcs, "Toronto Blue Jays")).toMatch(/^\s*0%/);
     expect(rowText(wire.alcs, "Toronto Blue Jays")).not.toMatch(/Won|Lost/);
-    expect(pip(wire.alcs)).toBe("Sep 23");
+    expect(pip(wire.alcs)).toBe("As of Sep 23");
   });
 
   it("a resolved board of results prints Won/Lost and no age at all", () => {

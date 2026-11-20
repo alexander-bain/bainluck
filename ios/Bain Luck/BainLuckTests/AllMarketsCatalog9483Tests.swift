@@ -163,7 +163,7 @@ final class AllMarketsCatalog9483Tests: XCTestCase {
         XCTAssertEqual(AllMarketsCatalogView9483.priceText(outcome, status: "scheduled"), "Probability unavailable")
         let stale = QuestionCatalog9483.Outcome(label: "Over 47.5", threshold: 47.5, probability: nil,
                                                 observedAt: old, absence: .stale)
-        XCTAssertEqual(AllMarketsCatalogView9483.priceText(stale, status: "live"), "No recent probability update")
+        XCTAssertEqual(AllMarketsCatalogView9483.priceText(stale, status: "live"), "No recent probability")
         let priced = QuestionCatalog9483.Outcome(label: "Over 47.5", threshold: 47.5, probability: 0.52, observedAt: nil)
         XCTAssertEqual(AllMarketsCatalogView9483.priceText(priced, status: "live"), "52%")
     }

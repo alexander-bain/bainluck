@@ -220,6 +220,11 @@ def _outcome_threshold_value(label: str) -> tuple[float, str, str] | None:
     both also produced duplicate rungs — "1 (25 bps)" became a rung at 1 AND a
     rung at 25 in the same Fed ladder.
     """
+    from app.utils.plain_rate_outcome import parse_plain_rate_threshold
+
+    plain_rate = parse_plain_rate_threshold(label)
+    if plain_rate is not None:
+        return plain_rate
     if not _is_threshold_shaped(label):
         return None
     compact = _compact_value_thresholds(label)

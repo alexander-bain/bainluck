@@ -6,6 +6,7 @@ All endpoints require authentication unless noted otherwise.
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -20,6 +21,7 @@ from app.models.models import (
     FuturesMarket, FuturesOutcome, TeamIdentityMapping,
 )
 from app.services.database import get_db, get_db_rw
+from app.utils.futures_source_mark import futures_outcome_source_mark
 from app.utils.series_card_labels import market_threshold_label, reader_outcome_name
 from app.utils.market_team_sport import (
     link_crosses_gender as _link_crosses_gender,
@@ -29,6 +31,7 @@ from app.utils.market_team_sport import (
     sport_key_llm_category as _sport_key_llm_category,
 )
 from app.utils.name_normalization import names_match as _names_match
+from app.utils.team_linking import given_name_before_city
 
 logger = logging.getLogger(__name__)
 
@@ -1393,6 +1396,81 @@ def _many_winner_series_key(
     return external_id.split("-", 1)[0] or None
 
 
+async def _team_outcome_prices(
+    db: AsyncSession, outcome_ids: list[int]
+) -> tuple[list[dict], dict[str, str]]:
+    """#10090: fresh prices for team-page rows already on screen, by outcome id.
+
+    The row fields `_query_team_futures` serves for one leg — probability, 24h
+    move, rank, field size, graded winner — under the SAME refusals it applies:
+    open, not game-bound (`event_id IS NULL`), and not withheld by the market
+    page's screen plus board staleness (#8503, #11534). A refused leg gets an
+    explicit disposition (`withheld` / `closed`), never a bare number, so a row
+    stops showing a price the page would no longer serve. Which rows a team page
+    shows (coherence, series caps) is composition and stays with the full read.
+
+    FAILS CLOSED, unlike the page read: a screen that cannot run returns
+    `unresolved` for every leg, so a live patch never prints an unscreened price.
+    """
+    from app.routes.futures import withheld_price_outcome_ids_for_markets
+    from app.routes.prop_families import _board_staleness_withheld
+
+    dispositions = {f"outcome-{oid}": "missing" for oid in outcome_ids}
+    if not outcome_ids:
+        return [], dispositions
+    outcomes = (await db.execute(
+        select(FuturesOutcome).where(FuturesOutcome.id.in_(outcome_ids))
+    )).scalars().all()
+    market_ids = sorted({o.market_id for o in outcomes})
+    markets = (await db.execute(
+        select(FuturesMarket)
+        .where(FuturesMarket.id.in_(market_ids))
+        .options(selectinload(FuturesMarket.outcomes))
+    )).scalars().all() if market_ids else []
+    by_market = {m.id: m for m in markets}
+
+    screen = await db.begin_nested()
+    try:
+        withheld = await withheld_price_outcome_ids_for_markets(db, list(markets))
+        for market in markets:
+            stopped = await _board_staleness_withheld(db, market)
+            if stopped:
+                withheld[market.id] = withheld.get(market.id, set()) | stopped
+        await screen.commit()
+    except Exception:  # noqa: BLE001 — refuse, never patch unscreened
+        await screen.rollback()
+        logger.exception("team outcome prices: price screen failed for %s", market_ids)
+        for outcome in outcomes:
+            dispositions[f"outcome-{outcome.id}"] = "unresolved"
+        return [], dispositions
+
+    items = []
+    for outcome in outcomes:
+        key = f"outcome-{outcome.id}"
+        market = by_market.get(outcome.market_id)
+        if market is None or market.status != "open" or market.event_id is not None:
+            dispositions[key] = "closed"
+            continue
+        if outcome.id in withheld.get(market.id, ()):
+            dispositions[key] = "withheld"
+            continue
+        revision = outcome.__dict__.get("last_updated")
+        if isinstance(revision, datetime) and revision.tzinfo is None:
+            revision = revision.replace(tzinfo=timezone.utc)
+        items.append({
+            "outcome_id": outcome.id,
+            "market_id": market.id,
+            "probability": float(outcome.current_probability) if outcome.current_probability is not None else None,
+            "probability_change_24h": float(outcome.probability_change_24h) if outcome.probability_change_24h is not None else None,
+            "rank": outcome.rank,
+            "total_outcomes": len(market.outcomes),
+            "is_winner": bool(outcome.is_winner),
+            "price_revision_at": revision.isoformat() if isinstance(revision, datetime) else None,
+        })
+        dispositions[key] = "updated"
+    return items, dispositions
+
+
 def _prefer_coherent_team_items(per_team_items: dict[int, list[dict]]) -> None:
     """#237 Item 3, in place: when a team has at least one coherent candidate, drop
     its illiquid-binary ones (keyed on the private ``_illiquid_binary`` flag); keep
@@ -1704,6 +1782,21 @@ async def _query_team_futures(
         market_sport_cat: str | None = market.llm_sport_category
         if not market_sport_cat and market_sport_key:
             market_sport_cat = _sport_key_llm_category(market_sport_key)
+        outcome_name = outcome.name or ""
+        market_name = (market.name or "").casefold()
+
+        def _coach_surname_matches_city(team: Team) -> bool:
+            # A stored Blues link can put Canadiens coach Martin St. Louis
+            # on the Blues rail. A full roster match can still bind.
+            if "coach of the year" not in market_name and "jack adams award" not in market_name:
+                return False
+            if player_to_team_id.get(outcome_name.lower()) == team.id:
+                return False
+            aliases = getattr(team, "alternate_names", None)
+            return isinstance(aliases, list) and any(
+                given_name_before_city(outcome_name, alias, team.name, ignore_city_periods=True)
+                for alias in aliases if isinstance(alias, str)
+            )
 
         # Direct team_id match. Resolve dup ids onto the canonical row so a
         # market linked to a bare-location dupe still matches the followed
@@ -1758,15 +1851,15 @@ async def _query_team_futures(
             canonical_id = None
         if canonical_id and canonical_id in teams:
             t = teams[canonical_id]
-            return {
-                "id": t.id,
-                "name": t.name,
-                "logo_small": t.logo_url_small or t.logo_url,
-                "primary_color": t.primary_color,
-            }
+            if not _coach_surname_matches_city(t):
+                return {
+                    "id": t.id,
+                    "name": t.name,
+                    "logo_small": t.logo_url_small or t.logo_url,
+                    "primary_color": t.primary_color,
+                }
         # Name matching — use strict suffix-word logic to prevent
         # "Bears" (from "Brown Bears") matching "Chicago Bears".
-        outcome_name = outcome.name or ""
         for t in teams.values():
             if any(
                 _strict_team_name_matches(nm, outcome_name)
@@ -1777,8 +1870,8 @@ async def _query_team_futures(
                     team_cat = team_sport_categories.get(t.id)
                     if team_cat and team_cat != market_sport_cat:
                         continue  # sport mismatch — try next team
-                if _crosses_side(t.id):
-                    continue  # the other side's market (#9593)
+                if _crosses_side(t.id) or _coach_surname_matches_city(t):
+                    continue
                 return {
                     "id": t.id,
                     "name": t.name,
@@ -1936,7 +2029,10 @@ async def _query_team_futures(
             # identical but whose ticker leg is a player code, not a team code.
             # A short name is visibly short; a wrong one is not.
             "outcome_name": reader_outcome_name(
-                outcome.external_id, outcome.name, market_threshold_label(market)
+                getattr(outcome, "external_id", None),
+                outcome.name,
+                market_threshold_label(market),
+                market_name=getattr(market, "name", None),
             )
             or outcome.name,
             "market_id": market.id,
@@ -1945,6 +2041,7 @@ async def _query_team_futures(
             "category": market.llm_sport_category,
             "source": market.source,
             "probability": prob,
+            "source_mark": futures_outcome_source_mark(market, outcome, {"probability": prob}),
             "probability_change_24h": change,
             "rank": outcome.rank,
             "total_outcomes": outcome_total,

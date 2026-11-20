@@ -698,7 +698,7 @@ function gridCellStateExplanation(cell: GridCell, columnLabel: string): string {
       // UX-P150, ruling 141: naming the venues instead was the wrong fix. What
       // the reader needs is that the QUESTION has no answer anywhere, which is
       // the same admission without our sourcing in it.
-      return `${columnLabel}. ${cell.note ?? "Nobody is answering this question."}`;
+      return `${columnLabel}. ${cell.note ?? "No market is open for this round."}`;
     case "unlinked":
     case "unregistered":
       return `${columnLabel}. ${cell.note ?? "Market not linked."} This is a fault on our side.`;

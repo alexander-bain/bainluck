@@ -211,10 +211,11 @@ class TestBuildSlate:
         assert cands[2]["item_id"] is None and cands[2]["card"] == nameless
         assert cands[3]["item_key"] == "futures:4" and cands[3]["served_position"] == 4
 
-    def test_the_opening_ten_keep_their_served_card(self):
+    def test_every_candidate_keeps_its_card(self):
+        # #11937: not only the opening ten (test_capture_keeps_every_card_11937.py).
         order, cands = build_slate([futures(i) for i in range(1, 13)], [futures(99)], now=NOW)
-        assert [("card" in c) for c in cands] == [True] * 10 + [False] * 3
-        assert cands[0]["card"] == futures(1)
+        assert [("card" in c) for c in cands] == [True] * 13
+        assert cands[0]["card"] == futures(1) and cands[12]["card"] == futures(99)
 
     def test_never_more_than_the_cap(self):
         served = [futures(i) for i in range(1, 400)]

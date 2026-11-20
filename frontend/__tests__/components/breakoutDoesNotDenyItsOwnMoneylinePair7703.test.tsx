@@ -228,7 +228,7 @@ describe("shapeBreakoutCaption states the pair instead of denying it", () => {
     expect(caption()).not.toContain("Each shape is a different question");
     // The blanket subject is the defect. "Curves of different shapes" is the
     // qualified form and must be what stands in its place.
-    expect(caption()).toContain("Curves of different shapes answer different questions");
+    expect(caption()).toContain("Curves of different shapes measure different kinds of markets");
   });
 
   test("the between-shape warning SURVIVES — deleting it is not the fix", () => {
@@ -245,7 +245,7 @@ describe("shapeBreakoutCaption states the pair instead of denying it", () => {
     // here would be inventing one.
     const distinct = shapeBreakoutCaption(["odds_api", "odds_api_totals", "odds_api_spreads"]);
     expect(shapeCensus(["odds_api", "odds_api_totals", "odds_api_spreads"]).repeated).toHaveLength(0);
-    expect(distinct).toContain("Each curve here is a different question");
+    expect(distinct).toContain("Each curve here is a different market shape");
     expect(distinct).not.toContain("measured two ways");
     expect(distinct).toContain("The panel above is all of them pooled");
   });
@@ -275,7 +275,7 @@ describe("the page renders the honest control and the honest caption", () => {
     // half is individually valid. A unit test on `shapeBreakoutCaption` cannot
     // tell whether the page calls it.
     const text = visibleText(render());
-    expect(text).toContain("Per-sportsbook (Odds API) and Moneylines (Odds API) are the same question");
+    expect(text).toContain("Per-sportsbook (Odds API) and Moneylines (Odds API) measure the same market");
     expect(text).not.toContain("Each shape is a different question");
   });
 

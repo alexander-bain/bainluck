@@ -10,11 +10,13 @@
 // Sports-tab ConceptFeedCard's result-first grammar (settled-means-settled) in the
 // Discover visual system, modeled on the sibling discover/TournamentCard.
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { buildDiscoverShareUrl } from "@/lib/share";
 import { eventPath } from "@/lib/eventKey";
 import type { FeedConceptData } from "@/lib/types";
 import { conceptHeadlineBout } from "@/lib/eventConceptDisplay";
+import { resolveDiscoverAuxiliaryVisual } from "@/lib/discover/discoverEntityVisual";
 import { DismissBtn, ActionBar, dismissCornerBadge } from "./shared";
 import { conceptDomainLabel, formatConceptMovement } from "./utils";
 
@@ -77,14 +79,40 @@ export function ConceptCard({
     whatHit && winner
       ? `${winner} won ${data.name} on Bain Luck.`
       : `Track ${data.name} on Bain Luck.`;
+  const [imgErrored, setImgErrored] = useState(false);
+  const rawRecord = data as unknown as Record<string, unknown>;
+  const rawImg = typeof rawRecord.image_url === "string" ? rawRecord.image_url : null;
+  useEffect(() => {
+    setImgErrored(false);
+  }, [rawImg]);
+  const primarySubject =
+    winner || leader?.name || bout?.sides[0]?.name || data.name;
+  const visual = resolveDiscoverAuxiliaryVisual(
+    rawRecord,
+    primarySubject,
+    "person",
+  );
+  const effectiveImageUrl = imgErrored ? null : visual.imageUrl;
 
   return (
     <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow">
       <DismissBtn onDismiss={onDismiss} />
       <div
-        className="relative h-44 flex flex-col items-center justify-center px-4 text-center"
+        className="relative h-44 flex flex-col items-center justify-center px-4 text-center overflow-hidden"
         style={{ background: gradient }}
       >
+        {effectiveImageUrl && (
+          <img
+            src={effectiveImageUrl}
+            alt=""
+            aria-hidden="true"
+            loading="lazy"
+            decoding="async"
+            onError={() => setImgErrored(true)}
+            className="absolute right-2 bottom-0 h-36 w-36 object-contain object-bottom opacity-45 pointer-events-none select-none drop-shadow-lg"
+            data-testid="concept-hero-image"
+          />
+        )}
         <div className="absolute top-3 left-3 bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">
           {domainLabel}
         </div>

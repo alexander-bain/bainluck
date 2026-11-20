@@ -15,6 +15,17 @@ final class ContainerHubViewModel: ObservableObject {
     @Published private(set) var refreshError: String?
     @Published private(set) var pageError: String?
     @Published private(set) var context = ContainerHubReadingContext()
+    @Published private(set) var pairedMetricSets: [PairedMetricSet] = []
+
+    var isOscarsHub: Bool {
+        slug == "oscars-2027" || slug == "oscars" || slug == "the-oscars"
+    }
+
+    var pairedCoveredMarketIds: Set<Int> {
+        pairedMetricSets.reduce(into: Set<Int>()) { acc, set in
+            acc.formUnion(set.coveredMarketIds)
+        }
+    }
 
     let slug: String
     private let service: any ContainerHubLoading
@@ -44,10 +55,25 @@ final class ContainerHubViewModel: ObservableObject {
         refreshError = nil
         defer { if refreshVersion == version { isRefreshing = false } }
         do {
-            let response = try await service.load(slug: slug)
+            async let responseTask = service.load(slug: slug)
+            async let ceremonySetsTask = service.loadPairedMetrics(slug: slug)
+            let response = try await responseTask
+            let ceremonySets = await ceremonySetsTask
             guard version == refreshVersion, admitted(ticket), !Task.isCancelled else { return }
             try validate(response)
             guard revisionAdmitted(response) else { return }
+            let hasMachineryBlocks = response.sections.contains { $0.visualBlock != nil }
+            if response.state == .published && !hasMachineryBlocks {
+                if !ceremonySets.isEmpty {
+                    pairedMetricSets = ceremonySets
+                } else if let directSet = response.pairedMetricSet, !directSet.entries.isEmpty {
+                    pairedMetricSets = [directSet]
+                } else {
+                    pairedMetricSets = []
+                }
+            } else {
+                pairedMetricSets = []
+            }
             if case .loaded(let current) = state, current.response.edition?.isTheme == true,
                sameRevision(current.response, response), !response.revisionMoved {
                 // Each visited window owns its server position, including failed
@@ -91,9 +117,14 @@ final class ContainerHubViewModel: ObservableObject {
 
     @MainActor
     func loadMore() async {
+        let isWeekMarkets = { (r: ContainerHubResponse) in
+            r.page?.kind == ContainerHubPage.nflWeekMarketsKind
+        }
         guard !isLoadingMore, case .loaded(let current) = state,
-              current.response.state == .published, current.response.edition?.isTheme == true,
+              current.response.state == .published,
+              current.response.edition?.isTheme == true || isWeekMarkets(current.response),
               let revision = current.response.revision, let cursor = current.response.page?.nextCursor else { return }
+        let loadWeekMarkets = isWeekMarkets(current.response)
         issued += 1
         let ticket = issued
         pageVersion += 1
@@ -102,7 +133,11 @@ final class ContainerHubViewModel: ObservableObject {
         pageError = nil
         defer { if pageVersion == version { isLoadingMore = false } }
         do {
-            let response = try await service.loadPage(slug: slug, cursor: cursor, revision: revision, limit: current.response.page?.limit ?? 50)
+            let pageLimit = current.response.page?.limit ?? 50
+            let nextUrl = current.response.page?.nextUrl
+            let response = loadWeekMarkets
+                ? try await service.loadMarketPage(slug: slug, cursor: cursor, revision: revision, limit: pageLimit, nextUrl: nextUrl)
+                : try await service.loadPage(slug: slug, cursor: cursor, revision: revision, limit: pageLimit)
             guard version == pageVersion, admitted(ticket), !Task.isCancelled else { return }
             try validate(response)
             guard revisionAdmitted(response) else { return }
@@ -144,7 +179,9 @@ final class ContainerHubViewModel: ObservableObject {
     }
     private func sameRevision(_ lhs: ContainerHubResponse, _ rhs: ContainerHubResponse) -> Bool {
         lhs.state == .published && rhs.state == .published && lhs.slug == rhs.slug && lhs.revision == rhs.revision
-            && lhs.edition == rhs.edition && lhs.counts?.shownCount == rhs.counts?.shownCount
+            && lhs.edition == rhs.edition
+            && lhs.counts?.shownCount == rhs.counts?.shownCount
+            && lhs.marketCounts?.marketCount == rhs.marketCounts?.marketCount
     }
 
     @MainActor
@@ -154,6 +191,7 @@ final class ContainerHubViewModel: ObservableObject {
         isLoadingMore = false
         pageError = nil
         refreshError = nil
+        pairedMetricSets = []
     }
 
     @MainActor
@@ -163,7 +201,8 @@ final class ContainerHubViewModel: ObservableObject {
             closeReads()
             heldPages = []
         } else {
-            heldPages = response.edition?.isTheme == true ? [HeldPage(cursor: nil, response: response)] : []
+            let retainsPagination = response.edition?.isTheme == true || response.page?.kind == ContainerHubPage.nflWeekMarketsKind
+            heldPages = retainsPagination ? [HeldPage(cursor: nil, response: response)] : []
         }
         let presentation = ContainerHubPresentation(response: response)
         context.accept(presentation)
@@ -188,9 +227,27 @@ final class ContainerHubViewModel: ObservableObject {
                 guard !slots.isEmpty else { continue }
                 if let index = sections.firstIndex(where: { $0.sectionClass == section.sectionClass }) {
                     let joined = sections[index].slots + slots
-                    sections[index] = ContainerHubSection(sectionClass: section.sectionClass, count: joined.count, slots: joined)
+                    sections[index] = ContainerHubSection(
+                        sectionClass: section.sectionClass,
+                        title: sections[index].title ?? section.title,
+                        note: sections[index].note ?? section.note,
+                        layout: sections[index].layout ?? section.layout,
+                        count: joined.count,
+                        slots: joined,
+                        visualBlock: sections[index].visualBlock ?? section.visualBlock
+                    )
                 } else {
-                    sections.append(ContainerHubSection(sectionClass: section.sectionClass, count: slots.count, slots: slots))
+                    sections.append(
+                        ContainerHubSection(
+                            sectionClass: section.sectionClass,
+                            title: section.title,
+                            note: section.note,
+                            layout: section.layout,
+                            count: slots.count,
+                            slots: slots,
+                            visualBlock: section.visualBlock
+                        )
+                    )
                 }
             }
         }

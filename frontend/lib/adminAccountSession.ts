@@ -20,6 +20,13 @@ export interface AdminAccountSession {
 }
 
 export interface AdminAccountProbeDeps {
+  /**
+   * True when this browser has a stored account session worth probing.
+   * Checked before `getToken` so a browser that has never signed in goes
+   * straight to the secret prompt without loading the Firebase SDK or waiting
+   * on `authStateReady()`. Defaults to `true` when omitted for direct callers.
+   */
+  hasStoredSession?: () => boolean;
   /** The account token for the signed-in reader, or null when signed out. */
   getToken: () => Promise<string | null>;
   /**
@@ -69,6 +76,14 @@ export function hasStoredAccountSession(
 export async function probeAdminAccount(
   deps: AdminAccountProbeDeps
 ): Promise<AdminAccountSession | null> {
+  try {
+    if (deps.hasStoredSession && !deps.hasStoredSession()) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
   let token: string | null = null;
   try {
     token = await deps.getToken();

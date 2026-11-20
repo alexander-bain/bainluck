@@ -8,6 +8,7 @@ import type { TournamentPayload } from "@/lib/tournament";
 import type { ClosedPeriodRow } from "@/lib/marketMapUtils";
 import type { HistoryRangeRequest } from "@/lib/historyRange";
 import type {
+  SourceMark,
   EventsResponse,
   EventDetailResponse,
   EventHistoryResponse,
@@ -63,6 +64,7 @@ import {
 } from "./probabilityDisplay";
 import { reportFeedTelemetry } from "./feedTelemetry";
 import { resolveSharedAnonSuppression } from "./discover/sharedAnonFeed";
+import { normalizeFeedNumbers } from "./discover/feedNumbers";
 import {
   FEED_BOOT_CLAIM_TIMEOUT_MS,
   bootDurationMs,
@@ -577,6 +579,7 @@ export interface TypeaheadSuggestion {
   logo?: string;
   team_id?: number;
   team_slug?: string;
+  query_names_team?: boolean;
   sport_key?: string;
   // Event fields
   event_id?: number;
@@ -593,6 +596,8 @@ export interface TypeaheadSuggestion {
   venue_settled_result?: string | null;
   // #5811 @see Event.venue_closed_no_winner
   venue_closed_no_winner?: boolean;
+  // #13000 (250: A) @see Event.score_source_unavailable
+  score_source_unavailable?: boolean;
   // #9208: ESPN's word for a called-off match ("Canceled" / "Postponed"),
   // served only on a `suspended` row. Read through authorityStoppageLabel —
   // never printed raw.
@@ -758,6 +763,7 @@ export interface TeamGameBrief {
   away_team: string;
   home_score: number | null;
   away_score: number | null;
+  score_source_unavailable?: boolean;
   // live/056 — was a fifth inline copy of the status union, and it was the copy
   // that had never heard of `suspended`. `EventStatus`' own docstring exists
   // because three payloads carried three copies; this one was outside that
@@ -1257,6 +1263,7 @@ export interface GameMarketsResponse {
     bookmaker_count?: number;
   }[];
   player_props: {
+    source_mark?: SourceMark;
     market_name: string;
     outcome_name: string;
     threshold: number | null;
@@ -1556,6 +1563,22 @@ export async function fetchFeed(
   if (params?.category) searchParams.set("category", params.category);
   if (params?.edition) searchParams.set("edition", params.edition);
 
+  // #12095 — the Discover deck's own shape (no mode, filter or narrowing)
+  // names the slate its events carry; any other feed CLEARS it, so a swipe on
+  // a category page never carries the Discover slate.
+  const isDiscoverDeck =
+    !params?.mode && !params?.category && !params?.sport && !params?.tags?.length &&
+    !params?.my_teams_only && params?.include_futures !== false && params?.include_events !== false;
+
+  // #12288 / Ruling 252: A — website opts in via `machinery=1` only when the
+  // public website switch is on; older iOS (1.0.6) omits it and receives none.
+  if (
+    isDiscoverDeck &&
+    process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 === "true"
+  ) {
+    searchParams.set("machinery", "1");
+  }
+
   const query = searchParams.toString();
   // A suppressed request must NOT read-through-mint a session id; only the
   // session-scoped path calls the minting getter.
@@ -1568,12 +1591,6 @@ export async function fetchFeed(
   const headers = sessionId ? { "x-session-id": sessionId } : undefined;
 
   const endpoint = `/api/feed${query ? `?${query}` : ""}`;
-  // #12095 — the Discover deck's own shape (no mode, filter or narrowing)
-  // names the slate its events carry; any other feed CLEARS it, so a swipe on
-  // a category page never carries the Discover slate.
-  const isDiscoverDeck =
-    !params?.mode && !params?.category && !params?.sport && !params?.tags?.length &&
-    !params?.my_teams_only && params?.include_futures !== false && params?.include_events !== false;
 
   // L2-189: measure client time-to-response and emit bounded, non-PII latency
   // telemetry from the exposed feed headers. All best-effort — never affects
@@ -1612,7 +1629,7 @@ export async function fetchFeed(
           }),
         ]);
         if (res !== TIMED_OUT && res.ok) {
-          const parsed = (await res.json()) as FeedResponse;
+          const parsed = normalizeFeedNumbers((await res.json()) as FeedResponse);
           try {
             reportFeedTelemetry(res, {
               endpoint: "/api/feed",
@@ -1639,7 +1656,7 @@ export async function fetchFeed(
     }
   }
 
-  const page = await apiFetch<FeedResponse>(endpoint, {
+  const page = normalizeFeedNumbers(await apiFetch<FeedResponse>(endpoint, {
     headers,
     onResponse: (res, meta) => {
       const now =
@@ -1651,7 +1668,7 @@ export async function fetchFeed(
         durationMs: now - startedAt,
       });
     },
-  });
+  }));
   noteDiscoverSlate(isDiscoverDeck ? page : null);
   return page;
 }
@@ -2156,6 +2173,8 @@ export interface LeagueGameBrief {
   venue_settled_result?: string | null;
   // #5811 @see Event.venue_closed_no_winner
   venue_closed_no_winner?: boolean;
+  // #13000 (250: A) @see Event.score_source_unavailable
+  score_source_unavailable?: boolean;
   // ── #8515 ── the provider's doubleheader flag + game number, same names as
   // `TeamGameBrief` and `Event`. @see Event.doubleheader
   doubleheader?: boolean | null;
@@ -2348,6 +2367,7 @@ export interface EconThemeFed {
   count: number;
   fomc_meetings: { date: string; mo: string; dist: number[][]; resolved: boolean; market_id: number }[];
   rate_cuts: number[][];
+  rate_cuts_market_id?: number | null;
   side_markets: EconMarketRow[];
 }
 
@@ -2414,6 +2434,7 @@ export interface EconDistribution {
   q: string;
   kind: "ladder" | "brackets";
   rows: [number, string][];
+  reached_labels?: string[];
   src: string;
   market_id: number;
 }
@@ -2462,7 +2483,7 @@ export interface PoliticsMarketRow {
   prob: number;
   src: string;
   market_id: number;
-  top_outcomes: { name: string; prob: number; rendered_percent?: number | null }[];
+  top_outcomes: { name: string; prob: number; rendered_percent?: number | null; image_title?: string | null }[];
   outcome_count: number;
   // Rungs `/futures/{id}` shows beyond `top_outcomes` (#9109). Absent on a
   // payload built before it shipped.
@@ -3195,4 +3216,19 @@ export async function fetchEventTournament(
   eventId: number
 ): Promise<EventTournamentResponse> {
   return apiFetch<EventTournamentResponse>(`/api/tournaments/by-event/${eventId}`);
+}
+
+export async function fetchPairedMetricsByCeremony(
+  ceremony: string,
+  signal?: AbortSignal,
+): Promise<{ sets: import("@/lib/discover/visualForms").PairedMetricSet[]; count: number }> {
+  return apiFetch(`/api/paired-metrics?ceremony=${encodeURIComponent(ceremony)}`, {
+    signal,
+  });
+}
+
+export async function fetchPairedMetricByMarket(
+  marketId: number,
+): Promise<{ set: import("@/lib/discover/visualForms").PairedMetricSet | null }> {
+  return apiFetch(`/api/paired-metrics/by-market/${marketId}`);
 }

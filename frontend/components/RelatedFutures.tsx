@@ -2760,7 +2760,13 @@ export default function RelatedFutures({
   // card of `Phillies --- / Braves ---`. A leg with a price or a result keeps its card; when no
   // served market survives, the SERIES card is absent (notice 34) — and the legacy list is NOT
   // consulted, because it exists for payloads that carry no `series_markets` at all.
-  const servedSeries = safeData.series_markets ?? [];
+  const rawServedSeries = safeData.series_markets ?? [];
+  const contextMarkets = safeData.series_context?.markets ?? [];
+  const contextByMarketId = new Map(contextMarkets.map((m) => [m.market_id, m]));
+  const servedSeries =
+    rawServedSeries.length > 0
+      ? rawServedSeries.map((sm) => contextByMarketId.get(sm.market_id) ?? sm)
+      : contextMarkets;
   const seriesMarkets = servedSeries.filter((sm) =>
     sm.outcomes.some((o) => o.probability != null || isSettledOutcome(o)),
   );
@@ -2950,11 +2956,35 @@ export default function RelatedFutures({
       {/* === Series Context === */}
       {seriesMarkets.length > 0 ? (
         <div className="mb-4 bg-surface-card border border-surface-border rounded-xl shadow-sm p-4">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-3">SERIES</div>
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">SERIES</div>
+              {safeData.series_context?.series_score_summary && (
+                <span className="text-xs text-text-secondary truncate">
+                  {safeData.series_context.series_score_summary}
+                </span>
+              )}
+            </div>
+            {safeData.series_context?.series_hub_href && (
+              <Link
+                href={safeData.series_context.series_hub_href}
+                className="text-xs font-medium text-accent-brand hover:underline shrink-0"
+              >
+                Series hub →
+              </Link>
+            )}
+          </div>
           <div className="space-y-4">
             {seriesMarkets.map((sm) => (
-              <div key={sm.market_id}>
+              <div
+                key={sm.market_id}
+                data-series-family={sm.series_family}
+                data-distribution-kind={sm.distribution_kind}
+              >
                 <div className="text-xs text-text-secondary mb-1.5 truncate">{sm.market_name}</div>
+                {sm.distribution_kind === "independent_binary" && sm.sum_note && (
+                  <div className="text-[11px] text-text-muted mb-1">{sm.sum_note}</div>
+                )}
                 <div className="space-y-1">
                   {sm.outcomes.map((o) => {
                     // Resolve "Yes"/"No" for series winner markets
@@ -2966,6 +2996,10 @@ export default function RelatedFutures({
                       const vsMatch = sm.market_name.match(/[-–—]\s*(.+?)\s+vs\.?\s+(.+?)(?:\s*$|\s*[?])/i);
                       if (vsMatch) displayName = `${vsMatch[2].trim()} win series`;
                     }
+                    const hasGameStartBaseline =
+                      o.baseline_kind === "game_start" &&
+                      o.movement_since_baseline != null &&
+                      Math.abs(o.movement_since_baseline) >= 0.005;
                     return (
                       <div key={o.outcome_id} className="flex items-center justify-between py-1">
                         <div className="text-sm text-text-primary truncate flex-1 min-w-0">{displayName}</div>
@@ -2981,10 +3015,27 @@ export default function RelatedFutures({
                             o.is_winner == null ? null : <SettledMark won={o.is_winner} />
                           ) : (
                             <>
-                              {o.probability_change_24h != null && Math.abs(o.probability_change_24h) >= 0.005 && (
-                                <span className={`text-xs font-mono tabular-nums ${o.probability_change_24h > 0 ? "text-accent-brand" : "text-accent-danger"}`}>
-                                  {o.probability_change_24h > 0 ? "↑" : "↓"} {(Math.abs(o.probability_change_24h) * 100).toFixed(1)}%
+                              {hasGameStartBaseline ? (
+                                <span
+                                  data-baseline-kind="game_start"
+                                  className={`text-xs font-mono tabular-nums ${
+                                    (o.movement_since_baseline ?? 0) > 0
+                                      ? "text-accent-brand"
+                                      : "text-accent-danger"
+                                  }`}
+                                >
+                                  {(o.movement_since_baseline ?? 0) > 0 ? "↑" : "↓"}{" "}
+                                  {Math.round(Math.abs(o.movement_since_baseline ?? 0) * 100)}%{" "}
+                                  <span className="font-sans text-[10px] text-text-muted">
+                                    {o.baseline_label ?? "since game start"}
+                                  </span>
                                 </span>
+                              ) : (
+                                o.probability_change_24h != null && Math.abs(o.probability_change_24h) >= 0.005 && (
+                                  <span className={`text-xs font-mono tabular-nums ${o.probability_change_24h > 0 ? "text-accent-brand" : "text-accent-danger"}`}>
+                                    {o.probability_change_24h > 0 ? "↑" : "↓"} {Math.round(Math.abs(o.probability_change_24h) * 100)}%
+                                  </span>
+                                )
                               )}
                               {/* #10005: an unpriced, unanswered leg leaves its space empty
                                   (notice 34) — `---` beside a Lost read as three broken rows on

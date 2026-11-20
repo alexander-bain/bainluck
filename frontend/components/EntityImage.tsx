@@ -21,6 +21,8 @@ interface EntityImageProps {
   type: "player" | "wikipedia" | "flag";
   /** Entity name (player name, country name, coin name, person name) */
   name: string;
+  /** Verified Wikipedia article title; the displayed name and alt text stay unchanged. */
+  imageTitle?: string | null;
   /** ESPN player ID — required for type="player" */
   espnId?: string;
   /** Sport key — used for player headshot sport path */
@@ -44,6 +46,7 @@ interface EntityImageProps {
 export default function EntityImage({
   type,
   name,
+  imageTitle,
   espnId,
   sport,
   fallbackColor = DEFAULT_FALLBACK_COLOR,
@@ -73,7 +76,7 @@ export default function EntityImage({
     } else if (type === "flag") {
       setImageUrl(flagUrl(name));
     } else if (type === "wikipedia") {
-      getWikipediaImage(name).then((url) => {
+      getWikipediaImage(imageTitle?.trim() || name).then((url) => {
         if (!cancelled) setImageUrl(url);
       });
     }
@@ -81,7 +84,7 @@ export default function EntityImage({
     return () => {
       cancelled = true;
     };
-  }, [type, name, espnId, sport]);
+  }, [type, name, imageTitle, espnId, sport]);
 
   // Show image if loaded and not failed
   if (imageUrl && !failed) {

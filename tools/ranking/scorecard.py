@@ -280,10 +280,53 @@ def rank_closest(candidates: list[dict]) -> list[dict]:
     return sorted(candidates, key=key)
 
 
+#: Decide 32-C (#12091 / #12376): up to two novelty seats in the opening ten
+#: for a returning reader when new generated/round-up cards exist.
+NOVELTY_SEATS = 2
+
+
+def _is_novelty_candidate(c: dict) -> bool:
+    key = str(c.get("item_key") or "")
+    container = str(c.get("container") or "")
+    item_id = str(c.get("item_id") or "")
+    if not (
+        key.startswith("bundle:roundup:")
+        or container.startswith("roundup:")
+        or item_id.startswith("roundup:")
+    ):
+        return False
+    return not any(c.get(f) is True for f in GATE_FLAGS)
+
+
+def rank_novelty(candidates: list[dict], *, seen_keys: Iterable[str] = ()) -> list[dict]:
+    """Returning-reader novelty seating (#12376, Decide 32-C): up to two unseen
+    generated/round-up cards take seats 9-10 of the opening ten while keeping
+    seats 1-8 in their served order."""
+    served = rank_served(candidates)
+    if len(served) <= TOP:
+        return served
+    seen = {str(k) for k in seen_keys if k}
+    eligible_novelty = [
+        c
+        for c in served[TOP:]
+        if _is_novelty_candidate(c)
+        and str(c.get("item_key") or "") not in seen
+        and str(c.get("item_id") or "") not in seen
+    ][:NOVELTY_SEATS]
+    if not eligible_novelty:
+        return served
+    keep_opening = max(0, TOP - len(eligible_novelty))
+    novelty_ids = {id(c) for c in eligible_novelty}
+    opening = served[:keep_opening] + eligible_novelty
+    tail = served[keep_opening:TOP] + [c for c in served[TOP:] if id(c) not in novelty_ids]
+    return opening + tail
+
+
 BUILTIN_RANKERS: dict[str, Callable[[list[dict]], list]] = {
     "served": rank_served,
     "movement": rank_movement,
     "closest": rank_closest,
+    "novelty": rank_novelty,
 }
 
 

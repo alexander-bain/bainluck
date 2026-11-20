@@ -396,6 +396,7 @@ struct TennisReadingPanel9483: View {
     var scrubDate: Date? = nil
 
     @Environment(\.dynamicTypeSize) private var textSize
+    @Environment(\.timeZone) private var timeZone
     /// The value columns, wide enough for "100%" at each row's type and
     /// scaled with it (and for the names heading them, `valueColumn`), so the
     /// dated caption beside them takes the rest.
@@ -428,10 +429,10 @@ struct TennisReadingPanel9483: View {
                 case .names:
                     if !textSize.isAccessibilitySize { names }
                 case .shown(.reading(let reading, _)):
-                    row(TennisChartReading9483.heading(for: reading, scheduledStart: series.scheduledStart),
+                    row(TennisChartReading9483.heading(for: reading, scheduledStart: series.scheduledStart, timeZone: timeZone),
                         reading, prominent: expanded)
                 case .shown(.gap(let date)):
-                    Text("No recorded chance at \(TennisChartReading9483.time(date))")
+                    Text("No recorded chance at \(TennisChartReading9483.time(date, timeZone: timeZone))")
                         .font(.subheadline)
                         .fixedSize(horizontal: false, vertical: true)
                 case .shown(.unavailable):
@@ -439,7 +440,7 @@ struct TennisReadingPanel9483: View {
                         .font(.subheadline)
                         .fixedSize(horizontal: false, vertical: true)
                 case .baseline(let baseline):
-                    row(TennisChartReading9483.baselineHeading(for: baseline), baseline, prominent: false)
+                    row(TennisChartReading9483.baselineHeading(for: baseline, timeZone: timeZone), baseline, prominent: false)
                 case .showLatest:
                     Button(TennisChartReading9483.showLatestText) { pin.holdLatest(in: series) }
                         .font(.caption)

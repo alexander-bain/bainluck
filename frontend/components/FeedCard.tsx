@@ -25,6 +25,7 @@ import {
   isPersonOutcomeName,
 } from "@/lib/eventConceptDisplay";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
+import { numericalScaleOrderIndices, orderByNumericalScale } from "@/lib/numericalScaleOrder";
 import { boardRowRanks, futuresBoardRemainderLabel, futuresDistributionBoard } from "@/lib/discover/futuresBoard";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
 import { getSportLabel, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
@@ -51,11 +52,15 @@ import {
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { probabilityBarPair, SEGMENT_OPACITY } from "@/lib/probabilityBarPair";
+import { resolveMatchupTeamColors } from "@/lib/teamColors";
 import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import TeamNameLink from "./TeamNameLink";
 import ProjectedFinalLine from "./ProjectedFinalLine";
 import { cardProjectedFinal, liveCardProjectedFinal, projectedFinalLabel } from "@/lib/projectedFinalPair";
 import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastComparison";
+import EventCard183A, { buildUnifiedCardFromFeed } from "./EventCard183A";
+import { isWebGameCard183AEnabled } from "@/lib/gameCard183AFlag";
+import { isStoredOpeningChance } from "@/lib/probabilityEvidence";
 
 interface FeedCardProps {
   item: FeedItem;
@@ -325,7 +330,21 @@ function ThumbButtons({
 // Team logo — small inline logo with fallback
 // ============================================================================
 
-function TeamLogo({ url, name, color, isFlag, sport }: { url: string | null | undefined; name: string; color?: string | null; isFlag?: boolean; sport?: string | null }) {
+function TeamLogo({
+  url,
+  name,
+  color,
+  isFlag,
+  sport,
+  abbreviation,
+}: {
+  url: string | null | undefined;
+  name: string;
+  color?: string | null;
+  isFlag?: boolean;
+  sport?: string | null;
+  abbreviation?: string | null;
+}) {
   const [imgError, setImgError] = useState(false);
   const resolvedUrl = url || (!isFlag ? espnTeamLogoByName(name, sport) : null);
 
@@ -345,10 +364,12 @@ function TeamLogo({ url, name, color, isFlag, sport }: { url: string | null | un
   // #2882's neighbour: the same crest square as `EventCard`, and it had the
   // same inline initialism, so a doubles side rendered "S/" here too. One rule,
   // one place — see `teamCrestInitials`.
-  const initials = teamCrestInitials(name);
+  const initials = teamCrestInitials(name, sport, abbreviation);
   return (
     <div
-      className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
+      className={`w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center font-bold text-white/90 ${
+        initials.length >= 4 ? "text-[7px] tracking-tighter" : "text-[9px]"
+      }`}
       style={{ backgroundColor: color || "#6b7280" }}
     >
       {initials}
@@ -374,6 +395,38 @@ function EventFeedCard({
   category?: string;
 }) {
   const { track } = useAnalyticsContext();
+  if (isWebGameCard183AEnabled()) {
+    const unified = buildUnifiedCardFromFeed(item, data);
+    return (
+      <EventCard183A
+        card={unified}
+        surface="standard"
+        onCardClick={() =>
+          track("event_card_click", {
+            event_id: data.id,
+            sport: data.sport || "unknown",
+            league: data.sport || "unknown",
+            league_tier: 1 as 1 | 2 | 3,
+            home_team: data.home_team,
+            away_team: data.away_team,
+            status: data.status,
+            home_probability: unified.home_prob,
+            away_probability: unified.away_prob,
+            is_close_game:
+              unified.home_prob !== null &&
+              unified.away_prob !== null &&
+              Math.abs(unified.home_prob - unified.away_prob) < 0.1,
+            is_live: data.status === "live",
+            source_section: "feed" as const,
+            position_index: 0,
+            minutes_to_start: Math.round(
+              (new Date(data.commence_time).getTime() - Date.now()) / 60000,
+            ),
+          })
+        }
+      />
+    );
+  }
   const isLive = data.status === "live";
   const isFinished = isFinishedStatus(data.status);
   // live/048 + CERT-786 — the branch this card did not have. Its three states
@@ -396,14 +449,24 @@ function EventFeedCard({
     { name: data.away_team, abbreviation: data.away_team_data?.abbreviation },
     data.sport,
   );
+  const feedChance = {
+    home: data.current_odds?.home_probability ?? null,
+    away: data.current_odds?.away_probability ?? null,
+  };
   const projectedFinal =
     isScheduled && Date.parse(data.commence_time) > Date.now()
-      ? cardProjectedFinal(data.current_odds, data.sport)
+      ? cardProjectedFinal(data.current_odds, data.sport, feedChance)
       : isLive && Date.parse(data.commence_time) <= Date.now()
-        ? liveCardProjectedFinal(data.current_odds, data.sport, data.commence_time, {
-            home: data.home_score,
-            away: data.away_score,
-          })
+        ? liveCardProjectedFinal(
+            data.current_odds,
+            data.sport,
+            data.commence_time,
+            {
+              home: data.home_score,
+              away: data.away_score,
+            },
+            feedChance,
+          )
         : null;
   // #11296 — on a final, the sportsbooks' last pair before the scheduled start,
   // by the same rule as the league card and the headline; empty while a row
@@ -422,8 +485,9 @@ function EventFeedCard({
   const rawHighlightLabel = data.highlight?.label?.trim() || "";
   const highlightLabel =
     isLive && rawHighlightLabel.toLowerCase() === "live" ? "" : rawHighlightLabel;
-  const homeProb = data.current_odds?.home_probability ?? null;
-  const awayProb = data.current_odds?.away_probability ?? null;
+  const forecastOdds = isStoredOpeningChance(data) ? undefined : data.current_odds;
+  const homeProb = forecastOdds?.home_probability ?? null;
+  const awayProb = forecastOdds?.away_probability ?? null;
   const hasScore = (isLive || isFinished) && data.home_score !== null && data.away_score !== null;
 
   // Determine winner for finished events
@@ -481,16 +545,23 @@ function EventFeedCard({
   const [awayPct, homePct] = servedDuelPercents(
     displayAwayProb,
     displayHomeProb,
-    data.current_odds?.away_rendered_percent,
-    data.current_odds?.home_rendered_percent,
+    forecastOdds?.away_rendered_percent,
+    forecastOdds?.home_rendered_percent,
   );
 
-  // Team colors for the probability bar. Decided as a PAIR (#2962): a bar with
-  // two halves is one decision, not two, or the halves can agree — or, as they
-  // did here for months, both vanish. `probabilityBarPair` owns the rule.
+  // Team colors for the probability bar and missing-logo badges. Decided as a
+  // PAIR (#2962 + Ruling 197): when both teams share a hue family or are
+  // near-identical, away switches to its secondary colour or slate grey.
   const homeColor = data.home_team_data?.primary_color ?? null;
   const awayColor = data.away_team_data?.primary_color ?? null;
-  const barPair = probabilityBarPair(awayColor, homeColor);
+  const awaySecondary = data.away_team_data?.secondary_color ?? null;
+  const matchupBadgeColors = resolveMatchupTeamColors({
+    homePrimary: homeColor,
+    awayPrimary: awayColor,
+    homeSecondary: data.home_team_data?.secondary_color,
+    awaySecondary,
+  });
+  const barPair = probabilityBarPair(awayColor, homeColor, SEGMENT_OPACITY, awaySecondary);
 
   // International sport detection — show flags instead of team logos
   const showFlags = isInternationalSport(data.sport);
@@ -847,7 +918,7 @@ function EventFeedCard({
           <div className="flex-1 min-w-0">
             {/* Away team */}
             <div className="flex items-center gap-1.5 mb-0.5">
-              <TeamLogo url={awayParticipantUrl || data.away_team_data?.logo_small} name={data.away_team} color={data.away_team_data?.primary_color} isFlag={awayIsFlag} sport={data.sport} />
+              <TeamLogo url={awayParticipantUrl || data.away_team_data?.logo_small} name={data.away_team} color={matchupBadgeColors.away ?? data.away_team_data?.primary_color} isFlag={awayIsFlag} sport={data.sport} abbreviation={data.away_team_data?.abbreviation} />
               <TeamNameLink
                 name={data.away_team}
                 sportKey={data.sport}
@@ -891,7 +962,7 @@ function EventFeedCard({
             </div>
             {/* Home team */}
             <div className="flex items-center gap-1.5">
-              <TeamLogo url={homeParticipantUrl || data.home_team_data?.logo_small} name={data.home_team} color={data.home_team_data?.primary_color} isFlag={homeIsFlag} sport={data.sport} />
+              <TeamLogo url={homeParticipantUrl || data.home_team_data?.logo_small} name={data.home_team} color={matchupBadgeColors.home ?? data.home_team_data?.primary_color} isFlag={homeIsFlag} sport={data.sport} abbreviation={data.home_team_data?.abbreviation} />
               <TeamNameLink
                 name={data.home_team}
                 sportKey={data.sport}
@@ -1092,7 +1163,7 @@ function EventFeedCard({
                   data-testid="feed-card-prematch-label"
                   data-prematch-source={prematch.source}
                 >
-                  Pre-match · {prematch.label}
+                  Pregame · {prematch.label}
                 </span>
               )}
             </div>
@@ -1164,9 +1235,21 @@ function FuturesFeedCard({
   // 100"). The fallback keys on the KEY BEING ABSENT rather than on the value being
   // falsy — `?? derive()` would re-derive on every correct card and make the
   // server's answer decorative. Same discipline as `LabelingCard`.
-  const printedOutcomes = leaderFirstSlice(data.top_outcomes ?? [], 3);
-  const fallbackPercents = renderedCardPercents(
-    printedOutcomes.map((o) => o.probability)
+  const leaderCut = leaderFirstSlice(data.top_outcomes ?? [], 3);
+  const isScaleOrdered =
+    numericalScaleOrderIndices(data.top_outcomes ?? [], {
+      marketType: (data as { market_type?: string | null }).market_type,
+    }) !== null;
+  const printedOutcomes = isScaleOrdered
+    ? orderByNumericalScale(leaderCut, {
+        marketType: (data as { market_type?: string | null }).market_type,
+      })
+    : leaderCut;
+  const fallbackPercentsByCut = renderedCardPercents(
+    leaderCut.map((o) => o.probability)
+  );
+  const fallbackPercents = printedOutcomes.map(
+    (o) => fallbackPercentsByCut[leaderCut.indexOf(o)] ?? null
   );
   // ── #8025: THE FIELD THIS CARD USED TO THROW AWAY ────────────────────────────
   //
@@ -1482,7 +1565,7 @@ function FuturesFeedCard({
                   className={`text-[11px] font-medium ${
                   leader.movement > 0 ? "text-accent-live" : "text-accent-danger"
                 }`}>
-                  {leader.movement > 0 ? "+" : "-"}{formatMovementPoints(leader.movement)} pts
+                  {leader.movement > 0 ? "+" : "-"}{formatMovementPoints(leader.movement)} points
                 </div>
               )}
             </div>
@@ -1582,42 +1665,22 @@ function FuturesFeedCard({
               // #2060/#2088: the served percent wins; `fallbackPercents` is the
               // pre-#2088 payload's answer and is computed over the SAME
               // leader-first slice, so index i lines up either way.
+              const isFavoriteRow = outcome === leaderCut[0];
               const pct =
                 "rendered_percent" in outcome
                   ? outcome.rendered_percent
                   : fallbackPercents[i];
               return (
               <div key={outcome.id} className="flex items-center gap-2">
-                {/* #4245, first half — the name column was a flat `w-20` (80px) while
-                    the bar beside it took `flex-1` and measured 212px at 390px. So the
-                    one cell that has to carry an identity was the starved one, and the
-                    one that only has to carry a length was over-provisioned: 15 of 39
-                    futures cards on production cut their RANK-1 name — "Alexander V…",
-                    "Los Angeles …", "Aryna Sabal…". Two of the live UFC cards lead with
-                    an "Alexander", so the truncation was not merely ugly, it was
-                    ambiguous between two different fighters.
-                    Derived rather than assumed, per the standing layout-fit note: the bar
-                    takes a fixed, still-legible 112px (176px once there is room for it)
-                    and the name takes what is left — ~180px at 390px, 2.2x its old budget.
-                    A FIXED bar is also the better comparison instrument: every row's bar
-                    is now the same length on every card, which is what makes two rows
-                    comparable at a glance. */}
                 <span
                   title={outcome.name}
-                  className={`text-[11px] flex-1 min-w-0 truncate ${i === 0 ? "font-semibold text-text-primary" : "text-text-secondary"}`}
+                  className={`text-[11px] flex-1 min-w-0 truncate ${isFavoriteRow ? "font-semibold text-text-primary" : "text-text-secondary"}`}
                 >
-                  {/* L2-243 Item 1 — show the real outcome name (CSS-truncated),
-                      not the trailing word only, which turned "Costa Rica" into
-                      "Rica" and "…World Cup?" into "Cup?". */}
                   {outcome.name}
                 </span>
-                {/* The bar WIDTH stays on the raw probability — it is a length,
-                    not a printed number — but `aria-valuenow` is the number that
-                    is printed, so a screen reader hears the card, not a second
-                    rounding of it. */}
                 <div className="w-28 sm:w-44 shrink-0 h-1.5 rounded-full bg-surface-border overflow-hidden" role="progressbar" aria-valuenow={pct ?? undefined} aria-valuemin={0} aria-valuemax={100} aria-label={`${outcome.name} probability`}>
                   <div
-                    className={`h-full rounded-full transition-all duration-500 ${i === 0 ? "bg-accent-brand" : "bg-text-muted/30"}`}
+                    className={`h-full rounded-full transition-all duration-500 ${isFavoriteRow ? "bg-accent-brand" : "bg-text-muted/30"}`}
                     style={{ width: `${(outcome.probability ?? 0) * 100}%` }}
                   />
                 </div>

@@ -8,13 +8,15 @@ import { getSportLabel } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
 import { cn } from "@/lib/utils";
 import EventCardShell from "./EventCardShell";
+import EventCard183A, { buildUnifiedCardFromEvent } from "./EventCard183A";
+import { isWebGameCard183AEnabled } from "@/lib/gameCard183AFlag";
 import PersonalizedBadge from "./PersonalizedBadge";
 import ProbabilityBar from "./ProbabilityBar";
 import EntityImage from "./EntityImage";
 import { isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { teamColorStyle } from "@/lib/teamColors";
 import TeamNameLink from "./TeamNameLink";
-import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
+import { isStoredOpeningChance, shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
@@ -141,6 +143,8 @@ function AnimatedProbability({
 // `object-contain`, which is what each was already doing.
 function ParticipantCrest({
   name,
+  sport,
+  abbreviation,
   servedFace,
   servedFlag,
   countryFlagUrl,
@@ -148,6 +152,8 @@ function ParticipantCrest({
   colorVar,
 }: {
   name: string;
+  sport?: string | null;
+  abbreviation?: string | null;
   servedFace: string | null;
   servedFlag: string | null;
   countryFlagUrl: string | null;
@@ -194,12 +200,16 @@ function ParticipantCrest({
       />
     );
   }
+  const badge = teamCrestInitials(name, sport, abbreviation);
   return (
     <div
-      className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
+      className={cn(
+        "w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center font-bold text-white/90",
+        badge.length >= 4 ? "text-[7px] tracking-tighter" : "text-[9px]",
+      )}
       style={{ backgroundColor: `rgb(var(${colorVar}))` }}
     >
-      {teamCrestInitials(name)}
+      {badge}
     </div>
   );
 }
@@ -219,6 +229,18 @@ export default function EventCard({
   hostCue = null,
 }: EventCardProps) {
   const { trackEventCardClick } = useAnalytics();
+  if (isWebGameCard183AEnabled()) {
+    return (
+      <EventCard183A
+        card={buildUnifiedCardFromEvent(event)}
+        surface="standard"
+        isPinned={isPinned}
+        pinDisabled={pinDisabled}
+        onPinToggle={onPinToggle ? () => onPinToggle(event.id) : undefined}
+        onCardClick={() => trackEventCardClick(event, sourceSection, positionIndex)}
+      />
+    );
+  }
   const gameNumber = providerGameNumber(event);
 
   // Handle pin button click (prevent navigation)
@@ -236,7 +258,11 @@ export default function EventCard({
   // event page reads too before kickoff, so the card's projected final and the
   // hero's are one pair. #2920: rounded and tie-gated in `cardProjectedFinal`,
   // the way the hero rounds and gates it.
-  const projectedScore = cardProjectedFinal(odds, event.sport);
+  const legacyChance = {
+    home: event.hero_probability ?? odds?.home_probability ?? null,
+    away: event.hero_probability_away ?? odds?.away_probability ?? null,
+  };
+  const projectedScore = cardProjectedFinal(odds, event.sport, legacyChance);
 
   // UX-P166 — the live footer's "Opened 62/38" prints both sides of one question
   // in fixed positions, which makes it a duel. Rounding the two independently
@@ -262,9 +288,9 @@ export default function EventCard({
   if (isFinishedStatus(event.status) && opening) {
     homeProb = opening.home_probability;
     awayProb = opening.away_probability;
-  } else if (shouldWithholdProbability(event)) {
-    // UX-P042 (#1640) — the only evidence is an untraded Polymarket midpoint, so
-    // `current_odds` reads a confident 0.5/0.5 built from nothing. Show no number.
+  } else if (isStoredOpeningChance(event) || shouldWithholdProbability(event)) {
+    // A cached opening line and an untraded Polymarket midpoint are both
+    // withheld from the current chance.
     homeProb = null;
     awayProb = null;
   } else if (!odds) {
@@ -539,6 +565,9 @@ export default function EventCard({
     : isSuspended || noReading || !favoriteKnown || !homeFavorite
       ? "text-text-primary"
       : "text-text-secondary";
+  const maxTeamLen = Math.max(event.home_team.length, event.away_team.length);
+  const sharedTeamSizeClass =
+    maxTeamLen > 22 ? "text-xs" : maxTeamLen > 16 ? "text-[13px]" : "text-sm";
 
   // Format time and date compactly
   const gameTime = new Date(event.commence_time);
@@ -622,10 +651,16 @@ export default function EventCard({
   // never shown live: on a search row it can be the pregame reading.
   const liveProjectedScore =
     isLive && !isFinished && !isSuspended
-      ? liveCardProjectedFinal(odds, event.sport, event.commence_time, {
-          home: event.home_score,
-          away: event.away_score,
-        })
+      ? liveCardProjectedFinal(
+          odds,
+          event.sport,
+          event.commence_time,
+          {
+            home: event.home_score,
+            away: event.away_score,
+          },
+          legacyChance,
+        )
       : null;
   const bandScore = showProjectedFinal ? projectedScore : liveProjectedScore;
   // #11296 — and on a final, the sportsbooks' last pair before the scheduled
@@ -856,6 +891,8 @@ export default function EventCard({
               <div className="flex items-center gap-2 flex-1 min-w-0">
                 <ParticipantCrest
                   name={event.home_team}
+                  sport={event.sport}
+                  abbreviation={event.home_team_data?.abbreviation ?? null}
                   servedFace={event.home_image_url ?? null}
                   servedFlag={event.home_flag_url ?? null}
                   countryFlagUrl={homeFlagUrl}
@@ -866,7 +903,8 @@ export default function EventCard({
                   name={event.home_team}
                   sportKey={event.sport}
                   className={cn(
-                    "text-sm font-medium truncate hover:underline",
+                    sharedTeamSizeClass,
+                    "font-medium truncate hover:underline",
                     homeNameClass,
                   )}
                 />
@@ -937,6 +975,7 @@ export default function EventCard({
                 awayWithheld={awayWithheld}
                 homeColor={event.home_team_data?.primary_color ?? undefined}
                 awayColor={event.away_team_data?.primary_color ?? undefined}
+                awaySecondary={event.away_team_data?.secondary_color ?? undefined}
                 height={isLive ? 3 : 5}
               />
             )}
@@ -962,6 +1001,8 @@ export default function EventCard({
               <div className="flex items-center gap-2 flex-1 min-w-0">
                 <ParticipantCrest
                   name={event.away_team}
+                  sport={event.sport}
+                  abbreviation={event.away_team_data?.abbreviation ?? null}
                   servedFace={event.away_image_url ?? null}
                   servedFlag={event.away_flag_url ?? null}
                   countryFlagUrl={awayFlagUrl}
@@ -972,7 +1013,8 @@ export default function EventCard({
                   name={event.away_team}
                   sportKey={event.sport}
                   className={cn(
-                    "text-sm font-medium truncate hover:underline",
+                    sharedTeamSizeClass,
+                    "font-medium truncate hover:underline",
                     awayNameClass,
                   )}
                 />
@@ -1072,7 +1114,7 @@ export default function EventCard({
                 data-testid="event-card-prematch-label"
                 data-prematch-source={prematch.source}
               >
-                Pre-match · {prematch.label}
+                Pregame · {prematch.label}
               </span>
             </div>
           )}

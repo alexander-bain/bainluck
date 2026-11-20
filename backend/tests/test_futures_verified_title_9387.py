@@ -454,6 +454,65 @@ NEW_OUTCOME_KEYS = {"contributing_sources", "observed_at", "aggregation_rule"}
 VERIFIED = "verified_title"
 
 
+class TestVerifiedTitleGameDate12530:
+    @pytest.mark.parametrize("mid", [ODDS_ID, KALSHI_ID, PM_ID])
+    async def test_detail_and_search_share_the_proved_game_date(self, mid):
+        from app.routes.events import _format_futures_for_search
+
+        markets = trio()
+        stored_dates = [m.resolution_date for m in markets]
+        source_before, _ = await detail(mid, markets, "source")
+        payload, _ = await detail(mid, markets, VERIFIED)
+        requested = next(m for m in markets if m.id == mid)
+        with _at():
+            verdict = await futures_routes._compose_verified_title(_DB(markets), requested)
+            card = _format_futures_for_search(requested, set(), verified=verdict)
+
+        # The same earliest corroborated game instant used by membership;
+        # neither Polymarket's no-winner cutoff nor Kalshi's tail expiration.
+        game_at = "2027-02-14T23:30:00+00:00"
+        assert payload["representation"] == VERIFIED
+        assert payload["resolution_date"] == card["resolution_date"] == game_at
+        assert [m.resolution_date for m in markets] == stored_dates
+        source_after, _ = await detail(mid, markets, "source")
+        assert source_after == source_before
+
+    @pytest.mark.parametrize("mid", [ODDS_ID, KALSHI_ID, PM_ID])
+    async def test_conflicting_game_dates_keep_each_source_date(self, mid):
+        markets = trio(kalshi=kalshi_market(
+            resolution_date=datetime(2027, 2, 7, 23, 30, tzinfo=timezone.utc),
+        ))
+        source, _ = await detail(mid, markets, "source")
+        payload, _ = await detail(mid, markets, VERIFIED)
+        assert payload["representation"] == "source"
+        assert payload["representation_fallback"] == "edition_instant_conflict"
+        assert payload["resolution_date"] == source["resolution_date"]
+
+    @pytest.mark.parametrize("mid", [KALSHI_ID, PM_ID])
+    async def test_kalshi_dates_the_field_when_sportsbooks_are_absent(self, mid):
+        markets = [m for m in trio() if m.id != ODDS_ID]
+        payload, _ = await detail(mid, markets, VERIFIED)
+        assert payload["representation"] == VERIFIED
+        assert payload["resolution_date"] == "2027-02-14T23:30:00+00:00"
+
+    async def test_cached_peer_keeps_the_date_of_its_verified_snapshot(self, monkeypatch):
+        markets = trio()
+        db = _DB(markets)
+        monkeypatch.setenv("VERIFIED_TITLE_CACHE_SECONDS", "60")
+        futures_routes._VERIFIED_TITLE_CACHE.clear()
+        try:
+            with _at():
+                first = await futures_routes._resolve_verified_title(db, markets[0])
+                reads = list(db.kinds)
+                markets[1].resolution_date = datetime(2028, 2, 13, tzinfo=timezone.utc)
+                peer = await futures_routes._resolve_verified_title(db, markets[1])
+            assert db.kinds == reads
+            assert first.canonical_card_fields["resolution_date"] == "2027-02-14T23:30:00+00:00"
+            assert peer.canonical_card_fields["resolution_date"] == first.canonical_card_fields["resolution_date"]
+        finally:
+            futures_routes._VERIFIED_TITLE_CACHE.clear()
+
+
 def _why(payload):
     return f"served {payload.get('representation')!r}, fallback {payload.get('representation_fallback')!r}"
 
@@ -489,8 +548,8 @@ class TestTheTrioServesOneVerifiedNumber:
             assert payload["representation"] == VERIFIED, _why(payload)
             row = next(o for o in payload["outcomes"] if o["id"] == buffalo)
             assert row["probability"] == pytest.approx(
-                0.13 if payload["id"] == PM_ID else 0.13 / 0.4715, abs=1e-8
-            )  # PM has an unpriced Other: unknown mass is never normalized
+                0.13 / 0.4715, abs=1e-8
+            )  # #12530: one verified named-team field, before venue projection
             assert row["contributing_sources"] == ["odds_api", "kalshi", "polymarket"]
             assert payload["question_identity"]["edition"] == "2027"
 
@@ -891,8 +950,11 @@ class TestExactTeamCorrespondence:
         ny = by_name(payload, "New York")
         assert ny["contributing_sources"] == ["odds_api"]
         assert ny["aggregation_rule"] == "single_source"
-        assert ny["probability"] == pytest.approx(0.02 / 0.4715, abs=1e-8)
-        assert ny["opening_probability"] is None, "normalization suppresses the raw opening"
+        assert ny["probability"] == 0.02
+        assert ny["opening_probability"] == 0.01
+        # An unresolved canonical row cannot certify a full common field.
+        # Its own value/reference remain source-only; neither is borrowed
+        # from the Giants or from the normalized named-team set.
 
     async def test_kalshi_corresponds_by_its_ticker_not_its_city_string(self):
         # Kalshi's display strings are bare cities and truncations; every one of
@@ -1144,3 +1206,320 @@ class TestTheRosterIndex:
         assert index.alias_team("Buffalo") is None
         assert index.abbrev_team("BUF") == 1
         assert index.is_ambiguous("New York"), "a shared alternate name is refused"
+
+
+# #12530: the November 10 field that exposed per-venue normalization.
+_SNAPSHOT_12530 = [
+    ('Buffalo Bills', 0.145),
+    ('San Francisco 49ers', 0.1435),
+    ('Jacksonville Jaguars', 0.10828),
+    ('Chicago Bears', 0.1095),
+    ('Kansas City Chiefs', 0.075),
+    ('Los Angeles Rams', 0.060789),
+    ('Cincinnati Bengals', 0.060396),
+    ('Denver Broncos', 0.0505),
+    ('Detroit Lions', 0.045),
+    ('Seattle Seahawks', 0.045),
+    ('Green Bay Packers', 0.035),
+    ('Minnesota Vikings', 0.0275),
+    ('Houston Texans', 0.0235),
+    ('Pittsburgh Steelers', 0.021),
+    ('New England Patriots', 0.025),
+    ('New York Giants', 0.0145),
+    ('Dallas Cowboys', 0.013583),
+    ('Baltimore Ravens', 0.006),
+    ('Tampa Bay Buccaneers', 0.01),
+    ('Carolina Panthers', 0.007911),
+    ('Atlanta Falcons', 0.007341),
+    ('New Orleans Saints', 0.004702),
+    ('Cleveland Browns', 0.003844),
+    ('Washington Commanders', 0.003812),
+    ('Las Vegas Raiders', 0.005094),
+    ('Arizona Cardinals', 0.000849),
+    ('Miami Dolphins', 0.000643),
+    ('Indianapolis Colts', 0.000764),
+    ('Los Angeles Chargers', 0.000764),
+    ('New York Jets', 0.000721),
+    ('Philadelphia Eagles', 0.000849),
+    ('Tennessee Titans', 0.000678),
+]
+
+
+class TestOneTitleField12530:
+    def markets(self, *, missing_last=False):
+        values = list(_SNAPSHOT_12530)
+        if missing_last:
+            values[-1] = (values[-1][0], None)
+        odds = odds_market(rows=[(100 + i, name, p if p is not None else 0) for i, (name, p) in enumerate(values)])
+        if missing_last:
+            odds.outcomes[-1].current_probability = None
+        pm = pm_market(rows=[(1000 + i, name, p) for i, (name, p) in enumerate(values)])
+        roster = [
+            {"id": i + 1, "name": name, "abbreviation": f"team{i}", "alternate_names": []}
+            for i, (name, _p) in enumerate(values)
+        ]
+        return [odds, pm], roster
+
+    async def test_all_32_teams_share_the_number_and_other_is_retained_unpriced(self):
+        markets, roster = self.markets()
+        odds, _ = await detail(ODDS_ID, markets, VERIFIED, roster=roster)
+        pm, _ = await detail(PM_ID, markets, VERIFIED, roster=roster)
+        assert len(odds["outcomes"]) == 32
+        assert len(pm["outcomes"]) == 33
+        for name, raw in _SNAPSHOT_12530:
+            expected = round(raw / 1.04702, 8)
+            assert by_name(odds, name)["probability"] == expected
+            assert by_name(pm, name)["probability"] == expected
+        other = by_name(pm, "Other")
+        assert other["id"] == PM_OTHER_ID
+        assert other["probability"] is None
+        assert other["contributing_sources"] == []
+        assert by_name(pm, "Buffalo Bills")["probability"] == 0.13848828
+
+    async def test_a_missing_named_team_stops_normalization_under_both_aliases(self):
+        markets, roster = self.markets(missing_last=True)
+        for mid in (ODDS_ID, PM_ID):
+            payload, _ = await detail(mid, markets, VERIFIED, roster=roster)
+            assert by_name(payload, "Buffalo Bills")["probability"] == 0.145
+            assert by_name(payload, _SNAPSHOT_12530[-1][0])["probability"] is None
+
+    async def test_each_alias_has_one_destination_and_the_same_top_five(self):
+        from app.routes.events import _format_futures_for_search, _dedup_verified_title_markets
+
+        markets, roster = self.markets()
+        cards, verdicts = [], {}
+        for market in markets:
+            with _at():
+                verdict = await futures_routes._compose_verified_title(_DB(markets, roster=roster), market)
+                cards.append(_format_futures_for_search(market, set(), verified=verdict))
+            verdicts[market.id] = verdict
+        for key in ("id", "name", "source", "sport", "sport_name", "resolution_date",
+                    "outcome_count", "prices_updated_at"):
+            assert cards[0][key] == cards[1][key], key
+        assert cards[0]["id"] == ODDS_ID
+        assert cards[0]["outcome_count"] == 32
+        named = [[(o["name"], o["probability"]) for o in c["top_outcomes"]] for c in cards]
+        assert named[0] == named[1]
+        assert [n for n, _p in named[0]] == [
+            "Buffalo Bills", "San Francisco 49ers", "Chicago Bears",
+            "Jacksonville Jaguars", "Kansas City Chiefs",
+        ]
+        assert len(_dedup_verified_title_markets(markets, verdicts)) == 1
+        assert len(_dedup_verified_title_markets(markets, {})) == 2
+
+    async def test_aliases_reuse_one_snapshot_without_another_database_read(self, monkeypatch):
+        from app.routes.events import _format_futures_for_search
+
+        markets, roster = self.markets()
+        db = _DB(markets, roster=roster)
+        monkeypatch.setenv("VERIFIED_TITLE_CACHE_SECONDS", "60")
+        monkeypatch.setattr(futures_routes, "_VERIFIED_TITLE_CACHE_MAX", 3)
+        futures_routes._VERIFIED_TITLE_CACHE.clear()
+        futures_routes._VERIFIED_TITLE_CACHE.update({
+            777: (float("inf"), None), 888: (float("inf"), None),
+        })
+        try:
+            with _at():
+                first = await futures_routes._resolve_verified_title(db, markets[0])
+                reads = list(db.kinds)
+                # A later poll must not make the other alias recompose within
+                # the already-accepted snapshot's short cache life.
+                markets[1].outcomes[0].current_probability = 0.9
+                second = await futures_routes._resolve_verified_title(db, markets[1])
+                a = _format_futures_for_search(markets[0], set(), verified=first)
+                b = _format_futures_for_search(markets[1], set(), verified=second)
+            assert db.kinds == reads
+            assert set(futures_routes._VERIFIED_TITLE_CACHE) == {ODDS_ID, PM_ID}
+            assert len({entry[0] for entry in futures_routes._VERIFIED_TITLE_CACHE.values()}) == 1
+            assert [(r["name"], r["probability"]) for r in a["top_outcomes"]] == [
+                (r["name"], r["probability"]) for r in b["top_outcomes"]
+            ]
+            assert second.peer_verdicts == {}, "cached projections must not form cycles"
+        finally:
+            futures_routes._VERIFIED_TITLE_CACHE.clear()
+
+    @pytest.mark.parametrize("mid", [ODDS_ID, KALSHI_ID, PM_ID])
+    async def test_each_chart_current_column_still_matches_its_detail(self, mid):
+        board, _ = await detail(mid, trio(), VERIFIED)
+        chart, _ = await timeline(mid, trio(), VERIFIED)
+        detail_values = {o["id"]: o["probability"] for o in board["outcomes"]}
+        for row in chart["outcomes"]:
+            if row.get("id") is not None:
+                assert row["current_probability"] == detail_values[row["id"]]
+
+
+class TestVenueTeamCodes12530:
+    """The Nov 10 JAC/WAS identities, with deliberately different fixture quotes."""
+
+    def test_all_32_real_tickers_resolve_distinct_real_roster_clubs(self):
+        import json
+        from pathlib import Path
+        from app.utils.futures_verified_title import _row_team_id, title_team_index
+
+        # Captured by bounded READ ONLY SQL on Nov 11. No invented aliases or
+        # stored outcome team IDs participate in the resolution under test.
+        specimen = json.loads(
+            (Path(__file__).parent / "fixtures/nfl_title_teams_12530.json").read_text()
+        )
+        index = title_team_index(specimen["roster"])
+        resolved = {
+            row["external_id"]: _row_team_id(
+                "kalshi", row["external_id"], row["name"], index,
+                kalshi_event_ticker=specimen["market_external_id"],
+            )
+            for row in specimen["outcomes"]
+        }
+        assert len(resolved) == 32
+        assert len(set(resolved.values())) == 32
+        assert set(resolved.values()) == {team["id"] for team in specimen["roster"]}
+        assert resolved["KXSB-27-JAC"] == 564
+        assert resolved["KXSB-27-WAS"] == 542
+
+    def markets(self):
+        roster = copy.deepcopy(ROSTER) + [
+            {"id": 564, "name": "Jacksonville Jaguars", "abbreviation": "JAX",
+             "alternate_names": ["jags", "Jaguars"]},
+            {"id": 542, "name": "Washington Commanders", "abbreviation": "WSH",
+             "alternate_names": ["Commanders"]},
+        ]
+        markets = [
+            odds_market(rows=ODDS_ROWS + [
+                (1309497, "Jacksonville Jaguars", 0.11),
+                (1309504, "Washington Commanders", 0.003),
+            ]),
+            kalshi_market(rows=KALSHI_ROWS + [
+                (643835, "Jacksonville", "KXSB-27-JAC", 0.105),
+                (643851, "Washington", "KXSB-27-WAS", 0.01),
+            ]),
+            pm_market(rows=PM_ROWS + [
+                (1709110, "Jacksonville Jaguars", 0.10),
+                (1709121, "Washington Commanders", 0.004),
+            ]),
+        ]
+        # Stored outcome team IDs remain deliberately untrusted.
+        for row in markets[1].outcomes:
+            row.team_id = 10740
+        return markets, roster
+
+    @pytest.mark.parametrize("mid", [ODDS_ID, KALSHI_ID, PM_ID])
+    async def test_verified_pages_name_the_same_clubs_without_changing_source_rows(self, mid):
+        markets, roster = self.markets()
+        original_names = [[o.name for o in market.outcomes] for market in markets]
+        source_before, _ = await detail(mid, markets, "source", roster=roster)
+        canonical, _ = await detail(ODDS_ID, markets, VERIFIED, roster=roster)
+        payload, _ = await detail(mid, markets, VERIFIED, roster=roster)
+
+        expected = {row["name"] for row in canonical["outcomes"]}
+        actual = {row["name"] for row in payload["outcomes"] if row["name"] != "Other"}
+        assert actual == expected
+        assert by_name(payload, "Buffalo Bills")["probability"] == by_name(canonical, "Buffalo Bills")["probability"]
+        assert by_name(payload, "Jacksonville Jaguars")["probability"] == by_name(canonical, "Jacksonville Jaguars")["probability"]
+        assert [row["id"] for row in payload["outcomes"]] == [row["id"] for row in source_before["outcomes"]]
+        assert [[o.name for o in market.outcomes] for market in markets] == original_names
+        source_after, _ = await detail(mid, markets, "source", roster=roster)
+        assert source_after == source_before
+        if mid == PM_ID:
+            assert by_name(payload, "Other")["probability"] is None
+
+    async def test_venue_codes_share_values_and_clocks_on_all_three_pages(self):
+        markets, roster = self.markets()
+        expected = {"Jacksonville": round(0.105 / 0.5805, 8),
+                    "Washington": round(0.004 / 0.5805, 8)}
+        for mid in (ODDS_ID, KALSHI_ID, PM_ID):
+            payload, _ = await detail(mid, markets, VERIFIED, roster=roster)
+            for city, nickname in (("Jacksonville", "Jaguars"), ("Washington", "Commanders")):
+                row = by_name(payload, f"{city} {nickname}")
+                assert row["probability"] == pytest.approx(expected[city], abs=1e-8)
+                assert row["contributing_sources"] == ["odds_api", "kalshi", "polymarket"]
+                assert row["aggregation_rule"] == "weighted_median"
+                assert row["observed_at"] == KALSHI_AT.isoformat()
+
+    @pytest.mark.parametrize("mid", [ODDS_ID, KALSHI_ID, PM_ID])
+    async def test_chart_current_and_search_cards_use_the_same_venue_code_answer(self, mid):
+        from app.routes.events import _format_futures_for_search
+
+        markets, roster = self.markets()
+        market = next(m for m in markets if m.id == mid)
+        payload, _ = await detail(mid, markets, VERIFIED, roster=roster)
+        db = _DB(markets, roster=roster, snapshots=snapshots_for(market))
+        with _at():
+            chart = await get_probability_timeline(mid, top=10, hours=168,
+                                                  representation=VERIFIED, db=db)
+            cards = []
+            for member in markets:
+                verdict = await futures_routes._compose_verified_title(_DB(markets, roster=roster), member)
+                cards.append(_format_futures_for_search(member, set(), verified=verdict))
+        detail_rows = {r["id"]: r for r in payload["outcomes"]}
+        for row in chart["outcomes"]:
+            if row.get("id") in detail_rows:
+                assert row["current_probability"] == detail_rows[row["id"]]["probability"]
+                for key in NEW_OUTCOME_KEYS:
+                    assert row[key] == detail_rows[row["id"]][key]
+        assert [c["id"] for c in cards] == [ODDS_ID] * 3
+        visible = [[(r["name"], r["probability"]) for r in c["top_outcomes"]] for c in cards]
+        assert visible[0] == visible[1] == visible[2]
+        assert any(name == "Jacksonville Jaguars" for name, _p in visible[0])
+
+    @pytest.mark.parametrize("query,expected", [
+        ("jaguars", "Jacksonville Jaguars"),
+        ("jacksonville", "Jacksonville Jaguars"),
+        ("commanders", "Washington Commanders"),
+        ("washington", "Washington Commanders"),
+    ])
+    @pytest.mark.parametrize("lean", [False, True])
+    async def test_canonical_labels_keep_team_query_pinning_and_source_names(self, query, expected, lean):
+        from app.routes.events import _build_search_top_outcomes
+
+        markets, roster = self.markets()
+        original_names = [[o.name for o in market.outcomes] for market in markets]
+        previews = []
+        with _at():
+            for market in markets:
+                verdict = await futures_routes._compose_verified_title(_DB(markets, roster=roster), market)
+                rows = _build_search_top_outcomes(
+                    market, limit=3, lean=lean, query_terms=[(query, None)], verified=verdict,
+                )
+                assert rows[0]["name"] == expected
+                if not lean:
+                    assert rows[0]["query_match"] is True
+                previews.append([(r["name"], r["probability"]) for r in rows])
+        assert previews[0] == previews[1] == previews[2]
+        assert [[o.name for o in market.outcomes] for market in markets] == original_names
+        source, _ = await detail(KALSHI_ID, markets, "source", roster=roster)
+        assert by_name(source, "Jacksonville")["id"] == 643835
+        assert by_name(source, "Washington")["id"] == 643851
+
+    @pytest.mark.parametrize("ticker,name", [
+        ("KXSB-26-BUF", "Jacksonville"),
+        ("KXNFLPLAYOFF-27-BUF", "Jacksonville"),
+        ("KXSB-27-JAC-WAS", "Jacksonville"),
+        ("KXSB-27-JAC-BUF", "Jacksonville"),
+        ("KXNBA-27-WAS", "Jacksonville"),
+        ("KXSB-27-ZZZ", "Jacksonville"),
+        ("KXSB-27-JAC", "Buffalo Bills"),
+    ])
+    async def test_wrong_parent_matchups_unknown_codes_and_conflicting_names_refuse(self, ticker, name):
+        markets, roster = self.markets()
+        row = next(r for r in markets[1].outcomes if r.id == 643835)
+        row.external_id, row.name = ticker, name
+        odds, _ = await detail(ODDS_ID, markets, VERIFIED, roster=roster)
+        assert by_name(odds, "Jacksonville Jaguars")["contributing_sources"] == ["odds_api", "polymarket"]
+        assert by_name(odds, "Buffalo Bills")["contributing_sources"] == ["odds_api", "kalshi", "polymarket"]
+        own, _ = await detail(KALSHI_ID, markets, VERIFIED, roster=roster)
+        refused = next(r for r in own["outcomes"] if r["id"] == 643835)
+        assert refused["name"] == name
+        assert refused["contributing_sources"] == ["kalshi"]
+        assert refused["probability"] == 0.105
+
+    @pytest.mark.parametrize("extra", [
+        [{"id": 901, "name": "Another club", "abbreviation": "JAC", "alternate_names": []}],
+        [{"id": 901, "name": "Another club", "abbreviation": "XXX", "alternate_names": ["Jaguars"]}],
+        [{"id": 901, "name": "Another club", "abbreviation": "JAC", "alternate_names": []},
+         {"id": 902, "name": "A third club", "abbreviation": "JAC", "alternate_names": []}],
+    ])
+    async def test_the_venue_alias_cannot_override_conflicting_or_ambiguous_roster_claims(self, extra):
+        markets, roster = self.markets()
+        odds, _ = await detail(ODDS_ID, markets, VERIFIED, roster=roster + extra)
+        assert by_name(odds, "Jacksonville Jaguars")["contributing_sources"] == ["odds_api", "polymarket"]
+        own, _ = await detail(KALSHI_ID, markets, VERIFIED, roster=roster + extra)
+        assert by_name(own, "Jacksonville")["contributing_sources"] == ["kalshi"]

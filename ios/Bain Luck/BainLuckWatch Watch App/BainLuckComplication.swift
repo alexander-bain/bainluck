@@ -15,10 +15,20 @@ nonisolated struct BainLuckProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<BainLuckEntry>) -> Void) {
-        completion(Timeline(entries: [entry()], policy: .never))
+        let current = entry()
+        var dates = WatchRectangularReading.timelineDates(for: current.snapshot, now: current.date)
+        // Direction 217: a Matchup final gives way to the launcher 3 hours on.
+        if let step = WatchMatchupReading217.finalStepAside(for: current.snapshot, now: current.date),
+           step > current.date, !dates.contains(step) {
+            dates = (dates + [step]).sorted()
+        }
+        let entries = dates.map { BainLuckEntry(date: $0, snapshot: current.snapshot) }
+        completion(Timeline(entries: entries, policy: dates.count > 1 ? .atEnd : .never))
     }
     private func entry() -> BainLuckEntry {
-        BainLuckEntry(date: Date(), snapshot: nil)
+        let now = Date()
+        let directory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.bainluck.watch")
+        return BainLuckEntry(date: now, snapshot: WatchComplicationSnapshot.read(from: directory, now: now))
     }
 }
 
@@ -29,9 +39,16 @@ struct BainLuckComplicationView: View {
     var body: some View {
         Group {
             if family == .accessoryRectangular {
-                WatchSavedComplicationContent(snapshot: entry.snapshot)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(accessibilityDescription)
+                if WatchMatchupReading217.finalHasPassed(entry.snapshot, now: entry.date) {
+                    // 3 hours after the final: the launcher until the next game is published.
+                    WatchSavedComplicationContent(snapshot: nil, now: entry.date)
+                } else if let matchup = WatchMatchupReading217.make(snapshot: entry.snapshot, now: entry.date) {
+                    WatchMatchupComplication217(reading: matchup)
+                } else {
+                    WatchSavedComplicationContent(snapshot: entry.snapshot, now: entry.date)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(accessibilityDescription)
+                }
             } else if family == .accessoryCorner {
                 WatchSavedCornerComplicationContent(snapshot: entry.snapshot)
             } else {
@@ -45,7 +62,11 @@ struct BainLuckComplicationView: View {
         .widgetURL(WatchLaunchRoute.url)
     }
     private var accessibilityDescription: String {
-        "Open your selected game in Bain Luck, or choose a game"
+        if family == .accessoryRectangular,
+           let rectangular = entry.snapshot?.validatedRectangularReading(now: entry.date) {
+            return rectangular.accessibilityDescription(at: entry.date)
+        }
+        return "Open your selected game in Bain Luck, or choose a game"
     }
 }
 

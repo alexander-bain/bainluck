@@ -1,0 +1,662 @@
+[
+  {
+    "event_id": 14639206,
+    "home": "Detroit Lions",
+    "away": "New England Patriots",
+    "probability": 0.583,
+    "source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.575,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.585,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.583,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    },
+    "away_source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.425,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.415,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.417,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    }
+  },
+  {
+    "event_id": 15345983,
+    "home": "Indiana Pacers",
+    "away": "Washington Wizards",
+    "probability": 0.575,
+    "source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.575,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.575,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.5742,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    },
+    "away_source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.425,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.425,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.4258,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    }
+  },
+  {
+    "event_id": 15345984,
+    "home": "New Orleans Pelicans",
+    "away": "Brooklyn Nets",
+    "probability": 0.6283,
+    "source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.605,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.635,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.6283,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    },
+    "away_source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.395,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.365,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.3717,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    }
+  },
+  {
+    "event_id": 15345985,
+    "home": "Chicago Bulls",
+    "away": "San Antonio Spurs",
+    "probability": 0.095,
+    "source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.095,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.095,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.113,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    },
+    "away_source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.905,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.905,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.887,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    }
+  },
+  {
+    "event_id": 15345986,
+    "home": "Houston Rockets",
+    "away": "Golden State Warriors",
+    "probability": 0.685,
+    "source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.685,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.695,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.6814,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    },
+    "away_source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.315,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.305,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.3186,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    }
+  },
+  {
+    "event_id": 15345987,
+    "home": "Portland Trail Blazers",
+    "away": "Oklahoma City Thunder",
+    "probability": 0.485,
+    "source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.485,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.495,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.4826,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    },
+    "away_source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.515,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.505,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.5174,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    }
+  },
+  {
+    "event_id": 15346030,
+    "home": "Memphis Grizzlies",
+    "away": "Denver Nuggets",
+    "probability": 0.395,
+    "source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.395,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.395,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.4009,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    },
+    "away_source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.605,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.605,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.5991,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    }
+  },
+  {
+    "event_id": 15346115,
+    "home": "New York Knicks",
+    "away": "Cleveland Cavaliers",
+    "probability": 0.635,
+    "source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.635,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.635,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.6229,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    },
+    "away_source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.365,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.365,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.3771,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    }
+  },
+  {
+    "event_id": 15346136,
+    "home": "Toronto Raptors",
+    "away": "Boston Celtics",
+    "probability": 0.315,
+    "source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.315,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.305,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.3222,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    },
+    "away_source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.685,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.695,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.6778,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    }
+  },
+  {
+    "event_id": 15346145,
+    "home": "Milwaukee Bucks",
+    "away": "Los Angeles Lakers",
+    "probability": 0.125,
+    "source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.125,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.125,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.1517,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    },
+    "away_source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.875,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.875,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.8483,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    }
+  },
+  {
+    "event_id": 15346173,
+    "home": "Utah Jazz",
+    "away": "Orlando Magic",
+    "probability": 0.415,
+    "source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.415,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.415,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.4088,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    },
+    "away_source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.585,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "polymarket",
+          "name": "Polymarket",
+          "probability": 0.585,
+          "observed_at": null,
+          "reason": "observation_unknown"
+        },
+        {
+          "key": "betting",
+          "name": "Sportsbooks",
+          "probability": 0.5912,
+          "observed_at": null,
+          "reason": "observation_unknown",
+          "count": 11
+        }
+      ]
+    }
+  }
+]

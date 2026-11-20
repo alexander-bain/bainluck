@@ -272,6 +272,10 @@ LIVE_KALSHI_SETTLEMENT_WRITERS = {
 #: files the old census never opened, and they are named here rather than
 #: silently skipped so the forward-only gap stays countable.
 NON_KALSHI_SETTLEMENT_WRITERS = {
+    # #12633's broad scan sees the api_settlement WHERE refusal beside an
+    # UPDATE of price columns. This function never writes a grade; the real
+    # PostgreSQL child-write controls preserve grades and resolution sources.
+    "app/tasks/prediction_market_matching.py": {"_write_live_polymarket_child"},
     # #6110 adds the second Polymarket writer in this file. It is the only
     # settlement writer in the repo that INSERTS rather than updates — it stores
     # the champion of a field we ingested without one (the Vuelta a España 2026

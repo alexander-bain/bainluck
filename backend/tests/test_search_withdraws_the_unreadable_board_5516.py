@@ -504,21 +504,10 @@ class TestTheWithdrawalReachesThePage:
         ]
         assert len(calls) == 2, f"expected both filters, found {len(calls)}"
 
-    def test_the_count_moves_with_the_card_it_withdraws(self):
-        """🪤 Withholding on a LIST surface deletes the card; the count must follow.
-
-        `more_count` renders as "+N more markets below" and is a promise about
-        the page. It counts only ids in `serialized_ids`, and `search_events`
-        builds that set from `futures_markets` — the list this predicate has
-        already filtered — so a withdrawn board is uncounted by construction
-        rather than by a second rule that could fall out of step.
-        """
-        composer = inspect.getsource(_events_module._compose_futures_families)
-        assert "if m.id in serialized_ids" in composer
-        route = inspect.getsource(_events_module.search_events)
-        assert "{m.id for m in futures_markets}" in route
-        # #8661: the predicate now also takes the market's refusal set.
-        assert "m for m in deduped_futures if not _futures_card_has_no_answer(" in route
+    # The withdrawal/count contract is exercised through the actual search
+    # response in integration/test_route_search_family_more_count_2646.py:
+    # test_the_count_moves_with_the_card_it_withdraws. #12530 allows a verified
+    # alias's rendered destination to differ from its candidate row id.
 
 
 # ---------------------------------------------------------------------------

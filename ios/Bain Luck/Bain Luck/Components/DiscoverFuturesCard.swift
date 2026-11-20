@@ -122,6 +122,7 @@ struct NativeFuturesDiscoverCard: View {
     /// setting instead, and measuring one while drawing the other is how a
     /// column ends up narrower than the string inside it.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
 
     private var categoryLabel: String {
         sportCategoryDisplayName(data.sportName ?? data.llmSportCategory).uppercased()
@@ -188,12 +189,11 @@ struct NativeFuturesDiscoverCard: View {
     /// uppercasing a name back to `SPORTSBOOKS` would re-create the defect in a
     /// nicer font; D91 asks for a small mark that reads as sourcing, by name.
     private var sourceMark: String? {
-        let keys: [String] = {
-            if let sources = data.sources, sources.count > 1 { return sources }
-            return [data.source].compactMap { $0 }
-        }()
-        let named = keys.compactMap { SourceLabels.label(for: $0) }
-        return named.isEmpty ? nil : named.joined(separator: " + ")
+        SourceLabels.cardFaceLabel(
+            for: data.source,
+            sources: data.sources,
+            sourceCount: data.sourceCount
+        )
     }
 
     /// The source mark (D91): the venue names, small, reading as sourcing. One
@@ -295,12 +295,31 @@ struct NativeFuturesDiscoverCard: View {
 
                         MovementBadge(movement: leader.movement)
                             .padding(.bottom, 8)
+
+                        let leaderMark = data.resolvedSourceMark(for: leader)
+                        if let mark = SourceMarkButton(
+                            leaderMark,
+                            number: leaderMark?.state == .settled ? nil : leader.probability,
+                            subject: leader.name,
+                            numberSize: 20,
+                            compactRow: true
+                        ) {
+                            Group {
+                                if colorScheme == .light {
+                                    mark.colorInvert()
+                                } else {
+                                    mark
+                                }
+                            }
+                            .buttonStyle(.borderless)
+                            .padding(.bottom, 8)
+                        }
                     }
 
                     Text(leader.name)
                         .font(.headline.weight(.bold))
                         .foregroundStyle(.white.opacity(0.92))
-                        .lineLimit(3)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
                         .minimumScaleFactor(0.92)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -317,7 +336,7 @@ struct NativeFuturesDiscoverCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text(data.name)
                     .font(.headline.weight(.bold))
-                    .lineLimit(4)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 4)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let contextText {
@@ -332,7 +351,22 @@ struct NativeFuturesDiscoverCard: View {
 
                 if let outcomes = data.topOutcomes, outcomes.count > 1 {
                     let percents = renderedPercents
-                    let shown = Array(outcomes.prefix(3).enumerated())
+                    let orderedRows: [(originalIndex: Int, outcome: FeedFuturesOutcome, isLeader: Bool)] = {
+                        if let numerical = NumericalMarketScaleOrder228.orderedSlice(
+                            outcomes,
+                            limit: 3,
+                            label: \.name,
+                            probability: \.probability,
+                            explicitSortKey: \.sortKey,
+                            marketType: data.marketType,
+                            totalOutcomeCount: data.outcomeCount ?? outcomes.count,
+                            isCumulative: data.mutuallyExclusive == false
+                        ) {
+                            return numerical.map { ($0.originalIndex, $0.element, $0.isLeader) }
+                        }
+                        return Array(outcomes.prefix(3).enumerated()).map { ($0.offset, $0.element, $0.offset == 0) }
+                    }()
+                    let hasAnyRowMark = orderedRows.contains { data.resolvedSourceMark(for: $0.outcome)?.draws == true }
                     // #8213 — the column widths are measured from the strings
                     // these rows will actually print, at this view's text size,
                     // in the width this card was actually given. The percent
@@ -340,20 +374,24 @@ struct NativeFuturesDiscoverCard: View {
                     // so all three rows share a right edge, which is the one
                     // thing the 34pt literal was getting right.
                     let columns = FuturesOutcomeRowColumns.layout(
-                        percentLabels: shown.map {
-                            discoverFuturesCardPercentLabel(
-                                percents.indices.contains($0.offset) ? percents[$0.offset] : nil)
+                        percentLabels: orderedRows.map { row in
+                            let idx = row.originalIndex
+                            return discoverFuturesCardPercentLabel(
+                                percents.indices.contains(idx) ? percents[idx] : nil)
                         },
                         availableWidth: outcomeRowWidth,
-                        typeSize: dynamicTypeSize
+                        typeSize: dynamicTypeSize,
+                        hasSourceMark: hasAnyRowMark
                     )
                     VStack(spacing: 7) {
-                        ForEach(shown, id: \.element.id) { idx, outcome in
+                        ForEach(orderedRows, id: \.outcome.id) { row in
+                            let idx = row.originalIndex
                             outcomeRow(
-                                outcome,
-                                isLeader: idx == 0,
+                                row.outcome,
+                                isLeader: row.isLeader,
                                 percent: percents.indices.contains(idx) ? percents[idx] : nil,
-                                columns: columns
+                                columns: columns,
+                                hasAnyRowMark: hasAnyRowMark
                             )
                         }
                     }
@@ -380,7 +418,7 @@ struct NativeFuturesDiscoverCard: View {
                 if let sumExplanation = cardSumExplanation(data.cardSumReason) {
                     Text(sumExplanation)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -423,6 +461,8 @@ struct NativeFuturesDiscoverCard: View {
                     // multi-candidate kernels (Comparison/Distribution/HeatMap).
                     SignalBarsView(tier: data.confidenceTier)
 
+                    PinButton(type: "future", id: data.id)
+
                     ShareLink(
                         item: shareURL,
                         subject: Text(data.name),
@@ -430,7 +470,7 @@ struct NativeFuturesDiscoverCard: View {
                     ) {
                         Image(systemName: "square.and.arrow.up")
                             .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .padding(8)
                             .background(Color.secondary.opacity(0.10), in: Circle())
                             .frame(minWidth: 44, minHeight: 44)
@@ -485,14 +525,16 @@ struct NativeFuturesDiscoverCard: View {
         _ outcome: FeedFuturesOutcome,
         isLeader: Bool,
         percent: Int?,
-        columns: FuturesOutcomeRowColumns.Layout
+        columns: FuturesOutcomeRowColumns.Layout,
+        hasAnyRowMark: Bool = false
     ) -> some View {
+        let outcomeMark = data.resolvedSourceMark(for: outcome)
         // #8213 — the spacing the model subtracts is the spacing the row is
         // built with. Two literals that must agree are two numbers that drift.
-        HStack(spacing: FuturesOutcomeRowColumns.interColumnSpacing) {
+        return HStack(spacing: FuturesOutcomeRowColumns.interColumnSpacing) {
             Text(outcome.name)
                 .font(.caption.weight(isLeader ? .semibold : .regular))
-                .lineLimit(2)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(
                     minWidth: FuturesOutcomeRowColumns.nameMinimum,
@@ -514,6 +556,20 @@ struct NativeFuturesDiscoverCard: View {
                 .font(.caption.weight(.bold).monospacedDigit())
                 .lineLimit(1)
                 .frame(width: columns.percentWidth, alignment: .trailing)
+
+            if hasAnyRowMark {
+                if let mark = SourceMarkButton(
+                    outcomeMark,
+                    number: outcomeMark?.state == .settled ? nil : outcome.probability,
+                    subject: outcome.name,
+                    numberSize: 12,
+                    compactRow: true
+                ) {
+                    mark.buttonStyle(.borderless)
+                } else {
+                    Color.clear.frame(width: 22, height: 1)
+                }
+            }
         }
     }
 

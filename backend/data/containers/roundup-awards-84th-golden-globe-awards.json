@@ -1,0 +1,22 @@
+{
+  "category": "entertainment",
+  "enabled": false,
+  "footer": "Ceremony date unknown · Completion unknown",
+  "kind": "roundup",
+  "level": "member",
+  "membership": "computed-produced",
+  "name": "84th Golden Globe Awards",
+  "relations": [
+    "same_event"
+  ],
+  "rule": {
+    "producer": "awards_ceremony",
+    "selector": {
+      "evidence": "primary_rules_ordinal_awards",
+      "label": "84th Golden Globe Awards"
+    },
+    "trigger": "market_availability"
+  },
+  "section_title": "Awards markets",
+  "slug": "roundup-awards-84th-golden-globe-awards"
+}

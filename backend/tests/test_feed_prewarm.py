@@ -16,10 +16,13 @@ import json
 import re
 import textwrap
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi.encoders import jsonable_encoder
 
 from app.utils.feed_cache import (
     FEED_PREWARM_KEY_SCOPE_KEY,
@@ -617,6 +620,36 @@ def test_warmer_publishes_under_the_key_the_route_resolved():
     assert captured["user"] is None
     assert captured["request"].headers.get("x-session-id") is None
     assert captured["debug"] is False and captured["exclude_reviewed"] is False
+
+
+def test_warmer_preserves_the_fresh_feeds_numeric_types_12361():
+    """The second writer must not turn #12334's route fix back into strings."""
+    payload = {
+        "items": [{
+            "type": "bundle",
+            "data": {"items": [{
+                "type": "futures",
+                "data": {
+                    "id": 68943109,
+                    "name": "2027",
+                    "top_outcomes": [{"name": "3.7000", "probability": Decimal("0.067500")}],
+                    "price_observed_at": datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+                },
+            }]},
+        }],
+        "total": 1,
+        "cache": dict(_BUILT_CACHE_META),
+    }
+    outcome, rc, _ = _run_warm(payload, resolved_key="feed_cache:decimal")
+    assert outcome["outcome"] == "ok"
+    writes = {call.args[0]: call.args[2] for call in rc.setex.call_args_list}
+    for key in ("feed_cache:decimal", "feed_cache:decimal:stale"):
+        cached = json.loads(writes[key])
+        assert cached == jsonable_encoder(payload)
+        row = cached["items"][0]["data"]["items"][0]["data"]["top_outcomes"][0]
+        assert row["probability"] == 0.0675
+        assert row["name"] == "3.7000"
+    assert writes["feed_cache:decimal"] == writes["feed_cache:decimal:stale"]
 
 
 def test_warmer_refuses_to_publish_a_degraded_build():

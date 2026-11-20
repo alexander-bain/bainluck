@@ -17,6 +17,17 @@ enum DS {
     static let amber = Color(red: 0.96, green: 0.62, blue: 0.04)         // #F59E0B
     static let danger = Color(red: 0.94, green: 0.27, blue: 0.27)        // #EF4444
     static let trackBg = Color(red: 0.95, green: 0.96, blue: 0.96)       // #F3F4F6
+    /// #12364 — small grey text a reader can read: 6.0:1 on a white card and
+    /// 5.6:1 on `surface`. Apple's accessibility audit wants 4.5:1 for small
+    /// text; the system's secondary grey is about 3.4:1 and `textSecondary`
+    /// 4.4:1 on `surface`. It replaces the system `.secondary` on the
+    /// game page's small text.
+    static let textSecondaryReadable = Color(red: 0.37, green: 0.39, blue: 0.44) // #5E6370
+    /// #12364 — small blue text and links: 6.3:1 on white, 5.0:1 on its own
+    /// 15% tint. The system blue is 4.0:1 and `blue` 3.7:1.
+    static let blueReadable = Color(red: 0.00, green: 0.36, blue: 0.76)          // #005CC2
+    /// #12364 — a won or hit mark in text: 5.5:1 on white. The system green is 2.2:1.
+    static let greenReadable = Color(red: 0.02, green: 0.47, blue: 0.34)         // #047857
 
     static func probColor(_ value: Double) -> Color {
         if value >= 65 { return emerald }
@@ -163,12 +174,18 @@ struct DeltaBadge: View {
 
 struct SourceChip: View {
     let source: String
+    var onCardFace: Bool = false
 
     /// nil when the app cannot name the source — the chip renders nothing rather
     /// than title-casing a raw key onto the screen (#4135). "cross"/"merged" are
     /// this chip's own pseudo-sources for the comparison surfaces, not market
-    /// sources, so they stay local to it.
+    /// sources, so they stay local to it. On card faces (`onCardFace == true`),
+    /// single-venue Kalshi / Polymarket are omitted and multi-source says "2 sources".
     private var config: (color: Color, label: String, bg: Color)? {
+        if onCardFace {
+            guard let label = SourceLabels.cardFaceLabel(for: source) else { return nil }
+            return (DS.textSecondary, label, DS.trackBg)
+        }
         switch source.lowercased() {
         case "kalshi": return (DS.kalshiGreen, "Kalshi", DS.kalshiGreen.opacity(0.08))
         case "polymarket": return (DS.blue, "Polymarket", DS.blue.opacity(0.08))
@@ -230,7 +247,7 @@ struct DSMarketCard: View {
                     DeltaBadge(value: delta)
                 }
                 Spacer()
-                SourceChip(source: source)
+                SourceChip(source: source, onCardFace: true)
             }
         }
         .padding(14)

@@ -959,7 +959,7 @@ def test_narrative_copy_refuses_blend_and_closest_races_uses_combined_probabilit
     from app.utils.field_band import _validate_narrative_copy
     from app.utils.register_closest import CLOSEST_RACES_DEFINITION
 
-    assert CLOSEST_RACES_DEFINITION["footer"] == "Combined probability · both sources where paired"
+    assert CLOSEST_RACES_DEFINITION["footer"] == "One winner per race."
     assert "blend" not in CLOSEST_RACES_DEFINITION["footer"].lower()
 
     with pytest.raises(ValueError, match="blend"):

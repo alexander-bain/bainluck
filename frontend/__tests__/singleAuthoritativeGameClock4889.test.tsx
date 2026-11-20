@@ -164,15 +164,29 @@ function draw(espn: Record<string, unknown> | undefined, hist: unknown, sport?: 
   );
 }
 
-/** The header phase badge: the pulsing dot, then the label. */
-const BADGE_RE = /bg-emerald-500 animate-pulse"><\/span>([^<]*)</g;
+/** The Direction 199 live pill (`LIVE` or `LIVE · <clock>`). */
+const BADGE_RE = /data-testid="event-hero-live-pill"[^>]*><span[^>]*><\/span><span[^>]*>([^<]*)<\/span>/g;
+
+function normalizePeriod(text: string): string {
+  return text
+    .replace(/\b1st Quarter\b/gi, "Q1")
+    .replace(/\b2nd Quarter\b/gi, "Q2")
+    .replace(/\b3rd Quarter\b/gi, "Q3")
+    .replace(/\b4th Quarter\b/gi, "Q4")
+    .replace(/\b1st Period\b/gi, "P1")
+    .replace(/\b2nd Period\b/gi, "P2")
+    .replace(/\b3rd Period\b/gi, "P3")
+    .replace(/\b1st Half\b/gi, "1H")
+    .replace(/\b2nd Half\b/gi, "2H");
+}
 
 function headerClock(html: string): string {
   const all = Array.from(html.matchAll(BADGE_RE));
   // One live badge on the page — otherwise "the header" is ambiguous and every
   // assertion below could be reading the wrong span.
   expect(all).toHaveLength(1);
-  return all[0][1];
+  const raw = all[0][1];
+  return raw.startsWith("LIVE · ") ? raw.slice("LIVE · ".length) : raw;
 }
 
 /** The resting readout's badge — the real `GamePlayCard`'s period/clock span. */
@@ -186,13 +200,10 @@ function stripBadge(html: string): string {
   return all[0][1];
 }
 
-/**
- * The header joins with " · ", the card with a space, and only the card marks a
- * carried field with `~` (the header has no age vocabulary). The period and
- * clock VALUES are what must match.
- */
 function sameClock(header: string, strip: string): void {
-  expect(header.split(" · ").join(" ")).toBe(strip.split("~").join(""));
+  expect(normalizePeriod(header.split(" · ").join(" "))).toBe(
+    normalizePeriod(strip.split("~").join("")),
+  );
 }
 
 describe("#4889 a live event page shows one game clock", () => {
@@ -217,7 +228,7 @@ describe("#4889 a live event page shows one game clock", () => {
     const rows = [espnRow(3 * MINUTE, "0:52 - 1st Quarter", "0:52"), espnRow(1 * MINUTE, "0:38 - 1st Quarter", "0:38")];
     const html = draw({ period: "0:42 - 1st Quarter", game_clock: "0:42" }, history(rows));
 
-    expect(headerClock(html)).toBe("0:38 - 1st Quarter");
+    expect(headerClock(html)).toBe("0:38 - Q1");
     sameClock(headerClock(html), stripBadge(html));
     // The detail payload's clock is printed nowhere on the page.
     expect(html).not.toContain("0:42");
@@ -229,7 +240,7 @@ describe("#4889 a live event page shows one game clock", () => {
     const rows = [espnRow(1 * MINUTE, "0:42 - 1st Quarter", "0:42")];
     const html = draw({ period: "0:38 - 1st Quarter", game_clock: "0:38" }, history(rows));
 
-    expect(headerClock(html)).toBe("0:42 - 1st Quarter");
+    expect(headerClock(html)).toBe("0:42 - Q1");
     sameClock(headerClock(html), stripBadge(html));
     expect(html).not.toContain("0:38");
   });
@@ -249,7 +260,7 @@ describe("#4889 a live event page shows one game clock", () => {
     const rows = [espnRow(4 * MINUTE, "2nd Quarter", "0:05"), espnRow(1 * MINUTE, "3rd Quarter", null)];
     const html = draw({ period: "2nd Quarter", game_clock: "0:05" }, history(rows));
 
-    expect(headerClock(html)).toBe("3rd Quarter");
+    expect(headerClock(html)).toBe("Q3");
     // The real strip says the same period and marks its inherited clock as old.
     expect(stripBadge(html)).toBe("3rd Quarter ~0:05");
   });
@@ -257,13 +268,13 @@ describe("#4889 a live event page shows one game clock", () => {
   it("history holds no clock yet (quiet): the detail clock is the only clock on the page, so the header keeps it", () => {
     const rows = [espnRow(1 * MINUTE, null, null)];
     const quiet = draw({ period: "0:42 - 1st Quarter", game_clock: "0:42" }, history(rows));
-    expect(headerClock(quiet)).toBe("0:42 - 1st Quarter");
+    expect(headerClock(quiet)).toBe("0:42 - Q1");
     // The real strip falls back to the same event-row clock (#925), marked carried.
     expect(stripBadge(quiet)).toBe("~0:42 - 1st Quarter");
     sameClock(headerClock(quiet), stripBadge(quiet));
     // CONTROL: no history read at all — the pre-#4889 behaviour, unchanged.
     expect(headerClock(draw({ period: "0:42 - 1st Quarter", game_clock: "0:42" }, undefined))).toBe(
-      "0:42 - 1st Quarter",
+      "0:42 - Q1",
     );
   });
 
@@ -286,7 +297,7 @@ describe("#4889 a live event page shows one game clock", () => {
     };
     const html = draw({ period: "5:31 - 2nd Quarter", game_clock: "5:31" }, history([], winProb));
 
-    expect(headerClock(html)).toBe("Q2 · 5:10");
+    expect(headerClock(html)).toBe("Q2 5:10");
     // The independent review's counterexample: the REAL resting readout printed
     // the detail payload's 5:31 here while the header printed 5:10.
     expect(stripBadge(html)).toBe("Q2 5:10");

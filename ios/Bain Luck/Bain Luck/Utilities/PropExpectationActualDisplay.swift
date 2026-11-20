@@ -43,9 +43,9 @@ nonisolated enum PropExpectationActualDisplay {
         return Expectation(valueText: formatProbability(probability), label: "Saved pregame chance", basisText: basis)
     }
 
-    /// What a question with no saved chance says in its detail — words, not a
+    /// What a prop with no saved chance says in its detail — words, not a
     /// dash, and never a chance inferred from the count or the mark.
-    static let unavailableLabel = "No pregame chance was saved for this question."
+    static let unavailableLabel = "No pregame chance was saved for this prop."
 
     /// The detail's exact saved value, or nil when it states the same number
     /// as the headline: 6.0% beside 6% says nothing new, while 0.4% beside
@@ -110,7 +110,7 @@ nonisolated enum PropExpectationActualDisplay {
             }
             spokenQuestion = "\(question.predicate.count) or more" + (unit.map { " \($0)" } ?? "")
         } else {
-            spokenQuestion = "Question unavailable"
+            spokenQuestion = "Prop unavailable"
         }
         let chance = expectation(question.expectation).valueText.map {
             $0.replacingOccurrences(of: "<", with: "under ")

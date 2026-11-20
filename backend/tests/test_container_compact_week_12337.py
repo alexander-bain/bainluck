@@ -16,17 +16,17 @@ from tests.test_container_hydrated_reader_9636 import _Result, _Session, _market
 class CompactSession(_Session):
     async def execute(self, sql, params=None):
         statement = str(sql)
-        if statement.startswith("SELECT id, event_id FROM futures_markets"):
+        if statement.startswith("SELECT id, event_id, name, external_id, volume_24h, volume FROM futures_markets"):
             self.statements.append(statement)
             ids = set(params["market_ids"])
-            event_ids = set(params["event_ids"])
             return _Result(
-                (market.id, market.event_id) for market in self.markets
-                if market.id in ids and market.event_id in event_ids
+                (market.id, market.event_id, market.name, market.external_id, market.volume_24h, market.volume)
+                for market in self.markets if market.id in ids
             )
         if statement.startswith("SELECT futures_markets.") and "WHERE futures_markets.id IN" in statement:
             self.statements.append(statement)
-            ids = set(sql.compile().params["id_1"])
+            (market_ids,) = sql.compile().params.values()
+            ids = set(market_ids)
             return _Result(market for market in self.markets if market.id in ids)
         return await super().execute(sql, params)
 
@@ -72,19 +72,20 @@ async def test_compact_view_accounts_for_every_member_and_keeps_missing_row_reas
     compact = await read_week(session, compact=True)
 
     assert compact["revision"] == full["revision"] == hub.revision
-    assert compact["related_summary"] == {"count": 13, "unclassified_count": 11}
-    assert compact["member_count"] == 4
+    assert compact["related_summary"] == {"count": 11, "unclassified_count": 11}
+    assert compact["member_count"] == 6
     assert compact["member_count"] + compact["related_summary"]["count"] == full["member_count"]
-    assert compact["withheld"] == full["withheld"]
-    assert {member["id"] for member in compact["withheld"]} == {599, 9401}
+    assert {member["id"] for member in compact["withheld"]} == {599}
+    # Unselected markets are accounted for and checked when their page is read.
+    assert compact["counts"]["deferred_market_count"] == 12
     members = {member["id"]: member for section in compact["sections"] for member in section["members"]}
-    assert members[501]["related_count"] == 13
-    assert members[501]["question_ids"] == []
+    assert members[501]["related_count"] == 11
+    assert members[501]["question_ids"] == [9101, 9103]
     assert members[502]["question_ids"] == [9102]
     assert members[9102]["destination"]["web"] == "/futures/9102"
     assert members[9400]["destination"]["web"] == "/futures/9400"
     assert all(reason["reason"] == "row_missing" for reason in compact["withheld"])
-    assert sum(statement.startswith("SELECT id, event_id FROM futures_markets") for statement in session.statements) == 1
+    assert sum(statement.startswith("SELECT id, event_id, name") for statement in session.statements) == 1
 
 
 async def test_compact_http_entry_point_skips_hydration_of_a_long_attached_list(monkeypatch):
@@ -111,11 +112,11 @@ async def test_compact_http_entry_point_skips_hydration_of_a_long_attached_list(
         response = await client.get(f"/api/containers/{hub.slug}?compact=true")
 
     assert response.status_code == 200
-    assert response.json()["related_summary"]["count"] == 13
-    assert set(formatted_ids) == {9102, 9400}
+    assert response.json()["related_summary"]["count"] == 11
+    assert set(formatted_ids) == {9101, 9102, 9103, 9400}
 
 
-async def test_a_failed_game_card_keeps_its_markets_in_the_card_read(monkeypatch):
+async def test_a_failed_game_card_does_not_expand_the_market_read(monkeypatch):
     from app.routes import events as event_route
 
     original_format = event_route._format_event_with_aggregated_odds
@@ -132,7 +133,9 @@ async def test_a_failed_game_card_keeps_its_markets_in_the_card_read(monkeypatch
 
     assert payload["related_summary"] == {"count": 0, "unclassified_count": 0}
     members = {member["id"] for section in payload["sections"] for member in section["members"]}
-    assert {9101, 9103, *range(9300, 9311)} <= members
+    assert {9101, 9103} <= members
+    assert not set(range(9300, 9311)) & members
+    assert payload["page"]["next_url"]
     assert {"type": "event", "id": 501, "reason": "unserializable"} in payload["withheld"]
 
 

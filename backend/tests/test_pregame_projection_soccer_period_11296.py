@@ -114,8 +114,10 @@ def _read(events, rows=(), **kwargs):
 
 def test_the_served_ft_on_15330334_is_its_stored_period_verbatim():
     # The page serves `espn.period` through `normalize_live_game_state`, which
-    # rewrites only baseball. So the served "FT" IS the stored `events.period`.
-    assert normalize_live_game_state(SOCCER, "FT", "90'+4'") == ("FT", "90'+4'")
+    # rewrites only baseball's period. So the served "FT" IS the stored
+    # `events.period`. (#11220: a finished game serves no clock, so the
+    # leftover "90'+4'" is dropped; the period is untouched.)
+    assert normalize_live_game_state(SOCCER, "FT", "90'+4'") == ("FT", None)
     assert regulation_finish_proven(S_SERVED["espn"]["period"])
 
 

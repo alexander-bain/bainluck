@@ -44,41 +44,34 @@ final class AStalledCaptureDrawsAGapNotALine7878Tests: XCTestCase {
         }
     }
 
-    // MARK: - The defect
+    // MARK: - Decision 164 (#12639): interior unobserved stretches bridge as one straight line
 
-    /// The specimen's own shape: a dense in-game run, then the hole.
-    ///
-    /// Five observations two minutes apart, then 3h17m of nothing, then the one
-    /// point anchoring the right-hand edge. Two segments, and the reader sees
-    /// the hole.
+    /// Five observations two minutes apart, then 3h17m of unobserved time, then
+    /// the reading on the far side: Decision 164 (#12639) connects all six real
+    /// readings in one straight-segment series rather than lifting the pen.
     func testTheThreeHourHoleBreaksTheLine() {
         let observed = points(offsetsFromCommence: [141, 260, 380, 500, 619, 12_437])
 
         let segments = OddsChartView.observationSegments(observed, gameStart: Self.commence)
 
-        XCTAssertEqual(segments.count, 2, "the 3h17m hole must break the series")
-        XCTAssertEqual(segments[0].count, 5, "the dense run stays joined")
-        XCTAssertEqual(segments[1].count, 1, "the far-side observation is its own run")
+        XCTAssertEqual(segments.count, 1, "Decision 164 (#12639): interior gaps bridge with a straight segment")
+        XCTAssertEqual(segments[0].count, 6, "all six real observations stay in one connected series")
     }
 
-    /// The lone observation on the far side of a hole survives as a run of one.
-    ///
-    /// A `LineMark` needs two points, so a segment of one draws nothing unless
-    /// the caller marks it. Dropping it would lose real data to a fix meant to
-    /// stop losing real data — this pins that the helper still returns it.
+    /// The observation on the far side of a hole stays at the end of the connected run.
     func testTheObservationAfterTheHoleIsNotDiscarded() {
         let observed = points(offsetsFromCommence: [141, 260, 380, 500, 619, 12_437])
 
         let segments = OddsChartView.observationSegments(observed, gameStart: Self.commence)
 
         XCTAssertEqual(
-            segments.last?.first?.date,
+            segments.last?.last?.date,
             Self.commence.addingTimeInterval(12_437),
-            "the point past the hole is still drawn, as its own run"
+            "the point past the hole stays anchored at the end of the connected series"
         )
         XCTAssertEqual(
             segments.flatMap { $0 }.count, observed.count,
-            "segmenting partitions the points — it never drops one"
+            "segmenting never drops a real observation"
         )
     }
 
@@ -164,7 +157,8 @@ final class AStalledCaptureDrawsAGapNotALine7878Tests: XCTestCase {
         XCTAssertEqual(segments.count, 1, "200s is 20x a 10s cadence and still not a hole")
     }
 
-    /// Both conditions met ⇒ break. The positive twin of the two tests above.
+    /// Under Decision 164 (#12639), even a 90-minute interior gap against a 60s
+    /// cadence bridges with a straight segment across the real observations.
     func testAnIntervalFailingBothTestsBreaks() {
         var offsets = (0..<20).map { Double($0) * 60 }
         offsets.append(offsets.last! + 5_400)
@@ -173,7 +167,8 @@ final class AStalledCaptureDrawsAGapNotALine7878Tests: XCTestCase {
             points(offsetsFromCommence: offsets), gameStart: Self.commence
         )
 
-        XCTAssertEqual(segments.count, 2, "90 minutes against a 60s cadence is a hole")
+        XCTAssertEqual(segments.count, 1, "Decision 164 (#12639): interior gap bridges as one connected series")
+        XCTAssertEqual(segments[0].count, 21)
     }
 
     // MARK: - Degenerate input
@@ -190,13 +185,17 @@ final class AStalledCaptureDrawsAGapNotALine7878Tests: XCTestCase {
         )
     }
 
-    /// Out-of-order input is sorted before it is judged.
+    /// Out-of-order input is sorted chronologically into the connected series.
     func testPointsAreOrderedBeforeSegmenting() {
         let observed = points(offsetsFromCommence: [12_437, 141, 500, 260, 380, 619])
 
         let segments = OddsChartView.observationSegments(observed, gameStart: Self.commence)
 
-        XCTAssertEqual(segments.count, 2)
-        XCTAssertEqual(segments[0].count, 5, "arrival order must not decide where the hole is")
+        XCTAssertEqual(segments.count, 1)
+        XCTAssertEqual(
+            segments[0].map(\.date),
+            [141.0, 260, 380, 500, 619, 12_437].map { Self.commence.addingTimeInterval($0) },
+            "arrival order is sorted chronologically before drawing the connected line"
+        )
     }
 }

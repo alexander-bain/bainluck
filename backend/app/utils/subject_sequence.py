@@ -31,8 +31,12 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from app.utils.team_short_name import is_college_sport, school_label
 from app.utils.container_presentation import MEMBER_EVENT, event_destination
 from app.utils.field_band import _validate_narrative_copy
+from app.utils.grouping_captions import compose_container_caption
+from app.utils.source_mark import no_source_mark
+from app.utils.sport_keys import SPORT_HIERARCHY
 from app.utils.tonights_games import _parse_dt
 
 __all__ = [
@@ -142,23 +146,30 @@ def subject_sequence_enabled() -> bool:
     )
 
 
-_SPORT_KEY_TO_TEAM_ROUTE_SEGMENTS: dict[str, tuple[str, str]] = {
-    "basketball_nba": ("basketball", "nba"),
-    "americanfootball_nfl": ("football", "nfl"),
-    "baseball_mlb": ("baseball", "mlb"),
-    "icehockey_nhl": ("hockey", "nhl"),
-    "basketball_ncaab": ("basketball", "ncaab"),
-    "americanfootball_ncaaf": ("football", "ncaaf"),
-    "basketball_wnba": ("basketball", "wnba"),
-    "soccer_usa_mls": ("soccer", "mls"),
-    "soccer_epl": ("soccer", "epl"),
-    "soccer_spain_la_liga": ("soccer", "laliga"),
-    "soccer_uefa_champs_league": ("soccer", "ucl"),
-    "soccer_germany_bundesliga": ("soccer", "bundesliga"),
-    "basketball_wncaab": ("basketball", "wncaab"),
-    "mma_mixed_martial_arts": ("mma", "ufc"),
-    "golf_pga": ("golf", "pga"),
-}
+def _sport_route_segments_from_hierarchy() -> tuple[
+    dict[str, tuple[str, str]], set[tuple[str, str]]
+]:
+    by_key: dict[str, tuple[str, str]] = {}
+    valid_pairs: set[tuple[str, str]] = set()
+    for sport_cfg in SPORT_HIERARCHY.values():
+        sport_slug = str(sport_cfg.get("slug") or "").strip().lower()
+        if not sport_slug:
+            continue
+        for league_cfg in sport_cfg.get("leagues") or ():
+            league_slug = str(league_cfg.get("slug") or "").strip().lower()
+            if not league_slug:
+                continue
+            pair = (sport_slug, league_slug)
+            valid_pairs.add(pair)
+            for sk in league_cfg.get("sport_keys") or ():
+                if isinstance(sk, str) and sk.strip():
+                    by_key[sk.strip().lower()] = pair
+    return by_key, valid_pairs
+
+
+_SPORT_KEY_TO_TEAM_ROUTE_SEGMENTS, _VALID_SPORT_LEAGUE_PAIRS = (
+    _sport_route_segments_from_hierarchy()
+)
 
 
 def canonical_team_page_href(
@@ -166,20 +177,24 @@ def canonical_team_page_href(
     sport: Optional[str] = None,
     league: Optional[str] = None,
 ) -> str:
-    """Return the canonical ``/sport/<sport>/<league>/team/<slug>`` URL for a team page."""
+    """Return the canonical ``/sport/<sport>/<league>/team/<slug>`` URL for a team page.
+
+    Uses ``SPORT_HIERARCHY`` from ``app.utils.sport_keys`` and refuses (raises
+    ``ValueError``) when the sport/league is unmapped instead of falling back to NBA.
+    """
     clean_slug = _slugify(team_slug)
+    if not clean_slug:
+        raise ValueError("canonical_team_page_href requires a non-empty team_slug")
     sport_key = (sport or "").strip().lower()
     mapped = _SPORT_KEY_TO_TEAM_ROUTE_SEGMENTS.get(sport_key)
     if mapped is not None:
         return f"/sport/{mapped[0]}/{mapped[1]}/team/{clean_slug}"
-    if "_" in sport_key:
-        parts = sport_key.split("_", 1)
-        if parts[0] and parts[1]:
-            return f"/sport/{parts[0]}/{parts[1]}/team/{clean_slug}"
     clean_league = (league or "").strip().lower()
-    if sport_key and clean_league:
+    if (sport_key, clean_league) in _VALID_SPORT_LEAGUE_PAIRS:
         return f"/sport/{sport_key}/{clean_league}/team/{clean_slug}"
-    return f"/sport/basketball/nba/team/{clean_slug}"
+    raise ValueError(
+        f"Unmapped sport/league for team route: sport={sport!r}, league={league!r}"
+    )
 
 
 def _normalize_team_destination_href(
@@ -207,6 +222,8 @@ def _slugify(value: str) -> str:
 def _extract_short_name(
     team_name: str,
     team_data: Optional[Mapping[str, Any]] = None,
+    *,
+    sport: Optional[str] = None,
 ) -> str:
     if isinstance(team_data, Mapping):
         raw_short = str(team_data.get("short_name") or "").strip()
@@ -215,6 +232,10 @@ def _extract_short_name(
     cleaned = str(team_name or "").strip()
     if not cleaned:
         return ""
+    if is_college_sport(sport):
+        # 194-A: "vs Gonzaga", never "vs Bulldogs".
+        location = team_data.get("location") if isinstance(team_data, Mapping) else None
+        return school_label(cleaned, location) or cleaned
     lower_cleaned = cleaned.lower()
     for multi in _MULTI_WORD_NICKNAMES:
         if lower_cleaned.endswith(multi.lower()):
@@ -340,6 +361,7 @@ class _SequenceGame:
     commence_utc: datetime
     commence_iso: str
     team_prob: float
+    source_mark: dict[str, Any]
     rendered_percent: int
     row_label: str
     opponent_label: str
@@ -374,8 +396,9 @@ def select_subject_sequence(
     count: int = 3,
     window_days: int = 21,
     max_prob_age_hours: float = 48.0,
-    footer: str = "Combined win probability · next 3 games in schedule order",
+    footer: str = "Next 3 games in schedule order",
     destination_href: Optional[str] = None,
+    caption: Optional[str | Mapping[str, Any]] = None,
 ) -> Any:
     """Pure selector for ``subject_sequence`` (Decide 74-A).
 
@@ -465,11 +488,12 @@ def select_subject_sequence(
             now=effective_now,
             max_prob_age_hours=max_prob_age_hours,
         )
+        card_sport = raw_card.get("sport") or raw_card.get("sport_key")
         if is_home:
-            opp_short = _extract_short_name(away_name, away_data)
+            opp_short = _extract_short_name(away_name, away_data, sport=card_sport)
             opp_label = f"vs {opp_short}"
         else:
-            opp_short = _extract_short_name(home_name, home_data)
+            opp_short = _extract_short_name(home_name, home_data, sport=card_sport)
             opp_label = f"at {opp_short}"
 
         et_date_key = commence_utc.astimezone(SPORTS_DAY_TZ).date().isoformat()
@@ -533,6 +557,7 @@ def select_subject_sequence(
             continue
         home_prob, away_prob, observed_iso = g.blend
         team_prob = home_prob if g.is_home else away_prob
+        mark_key = "source_mark" if g.is_home else "away_source_mark"
         rendered_pct = int(math.floor(team_prob * 100.0 + 0.5))
         ordered.append(
             _SequenceGame(
@@ -540,6 +565,7 @@ def select_subject_sequence(
                 commence_utc=g.commence_utc,
                 commence_iso=g.commence_iso,
                 team_prob=team_prob,
+                source_mark=g.card.get(mark_key) or no_source_mark("source_evidence_incomplete"),
                 rendered_percent=rendered_pct,
                 row_label=g.row_label,
                 opponent_label=g.opp_label,
@@ -575,21 +601,37 @@ def select_subject_sequence(
             "date_label": g.date_label,
             "commence_time": g.commence_iso,
             "probability": g.team_prob,
+            "source_mark": g.source_mark,
             "rendered_percent": g.rendered_percent,
             "observed_at": g.observed_at,
         }
         for g in ordered
     ]
-    resolved_href = _normalize_team_destination_href(
-        destination_href,
-        team_slug=team_slug,
-        sport=sport,
+    effective_sport = sport or str(
+        ordered[0].card.get("sport") or ordered[0].card.get("sport_key") or ""
+    ).strip() or None
+    try:
+        resolved_href = _normalize_team_destination_href(
+            destination_href,
+            team_slug=team_slug,
+            sport=effective_sport,
+        )
+    except ValueError:
+        return _rc().RoundupRefusal([("unmapped_team_sport", effective_sport)])
+    verified_caption = (
+        compose_container_caption(
+            {"caption": caption},
+            members=rows,
+        )
+        if caption is not None
+        else None
     )
     return _rc().RoundupMembers(
         members=members,
         rows=rows,
         footer=footer,
         destination_href=resolved_href,
+        caption=verified_caption,
     )
 
 
@@ -745,12 +787,16 @@ async def produce_subject_sequence(
             return loaded
         ordered_cards = loaded
 
-    defined_href = _normalize_team_destination_href(
-        rule.get("destination_href") or definition.get("destination_href"),
-        team_slug=team_slug,
-        sport=sport,
-        league=str(rule.get("league") or definition.get("category") or ""),
-    )
+    league_val = str(rule.get("league") or definition.get("category") or "")
+    try:
+        defined_href = _normalize_team_destination_href(
+            rule.get("destination_href") or definition.get("destination_href"),
+            team_slug=team_slug,
+            sport=sport,
+            league=league_val,
+        )
+    except ValueError:
+        return _rc().RoundupRefusal([("unmapped_team_sport", sport or league_val)])
     return select_subject_sequence(
         ordered_cards,
         now=effective_now,
@@ -763,6 +809,7 @@ async def produce_subject_sequence(
         max_prob_age_hours=max_prob_age_hours,
         footer=footer,
         destination_href=defined_href,
+        caption=definition.get("caption") or rule.get("caption"),
     )
 
 
@@ -807,20 +854,26 @@ def build_subject_sequence_producer(
     _validate_narrative_copy(name, footer, kicker, section_title)
     tag = str(definition.get("tag") or category.upper())
     team_slug = str(rule.get("team_slug") or "").strip()
-    destination_href = (
-        _normalize_team_destination_href(
-            rule.get("destination_href") or definition.get("destination_href"),
-            team_slug=team_slug,
-            sport=str(rule.get("sport") or ""),
-            league=str(rule.get("league") or category),
-        )
-        if team_slug
-        else str(
+    if team_slug:
+        try:
+            destination_href = _normalize_team_destination_href(
+                rule.get("destination_href") or definition.get("destination_href"),
+                team_slug=team_slug,
+                sport=str(rule.get("sport") or ""),
+                league=str(rule.get("league") or category),
+            )
+        except ValueError:
+            destination_href = str(
+                rule.get("destination_href")
+                or definition.get("destination_href")
+                or f"/collections/{slug}"
+            )
+    else:
+        destination_href = str(
             rule.get("destination_href")
             or definition.get("destination_href")
             or f"/collections/{slug}"
         )
-    )
     order = str(rule.get("order") or "sequence")
     presentation = str(rule.get("presentation") or "strip")
     story_key = f"roundup:{slug.removeprefix('roundup-')}"
@@ -850,6 +903,7 @@ def build_subject_sequence_producer(
         destination_href=destination_href,
         order=order,
         presentation=presentation,
+        caption=definition.get("caption") or rule.get("caption"),
         produce=_produce,
         enabled=enabled if enabled is not None else subject_sequence_enabled,
     )

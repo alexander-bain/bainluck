@@ -110,9 +110,9 @@ describe("admission is by exact league name", () => {
   });
 });
 
-describe("pregame basketball mounts with twenty-point ticks", () => {
+describe("pregame basketball mounts with fitted ticks (#12889) while live/finished stays zero-based", () => {
   it.each([["basketball_nba"], ["basketball_wnba"], ["basketball_ncaab"], ["basketball_wncaab"]])(
-    "%s: forecasts only, the page's own sport key, no actual score",
+    "%s: forecasts only, fitted pregame axis, no actual score",
     (sportKey) => {
       const input = mountedInput(sportKey, "scheduled", scheduled, PREGAME);
       expect(input.sportKey).toBe(sportKey);
@@ -120,33 +120,36 @@ describe("pregame basketball mounts with twenty-point ticks", () => {
       expect(s.phase).toBe("before");
       expect(s.actualSteps).toEqual([]);
       expect(s.latest).toMatchObject({ home: 116.5, away: 108 });
-      // max(20, ceil((116.5 + 20/4) / 20) * 20) = 140
-      expect(s.yMax).toBe(140);
-      expect(s.yTicks).toEqual([0, 20, 40, 60, 80, 100, 120, 140]);
+      // #12889: 108.0..116.5 fits to [105, 110, 115, 120] before kickoff so both lines separate.
+      expect(s.yMin).toBe(105);
+      expect(s.yMax).toBe(120);
+      expect(s.yTicks).toEqual([105, 110, 115, 120]);
     },
   );
 
-  it("the axis formula is max(step, ceil((high + step/4) / step) * step) for each step", () => {
-    const at = (sportKey: string, home: number, away: number) =>
+  it("during/after a game, the zero-based axis formula is max(step, ceil((high + step/4) / step) * step) for each step", () => {
+    const atLive = (sportKey: string, home: number, away: number) =>
       series({
         sportKey,
         sourceKey: "draftkings",
         basis: "same_book_same_capture_full_game_spread_and_total",
-        pairs: [{ timestamp: "2026-11-11T23:30:00Z", home, away, homeProbability: 0.6, kind: "recorded" }],
+        pairs: [{ timestamp: "2026-11-12T00:30:00Z", home, away, homeProbability: 0.6, kind: "recorded" }],
         actuals: [],
-        kickoffAt: null,
+        kickoffAt: TIP,
         finalAt: null,
-        asOf: PREGAME,
+        asOf: LIVE_NOW,
       });
     // 115.5 + 5 = 120.5 → 140; exactly 115 + 5 = 120 → 120.
-    expect(at("basketball_nba", 115.5, 100).yMax).toBe(140);
-    expect(at("basketball_nba", 115, 100).yMax).toBe(120);
+    expect(atLive("basketball_nba", 115.5, 100).yMin).toBe(0);
+    expect(atLive("basketball_nba", 115.5, 100).yMax).toBe(140);
+    expect(atLive("basketball_nba", 115, 100).yMax).toBe(120);
     // A football 27.8 + 1.75 = 29.55 → 35, ticks of seven.
-    const fb = at("americanfootball_ncaaf", 27.8, 23.8);
+    const fb = atLive("americanfootball_ncaaf", 27.8, 23.8);
+    expect(fb.yMin).toBe(0);
     expect(fb.yMax).toBe(35);
     expect(fb.yTicks).toEqual([0, 7, 14, 21, 28, 35]);
     // A tiny pair never collapses below one step.
-    expect(at("basketball_wnba", 0, 0).yMax).toBe(20);
+    expect(atLive("basketball_wnba", 0, 0).yMax).toBe(20);
   });
 });
 

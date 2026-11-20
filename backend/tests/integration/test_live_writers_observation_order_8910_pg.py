@@ -497,9 +497,10 @@ class TestSocketStampWaitsOnThePollsLock:
                             text(
                                 "SELECT query FROM pg_stat_activity "
                                 " WHERE wait_event_type = 'Lock' "
-                                "   AND query ILIKE '%%UPDATE events%%' "
-                                "   AND query ILIKE '%%jsonb_each%%'"
-                            )
+                                "   AND query ILIKE '%%UPDATE events SET win_probability_sources%%' "
+                                "   AND :poll_pid = ANY(pg_blocking_pids(pid))"
+                            ),
+                            {"poll_pid": seen["poll_pid"]},
                         )
                     ).scalars().all()
                     if waiting:
@@ -514,6 +515,12 @@ class TestSocketStampWaitsOnThePollsLock:
             # venue after the goal and stamps under the event row — and is
             # still holding that row when the socket reaches its UPDATE.
             poll = Session()
+            # pg_stat_activity truncates query text. Added price-read evidence
+            # can move jsonb_each past that cut, so identify this poll's actual
+            # blocker PID and the UPDATE prefix instead of an internal clause.
+            seen["poll_pid"] = (
+                await poll.execute(text("SELECT pg_backend_pid()"))
+            ).scalar_one()
             seen["poll"] = asyncio.create_task(
                 poll_commits_once_the_socket_waits(poll)
             )

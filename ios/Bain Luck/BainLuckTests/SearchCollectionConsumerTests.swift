@@ -44,7 +44,7 @@ final class SearchCollectionConsumerTests: XCTestCase {
         let entries = SearchCollectionRows.entries(in: response)
         XCTAssertEqual(entries.map(\.id), ["nfl-2026-week-5", "mlb-2026-postseason"])
         XCTAssertEqual(entries.map { $0.collection.name }, ["NFL 2026 · Week 5", "MLB 2026 · Postseason"])
-        XCTAssertEqual(entries.map(\.subtitle), ["4 games · 1 question", "9 games · 6 questions"])
+        XCTAssertEqual(entries.map(\.subtitle), ["4 games · 1 market", "9 games · 6 markets"])
         XCTAssertEqual(entries.map { SearchCollectionRows.editionLabel(for: $0) }, ["NFL 2026 · Week 5", "MLB 2026 · Postseason"])
         XCTAssertEqual(entries.map(\.route), [
             .containerHub(slug: "nfl-2026-week-5", name: "NFL 2026 · Week 5"),

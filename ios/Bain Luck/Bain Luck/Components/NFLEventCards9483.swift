@@ -241,6 +241,7 @@ struct NFLFinishCardView9483: View {
     let homeColor: Color
     var state: NFLCardDeckState9483? = nil
     var expanded = false
+    @Environment(\.dynamicTypeSize) private var size
     @ScaledMetric(relativeTo: .caption2) private var scaledAxisFont: CGFloat = 12
     /// The line the chart draws each team's name on, at the top of its band.
     @ScaledMetric(relativeTo: .caption) private var trackNameLine: CGFloat = 16
@@ -264,26 +265,35 @@ struct NFLFinishCardView9483: View {
         return lower...upper
     }
 
+    private func detailsButton(_ state: NFLCardDeckState9483) -> some View {
+        Button {
+            state.detailsRowID = "finish"
+        } label: {
+            Image(systemName: "info.circle")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Forecast details")
+        .accessibilityIdentifier("atlas-finish-card-details-button-11666")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 Text(card.kicker.uppercased())
                     .font(.caption.weight(.bold))
                     .foregroundStyle(homeColor)
-                if expanded, ReleaseSurfaces.isEventPageAtlasEnabled(), let state {
+                    .fixedSize(horizontal: false, vertical: true)
+                // #12693 — on a 320pt narrow phone at AX5, a 44pt button beside
+                // the kicker stole 52pt and broke "PROJECTED" mid-word ("PRO- / JECTED").
+                // At accessibility sizes the kicker keeps the full card width and
+                // the details button sits alongside the mark key below the headline.
+                if !size.isAccessibilitySize, expanded, ReleaseSurfaces.isEventPageAtlasEnabled(), let state {
                     Spacer(minLength: 8)
-                    Button {
-                        state.detailsRowID = "finish"
-                    } label: {
-                        Image(systemName: "info.circle")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .frame(minWidth: 44, minHeight: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Forecast details")
-                    .accessibilityIdentifier("atlas-finish-card-details-button-11666")
+                    detailsButton(state)
                 }
             }
             Text(card.headline(awayName: awayName, homeName: homeName))
@@ -291,6 +301,12 @@ struct NFLFinishCardView9483: View {
                 .fixedSize(horizontal: false, vertical: true)
             if ReleaseSurfaces.isEventPageAtlasEnabled() {
                 EventAtlasStoryCardMarkKeyView11666(items: EventAtlasStoryCards11666.finishMarkKey(for: card))
+                if size.isAccessibilitySize, expanded, let state {
+                    HStack {
+                        Spacer(minLength: 0)
+                        detailsButton(state)
+                    }
+                }
             }
             Chart {
                 ForEach([false, true], id: \.self) { isHome in
@@ -523,8 +539,15 @@ struct NFLMilestoneCardView9483: View {
             Text(card.caption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if ReleaseSurfaces.isEventPageAtlasEnabled() {
                 EventAtlasStoryCardMarkKeyView11666(items: EventAtlasStoryCards11666.milestoneMarkKey(for: card))
+                PlayerMilestoneComparison9483(
+                    card: card,
+                    selectedRowID: rung?.rowID,
+                    isFinal: card.isFinal,
+                    color: color
+                )
             }
             if let profile = card.profile {
                 chart(profile, selected: rung)
@@ -585,7 +608,7 @@ struct NFLMilestoneCardView9483: View {
     }
 
     @ViewBuilder private var actualFigure: some View {
-        if let actual = card.actual {
+        if !ReleaseSurfaces.isEventPageAtlasEnabled(), let actual = card.actual {
             VStack(alignment: .trailing, spacing: 0) {
                 Text(NFLFinishCardView9483.points(actual))
                     .font(.title.weight(.bold).monospacedDigit())
@@ -640,20 +663,23 @@ struct NFLMilestoneCardView9483: View {
 
     private func chart(_ profile: PlayerMilestoneProfile.Profile, selected: NFLMilestoneCard9483.Rung?) -> some View {
         let domain = NFLMilestoneCard9483.statDomain(profile.domain, actual: card.actual)
+        let yScale = ChartScaleRule201.manyWayWindow(values: card.rungs.compactMap(\.chance))
         return Chart {
             // The final is a rule on the stat axis. Its value is printed large
             // in the card's header, so the rule carries no second label to clip.
             if let actual = card.actual {
                 RectangleMark(xStart: .value("Start", domain.lowerBound), xEnd: .value("Final", actual),
-                              yStart: .value("Chance", 0), yEnd: .value("Chance", 1))
+                              yStart: .value("Chance", 0), yEnd: .value("Chance", yScale.ceilingFraction))
                     .foregroundStyle(color.opacity(0.07))
                 RuleMark(x: .value("Final", actual))
                     .foregroundStyle(color)
                     .lineStyle(StrokeStyle(lineWidth: 2))
             }
-            RuleMark(y: .value("Chance", 0.5))
-                .foregroundStyle(Color.secondary.opacity(0.35))
-                .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+            if yScale.domain.contains(0.5) {
+                RuleMark(y: .value("Chance", 0.5))
+                    .foregroundStyle(Color.secondary.opacity(0.35))
+                    .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+            }
             ForEach(card.rungs.filter { $0.chance != nil }) { rung in
                 let isSelected = rung.rowID == selected?.rowID
                 let chance = rung.chance ?? 0
@@ -671,9 +697,9 @@ struct NFLMilestoneCardView9483: View {
             }
         }
         .chartXScale(domain: domain)
-        .chartYScale(domain: 0...1)
+        .chartYScale(domain: yScale.domain)
         .chartYAxis {
-            AxisMarks(position: .leading, values: [0, 0.5, 1]) { value in
+            AxisMarks(position: .leading, values: yScale.ticks) { value in
                 AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
                 AxisValueLabel {
                     if let chance = value.as(Double.self) { Text("\(Int((chance * 100).rounded()))%") }
@@ -831,6 +857,14 @@ struct NFLEventCardView9483: View {
             case .mlb(let mlb):
                 MLBFinalCardView11284(card: mlb, awayColor: awayColor, homeColor: homeColor,
                                       state: state, expanded: expanded)
+            case .cricket(let cricket):
+                EventAtlasCricketCardView11666(card: cricket)
+            case .esports(let esports):
+                EventAtlasEsportsCardView11666(card: esports, awayColor: awayColor, homeColor: homeColor)
+            case .rugbyAfl(let rugbyAfl):
+                EventAtlasRugbyAflCardView11666(card: rugbyAfl)
+            case .lacrosseDartsSquash(let lds):
+                EventAtlasLacrosseDartsSquashCardView11666(card: lds)
             case .nhlScoring(let nhl):
                 EventAtlasNhlScoringCardView11666(card: nhl, awayColor: awayColor, homeColor: homeColor,
                                                   state: state, expanded: expanded)
@@ -866,6 +900,12 @@ struct NFLEventCardView9483: View {
                     state: state,
                     expanded: expanded
                 )
+            case .combatMethod(let combatMethod):
+                EventAtlasCombatMethodCardView11666(card: combatMethod)
+            case .combatRounds(let combatRounds):
+                EventAtlasCombatRoundCardView11666(card: combatRounds)
+            case .combatDuration(let combatDuration):
+                EventAtlasCombatDurationCardView11666(card: combatDuration)
             }
         }
         .padding(16)

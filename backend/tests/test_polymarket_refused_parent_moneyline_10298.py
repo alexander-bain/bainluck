@@ -20,6 +20,10 @@ THE TWO CLAUSES (Authority contract C1 + Live's C2 decision, 2026-10-03):
   venue served a book, so the unchanged ``_withdraw_book_refuted_legs`` withdraws a
   stored number that book refutes. "Refused" is computed from the branch's own
   output, so it means exactly "the branch that writes it dropped it".
+
+#12658 supersedes C2's raw-price policy: every open-market writer now uses a
+usable bounded book, never an undated trade. The 37-point-wide specimen is
+still refused. C1's exact refusal set and partial-payload safeguards remain.
 """
 
 from __future__ import annotations
@@ -130,14 +134,10 @@ class TestTheSpecimen:
         legs = _side_legs()
         out = _emitted(_game(legs=legs))
         for leg in legs:
-            assert out[leg.condition_id] is leg.outcome_prices[0]
+            assert out[leg.condition_id] == leg.outcome_prices[0]
 
-    def test_the_resolver_would_still_have_priced_it(self):
-        """Why the refused set cannot ask the resolver: it admits the raw 0.53
-        (the parked sibling, not in this ship)."""
-        assert polymarket._resolve_market_probability_with_source(_moneyline()) == (
-            pytest.approx(0.53), "outcome_prices",
-        )
+    def test_the_resolver_now_refuses_the_same_wide_book(self):
+        assert polymarket._resolve_market_probability_with_source(_moneyline()) == (None, None)
 
 
 class TestSkipNeverSubstitute:
@@ -172,34 +172,43 @@ class TestWhatSurvives:
         """(f3) 0.40 on 0.38/0.42."""
         m = _moneyline(prices=(0.40, 0.60), bid=0.38, ask=0.42, last=0.40)
         out = _emitted(_game(m))
-        assert out[ML] is m.outcome_prices[0]
+        assert out[ML] == m.outcome_prices[0]
         assert ML not in _refused_leg_books(_game(m))
 
     @pytest.mark.parametrize("raw, emitted", [(0.525, True), (0.5251, False)])
-    def test_the_ask_boundary_is_half_a_cent(self, raw, emitted):
-        """(f4) 0.525 kept over a 0.52 ask; 0.5251 skipped."""
+    def test_ask_refutation_keeps_its_boundary_but_wide_quotes_are_not_prices(self, raw, emitted):
+        """The withdrawal predicate retains its tolerance; neither raw print prices a wide book."""
         m = _moneyline(prices=(raw, 1 - raw), bid=0.15, ask=0.52, last=None)
-        assert (ML in _emitted(_game(m))) is emitted
-        assert (ML in _refused_leg_books(_game(m))) is (not emitted)
+        assert polymarket.book_refutes_price(m.best_bid, m.best_ask, raw) is (not emitted)
+        assert ML not in _emitted(_game(m))
+        assert ML in _refused_leg_books(_game(m))
 
     @pytest.mark.parametrize("raw, emitted", [(0.475, True), (0.4749, False)])
-    def test_the_bid_mirror_is_half_a_cent(self, raw, emitted):
-        """(f4) The bid arm: you could sell into a 0.48 bid."""
+    def test_bid_refutation_keeps_its_boundary_but_wide_quotes_are_not_prices(self, raw, emitted):
         m = _moneyline(prices=(raw, 1 - raw), bid=0.48, ask=0.90, last=None)
-        assert (ML in _emitted(_game(m))) is emitted
-        assert (ML in _refused_leg_books(_game(m))) is (not emitted)
+        assert polymarket.book_refutes_price(m.best_bid, m.best_ask, raw) is (not emitted)
+        assert ML not in _emitted(_game(m))
+        assert ML in _refused_leg_books(_game(m))
 
-    @pytest.mark.parametrize("bid, ask", [(0.96, None), (0.96, 1.0), (0, 1)])
-    def test_a_book_that_bounds_nothing_refutes_nothing(self, bid, ask):
-        """(f5) Gotcha #19: ask None or 1.0 cannot be exceeded; 0/1 is inert."""
+    @pytest.mark.parametrize("bid, ask", [(0.80, None), (0.80, 1.0), (0, 1)])
+    def test_an_undated_trade_does_not_price_an_unbounded_book(self, bid, ask):
         m = _moneyline(prices=(0.97, 0.03), bid=bid, ask=ask, last=0.97)
-        assert _emitted(_game(m))[ML] == 0.97
+        assert ML not in _emitted(_game(m))
+        assert not polymarket.book_refutes_price(bid, ask, 0.97)
+
+    @pytest.mark.parametrize("ask", [None, 1.0])
+    def test_a_tight_no_ask_book_prices_at_the_midpoint_not_the_trade(self, ask):
+        m = _moneyline(prices=(0.97, 0.03), bid=0.96, ask=ask, last=0.97)
+        assert _emitted(_game(m))[ML] == pytest.approx(0.98)
         assert ML not in _refused_leg_books(_game(m))
 
-    def test_a_blowout_wide_spread_still_prices_through_the_last_trade(self):
-        """(f5) Gotcha #19: a stale midpoint over a wide book gives way to the trade."""
+    def test_a_wide_book_does_not_date_a_blowout_trade(self):
         m = _moneyline(prices=(0.50, 0.50), bid=0.02, ask=0.98, last=0.97)
-        assert _emitted(_game(m))[ML] == 0.97
+        assert ML not in _emitted(_game(m))
+
+    def test_a_current_near_certain_book_still_prices(self):
+        m = _moneyline(prices=(0.50, 0.50), bid=0.965, ask=0.975, last=0.50)
+        assert _emitted(_game(m))[ML] == pytest.approx(0.97)
 
     def test_the_liquid_packers_062_control_is_emitted_and_not_refused(self):
         """Authority (c): the named-side liquid moneyline."""
@@ -212,9 +221,9 @@ class TestWhatSurvives:
 class TestMidpointControlsUnchanged:
     """(f6) #1578 / #6676 / #7548 behave as before inside the game branch."""
 
-    def test_a_fabricated_midpoint_gives_way_to_a_trade_inside_its_book(self):
+    def test_a_fabricated_midpoint_does_not_give_way_to_an_undated_trade(self):
         m = _moneyline(prices=(0.335, 0.665), bid=0.15, ask=0.52, last=0.40)
-        assert _emitted(_game(m))[ML] == 0.40
+        assert ML not in _emitted(_game(m))
 
     def test_a_fabricated_midpoint_with_a_refuted_trade_is_dropped_and_refused(self):
         """#7548 then C1: the drop now reaches the refused set."""
@@ -247,9 +256,8 @@ class TestOneDefinition:
         _moneyline(),                                                # resolver writes, branch drops
         _moneyline(prices=(0.40, 0.60), bid=0, ask=0.99, last=None),  # resolver drops, branch writes
     ])
-    def test_the_resolver_strawman_fails_the_same_invariant(self, moneyline):
-        with pytest.raises(AssertionError):
-            _assert_refused_is_exactly_dropped(_game(moneyline), _resolver_strawman)
+    def test_the_resolver_and_parent_now_have_one_policy(self, moneyline):
+        _assert_refused_is_exactly_dropped(_game(moneyline), _resolver_strawman)
 
     def test_the_producer_reads_the_branch_not_the_resolver(self):
         src = inspect.getsource(_refused_leg_books)
@@ -285,26 +293,25 @@ class TestScopeLimits:
 
 
 class TestOtherShapesUntouched:
-    def test_negrisk_still_emits_a_raw_value_its_book_refutes(self):
-        """C2 is game-branch only: negRisk prices through the resolver, unchanged."""
+    def test_negrisk_also_refuses_the_wide_book(self):
         event = _game(neg_risk=True)
         out = _emitted(event)
-        assert out[ML] == pytest.approx(0.53)
-        assert ML not in _refused_leg_books(event)
+        assert ML not in out
+        assert ML in _refused_leg_books(event)
 
     def test_negrisk_refused_set_is_still_the_resolvers(self):
         m = _moneyline(prices=(0.335, 0.665), last=0.90)
         event = _game(m, neg_risk=True)
         assert _refused_leg_books(event) == _resolver_strawman(event) == {ML: (0.15, 0.52)}
 
-    def test_single_market_still_emits_and_refuses_nothing(self):
+    def test_single_market_refuses_price_without_expanding_withdrawal_scope(self):
         from app.services.polymarket_api import PolymarketEvent
 
         event = PolymarketEvent(
             id="61040985", title="Lions vs. Packers", neg_risk=False,
             markets=[_moneyline()],
         )
-        assert [od["prob"] for od in _parent_outcome_data(event)][0] == pytest.approx(0.53)
+        assert _parent_outcome_data(event) == []
         assert _refused_leg_books(event) == {}
 
 
@@ -327,16 +334,16 @@ async def _fetch(event):
 
 
 class TestTheRefreshFetchTagsTheParentRefusal:
-    """The review's correction (2026-10-06): ``futures_price_refresh`` resolves the
-    specimen to 0.53 through the unchanged resolver. The fetch keeps that item —
-    decomposed ``_yes``/``_no`` rows price on it — and TAGS it, so the writer skips
-    only the parent's bare row. The composed write/withdraw is proved against real
-    Postgres in ``integration/test_polymarket_refused_leg_withdrawn_9399_real_postgres.py``."""
+    """A refusal reaches the guarded parent withdrawal, never the price writer.
 
-    async def test_the_specimen_is_kept_tagged_and_its_book_still_reaches_the_withdrawal(self):
+    #12658 also refuses the child. The marker retains the condition for twin
+    lookup without a price, snapshot or freshness stamp on either row.
+    """
+
+    async def test_the_specimen_is_unpriced_and_its_book_still_reaches_the_withdrawal(self):
         items, refuted = await _fetch(_game())
-        assert items[ML]["probability"] == pytest.approx(0.53), "resolver unchanged"
-        assert items[ML].get("parent_book_refused") is True
+        assert items[ML]["probability"] is None
+        assert items[ML]["parent_book_refused"] is True
         assert refuted == {"61040985": {ML: (0.15, 0.52)}}
 
     async def test_the_emitted_legs_are_not_tagged(self):

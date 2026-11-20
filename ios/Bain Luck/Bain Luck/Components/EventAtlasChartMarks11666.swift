@@ -26,7 +26,7 @@ nonisolated enum EventAtlasSettledResult11666: String, Equatable, Sendable {
 /// - Solid (`●`) = Recorded reading
 /// - Connector (`—`) = Change
 /// - `✓ Won` / `✗ Lost` = Result as a word (never a synthetic 100% point)
-/// - Any real reading tappable/scrubbable for its exact time in PT
+/// - Any real reading tappable/scrubbable for its exact time in the chart's timezone (#12628)
 nonisolated struct EventAtlasChartMarkKeyModel11666: Equatable, Sendable {
     let showsOpening: Bool
     let openingLabel: String
@@ -36,7 +36,6 @@ nonisolated struct EventAtlasChartMarkKeyModel11666: Equatable, Sendable {
     let settledWonWord: String
     let settledLostWord: String
     let settledExplanation: String
-    let tapHint: String
 
     init(settledResult: EventAtlasSettledResult11666?, includesOpening: Bool, openingLabel: String = "Pregame") {
         self.showsOpening = includesOpening
@@ -47,7 +46,6 @@ nonisolated struct EventAtlasChartMarkKeyModel11666: Equatable, Sendable {
         self.settledWonWord = EventAtlasSettledResult11666.won.word
         self.settledLostWord = EventAtlasSettledResult11666.lost.word
         self.settledExplanation = "Result as a word"
-        self.tapHint = "Tap any reading for exact time (PT)"
     }
 }
 
@@ -93,22 +91,49 @@ nonisolated enum EventAtlasChartMarks11666 {
         return max(1, Int(ceil(Double(pointCount) / 28.0)))
     }
 
-    private static let exactTimestampFormatterPT: DateFormatter = {
+    private static let pacificTimeZone = TimeZone(identifier: "America/Los_Angeles") ?? .current
+
+    /// Concise timezone suffix for chart scrub/tap readouts (#12628):
+    /// keeps `"PT"` for `America/Los_Angeles` and uses the zone's active abbreviation
+    /// (e.g. `"EST"` / `"EDT"` in `America/New_York`, `"GMT"` / `"BST"` in `Europe/London`)
+    /// so x-axis ticks and tapped-reading readouts always share one clock.
+    static func timeZoneShortLabel(for date: Date, in timeZone: TimeZone) -> String {
+        if timeZone.identifier == "America/Los_Angeles" {
+            return "PT"
+        }
+        let abbr = timeZone.abbreviation(for: date) ?? timeZone.identifier
+        if abbr == "GMT+0" || abbr == "GMT-0" {
+            return "GMT"
+        }
+        return abbr
+    }
+
+    /// Formats a date with exact seconds in `timeZone` (defaults to the reader's local timezone, `#12628`).
+    static func formatExactTimestamp(_ date: Date, timeZone: TimeZone = .autoupdatingCurrent) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? .current
+        formatter.timeZone = timeZone
         formatter.dateFormat = "MMM d, h:mm:ss a"
-        return formatter
-    }()
+        return "\(formatter.string(from: date)) \(timeZoneShortLabel(for: date, in: timeZone))"
+    }
 
-    private static let exactTimestampLock = NSLock()
+    /// Formats a date to the minute without seconds in `timeZone` (defaults to the reader's local timezone, `#12628`).
+    static func formatMinuteTimestamp(_ date: Date, timeZone: TimeZone = .autoupdatingCurrent) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "MMM d, h:mm a"
+        return "\(formatter.string(from: date)) \(timeZoneShortLabel(for: date, in: timeZone))"
+    }
 
-    /// Formats a date as an exact PT timestamp with seconds (e.g. `"Nov 6, 4:15:30 PM PT"`),
-    /// matching web `formatAtlasTimestampPT(ts, { includeSeconds: true })`.
+    /// Formats a date as an exact PT timestamp with seconds (e.g. `"Nov 6, 4:15:30 PM PT"`).
     static func formatExactTimestampPT(_ date: Date) -> String {
-        exactTimestampLock.lock()
-        defer { exactTimestampLock.unlock() }
-        return "\(exactTimestampFormatterPT.string(from: date)) PT"
+        formatExactTimestamp(date, timeZone: pacificTimeZone)
+    }
+
+    /// Formats a date as a minute-precision PT timestamp without seconds (e.g. `"Nov 6, 4:15 PM PT"`).
+    static func formatMinuteTimestampPT(_ date: Date) -> String {
+        formatMinuteTimestamp(date, timeZone: pacificTimeZone)
     }
 
     /// Maximum scrub-to-observation snap distance when a series spans at least two points.
@@ -228,7 +253,8 @@ nonisolated enum EventAtlasChartMarks11666 {
         selectedDate: Date?,
         outcomeName: String,
         includesOpening: Bool,
-        openingLabel: String = "Pregame"
+        openingLabel: String = "Pregame",
+        timeZone: TimeZone = .autoupdatingCurrent
     ) -> EventAtlasSelectedReadingModel11666? {
         let resolvedRows = rows.contains(where: \.isSelected)
             ? rows
@@ -239,7 +265,7 @@ nonisolated enum EventAtlasChartMarks11666 {
             outcomeName: outcomeName,
             badgeText: effectiveOpening ? openingLabel : "Recorded",
             probabilityText: formatProbability(row.probability),
-            timestampTextPT: formatExactTimestampPT(row.date),
+            timestampTextPT: formatExactTimestamp(row.date, timeZone: timeZone),
             isOpening: effectiveOpening
         )
     }
@@ -291,6 +317,10 @@ nonisolated enum EventAtlasChartMarks11666 {
     }
 
     /// Computes the placement of the settled result word (`✓ Won` or `✗ Lost`) beside the last recorded dot.
+    /// Reserves the top 20pt period-chip band (`OddsChartView.endLabelTopReserve9483`) plus half the badge height
+    /// (`minTopY = OddsChartView.endLabelTopReserve9483 + 8`) when placed left of a right-edge terminal dot
+    /// so `✓ Won` never overlaps the `Final` period marker chip at `y = 10`, without capping lower dots on tall
+    /// iPad or Full Screen charts.
     static func resultWordPlacement(
         result: EventAtlasSettledResult11666,
         dotX: CGFloat,
@@ -300,6 +330,7 @@ nonisolated enum EventAtlasChartMarks11666 {
         let placesLeft = dotX > plotWidth - 56 && dotX - 48 > 0
         let offset: CGFloat = 26
         let labelX = placesLeft ? dotX - offset : dotX + offset
+        let minTopY: CGFloat = placesLeft ? OddsChartView.endLabelTopReserve9483 + 8 : 10
         return EventAtlasResultWordPlacement11666(
             result: result,
             word: result.word,
@@ -307,7 +338,7 @@ nonisolated enum EventAtlasChartMarks11666 {
             dotX: dotX,
             dotY: dotY,
             labelX: labelX,
-            labelY: dotY
+            labelY: max(minTopY, dotY)
         )
     }
 }
@@ -336,20 +367,6 @@ struct EventAtlasChartHeaderView11666: View {
     var gameStart: Date? = nil
 
     var body: some View {
-        let settled = EventAtlasChartMarks11666.settledResult(
-            dataPoints: dataPoints,
-            checkpoints: checkpoints,
-            history: history,
-            status: status,
-            sides: sides,
-            homeScoreOverride: homeScore,
-            awayScoreOverride: awayScore,
-            servedSettledResult: servedSettledResult
-        )
-        let keyModel = EventAtlasChartMarkKeyModel11666(
-            settledResult: settled,
-            includesOpening: includesOpening
-        )
         let baseRows = EventAtlasChartMarks11666.observationRows(
             dataPoints: dataPoints,
             checkpoints: checkpoints,
@@ -358,113 +375,113 @@ struct EventAtlasChartHeaderView11666: View {
             gameStart: gameStart
         )
 
-        VStack(alignment: .leading, spacing: 6) {
-            FlowLayout(spacing: 10) {
-                if keyModel.showsOpening {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .strokeBorder(Color.primary, lineWidth: 1.75)
-                            .background(Circle().fill(Color.systemBackground))
-                            .frame(width: 8, height: 8)
-                        Text(keyModel.openingLabel)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(Color.primary)
-                        .frame(width: 8, height: 8)
-                    Text(keyModel.recordedLabel)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                HStack(spacing: 4) {
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(Color.primary)
-                        .frame(width: 12, height: 2)
-                    Text(keyModel.changeLabel)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                if keyModel.showsSettledResultWords {
-                    HStack(spacing: 3) {
-                        Text(keyModel.settledWonWord)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.primary)
-                        Text("/")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                        Text(keyModel.settledLostWord)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Text(keyModel.settledExplanation)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    .accessibilityIdentifier("event.atlas.chartKeyResultWord")
-                }
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("event.atlas.chartMarkKey")
-
-            EventAtlasSelectedReadingSlot11666(
-                selection: selection,
-                baseRows: baseRows,
-                outcomeName: homeName,
-                includesOpening: includesOpening,
-                openingLabel: keyModel.openingLabel,
-                tapHint: keyModel.tapHint,
-                primaryColor: primaryColor
-            )
-        }
-        .padding(.bottom, 2)
+        EventAtlasSelectedReadingSlot11666(
+            selection: selection,
+            baseRows: baseRows,
+            checkpoints: checkpoints,
+            outcomeName: homeName,
+            includesOpening: includesOpening,
+            openingLabel: "Pregame",
+            primaryColor: primaryColor
+        )
     }
 }
 
-/// Fixed-height readout slot that observes `selection` without shifting the chart plot vertically.
+/// Scrub/tap readout slot (#11666 Step E2, updated for Ruling 201):
+/// renders nothing at rest (no legend line, no "Tap any reading..." prompt)
+/// so the chart keeps a single title row with the All / Since Start control.
 private struct EventAtlasSelectedReadingSlot11666: View {
     @ObservedObject var selection: OddsChartSelection
+    @Environment(\.timeZone) private var timeZone
     let baseRows: [EventAtlasObservationRow11666]
+    let checkpoints: PublicationCheckpointMount4974?
     let outcomeName: String
     let includesOpening: Bool
     let openingLabel: String
-    let tapHint: String
     let primaryColor: Color
 
-    var body: some View {
-        let selectedModel = EventAtlasChartMarks11666.selectedReading(
+    private enum ResolvedSlotState {
+        case idle
+        case withheld
+        case reading(EventAtlasSelectedReadingModel11666)
+    }
+
+    private var resolvedState: ResolvedSlotState {
+        if let checkpoints {
+            guard selection.date != nil || selection.checkpoint != nil else { return .idle }
+            switch checkpoints.readout(date: selection.date, scrub: selection.checkpoint) {
+            case .withheld:
+                return .withheld
+            case .checkpoint(let cp):
+                return .reading(EventAtlasSelectedReadingModel11666(
+                    outcomeName: outcomeName,
+                    badgeText: "Recorded",
+                    probabilityText: formatProbability(cp.vertex.p),
+                    timestampTextPT: EventAtlasChartMarks11666.formatExactTimestamp(cp.date, timeZone: timeZone),
+                    isOpening: false
+                ))
+            case .legacy(let pt):
+                let effectiveOpening = includesOpening
+                    && baseRows.first.map { $0.isOpening && $0.date == pt.date } == true
+                return .reading(EventAtlasSelectedReadingModel11666(
+                    outcomeName: outcomeName,
+                    badgeText: effectiveOpening ? openingLabel : "Recorded",
+                    probabilityText: formatProbability(pt.probability),
+                    timestampTextPT: EventAtlasChartMarks11666.formatExactTimestamp(pt.date, timeZone: timeZone),
+                    isOpening: effectiveOpening
+                ))
+            }
+        }
+        if selection.checkpoint == .withheld {
+            return .withheld
+        }
+        if let selectedModel = EventAtlasChartMarks11666.selectedReading(
             rows: baseRows,
             selectedDate: selection.date,
             outcomeName: outcomeName,
             includesOpening: includesOpening,
-            openingLabel: openingLabel
-        )
+            openingLabel: openingLabel,
+            timeZone: timeZone
+        ) {
+            return .reading(selectedModel)
+        }
+        return .idle
+    }
 
-        Group {
-            if let selectedModel {
-                ViewThatFits(in: .horizontal) {
-                    singleLineReadout(selectedModel)
-                    twoLineReadout(selectedModel)
-                }
+    var body: some View {
+        switch resolvedState {
+        case .idle:
+            EmptyView()
+        case .withheld:
+            Text(PublicationCheckpointReadoutSlot4974.withheldText)
+                .font(.caption2)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                .accessibilityElement(children: .combine)
+                .background(Color.systemBackground.opacity(0.95), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.secondary.opacity(0.18), lineWidth: 1)
+                )
+                .padding(.bottom, 2)
                 .accessibilityIdentifier("event.atlas.selectedReading")
-            } else {
-                HStack(spacing: 6) {
-                    Text(tapHint)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 2)
-                .padding(.vertical, 6)
-                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-                .accessibilityIdentifier("event.atlas.selectedReadingPrompt")
+        case .reading(let selectedModel):
+            ViewThatFits(in: .horizontal) {
+                singleLineReadout(selectedModel)
+                twoLineReadout(selectedModel)
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .background(Color.systemBackground.opacity(0.95), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.secondary.opacity(0.18), lineWidth: 1)
+            )
+            .padding(.bottom, 2)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("event.atlas.selectedReading")
         }
     }
 
@@ -491,7 +508,7 @@ private struct EventAtlasSelectedReadingSlot11666: View {
                 .fixedSize(horizontal: true, vertical: false)
             Text(selectedModel.badgeText.uppercased())
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1.5)
                 .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
@@ -505,7 +522,7 @@ private struct EventAtlasSelectedReadingSlot11666: View {
                 .foregroundStyle(.tertiary)
             Text(selectedModel.timestampTextPT)
                 .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: true, vertical: false)
             Spacer(minLength: 4)
             Button("Clear") {
@@ -513,7 +530,7 @@ private struct EventAtlasSelectedReadingSlot11666: View {
             }
             .font(.caption2.weight(.semibold))
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DS.textSecondaryReadable)
             .fixedSize(horizontal: true, vertical: false)
         }
     }
@@ -527,7 +544,7 @@ private struct EventAtlasSelectedReadingSlot11666: View {
                     .foregroundStyle(.primary)
                 Text(selectedModel.badgeText.uppercased())
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1.5)
                     .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
@@ -540,11 +557,11 @@ private struct EventAtlasSelectedReadingSlot11666: View {
                 }
                 .font(.caption2.weight(.semibold))
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             }
             Text(selectedModel.timestampTextPT)
                 .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
         }
     }
 }
@@ -570,6 +587,10 @@ struct EventAtlasChartOverlay11666: View {
     var servedSettledResult: String? = nil
     var gameStart: Date? = nil
     var settledResult: EventAtlasSettledResult11666? = nil
+    /// When `LiveChartEdgeMarker` owns the live endpoint (`liveSplit.tail.to`),
+    /// suppress drawing a static 6pt dot at `tail.to` so no premature dot snaps
+    /// into empty space ahead of the gliding line (#12693).
+    var liveTailVertex: LiveEdgeVertex? = nil
 
     var body: some View {
         let baseRows = EventAtlasChartMarks11666.observationRows(
@@ -612,7 +633,7 @@ struct EventAtlasChartOverlay11666: View {
                             )
                             .frame(width: 8, height: 8)
                             .position(x: screenX, y: screenY)
-                    } else if row.isVisibleSolid {
+                    } else if row.isVisibleSolid, !isOwnedByLiveEdge(row) {
                         Circle()
                             .fill(primaryColor)
                             .frame(width: 6, height: 6)
@@ -624,6 +645,8 @@ struct EventAtlasChartOverlay11666: View {
             EventAtlasSelectedMarkOverlay11666(
                 selection: selection,
                 baseRows: baseRows,
+                checkpoints: checkpoints,
+                includesOpening: includesOpening,
                 proxy: proxy,
                 plotFrame: plotFrame,
                 primaryColor: primaryColor
@@ -641,7 +664,7 @@ struct EventAtlasChartOverlay11666: View {
                 )
                 Text(placement.word)
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(settled == .won ? Color.green : Color.secondary)
+                    .foregroundStyle(settled == .won ? DS.greenReadable : DS.textSecondaryReadable)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1.5)
                     .background(Color.systemBackground.opacity(0.88), in: RoundedRectangle(cornerRadius: 3))
@@ -655,27 +678,53 @@ struct EventAtlasChartOverlay11666: View {
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
+
+    private func isOwnedByLiveEdge(_ row: EventAtlasObservationRow11666) -> Bool {
+        guard let liveTailVertex else { return false }
+        return abs(row.date.timeIntervalSince(liveTailVertex.date)) < 1e-6
+            && abs(row.probability - liveTailVertex.probability) < 1e-9
+    }
 }
 
 /// Lightweight selection ring overlay that observes `selection` without rebuilding static marks.
 private struct EventAtlasSelectedMarkOverlay11666: View {
     @ObservedObject var selection: OddsChartSelection
     let baseRows: [EventAtlasObservationRow11666]
+    let checkpoints: PublicationCheckpointMount4974?
+    let includesOpening: Bool
     let proxy: ChartProxy
     let plotFrame: CGRect
     let primaryColor: Color
 
-    var body: some View {
+    private var selectedTarget: (date: Date, probability: Double, isOpening: Bool)? {
+        if let checkpoints {
+            guard selection.date != nil || selection.checkpoint != nil else { return nil }
+            switch checkpoints.readout(date: selection.date, scrub: selection.checkpoint) {
+            case .withheld:
+                return nil
+            case .checkpoint(let cp):
+                return (cp.date, cp.vertex.p, false)
+            case .legacy(let pt):
+                let isOpening = includesOpening
+                    && baseRows.first.map { $0.isOpening && $0.date == pt.date } == true
+                return (pt.date, pt.probability, isOpening)
+            }
+        }
         let rows = EventAtlasChartMarks11666.applyingSelection(to: baseRows, selectedDate: selection.date)
-        if let row = rows.first(where: \.isSelected),
-           let x = proxy.position(forX: row.date),
-           let y = proxy.position(forY: row.probability),
+        guard let row = rows.first(where: \.isSelected) else { return nil }
+        return (row.date, row.probability, row.isOpening)
+    }
+
+    var body: some View {
+        if let target = selectedTarget,
+           let x = proxy.position(forX: target.date),
+           let y = proxy.position(forY: target.probability),
            x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
             let screenX = plotFrame.minX + x
             let screenY = plotFrame.minY + y
 
             ZStack {
-                if row.isOpening {
+                if target.isOpening {
                     Circle()
                         .fill(Color.systemBackground)
                         .overlay(

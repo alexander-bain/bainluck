@@ -458,7 +458,8 @@ async def _seed(session):
     # rather than guessed, against the 0.25 threshold the route pins with
     # `SET LOCAL pg_trgm.similarity_threshold`. The margin is real but thin: if
     # this team's NAME changes, re-measure instead of assuming the test still
-    # exercises the path.
+    # exercises the path. #12290 now handles `celtcs` directly; the generic
+    # fallback controls use the uncurated `celticcs` spelling instead.
     session.add(Team(sport_id=nba.id, name="Boston Celtics", abbreviation="BOS"))
 
     # LAT-P046 — the POOL specimen, transcribed from production 2026-08-13.
@@ -541,7 +542,7 @@ async def _seed(session):
     # The fallback resolves its correction against `teams`, so the Miners need a
     # team row for the `niners` path to be reachable at all — without it the
     # suppression test would pass vacuously. The fallback is proven ALIVE in this
-    # fixture by `celtcs` -> Boston Celtics above (similarity 0.294, measured).
+    # fixture by the uncurated `celticcs` -> Boston Celtics correction below.
     session.add(Team(sport_id=ncaaf.id, name="UTEP Miners", abbreviation="UTEP"))
 
     # #8250 — the reported pair, verbatim names. For `red socks`, plain
@@ -718,8 +719,8 @@ async def search(seeded_db):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
 
-        async def _do(q: str) -> dict:
-            resp = await client.get("/api/events/search", params={"q": q})
+        async def _do(q: str, **params) -> dict:
+            resp = await client.get("/api/events/search", params={"q": q, **params})
             assert resp.status_code == 200, f"{q!r} -> HTTP {resp.status_code}"
             return resp.json()
 
@@ -777,6 +778,67 @@ def _typeahead_texts(payload) -> list[str]:
     if not isinstance(items, list):
         return []
     return [str(i.get("text") or i.get("name") or "") for i in items if isinstance(i, dict)]
+
+
+@pytest.fixture
+async def team_first_rows(seeded_db):
+    """#12290 resolves curated names with no alternate-name backfill."""
+    from sqlalchemy import select
+
+    from app.models.models import Sport, Team
+
+    _engine, maker = seeded_db
+    async with maker() as session:
+        nfl = (await session.execute(
+            select(Sport).where(Sport.key == "americanfootball_nfl")
+        )).scalar_one()
+        cricket = (await session.execute(
+            select(Sport).where(Sport.key == "cricket_cpl")
+        )).scalar_one()
+        mlb = (await session.execute(
+            select(Sport).where(Sport.key == "baseball_mlb")
+        )).scalar_one()
+        nhl = (await session.execute(
+            select(Sport).where(Sport.key == "icehockey_nhl")
+        )).scalar_one()
+        session.add_all([
+            Team(sport_id=nfl.id, name="Kansas City Chiefs", abbreviation="KC"),
+            Team(sport_id=nfl.id, name="New England Patriots", abbreviation="NE"),
+            Team(sport_id=nfl.id, name="San Francisco 49ers", abbreviation="SF"),
+            Team(sport_id=cricket.id, name="St Kitts and Nevis Patriots", abbreviation="SKN"),
+            Team(sport_id=mlb.id, name="New York Yankees", abbreviation="NYY"),
+            Team(sport_id=nhl.id, name="Toronto Maple Leafs", abbreviation="TOR"),
+        ])
+        await session.commit()
+
+
+@pytest.mark.parametrize("surface", ["search", "typeahead"])
+@pytest.mark.parametrize("query,expected", [
+    ("chiefs", "Kansas City Chiefs"),
+    ("patroits", "New England Patriots"),
+    ("niners", "San Francisco 49ers"),
+    ("celtcs", "Boston Celtics"),
+    ("pinstripes", "New York Yankees"),
+    ("maple laefs", "Toronto Maple Leafs"),
+])
+async def test_team_name_query_carries_its_owned_name_to_the_reader(
+    team_first_rows, search, typeahead, surface, query, expected
+):
+    payload = await (search if surface == "search" else typeahead)(query)
+    teams = payload["teams"] if surface == "search" else [
+        row for row in payload["suggestions"] if row.get("type") == "team"
+    ]
+    assert teams, payload
+    name_key = "name" if surface == "search" else "text"
+    assert teams[0][name_key] == expected
+    assert teams[0]["query_names_team"] is True
+    assert all("_aliases" not in row for row in teams)
+    assert payload.get("did_you_mean") is None
+    assert not any(row[name_key] == "St Kitts and Nevis Patriots" for row in teams)
+    if query == "patroits" and surface == "search":
+        pairings = _event_pairings(payload)
+        assert any("New England Patriots" in pairing for pairing in pairings)
+        assert not any("St Kitts" in pairing for pairing in pairings)
 
 
 def _futures_names(payload: dict) -> list[str]:
@@ -1441,14 +1503,15 @@ async def test_a_filtered_bucket_does_not_trigger_a_did_you_mean(search):
 async def test_a_genuinely_unmatched_query_still_gets_its_correction(search):
     """The guard must not disable did-you-mean wholesale.
 
-    `celtcs` matches no event by substring at all, so the fallback SHOULD run —
-    that is the case it was written for. Asserting only the suppression direction
-    would let a change that kills the feature entirely pass.
+    `celticcs` is not a curated spelling and matches no event by substring, so
+    the fallback SHOULD run. The observed `celtcs` now has a direct search alias.
+    Asserting only the suppression direction would let a change that kills
+    the fallback entirely pass.
     """
-    payload = await search("celtcs")
+    payload = await search("celticcs")
     assert payload.get("did_you_mean") == "Boston Celtics", (
         f"expected a correction to 'Boston Celtics', got "
-        f"{payload.get('did_you_mean')!r}. `%celtcs%` matches no event by "
+        f"{payload.get('did_you_mean')!r}. `%celticcs%` matches no event by "
         "substring, so the guard must let the fallback run — otherwise "
         "did-you-mean is dead for every query, not just the filtered ones."
     )
@@ -1463,7 +1526,7 @@ async def test_a_two_word_misspelling_gets_the_same_rescue_as_a_one_word_one(sea
     says no results"*.
 
     Seeded analogue, so this runs on the contract fixture rather than production:
-    `boston celtcs` is the two-word shape of the `celtcs` case directly above.
+    `boston celtcs` remains an uncurated two-word correction, unlike bare `celtcs`.
     Measured `word_similarity('boston celtcs', 'Boston Celtics')` = **0.786**,
     against **0.500** for the nearest decoy `Boston Bruins` — so this asserts the
     right club, not merely that something came back.
@@ -1507,13 +1570,13 @@ async def test_the_multi_term_correction_refuses_a_near_miss_that_clears_the_pre
 #: #8250 — the multi-term population both twins must answer identically. The
 #: first two are the reported class, the third is #8155's own seeded analogue,
 #: the fourth is a real club plus an ordinary word (the floor must refuse it),
-#: and `celtcs` pins that the single-term arm did not move.
+#: and uncurated `celticcs` pins that the single-term arm still works.
 _TWIN_CORRECTION_CASES = (
     ("red socks", "Boston Red Sox"),
     ("boston red socks", "Boston Red Sox"),
     ("boston celtcs", "Boston Celtics"),
     ("celtics roster", None),
-    ("celtcs", "Boston Celtics"),
+    ("celticcs", "Boston Celtics"),
 )
 
 
@@ -1819,7 +1882,7 @@ async def test_a_resolved_nickname_is_never_corrected_to_a_spelling_neighbour(se
     We KNOW what `niners` names — the map is curated, franchise-anchored and
     sport-keyed — so an honest empty rail beats a guess, and the team and market
     rails still answer. The fallback itself is proven ALIVE in this fixture by
-    the `celtcs` -> Boston Celtics correction (similarity 0.294, measured), so
+    the uncurated `celticcs` -> Boston Celtics correction, so
     this assertion is not passing vacuously.
     """
     pairings = _event_pairings(await search("niners"))
@@ -2662,6 +2725,146 @@ async def typeahead_with_a_rostered_player(search_with_a_rostered_player, typeah
     events_route._roster_index_expires_at = 0.0
     yield typeahead
     events_route._roster_index_expires_at = 0.0
+
+
+@pytest.fixture
+async def search_with_bears_namesakes(seeded_db, search):
+    """#12366: Chicago's schedule beside a live college and a newer final."""
+    from sqlalchemy import select
+    from zoneinfo import ZoneInfo
+
+    from app.models.models import Event, Sport, Team
+
+    _engine, maker = seeded_db
+    now = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York"))
+
+    def on_day(days):
+        return (now + timedelta(days=days)).replace(
+            hour=12, minute=0, second=0, microsecond=0,
+        )
+
+    # Keep the live fixture on today's Eastern calendar date even during the
+    # first five minutes after 00:00 America/New_York (when `now - 5m` would
+    # fall on yesterday Eastern and drop out of `"bears today"`).
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    live_kickoff = max(now - timedelta(minutes=5), day_start)
+
+    async with maker() as session:
+        sports = {
+            row.key: row
+            for row in (await session.execute(select(Sport))).scalars().all()
+        }
+        for key, name, aliases in (
+            ("americanfootball_nfl", "Chicago Bears", ["Bears"]),
+            ("basketball_ncaab", "Maine Black Bears", ["Black Bears"]),
+            ("basketball_wncaab", "Missouri State Bears", ["Bears"]),
+        ):
+            session.add(Team(
+                sport_id=sports[key].id, name=name, alternate_names=aliases,
+            ))
+        for key, home, away, kickoff, status in (
+            ("americanfootball_nfl", "Chicago Bears", "New Orleans Saints", on_day(1), "scheduled"),
+            ("americanfootball_nfl", "Detroit Lions", "Chicago Bears", on_day(8), "scheduled"),
+            ("americanfootball_nfl", "Chicago Bears", "Tampa Bay Buccaneers", on_day(-2), "completed"),
+            ("basketball_ncaab", "Maine Black Bears", "Manhattan Jaspers", live_kickoff, "live"),
+            ("basketball_wncaab", "Wyoming Cowgirls", "Missouri State Bears", on_day(-1), "completed"),
+        ):
+            session.add(Event(
+                sport_id=sports[key].id, home_team_name=home, away_team_name=away,
+                commence_time=kickoff, status=status,
+                home_score=9 if status != "scheduled" else None,
+                away_score=8 if status != "scheduled" else None,
+            ))
+        await session.commit()
+    return search
+
+
+async def test_bears_names_its_franchise_before_live_and_newer_college_games(
+    search_with_bears_namesakes,
+):
+    payload = await search_with_bears_namesakes("bears")
+    assert payload["teams"][0]["name"] == "Chicago Bears"
+    assert _game_pairs(payload) == [
+        "Chicago Bears v New Orleans Saints",
+        "Detroit Lions v Chicago Bears",
+        "Chicago Bears v Tampa Bay Buccaneers",
+        "Maine Black Bears v Manhattan Jaspers",
+        "Wyoming Cowgirls v Missouri State Bears",
+    ]
+
+
+async def test_bears_franchise_order_is_applied_before_the_page_cut(
+    search_with_bears_namesakes,
+):
+    first = await search_with_bears_namesakes("bears", per_page=2, page=1)
+    second = await search_with_bears_namesakes("bears", per_page=2, page=2)
+    assert _game_pairs(first) == [
+        "Chicago Bears v New Orleans Saints", "Detroit Lions v Chicago Bears",
+    ]
+    assert _game_pairs(second)[0] == "Chicago Bears v Tampa Bay Buccaneers"
+
+
+async def test_bears_today_keeps_the_readers_explicit_day_ahead_of_the_club(
+    search_with_bears_namesakes,
+):
+    payload = await search_with_bears_namesakes("bears today")
+    assert _game_pairs(payload)[0] == "Maine Black Bears v Manhattan Jaspers"
+
+
+async def test_naming_a_bears_college_keeps_its_game(
+    search_with_bears_namesakes,
+):
+    payload = await search_with_bears_namesakes("maine black bears")
+    assert _game_pairs(payload) == ["Maine Black Bears v Manhattan Jaspers"]
+
+
+async def test_bears_explicit_college_sport_keeps_its_game(
+    search_with_bears_namesakes,
+):
+    payload = await search_with_bears_namesakes("bears", sport="basketball_ncaab")
+    assert _game_pairs(payload) == ["Maine Black Bears v Manhattan Jaspers"]
+
+
+async def test_an_unfinished_bears_nickname_keeps_the_existing_state_order(
+    search_with_bears_namesakes,
+):
+    payload = await search_with_bears_namesakes("bear")
+    assert _game_pairs(payload)[0] == "Maine Black Bears v Manhattan Jaspers"
+
+
+async def test_two_exact_giants_franchises_keep_the_live_game_first(seeded_db, search):
+    from sqlalchemy import select
+
+    from app.models.models import Event, Sport, Team
+
+    _engine, maker = seeded_db
+    now = datetime.now(timezone.utc)
+    async with maker() as session:
+        nfl = (await session.execute(
+            select(Sport).where(Sport.key == "americanfootball_nfl")
+        )).scalar_one()
+        mlb = (await session.execute(
+            select(Sport).where(Sport.key == "baseball_mlb")
+        )).scalar_one()
+        session.add_all([
+            Team(sport_id=nfl.id, name="New York Giants", alternate_names=["Giants"]),
+            Team(sport_id=mlb.id, name="San Francisco Giants", alternate_names=["Giants"]),
+            Event(
+                sport_id=nfl.id, home_team_name="New York Giants",
+                away_team_name="Philadelphia Eagles", status="scheduled",
+                commence_time=now + timedelta(days=1),
+            ),
+            Event(
+                sport_id=mlb.id, home_team_name="San Francisco Giants",
+                away_team_name="Los Angeles Dodgers", status="live",
+                commence_time=now - timedelta(hours=1), home_score=1, away_score=0,
+            ),
+        ])
+        await session.commit()
+    assert _game_pairs(await search("giants")) == [
+        "San Francisco Giants v Los Angeles Dodgers",
+        "New York Giants v Philadelphia Eagles",
+    ]
 
 
 def _typeahead_rows(payload) -> list[tuple[str, str]]:

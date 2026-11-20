@@ -101,7 +101,7 @@ describe("#1529 the game's winner reaches Game lines", () => {
       ["Philadelphia", 0.62],
       ["New York", 0.38],
     ]);
-    expect(groups.some((g) => g.family === "Other")).toBe(false);
+    expect(groups.some((g) => g.family === "Other markets")).toBe(false);
     // Beside the totals the reader already found there.
     expect(groups.map((g) => g.family)).toEqual(["Game lines", "Game lines"]);
   });
@@ -119,14 +119,14 @@ describe("#1529 what must not move", () => {
   test("a row with no established class stays in Other — the title is never read", () => {
     // Same title, same outcomes, no class: the catalog may not guess.
     expect(familyOf(markets({ other: winnerRows() }), "Philadelphia vs New York"))
-      .toEqual(["Other"]);
+      .toEqual(["Other markets"]);
   });
 
   test.each(["segment_winner", "other", "btts", ""])(
     "a row classed %p stays in Other",
     (cls) => {
       expect(familyOf(markets({ other: winnerRows(cls) }), "Philadelphia vs New York"))
-        .toEqual(["Other"]);
+        .toEqual(["Other markets"]);
     },
   );
 
@@ -144,7 +144,7 @@ describe("#1529 what must not move", () => {
         source: "polymarket", observed_at: FRESH,
       }],
     });
-    expect(familyOf(data, c.market_name).sort()).toEqual(["Other", "Player props"]);
+    expect(familyOf(data, c.market_name).sort()).toEqual(["Other markets", "Player props"]);
   });
 
   test("an unclassified question keeps its Other section beside a classified winner", () => {
@@ -157,6 +157,6 @@ describe("#1529 what must not move", () => {
       ],
     });
     expect(familyOf(data, "Philadelphia vs New York")).toEqual(["Game lines"]);
-    expect(familyOf(data, u.market_name)).toEqual(["Other"]);
+    expect(familyOf(data, u.market_name)).toEqual(["Other markets"]);
   });
 });

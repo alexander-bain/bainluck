@@ -257,8 +257,8 @@ final class SearchTeamRowSportLabelTests: XCTestCase {
             return code.contains("sportKeyDisplayName(")
         }
         XCTAssertEqual(
-            asks.count, 2,
-            "search should ask for the served sport name on exactly two rows (the team row and the event row); found \(asks.count):\n" + asks.joined(separator: "\n")
+            asks.count, 3,
+            "search should ask for the served sport name on all three rows (the team row, the 183-A game card, and the event row); found \(asks.count):\n" + asks.joined(separator: "\n")
         )
         for ask in asks {
             XCTAssertTrue(

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.utils import field_leaders
 from app.utils.field_leaders import (
     OPENING_WEEKEND_SLUG,
     THIS_WEEKS_ECONOMIC_DATA_SLUG,
@@ -19,6 +20,8 @@ from app.utils.roundup_containers import (
     ROUNDUP_PRODUCERS,
     RoundupMembers,
     RoundupRefusal,
+    evaluate_roundup_producer,
+    serve_roundup,
 )
 from app.utils.sibling_family import (
     RT_SCORES_THIS_WEEK_SLUG,
@@ -92,6 +95,58 @@ async def test_tomorrows_highs_least_likely_leaders_and_verbatim_bucket_labels()
         "Chicago · 44°–45°",
     ]
     assert [r["rendered_percent"] for r in res.rows] == [48, 41, 38]
+
+
+@pytest.mark.asyncio
+async def test_field_leader_marks_keep_the_raw_quote_in_the_container_and_roundup(monkeypatch):
+    class FixtureClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW_UTC.astimezone(tz) if tz is not None else NOW_UTC.replace(tzinfo=None)
+
+    monkeypatch.setattr(field_leaders, "datetime", FixtureClock)
+    scaled = _city_market(101, "New York", [
+        ("50°–51°", 0.0), ("52°–53°", 0.27), ("54°–55°", 0.35), ("56°–57°", 0.43),
+    ])
+    for outcome in scaled["outcomes"]:
+        outcome["last_updated"] = outcome.pop("observed_at")
+    unsupported = _city_market(102, "Chicago", [("44°–45°", 0.39), ("46°–47°", 0.33), ("48°–49°", 0.32)])
+    unsupported["source"] = "both"
+    markets = [
+        scaled,
+        unsupported,
+        _city_market(103, "Miami", [("80°–81°", 0.48), ("82°–83°", 0.32), ("84°–85°", 0.20)]),
+        _city_market(104, "Phoenix", [("86°–87°", 0.72), ("88°–89°", 0.18), ("90°–91°", 0.10)]),
+    ]
+    payload = await serve_roundup(TOMORROWS_HIGHS_SLUG, markets, include_children=False, now=NOW_UTC)
+    members = payload["sections"][0]["members"]
+    assert [member["id"] for member in members] == [103, 101, 102]
+
+    feed, _ = await evaluate_roundup_producer(ROUNDUP_PRODUCERS[TOMORROWS_HIGHS_SLUG], markets, now=NOW_UTC)
+    rows = feed["data"]["roundup"]["rows"]
+    assert [row["rendered_percent"] for row in rows] == [48, 41, 37]
+    raw_prices = {outcome["id"]: outcome["probability"] for market in markets for outcome in market["outcomes"]}
+    for member, row, feed_member in zip(members, rows, feed["data"]["items"], strict=True):
+        outcomes = member["card"]["top_outcomes"]
+        assert feed_member["data"]["top_outcomes"] == outcomes
+        by_id = {outcome["id"]: outcome for outcome in outcomes}
+        assert row["source_mark"] == by_id[row["outcome_id"]]["source_mark"]
+        for outcome in outcomes:
+            mark = outcome["source_mark"]
+            if member["id"] == 102:
+                assert mark == {"state": "none", "sources": [], "reason": "source_evidence_incomplete"}
+                continue
+            assert mark["state"] == "single"
+            assert mark["sources"] == [{
+                "key": "kalshi", "name": "Kalshi", "probability": raw_prices[outcome["id"]],
+                "observed_at": None, "reason": "observation_unknown",
+            }]
+            if member["id"] == 101:
+                assert outcome["probability"] == round(raw_prices[outcome["id"]] / 1.05, 8)
+                assert mark["method"] == "Bain Luck field · scaled with the other outcomes to total 100%"
+            else:
+                assert outcome["probability"] == raw_prices[outcome["id"]]
+                assert "method" not in mark
 
 
 @pytest.mark.asyncio
@@ -186,10 +241,93 @@ async def test_opening_weekend_withholds_under_three_and_emits_at_three():
     ]
     emitted = await opening_weekend(three_films, now=NOW_UTC)
     assert isinstance(emitted, RoundupMembers)
+    # #12659: ordered by expected weekend gross descending ($120M–$140M > $90M–$110M > $60M–$75M),
+    # not raw modal bracket probability (where Gladiator II's 58% previously beat Wicked's 52%).
     assert [r["label"] for r in emitted.rows] == [
         "Moana 2 · $120M–$140M",
-        "Gladiator II · $60M–$75M",
         "Wicked: For Good · $90M–$110M",
+        "Gladiator II · $60M–$75M",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_opening_weekend_ranks_wide_releases_above_sub_2_5m_indie_12659():
+    from app.utils.field_leaders import OPENING_WEEKEND_PRODUCER
+
+    assert OPENING_WEEKEND_PRODUCER.order == "sequence"
+
+    films = [
+        {
+            "id": 69847039,
+            "name": '"Victorian Psycho" Opening Weekend Box Office',
+            "status": "open",
+            "source": "polymarket",
+            "category": "entertainment",
+            "mutually_exclusive": True,
+            "resolution_date": "2026-11-09T12:00:00Z",
+            "prices_updated_at": "2026-11-05T17:00:00Z",
+            "outcomes": [
+                {"id": 11, "name": "<2.5m", "probability": 0.92},
+                {"id": 12, "name": "2.5m-4m", "probability": 0.06},
+                {"id": 13, "name": "4m+", "probability": 0.02},
+            ],
+        },
+        {
+            "id": 69847040,
+            "name": '"How to Rob a Bank" Opening Weekend Box Office',
+            "status": "open",
+            "source": "polymarket",
+            "category": "entertainment",
+            "mutually_exclusive": True,
+            "resolution_date": "2026-11-09T12:00:00Z",
+            "prices_updated_at": "2026-11-05T17:00:00Z",
+            "outcomes": [
+                {"id": 21, "name": "<7m", "probability": 0.88},
+                {"id": 22, "name": "7m-9m", "probability": 0.08},
+                {"id": 23, "name": "9m+", "probability": 0.04},
+            ],
+        },
+        {
+            "id": 69847041,
+            "name": '"Ebenezer" Opening Weekend Box Office',
+            "status": "open",
+            "source": "polymarket",
+            "category": "entertainment",
+            "mutually_exclusive": True,
+            "resolution_date": "2026-11-09T12:00:00Z",
+            "prices_updated_at": "2026-11-05T17:00:00Z",
+            "outcomes": [
+                {"id": 31, "name": "<16m", "probability": 0.20},
+                {"id": 32, "name": "16m-19m", "probability": 0.25},
+                {"id": 33, "name": "19m-22m", "probability": 0.38},
+                {"id": 34, "name": "22m+", "probability": 0.17},
+            ],
+        },
+        {
+            "id": 69847099,
+            "name": '"Toy Story 5" Opening Weekend Box Office',
+            "status": "open",
+            "source": "polymarket",
+            "category": "entertainment",
+            "mutually_exclusive": True,
+            "resolution_date": "2026-11-09T12:00:00Z",
+            "prices_updated_at": "2026-11-05T17:00:00Z",
+            "outcomes": [
+                {"id": 41, "name": "80m-100m", "probability": 0.34},
+                {"id": 42, "name": "100m-120m", "probability": 0.44},
+                {"id": 43, "name": "120m+", "probability": 0.22},
+            ],
+        },
+    ]
+
+    emitted = await opening_weekend(films, now=NOW_UTC)
+    assert isinstance(emitted, RoundupMembers)
+    # Top 3 by expected gross: Toy Story 5 (~$107.6M), Ebenezer (~$18.3M), How to Rob a Bank (~$4.0M).
+    # Victorian Psycho (<2.5m · 92%, expected ~$1.4M) no longer sorts #1 or displaces wide releases.
+    assert [r["label"] for r in emitted.rows] == [
+        '"Toy Story 5" · 100m-120m',
+        '"Ebenezer" · 19m-22m',
+        '"How to Rob a Bank" · <7m',
     ]
 
 

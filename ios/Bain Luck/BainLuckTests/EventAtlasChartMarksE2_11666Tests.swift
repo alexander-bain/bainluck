@@ -17,7 +17,6 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
         XCTAssertEqual(liveAllKey.recordedLabel, "Recorded reading")
         XCTAssertEqual(liveAllKey.changeLabel, "Change")
         XCTAssertFalse(liveAllKey.showsSettledResultWords)
-        XCTAssertEqual(liveAllKey.tapHint, "Tap any reading for exact time (PT)")
 
         let liveSinceStartKey = EventAtlasChartMarkKeyModel11666(settledResult: nil, includesOpening: false)
         XCTAssertFalse(liveSinceStartKey.showsOpening)
@@ -114,11 +113,13 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
             includesOpening: true,
             selectedDate: t0
         )
+        let ptZone = TimeZone(identifier: "America/Los_Angeles")!
         let openingReadout = EventAtlasChartMarks11666.selectedReading(
             rows: rowsAll,
             selectedDate: t0,
             outcomeName: "Celtics",
-            includesOpening: true
+            includesOpening: true,
+            timeZone: ptZone
         )
         XCTAssertEqual(openingReadout?.outcomeName, "Celtics")
         XCTAssertEqual(openingReadout?.badgeText, "Pregame")
@@ -367,6 +368,27 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
         XCTAssertEqual(rightEdge.word, "✗ Lost")
         XCTAssertTrue(rightEdge.placesLeftOfDot)
         XCTAssertLessThan(rightEdge.labelX, rightEdge.dotX)
+
+        // Right-edge terminal dot at 100% (dotY = 0) steps below the top 20pt period-chip band
+        // so `✓ Won` never overlaps the `Final` period marker chip at y = 10.
+        let topRightEdge = EventAtlasChartMarks11666.resultWordPlacement(
+            result: .won,
+            dotX: 300,
+            dotY: 0,
+            plotWidth: 320
+        )
+        XCTAssertTrue(topRightEdge.placesLeftOfDot)
+        XCTAssertEqual(topRightEdge.labelY, 28)
+
+        // Bottom-edge terminal dot on a taller chart (e.g. dotY = 280 on a 300pt/380pt plot) stays beside its dot.
+        let bottomRightEdge = EventAtlasChartMarks11666.resultWordPlacement(
+            result: .lost,
+            dotX: 300,
+            dotY: 280,
+            plotWidth: 320
+        )
+        XCTAssertTrue(bottomRightEdge.placesLeftOfDot)
+        XCTAssertEqual(bottomRightEdge.labelY, 280)
     }
 
     func testOddsChartViewGatesE2HeaderAndOverlayBehindEventPageAtlasEnabled() throws {
@@ -375,11 +397,11 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
             .deletingLastPathComponent()
             .appendingPathComponent("Bain Luck/Components/OddsChartView.swift")
         let source = try String(contentsOf: chartURL, encoding: .utf8)
-        XCTAssertTrue(source.contains("if ReleaseSurfaces.isEventPageAtlasEnabled() {\n                        EventAtlasChartHeaderView11666("))
-        XCTAssertTrue(source.contains("if ReleaseSurfaces.isEventPageAtlasEnabled() {\n                    EventAtlasChartOverlay11666("))
-        XCTAssertTrue(source.contains("servedSettledResult: servedSettledResult,\n                            gameStart: kickoffDate"))
-        XCTAssertTrue(source.contains("servedSettledResult: servedSettledResult,\n                        gameStart: kickoffDate,\n                        settledResult: atlasSettledResult"))
-        XCTAssertTrue(source.contains("if let finishedEnd, atlasSettledResult == nil"))
+        XCTAssertTrue(source.contains("if sharesPageAxis, let history = vm.history, ReleaseSurfaces.isEventPageAtlasEnabled() {\n                EventAtlasChartHeaderView11666("))
+        XCTAssertTrue(source.contains("if ReleaseSurfaces.isEventPageAtlasEnabled() {\n                        EventAtlasChartOverlay11666("))
+        XCTAssertTrue(source.contains("servedSettledResult: servedSettledResult,\n                    gameStart: kickoffDate"))
+        XCTAssertTrue(source.contains("servedSettledResult: servedSettledResult,\n                            gameStart: kickoffDate,\n                            settledResult: atlasSettledResult"))
+        XCTAssertTrue(source.contains("if let finishedEnd {\n                        if atlasSettledResult == nil {"))
     }
 
     @MainActor

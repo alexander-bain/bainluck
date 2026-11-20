@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from typing import NamedTuple, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, func, exists
+from sqlalchemy import select, and_, or_, func, exists, union
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, joinedload, selectinload
 
@@ -987,7 +987,10 @@ def _build_movers_query(limit: int, *, pooled: bool):
     `pooled=False` is the legacy full-scan arm, kept as rollback and as the
     equivalence oracle the gate drives both paths through.
     """
-    conditions = [FuturesOutcome.probability_change_24h.isnot(None)]
+    conditions = [
+        FuturesOutcome.probability_change_24h.isnot(None),
+        FuturesOutcome.current_probability.isnot(None),
+    ]
 
     if pooled:
         # LAT-P151: the pool SHAPE moved to `app/utils/movement_pool.py` so the
@@ -1092,11 +1095,33 @@ async def build_and_cache_movers(
 
 def _movers_payload(outcomes, hours: int) -> dict:
     """Shape the response. The ONLY place this dict is spelled."""
+    # #12658: a per-write Polymarket delta only nominates a candidate. A dated
+    # basis must support the move before it may appear in the public list.
+    outcomes = [
+        o for o in outcomes
+        # #12658: a retained delta cannot advertise a move after its current
+        # price was withdrawn. This applies to every venue, including Kalshi.
+        if o.current_probability is not None
+        and (
+            getattr(o.market, "source", None) != "polymarket"
+            or reader_change_24h(
+                o.market, o.id, o.current_probability, o.probability_change_24h
+            ) not in (None, 0)
+        )
+    ]
     return {
         "movers": [
             {
                 "outcome_id": o.id,
-                "name": o.name,
+                "name": (
+                    reader_outcome_name(
+                        getattr(o, "external_id", None),
+                        o.name,
+                        market_threshold_label(o.market) if getattr(o, "market", None) else None,
+                        market_name=getattr(getattr(o, "market", None), "name", None),
+                    )
+                    or o.name
+                ),
                 "market_id": o.market_id,
                 "market_name": o.market.name if o.market else None,
                 "current_probability": float(o.current_probability) if o.current_probability is not None else None,
@@ -1158,7 +1183,12 @@ async def get_futures_movers(
         redis = get_redis_client()
         cached = redis.get(movers_cache_key(hours, limit))
         if cached:
-            return _json.loads(cached)
+            payload = _json.loads(cached)
+            # A worker on the previous release can still warm this shared key.
+            payload["movers"] = [
+                row for row in payload["movers"] if row.get("current_probability") is not None
+            ]
+            return payload
     except Exception:
         pass
 
@@ -1384,6 +1414,7 @@ async def browse_futures(
     # search drop AFTER normalization, and browse has no basis step to sit either
     # side of.
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
+    from app.utils.futures_source_mark import mark_futures_card_rows
     from app.utils.outcome_display import (
         drop_dominant_field_outcomes,
         drop_incoherent_ladder_outcomes,
@@ -1478,10 +1509,20 @@ async def browse_futures(
         # "judge the number RENDERED" rule needs it, since the raw price is no
         # longer the rendered number once a leg is withheld.
         display_outcomes = []
+        _browse_threshold_label = market_threshold_label(market)
+        _browse_market_name = getattr(market, "name", None)
         for o in sorted_outcomes:
             od = {
                 "id": o.id,
-                "name": o.name,
+                "name": (
+                    reader_outcome_name(
+                        getattr(o, "external_id", None),
+                        o.name,
+                        _browse_threshold_label,
+                        market_name=_browse_market_name,
+                    )
+                    or o.name
+                ),
                 "probability": float(o.current_probability) if o.current_probability is not None else None,
                 # #10248 D5 — `reader_change_24h`.
                 "movement": (
@@ -1533,6 +1574,7 @@ async def browse_futures(
                 o["movement"] = None
         leader_pick_order(display_outcomes)
         top3 = display_outcomes[:3]
+        mark_futures_card_rows(market, top3)
         items.append({
             "id": market.id,
             "name": market.name,
@@ -1834,6 +1876,7 @@ async def faceted_futures_search(
     import json as _json
     from sqlalchemy import literal_column, text as sql_text
     from app.utils.event_taxonomy import validate_tag
+    from app.utils.futures_source_mark import mark_futures_card_rows
 
     # Build tag filter from both sources
     tag_filter: list[str] = []
@@ -1964,10 +2007,20 @@ async def faceted_futures_search(
             reverse=True,
         )
         top3 = []
+        _hl_threshold_label = market_threshold_label(market)
+        _hl_market_name = getattr(market, "name", None)
         for o in sorted_outcomes[:3]:
             od = {
                 "id": o.id,
-                "name": o.name,
+                "name": (
+                    reader_outcome_name(
+                        getattr(o, "external_id", None),
+                        o.name,
+                        _hl_threshold_label,
+                        market_name=_hl_market_name,
+                    )
+                    or o.name
+                ),
                 "probability": float(o.current_probability) if o.current_probability is not None else None,
                 # #10248 D5 — `reader_change_24h`.
                 "movement": (
@@ -1983,6 +2036,7 @@ async def faceted_futures_search(
                     if field in od:
                         od[field] = None
             top3.append(od)
+        mark_futures_card_rows(market, top3)
         formatted.append({
             "id": market.id,
             "name": market.name,
@@ -3542,22 +3596,26 @@ async def grouped_feed(
     )
     if slate_market_ids:
         # The same recency pool, plus the slate rows it missed — in ONE read.
+        # #11931: combine the two small ID sets via UNION and join back on PK
+        # instead of `OR(id IN (subquery), id IN (slate_market_ids))`. Postgres
+        # cannot turn an `IN (SELECT ...)` inside an `OR` into a semi-join, so
+        # the old form scanned all of `futures_markets` (13-24 s on prod); the
+        # UNION join bounds the outer lookup to <= limit*5 + len(slate) PK hits.
         recent_ids = (
-            select(FuturesMarket.id)
+            select(FuturesMarket.id.label("id"))
             .where(and_(*filters))
             .order_by(FuturesMarket.updated_at.desc())
             .limit(limit * 5)
         )
+        slate_ids = select(FuturesMarket.id.label("id")).where(
+            FuturesMarket.id.in_(slate_market_ids),
+            and_(*filters),
+        )
+        pool_ids = union(recent_ids, slate_ids).subquery("grouped_feed_pool_ids")
         stmt = (
             select(FuturesMarket)
             .options(selectinload(FuturesMarket.outcomes))
-            .where(
-                and_(*filters),
-                or_(
-                    FuturesMarket.id.in_(recent_ids),
-                    FuturesMarket.id.in_(slate_market_ids),
-                ),
-            )
+            .join(pool_ids, FuturesMarket.id == pool_ids.c.id)
             .order_by(FuturesMarket.updated_at.desc())
         )
     result = await db.execute(stmt)
@@ -4628,6 +4686,13 @@ async def _newest_kalshi_trades(db: AsyncSession, outcome_ids: list[int]) -> dic
     return {outcome_id: price for outcome_id, price in rows.all()}
 
 
+_KALSHI_MULTI_SELECTION_AWARD_SERIES = frozenset({
+    "KXNBAROOKIE1STTEAM",
+    "KXNBAROOKIE2NDTEAM",
+    "KXNBAAWARDFIN",
+})
+
+
 def _unsupported_price_verdicts(
     market: FuturesMarket, candidates: list, latest_trade: dict
 ) -> set[int]:
@@ -4642,6 +4707,8 @@ def _unsupported_price_verdicts(
         getattr(market, "market_type", None),
         getattr(market, "market_metadata", None),
     )
+    series = (getattr(market, "external_id", None) or "").partition("-")[0]
+    multi_selection_award = series in _KALSHI_MULTI_SELECTION_AWARD_SERIES
     return {
         o.id
         for o in candidates
@@ -4689,9 +4756,11 @@ def _unsupported_price_verdicts(
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
             _as_float(latest_trade.get(o.id)),
-            has_trade_evidence=o.id in latest_trade
-            and latest_trade[o.id] is not None,
+            # A stored snapshot with a null trade can inform the award
+            # guard. A missing snapshot still provides no evidence.
+            has_trade_evidence=o.id in latest_trade,
             in_exclusive_field=in_exclusive_field,
+            multi_selection_award=multi_selection_award,
             volume_24h=getattr(o, "volume_24h", None),
             volume_24h_at=getattr(o, "volume_24h_at", None),
             last_seen_at=getattr(o, "last_updated", None),
@@ -5456,11 +5525,43 @@ async def withheld_price_outcome_ids_for_markets(
             venue = (market.source or "").strip().lower()
             venue_ids.setdefault(venue, []).extend(o.id for o in midpoint)
 
-    latest_kalshi_trade = await _newest_kalshi_trades(db, kalshi_ids)
-    venue_rows = {
-        venue: await _newest_venue_trade_rows(db, venue, ids)
-        for venue, ids in venue_ids.items()
-    }
+    kalshi_id_set = set(kalshi_ids)
+    kalshi_midpoint_ids = venue_ids.get(KALSHI_BOOKMAKER)
+    venue_rows: dict[str, list] = {}
+    if kalshi_id_set and kalshi_midpoint_ids:
+        # #11931: both arms read `(outcome_id, last_price)` at each leg's newest
+        # Kalshi capture from the 51 GB `futures_odds_snapshots` table. Query
+        # the union ONCE and fold `max(last_price)` in Python identically to
+        # `_newest_kalshi_trades` while reusing the raw rows for the midpoint
+        # arm (`_closest_trade_by_outcome` filters by each board's candidates).
+        kalshi_union = sorted(kalshi_id_set | set(kalshi_midpoint_ids))
+        kalshi_rows = await _newest_venue_trade_rows(
+            db, KALSHI_BOOKMAKER, kalshi_union
+        )
+        venue_rows[KALSHI_BOOKMAKER] = kalshi_rows
+        latest_kalshi_trade: dict = {}
+        for oid, price in kalshi_rows:
+            if oid not in kalshi_id_set:
+                continue
+            if oid not in latest_kalshi_trade:
+                latest_kalshi_trade[oid] = price
+            elif price is not None and (
+                latest_kalshi_trade[oid] is None or price > latest_kalshi_trade[oid]
+            ):
+                latest_kalshi_trade[oid] = price
+    else:
+        latest_kalshi_trade = (
+            await _newest_kalshi_trades(db, sorted(kalshi_id_set))
+            if kalshi_id_set
+            else {}
+        )
+
+    for venue, ids in venue_ids.items():
+        if venue in venue_rows:
+            continue
+        venue_rows[venue] = await _newest_venue_trade_rows(
+            db, venue, sorted(set(ids))
+        )
 
     withheld: dict[int, set[int]] = {}
     for market in markets:
@@ -5763,6 +5864,8 @@ async def _verified_title_board(db: AsyncSession, market: FuturesMarket) -> list
                 external_id=getattr(orm, "external_id", None),
                 probability=row["probability"],
                 observed_at=parse_aware(getattr(orm, "last_updated", None)),
+                is_winner=row.get("is_winner"),
+                resolution_source=row.get("resolution_source"),
             )
         )
     return board
@@ -5849,7 +5952,48 @@ async def _compose_verified_title(db: AsyncSession, market: FuturesMarket):
             for t in roster
         ]
     )
-    return compose_outcomes(spec, members, boards, index, now)
+    verdict = compose_outcomes(spec, members, boards, index, now)
+    if isinstance(verdict, Composition):
+        from dataclasses import replace
+
+        projections = {market.id: verdict}
+        for member in members[1:]:
+            peer = compose_outcomes(
+                spec, [member, *(m for m in members if m != member)], boards, index, now,
+            )
+            if isinstance(peer, Composition):
+                projections[member.market_id] = peer
+        canonical = loaded[verdict.canonical_market_id]
+        canonical_verdict = projections.get(canonical.id, verdict)
+        observations = [
+            value.observed_at for value in canonical_verdict.overlay.values()
+            if value.probability is not None and value.observed_at is not None
+        ]
+        # Membership already proves this game instant across the loaded
+        # venues. A no-winner deadline (Polymarket) is not the game's date.
+        game_at = min((m.instant for m in members if m.instant is not None), default=None)
+        card_fields = {
+            "sport": canonical.sport.key if canonical.sport else None,
+            "sport_name": (
+                sport_display_name(canonical.sport.key, canonical.sport.name)
+                if canonical.sport else None
+            ),
+            "resolution_date": (
+                game_at.isoformat() if game_at is not None else None
+            ),
+            "outcome_count": len(boards[canonical.id]),
+            "updated_at": canonical.updated_at.isoformat() if canonical.updated_at else None,
+            "prices_updated_at": min(observations) if observations else None,
+        }
+        projections = {
+            mid: replace(peer, canonical_market_name=canonical.name, canonical_card_fields=card_fields)
+            for mid, peer in projections.items()
+        }
+        verdict = replace(
+            projections[market.id],
+            peer_verdicts={mid: peer for mid, peer in projections.items() if mid != market.id},
+        )
+    return verdict
 
 
 #: #12335 step 2: each title market's verdict, kept briefly and shared by every
@@ -5922,12 +6066,17 @@ async def _resolve_verified_title(db: AsyncSession, market: FuturesMarket):
         return Refusal("resolver_error")
     if ttl > 0 and key is not None:
         now = _time.monotonic()
-        if len(_VERIFIED_TITLE_CACHE) >= _VERIFIED_TITLE_CACHE_MAX:
+        entries = {key: verdict}
+        if isinstance(verdict, Composition):
+            entries.update(verdict.peer_verdicts)
+        if len(entries) > _VERIFIED_TITLE_CACHE_MAX:
+            entries = {key: verdict}
+        if len(_VERIFIED_TITLE_CACHE.keys() | entries.keys()) > _VERIFIED_TITLE_CACHE_MAX:
             for stale in [k for k, (exp, _v) in _VERIFIED_TITLE_CACHE.items() if exp <= now]:
                 del _VERIFIED_TITLE_CACHE[stale]
-            if len(_VERIFIED_TITLE_CACHE) >= _VERIFIED_TITLE_CACHE_MAX:
+            if len(_VERIFIED_TITLE_CACHE.keys() | entries.keys()) > _VERIFIED_TITLE_CACHE_MAX:
                 _VERIFIED_TITLE_CACHE.clear()
-        _VERIFIED_TITLE_CACHE[key] = (now + ttl, verdict)
+        _VERIFIED_TITLE_CACHE.update({mid: (now + ttl, value) for mid, value in entries.items()})
     return verdict
 
 
@@ -5977,19 +6126,33 @@ def _overlay_current(row: dict, overlay, prob_key: str) -> bool:
 
 
 def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
-    """Effective verified mode changes current values; nothing else moves.
+    """Effective verified mode uses the shared current values and club names.
 
-    Outcome ids, names, array order, `source` and `bookmakers` stay the
+    Outcome ids, array order, `source` and `bookmakers` stay the
     requested row's provenance. Badges are renumbered by the canonical
     `assign_display_ranks`, because the client sorts on the value it is given.
     """
     from app.utils.outcome_display import assign_display_ranks, normalize_display_probs
+    from app.utils.futures_verified_title import apply_title_display
+    from app.utils.futures_source_mark import (
+        describe_field_normalization, verified_futures_source_mark,
+    )
 
     _stamp_representation(detail, verdict)
     changed = False
     if isinstance(verdict, Composition):
+        game_at = verdict.canonical_card_fields.get("resolution_date")
+        if game_at is not None:
+            detail["resolution_date"] = game_at
         for row in detail["outcomes"]:
-            changed |= _overlay_current(row, verdict.overlay.get(row["id"]), "probability")
+            overlay = verdict.overlay.get(row["id"])
+            changed |= _overlay_current(row, overlay, "probability")
+            if row.get("source_mark", {}).get("state") != "settled":
+                row["source_mark"] = verified_futures_source_mark(
+                    overlay.source_inputs if overlay is not None else (),
+                    row["probability"],
+                    overlay.aggregation_rule if overlay is not None else "unsupported",
+                )
     # A source-only/refused composition can retain complete references. A
     # changed blend has no historical field with those same contributors;
     # its old source-only references are still withheld by _overlay_current.
@@ -6002,10 +6165,15 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
         if not changed
         else None
     )
-    scaled = normalize_display_probs(
-        detail["outcomes"], mutually_exclusive=detail.get("mutually_exclusive", True),
-        field_complete=not detail.get("prices_withheld"), question=detail.get("name"),
+    scaled = (
+        apply_title_display(detail["outcomes"], verdict)
+        if isinstance(verdict, Composition) else None
     )
+    if scaled is None:
+        scaled = normalize_display_probs(
+            detail["outcomes"], mutually_exclusive=detail.get("mutually_exclusive", True),
+            field_complete=not detail.get("prices_withheld"), question=detail.get("name"),
+        )
     if comparisons is not None:
         had_openings = any(
             row.get("opening_probability") is not None for row in detail["outcomes"]
@@ -6029,6 +6197,16 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
             for key in ("opening_probability", "opening_american_odds", "probability_change_24h"):
                 row[key] = None
     assign_display_ranks(detail["outcomes"])
+    original_prices = {o.id: o.current_probability for o in market.outcomes}
+    for row in detail["outcomes"]:
+        overlay = verdict.overlay.get(row["id"]) if isinstance(verdict, Composition) else None
+        describe_field_normalization(
+            row["source_mark"],
+            input_probability=(
+                overlay.probability if overlay else original_prices.get(row["id"])
+            ),
+            displayed_probability=row["probability"],
+        )
     # The stored sentence was written about the source row's numbers.
     if changed and detail.get("hook_description"):
         detail["hook_description"] = None
@@ -6350,7 +6528,15 @@ async def get_related_events(
             # detail in another representation can print that row's own number
             # by id instead of this route's source value beside it.
             "outcome_id": o.id,
-            "outcome_name": o.name,
+            "outcome_name": (
+                reader_outcome_name(
+                    getattr(o, "external_id", None),
+                    o.name,
+                    market_threshold_label(market),
+                    market_name=getattr(market, "name", None),
+                )
+                or o.name
+            ),
             "probability": _served_probability(o),
             "american_odds": None if o.id in withheld else o.current_american_odds,
             "rank": o.rank,
@@ -9694,7 +9880,10 @@ async def get_futures_history(
             _leg_side_label(leg_sides[o.external_id], o.name)
             if o.external_id in leg_sides
             else reader_outcome_name(
-                o.external_id, o.name, market_threshold_label(market)
+                getattr(o, "external_id", None),
+                o.name,
+                market_threshold_label(market),
+                market_name=getattr(market, "name", None),
             )
             or o.name
         )
@@ -10140,7 +10329,15 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
     outcome_dicts = [
         {
             "id": o.id,
-            "name": o.name,
+            "name": (
+                reader_outcome_name(
+                    getattr(o, "external_id", None),
+                    o.name,
+                    market_threshold_label(market),
+                    market_name=getattr(market, "name", None),
+                )
+                or o.name
+            ),
             "probability": float(o.current_probability) if o.current_probability is not None else None,
             "american_odds": o.current_american_odds,
             "rank": o.rank,
@@ -10165,6 +10362,9 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
             getattr(market, "name", "") or "",
         )
     top_outcomes = outcome_dicts[:5]
+    from app.utils.futures_source_mark import mark_futures_card_rows
+
+    mark_futures_card_rows(market, top_outcomes)
 
     # Cross-source info from canonical key
     source_info = None
@@ -10678,7 +10878,10 @@ def _format_market_detail(
                 _leg_side_label(leg_sides[o.external_id], o.name)
                 if leg_sides and o.external_id in leg_sides
                 else reader_outcome_name(
-                    o.external_id, o.name, market_threshold_label(market)
+                    getattr(o, "external_id", None),
+                    o.name,
+                    market_threshold_label(market),
+                    market_name=getattr(market, "name", None),
                 )
                 or o.name
             ),
@@ -11467,6 +11670,23 @@ def _format_market_detail(
     # field whose whole job is to say where the row sits, using the list it sits in.
     assign_display_ranks(outcomes)
 
+    # The source price is the selected stored input, before field normalization.
+    # Withheld values and unresolved results keep an explicit refusal.
+    from app.utils.futures_source_mark import (
+        describe_field_normalization, futures_outcome_source_mark,
+    )
+
+    source_outcomes = {o.id: o for o in sorted_outcomes}
+    for row in outcomes:
+        row["source_mark"] = futures_outcome_source_mark(
+            market, source_outcomes[row["id"]], row,
+        )
+        describe_field_normalization(
+            row["source_mark"],
+            input_probability=source_outcomes[row["id"]].current_probability,
+            displayed_probability=row["probability"],
+        )
+
     # #5906: THE HOOK GOES THROUGH THE SAME GATE THE DISCOVER CARD HAS ALWAYS
     # USED. `routes/feed.py` has run every stored hook past `is_hook_stale`
     # since that module shipped; this serializer published `market.hook_
@@ -11828,11 +12048,21 @@ async def get_group(
         ):
             od = {
                 "id": o.id,
-                "name": o.name,
+                "name": (
+                    reader_outcome_name(
+                        getattr(o, "external_id", None),
+                        o.name,
+                        market_threshold_label(m),
+                        market_name=getattr(m, "name", None),
+                    )
+                    or o.name
+                ),
                 "probability": o.current_probability,
                 "american_odds": probability_to_american(o.current_probability) if o.current_probability and 0 < o.current_probability < 1 else None,
                 "market_id": m.id,
                 "source": m.source,
+                "last_updated": o.last_updated.isoformat() if getattr(o, "last_updated", None) else None,
+                "observed_at": o.last_updated.isoformat() if getattr(o, "last_updated", None) else None,
             }
             if o.id in withheld:
                 # Keyed on presence so the refusal covers any price field this
@@ -11875,6 +12105,7 @@ async def get_group(
             "market_metadata": m.market_metadata,
             "commence_time": m.commence_time.isoformat() if m.commence_time else None,
             "resolution_date": m.resolution_date.isoformat() if m.resolution_date else None,
+            "updated_at": m.updated_at.isoformat() if getattr(m, "updated_at", None) else None,
             "outcomes": outcomes,
             "outcome_count": len(outcomes),
         })

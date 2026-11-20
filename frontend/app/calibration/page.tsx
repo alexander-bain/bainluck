@@ -1556,7 +1556,7 @@ export default function CalibrationPage() {
                     "one place owns the shapes" — but could not reach this copy, which is
                     inside a fold. Both numbers now come off the built panels, so the sentence
                     cannot name a count the control below it does not render. */}
-                {" "}Sportsbook odds arrive in more than one question shape; the
+                {" "}Sportsbook odds arrive in more than one market shape; the
                 prediction markets publish a single shape each, so a per-shape column here would
                 exist for one provider and be blank for the others. The shape-by-shape breakdown is
                 in <a href="#by-source" className="text-accent-brand hover:underline">By Source</a>{" "}
@@ -3064,7 +3064,7 @@ export default function CalibrationPage() {
               the last sentence is load-bearing, not a hedge. No count goes here: the
               `price_derived` census is taken over a different shape than the curve's
               exclusions and its own producer says the two have never been equal. */}
-          <li data-testid="calibration-who-won-note"><strong className="text-text-primary">How do we know who won?</strong> For sports, we use final scores &mdash; no ambiguity. For prediction markets, we use the venue&rsquo;s own settlement: Kalshi&rsquo;s or Polymarket&rsquo;s published answer to the question, or a public record that settles it. We do not take the winner from the market&rsquo;s own closing price &mdash; a prediction we could only grade that way is left out of the curve instead, because a forecast marked by its own price is marking its own homework. The exception is a market that asks a single yes-or-no question, where there is no other price in play and the venue&rsquo;s answer stands on its own.</li>
+          <li data-testid="calibration-who-won-note"><strong className="text-text-primary">How do we know who won?</strong> For sports, we use final scores &mdash; no ambiguity. For prediction markets, we use the venue&rsquo;s own settlement: Kalshi&rsquo;s or Polymarket&rsquo;s published result for the market, or a public record that settles it. We do not take the winner from the market&rsquo;s own closing price &mdash; a prediction we could only grade that way is left out of the curve instead, because a forecast marked by its own price is marking its own homework. The exception is a single yes-or-no market, where there is no other price in play and the venue&rsquo;s result stands on its own.</li>
           {/* #7718. This clause said "vig-removed CONSENSUS closing odds across
               20+ sportsbooks", and the page called the same curve
               "Per-sportsbook" three times above it — in the hero SOURCES card,

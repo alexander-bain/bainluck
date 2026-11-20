@@ -118,6 +118,18 @@ const TEMPLATES: Array<(name: string) => string> = [
   (n) => `Multiple ranking changes in Will ${n} win the title?`,
 ];
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("#5749 — a reason badge is classified by the template, not by the team's name", () => {
   // ARM 1 FIRST, the reader-visible specimen, verbatim from the production card.
   it("arm 1: the Wildcats card no longer claims something wild is happening", () => {

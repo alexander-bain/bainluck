@@ -58,8 +58,20 @@ final class TheEventPageReadsOneDisplayClock9483Tests: XCTestCase {
         XCTAssertFalse(text.contains("now: Date())"), "no reader takes the wall clock inline")
         XCTAssertTrue(text.contains("homeShort: names.home, awayShort: names.away, now: displayNow())"),
                       "the NBA ladders' eligibility reads the display clock")
-        XCTAssertEqual(text.components(separatedBy: "now: displayNow())").count - 1, 5,
-                       "both chart windows, the ladders and the EKG (its venue-settled gate and its step) read the display clock")
+        XCTAssertEqual(text.components(separatedBy: "now: displayNow())").count - 1, 4,
+                       "both chart windows, the ladders and the EKG venue-settled gate read the display clock inline")
+        XCTAssertTrue(
+            text.contains(
+                """
+                                    ekgTracker = EventAtlasLivePath11666.stepEkgTracker(
+                                        ekgTracker,
+                                        observation: observation,
+                                        now: displayNow()
+                                    )
+                """
+            ),
+            "the EKG step also reads the display clock"
+        )
         let shared = try XCTUnwrap(text.range(of: "private var sharedChartDomain: ClosedRange<Date>? {"))
         XCTAssertTrue(text[shared.upperBound...].prefix(300).contains("now: displayNow())"))
         let legacy = try XCTUnwrap(text.range(of: "private var legacyChartDataDomain: ClosedRange<Date>? {"))

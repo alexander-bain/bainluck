@@ -36,7 +36,7 @@ class _CaptureDB:
         self.commit = AsyncMock()
 
 
-def test_register_device_token_upserts_with_body_session_and_numeric_user():
+def test_register_device_token_upserts_with_body_session_and_ignores_the_body_user():
     db = _CaptureDB()
     client = _client_with_db(db)
 
@@ -63,19 +63,23 @@ def test_register_device_token_upserts_with_body_session_and_numeric_user():
     assert params["device_token"] == "abcdef1234567890"
     assert params["platform"] == "ios"
     assert params["session_id"] == "body-session"
-    assert params["user_id"] == 42
+    # #2118: no sign-in on this request, so the body's user_id is ignored and
+    # the phone is stored anonymous.
+    assert params["user_id"] is None
     assert params["is_active"] is True
     # An app build that predates Queue 311 sends no kind, and lands as `apns` —
     # which is the truth about the token it captured.
     assert params["token_kind"] == "apns"
     # The ON CONFLICT SET clause, positionally. `param_N` follows TABLE COLUMN
     # order, so inserting a column into the model renumbers these — as adding
-    # `token_kind` just did.
+    # `token_kind` did. #2118: a signed-out call sets no account (it detaches),
+    # and the body's 42 appears nowhere.
     assert params["param_1"] == "ios"          # platform
     assert params["param_2"] == "apns"         # token_kind
-    assert params["param_3"] == 42             # user_id
+    assert params["param_3"] is None           # user_id
     assert params["param_4"] == "body-session"  # session_id
     assert params["param_5"] is True           # is_active
+    assert 42 not in params.values()
 
 
 def test_register_device_token_falls_back_to_header_and_ignores_bad_user_id():

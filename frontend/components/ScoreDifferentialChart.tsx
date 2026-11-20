@@ -28,7 +28,7 @@ import { sportVocab, playedCountAbsence, playedUnits, withUnit } from "@/lib/mar
 import { teamShortNames } from "@/lib/teamShortName";
 import { useAxisPoleFit } from "@/hooks/useAxisPoleFit";
 import { axisPoleStyle, axisLabelStyle, axisCodePair } from "@/lib/axisPoleFit";
-import { teamTextColor } from "@/lib/teamColors";
+import { resolveMatchupTeamColors, teamTextColor } from "@/lib/teamColors";
 import type { PlayedLinescore } from "@/lib/marketMapUtils";
 import type {
   OddsHistoryPoint,
@@ -69,6 +69,8 @@ interface ScoreDifferentialChartProps {
   homeTeamColor?: string;
   /** Away team primary color (hex) for team label styling */
   awayTeamColor?: string;
+  /** Away team secondary color (hex) for Ruling 197 same-hue collision fallback */
+  awayTeamSecondaryColor?: string;
   /** Home team logo URL (small) */
   homeTeamLogo?: string;
   /** Away team logo URL (small) */
@@ -160,6 +162,7 @@ export default function ScoreDifferentialChart({
   periodBoundaries,
   homeTeamColor,
   awayTeamColor,
+  awayTeamSecondaryColor,
   homeTeamLogo,
   awayTeamLogo,
   homeTeamAbbrev,
@@ -957,6 +960,14 @@ export default function ScoreDifferentialChart({
     return null;
   };
 
+  const resolvedTeamColors = resolveMatchupTeamColors({
+    homePrimary: homeTeamColor,
+    awayPrimary: awayTeamColor,
+    awaySecondary: awayTeamSecondaryColor,
+  });
+  const effectiveHomeTeamColor = resolvedTeamColors.home ?? homeTeamColor;
+  const effectiveAwayTeamColor = resolvedTeamColors.away ?? awayTeamColor;
+
   return (
     <div
       className={fillContainer ? "flex flex-col h-full gap-1" : "space-y-3"}
@@ -1086,7 +1097,17 @@ export default function ScoreDifferentialChart({
             <span
               data-axis-label
               className="text-[11px] font-bold uppercase tracking-wider"
-              style={{ color: teamTextColor(homeTeamColor) || "#16a34a", ...axisLabelStyle(axisPoleCaps.home) }}
+              style={{
+                color:
+                  teamTextColor(
+                    resolveMatchupTeamColors({
+                      homePrimary: homeTeamColor,
+                      awayPrimary: awayTeamColor,
+                      awaySecondary: awayTeamSecondaryColor,
+                    }).home ?? homeTeamColor
+                  ) || "#16a34a",
+                ...axisLabelStyle(axisPoleCaps.home),
+              }}
             >
               {axisPoleLabels.home}
             </span>
@@ -1105,7 +1126,17 @@ export default function ScoreDifferentialChart({
             <span
               data-axis-label
               className="text-[11px] font-bold uppercase tracking-wider"
-              style={{ color: teamTextColor(awayTeamColor) || "#2563eb", ...axisLabelStyle(axisPoleCaps.away) }}
+              style={{
+                color:
+                  teamTextColor(
+                    resolveMatchupTeamColors({
+                      homePrimary: homeTeamColor,
+                      awayPrimary: awayTeamColor,
+                      awaySecondary: awayTeamSecondaryColor,
+                    }).away ?? awayTeamColor
+                  ) || "#2563eb",
+                ...axisLabelStyle(axisPoleCaps.away),
+              }}
             >
               {axisPoleLabels.away}
             </span>

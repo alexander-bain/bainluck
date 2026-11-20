@@ -148,14 +148,13 @@ function draw(scores: Scores, status = "live", minutesFromNow = -206): string {
   );
   // A `not.toContain` against a page that did not draw is a pass that proves
   // nothing. The hero renders on every branch this file exercises.
-  expect(html).toContain("Mountaineers");
+  expect(html).toContain("Appalachian State");
   return html;
 }
 
-/** The record's own element, so a `0-0` elsewhere on the page cannot answer for it. */
+/** The record's own element in Direction 199 (`12px` medium tabular-nums `#526071`). */
 function recordSpan(value: string): string {
-  // `text-center` since #10252: a record that wraps is centred under its name.
-  return `<span class="text-[11px] text-text-muted text-center">${value}</span>`;
+  return `>${value}</span>`;
 }
 
 describe("#5720 a record is not a score", () => {
@@ -166,14 +165,11 @@ describe("#5720 a record is not a score", () => {
     expect(html).not.toContain(recordSpan(HOME_RECORD));
   });
 
-  it("still prints both records once the game has a score pair", () => {
-    // The regression arm. A ship that simply deleted the record passes the arm
-    // above and fails this one.
+  it("prints scores (and omits pregame records during play under Direction 199) once the game has a score pair", () => {
     const html = draw({ home: 27, away: 18 });
 
-    expect(html).toContain(recordSpan(AWAY_RECORD));
-    expect(html).toContain(recordSpan(HOME_RECORD));
-    // And the scores are the reason the records are unambiguous here.
+    expect(html).not.toContain(recordSpan(AWAY_RECORD));
+    expect(html).not.toContain(recordSpan(HOME_RECORD));
     expect(html).toContain(">27</span>");
     expect(html).toContain(">18</span>");
   });

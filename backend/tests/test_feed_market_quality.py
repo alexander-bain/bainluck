@@ -528,13 +528,23 @@ class TestMarketQualityClassification:
             "Who will have a #1 song on Spotify USA in May?",
             sport_category="entertainment",
         )
-        billboard = classify_market_quality(
+        billboard_200 = classify_market_quality(
             "Where will BULLY by Ye rank on the Billboard 200?",
             sport_category="entertainment",
         )
+        billboard_hot100 = classify_market_quality(
+            "Who will be #1 on the Billboard Hot 100 chart?",
+            sport_category="entertainment",
+        )
+        billboard_generic = classify_market_quality(
+            "How many spots will Drake have in the Billboard top 10?",
+            sport_category="entertainment",
+        )
 
-        assert spotify.story_key == "story:music_charts"
-        assert billboard.story_key == "story:music_charts"
+        assert spotify.story_key == "story:spotify_charts"
+        assert billboard_200.story_key == "story:billboard_200"
+        assert billboard_hot100.story_key == "story:billboard_hot100"
+        assert billboard_generic.story_key == "story:music_charts"
 
     def test_story_key_groups_remaining_editorial_recall_variants(self):
         examples = [
@@ -549,7 +559,7 @@ class TestMarketQualityClassification:
             (
                 "Who will attend The Met Gala?",
                 "entertainment",
-                "story:major_entertainment_events",
+                "story:met_gala",
             ),
             (
                 "Who will be Trump's next Attorney General?",
@@ -2667,11 +2677,12 @@ class TestQualityFamilyDiversity:
         assert len(capped) == 1
         assert capped[0]["_quality_story_key"] == "story:single_stock_earnings"
 
-    def test_diversify_caps_music_chart_story_to_one(self):
+    def test_diversify_caps_music_chart_story_to_one_per_chart(self):
         names = [
             "Will Drake have the top 3 albums on the Billboard 200?",
-            "How many spots will Drake have in the Billboard top 10?",
+            "Will Taylor Swift top the Billboard 200 in May?",
             "Who will have a #1 song on Spotify USA in May?",
+            "Who will be #1 on Spotify Global in May?",
         ]
         items = []
         for idx, name in enumerate(names):
@@ -2689,8 +2700,10 @@ class TestQualityFamilyDiversity:
             items, exact_family_cap=1, story_family_cap=5
         )
 
-        assert len(capped) == 1
-        assert capped[0]["_quality_story_key"] == "story:music_charts"
+        assert [c["_quality_story_key"] for c in capped] == [
+            "story:billboard_200",
+            "story:spotify_charts",
+        ]
 
     def test_diversify_caps_russia_war_territory_story_to_two(self):
         names = [

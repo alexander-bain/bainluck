@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Vision
 import XCTest
 @testable import Bain_Luck
 
@@ -172,11 +173,21 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
             source.contains("@inline(never)\n    private func stackBoundary12278<V: View>(@ViewBuilder _ make: () -> V) -> AnyView"),
             "EventDetailView must keep @inline(never) stackBoundary12278 so Release (-O) cannot inline child @ViewBuilder frames into body/contentView/heroSection"
         )
-        let boundaryOccurrences = source.components(separatedBy: "stackBoundary12278 {").count - 1
+        let cardSource = try String(
+            contentsOf: root.appendingPathComponent("Components/EventSportHeadlineCard12472.swift"),
+            encoding: .utf8
+        )
+        let boundaryOccurrences =
+            (source.components(separatedBy: "stackBoundary12278 {").count - 1)
+            + (cardSource.components(separatedBy: "cardStackBoundary12278 {").count - 1)
         XCTAssertGreaterThanOrEqual(
             boundaryOccurrences,
             24,
-            "EventDetailView must preserve all 24+ stackBoundary12278 seams across body, contentView, heroSection, and nflPairedHeadlineView (found \(boundaryOccurrences))"
+            "EventDetailView + EventSportHeadlineCard12472 must preserve all 24+ non-inlined stack-boundary seams (found \(boundaryOccurrences))"
+        )
+        XCTAssertTrue(
+            cardSource.contains(".minimumScaleFactor(stacksRowsVertically ? 0.72 : 0.80)"),
+            "Unified headline competitor labels must allow 0.80 minimumScaleFactor at regular Dynamic Type so multi-word names do not collide with right-aligned columns"
         )
     }
 
@@ -197,5 +208,72 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
         XCTAssertEqual(nav.pendingRoute, .eventDetail(id: 15342680))
         XCTAssertEqual(nav.consumeRoute(), .eventDetail(id: 15342680))
         XCTAssertNil(nav.consumeRoute(), "consumeRoute() must clear pendingRoute so a second observer never pushes twice")
+    }
+
+    @MainActor
+    func testUnifiedHeroKeepsFinalScoresAlignedInTrailingColumnAt390px() throws {
+        let json = """
+        {
+          "id": 15331713,
+          "sport": "soccer_epl",
+          "league": "Premier League",
+          "home_team": "Chelsea",
+          "away_team": "Manchester United",
+          "commence_time": "2026-10-31T15:30:00Z",
+          "status": "completed",
+          "home_score": 34,
+          "away_score": 23,
+          "home_team_data": { "record": "5-1-4" },
+          "away_team_data": { "record": "1-5-4" },
+          "prematch_odds": {
+            "home_probability": 0.44,
+            "away_probability": 0.30,
+            "draw_probability": 0.26
+          }
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let event = try decoder.decode(EventDetail.self, from: Data(json.utf8))
+
+        let view = EventDetailView(eventId: event.id)
+            .withLoadedEventForTest12278(event)
+            .heroSectionForTest12278(event)
+            .environmentObject(PinManager())
+            .environmentObject(NavigationCoordinator())
+            .padding(.horizontal, 16)
+            .frame(width: 390, alignment: .top)
+            .background(Color(.systemBackground))
+            .environment(\.colorScheme, .light)
+
+        let renderer = rendererForMeasurement(view)
+        renderer.scale = 3.0
+        let image = try XCTUnwrap(renderer.uiImage)
+        let cgImage = try XCTUnwrap(image.cgImage)
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+
+        let observations = try XCTUnwrap(request.results)
+        let seen = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
+        func maxXPoints(startingWith prefix: String) -> CGFloat? {
+            for obs in observations {
+                guard let top = obs.topCandidates(1).first else { continue }
+                let trimmed = top.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard trimmed == prefix || trimmed.hasPrefix(prefix) else { continue }
+                return obs.boundingBox.maxX * image.size.width
+            }
+            return nil
+        }
+
+        let awayScoreMaxX = try XCTUnwrap(maxXPoints(startingWith: "23"), "Expected away score '23' in rendered 390px hero (seen: \(seen))")
+        let homeScoreMaxX = try XCTUnwrap(maxXPoints(startingWith: "34"), "Expected home score '34' in rendered 390px hero (seen: \(seen))")
+        XCTAssertLessThanOrEqual(
+            abs(awayScoreMaxX - homeScoreMaxX),
+            18.0,
+            "Scores in the unified Final column (including winner tick) stay aligned in the trailing Final column"
+        )
     }
 }

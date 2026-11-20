@@ -522,6 +522,20 @@ export async function signOut(): Promise<void> {
   }
 }
 
+/** Cap on waiting for Firebase Auth persistence restoration during the admin probe (#5952). */
+export const AUTH_STATE_READY_TIMEOUT_MS = 5000;
+
+export interface RestorableAuthInstance {
+  readonly currentUser: { getIdToken: () => Promise<string> } | null;
+  authStateReady?: () => Promise<void>;
+}
+
+export interface GetIdTokenAfterAuthReadyDeps {
+  getAuth?: () => Promise<RestorableAuthInstance | null>;
+  getBackendToken?: () => string | null;
+  timeoutMs?: number;
+}
+
 /**
  * Get the current user's ID token (for API calls).
  * Checks Firebase first, then backend-only auth fallback.
@@ -540,6 +554,53 @@ export async function getIdToken(): Promise<string | null> {
   const backendAuth = loadBackendAuth();
   if (backendAuth) {
     return backendAuth.idToken;
+  }
+
+  return null;
+}
+
+/**
+ * Wait for Firebase Auth to finish restoring a persisted session
+ * (`await authInstance.authStateReady()`, bounded by `timeoutMs`) before
+ * reading `authInstance.currentUser`, then fall back to backend-only auth.
+ *
+ * Used by the admin session probe (#5952) so a fresh load of `/admin`,
+ * `/grade`, or `/grade/groupings` does not read `currentUser` as `null` while
+ * persistence is still restoring. Other `getIdToken()` callers are left
+ * unchanged.
+ */
+export async function getIdTokenAfterAuthReady(
+  deps?: GetIdTokenAfterAuthReadyDeps
+): Promise<string | null> {
+  const resolveAuth = deps?.getAuth ?? getFirebaseAuth;
+  const authInstance = await resolveAuth();
+  if (authInstance && typeof authInstance.authStateReady === "function") {
+    const timeoutMs = deps?.timeoutMs ?? AUTH_STATE_READY_TIMEOUT_MS;
+    try {
+      await withTimeout(
+        authInstance.authStateReady(),
+        timeoutMs,
+        "Firebase authStateReady"
+      );
+    } catch {
+      // Timed out or failed restoring — fall through to currentUser / backend auth / null
+    }
+  }
+  if (authInstance?.currentUser) {
+    try {
+      return await authInstance.currentUser.getIdToken();
+    } catch {
+      // Fall through to backend auth check
+    }
+  }
+
+  // Backend-only auth fallback (Safari ITP)
+  const backendToken =
+    deps?.getBackendToken !== undefined
+      ? deps.getBackendToken()
+      : loadBackendAuth()?.idToken ?? null;
+  if (backendToken) {
+    return backendToken;
   }
 
   return null;

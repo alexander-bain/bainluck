@@ -443,6 +443,19 @@ def project_scores(
     return round(home_score, 1), round(away_score, 1)
 
 
+def sportsbook_handicap_is_pinned(sport_key: Optional[str]) -> bool:
+    """True when a sport's sportsbook spread is a fixed ±1.5 handicap (run line / puck line).
+
+    #8617 (baseball run line) and #13112 (hockey puck line): sportsbooks hang
+    ±1.5 whatever the matchup, so ``project_scores(spread, over_under)`` always
+    outputs a 1.5-goal/run gap even on a 52% coin flip (e.g. NHL 2.4 to 3.9).
+    """
+    key = str(sport_key or "").strip().lower()
+    if not key:
+        return False
+    return key.startswith("baseball") or key.startswith("icehockey") or "hockey" in key
+
+
 def sportsbook_spread_is_a_margin(sport_key: Optional[str]) -> bool:
     """False when a sport's sportsbook spread is a fixed handicap, not an expected margin.
 
@@ -450,7 +463,13 @@ def sportsbook_spread_is_a_margin(sport_key: Optional[str]) -> bool:
     A baseball run line is pinned at ±1.5 whatever the matchup, so on a coin
     flip it projected ``4.7 – 3.1`` and the card printed "Proj 5-3" (event
     15318355, home 0.50, 2026-09-25). Same misreading as #8613 in the stat
-    model. Mirrors the web's ``sportsbookSpreadIsAMargin`` (baseball false,
+    model.
+
+    #13112. Hockey's puck line is pinned at ±1.5 the same way: every NHL game
+    with sportsbook lines projected 1.5 goals apart (e.g. 2.4 to 3.9 for a 52%
+    favourite), which older App Store builds printed directly from
+    ``current_odds``. Mirrors the web's and 1.0.7 iOS's
+    ``sportsbookSpreadIsAMargin`` (baseball, hockey, and fights false;
     everything else true). An unknown sport keeps the old answer.
 
     #9006. A fight has no points score: its total is a ROUNDS line and its
@@ -458,9 +477,9 @@ def sportsbook_spread_is_a_margin(sport_key: Optional[str]) -> bool:
     stored as ``5.8 – -1.8`` and the card printed "Proj 6--2". Mirrors the web's
     ``match: ["mma", "boxing"]`` row (a lowercased substring, as ``sportVocab``).
     """
-    key = str(sport_key or "")
-    if key.startswith("baseball"):
+    if sportsbook_handicap_is_pinned(sport_key):
         return False
+    key = str(sport_key or "")
     return not any(fight in key.lower() for fight in ("mma", "boxing"))
 
 
@@ -495,8 +514,11 @@ def projection_contradicts_moneyline(
     return (lean > 0 and margin < 0) or (lean < 0 and margin > 0)
 
 
-def refuse_incoherent_projections(rows: List[dict]) -> List[dict]:
-    """Null the projected pair on every served per-book row that contradicts its own moneyline.
+def refuse_incoherent_projections(
+    rows: List[dict], *, sport_key: Optional[str] = None
+) -> List[dict]:
+    """Null the projected pair on every served per-book row that contradicts its own moneyline,
+    or belongs to a pinned-handicap sport (baseball run line / hockey puck line, #13112).
 
     #8231, the per-book half of ``aggregate_bookmaker_odds``: the sportsbook table
     prints each book's projected score and the history's per-book lines carry
@@ -504,8 +526,9 @@ def refuse_incoherent_projections(rows: List[dict]) -> List[dict]:
     the row's already-oriented ``home_probability`` so a reversed book is judged
     after its sides are swapped back. Mutates and returns ``rows``.
     """
+    pinned = sportsbook_handicap_is_pinned(sport_key)
     for row in rows:
-        if projection_contradicts_moneyline(
+        if pinned or projection_contradicts_moneyline(
             row.get("home_probability"),
             row.get("projected_home_score"),
             row.get("projected_away_score"),

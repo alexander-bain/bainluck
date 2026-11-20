@@ -178,7 +178,7 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                       helper it would render a fall as a rise wearing red. */}
                   {!decided && leader.movement != null && isRenderedMove(leader.movement) && (
                     <span className={leader.movement > 0 ? " text-green-600 font-semibold" : " text-red-600 font-semibold"}>
-                      {" "}{leader.movement > 0 ? "+" : "-"}{formatMovementPoints(leader.movement)} pts today
+                      {" "}{leader.movement > 0 ? "+" : "-"}{formatMovementPoints(leader.movement)} points today
                     </span>
                   )}
                 </div>

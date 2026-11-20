@@ -13,6 +13,7 @@ import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
 import { unfurlImageOptions } from "@/lib/unfurlImageCache";
 import { withSettledResultCertainty } from "@/lib/settledResultDisplay";
+import { VERIFIED_TITLE } from "@/lib/verifiedTitleDetail";
 
 export const runtime = "edge";
 export const alt = "Bain Luck market probability";
@@ -46,7 +47,7 @@ async function fetchMarket(id: string): Promise<MarketLookup> {
   }
 
   try {
-    const response = await fetch(`${API_URL}/api/futures/${marketId}`, {
+    const response = await fetch(`${API_URL}/api/futures/${marketId}?representation=${VERIFIED_TITLE}`, {
       next: { revalidate: 60 },
     });
     if (response.status === 404) return { ok: false, failure: "not-found" };

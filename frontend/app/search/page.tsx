@@ -7,7 +7,7 @@ import Link from "next/link";
 import { searchEvents, fetchSearchSuggestions } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague, getSportLabel } from "@/lib/sportCategories";
 import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, useEngagementTime, useAnalytics } from "@/hooks";
-import { useSearchFuturesStream } from "@/hooks/useSearchFuturesStream";
+import { useSearchPriceStream } from "@/hooks/useSearchPriceStream";
 import { patchSearchFamilies, searchAnswerMarkets } from "@/lib/searchFuturesStream";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
@@ -31,6 +31,7 @@ import type { FuturesFamily, FuturesMarket, SearchResponse, SearchSuggestion } f
 // Stable, so an absent answer does not reset the live-price book each render.
 const NO_FUTURES: FuturesMarket[] = [];
 const NO_FAMILIES: FuturesFamily[] = [];
+const NO_EVENTS: SearchResponse["results"] = [];
 
 // Representative example queries spanning the search gold-set's classes (a team,
 // a season future, a politics question) — a self-contained zero-state that works
@@ -221,14 +222,20 @@ function SearchContent() {
   } = usePinnedFutures();
 
   // #10090: the open Kalshi/Polymarket futures cards, flat and in families,
-  // re-price live while the page is open (`hooks/useSearchFuturesStream`).
+  // re-price live while the page is open (`hooks/useSearchPriceStream`), and
+  // so do its scheduled and live games.
   // Called before any early return; the input is memoised on the answer, since
   // a new array is a new answer and resets the live-price book.
   const answerMarkets = useMemo(
     () => searchAnswerMarkets(results?.futures ?? NO_FUTURES, results?.futures_families ?? NO_FAMILIES),
     [results],
   );
-  const patchLive = useSearchFuturesStream(answerMarkets);
+  const answerEvents = results?.results ?? NO_EVENTS;
+  const { patchMarket: patchLive, patchEvent } = useSearchPriceStream(answerMarkets, answerEvents);
+  const liveEvents = useMemo(() => {
+    const next = answerEvents.map(patchEvent);
+    return next.every((e, i) => e === answerEvents[i]) ? answerEvents : next;
+  }, [answerEvents, patchEvent]);
   const liveFutures = useMemo(() => {
     const served = results?.futures ?? NO_FUTURES;
     const next = served.map(patchLive);
@@ -423,6 +430,18 @@ function SearchContent() {
     );
   }
 
+  const teamQuery = results.teams.some((team) => team.query_names_team === true);
+  const teamsSection = hasTeams && (
+    <section className="mb-8" aria-label="Teams">
+      <SectionHeader title="Teams" count={results.teams.length} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {results.teams.map((team) => (
+          <SearchTeamCard key={team.id} team={team} sports={results.sports} />
+        ))}
+      </div>
+    </section>
+  );
+
   const totalCount = (results.teams?.length ?? 0)
     + (results.pagination?.total_results ?? 0)
     + (results.futures?.length ?? 0)
@@ -494,6 +513,8 @@ function SearchContent() {
         </div>
       )}
 
+      {teamQuery && teamsSection}
+
       {hasCollections && (
         <section className="mb-8" aria-label="Collections">
           <SectionHeader title="Collections" count={collections.length} />
@@ -531,24 +552,14 @@ function SearchContent() {
         </section>
       )}
 
-      {/* Teams section */}
-      {hasTeams && (
-        <section className="mb-8">
-          <SectionHeader title="Teams" count={results.teams.length} />
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {results.teams.map((team) => (
-              <SearchTeamCard key={team.id} team={team} sports={results.sports} />
-            ))}
-          </div>
-        </section>
-      )}
+      {!teamQuery && teamsSection}
 
       {/* Games section */}
       {hasEvents && (
         <section className="mb-8">
-          <SectionHeader title="Games" count={results.pagination.total_results} />
+          <SectionHeader title={results.game_set?.title ?? "Games"} count={results.pagination.total_results} />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {results.results.map((event, index) => (
+            {liveEvents.map((event, index) => (
               <div key={event.id} onClick={() => {
                 track('search_result_click', {
                   query: query,

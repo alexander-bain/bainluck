@@ -2,7 +2,24 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>INAlternativeAppNames</key>
+	<array>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Bain Luck</string>
+			<key>INAlternativeAppNamePronunciationHint</key>
+			<string>bane luck</string>
+		</dict>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Bainluck</string>
+			<key>INAlternativeAppNamePronunciationHint</key>
+			<string>bane luck</string>
+		</dict>
+	</array>
 	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
 	<true/>
 	<key>NSUserActivityTypes</key>
 	<array>

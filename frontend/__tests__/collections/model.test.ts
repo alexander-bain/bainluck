@@ -8,7 +8,7 @@ describe("published collection presentation", () => {
     const hub = parseCollection(nflHub(), "nfl-2026-week-4");
     expect(hub.title).toBe("NFL Week 4");
     expect(hub.edition).toBe("NFL · 2026 · Regular Season · Week 4");
-    expect(hub.sections.map((s) => s.title)).toEqual(["Games and winners", "Player and game questions", "Championship"]);
+    expect(hub.sections.map((s) => s.title)).toEqual(["Games and winners", "Player and game props", "Championship"]);
     expect(hub.sections[0].members.map((m) => (m.item.data as FeedEventData).status)).toEqual(["scheduled", "live", "completed"]);
     expect(hub.related["event:7"].map((m) => m.key)).toEqual(["market:70"]);
     expect(hub.related["event:8"]).toEqual([]);
@@ -19,7 +19,7 @@ describe("published collection presentation", () => {
   test("MLB preserves final/absent-price facts and partial state", () => {
     const hub = parseCollection(mlbHub(), "mlb-2026-postseason");
     expect(hub.edition).toBe("MLB · 2026 · Postseason");
-    expect(hub.note).toBe("Some games or questions aren't available right now.");
+    expect(hub.note).toBe("Some games or markets aren't available right now.");
     expect((hub.members[1].item.data as FeedFuturesData).status).toBe("resolved");
     expect((hub.members[2].item.data as { top_outcomes: { probability: number | null }[] }).top_outcomes[0].probability).toBeNull();
   });

@@ -1,14 +1,19 @@
 name: Tier-B review policy
 
-# Ruling A: the author window merges every Tier-B PR, including policy edits,
-# after green CI, current-head claude[bot] approval and Fable ACCEPT.
+# Ruling A, narrowed by 119-A (#12539): the author window merges every Tier-B PR
+# after green CI and current-head claude[bot] approval; Fable ACCEPT at the head
+# is also needed when the PR is reader-visible, destructive or touches evals and
+# gates (its first `Fable:` line, checked by tools/release/tier_b.cjs).
 
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review, edited]
   # GitHub loads workflow_run YAML from the default branch, not the PR merge ref.
+  # Deliberately NO `pull_request_target` trigger (#12957 / #12873): a
+  # `pull_request_target` run creates a check-suite on head_sha that GitHub
+  # branch protection refuses to count toward required status checks whenever it
+  # races ahead of the `push`/`pull_request` suite. PR events signal this
+  # workflow via `.github/workflows/tier-b-trigger.yml` (`on: pull_request`).
   workflow_run:
-    workflows: [Tier-B review]
+    workflows: [Tier-B review, Tier-B policy trigger]
     types: [completed]
   # Every event uses the evaluator checked out from the default branch below.
   schedule:
@@ -29,7 +34,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: tier-b-review-policy-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.client_payload.pull_number || github.event.inputs.pull_number || 'sweep' }}
+  group: tier-b-review-policy-${{ github.event.workflow_run.pull_requests[0].number || github.event.client_payload.pull_number || github.event.inputs.pull_number || 'sweep' }}
   cancel-in-progress: false
 
 jobs:
@@ -50,6 +55,6 @@ jobs:
               await github.rest.issues.getLabel({...context.repo, name: 'tier-b'});
             } catch (error) {
               if (error.status !== 404) throw error;
-              await github.rest.issues.createLabel({...context.repo, name: 'tier-b', color: 'B60205', description: 'Current-head Claude approval; Fable ACCEPT before the author window merges'});
+              await github.rest.issues.createLabel({...context.repo, name: 'tier-b', color: 'B60205', description: 'Current-head Claude approval; Fable ACCEPT too when reader-visible, destructive or eval (119-A)'});
             }
             await require('./tools/release/tier_b.cjs').evaluate(github, context);

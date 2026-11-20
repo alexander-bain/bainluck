@@ -346,7 +346,8 @@ final class PublicationCheckpointLayer4974Tests: XCTestCase {
         })
         XCTAssertEqual(pixels.width, 400)
 
-        XCTAssertTrue(pixels.redRows(in: 195...205).isEmpty, "something is drawn between the two checkpoints")
+        XCTAssertFalse(pixels.redRows(in: 195...205).isEmpty,
+                       "Decision 164 (#12639): a straight segment bridges separated checkpoints")
 
         let fortyRows = pixels.redRows(in: 176...184)
         let sixtyRows = pixels.redRows(in: 216...224)

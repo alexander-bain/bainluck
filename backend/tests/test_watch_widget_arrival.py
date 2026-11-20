@@ -20,7 +20,7 @@ def test_gallery_waits_for_complete_parent_or_detail_before_normalization():
         "return retainedDetail || appGallery",
         "XCTWaiter.wait(for: [arrived], timeout: 15) == .completed",
         "parentPage.waitForExistence(timeout: 15)",
-        "for step in 0..<32",
+        "for step in 0..<48",
         "visits[position, default: 0] <= 3",
     ]:
         assert requirement in helper
@@ -34,7 +34,7 @@ def test_modular_add_is_below_real_chrome_and_editor_arrives_before_swipes():
     assert "try reveal(add, in: host, belowNavigationChrome: true)" in source
     assert (
         source.index("add.tap()")
-        < source.index("XCTWaiter.wait(for: [editorArrived], timeout: 15)")
+        < source.index("XCTWaiter.wait(for: [editorArrived], timeout: 45)")
         < source.index("for _ in 0..<8")
     )
     for requirement in [

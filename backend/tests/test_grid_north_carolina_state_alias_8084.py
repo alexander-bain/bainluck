@@ -103,6 +103,7 @@ def test_search_and_game_card_expansions_are_byte_identical_to_before():
     """
     assert team_nickname_search_expansions() == {
         "pats": ("Patriots", "football"),
+        "patroits": ("Patriots", "football"),
         "revs": ("Revolution", "soccer"),
         "niners": ("49ers", "football"),
         "bucs": ("Buccaneers", "football"),
@@ -138,6 +139,8 @@ def test_search_and_game_card_expansions_are_byte_identical_to_before():
     }
     assert team_nickname_event_expansions() == {
         "pats": ("Patriots", "americanfootball_nfl"),
+        "patroits": ("Patriots", "americanfootball_nfl"),
+        "chiefs": ("Chiefs", "americanfootball_nfl"),
         "revs": ("Revolution", "soccer_usa_mls"),
         "niners": ("49ers", "americanfootball_nfl"),
         "9ers": ("49ers", "americanfootball_nfl"),

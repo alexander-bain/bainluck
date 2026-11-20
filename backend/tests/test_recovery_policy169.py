@@ -150,9 +150,15 @@ async def test_many_waiters_count_one_failure_and_cancel_does_not_add_backoff(mo
     tasks=[asyncio.create_task(projector.project(1,notice(),fresh=True)) for _ in range(12)]
     try:
         await until(lambda:calls==1,tasks[0],'coalesced load entered')
+        # Bracket the failure's own clock read instead of measuring from after
+        # the gather: twelve waiters can take a few ms to finish on a busy CI
+        # runner, and a 1 ms window failed master twice (0.2467 s, Nov 9).
+        before=asyncio.get_running_loop().time()
         release.set();await asyncio.gather(*tasks)
+        after=asyncio.get_running_loop().time()
         state=projector._recovery_retry_after[1]
-        assert state.failures==1 and .249<=state.after-asyncio.get_running_loop().time()<=.25
+        assert state.failures==1
+        assert before+fq.RECOVERY_RETRY_S<=state.after<=after+fq.RECOVERY_RETRY_S
         assert not projector._pending
         release.clear()
         cancelled=asyncio.create_task(projector.project(2,notice(2),fresh=True))

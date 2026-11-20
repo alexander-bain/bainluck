@@ -146,14 +146,33 @@ class DbTiming:
     #: the two events). Counted rather than silently dropped, so a partial
     #: `total_ms` announces itself instead of reading as a fast request.
     unfinished: int = field(default=0)
+    #: #12529: the first ``MAX_QUERY_SQL_CHARS`` of that longest statement's text
+    #: (whitespace collapsed). Placeholders only — parameters travel separately —
+    #: so it names the query without carrying any reader's values. It reaches the
+    #: admin slow-event ring and NO response header.
+    max_query_sql: Optional[str] = field(default=None)
 
-    def record(self, elapsed_ms: float) -> None:
+    def record(self, elapsed_ms: float, statement: Optional[str] = None) -> None:
         if not math.isfinite(elapsed_ms) or elapsed_ms < 0:
             return
         self.total_ms += elapsed_ms
         self.queries += 1
         if elapsed_ms > self.max_query_ms:
             self.max_query_ms = elapsed_ms
+            self.max_query_sql = sql_head(statement)
+
+
+#: How much of the slowest statement the ring keeps: enough to find it in the
+#: source and in `pg_stat_statements`, short enough to cap the ring's size.
+MAX_QUERY_SQL_CHARS = 160
+
+
+def sql_head(statement) -> Optional[str]:
+    """The statement's first ``MAX_QUERY_SQL_CHARS`` characters, whitespace collapsed."""
+    if not isinstance(statement, str):
+        return None
+    text = " ".join(statement.split())
+    return text[:MAX_QUERY_SQL_CHARS] or None
 
 
 _db_timing: ContextVar[Optional[DbTiming]] = ContextVar("lat_p070_db_timing", default=None)
@@ -191,7 +210,7 @@ def end_db_timing(token: Optional[Token]) -> None:
         _db_timing.set(None)
 
 
-def record_query(elapsed_ms: float, *, finished: bool = True) -> None:
+def record_query(elapsed_ms: float, *, finished: bool = True, statement: Optional[str] = None) -> None:
     """Add one statement's duration. No-op when no request is in flight.
 
     **The only write path.** The engine listener used to call ``acc.record()``
@@ -205,7 +224,7 @@ def record_query(elapsed_ms: float, *, finished: bool = True) -> None:
         return
     if finished:
         acc.unfinished = max(0, acc.unfinished - 1)
-    acc.record(elapsed_ms)
+    acc.record(elapsed_ms, statement)
 
 
 def note_query_started() -> None:
@@ -314,6 +333,9 @@ def build_split(
     }
     if db is not None and db.unfinished:
         split["unfinished_queries"] = db.unfinished
+    # #12529: for the slow-event ring only — `format_split_header` never reads it.
+    if db is not None and db.max_query_sql:
+        split["max_query_sql"] = db.max_query_sql
     split["edge_ms"] = round(wall + (router_ms or 0.0), 1) if router_ms is not None else None
     # The share a reader actually wants, computed once here so three call sites
     # cannot compute it three ways.
@@ -378,7 +400,7 @@ def install_request_db_timer(async_engine) -> bool:
         t0 = conn.info.pop(_START_KEY, None)
         if t0 is None:
             return
-        record_query((time.perf_counter() - t0) * 1000.0)
+        record_query((time.perf_counter() - t0) * 1000.0, statement=statement)
 
     try:
         setattr(target, _INSTALLED_FLAG, True)

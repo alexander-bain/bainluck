@@ -51,6 +51,12 @@ CACHE_KEY = "bainluck:feed:champ_probs:v1"
 #: changes who computes it, never how old it may be.
 TTL_SECONDS = 300
 
+#: #11931: proactive background refresh threshold (half the 300 s TTL). The
+#: every-2-minute Discover warm beat refreshes the shared slot once it reaches
+#: this age, so web workers always hit a fresh Redis slot (<300 s old) instead
+#: of blocking ~2.5 s inline when the slot expires.
+PREWARM_REFRESH_AFTER_S = TTL_SECONDS // 2
+
 
 def _client():
     """The bounded shared client, or None. Never raises (gotcha #39)."""
@@ -149,3 +155,22 @@ def write(probs: dict[int, float], computed_at: float, rc=None) -> bool:
         logger.warning("championship-probs cache: write failed")
         return False
     return True
+
+
+def needs_prewarm(
+    rc=None,
+    now: float | None = None,
+    *,
+    refresh_after_s: float = PREWARM_REFRESH_AFTER_S,
+) -> bool:
+    """True when the shared slot is missing, stale, or old enough to refresh proactively.
+
+    Never relaxes `TTL_SECONDS`: the background warmer refreshes before expiry so
+    live web requests always read a fresh (<300 s) slot from Redis.
+    """
+    now_ts = time.time() if now is None else now
+    slot = read(rc=rc, now=now_ts)
+    if slot is None:
+        return True
+    _, computed_at = slot
+    return (now_ts - computed_at) >= refresh_after_s

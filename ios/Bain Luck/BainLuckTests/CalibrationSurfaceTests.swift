@@ -323,6 +323,7 @@ final class CalibrationSurfaceTests: XCTestCase {
         // defect: production served that sentence over `stalled: true,
         // beats_missed: 51`. Silence is the honest reading of an absent block.
         XCTAssertFalse(detail.contains("rebuilds hourly"), detail)
+        XCTAssertFalse(detail.contains("rebuilds daily"), detail)
         // Stale is a freshness state, not a contract failure — the curve renders.
         XCTAssertFalse(vm.isIncompatible)
         XCTAssertEqual(vm.cohortN, 600)
@@ -355,6 +356,7 @@ final class CalibrationSurfaceTests: XCTestCase {
         XCTAssertTrue(detail.contains("built earlier"), detail)
         // #2649, same rule: no `producer` block, so no cadence claim.
         XCTAssertFalse(detail.contains("rebuilds hourly"), detail)
+        XCTAssertFalse(detail.contains("rebuilds daily"), detail)
         XCTAssertFalse(detail.localizedCaseInsensitiveContains("nil"))
     }
 
@@ -363,25 +365,22 @@ final class CalibrationSurfaceTests: XCTestCase {
     @MainActor
     func testStalledProducerIsDescribedInsteadOfPromisingAnHourlyRebuild() throws {
         // The exact production state of 2026-09-02: a two-day-old artifact whose
-        // own payload reports the hourly beat has missed 51 of them. The old copy
-        // closed with "The curve rebuilds hourly." over precisely this.
+        // own payload reports the beat has missed 51 of them.
         let vm = try model(Self.healthy(
             cache: Self.staleCache,
             producer: #"{"stalled": true, "beats_missed": 51}"#
         ))
         let detail = try XCTUnwrap(vm.staleBannerDetail)
         XCTAssertFalse(detail.contains("rebuilds hourly"), detail)
-        XCTAssertTrue(detail.contains("51 hourly rebuilds have"), detail)
+        XCTAssertFalse(detail.contains("rebuilds daily"), detail)
+        XCTAssertTrue(detail.contains("51 daily rebuilds have"), detail)
     }
 
     @MainActor
     func testFallbackTierServeOfAProvenCurrentCurveIsNotADatedCopy() throws {
-        // #8959, porting web's #4046. This test used to assert the banner said
-        // "not being refreshed right now … The curve rebuilds hourly." over a
-        // producer that had missed NO beat — the sentence contradicting itself.
-        // `main` is evicted ahead of `last_good` by design, so which tier
-        // answered is storage, not a claim about the numbers: a proven-current
-        // producer means there is nothing to tell the reader.
+        // #8959, porting web's #4046. `main` is evicted ahead of `last_good` by
+        // design, so which tier answered is storage, not a claim about the numbers:
+        // a proven-current producer means there is nothing to tell the reader.
         let vm = try model(Self.healthy(
             cache: Self.staleCache,
             producer: #"{"stalled": false, "beats_missed": 0}"#
@@ -400,10 +399,11 @@ final class CalibrationSurfaceTests: XCTestCase {
             producer: #"{"stalled": true}"#
         ))
         let detail = try XCTUnwrap(vm.staleBannerDetail)
-        // #8959: web's #5042 wording — the count measures the artifact, not runs.
-        XCTAssertTrue(detail.contains("Hourly rebuilds have not produced a new snapshot."), detail)
+        // #8959 / 215-B: web's #5042 wording — the count measures the artifact, not runs.
+        XCTAssertTrue(detail.contains("Daily rebuilds have not produced a new snapshot."), detail)
         XCTAssertFalse(detail.contains("rebuilds hourly"), detail)
-        XCTAssertFalse(detail.contains("0 hourly"), detail)
+        XCTAssertFalse(detail.contains("rebuilds daily"), detail)
+        XCTAssertFalse(detail.contains("0 daily"), detail)
     }
 
     @MainActor
@@ -415,7 +415,7 @@ final class CalibrationSurfaceTests: XCTestCase {
         let stalled = try model(Self.healthy(
             cache: Self.staleCache, producer: #"{"stalled": true, "beats_missed": 1}"#))
         XCTAssertEqual(stalled.scheduleClause,
-                       "1 hourly rebuild has come and gone without a new snapshot.")
+                       "1 daily rebuild has come and gone without a new snapshot.")
         // #4113: `stalled: false` is a four-hour verdict. With no `beats_missed`
         // the hour is unproven, so the promise is withheld, not asserted.
         let landing = try model(Self.healthy(

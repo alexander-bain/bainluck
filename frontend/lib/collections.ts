@@ -1,5 +1,6 @@
 import { API_URL } from "@/lib/api";
 import type { FeedEventData, FeedFuturesData, FeedItem } from "@/lib/types";
+import { priceKey } from "@/lib/discover/priceRefresh";
 
 export type CollectionState = "published" | "unpublished" | "withdrawn" | "empty" | "unavailable";
 export interface CollectionMember {
@@ -13,8 +14,79 @@ export interface CollectionMember {
   linkPresentation?: "game" | "inline" | "secondary";
   relatedMarketCount?: number;
 }
-export interface CollectionSection { key: string; cls: string; title: string; note: string | null; layout?: string; members: CollectionMember[] }
+export interface MachinerySubjectArt {
+  url: string | null;
+  kind: string;
+  detail: string;
+  accent_color: string;
+  initials: string;
+}
+
+export interface MachineryOutcomeVisual {
+  outcome_id: number;
+  name: string;
+  probability: number;
+  rendered_percent: number;
+  art: MachinerySubjectArt;
+}
+
+export interface MachineryVisualBlock {
+  form_id:
+    | "paired_stage_bars"
+    | "coin_flip_matchups"
+    | "matchup_slate"
+    | "duel_bar"
+    | "contender_spotlight"
+    | "sibling_fields_grid"
+    | "benchmark_strip"
+    | "probability_history_chart";
+  initial_visible_limit?: number;
+  item_noun?: string | null;
+  paired_metric_set?: import("@/lib/discover/visualForms").PairedMetricSet;
+  items?: Record<string, unknown>[];
+}
+
+export interface CollectionSection {
+  key: string;
+  cls: string;
+  title: string;
+  note: string | null;
+  layout?: string;
+  visualBlock?: MachineryVisualBlock;
+  members: CollectionMember[];
+}
 export interface CollectionPin { slug: string; name: string; href: string; subtitle: string; pin_until: string }
+export interface CollectionCaptionFigure {
+  memberId: string;
+  label: string;
+  value: string;
+  observedAt: string;
+  asOfLabel: string;
+  source: string;
+  sourceHref: string;
+}
+export interface CollectionCaption {
+  commentary: string;
+  noNumberVerified: boolean;
+  figures: CollectionCaptionFigure[];
+}
+export interface CollectionParent {
+  slug: string;
+  name: string;
+  href: string;
+}
+export interface CollectionMoreSet {
+  slug: string;
+  name: string;
+  href: string;
+  dek: string | null;
+  category: string | null;
+  memberCount: number;
+  leadLabel: string | null;
+  leadProbability: number | null;
+  leadRenderedPercent?: number | null;
+  asOf: string | null;
+}
 export interface CollectionHub {
   slug: string;
   revision: number | null;
@@ -23,6 +95,8 @@ export interface CollectionHub {
   edition: string | null;
   sections: CollectionSection[];
   children: { key: string; name: string; href: string }[];
+  parent?: CollectionParent | null;
+  moreSets?: CollectionMoreSet[];
   members: CollectionMember[];
   related: Record<string, CollectionMember[]>;
   note: string | null;
@@ -34,7 +108,9 @@ export interface CollectionHub {
   // revision. Null on every NFL/MLB hub, which arrives whole.
   theme: { totalCount: number; nextCursor: string | null; inventoryComplete: boolean; revisionMoved: boolean } | null;
   subtitle?: string | null;
+  caption?: CollectionCaption | null;
   pin?: CollectionPin | null;
+  pairedMetricSet?: import("@/lib/discover/visualForms").PairedMetricSet | null;
   relatedSummary?: { count: number; unclassifiedCount: number };
 }
 export interface CollectionReadingContext {
@@ -93,8 +169,8 @@ function member(value: unknown, quiet = false): CollectionMember | null {
 }
 
 const sectionTitles: Record<string, string> = {
-  match_winner: "Games and winners", prop: "Player and game questions", title: "Championship",
-  advancement: "Advancement", side_question: "More questions", doubles: "Doubles", unclassified: "More",
+  match_winner: "Games and winners", prop: "Player and game props", title: "Championship",
+  advancement: "Advancement", side_question: "Other markets", doubles: "Doubles", unclassified: "More",
 };
 
 // #9925: the theme registry's own slugs — `ai` (continuing) and `oscars-<year>`
@@ -125,7 +201,7 @@ const familyDek: Record<string, string> = {
 };
 const isTheme = (value: unknown): boolean => { const edition = object(value); return edition?.kind === "theme_continuing" || edition?.kind === "theme_edition"; };
 const themeSectionTitles: Record<string, Record<string, string>> = {
-  oscars: { title: "Award winners", advancement: "Nominations", side_question: "More questions" },
+  oscars: { title: "Award winners", advancement: "Nominations", side_question: "Other markets" },
   ai: { side_question: "Markets" },
 };
 const cursorText = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 64 && /^[A-Za-z0-9_-]+$/.test(value);
@@ -167,7 +243,7 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
     dek: null, family: null };
   if (state !== "published") {
     const notes = { unpublished: "This collection isn't available yet.", withdrawn: "This collection is no longer available.",
-      empty: isRoundup ? "There are no markets in this collection right now." : "There are no games or questions in this collection right now.", unavailable: "This collection isn't available right now." };
+      empty: isRoundup ? "There are no markets in this collection right now." : "There are no games or markets in this collection right now.", unavailable: "This collection isn't available right now." };
     return { ...base, note: notes[state] };
   }
   if (!base.revision || (!base.edition && !isRoundup) || !title || !Array.isArray(row.sections)) throw new Error("This collection isn't available right now.");
@@ -206,8 +282,11 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
     if (section.count !== section.members.length || accepted.length !== section.members.length) partial = true;
     if (accepted.length) sections.push({ key: `${index}:${section.class}`, cls: section.class,
       title: (slug === "midterms-2026" || isRoundup) && text(section.title) ? section.title : familyTitles?.[section.class as string]?.title ?? titles[section.class] ?? "More",
-      note: familyTitles?.[section.class as string]?.note ?? null,
-      layout: slug === "midterms-2026" && text(section.layout) ? section.layout : undefined,
+      note: (isRoundup && text(section.note) ? section.note : null) ?? familyTitles?.[section.class as string]?.note ?? null,
+      layout: (slug === "midterms-2026" || isRoundup) && text(section.layout) ? section.layout : undefined,
+      visualBlock: isRoundup && object(section.visual_block) && text(object(section.visual_block)?.form_id)
+        ? (section.visual_block as unknown as MachineryVisualBlock)
+        : undefined,
       members: accepted });
   });
   const members = sections.flatMap((section) => section.members);
@@ -231,10 +310,110 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
   }
   const pin = object(row.discover_pin);
   const admittedPin = slug === "midterms-2026" && pin?.slug === slug && pin.href === collectionPath(slug) && text(pin.name) && text(pin.subtitle) && text(pin.pin_until) && Number.isFinite(Date.parse(pin.pin_until)) ? pin as unknown as CollectionPin : null;
-  return { ...base, members, related, children, theme, family, relatedSummary, dek: family ? familyDek[family] ?? null : null,
-    subtitle: text(row.subtitle) ? row.subtitle : null, pin: admittedPin,
+  const rawCaption = object(row.caption) ?? object(header?.caption);
+  let admittedCaption: CollectionCaption | null = null;
+  if (rawCaption && rawCaption.no_number_verified === true && text(rawCaption.commentary) && !/\d/.test(rawCaption.commentary)) {
+    const rawFigs = Array.isArray(rawCaption.figures) ? rawCaption.figures : [];
+    const parsedFigs: CollectionCaptionFigure[] = [];
+    for (const f of rawFigs) {
+      const fig = object(f);
+      if (fig && text(fig.label) && text(fig.value) && text(fig.observed_at) && text(fig.as_of_label) && text(fig.source) && text(fig.source_href) && fig.source_href.startsWith("/") && !fig.source_href.startsWith("//")) {
+        parsedFigs.push({
+          memberId: text(fig.member_id) ? fig.member_id : "",
+          label: fig.label.trim(),
+          value: fig.value.trim(),
+          observedAt: fig.observed_at.trim(),
+          asOfLabel: fig.as_of_label.trim(),
+          source: fig.source.trim(),
+          sourceHref: fig.source_href.trim(),
+        });
+      }
+    }
+    admittedCaption = {
+      commentary: rawCaption.commentary.trim(),
+      noNumberVerified: true,
+      figures: parsedFigs,
+    };
+  }
+  const rawParent = object(row.parent);
+  let admittedParent: CollectionParent | null = null;
+  if (rawParent && safeCollectionSlug(rawParent.slug) && text(rawParent.name)) {
+    const pDest = object(rawParent.destination);
+    const pHref = collectionPath(rawParent.slug);
+    if (
+      pHref &&
+      (!pDest ||
+        (pDest.kind === "container" &&
+          pDest.slug === rawParent.slug &&
+          pDest.api === `/api/containers/${rawParent.slug}` &&
+          (pDest.web == null || pDest.web === pHref)))
+    ) {
+      admittedParent = {
+        slug: rawParent.slug,
+        name: rawParent.name.trim(),
+        href: pHref,
+      };
+    }
+  }
+  const admittedMoreSets: CollectionMoreSet[] = [];
+  if (Array.isArray(row.more_sets)) {
+    const seenMore = new Set<string>([slug]);
+    for (const rawItem of row.more_sets) {
+      if (admittedMoreSets.length >= 2) break;
+      const item = object(rawItem);
+      if (!item || !safeCollectionSlug(item.slug) || !text(item.name) || seenMore.has(item.slug)) continue;
+      const mHref = collectionPath(item.slug);
+      if (!mHref) continue;
+      const mDest = object(item.destination);
+      if (
+        mDest &&
+        (mDest.kind !== "container" ||
+          mDest.slug !== item.slug ||
+          mDest.api !== `/api/containers/${item.slug}` ||
+          (mDest.web != null && mDest.web !== mHref))
+      ) {
+        continue;
+      }
+      if (!positive(item.member_count)) continue;
+      const prob =
+        typeof item.lead_probability === "number" &&
+        Number.isFinite(item.lead_probability) &&
+        item.lead_probability >= 0 &&
+        item.lead_probability <= 1
+          ? item.lead_probability
+          : null;
+      const leadLabel = prob !== null && text(item.lead_label) ? item.lead_label.trim() : null;
+      const asOf = prob !== null && text(item.as_of) ? item.as_of.trim() : null;
+      if (prob === null || leadLabel === null || asOf === null) continue;
+      const leadRenderedPercent =
+        typeof item.lead_rendered_percent === "number" &&
+        Number.isInteger(item.lead_rendered_percent) &&
+        item.lead_rendered_percent >= 0 &&
+        item.lead_rendered_percent <= 100
+          ? item.lead_rendered_percent
+          : null;
+      seenMore.add(item.slug);
+      admittedMoreSets.push({
+        slug: item.slug,
+        name: item.name.trim(),
+        href: mHref,
+        dek: text(item.dek) ? item.dek.trim() : null,
+        category: text(item.category) ? item.category.trim() : null,
+        memberCount: item.member_count,
+        leadLabel,
+        leadProbability: prob,
+        leadRenderedPercent,
+        asOf,
+      });
+    }
+  }
+  const admittedPairedSet = object(row.paired_metric_set) && Array.isArray(object(row.paired_metric_set)?.entries)
+    ? (row.paired_metric_set as unknown as CollectionHub["pairedMetricSet"])
+    : null;
+  return { ...base, members, related, children, parent: admittedParent, moreSets: admittedMoreSets, theme, family, relatedSummary, dek: family ? familyDek[family] ?? null : null,
+    subtitle: text(row.subtitle) ? row.subtitle : null, caption: admittedCaption, pin: admittedPin, pairedMetricSet: admittedPairedSet,
     sections: sections.map((section) => ({ ...section, members: section.members.filter((m) => !relatedKeys.has(m.key)) })).filter((s) => s.members.length > 0),
-    note: partial ? (slug === "midterms-2026" || isRoundup ? "Some markets aren't available right now." : "Some games or questions aren't available right now.") : !members.length && !children.length ? "No markets are available right now." : null };
+    note: partial ? (slug === "midterms-2026" || isRoundup ? "Some markets aren't available right now." : "Some games or markets aren't available right now.") : !members.length && !children.length ? "No markets are available right now." : null };
 }
 
 function relate(members: CollectionMember[]): Record<string, CollectionMember[]> {
@@ -265,6 +444,19 @@ export function relatedMarketLinks(
 }
 
 export interface CollectionPageRequest { revision: number; cursor: string }
+async function resolveMachineryAdminHeaders(slug: string): Promise<Record<string, string> | undefined> {
+  if (!slug.startsWith("machinery-") || typeof window === "undefined") return undefined;
+  try {
+    const { hasStoredAccountSession } = await import("@/lib/adminAccountSession");
+    const { BACKEND_AUTH_KEY, getIdTokenAfterAuthReady } = await import("@/lib/firebase");
+    const { SIGNED_IN_MARKER } = await import("@/hooks/useAuth");
+    if (!hasStoredAccountSession(SIGNED_IN_MARKER, BACKEND_AUTH_KEY)) return undefined;
+    const token = await getIdTokenAfterAuthReady();
+    return token ? { Authorization: `Bearer ${token}` } : undefined;
+  } catch {
+    return undefined;
+  }
+}
 export async function fetchCollection(slug: string, signal?: AbortSignal, page?: CollectionPageRequest): Promise<CollectionHub> {
   if (!safeCollectionSlug(slug)) throw new Error("This collection isn't available right now.");
   // The cursor is opaque and belongs to its revision; both travel together.
@@ -277,7 +469,13 @@ export async function fetchCollection(slug: string, signal?: AbortSignal, page?:
   const query = params.toString();
   const path = `${API_URL}/api/containers/${slug}`;
   const url = query ? `${path}?${query}` : path;
-  const response = await fetch(url, { cache: "no-store", signal });
+  const adminHeaders = slug.startsWith("machinery-")
+    ? await resolveMachineryAdminHeaders(slug)
+    : null;
+  const init: RequestInit = adminHeaders
+    ? { cache: "no-store", signal, headers: adminHeaders }
+    : { cache: "no-store", signal };
+  const response = await fetch(url, init);
   if (response.status === 404) return parseCollection({ slug, state: "unavailable" }, slug);
   if (!response.ok) throw new Error("Couldn't load this collection. Please try again.");
   return parseCollection(await response.json(), slug);
@@ -435,3 +633,29 @@ export async function fetchCollectionWeekNavigation(slug: string, signal?: Abort
 export function activeCollectionPin(hub: CollectionHub | null | undefined, now = Date.now()): CollectionPin | null {
   return hub?.state === "published" && hub.slug === "midterms-2026" && hub.pin && Date.parse(hub.pin.pin_until) > now ? hub.pin : null;
 }
+
+/**
+ * #10090: a member the page already settled by the official result
+ * (`settled_winner`, e.g. a called midterm race). It shows that winner, so it
+ * never takes a streamed price: a venue card resolved later carries no
+ * `settled_winner` and would turn the winner back into 100% / 0%.
+ */
+export function servedSettledMember(member: CollectionMember): boolean {
+  const winner = (member.item.data as { settled_winner?: string | null } | null)?.settled_winner;
+  return typeof winner === "string" && winner.trim() !== "";
+}
+
+/**
+ * #10090: one member with its card re-priced by the price stream, matched by
+ * price key (`event-<id>` / `futures-<id>`). The hub itself is never rewritten:
+ * revisions, paging and reading context keep reading the served members.
+ * Returns `member` itself when the stream holds nothing newer for it, or when
+ * the served card is already settled (`servedSettledMember`).
+ */
+export function pricedCollectionMember(member: CollectionMember, priced: ReadonlyMap<string, FeedItem>): CollectionMember {
+  if (servedSettledMember(member)) return member;
+  const key = priceKey(member.item);
+  const item = key ? priced.get(key) : undefined;
+  return item && item !== member.item ? { ...member, item } : member;
+}
+

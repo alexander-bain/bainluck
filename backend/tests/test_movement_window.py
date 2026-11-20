@@ -1372,19 +1372,21 @@ def test_both_short_batches_report_drain_unverified(run_task) -> None:
 
 class TestTheFieldStillDoesNotMeanWhatItIsNamed:
     def test_every_writer_computes_a_per_write_delta_not_a_windowed_one(self):
-        """All four writers store ``new - previous``, over whatever interval that was."""
+        """The stored delta is per-write; Polymarket additionally guards its basis."""
         import inspect
 
         from app.tasks import futures as futures_task
         from app.tasks import kalshi as kalshi_task
         from app.tasks import polymarket as polymarket_task
+        from app.utils.polymarket_quote import quoted_price_change
 
         kalshi_src = inspect.getsource(kalshi_task)
         poly_src = inspect.getsource(polymarket_task)
         futures_src = inspect.getsource(futures_task)
 
         assert "- FuturesOutcome.current_probability" in kalshi_src
-        assert "- FuturesOutcome.current_probability" in poly_src
+        assert "quoted_price_change(" in poly_src
+        assert "- FuturesOutcome.current_probability" in inspect.getsource(quoted_price_change)
         assert "prob_change = prob - old_prob" in futures_src
 
     def test_no_writer_recomputes_it_over_a_real_24_hour_window(self):

@@ -219,6 +219,11 @@ def _make_related_futures_session(event):
         source="polymarket",
         bookmaker_count=4,
     )
+    from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
+    polymarket_champ.market_metadata = {DATED_BASIS_METADATA_KEY: {
+        "202": [0.42, (datetime.now(timezone.utc) - timedelta(hours=18)).isoformat()],
+    }}
     away_champ = _make_market(
         id=103,
         name="NBA Champion",
@@ -535,6 +540,16 @@ class TestRelatedFuturesPopulatedContract:
         assert item["merge_group"] == "nba_champion"
         assert item["bookmaker_count"] == 4
         assert set(item["all_sources"]) == {"kalshi", "polymarket"}
+        assert item["source_mark"] == {
+            "state": "single",
+            "sources": [{
+                "key": "polymarket",
+                "name": "Polymarket",
+                "probability": 0.44,
+                "observed_at": None,
+                "reason": "observation_unknown",
+            }],
+        }
 
     async def test_same_merge_group_keeps_distinct_team_outcomes(
         self,
@@ -549,6 +564,8 @@ class TestRelatedFuturesPopulatedContract:
         assert away_item["outcome_name"] == "Philadelphia 76ers"
         assert away_item["merge_group"] == "nba_champion"
         assert "all_sources" not in away_item
+        assert away_item["source_mark"]["sources"][0]["key"] == "kalshi"
+        assert away_item["source_mark"]["sources"][0]["probability"] == 0.08
 
     async def test_futures_item_value_contract(
         self,
@@ -559,7 +576,7 @@ class TestRelatedFuturesPopulatedContract:
         item = body["home_team_futures"][0]
 
         assert item["probability"] == 0.44
-        assert item["probability_change_24h"] == 0.02
+        assert item["probability_change_24h"] == pytest.approx(0.02)
         assert item["opening_probability"] == 0.42
         assert item["market_tier"] == 1
         assert item["category"] == "championship"

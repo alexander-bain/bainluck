@@ -107,6 +107,18 @@ VENUE_SETTLED_CONFIRM_HOURS = 48
 #: needs no ``jsonb_set`` path handling.
 VENUE_SETTLED_KEY = "price_refresh_venue_settled_since"
 
+#: Ruling 198-B (Alex, Nov 15 2026): a market whose CURRENT book we refuse as too
+#: wide keeps its number on its own page, with its "As of", and is never featured
+#: on Discover. Nothing is blanked. The price refresh stamps ``…_first_at`` on a
+#: read where the venue quoted books but no leg was accepted, and ``…_since``
+#: (CONFIRMED) on the next such read from a later run: two refused reads in a row,
+#: so one thin overnight read cannot take a market off Discover. Any accepted
+#: price, from the refresh or the hourly poll, clears both. Discover's candidate
+#: pool skips a market holding ``BOOK_REFUSED_KEY``. Same ``YYYY-MM-DDTHH:MM:SS``
+#: UTC shape as ``VENUE_SETTLED_KEY``.
+BOOK_REFUSED_FIRST_KEY = "price_refresh_book_refused_first_at"
+BOOK_REFUSED_KEY = "price_refresh_book_refused_since"
+
 assert isinstance(VENUE_SETTLED_CONFIRM_HOURS, int)  # interpolated into SQL
 
 #: Keys `preserve_venue_settled` carries across an ingest poll's wholesale
@@ -144,6 +156,11 @@ OUTCOME_TOKEN_METADATA_KEY = "clob_yes_token_by_outcome"
 
 CARRIED_METADATA_KEYS = (
     VENUE_SETTLED_KEY,
+    # 198-B: the poll REPLACES the blob hourly; without these it would erase the
+    # refusal stamp every hour and a market would flicker back onto Discover.
+    # The poll clears them itself, explicitly, when it accepts a price.
+    BOOK_REFUSED_FIRST_KEY,
+    BOOK_REFUSED_KEY,
     HOOK_POLICY_METADATA_KEY,  # #5531
     HOOK_PROB_METADATA_KEY,  # #5531
     MARKET_SHAPE_METADATA_KEY,  # #8265
@@ -289,6 +306,43 @@ _VENUE_SETTLED_CUTOFF_SQL = (
 VENUE_SETTLED_NOW_SQL = (
     "to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS')"
 )
+
+#: 198-B: an accepted price retracts both refusal stamps. Plain SQL text so the
+#: refresh and the hourly poll run the identical statement (and this module keeps
+#: its zero-model-imports property). Guarded so a market that never carried a
+#: stamp is not rewritten.
+CLEAR_BOOK_REFUSED_SQL = f"""
+    UPDATE futures_markets
+       SET market_metadata = market_metadata - '{BOOK_REFUSED_FIRST_KEY}' - '{BOOK_REFUSED_KEY}'
+     WHERE id = :mid
+       AND (market_metadata->>'{BOOK_REFUSED_FIRST_KEY}' IS NOT NULL
+            OR market_metadata->>'{BOOK_REFUSED_KEY}' IS NOT NULL)
+"""
+
+#: 198-B: one refused read. The first stamps ``…_first_at``; a later run's
+#: refused read, with no accepted price between (which would have cleared the
+#: first), CONFIRMS with ``…_since``. ``:run_started`` (naive UTC) keeps one run
+#: from confirming its own first stamp. Open Polymarket markets only. RETURNING
+#: says whether the market is now confirmed. The merge base is ``{}`` unless the
+#: column already holds an OBJECT: an ORM insert with ``None`` stores JSON
+#: ``null`` (not SQL NULL), and ``COALESCE`` would let ``null || {...}`` turn the
+#: blob into an array. Found by the real-Postgres gate, not by the fakes.
+STAMP_BOOK_REFUSED_SQL = f"""
+    UPDATE futures_markets
+       SET market_metadata = (CASE WHEN jsonb_typeof(market_metadata) = 'object'
+                                   THEN market_metadata ELSE '{{}}'::jsonb END) || CASE
+             WHEN market_metadata->>'{BOOK_REFUSED_FIRST_KEY}' IS NULL
+               THEN jsonb_build_object('{BOOK_REFUSED_FIRST_KEY}', {VENUE_SETTLED_NOW_SQL})
+             ELSE jsonb_build_object('{BOOK_REFUSED_KEY}', {VENUE_SETTLED_NOW_SQL})
+           END
+     WHERE id = :mid
+       AND source = 'polymarket'
+       AND status = 'open'
+       AND market_metadata->>'{BOOK_REFUSED_KEY}' IS NULL
+       AND (market_metadata->>'{BOOK_REFUSED_FIRST_KEY}' IS NULL
+            OR (market_metadata->>'{BOOK_REFUSED_FIRST_KEY}')::timestamp < :run_started)
+    RETURNING market_metadata->>'{BOOK_REFUSED_KEY}' IS NOT NULL
+"""
 
 #: The two bounds #2222 added, on their own so a caller can report the
 #: population they exclude rather than merely dropping it (see

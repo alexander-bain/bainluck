@@ -47,19 +47,22 @@ final class LiveSportsCardTidy11422Tests: XCTestCase {
         XCTAssertFalse(Footer.reasonStatesTheOpening("Rising Stars leading after starting slow"))
     }
 
-    /// Stepping the caption aside never empties the footer: the reason is
-    /// content on its own, so the sentence is still drawn once.
-    func testTheFooterStillDrawsWhenTheCaptionStepsAside() {
-        XCTAssertTrue(Footer.hasContent(
+    /// Ruling 204-C: live cards draw no grey sentence in the footer; pregame
+    /// cards keep their real reason line.
+    func testScheduledCardKeepsReasonWhileLiveCardSuppressesGreyFooter204C() {
+        XCTAssertFalse(Footer.hasContent(
             reason: "New Orleans Pelicans leading after starting at 44%", isLive: true,
+            awayOpening: 0.56, homeOpening: 0.44, sport: "basketball_nba"))
+        XCTAssertTrue(Footer.hasContent(
+            reason: "Starting soon — close matchup", isLive: false,
             awayOpening: 0.56, homeOpening: 0.44, sport: "basketball_nba"))
     }
 
     func testTheCaptionIsGatedOnTheReasonInTheView() throws {
         let code = try source("Components/EventCardView.swift")
-        XCTAssertTrue(code.contains("privatevarfooterRow:someView{"), "anti-vacuity")
+        XCTAssertTrue(code.contains("privatevarlivePregameContext12616:(visible:String,spoken:String)?{"), "anti-vacuity")
         XCTAssertEqual(
-            occurrences("ifisLive,!EventCardFooter.reasonStatesTheOpening(reason),letopened=DrawPricedWinner.printablePair(", in: code), 1)
+            occurrences("guardisLive,!isSuspended,!EventCardFooter.reasonStatesTheOpening(reason),letreading=prematchelse{returnnil}", in: code), 1)
     }
 
     // MARK: - 2. The reason pill keeps every letter
@@ -67,11 +70,12 @@ final class LiveSportsCardTidy11422Tests: XCTestCase {
     func testTheReasonPillIsNotClippedToACapsule() throws {
         let code = try source("Components/EventCardView.swift")
         guard let start = code.range(of: "privatefuncreasonBadge("),
-              let end = code.range(of: "privatefuncreasonStyle(", range: start.upperBound..<code.endIndex)
+              let end = code.range(of: "enumReasonBadge{", range: start.upperBound..<code.endIndex)
         else { return XCTFail("reasonBadge not found") }
         let badge = String(code[start.lowerBound..<end.lowerBound])
-        XCTAssertTrue(badge.contains(".clipShape(RoundedRectangle(cornerRadius:8,style:.continuous))"), badge)
-        XCTAssertFalse(badge.contains("Capsule()"), "a wrapped sentence loses its end letters to a Capsule")
+        XCTAssertTrue(badge.contains(".foregroundStyle(DS.textSecondaryReadable)"), badge)
+        XCTAssertFalse(badge.contains("Capsule()"), "Ruling 182-A: a capsule is only for live status")
+        XCTAssertFalse(badge.contains("RoundedRectangle("), "Ruling 182-A: a real reason is a plain grey line, not a pill")
     }
 
     // MARK: - 1. The projected final on one line

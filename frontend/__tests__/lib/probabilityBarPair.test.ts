@@ -266,18 +266,19 @@ describe("when both sides have a colour (unreachable on today's payloads)", () =
     expect(pair).toEqual({ away: "#be0a14", home: "#005A9C" });
   });
 
-  it("rescues the home side when two real colours would read as one block", () => {
+  it("rescues the away side when two real colours would read as one block (Ruling 197)", () => {
     // 155 teams share #000000, so a black-v-black card is not hypothetical.
+    // Ruling 197: home keeps its main colour; away switches to its secondary or slate grey.
     const pair = probabilityBarPair("#000000", "#000000");
-    expect(pair.away).toBe("#000000");
-    expect(pair.home).not.toBe("#000000");
+    expect(pair.home).toBe("#000000");
+    expect(pair.away).not.toBe("#000000");
     expect(distinct(pair.away, pair.home)).toBe(true);
   });
 
-  it("two dark reds 78 apart are treated as a collision, per the measured floor", () => {
+  it("two dark reds 78 apart are treated as a collision, with away switching (Ruling 197)", () => {
     const pair = probabilityBarPair("#8a2432", "#ac0d1e");
-    expect(pair.away).toBe("#8a2432");
-    expect(pair.home).not.toBe("#ac0d1e");
+    expect(pair.home).toBe("#ac0d1e");
+    expect(pair.away).not.toBe("#8a2432");
   });
 
   it("is deterministic — the same input never renders two ways", () => {

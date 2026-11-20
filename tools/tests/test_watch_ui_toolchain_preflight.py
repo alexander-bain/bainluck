@@ -36,8 +36,10 @@ class ToolchainPreflightTests(unittest.TestCase):
                     self.assertEqual(gate.toolchain(), dict(zip(self.keys, self.outputs)))
                     self.assertIn(repr(command), log.getvalue())
                     self.assertEqual(log.getvalue().count("retrying once"), 1)
-                expected = self.commands[:index] + [command] + self.commands[index:]
-                self.assertEqual(run.call_args_list, [call(c, text=True, timeout=60) for c in expected])
+                expected = ([call(c, text=True, timeout=60) for c in self.commands[:index]]
+                            + [call(command, text=True, timeout=60), call(command, text=True, timeout=240)]
+                            + [call(c, text=True, timeout=60) for c in self.commands[index + 1:]])
+                self.assertEqual(run.call_args_list, expected)
 
     def test_two_timeouts_propagate_and_never_start_later_identity_reads(self):
         for index, command in enumerate(self.commands):
@@ -49,7 +51,8 @@ class ToolchainPreflightTests(unittest.TestCase):
                         gate.toolchain()
                 self.assertIs(error.exception, last)
                 self.assertEqual(run.call_count, index + 2)
-                self.assertEqual(run.call_args_list[-2:], [call(command, text=True, timeout=60)] * 2)
+                self.assertEqual(run.call_args_list[-2:], [call(command, text=True, timeout=60),
+                                                           call(command, text=True, timeout=240)])
 
     def test_nonzero_exit_is_not_retried_or_swallowed(self):
         error = subprocess.CalledProcessError(72, self.commands[0], output="no selected Xcode")
@@ -79,7 +82,16 @@ class ToolchainPreflightTests(unittest.TestCase):
         with patch.object(gate.subprocess, "check_output", side_effect=effects) as run, patch.object(gate.sys, "stderr", new_callable=io.StringIO):
             self.assertEqual(gate.toolchain(), dict(zip(self.keys, self.outputs)))
         self.assertEqual(run.call_count, 12)
-        self.assertTrue(all(c.kwargs["timeout"] == 60 for c in run.call_args_list))
+        self.assertEqual([c.kwargs["timeout"] for c in run.call_args_list], [60, 240] * 6)
+
+    def test_the_one_retry_waits_longer_and_says_so(self):
+        # Run 44360250607: xcrun stalled past two 60 s reads after the products built.
+        self.assertEqual(gate.TOOLCHAIN_READ_TIMEOUTS, (60, 240))
+        effects = [subprocess.TimeoutExpired(self.commands[1], 60)]
+        effects = self.outputs[:1] + effects + self.outputs[1:]
+        with patch.object(gate.subprocess, "check_output", side_effect=effects), patch.object(gate.sys, "stderr", new_callable=io.StringIO) as log:
+            gate.toolchain()
+        self.assertIn("timed out after 60s; retrying once with 240s", log.getvalue())
 
     def test_successful_retry_still_requires_exact_manifest_toolchain(self):
         effects = [subprocess.TimeoutExpired(self.commands[0], 60)] + self.outputs

@@ -439,6 +439,20 @@ READ_SIDE_CONSUMERS = {
         "#2024 was found through, and the one that is WRONG today: it is filtering "
         "on a stamp that says the poller ran."
     ),
+    "app/utils/futures_quote_freshness.py": (
+        "POLLER ALIVE — #12633's shared selection/guard predicate requires "
+        "a recent last_updated on the same outcome as a recent chart point. "
+        "It also keeps an old, still-priced writable sibling due even when "
+        "another outcome is fresh. The task selectors and source-health "
+        "guards call this helper rather than comparing the stamp themselves. "
+        "A chart keepalive alone is not a quote observation. An unchanged "
+        "successful venue read advances last_updated and clears this darkness "
+        "without advancing price_changed_at; the real PostgreSQL guard and "
+        "Governor writer cases in test_futures_price_refresh_writes_pg prove "
+        "both directions. Under option 1, a stable quoted field would remain "
+        "dark forever. This shared selection predicate never hides or rewrites "
+        "a price; all existing writer semantics and consumer gates are unchanged."
+    ),
     "app/routes/oscars.py": (
         "NEITHER — `outcome.last_updated > existing_ts` is a max() fold over "
         "nominees to display 'last updated'. Insensitive to the change either way, "
@@ -473,7 +487,12 @@ READ_SIDE_CONSUMERS = {
         "zeroed. PRE-EXISTING and unaudited until Q482 widened the scan."
     ),
     "app/tasks/futures_price_refresh.py": (
-        "POLLER ALIVE — #7582's clear. `FuturesOutcome.last_updated < "
+        "POLLER ALIVE — #12633's selectors and remaining-stale count now require "
+        "the same recent observation beside a recent chart point before "
+        "suppressing a recheck. Under option 1 stable prices would be reselected "
+        "forever. The existing writer stamps every real unchanged quote; "
+        "keepalives never advance that row clock. Also #7582's clear: "
+        "`FuturesOutcome.last_updated < "
         "stale_before` is the seven-day grace (`OBSERVATION_LAG_DAYS`) before a "
         "leg the venue lists and will not quote has its price taken down. Under "
         "option 1 this INVERTS, and it is the subtlest inversion in the dict "
@@ -779,6 +798,9 @@ PRICE_CHANGE_STAMPERS = {
     # #10022: the open-contract per-leg grader writes the settled price (1.0 /
     # 0.0) the way `backfill_winners`' Kalshi grader does, stamp included.
     "app/tasks/ws_open_contracts.py": 1,
+    # #12633's new conditional binary-child write maintains the move stamp.
+    # The pre-existing legacy poll/clear debt stays in #5192's site ledger.
+    "app/tasks/prediction_market_matching.py": 1,
 }
 
 

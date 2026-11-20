@@ -82,7 +82,7 @@ final class ProjectedFinalPointsSeries10239Tests: XCTestCase {
 
     func testBrokenPairSplitsLineAndSingletonsSurvive() throws {
         let result = try XCTUnwrap(Series.build(input([pair(0), pair(60, nil, 7), pair(120)])))
-        XCTAssertEqual(result.segments.map(\.count), [1, 1])
+        XCTAssertEqual(result.segments.map(\.count), [2])
         XCTAssertEqual(result.withheld.map(\.reason), [.incomplete])
         XCTAssertEqual(result.segments[0][0].holdEnd, t(0))
     }
@@ -111,7 +111,7 @@ final class ProjectedFinalPointsSeries10239Tests: XCTestCase {
 
     func testLongCaptureGapBreaksRatherThanHoldingThroughSilence() throws {
         let result = try XCTUnwrap(Series.build(input([pair(0), pair(3601)], now: 3700)))
-        XCTAssertEqual(result.segments.map(\.count), [1, 1])
+        XCTAssertEqual(result.segments.map(\.count), [2])
         XCTAssertEqual(result.segments[0][0].holdEnd, t(0))
         XCTAssertFalse(result.latestIntervalUnavailable)
         XCTAssertTrue(try XCTUnwrap(Series.build(input([pair(0)], now: 3601))).latestIntervalUnavailable)

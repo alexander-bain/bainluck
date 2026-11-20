@@ -407,8 +407,13 @@ final class ContextualTips10876Tests: XCTestCase {
                            "\(page.file): the ScrollView no longer carries the space the hero is measured in")
             let space = try XCTUnwrap(code.range(of: ".coordinateSpace(name: Self.scrollSpace)"))
             let scroll = try XCTUnwrap(code.range(of: "ScrollView {", options: .backwards,
-                                                  range: code.startIndex..<hero.lowerBound))
+                                                  range: code.startIndex..<space.lowerBound))
             XCTAssertLessThan(scroll.upperBound, space.lowerBound, "\(page.file): the space is not on the hero's ScrollView")
+            if scroll.lowerBound > hero.lowerBound {
+                let scrollBody = code[scroll.upperBound..<space.lowerBound]
+                XCTAssertTrue(scrollBody.contains("heroAndChartCard"),
+                              "\(page.file): hoisted heroBlock must be mounted inside the ScrollView carrying Self.scrollSpace")
+            }
         }
         let tips = Self.withoutCommentLines(try String(contentsOf: Self.tipsSource, encoding: .utf8))
         XCTAssertTrue(tips.contains("heroClearOfTips(heroBottom: proxy.frame(in: .named(scrollSpace)).maxY)"),

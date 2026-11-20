@@ -118,22 +118,20 @@ function crestLetters(html: string): string[] {
 }
 
 describe("#7270 the event hero cannot paint an unshippable crest badge", () => {
-  it("draws ASD and JAY for the filed specimen, and nowhere paints ASS or KJ", () => {
+  it("draws school letters AS and KAN (or served ASU and KU) for the filed specimen, and nowhere paints ASS or KJ", () => {
     EVENT_HOLDER.value = EVENT;
     const letters = crestLetters(draw());
 
     // Positive first, so the test cannot pass by rendering nothing at all —
     // an empty hero would satisfy every "does not contain" assertion below.
     expect(letters.length).toBeGreaterThanOrEqual(2);
-    // `ASD`, not `DEV`: "State" is a non-distinctive token, so the distinctive
-    // set is Arizona/Sun/Devils. This is also what Discover already draws for
-    // this team, which is the point of routing the hero through the helper.
-    expect(letters).toContain("ASD");
-    expect(letters).toContain("JAY");
+    // Ruling 194-A: when `sport` is `americanfootball_ncaaf` and no served
+    // abbreviation is present on the fixture, the badge derives from the school
+    // ("Arizona State" -> `AS`, "Kansas" -> `KAN`), never the mascot (`ASD`, `JAY`).
+    expect(letters).toContain("AS");
+    expect(letters).toContain("KAN");
 
     expect(letters).not.toContain("ASS");
-    // `KJ` was not a slur, it was the same rule failing quietly: two initials
-    // where the other surfaces all draw `JAY`.
     expect(letters).not.toContain("KJ");
   });
 

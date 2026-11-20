@@ -108,7 +108,7 @@ function ChamberControlCard({
     return (
       <div className="min-w-0 rounded-card border border-surface-border bg-surface-card p-3">
         <Link href={`/futures/${probs.market_id}`} data-midterms-card="control" className="block space-y-3 hover:bg-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-brand">
-          <div className="flex items-center justify-between gap-1"><h3 className="text-xs font-semibold uppercase tracking-wide text-text-secondary">{chamber}</h3><SourceBadge source={probs.source ?? "both"} /></div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-text-secondary">{chamber}</h3>
           {probs.winner ? <p className="text-sm font-semibold text-text-primary">Settled - {probs.winner}</p> : <>
             <div className="grid grid-cols-2 gap-2">
               <div style={{ color: "var(--party-democratic)" }}><p className="font-mono text-2xl font-semibold tabular-nums">{demPct ?? Math.round(probs.dem)}%</p><p className="text-[10px] font-medium">Democratic</p></div>

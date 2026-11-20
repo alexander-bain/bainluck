@@ -91,11 +91,13 @@ export function MovementBadge({
   prob,
   onDark = false,
   timeframeLabel,
+  unit = "pts",
 }: {
   m: number | null | undefined;
   prob?: number | null;
   onDark?: boolean;
   timeframeLabel?: string | null;
+  unit?: "pts" | "points";
 }) {
   // UX-P048 (#1695): the fraction -> points conversion lives in exactly one
   // place. This badge was already correct; it delegates so that it and the hero
@@ -154,7 +156,7 @@ export function MovementBadge({
       className={`inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-[10px] font-bold px-1.5 py-0.5 rounded-full ${onDark ? MOVEMENT_BADGE_ON_DARK[up ? "up" : "down"] : up ? "bg-green-500/15 text-green-600" : "bg-red-500/15 text-red-600"}`}
     >
       <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true">{up ? <path d="M4 1L7 5H1z" /> : <path d="M4 7L1 3h6z" />}</svg>
-      {pts} pts
+      {pts} {unit === "points" ? (pts === "1" ? "point" : "points") : "pts"}
     </span>
   );
 }

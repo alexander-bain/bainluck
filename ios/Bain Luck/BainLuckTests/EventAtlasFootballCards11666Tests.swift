@@ -140,8 +140,162 @@ final class EventAtlasFootballCards11666Tests: XCTestCase {
         XCTAssertEqual(q1.legs[0].pregameChance ?? 0, 0.52, accuracy: 0.0001)
         XCTAssertEqual(q1.legs[0].verdict, .won)
         XCTAssertEqual(q1.legs[1].pregameChance ?? 0, 0.34, accuracy: 0.0001)
-        XCTAssertEqual(q1.legs[1].verdict, .lost)
+        XCTAssertEqual(q1.legs[1].verdict, .unconfirmed)
         XCTAssertEqual(q1.legs[2].pregameChance ?? 0, 0.18, accuracy: 0.0001)
+        XCTAssertEqual(q1.legs[2].verdict, .unconfirmed)
+
+        // Tier 0/1/2 rows with is_winner: false at the final read "Result not confirmed"
+        for nonAuthSource in ["binary_higher_wins", "clean_resolution", "game_score"] {
+            let nonAuthGM = GameMarketsResponse(
+                eventId: 14780562,
+                homeTeam: "Dallas Cowboys",
+                awayTeam: "Philadelphia Eagles",
+                status: "completed",
+                homeScore: 20,
+                awayScore: 28,
+                playerProps: [
+                    GameMarketPlayerProp(
+                        isWinner: true,
+                        resolutionSource: "api_settlement",
+                        marketName: "Team Sacks",
+                        outcomeName: "Philadelphia Eagles: 2+",
+                        threshold: 2,
+                        overProbability: 0.99,
+                        source: "kalshi",
+                        movement: nil,
+                        playerHeadshot: nil,
+                        playerTeam: "PHI",
+                        actual: 4,
+                        hit: true,
+                        pregameMark: 0.72,
+                        observedAt: "2026-11-08T21:00:00Z"
+                    ),
+                    GameMarketPlayerProp(
+                        isWinner: false,
+                        resolutionSource: nonAuthSource,
+                        marketName: "Team Sacks",
+                        outcomeName: "Dallas Cowboys: 2+",
+                        threshold: 2,
+                        overProbability: 0.01,
+                        source: "kalshi",
+                        movement: nil,
+                        playerHeadshot: nil,
+                        playerTeam: "DAL",
+                        actual: 1,
+                        hit: false,
+                        pregameMark: 0.50,
+                        observedAt: "2026-11-08T21:00:00Z"
+                    )
+                ],
+                spreads: nil,
+                totals: nil,
+                teamTotals: nil,
+                periodMarkets: [
+                    GameMarketOutcome(
+                        marketName: "1st Quarter Winner",
+                        outcomeName: "Philadelphia Eagles",
+                        probability: 1.0,
+                        source: "kalshi",
+                        threshold: nil,
+                        overProbability: nil,
+                        marketType: "moneyline",
+                        movement: nil,
+                        period: "Q1",
+                        isWinner: true,
+                        resolutionSource: "api_settlement",
+                        observedAt: "2026-11-08T18:45:00Z",
+                        pregameMark: 0.52
+                    ),
+                    GameMarketOutcome(
+                        marketName: "1st Quarter Winner",
+                        outcomeName: "Dallas Cowboys",
+                        probability: 0.0,
+                        source: "kalshi",
+                        threshold: nil,
+                        overProbability: nil,
+                        marketType: "moneyline",
+                        movement: nil,
+                        period: "Q1",
+                        isWinner: false,
+                        resolutionSource: nonAuthSource,
+                        observedAt: "2026-11-08T18:45:00Z",
+                        pregameMark: 0.34
+                    )
+                ],
+                other: nil,
+                pace: nil
+            )
+            let nonAuthPeriodCard = try XCTUnwrap(
+                EventAtlasFootballCards11666.buildPeriodWinnersCard(
+                    status: "completed",
+                    commenceTime: commence,
+                    homeTeam: "Dallas Cowboys",
+                    awayTeam: "Philadelphia Eagles",
+                    homeShort: "Cowboys",
+                    awayShort: "Eagles",
+                    homeScore: 20,
+                    awayScore: 28,
+                    boxScoreData: nil,
+                    gameMarkets: nonAuthGM,
+                    now: now
+                )
+            )
+            let wonDetails = try XCTUnwrap(
+                EventAtlasStoryCards11666.readerDetailsModel(
+                    rowID: nonAuthPeriodCard.panels[0].legs[0].id,
+                    cards: [.nflPeriodWinners(nonAuthPeriodCard)],
+                    rows: [:],
+                    awayName: "Eagles",
+                    homeName: "Cowboys"
+                )
+            )
+            XCTAssertEqual(wonDetails.primaryReadingValue, "✓ Won")
+            let unconfirmedDetails = try XCTUnwrap(
+                EventAtlasStoryCards11666.readerDetailsModel(
+                    rowID: nonAuthPeriodCard.panels[0].legs[1].id,
+                    cards: [.nflPeriodWinners(nonAuthPeriodCard)],
+                    rows: [:],
+                    awayName: "Eagles",
+                    homeName: "Cowboys"
+                )
+            )
+            XCTAssertEqual(
+                unconfirmedDetails.primaryReadingValue,
+                "Result not confirmed",
+                "Tier 0/1/2 source \(nonAuthSource) with is_winner: false must read 'Result not confirmed'"
+            )
+
+            let nonAuthSacksCard = try XCTUnwrap(
+                EventAtlasFootballCards11666.buildPairedMilestonesCard(
+                    family: .sacks,
+                    status: "completed",
+                    commenceTime: commence,
+                    homeTeam: "Dallas Cowboys",
+                    awayTeam: "Philadelphia Eagles",
+                    homeShort: "Cowboys",
+                    awayShort: "Eagles",
+                    gameMarkets: nonAuthGM,
+                    now: now
+                )
+            )
+            XCTAssertEqual(nonAuthSacksCard.groups[0].away?.verdict, .won)
+            XCTAssertEqual(nonAuthSacksCard.groups[0].home?.verdict, .unconfirmed)
+            let homeSacksSlot = try XCTUnwrap(nonAuthSacksCard.groups[0].home)
+            let homeSacksDetails = try XCTUnwrap(
+                EventAtlasStoryCards11666.readerDetailsModel(
+                    rowID: homeSacksSlot.id,
+                    cards: [.nflPairedMilestones(nonAuthSacksCard)],
+                    rows: [:],
+                    awayName: "Eagles",
+                    homeName: "Cowboys"
+                )
+            )
+            XCTAssertEqual(
+                homeSacksDetails.primaryReadingValue,
+                "Result not confirmed · Final 1 sack",
+                "Tier 0/1/2 source \(nonAuthSource) with is_winner: false must read 'Result not confirmed'"
+            )
+        }
 
         // Unconfirmed Q2 row shows .unconfirmed after final, never .lost
         let q2 = card.panels[1]

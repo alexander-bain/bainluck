@@ -1,0 +1,57 @@
+{
+  "slug": "machinery-taylor-swift",
+  "stage": "preview",
+  "look": "faces",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_subject",
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ENTERTAINMENT · TAYLOR SWIFT",
+  "name": "Taylor Swift",
+  "category": "entertainment",
+  "tag": "ENTERTAINMENT",
+  "section_title": "Taylor Swift Markets",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": ["politics", "culture"],
+    "card_rows": 3,
+    "card_section_key": "taylor_swift_markets",
+    "headline_predicate": "is the likeliest Taylor Swift move",
+    "sections": [
+      {
+        "key": "taylor_swift_markets",
+        "title": "Taylor Swift Markets",
+        "item_noun": "markets",
+        "note": "Open Taylor Swift markets across albums, appearances, and pop-culture moments.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "taylor-swift",
+          "exclude_tokens": [
+            "wedding",
+            "married",
+            "divorce",
+            "pregnant",
+            "pregnancy",
+            "arrested",
+            "affair",
+            "death",
+            "health"
+          ],
+          "shape": "binary",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 10,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3
+        }
+      }
+    ]
+  }
+}

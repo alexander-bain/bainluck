@@ -125,15 +125,15 @@ const DECIMAL_NUMERAL = /^\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$/;
  * "7% chance": the cached `/api/feed` served `top_outcomes[].probability` as
  * `"0.067500"` (a database `NUMERIC`, stored as its text by the feed cache), and
  * `Number.isFinite("0.067500")` is false. The backend now stores numbers
- * (`feed_cache.dumps_feed_cache`); this is the other end, so one stray `Decimal`
- * can never blank a card again.
+ * (`feed_cache.dumps_feed_cache`). This protects the formatter; feed parsing
+ * also decodes the fields used by hero selection and row eligibility (#12361).
  *
  * Only a plain decimal numeral converts. An empty string is NOT zero
  * (`Number("")` is `0`, which would print `0%` over a missing reading), and hex,
  * `"Infinity"` or anything else stays not-a-number, so the caller prints `—`
  * exactly as before.
  */
-function probabilityValue(prob: number | string | null | undefined): number {
+export function probabilityValue(prob: number | string | null | undefined): number {
   if (typeof prob === "number") return prob;
   if (typeof prob === "string" && DECIMAL_NUMERAL.test(prob)) return Number(prob);
   return NaN;

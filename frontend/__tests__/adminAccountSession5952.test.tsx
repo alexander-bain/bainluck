@@ -19,6 +19,7 @@ import {
   probeAdminAccount,
   readWhoami,
 } from "@/lib/adminAccountSession";
+import { AdminApiError } from "@/lib/adminFetch";
 import {
   ADMIN_AUTH_INITIAL,
   adminAuthAccount,
@@ -26,6 +27,12 @@ import {
   adminAuthRefreshToken,
   adminAuthSubmit,
 } from "@/lib/adminAuthState";
+import {
+  AUTH_STATE_READY_TIMEOUT_MS,
+  getIdTokenAfterAuthReady,
+  type RestorableAuthInstance,
+} from "@/lib/firebase";
+import { handleGradeDeckReadError } from "@/lib/ranking/gradeSession";
 import AdminSecretPrompt from "@/components/admin/AdminSecretPrompt";
 
 const ALEX = "alex.bain@gmail.com";
@@ -284,5 +291,174 @@ describe("#5952 the reader is never asked for a password they do not have", () =
     expect(code).not.toMatch(/allowlist/i);
     // Guards the guard: stripping must not have emptied the file.
     expect(code).toContain("export async function probeAdminAccount");
+  });
+});
+
+describe("#5952 fresh load waits for Firebase authStateReady before reading currentUser", () => {
+  function delayedRestoreAuth(
+    delayMs: number,
+    token: string | null = TOKEN
+  ): RestorableAuthInstance {
+    let currentUser: { getIdToken: () => Promise<string> } | null = null;
+    let readyPromise: Promise<void> | null = null;
+    return {
+      get currentUser() {
+        return currentUser;
+      },
+      authStateReady() {
+        if (!readyPromise) {
+          readyPromise = new Promise<void>((resolve) => {
+            setTimeout(() => {
+              if (token) {
+                currentUser = { getIdToken: async () => token };
+              }
+              resolve();
+            }, delayMs);
+          });
+        }
+        return readyPromise;
+      },
+    };
+  }
+
+  it("the user appears 300 ms after init → the probe waits for authStateReady and returns the session", async () => {
+    const authInstance = delayedRestoreAuth(300, TOKEN);
+    const server = authorizingServer();
+
+    // Immediately after initializeAuth, currentUser is still null (the race on
+    // fresh loads of /admin, /grade, and /grade/groupings).
+    expect(authInstance.currentUser).toBeNull();
+
+    const session = await probeAdminAccount({
+      hasStoredSession: () => true,
+      getToken: () =>
+        getIdTokenAfterAuthReady({
+          getAuth: async () => authInstance,
+          getBackendToken: () => null,
+        }),
+      whoami: server.whoami,
+    });
+
+    expect(session).toEqual({ token: TOKEN, email: ALEX });
+    expect(server.seen).toEqual([TOKEN]);
+  });
+
+  it("never signed in → falls straight to the prompt with no wait and without calling getToken", async () => {
+    let tokenCalled = false;
+    let whoamiCalled = false;
+    const start = Date.now();
+
+    const session = await probeAdminAccount({
+      hasStoredSession: () => false,
+      getToken: () => {
+        tokenCalled = true;
+        return new Promise<string | null>(() => {
+          // Would hang forever if called
+        });
+      },
+      whoami: async () => {
+        whoamiCalled = true;
+        return { authorized: true, email: ALEX };
+      },
+    });
+
+    const elapsedMs = Date.now() - start;
+    expect(session).toBeNull();
+    expect(tokenCalled).toBe(false);
+    expect(whoamiCalled).toBe(false);
+    expect(elapsedMs).toBeLessThan(50);
+  });
+
+  it("restore never finishes → falls back to the prompt after the timeout cap", async () => {
+    expect(AUTH_STATE_READY_TIMEOUT_MS).toBe(5000);
+
+    const hungAuth: RestorableAuthInstance = {
+      currentUser: null,
+      authStateReady: () =>
+        new Promise<void>(() => {
+          // Never resolves
+        }),
+    };
+    const server = authorizingServer();
+    const start = Date.now();
+
+    const session = await probeAdminAccount({
+      hasStoredSession: () => true,
+      getToken: () =>
+        getIdTokenAfterAuthReady({
+          getAuth: async () => hungAuth,
+          getBackendToken: () => null,
+          timeoutMs: 80,
+        }),
+      whoami: server.whoami,
+    });
+
+    const elapsedMs = Date.now() - start;
+    expect(session).toBeNull();
+    expect(server.seen).toEqual([]);
+    expect(elapsedMs).toBeGreaterThanOrEqual(60);
+    expect(elapsedMs).toBeLessThan(500);
+  });
+
+  it("AdminAuthProvider wires the mount probe through hasStoredAccountSession and getIdTokenAfterAuthReady", () => {
+    const fs = require("fs") as typeof import("fs");
+    const path = require("path") as typeof import("path");
+    const source = fs.readFileSync(
+      path.join(__dirname, "..", "components", "admin", "AdminAuthProvider.tsx"),
+      "utf8"
+    );
+    expect(source).toContain("hasStoredSession:");
+    expect(source).toContain("hasStoredAccountSession(SIGNED_IN_MARKER, BACKEND_AUTH_KEY)");
+    expect(source).toContain("getIdTokenAfterAuthReady()");
+  });
+});
+
+describe("#5952 /grade and /grade/groupings recover from a 403 deck read via clearSecret({ rejected: true })", () => {
+  it.each([401, 403])(
+    "sends a %i deck read error to clearSecret({ rejected: true }) instead of a bare error line",
+    (status) => {
+      const cleared: Array<{ rejected?: boolean } | undefined> = [];
+      const errors: string[] = [];
+
+      handleGradeDeckReadError(
+        new AdminApiError(status, "Invalid admin secret"),
+        "Could not load the cards",
+        {
+          clearSecret: (opts) => cleared.push(opts),
+          setError: (msg) => errors.push(msg),
+        }
+      );
+
+      expect(cleared).toEqual([{ rejected: true }]);
+      expect(errors).toEqual([]);
+    }
+  );
+
+  it("leaves a non-auth deck failure as an error line without clearing the credential", () => {
+    const cleared: Array<{ rejected?: boolean } | undefined> = [];
+    const errors: string[] = [];
+
+    handleGradeDeckReadError(
+      new AdminApiError(500, "database unavailable"),
+      "Could not load the cards",
+      {
+        clearSecret: (opts) => cleared.push(opts),
+        setError: (msg) => errors.push(msg),
+      }
+    );
+
+    expect(cleared).toEqual([]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("500");
+  });
+
+  it("both /grade and /grade/groupings wire deck-read failures through handleGradeDeckReadError", () => {
+    const fs = require("fs") as typeof import("fs");
+    const path = require("path") as typeof import("path");
+    for (const rel of ["app/grade/page.tsx", "app/grade/groupings/page.tsx"]) {
+      const source = fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
+      expect(source).toContain("handleGradeDeckReadError");
+      expect(source).toContain("clearSecret");
+    }
   });
 });

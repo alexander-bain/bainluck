@@ -52,6 +52,7 @@ export interface ProjectedFinalPointsModuleProps {
   awayTeam: string;
   homeColor?: string | null;
   awayColor?: string | null;
+  awaySecondaryColor?: string | null;
 }
 
 export default function ProjectedFinalPointsModule({
@@ -63,6 +64,7 @@ export default function ProjectedFinalPointsModule({
   awayTeam,
   homeColor,
   awayColor,
+  awaySecondaryColor,
 }: ProjectedFinalPointsModuleProps) {
   const finalHome = finalScore?.home;
   const finalAway = finalScore?.away;
@@ -75,6 +77,7 @@ export default function ProjectedFinalPointsModule({
       awayTeam={awayTeam}
       homeColor={homeColor}
       awayColor={awayColor}
+      awaySecondaryColor={awaySecondaryColor}
       finalScore={final}
       projectedFinal={projectedFinal}
       periodBoundaries={periodBoundaries}

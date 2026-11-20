@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchTeamPage, fetchChampionshipGrid } from "@/lib/api";
-import type { TeamPageResponse } from "@/lib/api";
+import type { TeamFutureItem, TeamPageResponse } from "@/lib/api";
 import type { ChampionshipGridResponse } from "@/lib/types";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useTeamPropRaces } from "@/hooks/useTeamPropRaces";
@@ -30,6 +30,9 @@ import { TeamSeasonJourney } from "@/components/TeamSeasonJourney";
 import { TeamDivisionRace } from "@/components/TeamDivisionRace";
 import { TeamPropFamilies } from "@/components/TeamPropFamilies";
 import { TeamFutureRow } from "@/components/TeamFutureRow";
+import { useTeamOutcomeStream } from "@/hooks/useTeamOutcomeStream";
+
+const NO_FUTURES: TeamFutureItem[] = [];
 
 export default function TeamPage() {
   const params = useParams();
@@ -105,6 +108,10 @@ export default function TeamPage() {
   // (#2311), keyed on the resolved slug; see the hook for the reset contract.
   const propRaces = useTeamPropRaces(resolvedSlug);
 
+  // #10090: the season-futures rows re-price live by outcome id when their
+  // market moves; the championship path keeps its served value.
+  const patchFuture = useTeamOutcomeStream(data?.futures ?? NO_FUTURES);
+
   // Document title
   useEffect(() => {
     if (data?.team) {
@@ -144,8 +151,9 @@ export default function TeamPage() {
     );
   }
 
-  const { team, upcoming_events, recent_events, futures, championship_path, season } =
+  const { team, upcoming_events, recent_events, futures: servedFutures, championship_path, season } =
     data;
+  const futures = servedFutures.map(patchFuture);
   const leaguePath = `/sport/${sport}/${league}`;
   const leagueLabel = teamLeagueLabel(team, league);
 
@@ -199,6 +207,17 @@ export default function TeamPage() {
 
   // Division race (supplementary; null when it can't be shown honestly).
   const race = buildDivisionRace(grid, team.id, team.name);
+
+  // Opponent metadata from the league championship grid (supplementary; falls back to
+  // `lookupTeamColors` inside `buildUnifiedCardFromTeamGame` before the grid resolves).
+  const gridTeamByName = new Map(
+    (grid?.teams ?? []).map((gt) => [gt.name.trim().toLowerCase(), gt]),
+  );
+  const lookupOpponentGrid = (ev: { opponent?: string | null; is_home: boolean; home_team: string; away_team: string }) => {
+    const oppName = ev.opponent || (ev.is_home ? ev.away_team : ev.home_team);
+    return oppName ? gridTeamByName.get(oppName.trim().toLowerCase()) ?? null : null;
+  };
+  const pageTeamLogo = team.logo_small || team.logo_large || null;
 
   // Season futures: the championship path is surfaced as its own progression, so
   // the remaining list is props + awards + other markets (tiers outside 1/2/4).
@@ -353,15 +372,24 @@ export default function TeamPage() {
               : "Upcoming Games"}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {upcoming_events.map((event) => (
-              <UpcomingGameCard
-                key={event.id}
-                game={event}
-                teamName={team.name}
-                teamColor={team.primary_color}
-                gameNo={upcomingGameNos[event.id]}
-              />
-            ))}
+            {upcoming_events.map((event) => {
+              const oppGrid = lookupOpponentGrid(event);
+              return (
+                <UpcomingGameCard
+                  key={event.id}
+                  game={event}
+                  teamName={team.name}
+                  teamColor={team.primary_color}
+                  teamSecondaryColor={team.secondary_color}
+                  opponentColor={oppGrid?.primary_color ?? null}
+                  opponentSecondaryColor={oppGrid?.secondary_color ?? null}
+                  teamLogo={pageTeamLogo}
+                  opponentLogo={oppGrid?.logo_url ?? null}
+                  teamAbbrev={team.abbreviation}
+                  gameNo={upcomingGameNos[event.id]}
+                />
+              );
+            })}
           </div>
         </section>
       )}
@@ -373,13 +401,23 @@ export default function TeamPage() {
             Recent Results
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {recent_events.map((event) => (
-              <RecentGameCard
-                key={event.id}
-                game={event}
-                gameNo={recentGameNos[event.id]}
-              />
-            ))}
+            {recent_events.map((event) => {
+              const oppGrid = lookupOpponentGrid(event);
+              return (
+                <RecentGameCard
+                  key={event.id}
+                  game={event}
+                  teamColor={team.primary_color}
+                  teamSecondaryColor={team.secondary_color}
+                  opponentColor={oppGrid?.primary_color ?? null}
+                  opponentSecondaryColor={oppGrid?.secondary_color ?? null}
+                  teamLogo={pageTeamLogo}
+                  opponentLogo={oppGrid?.logo_url ?? null}
+                  teamAbbrev={team.abbreviation}
+                  gameNo={recentGameNos[event.id]}
+                />
+              );
+            })}
           </div>
         </section>
       )}

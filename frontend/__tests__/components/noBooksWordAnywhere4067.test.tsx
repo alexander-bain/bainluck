@@ -136,6 +136,18 @@ const renderDiscover = (d: FeedEventData) =>
     />
   );
 
+const __prevGameCard183AFlag = process.env.NEXT_PUBLIC_GAME_CARD_183A;
+beforeAll(() => {
+  process.env.NEXT_PUBLIC_GAME_CARD_183A = "false";
+});
+afterAll(() => {
+  if (__prevGameCard183AFlag === undefined) {
+    delete process.env.NEXT_PUBLIC_GAME_CARD_183A;
+  } else {
+    process.env.NEXT_PUBLIC_GAME_CARD_183A = __prevGameCard183AFlag;
+  }
+});
+
 describe("notice 33 — the word the site may not print", () => {
   it("the /sports card's pre-match marker says sportsbooks, and no banned word survives the render", () => {
     const html = renderFeed(booksFinal());
@@ -143,14 +155,14 @@ describe("notice 33 — the word the site may not print", () => {
     // POSITIVE FIRST. A bare `not.toContain` passes on an empty render, which is
     // how a guard of this shape lies; the marker has to be PRESENT and correct
     // before its absence in the banned form means anything.
-    expect(html).toContain("Pre-match · sportsbooks");
+    expect(html).toContain("Pregame · sportsbooks");
     expect(visibleText(html)).not.toMatch(BANNED);
   });
 
   it("the Discover card says it the same way", () => {
     const html = renderDiscover(booksFinal());
 
-    expect(html).toContain("Pre-match · sportsbooks");
+    expect(html).toContain("Pregame · sportsbooks");
     expect(visibleText(html)).not.toMatch(BANNED);
   });
 

@@ -39,6 +39,7 @@ nonisolated enum EventAtlasStates11666 {
     static let wonWithCheck = "✓ Won"
     static let lostWithCross = "✗ Lost"
     static let pending = "Pending"
+    static let resultNotConfirmed = "Result not confirmed"
     static let resultUnavailable = "Result unavailable"
     static let independentChancesLabel = "Independent chances · do not add to 100"
 
@@ -139,7 +140,7 @@ struct EventAtlasHeroStateLabelView11666: View {
     var body: some View {
         Text(label)
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DS.textSecondaryReadable)
             .multilineTextAlignment(.center)
             .accessibilityIdentifier(
                 label == EventAtlasStates11666.noRecentPrice

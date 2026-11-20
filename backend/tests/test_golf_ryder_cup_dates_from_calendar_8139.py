@@ -128,15 +128,16 @@ def test_the_calendar_alone_cannot_stamp_a_past_edition():
     """Belt to the ordering's braces: the SOURCE also refuses.
 
     `next_edition` returns the soonest edition that has not finished, so The
-    Open's only calendar row (2026-07-16 → 07-19) is unreachable from a 2026-09
-    clock. Ordering and source agree rather than one covering for the other — if
-    someone later moves the call site, this still holds.
+    Open's 2026 row (2026-07-16 → 07-19) is unreachable from a 2026-09 clock.
+    The fill reaches the 2027 edition (on file since #12201) or nothing, never
+    the one that is over. Ordering and source agree rather than one covering for
+    the other — if someone later moves the call site, this still holds.
     """
     rows = [{"key": "the_open", "name": "The Open"}]
     _fill_dates_from_calendar(rows, NOW)
 
-    assert rows[0].get("start_date") is None
-    assert rows[0].get("end_date") is None
+    assert not str(rows[0].get("start_date") or "").startswith("2026")
+    assert not str(rows[0].get("end_date") or "").startswith("2026")
 
 
 def test_a_golf_card_cannot_borrow_another_sports_competition(monkeypatch):

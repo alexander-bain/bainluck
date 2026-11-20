@@ -358,12 +358,34 @@ def _row_team_id(
     external_id: Optional[str],
     name: Optional[str],
     index: TeamAliasIndex,
+    *,
+    kalshi_event_ticker: Optional[str] = None,
 ) -> Optional[int]:
     if is_field_outcome(name):
         return None
     by_name = None if index.is_ambiguous(name) else index.alias_team(name)
     if source == "kalshi":
-        ids = ticker_team_ids(external_id, index)
+        ids = set(ticker_team_ids(external_id, index))
+        if kalshi_event_ticker is not None:
+            ticker = (external_id or "").strip()
+            prefix = f"{kalshi_event_ticker}-"
+            if not ticker.startswith(prefix):
+                return None
+            code = ticker[len(prefix) :]
+            if not code or "-" in code or code.upper() in index.ambiguous_abbrevs:
+                return None
+            # #12530: Kalshi's JAC/WAS differ from the roster's JAX/WSH.
+            # Reuse the venue's sport-scoped vocabulary, then require an exact,
+            # unambiguous roster name. Never consult stored outcome team IDs or
+            # let a second club named by the roster's abbreviation lose a vote.
+            from app.utils.prediction_market_matching import (
+                extract_team_code_from_outcome_ticker,
+            )
+
+            venue = extract_team_code_from_outcome_ticker(ticker)
+            venue_tid = index.alias_team(venue[1]) if venue else None
+            if venue_tid is not None:
+                ids.add(venue_tid)
         if len(ids) != 1:
             return None
         (tid,) = ids
@@ -382,6 +404,8 @@ class BoardRow:
     external_id: Optional[str]
     probability: Optional[float]
     observed_at: Optional[datetime]
+    is_winner: Optional[bool] = None
+    resolution_source: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -393,6 +417,9 @@ class OutcomeOverlay:
     #: False only when the value IS the requested source's own served value,
     #: so its opening and movement still describe the same estimator.
     changed: bool
+    # Exact admitted prices, before the shared field's display normalization.
+    # BoardRow.observed_at is a row-touch clock, not bound quote-read evidence.
+    source_inputs: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -400,6 +427,40 @@ class Composition:
     question_identity: dict
     overlay: dict[int, OutcomeOverlay]
     contributing_sources: list[str]
+    # #12530: displayed named-team values come from one full verified field,
+    # before projection onto a requested venue's row ids. Source-only Other
+    # keeps its own value; it never changes the named teams' denominator.
+    display_overlay: dict[int, dict] | None = None
+    canonical_market_id: int | None = None
+    canonical_market_name: str | None = None
+    canonical_source: str | None = None
+    canonical_card_fields: dict = field(default_factory=dict)
+    # Plain-data projections of this same snapshot for the other proven
+    # members. Reuse the existing short cache; never retain ORM rows or cycles.
+    peer_verdicts: dict[int, Composition] = field(default_factory=dict, repr=False)
+
+
+def apply_title_display(rows: list[dict], composition: Composition) -> bool | None:
+    """Apply the shared display field, or None for older caller-built verdicts.
+
+    The raw overlay still carries source attribution and observation clocks.
+    A reader using this display must not normalize its requested board again.
+    """
+    if composition.display_overlay is None:
+        return None
+    changed = False
+    for row in rows:
+        display = composition.display_overlay.get(row["id"])
+        if display is None:
+            continue
+        changed |= row.get("probability") != display["probability"]
+        row["probability"] = display["probability"]
+        if "name" in display:
+            row["name"] = display["name"]
+        row.pop("rendered_percent", None)
+        if "rendered_percent" in display:
+            row["rendered_percent"] = display["rendered_percent"]
+    return changed
 
 
 def _usable(row: BoardRow, member: Member, now: datetime) -> bool:
@@ -429,7 +490,10 @@ def compose_outcomes(
     for m in members:
         claims: dict[int, list[BoardRow]] = {}
         for row in boards.get(m.market_id, []):
-            tid = _row_team_id(m.source, row.external_id, row.name, index)
+            tid = _row_team_id(
+                m.source, row.external_id, row.name, index,
+                kalshi_event_ticker=spec.kalshi_event_ticker(m.edition),
+            )
             if tid is not None:
                 claims.setdefault(tid, []).append(row)
         # Two rows claiming one club inside one venue: neither speaks for it.
@@ -437,27 +501,13 @@ def compose_outcomes(
             t: rows[0] for t, rows in claims.items() if len(rows) == 1
         }
 
-    own_team = {row.outcome_id: t for t, row in team_maps[requested.market_id].items()}
     # One fixed venue order for every page, so the divergence gate's tiebreak
     # (and the contributor list) cannot depend on which venue's page was opened.
     voices = sorted(members, key=lambda m: CONTRIBUTOR_SOURCES.index(m.source))
-    overlay: dict[int, OutcomeOverlay] = {}
-    multi = False
-    for row in boards.get(requested.market_id, []):
-        tid = own_team.get(row.outcome_id)
-        picks: list[tuple[str, BoardRow]] = []
-        if tid is None:
-            if _usable(row, requested, now):
-                picks.append((requested.source, row))
-        else:
-            for m in voices:
-                other = team_maps[m.market_id].get(tid)
-                if other is not None and _usable(other, m, now):
-                    picks.append((m.source, other))
 
+    def combine(picks: list[tuple[str, BoardRow]]) -> OutcomeOverlay:
         if not picks:
-            overlay[row.outcome_id] = OutcomeOverlay(None, [], None, "unsupported", True)
-            continue
+            return OutcomeOverlay(None, [], None, "unsupported", True)
         if len(picks) == 1:
             value, rule, used = picks[0][1].probability, "single_source", picks
         else:
@@ -472,13 +522,69 @@ def compose_outcomes(
                 else picks
             )
         sources = [s for s, _ in used]
-        multi = multi or len(sources) > 1
-        overlay[row.outcome_id] = OutcomeOverlay(
+        return OutcomeOverlay(
             probability=value,
             contributing_sources=sources,
             observed_at=min(r.observed_at for _, r in used).isoformat(),
             aggregation_rule=rule,
             changed=sources != [requested.source],
+            source_inputs=tuple((source, float(row.probability)) for source, row in used),
+        )
+
+    team_ids = {tid for board in team_maps.values() for tid in board}
+    team_values = {
+        tid: combine([
+            (m.source, team_maps[m.market_id][tid])
+            for m in voices
+            if tid in team_maps[m.market_id]
+            and _usable(team_maps[m.market_id][tid], m, now)
+        ])
+        for tid in team_ids
+    }
+    # The dated, first venue in the fixed order supplies the title field's
+    # enumeration. Every one of its eligible rows must map unambiguously, and
+    # no verified peer may name an extra team. Otherwise completeness is not
+    # proved and EVERY alias keeps the same unscaled combined values.
+    canonical = voices[0]
+    canonical_rows = boards.get(canonical.market_id, [])
+    canonical_teams = team_maps[canonical.market_id]
+    field_complete = (
+        len(canonical_teams) == len(canonical_rows)
+        and set(canonical_teams) == team_ids
+        and not any(
+            row.is_winner is True
+            and row.resolution_source not in (None, "ungradeable_result")
+            for board in boards.values() for row in board
+        )
+    )
+    display_field = [
+        {"id": row.outcome_id, "name": row.name,
+         "probability": team_values[tid].probability, "team_id": tid}
+        for tid, row in canonical_teams.items()
+    ]
+    from app.utils.outcome_display import normalize_display_probs
+
+    normalize_display_probs(
+        display_field, mutually_exclusive=True, field_complete=field_complete,
+    )
+    display_by_team = {row["team_id"]: row for row in display_field}
+    own_team = {row.outcome_id: tid for tid, row in team_maps[requested.market_id].items()}
+    overlay: dict[int, OutcomeOverlay] = {}
+    display_overlay: dict[int, dict] = {}
+    multi = False
+    for row in boards.get(requested.market_id, []):
+        tid = own_team.get(row.outcome_id)
+        value = team_values[tid] if tid is not None else combine(
+            [(requested.source, row)] if _usable(row, requested, now) else []
+        )
+        overlay[row.outcome_id] = value
+        multi |= len(value.contributing_sources) > 1
+        display = display_by_team.get(tid)
+        display_overlay[row.outcome_id] = (
+            # The shared display field supplies club labels for search and
+            # every opted-in detail. Refused identities keep their own names.
+            {key: display[key] for key in ("name", "probability", "rendered_percent") if key in display}
+            if display is not None else {"probability": value.probability}
         )
 
     if not multi:
@@ -492,4 +598,7 @@ def compose_outcomes(
         },
         overlay=overlay,
         contributing_sources=[s for s in CONTRIBUTOR_SOURCES if s in used_sources],
+        display_overlay=display_overlay,
+        canonical_market_id=canonical.market_id,
+        canonical_source=canonical.source,
     )

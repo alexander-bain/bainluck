@@ -274,7 +274,7 @@ function StatBox({
           <div className="text-xs text-text-muted">threshold</div>
         </div>
         <div className="flex items-center justify-between mb-1">
-          <div className="text-[10px] text-text-muted">Pre-game odds</div>
+          <div className="text-[10px] text-text-muted">Pregame odds</div>
           {stat.movement != null && Math.abs(stat.movement) >= 0.01 && (
             <div className={`text-[10px] font-mono tabular-nums ${stat.movement > 0 ? "text-accent-brand" : "text-accent-danger"}`}>
               {stat.movement >= 0 ? "\u2191" : "\u2193"}{Math.round(Math.abs(stat.movement) * 100)}% 24h

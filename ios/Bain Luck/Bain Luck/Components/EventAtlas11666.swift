@@ -275,7 +275,8 @@ nonisolated struct EventAtlasDetailsSheetModel11666: Identifiable, Equatable, Se
                 opening: event.openingOdds
             )
             primaryValue = badge.winnerLabel
-        } else if let odds = event.currentOdds,
+        } else if !(event.status == "live" && event.heroProbabilitySource == OpeningLineHero.openingSource),
+                  let odds = event.currentOdds,
                   case let shown = OpeningLineHero.resolve(odds, for: event),
                   let pair = DrawPricedWinner.printablePair(
                     away: shown.awayProbability,
@@ -365,7 +366,7 @@ struct EventAtlasPregameMarkView11666: View {
                 .accessibilityHidden(true)
             Text(text)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("atlas-pregame-mark-11666")
@@ -570,11 +571,11 @@ struct EventAtlasHeadlineControlRow11666: View {
                 } else if let phase, visibility.showsPhaseAndLiveMark {
                     Text(phase.label)
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                     if let reading = overlaidReading {
                         Text(Self.tenthsSummary(for: reading, event: event))
                             .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .accessibilityIdentifier("atlas-headline-tenths-11666")
                     }
                     if event.status == "live",
@@ -609,7 +610,7 @@ struct EventAtlasHeadlineControlRow11666: View {
                     } label: {
                         Image(systemName: "info.circle")
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .frame(minWidth: 44, minHeight: 44)
                             .contentShape(Rectangle())
                     }
@@ -641,7 +642,7 @@ struct EventAtlasDetailsSheet11666: View {
                             .foregroundStyle(.primary)
                         Text(model.marketTitle)
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                     }
                     .padding(.vertical, 4)
                 }

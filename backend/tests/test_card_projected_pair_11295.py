@@ -173,9 +173,12 @@ def test_the_card_admits_less_than_the_writers_margin_gate():
         "basketball_",
         "soccer_",
     )
-    for sport in ("icehockey_nhl", "tennis_atp_shanghai", "cricket_ipl"):
+    for sport in ("tennis_atp_shanghai", "cricket_ipl"):
         assert sportsbook_spread_is_a_margin(sport)  # the control
         assert not cpp.card_projection_wanted("scheduled", sport)
+    # #13112: hockey is now also excluded from sportsbook_spread_is_a_margin.
+    assert not sportsbook_spread_is_a_margin("icehockey_nhl")
+    assert not cpp.card_projection_wanted("scheduled", "icehockey_nhl")
 
 
 def test_no_book_with_a_spread_and_total_means_no_pair_never_zero_zero():
@@ -737,3 +740,13 @@ def test_card_keys_are_the_detail_names_the_clients_already_read():
         "projected_away_score",
     )
     assert math.isfinite(_pair(_board())["projected_away_score"])
+
+
+@pytest.fixture(autouse=True)
+def _recent_lines_clock_at_kickoff(monkeypatch):
+    """#12595: a scheduled pair counts only line readings within 90 min of now.
+    These fixtures are dated, so the clock is pinned to their kickoff, the
+    moment the rows describe, rather than the wall clock."""
+    from app.utils import recent_line_readings
+
+    monkeypatch.setattr(recent_line_readings, "_utcnow", lambda: _KICKOFF)

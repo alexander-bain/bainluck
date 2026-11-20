@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -494,6 +496,11 @@ class TestLiveDefinitionsAndDecisionA:
         """
         pool = _live_snow_pool(denver_resolved=True)
         now_nov_16 = datetime(2026, 11, 16, 14, 0, 0, tzinfo=timezone.utc)
+        obs_nov_16 = "2026-11-16T13:00:00Z"
+        for m in pool:
+            m["updated_at"] = obs_nov_16
+            for o in m.get("outcomes") or ():
+                o["observed_at"] = obs_nov_16
         members = await snow_first_flakes_2026(pool, now=now_nov_16)
         assert isinstance(members, RoundupMembers)
         assert members.kicker == "SNOW · NOV 30"
@@ -551,6 +558,51 @@ class TestLiveDefinitionsAndDecisionA:
         assert feed_item["data"]["collection_ref"]["slug"] == GTA_VI_ALBUM_FEATURES_SLUG
         assert feed_item["data"]["collection_ref"]["collection_count"] == 12
 
+    @pytest.mark.asyncio
+    async def test_stored_sibling_prices_mark_their_selected_source(self) -> None:
+        kodak, don, weeknd = _live_gta_pool()[1:4]
+        kodak["outcomes"][1]["probability"] = 0.22
+        don["outcomes"].pop()
+        weeknd["source"] = None
+        rows = []
+        for market in (kodak, don, weeknd):
+            outcomes = [
+                SimpleNamespace(**outcome, current_probability=outcome["probability"])
+                for outcome in market["outcomes"]
+            ]
+            stored = {**market, "outcomes": outcomes}
+            rows.append(SimpleNamespace(**stored))
+        result = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows))
+        db = SimpleNamespace(execute=AsyncMock(return_value=result))
+
+        members = await gta_vi_album_features(db, now=NOW_NOV_3)
+        assert isinstance(members, RoundupMembers)
+        db.execute.assert_awaited_once()
+        feed = compose_roundup_feed_item(GTA_VI_ALBUM_FEATURES_PRODUCER, members)
+        container = compose_roundup_container(GTA_VI_ALBUM_FEATURES_PRODUCER, members)
+        assert feed is not None and container is not None
+        cards = {
+            member["id"]: member["card"]
+            for member in container["sections"][0]["members"]
+        }
+        for row in feed["data"]["roundup"]["rows"]:
+            yes, _ = cards[row["market_id"]]["top_outcomes"]
+            assert row["source_mark"] == yes["source_mark"]
+
+        stored_yes, stored_no = cards[kodak["id"]]["top_outcomes"]
+        _, derived_no = cards[don["id"]]["top_outcomes"]
+        for outcome, price in ((stored_yes, 0.785), (stored_no, 0.22), (derived_no, 0.225)):
+            assert outcome["source_mark"] == {
+                "state": "single",
+                "sources": [{
+                    "key": "polymarket", "name": "Polymarket", "probability": price,
+                    "observed_at": None, "reason": "observation_unknown",
+                }],
+            }
+        for outcome in cards[weeknd["id"]]["top_outcomes"]:
+            assert outcome["source_mark"]["state"] == "none"
+            assert outcome["source_mark"]["reason"] == "source_evidence_incomplete"
+
     def test_graded_settled_member_renders_only_graded_result(self) -> None:
         """A settled member with a graded winner carries its verdict and never an open probability."""
         markets = [
@@ -584,6 +636,9 @@ class TestLiveDefinitionsAndDecisionA:
 
     @pytest.mark.asyncio
     async def test_registered_in_roundup_producers_and_folds_covered_feed_cards(self) -> None:
+        # Passing ``now=NOW_NOV_3.timestamp()`` (or ``now=NOW_NOV_3``) to
+        # ``evaluate_roundup_producer`` threads the clock through to
+        # ``produce_sibling_family`` -> ``select_sibling_family`` (#12374).
         reset_roundup_cache_for_tests()
         assert SNOW_FIRST_FLAKES_2026_SLUG in ROUNDUP_PRODUCERS
         assert GTA_VI_ALBUM_FEATURES_SLUG in ROUNDUP_PRODUCERS
@@ -595,10 +650,19 @@ class TestLiveDefinitionsAndDecisionA:
         )
 
         snow_feed, snow_container = await evaluate_roundup_producer(
-            SNOW_FIRST_FLAKES_2026_PRODUCER, _live_snow_pool()
+            SNOW_FIRST_FLAKES_2026_PRODUCER, _live_snow_pool(), now=NOW_NOV_3.timestamp()
         )
         assert snow_feed is not None
         assert snow_container is not None
+
+        # When the caller passes a clock 8 days after the Nov 3 quotes, the
+        # 7-day freshness rule withholds the rows and refuses the card.
+        stale_now = datetime(2026, 11, 12, 0, 0, tzinfo=timezone.utc)
+        stale_feed, stale_container = await evaluate_roundup_producer(
+            SNOW_FIRST_FLAKES_2026_PRODUCER, _live_snow_pool(), now=stale_now
+        )
+        assert stale_feed is None
+        assert stale_container is None
 
         deck: list[dict[str, Any]] = [
             {

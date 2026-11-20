@@ -56,4 +56,23 @@ describe("rankTeamsFirst", () => {
     const list = [team("Boston Celtics")];
     expect(rankTeamsFirst(list, "")).toBe(list);
   });
+
+  test.each([
+    ["chiefs", "Kansas City Chiefs"],
+    ["patroits", "New England Patriots"],
+    ["niners", "San Francisco 49ers"],
+  ])("%s puts the server-resolved team before a collection", (query, name) => {
+    const resolved = { ...team(name), query_names_team: true };
+    const collection = other("hub", "NFL Week 10");
+    expect(rankTeamsFirst([collection, resolved], query)).toEqual([resolved, collection]);
+  });
+
+  test.each(["new", "york", "celtics next three games"])(
+    "%s respects a server refusal even when the old prefix heuristic would promote",
+    (query) => {
+      const incidental = { ...team(query === "york" ? "York City" : query === "new" ? "New York Yankees" : "Celtics"), query_names_team: false };
+      const list = [other("hub", "Requested collection"), incidental];
+      expect(rankTeamsFirst(list, query)).toEqual(list);
+    },
+  );
 });

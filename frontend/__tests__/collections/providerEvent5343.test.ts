@@ -74,7 +74,7 @@ describe("existing shared hub safeguards remain intact", () => {
     raw.sections[0].members[1].destination.web = "https://other.invalid";
     const hub = parseCollection({ ...raw, withheld_count: 1, withheld: [{ id: 99 }] }, raw.slug);
     expect(hub.members.map((m) => m.id)).toEqual([41, 43]);
-    expect(hub.note).toBe("Some games or questions aren't available right now.");
+    expect(hub.note).toBe("Some games or markets aren't available right now.");
     expect(parseCollection({ ...providerHub("145916"), member_count: 99 }, raw.slug).note).toBeTruthy();
   });
 

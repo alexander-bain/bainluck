@@ -14,20 +14,37 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import AdminAuthProvider, { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import DiscoverCard from "@/components/DiscoverCard";
+import { useRetryNotice } from "@/lib/ranking/useRetryNotice";
 import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
 import { setDiscoverLearningGate } from "@/lib/discoverInteractions";
 import {
   GRADES,
   GRADE_LABELS,
+  deckHeadline,
+  drawnOnly,
   formatTally,
+  gradeDeckInit,
+  gradeDeckPath,
+  handleGradeDeckReadError,
+  leftOutLine,
   normalizeGraderName,
+  saveWithOneRetry,
+  setFromSearch,
+  slateFromSearch,
   type Grade,
   type GradeDeck,
   type TallyEntry,
 } from "@/lib/ranking/gradeSession";
+import {
+  MORNING_NOT_READY_MESSAGE,
+  formatCaptureDayPt,
+  isCapturedTodayPt,
+  normalizeMorningError,
+} from "@/lib/ranking/pairSession";
 
 const GRADER_KEY = "bainluck_grader_name";
 const KID_KEY = "bainluck_grader_kid";
@@ -51,7 +68,7 @@ export default function GradePage() {
 }
 
 function GradeSession() {
-  const { secret } = useAdminAuth();
+  const { secret, clearSecret } = useAdminAuth();
   const [deck, setDeck] = useState<GradeDeck | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState("");
@@ -62,6 +79,19 @@ function GradeSession() {
   const [graded, setGraded] = useState(0);
   const [saving, setSaving] = useState(false);
   const [tally, setTally] = useState<TallyEntry[]>([]);
+  // #11937: `/grade?slate=<date or id>` grades that saved slate's spread deck.
+  // undefined until the URL is read, so the deck isn't fetched twice.
+  const [slateRef, setSlateRef] = useState<string | null | undefined>(undefined);
+  const [setRef, setSetRef] = useState<string | null>(null);
+  // While a named slate re-deals for the grader, the grade buttons wait, so a
+  // quick tap can't grade a card the new deck is about to skip.
+  const [dealing, setDealing] = useState(false);
+  const { notice, startWait, clearNotice } = useRetryNotice();
+
+  useEffect(() => {
+    setSlateRef(slateFromSearch(window.location.search));
+    setSetRef(setFromSearch(window.location.search));
+  }, []);
 
   useEffect(() => {
     try {
@@ -88,20 +118,31 @@ function GradeSession() {
   );
 
   useEffect(() => {
+    if (slateRef === undefined) return;
     let cancelled = false;
-    adminFetchJSON<GradeDeck>("/api/admin/ranking/grade-deck", secret)
+    adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef, setFromSearch(window.location.search)), secret)
       .then((d) => {
         if (cancelled) return;
-        setDeck(d);
+        // Same before-7:15 AM PT guard on Step 2: bare /grade or ?slate=today
+        // never serves yesterday's slate as today's morning deck.
+        if ((!slateRef || slateRef === "today") && d.captured_at && !isCapturedTodayPt(d.captured_at)) {
+          setError(MORNING_NOT_READY_MESSAGE);
+          return;
+        }
+        setDeck(drawnOnly(d));
         void loadTally(d.slate_id);
       })
       .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Could not load the cards");
+        if (cancelled) return;
+        handleGradeDeckReadError(e, "Could not load the cards", {
+          clearSecret,
+          setError: (msg) => setError(normalizeMorningError(msg)),
+        });
       });
     return () => {
       cancelled = true;
     };
-  }, [secret, loadTally]);
+  }, [secret, loadTally, clearSecret, slateRef]);
 
   const start = () => {
     const name = normalizeGraderName(nameInput);
@@ -115,28 +156,43 @@ function GradeSession() {
     setGrader(name);
     setIndex(0);
     setGraded(0);
+    // A named slate re-deals for this grader, skipping cards they already graded.
+    if (slateRef) {
+      setDealing(true);
+      adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef, setFromSearch(window.location.search)), secret, gradeDeckInit(name))
+        .then((d) => setDeck(drawnOnly(d)))
+        .catch((e: unknown) => setError(e instanceof Error ? e.message : "Could not load the cards"))
+        .finally(() => setDealing(false));
+    }
   };
 
   const submit = async (grade: Grade) => {
-    if (!deck || !grader || saving) return;
+    if (!deck || !grader || saving || dealing) return;
     const item = deck.items[index];
     setSaving(true);
     setError(null);
     try {
-      const res = await adminFetch("/api/admin/ranking/grades", secret, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          slate_id: deck.slate_id,
-          surface: deck.surface,
-          grader,
-          kid,
-          position: item.position,
-          item_key: item.item_key,
-          grade,
-          note: note.trim() || null,
-        }),
+      const body = JSON.stringify({
+        slate_id: deck.slate_id,
+        surface: deck.surface,
+        grader,
+        kid,
+        position: item.position,
+        item_key: item.item_key,
+        grade,
+        note: note.trim() || null,
       });
+      // #11937: a rate-limited save waits what the server asks and goes again once.
+      const res = await saveWithOneRetry(
+        () => adminFetch("/api/admin/ranking/grades", secret, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        }),
+        (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        startWait,
+      );
+      clearNotice();
       if (!res.ok) {
         setError(`Not saved (${res.status}): ${(await res.text()).slice(0, 200)}`);
         return;
@@ -146,6 +202,7 @@ function GradeSession() {
       setIndex((i) => i + 1);
       void loadTally(deck.slate_id);
     } catch {
+      clearNotice();
       setError("Not saved: the network dropped. Try that card again.");
     } finally {
       setSaving(false);
@@ -153,6 +210,14 @@ function GradeSession() {
   };
 
   const tallyLine = formatTally(tally);
+  const leftOut = deck ? leftOutLine(deck) : "";
+  const captureDay = formatCaptureDayPt(deck?.captured_at);
+  const stepBase = setRef
+    ? "Step 3 of 3: the extra set"
+    : slateRef
+      ? "Step 2 of 3: the deck"
+      : null;
+  const stepLabel = stepBase ? `${stepBase}${captureDay ? ` · ${captureDay}` : ""}` : null;
 
   if (error && !deck) {
     return <Shell><p className="text-sm text-text-secondary">{error}</p></Shell>;
@@ -164,10 +229,19 @@ function GradeSession() {
   if (!grader) {
     return (
       <Shell tally={tallyLine}>
+        {stepLabel ? (
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-accent-brand">{stepLabel}</p>
+        ) : (
+          <p className="mb-2 text-xs text-text-secondary">
+            Morning routine?{" "}
+            <Link href="/grade/pair" className="font-semibold text-accent-brand hover:underline">
+              Start at Step 1 of 3: pick →
+            </Link>
+          </p>
+        )}
         <h1 className="text-xl font-semibold text-text-primary">Who&apos;s grading?</h1>
-        <p className="mt-1 text-sm text-text-secondary">
-          The top {deck.items.length} Discover cards from {deck.captured_at ? new Date(deck.captured_at).toLocaleString() : "the latest capture"}.
-        </p>
+        <p className="mt-1 text-sm text-text-secondary">{deckHeadline(deck)}</p>
+        {leftOut && <p className="mt-1 text-sm text-text-secondary">{leftOut}.</p>}
         <input
           className="mt-4 w-full rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-text-primary"
           placeholder="Your name"
@@ -196,7 +270,18 @@ function GradeSession() {
   if (index >= deck.items.length) {
     return (
       <Shell tally={tallyLine}>
-        <h1 className="text-xl font-semibold text-text-primary">All {deck.items.length} graded. Thanks, {grader}!</h1>
+        {stepLabel && (
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-accent-brand">{stepLabel}</p>
+        )}
+        <h1 className="text-xl font-semibold text-text-primary">
+          {deck.items.length ? `All ${deck.items.length} graded. Thanks, ${grader}!` : `Nothing left to grade on this slate, ${grader}.`}
+        </h1>
+        {slateRef && !setRef && (
+          <p className="mt-2 text-sm text-text-secondary">
+            Step 3 of 3 (extra set): none needed today — this deck covers every card on the first page. You&apos;re done for the morning.
+          </p>
+        )}
+        {leftOut && <p className="mt-1 text-sm text-text-secondary">{leftOut}.</p>}
         <button className="mt-4 text-sm font-semibold text-accent-brand hover:underline" onClick={() => setGrader(null)}>
           Next grader
         </button>
@@ -207,6 +292,9 @@ function GradeSession() {
   const item = deck.items[index];
   return (
     <Shell tally={tallyLine}>
+      {stepLabel && (
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-accent-brand">{stepLabel}</p>
+      )}
       <div className="flex items-baseline justify-between text-sm text-text-secondary">
         <span>
           {grader}
@@ -215,15 +303,8 @@ function GradeSession() {
         <span>{graded} graded</span>
       </div>
       <div className="mt-3 pointer-events-none select-none" aria-label={`Card ${item.position}`}>
-        {item.card ? (
+        {item.card && (
           <DiscoverCard groupedItem={{ type: "single", item: item.card }} positionIndex={item.position - 1} />
-        ) : (
-          <div className="rounded-xl border border-surface-border bg-surface-card p-4">
-            <div className="font-semibold text-text-primary">{item.title || item.item_key}</div>
-            {item.probability != null && (
-              <div className="mt-1 text-2xl font-bold text-text-primary">{Math.round(item.probability * 100)}%</div>
-            )}
-          </div>
         )}
       </div>
       <input
@@ -238,13 +319,14 @@ function GradeSession() {
           <button
             key={g}
             className="rounded-lg border border-surface-border bg-surface-elevated px-2 py-3 font-semibold text-text-primary disabled:opacity-50"
-            disabled={saving}
+            disabled={saving || dealing}
             onClick={() => void submit(g)}
           >
             {GRADE_LABELS[g]}
           </button>
         ))}
       </div>
+      {notice && <p className="mt-2 text-sm text-text-muted" role="status">{notice}</p>}
       {error && <p className="mt-2 text-sm text-text-secondary">{error}</p>}
     </Shell>
   );
@@ -256,6 +338,11 @@ function Shell({ children, tally }: { children: React.ReactNode; tally?: string 
       <div className="mx-auto max-w-md">
         {children}
         {tally && <p className="mt-6 text-center text-sm text-text-muted">{tally}</p>}
+        <p className="mt-4 text-center text-xs text-text-muted">
+          <Link href="/grade/groupings" className="hover:underline">
+            Grade proposed grouping cards beside best single member →
+          </Link>
+        </p>
       </div>
     </div>
   );

@@ -42,9 +42,21 @@ nonisolated struct OpeningLineHero: Equatable, Sendable {
     static let openingSource = "opening"
     static let caption = "Opening line"
 
+    static func currentOddsForCard(_ odds: CurrentOdds?, heroSource: String?) -> CurrentOdds? {
+        // Older feed payloads put the opening pair in currentOdds as well.
+        guard heroSource == openingSource, var reading = odds else { return odds }
+        reading.homeProbability = nil
+        reading.awayProbability = nil
+        reading.drawProbability = nil
+        reading.homeRenderedPercent = nil
+        reading.awayRenderedPercent = nil
+        return reading
+    }
+
     static func resolve(_ currentOdds: CurrentOdds, for event: EventDetail) -> OpeningLineHero {
-        if event.heroProbabilitySource == openingSource,
-           event.status != "live", !EventState.isFinished(event.status),
+        let openingOnly = event.heroProbabilitySource == openingSource
+            && event.status != "live" && !EventState.isFinished(event.status)
+        if openingOnly,
            let home = event.heroProbability, home.isFinite, home > 0, home < 1 {
             return OpeningLineHero(
                 awayProbability: event.heroProbabilityAway.flatMap { $0.isFinite ? $0 : nil },
@@ -54,11 +66,14 @@ nonisolated struct OpeningLineHero: Equatable, Sendable {
                 isOpeningLine: true
             )
         }
+        // An older cached payload can copy the opener into current_odds. An
+        // unusable opening reading therefore leaves the chance empty.
+        let admittedOdds = openingOnly ? nil : currentOdds
         return OpeningLineHero(
-            awayProbability: currentOdds.awayProbability,
-            homeProbability: currentOdds.homeProbability,
-            awayRenderedPercent: currentOdds.awayRenderedPercent,
-            homeRenderedPercent: currentOdds.homeRenderedPercent,
+            awayProbability: admittedOdds?.awayProbability,
+            homeProbability: admittedOdds?.homeProbability,
+            awayRenderedPercent: admittedOdds?.awayRenderedPercent,
+            homeRenderedPercent: admittedOdds?.homeRenderedPercent,
             isOpeningLine: false
         )
     }

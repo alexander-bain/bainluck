@@ -368,7 +368,7 @@ final class PropExpectationActual10237Tests: XCTestCase {
             XCTAssertEqual(PropExpectationActualDisplay.question(q, stat: stat), absentProbabilityMarker, name)
             XCTAssertEqual(PropExpectationActualDisplay.mark(q, actual: actual), .unknown, name)
             let spoken = PropExpectationActualDisplay.accessibilityLabel(q, actual: actual, stat: stat)
-            XCTAssertTrue(spoken.contains("Question unavailable"), "\(name): \(spoken)")
+            XCTAssertTrue(spoken.contains("Prop unavailable"), "\(name): \(spoken)")
             XCTAssertFalse(spoken.contains("or more"), "\(name): \(spoken)")
         }
     }

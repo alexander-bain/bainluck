@@ -21,8 +21,8 @@ from app.utils.roundup_containers import (
     evaluate_roundup_producer,
     insert_roundup_feed_items,
     reset_roundup_cache_for_tests,
-    roundup_feed_items,
     roundup_revision,
+    serve_roundup,
 )
 from app.utils.same_deadline_board import (
     BY_DECEMBER_31_DEFINITION,
@@ -844,6 +844,19 @@ class TestRouteAndDiscoverFeedIntegration:
         monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "false")
         reset_roundup_cache_for_tests()
 
+        orig_serve_roundup = serve_roundup
+
+        async def _serve_roundup_at_now(
+            slug: str, db: Any, *, include_children: bool = True
+        ) -> dict[str, Any]:
+            return await orig_serve_roundup(
+                slug, db, include_children=include_children, now=FIXED_NOW
+            )
+
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.serve_roundup", _serve_roundup_at_now
+        )
+
         # Serving with live December 31 markets
         served = await get_container(
             slug=BY_DECEMBER_31_SLUG,
@@ -870,6 +883,7 @@ class TestRouteAndDiscoverFeedIntegration:
         feed_item, container = await evaluate_roundup_producer(
             BY_DECEMBER_31_PRODUCER,
             _live_december_31_markets(),
+            now=FIXED_NOW,
         )
         assert feed_item is not None and container is not None
 

@@ -115,9 +115,8 @@ def test_two_way_coherent_pair_is_untouched():
 def test_absent_sport_is_byte_identical_to_the_old_behaviour():
     """Every caller that has not been wired behaves exactly as before.
 
-    `tournament_slate._pair_probabilities` is the live instance — golf and tennis
-    price no draw, so the arm is unreachable there, but the contract is pinned
-    rather than assumed.
+    The tournament results reader leaves sport unspecified for its books
+    fallback. Tennis prices no draw, so the draw-specific branch stays unused.
     """
     with_sport = resolve_prematch_reading(books_home=0.302, books_away=0.455)
     assert with_sport is not None

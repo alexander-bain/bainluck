@@ -57,7 +57,8 @@
   59768483,
   59768524,
   59768531,
-  59768535
+  59768535,
+  59977706
  ],
  "captured_pairs": 709,
  "dropped": {
@@ -70733,7 +70734,7 @@
    "venue": "kalshi"
   },
   {
-   "correct_event_id": 15299815,
+   "correct_event_id": 15306137,
    "events": [
     {
      "away_team_name": "Sporting Gij\u00f3n",
@@ -70934,6 +70935,16 @@
      "sport": "soccer_other",
      "sport_id": 37873,
      "status": "suspended"
+    },
+    {
+     "away_team_name": "Legan\u00e9s",
+     "commence_time": "2026-09-13 19:01:00+00:00",
+     "external_id": "eb07ad346d2b78840e289d11461cc2a1",
+     "home_team_name": "Tenerife",
+     "id": 15306137,
+     "sport": "soccer_spain_segunda_division",
+     "sport_id": 1318,
+     "status": "completed"
     }
    ],
    "failure_class": "attached-correct",
@@ -70952,7 +70963,7 @@
    },
    "market_id": 59977706,
    "note": "eyeballed containment-ok",
-   "search_surfaced_the_answer": true,
+   "search_surfaced_the_answer": false,
    "title": "CD Tenerife vs. CD Legan\u00e9s - Exact Score",
    "venue": "polymarket"
   },

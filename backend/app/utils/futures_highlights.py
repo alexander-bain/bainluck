@@ -5,6 +5,7 @@ Parallel to highlights.py (game events), this scores futures markets
 on interestingness (0-100) for the unified feed.
 """
 
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
@@ -234,6 +235,11 @@ _MAJOR_ELECTION_RE = re.compile(
 
 FOREIGN_LOCAL_ELECTION_PENALTY = -30
 
+_AWARDS_COMPELLING_PATTERN = re.compile(
+    r"(oscars?|academy award|emmy|grammy|golden globe|tony award|bafta|cannes|sundance|eurovision)",
+    re.IGNORECASE,
+)
+
 # Compelling market patterns — genuinely interesting content
 _COMPELLING_PATTERNS = [
     re.compile(p, re.IGNORECASE)
@@ -256,11 +262,17 @@ _COMPELLING_PATTERNS = [
         r"(alien|ufo|uap|extraterrestrial)",
         r"(royal family|king charles|prince|princess|meghan|harry)",
         r"(nobel prize|pulitzer|ballon d.or)",
-        r"(oscars?|academy award|emmy|grammy|golden globe|tony award|bafta|cannes|sundance|eurovision)",
-        r"(survivor|the boys|last of us|stranger things|squid game|house of the dragon|rings of power|bachelor|bachelorette|love island|joe rogan)(?!.*(?:S\d+E\d+|season \d+.*(?:episode|elimination|eviction)))",
-        r"(box office|rotten tomatoes|netflix|disney\+|hbo|spotify|billboard|#1 song|#1 album)",
-        r"(bridesmaids?|wedding|engaged|engagement|married|divorce)",
     ]
+] + [
+    _AWARDS_COMPELLING_PATTERN,
+    *[
+        re.compile(p, re.IGNORECASE)
+        for p in [
+            r"(survivor|the boys|last of us|stranger things|squid game|house of the dragon|rings of power|bachelor|bachelorette|love island|joe rogan)(?!.*(?:S\d+E\d+|season \d+.*(?:episode|elimination|eviction)))",
+            r"(box office|rotten tomatoes|netflix|disney\+|hbo|spotify|billboard|#1 song|#1 album)",
+            r"(bridesmaids?|wedding|engaged|engagement|married|divorce)",
+        ]
+    ],
 ]
 
 BORING_PENALTY = -25
@@ -273,6 +285,61 @@ SPORTS_POSTSEASON_STORY_BOOST = 40
 # story. A market with NO resolution date is never demoted by this — see
 # `days_until` in `compute_futures_highlight`.
 SPORTS_POSTSEASON_STORY_HORIZON_DAYS = 547
+
+# #13100 (Ruling 277: A, Nov 19, 2026): awards ceremonies earn T1 cultural
+# gravity only when the ceremony or nominations are near (within 45 days) or
+# the market has moved, and never stack COMPELLING_BOOST on top of
+# CULTURAL_GRAVITY_T1_BOOST for the same awards keyword. On by default; set
+# DISCOVER_AWARDS_GRAVITY_GATE_ENABLED=0 to revert in one step.
+DISCOVER_AWARDS_GRAVITY_GATE_ENV = "DISCOVER_AWARDS_GRAVITY_GATE_ENABLED"
+AWARDS_GRAVITY_HORIZON_DAYS = 45
+_FALSY_ENV_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def is_awards_gravity_gate_enabled() -> bool:
+    """Return True when Ruling 277: A awards-gravity gating is active."""
+    raw = os.getenv(DISCOVER_AWARDS_GRAVITY_GATE_ENV, "true")
+    return raw.strip().lower() not in _FALSY_ENV_VALUES
+
+
+_AWARDS_GRAVITY_T1_RE = re.compile(
+    r"("
+    r"oscar|academy award|emmy|grammy|golden globe|tony award|"
+    r"game awards? 20\d{2}"
+    r")",
+    re.IGNORECASE,
+)
+
+_NON_AWARDS_CULTURAL_GRAVITY_T1 = re.compile(
+    r"("
+    r"super bowl.*(headline|halftime|headlin)|"
+    r"next (james )?bond|"
+    r"taylor swift.*(wedding|married|baby|pregnant)|"
+    r"time.?s? person of the year|"
+    r"sexiest man alive|"
+    r"world cup.*(winner|champion|halftime|headline|perform)|"
+    r"ps[56] (announce|release|launch)|"
+    r"highest grossing movie|"
+    r"biggest opening weekend|"
+    r"nobel (peace |)prize|"
+    r"(presidential|president).*(election|winner|2028)|"
+    r"(republican|democratic).*(primary|nominee|nomination)|"
+    r"(u\.?s\.?|which party).*(senate|house)|senate (control|majority)|"
+    r"(impeach|25th amendment|removed from office)|"
+    r"stanley cup (winner|champion)|"
+    r"world series (winner|champion)|"
+    r"french open.*(winner|champion)|"
+    r"us open.*(winner|champion)|"
+    r"wimbledon.*(winner|champion)|"
+    r"australian open.*(winner|champion)|"
+    r"roland garros.*(winner|champion)|"
+    r"grand slam.*(winner|champion)|"
+    r"ufc \d{3,}.*(winner|main event|title)|"
+    r"ufc.*(champion|title fight|title bout)|"
+    r"(nfl|nba) mvp"
+    r")",
+    re.IGNORECASE,
+)
 
 # Cultural gravity — high-interest culture/entertainment markets get a tier
 # boost similar to how sports get league tier bonuses. These are markets a
@@ -313,6 +380,8 @@ _CULTURAL_GRAVITY_T2 = re.compile(
     r"("
     r"#1 (song|album|artist|show|movie|app)|"
     r"number.?1.*(song|album|artist|show|movie)|"
+    r"top (?:global |u\.?s\.? )?netflix (?:show|movie|series)|"
+    r"opening weekend box office|rotten tomatoes score|"
     r"billboard.*(hot 100|200)|"
     r"top (artist|song).*(spotify|billboard)|"
     r"(elon musk|jeff bezos|kim kardashian|kanye|rogan)(?!.*(stock|net worth on))|"
@@ -380,6 +449,9 @@ class _NameVerdicts(NamedTuple):
     non_major_election_keyword: bool
     cultural_gravity_t1: bool
     cultural_gravity_t2: bool
+    awards_gravity_t1: bool
+    non_awards_cultural_gravity_t1: bool
+    awards_compelling_hit: bool
     compelling_hits: int
     sports_postseason_story: bool
     postseason_early_round: bool
@@ -415,6 +487,11 @@ def _name_verdicts(market_name: str) -> _NameVerdicts:
         ),
         cultural_gravity_t1=bool(_CULTURAL_GRAVITY_T1.search(market_name)),
         cultural_gravity_t2=bool(_CULTURAL_GRAVITY_T2.search(market_name)),
+        awards_gravity_t1=bool(_AWARDS_GRAVITY_T1_RE.search(market_name)),
+        non_awards_cultural_gravity_t1=bool(
+            _NON_AWARDS_CULTURAL_GRAVITY_T1.search(market_name)
+        ),
+        awards_compelling_hit=bool(_AWARDS_COMPELLING_PATTERN.search(market_name)),
         compelling_hits=sum(1 for p in _COMPELLING_PATTERNS if p.search(market_name)),
         sports_postseason_story=bool(_SPORTS_POSTSEASON_STORY_RE.search(market_name)),
         postseason_early_round=bool(_POSTSEASON_EARLY_ROUND_RE.search(market_name)),
@@ -603,6 +680,34 @@ def rank_claim_is_evidence(outcome: dict) -> bool:
     if rank + rank_change < 1:
         return False
     return outcome.get("prior_priced") is not False
+
+
+def _outcomes_have_awards_movement(outcomes: Optional[list[dict]]) -> bool:
+    """Return True when an awards market has genuine recent price movement.
+
+    Requires a >=2% 24h probability shift on a live outcome above
+    ``MOVER_MIN_PROBABILITY``. When ``dated_movement_24h`` is supplied on the
+    outcome dict (computed by ``routes/feed.py`` from the dated 24h basis so
+    stale never-cleared Polymarket per-write deltas cannot spoof fresh news),
+    read that dated value rather than raw ``probability_change_24h``. Bare rank
+    swaps with <2% price change (e.g., two nominees trading places on a 0.1%
+    tick) do not open the awards gravity gate.
+    """
+    if not outcomes:
+        return False
+    for o in outcomes:
+        current_prob = float(o.get("probability") or 0)
+        if current_prob < MOVER_MIN_PROBABILITY:
+            continue
+        raw_move = (
+            o.get("dated_movement_24h")
+            if "dated_movement_24h" in o
+            else o.get("probability_change_24h")
+        )
+        change_24h = abs(float(raw_move or 0))
+        if change_24h >= MODERATE_MOVEMENT_THRESHOLD:
+            return True
+    return False
 
 
 def compute_futures_highlight(
@@ -799,8 +904,26 @@ def compute_futures_highlight(
         result.reasons.append("non_major_election")
 
     # === Cultural gravity boost (high-interest culture/entertainment) ===
+    _awards_gate_on = is_awards_gravity_gate_enabled()
+    _awards_only_t1 = (
+        _awards_gate_on
+        and _v.awards_gravity_t1
+        and not _v.non_awards_cultural_gravity_t1
+    )
+    _awards_gravity_deferred = False
     if "boring_pattern" not in result.reasons and _market_name:
-        if _v.cultural_gravity_t1:
+        if _awards_only_t1:
+            _awards_near = (
+                days_until is not None
+                and 0 <= days_until <= AWARDS_GRAVITY_HORIZON_DAYS
+            )
+            if _awards_near or _outcomes_have_awards_movement(outcomes):
+                result.score += CULTURAL_GRAVITY_T1_BOOST
+                result.reasons.append("cultural_gravity_t1")
+            else:
+                _awards_gravity_deferred = True
+                result.reasons.append("awards_gravity_deferred")
+        elif _v.cultural_gravity_t1:
             result.score += CULTURAL_GRAVITY_T1_BOOST
             result.reasons.append("cultural_gravity_t1")
         elif _v.cultural_gravity_t2:
@@ -810,6 +933,10 @@ def compute_futures_highlight(
     # === Compelling market boost (skip if boring) ===
     if "boring_pattern" not in result.reasons and _market_name:
         compelling_hits = _v.compelling_hits
+        # #13100 (Ruling 277: A): never stack COMPELLING_BOOST on top of
+        # CULTURAL_GRAVITY_T1_BOOST for the same awards keyword.
+        if _awards_gate_on and _v.awards_gravity_t1 and _v.awards_compelling_hit:
+            compelling_hits = max(0, compelling_hits - 1)
         if compelling_hits > 0:
             result.score += COMPELLING_BOOST * min(compelling_hits, 3)
             result.reasons.append(f"compelling_x{min(compelling_hits, 3)}")
@@ -950,16 +1077,20 @@ def compute_futures_highlight(
         # 24h-movement signal now owned by the blend, so it is removed here to
         # avoid double-counting: low movement yields a low blend contribution.)
 
-        # Leader change scoring
+        # Leader change scoring (#13100: when a far-out awards market has no
+        # genuine >=2% 24h price shift, tiny rank-order flips do not lift it
+        # back into the opening seats).
         if leader_was_different:
             flags.leader_changed = True
-            result.score += FUTURES_WEIGHTS["leader_change"]
+            if not _awards_gravity_deferred:
+                result.score += FUTURES_WEIGHTS["leader_change"]
             result.reasons.append("leader_change")
 
         # Rank shakeup (multiple top-5 rank changes)
         if rank_changes_in_top5 >= 2:
             flags.has_rank_shakeup = True
-            result.score += FUTURES_WEIGHTS["rank_shakeup"]
+            if not _awards_gravity_deferred:
+                result.score += FUTURES_WEIGHTS["rank_shakeup"]
             result.reasons.append("rank_shakeup")
 
     # === Resolution proximity ===
@@ -1141,10 +1272,12 @@ def compute_futures_highlight(
             if opening is not None and current is not None:
                 max_surprise = max(max_surprise, abs(current - opening))
         if max_surprise >= MAJOR_SURPRISE_THRESHOLD:
-            result.score += 10
+            if not _awards_gravity_deferred:
+                result.score += 10
             result.reasons.append("major_surprise")
         elif max_surprise >= MODERATE_SURPRISE_THRESHOLD:
-            result.score += 5
+            if not _awards_gravity_deferred:
+                result.score += 5
             result.reasons.append("moderate_surprise")
 
     # === Curation adjustment (applied BEFORE the cap) ===
@@ -1152,9 +1285,15 @@ def compute_futures_highlight(
     # in the score rather than escape the cap post-hoc. Applying it here means it
     # counts toward both the uncapped ranking score and the capped display score.
     # #141/Item 1.
+    # #13100 (Ruling 277: A): a positive legacy curation boost on a far-out quiet
+    # awards market (e.g., Best Picture 400 days out) is deferred until the
+    # ceremony is within 45 days or moves; negative downranks still apply.
     if curation_score_adj:
-        result.score += curation_score_adj
-        result.reasons.append(f"curation_adj:{curation_score_adj:+d}")
+        if _awards_gravity_deferred and curation_score_adj > 0:
+            result.reasons.append("curation_adj_deferred_awards")
+        else:
+            result.score += curation_score_adj
+            result.reasons.append(f"curation_adj:{curation_score_adj:+d}")
 
     # Preserve the uncapped total for the feed's de-saturated ORDERING score,
     # THEN cap the display score at 98. #141/Item 1.

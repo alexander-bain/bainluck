@@ -188,6 +188,8 @@ export interface Event {
   status: EventStatus;
   home_score: number | null;
   away_score: number | null;
+  /** #13000 (`250: A`) — present and `true` when no score source carries this live match. */
+  score_source_unavailable?: boolean;
   /**
    * The per-period line under the score, when the authority holds one.
    *
@@ -1512,6 +1514,18 @@ export interface SeriesMarketOutcome {
   settled?: boolean;
   /** True won, false lost, null nobody has looked. Only read when `settled`. */
   is_winner?: boolean | null;
+  /** #9715: explicit settled state ("Won" | "Lost") preserved against live movement. */
+  settled_state?: "Won" | "Lost" | null;
+  /** #9715: during-game baseline status and labeled game-start movement. */
+  baseline_status?: "ok" | "missing_baseline" | "pre_game" | "settled_preserved";
+  baseline_kind?: "game_start" | null;
+  baseline_label?: string | null;
+  baseline_probability?: number | null;
+  baseline_at?: string | null;
+  movement_since_baseline?: number | null;
+  movement_percentage_points?: number | null;
+  market_open_probability?: number | null;
+  market_open_label?: string | null;
 }
 
 export interface SeriesMarket {
@@ -1521,6 +1535,39 @@ export interface SeriesMarket {
   status: string | null;
   resolution_date: string | null;
   outcomes: SeriesMarketOutcome[];
+  /** #9715: 3-family classification and distribution contract. */
+  series_family?:
+    | "series_winner"
+    | "exact_series_score"
+    | "series_total_games"
+    | "series_spread"
+    | "other_series";
+  series_family_label?: string;
+  distribution_kind?: "exhaustive" | "independent_binary";
+  exhaustive?: boolean;
+  normalize_to_unit_sum?: boolean;
+  sum_note?: string | null;
+  baseline_status?: "ok" | "missing_baseline" | "pre_game" | "settled_preserved";
+  baseline_kind?: "game_start" | null;
+  baseline_label?: string | null;
+  baseline_at?: string | null;
+}
+
+export interface SeriesContextData {
+  section_title: string;
+  series_hub_slug?: string | null;
+  series_hub_href?: string | null;
+  series_score_summary?: string | null;
+  families_present: string[];
+  core_families_present: string[];
+  missing_families: string[];
+  inventory_status: "complete" | "partial" | "empty";
+  baseline_status: "ok" | "missing_baseline" | "pre_game" | "settled_preserved";
+  baseline_kind: "game_start" | null;
+  baseline_label: string | null;
+  game_start: string | null;
+  markets: SeriesMarket[];
+  markets_by_family: Record<string, SeriesMarket[]>;
 }
 
 export interface RelatedFuturesResponse {
@@ -1530,6 +1577,7 @@ export interface RelatedFuturesResponse {
   home_team_futures: RelatedFuture[];
   away_team_futures: RelatedFuture[];
   series_markets: SeriesMarket[];
+  series_context?: SeriesContextData | null;
   total_count: number;
   summary: string | null;
   event_status?: string;
@@ -1578,6 +1626,8 @@ export interface SearchTeam {
   logo: string | null;
   record: string | null;
   sport_key: string | null;
+  /** Server-owned whole-name, nickname or curated misspelling match. */
+  query_names_team?: boolean;
 }
 
 /** #993 L2-41: a backend-composed topical family of related futures markets.
@@ -1603,7 +1653,13 @@ export interface SearchEventConcept {
   market_id: number;
 }
 
+export interface SearchGameSet {
+  title: string;
+  selector: { team_id: number | null; count: number; state: "scheduled" };
+}
+
 export interface SearchResponse {
+  game_set?: SearchGameSet;
   results: Event[];
   futures: FuturesMarket[];
   futures_families?: FuturesFamily[]; // #993: composed topical families (additive)
@@ -1721,6 +1777,8 @@ export interface FeedEventData {
   status: EventStatus;
   home_score: number | null;
   away_score: number | null;
+  /** #13000 (`250: A`) — present and `true` when no score source carries this live match. */
+  score_source_unavailable?: boolean;
   /**
    * #5811 — the venue already graded this scoreless row. Same keys, same
    * shared reader and same three states (absent / `false` / `true`) as
@@ -1847,6 +1905,8 @@ export interface FeedEventData {
 export interface FeedFuturesOutcome {
   id: number;
   name: string;
+  /** Verified Wikipedia identity, when the collection register supplies one. */
+  image_title?: string | null;
   probability: number | null;
   rank: number | null;
   movement: number | null;
@@ -1918,6 +1978,7 @@ export interface FeedFuturesData {
    */
   image_width?: number | null;
   image_height?: number | null;
+  image_presentation?: "portrait" | "logo" | "cover" | "photo" | "backdrop" | null;
   hook_description?: string | null;
   temporal_badge?: "Live" | "Closing Soon" | "New" | null;
   /** #490 — confidence signal (1-3 bars): how much we trust the probability. */
@@ -2223,6 +2284,10 @@ export interface FeedBundleData {
   roundup?: FeedRoundupContract | null;
   /** Producer-verified cumulative deadline-family payload (#9878 / #11040). */
   deadline_family?: FeedDeadlineFamilyContract | null;
+  /** Resolved Discover bundle hero image URL (#12825). */
+  image_url?: string | null;
+  image_presentation?: "portrait" | "logo" | "cover" | "photo" | "backdrop" | null;
+  image_credit?: string | null;
 }
 
 // #10357 — a round-up card ("NFL division front-runners", "The closest games
@@ -2262,6 +2327,8 @@ export type FeedRoundupRow = {
 export interface FeedRoundupContract {
   kicker: string;
   tag?: string | null;
+  subtitle?: string | null;
+  complete_group?: boolean;
   footer: string;
   count_line?: string | null;
   relations?: string[];
@@ -2269,6 +2336,8 @@ export interface FeedRoundupContract {
   order?: string | null;
   presentation?: string | null;
   destination_href?: string | null;
+  paired_metric_set?: import("@/lib/discover/visualForms").PairedMetricSet | null;
+  machinery_card?: import("@/components/collections/MachinerySectionRenderer").MachineryCardContract | null;
   rows: FeedRoundupRow[];
 }
 
@@ -3495,6 +3564,9 @@ export interface CompetitionEdition {
   concept_key: string | null;
   start: string | null; // ISO date (YYYY-MM-DD)
   end: string | null; // ISO date (YYYY-MM-DD)
+  // #12201: "approximate" is a conventional window nobody has announced. It
+  // prints as a month ("September 2027"), never a day, and no days count to it.
+  date_confidence?: "confirmed" | "approximate" | null;
 }
 
 /* ─── Tournament extensions on a standard event page (UX-P152) ───
@@ -3613,4 +3685,20 @@ export interface EventTournamentResponse {
    */
   broadcasts?: { region: string; channels: string[]; note: string | null }[];
   generated_at?: string;
+}
+/** #12581: the server's selected contributors; clients do not reconstruct them. */
+export interface SourceMark {
+  state: "single" | "blend" | "settled" | "none";
+  /** The actual server calculation, without inferred weights or depth. */
+  method?: string;
+  sources: {
+    key: string;
+    name: string;
+    probability: number;
+    observed_at: string | null;
+    count?: number;
+    reason?: string;
+  }[];
+  settled?: { source: string | null; result: string; at: string | null };
+  reason?: string;
 }

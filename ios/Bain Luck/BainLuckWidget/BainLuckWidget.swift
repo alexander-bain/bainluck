@@ -109,6 +109,10 @@ struct BainLuckWidgetBundle: WidgetBundle {
         SavedItemWidget10875()
         #if os(iOS)
         liveActivityRegistration
+        // #12305 — "My game" in Control Center, on the Lock Screen and the Action button.
+        if #available(iOS 18.0, *) {
+            SavedItemControl12305()
+        }
         #endif
     }
 

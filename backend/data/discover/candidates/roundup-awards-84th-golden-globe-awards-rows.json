@@ -1,0 +1,98 @@
+{
+  "candidate_slug": "roundup-awards-84th-golden-globe-awards",
+  "producer": "awards_ceremony",
+  "ceremony_slate_producer": "ceremony_award_categories",
+  "captured_at": "2026-11-14T15:10:00+00:00",
+  "trading_guard_summary": "Evaluates the 5 actively trading 84th Golden Globe Awards (2027) Winner categories on Sat Nov 14 (#70160308 Best Motion Picture Drama $4,820/24h, #70239575 Best Director $2,910/24h, #70239579 Best Actress Comedy/Musical $1,840/24h, #70239568 Best TV Series Comedy/Musical $1,420/24h, #70239581 Best Animated Feature $1,190/24h) and excludes $0-volume Supporting Actor #70239590. Held at enabled=false because roundup-golden-globes-best-picture is already live and awards_ceremony's theme bundle lacks ceremony date metadata.",
+  "input_markets": [
+    {
+      "id": 70160308,
+      "source": "polymarket",
+      "status": "open",
+      "name": "Golden Globes 2027: Best Motion Picture - Drama Winner",
+      "volume_24h": 4820.5,
+      "updated_at": "2026-11-14T11:20:00+00:00",
+      "outcomes": [
+        {"name": "The Odyssey", "probability": 0.52},
+        {"name": "Michael", "probability": 0.21},
+        {"name": "Dune: Part Three", "probability": 0.16}
+      ]
+    },
+    {
+      "id": 70239575,
+      "source": "polymarket",
+      "status": "open",
+      "name": "Golden Globes 2027: Best Director Winner",
+      "volume_24h": 2910.2,
+      "updated_at": "2026-11-14T11:20:00+00:00",
+      "outcomes": [
+        {"name": "Christopher Nolan", "probability": 0.58},
+        {"name": "Denis Villeneuve", "probability": 0.19},
+        {"name": "Antoine Fuqua", "probability": 0.11}
+      ]
+    },
+    {
+      "id": 70239579,
+      "source": "polymarket",
+      "status": "open",
+      "name": "Golden Globes 2027: Best Actress - Motion Picture Comedy or Musical Winner",
+      "volume_24h": 1840.0,
+      "updated_at": "2026-11-14T10:45:00+00:00",
+      "outcomes": [
+        {"name": "Julianne Moore", "probability": 0.59},
+        {"name": "Emma Stone", "probability": 0.22},
+        {"name": "Zendaya", "probability": 0.11}
+      ]
+    },
+    {
+      "id": 70239568,
+      "source": "polymarket",
+      "status": "open",
+      "name": "Golden Globes 2027: Best Television Series - Musical or Comedy Winner",
+      "volume_24h": 1420.8,
+      "updated_at": "2026-11-14T10:45:00+00:00",
+      "outcomes": [
+        {"name": "Widow's Bay", "probability": 0.53},
+        {"name": "Hacks", "probability": 0.24},
+        {"name": "The Bear", "probability": 0.14}
+      ]
+    },
+    {
+      "id": 70239581,
+      "source": "polymarket",
+      "status": "open",
+      "name": "Golden Globes 2027: Best Animated Motion Picture Winner",
+      "volume_24h": 1190.4,
+      "updated_at": "2026-11-14T10:45:00+00:00",
+      "outcomes": [
+        {"name": "Wildwood", "probability": 0.78},
+        {"name": "Toy Story 5", "probability": 0.13},
+        {"name": "Shrek 5", "probability": 0.06}
+      ]
+    },
+    {
+      "id": 70239590,
+      "source": "polymarket",
+      "status": "open",
+      "name": "Golden Globes 2027: Best Supporting Actor Winner",
+      "volume_24h": 0.0,
+      "quiet_days": 9.5,
+      "updated_at": "2026-11-04T20:00:00+00:00",
+      "outcomes": [
+        {"name": "Matt Damon", "probability": 0.44},
+        {"name": "Robert Pattinson", "probability": 0.27},
+        {"name": "Colman Domingo", "probability": 0.18}
+      ]
+    }
+  ],
+  "expected_member_ids": [
+    70160308,
+    70239575,
+    70239579,
+    70239568,
+    70239581
+  ],
+  "excluded_ids": [
+    70239590
+  ]
+}

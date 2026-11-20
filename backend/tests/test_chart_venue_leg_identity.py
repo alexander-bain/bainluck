@@ -309,8 +309,14 @@ class TestOnlyUsOpenLegsReachTheSeries:
         session = _CandidateSession([polymarket_cincinnati(), polymarket_us_open()])
         fetched_from: list[int] = []
 
+        # #12042: captures are read by OUTCOME id (the chart's outcomes only), so
+        # the check is on Cincinnati's outcome ids, and it must see a real read.
+        cincinnati_outcomes = {o.id for o in polymarket_cincinnati().outcomes}
+        captured: list[int] = []
+
         async def _captures(_session, ids):
-            assert 57718620 not in ids, "Cincinnati's captures were read"
+            assert not (set(ids) & cincinnati_outcomes), "Cincinnati's captures were read"
+            captured.extend(ids)
             return {}
 
         async def _kalshi_series(_service, outcomes, **_kw):
@@ -336,6 +342,7 @@ class TestOnlyUsOpenLegsReachTheSeries:
         )
 
         assert [leg["id"] for leg in payload["stats"]["legs"]] == [34277822, 114159]
+        assert captured, "captures read nothing — the Cincinnati check above cannot fail"
         assert set(fetched_from) == {34277822, 114159}, (
             f"a venue fetch went to the wrong market: {sorted(set(fetched_from))}"
         )

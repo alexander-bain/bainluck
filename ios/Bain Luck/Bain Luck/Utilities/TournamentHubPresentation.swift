@@ -62,6 +62,10 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         /// (notice 34).
         let winnerPrematchText: String?
         let loserPrematchText: String?
+        var winnerPrematchNumber: Double? = nil
+        var winnerPrematchSourceMark: SourceMark? = nil
+        var loserPrematchNumber: Double? = nil
+        var loserPrematchSourceMark: SourceMark? = nil
     }
 
     nonisolated struct BoardRow: Equatable, Sendable, Identifiable {
@@ -268,11 +272,11 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         let shownProps = allProps.prefix(Self.propsLimit).map { Self.propRow($0) }
         props = Array(shownProps)
         propsEmptyNote = shownProps.isEmpty
-            ? "No curated questions on this tournament yet — they appear here as "
+            ? "No curated markets on this tournament yet — they appear here as "
               + "Kalshi and Polymarket open them."
             : nil
         propsTrimNote = allProps.count > shownProps.count
-            ? "Showing \(shownProps.count) of \(allProps.count) questions"
+            ? "Showing \(shownProps.count) of \(allProps.count) markets"
             : nil
 
         let bracketEntries = response.bracket.values.reduce(0) { $0 + $1.count }
@@ -434,6 +438,11 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
             home: loser.prematchProbability
         )
 
+        let winnerRendered = priorPercents.first ?? nil
+        let loserRendered = priorPercents.last ?? nil
+        let winnerText = prematchText(winner.prematchProbability, winnerRendered)
+        let loserText = prematchText(loser.prematchProbability, loserRendered)
+
         return ResultRow(
             id: result.id,
             eventId: eventId,
@@ -445,9 +454,21 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
             loserName: loser.displayName,
             score: score,
             completionNote: note,
-            winnerPrematchText: prematchText(winner.prematchProbability, priorPercents.first ?? nil),
-            loserPrematchText: prematchText(loser.prematchProbability, priorPercents.last ?? nil)
+            winnerPrematchText: winnerText,
+            loserPrematchText: loserText,
+            winnerPrematchNumber: winnerText == nil ? nil : alignedPrematchNumber(winner.prematchProbability, winnerRendered),
+            winnerPrematchSourceMark: winnerText == nil ? nil : winner.prematchSourceMark,
+            loserPrematchNumber: loserText == nil ? nil : alignedPrematchNumber(loser.prematchProbability, loserRendered),
+            loserPrematchSourceMark: loserText == nil ? nil : loser.prematchSourceMark
         )
+    }
+
+    private static func alignedPrematchNumber(_ probability: Double?, _ rendered: Int?) -> Double? {
+        guard let probability else { return nil }
+        if let rendered, probability >= 0.01, probability <= 0.99 {
+            return Double(rendered) / 100.0
+        }
+        return probability
     }
 
     /// A prior we do not have prints NOTHING, not a dash.
@@ -971,7 +992,7 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
             incompleteNote = settlement == nil
                 ? "We have no number for \(who) yet, so this comparison is not complete."
                 : "We have no number for \(who), so this comparison is not complete and "
-                    + "the question has closed."
+                    + "the market has closed."
         }
 
         return PropRow(

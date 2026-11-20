@@ -275,11 +275,7 @@ extension EventAtlasSoccerCards11666 {
                 let pregameChance: Double? = currentPhase == .before
                     ? (recent ? validOpenChance(row.probability) : nil)
                     : validOpenChance(row.pregameMark)
-                let verdict = OutcomeVerdict.verdict(
-                    isWinner: row.isWinner,
-                    resolutionSource: row.resolutionSource,
-                    marketResolved: finished
-                )
+                let verdict = otherRowVerdict(row, finished: finished)
 
                 legsByRole[role] = BTTSLeg(
                     role: role,
@@ -632,11 +628,7 @@ extension EventAtlasSoccerCards11666 {
                 let pregameChance: Double? = currentPhase == .before
                     ? (recent ? validOpenChance(row.probability) : nil)
                     : validOpenChance(row.pregameMark)
-                let verdict = OutcomeVerdict.verdict(
-                    isWinner: row.isWinner,
-                    resolutionSource: row.resolutionSource,
-                    marketResolved: finished
-                )
+                let verdict = otherRowVerdict(row, finished: finished)
 
                 let displayLabel: String = {
                     switch role {
@@ -970,11 +962,7 @@ extension EventAtlasSoccerCards11666 {
                 let pregameChance: Double? = currentPhase == .before
                     ? (recent ? validOpenChance(row.probability) : nil)
                     : validOpenChance(row.pregameMark)
-                let verdict = OutcomeVerdict.verdict(
-                    isWinner: row.isWinner,
-                    resolutionSource: row.resolutionSource,
-                    marketResolved: finished
-                )
+                let verdict = otherRowVerdict(row, finished: finished)
 
                 legsByRole[role] = HalfLeg(
                     period: period,
@@ -1074,7 +1062,7 @@ extension EventAtlasSoccerCards11666 {
             primaryValue = res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross
         } else if card.phase == .after {
             primaryLabel = "Result"
-            primaryValue = EventAtlasStates11666.pending
+            primaryValue = EventAtlasStates11666.resultNotConfirmed
         } else if let quoted = leg.quotedChance {
             primaryLabel = "Last quote"
             primaryValue = formatProbability(quoted)
@@ -1120,7 +1108,7 @@ extension EventAtlasSoccerCards11666 {
             primaryValue = res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross
         } else if card.phase == .after {
             primaryLabel = "Result"
-            primaryValue = EventAtlasStates11666.pending
+            primaryValue = EventAtlasStates11666.resultNotConfirmed
         } else if let quoted = leg.quotedChance {
             primaryLabel = "Last quote"
             primaryValue = formatProbability(quoted)
@@ -1166,7 +1154,7 @@ extension EventAtlasSoccerCards11666 {
             primaryValue = res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross
         } else if card.phase == .after {
             primaryLabel = "Result"
-            primaryValue = EventAtlasStates11666.pending
+            primaryValue = EventAtlasStates11666.resultNotConfirmed
         } else if let quoted = leg.quotedChance {
             primaryLabel = "Last quote"
             primaryValue = formatProbability(quoted)
@@ -1217,13 +1205,13 @@ struct EventAtlasSoccerBothTeamsCardView11666: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("BOTH TEAMS TO SCORE")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             Text(card.title)
                 .font(.headline.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
             Text(card.reason)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: false, vertical: true)
             EventAtlasStoryCardMarkKeyView11666(
                 items: EventAtlasSoccerCards11666.bothTeamsMarkKey(for: card)
@@ -1231,7 +1219,7 @@ struct EventAtlasSoccerBothTeamsCardView11666: View {
             if let scoring = card.scoring {
                 Text(scoring.summaryText)
                     .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("atlas-soccer-btts-scoring-summary-11666")
             }
@@ -1251,7 +1239,7 @@ struct EventAtlasSoccerBothTeamsCardView11666: View {
         if card.phase == .during, let pregame = leg.pregameChance, leg.quotedChance != nil {
             Text("○ \(formatProbability(pregame))")
                 .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: true, vertical: false)
         }
         if let chance = displayChance {
@@ -1263,7 +1251,7 @@ struct EventAtlasSoccerBothTeamsCardView11666: View {
         } else {
             Text(EventAtlasStates11666.noRecentPrice)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -1274,12 +1262,12 @@ struct EventAtlasSoccerBothTeamsCardView11666: View {
             if let res = leg.result {
                 Text(res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(res == .won ? Color.green : Color.secondary)
+                    .foregroundStyle(res == .won ? DS.greenReadable : DS.textSecondaryReadable)
                     .fixedSize(horizontal: true, vertical: false)
             } else {
-                Text(EventAtlasStates11666.pending)
+                Text(EventAtlasStates11666.resultNotConfirmed)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: true, vertical: false)
             }
         }
@@ -1291,7 +1279,7 @@ struct EventAtlasSoccerBothTeamsCardView11666: View {
         } label: {
             Image(systemName: "info.circle")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
@@ -1350,13 +1338,13 @@ struct EventAtlasSoccerFirstTeamCardView11666: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("OPENING GOAL")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             Text(card.title)
                 .font(.headline.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
             Text(card.reason)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: false, vertical: true)
             EventAtlasStoryCardMarkKeyView11666(
                 items: EventAtlasSoccerCards11666.firstTeamMarkKey(for: card)
@@ -1370,7 +1358,7 @@ struct EventAtlasSoccerFirstTeamCardView11666: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Observed scores · Observation times, not exact goal times")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
                     ForEach(card.checkpoints) { cp in
                         HStack {
@@ -1379,7 +1367,7 @@ struct EventAtlasSoccerFirstTeamCardView11666: View {
                             Spacer(minLength: 8)
                             Text(cp.observedAtText)
                                 .font(.caption2.monospacedDigit())
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                         }
                     }
                 }
@@ -1398,7 +1386,7 @@ struct EventAtlasSoccerFirstTeamCardView11666: View {
         if card.phase == .during, let pregame = leg.pregameChance, leg.quotedChance != nil {
             Text("○ \(formatProbability(pregame))")
                 .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: true, vertical: false)
         }
         if let chance = displayChance {
@@ -1410,7 +1398,7 @@ struct EventAtlasSoccerFirstTeamCardView11666: View {
         } else {
             Text(EventAtlasStates11666.noRecentPrice)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -1421,12 +1409,12 @@ struct EventAtlasSoccerFirstTeamCardView11666: View {
             if let res = leg.result {
                 Text(res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(res == .won ? Color.green : Color.secondary)
+                    .foregroundStyle(res == .won ? DS.greenReadable : DS.textSecondaryReadable)
                     .fixedSize(horizontal: true, vertical: false)
             } else {
-                Text(EventAtlasStates11666.pending)
+                Text(EventAtlasStates11666.resultNotConfirmed)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: true, vertical: false)
             }
         }
@@ -1438,7 +1426,7 @@ struct EventAtlasSoccerFirstTeamCardView11666: View {
         } label: {
             Image(systemName: "info.circle")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
@@ -1498,13 +1486,13 @@ struct EventAtlasSoccerHalvesCardView11666: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("HALF-BY-HALF")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             Text(card.title)
                 .font(.headline.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
             Text(card.reason)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: false, vertical: true)
             EventAtlasStoryCardMarkKeyView11666(
                 items: EventAtlasSoccerCards11666.halvesMarkKey(for: card)
@@ -1529,7 +1517,7 @@ struct EventAtlasSoccerHalvesCardView11666: View {
                 if let a = section.awayGoals, let h = section.homeGoals {
                     Text("\(card.homeShort) \(h) – \(a) \(card.awayShort)")
                         .font(.caption.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -1548,7 +1536,7 @@ struct EventAtlasSoccerHalvesCardView11666: View {
         if card.phase == .during, let pregame = leg.pregameChance, leg.quotedChance != nil {
             Text("○ \(formatProbability(pregame))")
                 .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: true, vertical: false)
         }
         if let chance = displayChance {
@@ -1560,7 +1548,7 @@ struct EventAtlasSoccerHalvesCardView11666: View {
         } else {
             Text(EventAtlasStates11666.noRecentPrice)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -1571,12 +1559,12 @@ struct EventAtlasSoccerHalvesCardView11666: View {
             if let res = leg.result {
                 Text(res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(res == .won ? Color.green : Color.secondary)
+                    .foregroundStyle(res == .won ? DS.greenReadable : DS.textSecondaryReadable)
                     .fixedSize(horizontal: true, vertical: false)
             } else {
-                Text(EventAtlasStates11666.pending)
+                Text(EventAtlasStates11666.resultNotConfirmed)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: true, vertical: false)
             }
         }
@@ -1588,7 +1576,7 @@ struct EventAtlasSoccerHalvesCardView11666: View {
         } label: {
             Image(systemName: "info.circle")
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .frame(width: 24, height: 24)
                 .contentShape(Rectangle())
         }

@@ -124,7 +124,7 @@ function assertOnlyTheMovementUnitMoved(fixed: string, legacy: string) {
   if (before.length === 0) return; // a rung with no move: nothing to compare
   // 3. positive on both sides — the new form says `pts`, the frozen one said `%`
   for (const span of after) {
-    expect(span).toMatch(/ pts today<\/span>$/);
+    expect(span).toMatch(/ points today<\/span>$/);
     expect(span).not.toContain("% today");
   }
   for (const span of before) {

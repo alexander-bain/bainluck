@@ -10,8 +10,10 @@ read from cache first and only fall back to a live query when the cache
 is missing.
 """
 
+import contextlib
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -280,14 +282,69 @@ async def _precompute_golf_schedule():
     return {"tours": len(tours), "tournaments": tournaments, "written": True}
 
 
+CHAMP_PROBS_PREWARM_DEADLINE_S = 15.0
+
+
+async def _prewarm_championship_probabilities(
+    deadline_s: float = CHAMP_PROBS_PREWARM_DEADLINE_S,
+    *,
+    rc: object | None = None,
+) -> dict:
+    """Keep the shared championship-odds slot warm before its 300 s TTL expires (#11931).
+
+    Runs inside the every-2-minute Discover beat. When the Redis slot is still
+    younger than ``PREWARM_REFRESH_AFTER_S`` (150 s), this is a single Redis GET
+    with zero Postgres work. Otherwise it runs the exact query the feed uses and
+    republishes under the same 300 s TTL, keeping ``events.champ_probs`` (<2 ms)
+    off the user-facing request path.
+    """
+    import asyncio
+    import time as _time
+
+    from app.routes.feed import _query_championship_probabilities
+    from app.tasks.base import get_task_session
+    from app.utils import championship_probs_cache as champ_cache
+
+    client = rc if rc is not None else champ_cache._client()
+    if client is None:
+        return {"outcome": "skipped"}
+
+    if not champ_cache.needs_prewarm(rc=client):
+        return {"outcome": "fresh"}
+
+    started = _time.monotonic()
+    async with get_task_session() as db:
+        probs = await asyncio.wait_for(
+            _query_championship_probabilities(db),
+            timeout=deadline_s,
+        )
+    computed_at = _time.time()
+    written = champ_cache.write(probs, computed_at, rc=client)
+    elapsed_ms = round((_time.monotonic() - started) * 1000.0, 1)
+    logger.info(
+        "Warmed championship probs cache (%d teams, written=%s, %.1f ms)",
+        len(probs),
+        written,
+        elapsed_ms,
+    )
+    return {
+        "outcome": "ok" if written else "write_failed",
+        "teams": len(probs),
+        "elapsed_ms": elapsed_ms,
+    }
+
+
 async def _precompute_discover_candidate_base():
     """Every-2-minute Discover warm pass: candidate-ID base, then cold responses.
 
-    Two independent units of work share this beat (LAT-P001 adds the second
-    rather than a new beat entry, which the queue forbids):
+    Three independent units of work share this beat (LAT-P001 adds the second
+    rather than a new beat entry, which the queue forbids; #11931 adds proactive
+    championship-odds slot refresh):
 
     1. ``_publish_discover_candidate_base`` — the Queue 285 candidate-ID base.
-    2. ``_prewarm_discover_feed_responses`` — the anonymous Discover + Sports
+    2. ``_prewarm_championship_probabilities`` — keeps ``bainluck:feed:champ_probs:v1``
+       fresh before its 300 s TTL expires so web requests never pay the ~2.5 s scan.
+    3. ``_prewarm_discover_feed_responses`` — the anonymous Discover + Sports
        first-paint response cache.
 
     They are deliberately decoupled: the base build has three early-return paths
@@ -304,12 +361,22 @@ async def _precompute_discover_candidate_base():
         base_result = "error"
 
     try:
+        champ_result = await _prewarm_championship_probabilities()
+    except Exception:
+        logger.exception("Championship probabilities pre-warm failed")
+        champ_result = "error"
+
+    try:
         prewarm_result = await _prewarm_discover_feed_responses()
     except Exception:
         logger.exception("Discover feed response pre-warm failed")
         prewarm_result = "error"
 
-    return {"candidate_base": base_result, "feed_prewarm": prewarm_result}
+    return {
+        "candidate_base": base_result,
+        "champ_probs": champ_result,
+        "feed_prewarm": prewarm_result,
+    }
 
 
 async def _publish_discover_candidate_base():
@@ -380,10 +447,17 @@ async def _publish_discover_candidate_base():
 
     now = datetime.now(timezone.utc)
     t0 = time.perf_counter()
+    fun_admission_ids: list[int] = []
     try:
         async with get_task_session() as db:
             market_ids, pool_counts, curator_ids = await asyncio.wait_for(
-                _compute_ordered_candidate_ids(db, now, None, None),
+                _compute_ordered_candidate_ids(
+                    db,
+                    now,
+                    None,
+                    None,
+                    fun_admission_ids_out=fun_admission_ids,
+                ),
                 timeout=deadline_s,
             )
     except asyncio.TimeoutError:
@@ -401,6 +475,7 @@ async def _publish_discover_candidate_base():
         market_ids,
         pool_counts=pool_counts,
         external_curator_recall_ids=curator_ids,
+        fun_admission_ids=fun_admission_ids if fun_admission_ids else None,
     )
 
     # Failed/partial builds never replace last-good: only publish a fully-built,
@@ -1269,6 +1344,7 @@ async def _prewarm_feed_shape(
         FEED_PREWARM_OPENING_SCOPE_KEY,
         FEED_PREWARM_SCOPE_KEY,
         FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
+        dumps_feed_cache,
         feed_payload_was_built_by_this_request,
         feed_response_cache_ttls,
         payload_contains_live_event,
@@ -1313,6 +1389,7 @@ async def _prewarm_feed_shape(
                     exclude_reviewed=False,
                     reviewer=None,
                     reviewed_surface=None,
+                    machinery=None,
                     secret=None,
                     db=db,
                     user=None,
@@ -1535,9 +1612,55 @@ async def _prewarm_feed_shape(
             max(0.0, _time.time() - float(_cache_meta["built_at"])), 3
         )
 
-    body = json.dumps(payload, default=str)
+    # #12361: this is a second writer on the feed route's numeric cache keys.
+    body = dumps_feed_cache(payload)
     rc.setex(cache_key, ttl, body)
     rc.setex(f"{cache_key}:stale", stale_ttl, body)
+    # #12288: also publish the anonymous page base via sync Redis (Celery
+    # ForkPoolWorker closes asyncio loops between tasks) and, when the
+    # machinery switch is on for Discover shapes, splice the cached machinery
+    # groupings onto the just-built base in pure Python (<5 ms, 0 DB queries)
+    # so `machinery=1` readers hit warm Redis (~15 ms) with zero 5-minute misses.
+    from app.utils.feed_cache import (
+        FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY,
+        encode_base_last_good,
+        feed_page_base_last_good_key,
+    )
+
+    _mach_base_ctx = request.scope.get(FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY)
+    if isinstance(_mach_base_ctx, dict) and _mach_base_ctx.get("page_base_key"):
+        try:
+            _pb_key = str(_mach_base_ctx["page_base_key"])
+            _pb_json = dumps_feed_cache(_mach_base_ctx["page_base_body"])
+            _pb_fresh = int(_mach_base_ctx.get("page_base_fresh_ttl") or ttl)
+            _pb_stale = int(_mach_base_ctx.get("page_base_stale_ttl") or stale_ttl)
+            _pb_lg_ttl = int(_mach_base_ctx.get("page_base_last_good_ttl") or stale_ttl)
+            rc.setex(_pb_key, _pb_fresh, _pb_json)
+            rc.setex(f"{_pb_key}:stale", _pb_stale, _pb_json)
+            rc.setex(
+                feed_page_base_last_good_key(_pb_key),
+                _pb_lg_ttl,
+                encode_base_last_good(_pb_json),
+            )
+        except Exception:
+            logger.debug("Sync page-base publish failed for %s", label, exc_info=True)
+        if (
+            shape.get("mode") is None
+            and shape.get("include_events")
+            and shape.get("include_futures")
+        ):
+            try:
+                _publish_machinery_feed_from_prewarm_base(
+                    rc,
+                    mach_base=_mach_base_ctx,
+                    label=label,
+                )
+            except Exception:
+                logger.warning(
+                    "Machinery feed pre-warm splice failed for %s",
+                    label,
+                    exc_info=True,
+                )
     # #2236: the shape's liveness is recorded by the writer that just measured
     # it. Whichever pass called this — the 120s one or the republish one — the live set
     # now describes the payload actually on the key, so the republish pass can
@@ -1760,12 +1883,20 @@ async def _prewarm_discover_feed_responses():
         shapes[label] = await warm(rc, deadline_s=deadline_s)
         budget_left = max(0.0, budget_left - (_time.monotonic() - started))
 
+    # #12288: keep the 5 machinery roundup Redis caches warm in parallel when
+    # CONTAINER_MACHINERY_SLICE1_ENABLED=true so website & iOS 1.0.7+ `machinery=1`
+    # Discover splices and `/collections/machinery-*` opens hit warm Redis (<20 ms)
+    # without ever modifying the 1.0.6-safe Discover base cache.
+    machinery_result = await _prewarm_machinery_roundups()
+
     report = {
         "ran_at": datetime.now(timezone.utc).isoformat(),
         "shapes": shapes,
         "pass_budget_s": FEED_PREWARM_PASS_BUDGET_S,
         "budget_left_s": round(budget_left, 1),
     }
+    if machinery_result.get("outcome") != "disabled":
+        report["machinery"] = machinery_result
     try:
         rc.setex(
             FEED_PREWARM_STATUS_KEY,
@@ -1776,6 +1907,486 @@ async def _prewarm_discover_feed_responses():
         logger.debug("feed pre-warm status write failed", exc_info=True)
 
     return sum(1 for s in shapes.values() if s.get("outcome") == "ok")
+
+
+async def _prewarm_machinery_roundups(
+    deadline_s: float = 25.0,
+    *,
+    slugs: list[str] | set[str] | tuple[str, ...] | None = None,
+    rc: object | None = None,
+) -> dict:
+    """Warm registered `machinery-*` roundup caches into shared Redis in parallel."""
+    import asyncio
+    import time as _time
+
+    from app.routes.containers import containers_read_enabled
+    from app.tasks.base import get_task_session
+    from app.utils.container_machinery import container_machinery_enabled
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        _is_machinery_producer_slug,
+        _roundup_payload_has_live_event,
+        ensure_optional_roundup_candidates,
+        evaluate_roundup_producer,
+        store_roundup_cache_sync,
+        store_roundup_clean_empty_sync,
+        verify_roundup_cache_sync,
+    )
+
+    if not container_machinery_enabled() or not containers_read_enabled():
+        return {"outcome": "disabled", "warmed": 0}
+
+    sync_rc = rc
+    if sync_rc is None:
+        try:
+            from app.tasks.redis_state import get_redis_client
+
+            sync_rc = get_redis_client()
+        except Exception:  # noqa: BLE001 — test environments without Redis
+            sync_rc = None
+
+    ensure_optional_roundup_candidates()
+    slug_filter = set(slugs) if slugs is not None else None
+    producers = [
+        p
+        for p in ROUNDUP_PRODUCERS.values()
+        if _is_machinery_producer_slug(p.slug)
+        and (p.enabled is None or p.enabled())
+        and (slug_filter is not None or getattr(p, "stage", "public") == "public")
+        and (slug_filter is None or p.slug in slug_filter)
+    ]
+    if not producers:
+        return {"outcome": "empty", "warmed": 0, "slugs": {}}
+
+    wall_started = _time.monotonic()
+
+    async def _warm_one(prod) -> tuple[str, dict]:
+        t0 = _time.monotonic()
+        try:
+            async with get_task_session(
+                statement_timeout_ms=max(1000, int(deadline_s * 1000))
+            ) as db:
+                import inspect as _inspect
+
+                eval_meta: dict[str, Any] = {}
+                eval_kwargs: dict[str, Any] = {"force_refresh": True}
+                if "outcome_meta" in _inspect.signature(evaluate_roundup_producer).parameters:
+                    eval_kwargs["outcome_meta"] = eval_meta
+                fi, cp = await asyncio.wait_for(
+                    evaluate_roundup_producer(prod, db, **eval_kwargs),
+                    timeout=deadline_s,
+                )
+                elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
+                ok = fi is not None and cp is not None
+                redis_written = False
+                redis_read_back = False
+                redis_ttl_s = None
+                outcome_label = "ok" if ok else "refused"
+                if ok and sync_rc is not None:
+                    redis_written = store_roundup_cache_sync(
+                        sync_rc, prod.slug, _time.time(), fi, cp
+                    )
+                    if redis_written:
+                        redis_read_back, redis_ttl_s = verify_roundup_cache_sync(
+                            sync_rc, prod.slug
+                        )
+                elif not ok and eval_meta.get("clean_empty") is True:
+                    # #13183: strictly opt-in clean-empty marker. Only recorded
+                    # when `evaluate_roundup_producer` positively confirms a clean
+                    # empty result (never on SUSPENDED kinds, served-card licence
+                    # violations, transient refusals, timeouts, or errors).
+                    outcome_label = "clean_empty"
+                    if sync_rc is not None:
+                        redis_written = store_roundup_clean_empty_sync(
+                            sync_rc,
+                            prod.slug,
+                            _time.time(),
+                            reason=eval_meta.get("reason"),
+                        )
+                        if redis_written:
+                            redis_read_back, redis_ttl_s = verify_roundup_cache_sync(
+                                sync_rc, prod.slug, allow_clean_empty=True
+                            )
+                return prod.slug, {
+                    "outcome": outcome_label,
+                    "reason": eval_meta.get("reason"),
+                    "elapsed_ms": elapsed_ms,
+                    "live": bool(_roundup_payload_has_live_event(cp)) if ok else False,
+                    "redis_written": redis_written,
+                    "redis_read_back": redis_read_back,
+                    "redis_ttl_s": redis_ttl_s,
+                }
+        except asyncio.TimeoutError:
+            elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
+            logger.warning(
+                "Machinery roundup pre-warm timeout for %s after %.1fs",
+                prod.slug,
+                deadline_s,
+            )
+            return prod.slug, {
+                "outcome": "timeout",
+                "elapsed_ms": elapsed_ms,
+                "live": False,
+                "redis_written": False,
+                "redis_read_back": False,
+                "redis_ttl_s": None,
+            }
+        except Exception as exc:  # noqa: BLE001
+            elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
+            logger.warning("Machinery roundup pre-warm failed for %s: %s", prod.slug, exc)
+            return prod.slug, {
+                "outcome": "error",
+                "elapsed_ms": elapsed_ms,
+                "live": False,
+                "redis_written": False,
+                "redis_read_back": False,
+                "redis_ttl_s": None,
+            }
+
+    results = dict(await asyncio.gather(*(_warm_one(p) for p in producers)))
+    wall_ms = round((_time.monotonic() - wall_started) * 1000.0, 1)
+    total_db_ms = round(sum(float(v.get("elapsed_ms") or 0.0) for v in results.values()), 1)
+    warmed = sum(1 for v in results.values() if v.get("outcome") == "ok")
+    redis_written_n = sum(1 for v in results.values() if v.get("redis_written"))
+    redis_read_back_n = sum(1 for v in results.values() if v.get("redis_read_back"))
+    logger.info(
+        "Machinery roundup pre-warm finished: %d/%d ok redis_written=%d/%d redis_read_back=%d/%d wall_ms=%.1f total_db_ms=%.1f (%s)",
+        warmed,
+        len(producers),
+        redis_written_n,
+        len(producers),
+        redis_read_back_n,
+        len(producers),
+        wall_ms,
+        total_db_ms,
+        {k: f"{v['outcome']}:{v['elapsed_ms']}ms" for k, v in results.items()},
+    )
+    return {
+        "outcome": "ok" if warmed else "empty",
+        "warmed": warmed,
+        "redis_written": redis_written_n,
+        "redis_read_back": redis_read_back_n,
+        "wall_ms": wall_ms,
+        "total_db_ms": total_db_ms,
+        "slugs": results,
+    }
+
+
+def _live_machinery_slugs(rc) -> set[str]:
+    """Read `MACHINERY_LIVE_SLUGS_KEY` from Redis; fails open to empty set."""
+    from app.utils.roundup_containers import MACHINERY_LIVE_SLUGS_KEY
+
+    try:
+        raw = rc.hgetall(MACHINERY_LIVE_SLUGS_KEY)
+    except Exception:
+        logger.debug("machinery live-slugs read failed", exc_info=True)
+        return set()
+    if not raw:
+        return set()
+    out: set[str] = set()
+    for k in raw:
+        slug = k.decode("utf-8") if isinstance(k, (bytes, bytearray)) else str(k)
+        if slug:
+            out.add(slug)
+    return out
+
+
+def _publish_machinery_feed_from_prewarm_base(
+    rc,
+    *,
+    mach_base: dict,
+    label: str,
+) -> dict:
+    """Splice cached machinery groupings onto a freshly built Discover base via sync Redis (#12288).
+
+    Pure-Python + sync Redis only (zero DB queries, <5 ms). Keeps both the
+    `machinery=1` offset-0 response key AND the `:machinery` page base warm on
+    every prewarm beat (120s background + 30s live) while leaving the plain
+    1.0.6-safe response key and page base byte-for-byte untouched.
+    """
+    import copy
+    import time as _time
+
+    from app.routes.containers import containers_read_enabled
+    from app.utils.container_machinery import container_machinery_enabled
+    from app.utils.roundup_containers import (
+        ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S,
+        ROUNDUP_PRODUCERS,
+        _is_machinery_producer_slug,
+        _redis_cache_key,
+        _roundup_effective_keep_seconds,
+        _roundup_payload_has_live_event,
+        ensure_optional_roundup_candidates,
+        render_machinery_prewarm_bundle,
+    )
+
+    if not container_machinery_enabled() or not containers_read_enabled():
+        return {"outcome": "disabled"}
+
+    ensure_optional_roundup_candidates()
+    producers = [
+        p
+        for p in ROUNDUP_PRODUCERS.values()
+        if _is_machinery_producer_slug(p.slug)
+        and (p.enabled is None or p.enabled())
+        and getattr(p, "stage", "public") == "public"
+    ]
+    if not producers:
+        return {"outcome": "empty"}
+
+    produced: list[dict] = []
+    clean_empty_slugs: list[str] = []
+    clean_empty_reasons: dict[str, str] = {}
+    absent_slugs: list[str] = []
+    oldest_live_built_at: float | None = None
+    now_ts = _time.time()
+    for prod in producers:
+        raw = rc.get(_redis_cache_key(prod.slug)) if hasattr(rc, "get") else None
+        if not raw:
+            absent_slugs.append(prod.slug)
+            continue
+        if isinstance(raw, (bytes, bytearray)):
+            raw = raw.decode("utf-8", errors="ignore")
+        if not isinstance(raw, str):
+            absent_slugs.append(prod.slug)
+            continue
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            absent_slugs.append(prod.slug)
+            continue
+        if not isinstance(parsed, dict):
+            absent_slugs.append(prod.slug)
+            continue
+        built_at = parsed.get("built_at")
+        if not isinstance(built_at, (int, float)):
+            absent_slugs.append(prod.slug)
+            continue
+        raw_stale_ttl = parsed.get("stale_ttl_s")
+        stored_stale_ttl = (
+            float(raw_stale_ttl) if isinstance(raw_stale_ttl, (int, float)) else None
+        )
+        age_s = max(0.0, now_ts - float(built_at))
+        if parsed.get("clean_empty") is True:
+            lifetime_s = float(
+                stored_stale_ttl or ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+            )
+            if age_s >= lifetime_s:
+                # #13183: a clean-empty marker older than its lifetime is treated as absent.
+                absent_slugs.append(prod.slug)
+                continue
+            clean_empty_slugs.append(prod.slug)
+            clean_empty_reasons[prod.slug] = str(
+                parsed.get("clean_empty_reason") or "unspecified"
+            )
+            continue
+        fi = parsed.get("feed_item")
+        cp = parsed.get("container_payload")
+        if not isinstance(fi, dict) or not isinstance(cp, dict):
+            absent_slugs.append(prod.slug)
+            continue
+        # #13184 follow-up: apply the serve-time clock rule to groupings' own kept copies.
+        keep_s = _roundup_effective_keep_seconds(
+            prod.slug,
+            cp,
+            now_ts=now_ts,
+            stored_stale_ttl=stored_stale_ttl,
+        )
+        if age_s >= keep_s:
+            absent_slugs.append(prod.slug)
+            continue
+        if _roundup_payload_has_live_event(cp):
+            if oldest_live_built_at is None or float(built_at) < oldest_live_built_at:
+                oldest_live_built_at = float(built_at)
+        produced.append(copy.deepcopy(fi))
+
+    # All-or-nothing against failed/absent groupings (#12288, #13183):
+    # publish when every registered grouping is either active OR cleanly empty
+    # within its lifetime; keep refusing when any grouping is absent or failed.
+    if absent_slugs:
+        logger.warning(
+            "Skipping machinery Discover pre-warm for %s: %d/%d groupings absent/failed (%s); "
+            "active=%d clean_empty=%d",
+            label,
+            len(absent_slugs),
+            len(producers),
+            ", ".join(absent_slugs),
+            len(produced),
+            len(clean_empty_slugs),
+        )
+        return {
+            "outcome": "incomplete",
+            "have": len(produced),
+            "clean_empty": len(clean_empty_slugs),
+            "absent": absent_slugs,
+            "need": len(producers),
+        }
+
+    bundle = render_machinery_prewarm_bundle(
+        mach_base=mach_base,
+        produced=produced,
+        oldest_live_built_at=oldest_live_built_at,
+        now_ts=now_ts,
+    )
+    if bundle is None:
+        return {"outcome": "render_none"}
+
+    m_ttl = int(bundle["ttl"])
+    m_stale_ttl = int(bundle["stale_ttl"])
+    rc.setex(bundle["cache_key"], m_ttl, bundle["page_json"])
+    rc.setex(f"{bundle['cache_key']}:stale", m_stale_ttl, bundle["page_json"])
+    rc.setex(bundle["page_base_key"], m_ttl, bundle["page_base_json"])
+    rc.setex(f"{bundle['page_base_key']}:stale", m_stale_ttl, bundle["page_base_json"])
+    if bundle.get("manifest_key") and bundle.get("manifest_json"):
+        rc.setex(
+            bundle["manifest_key"], int(bundle["manifest_ttl"]), bundle["manifest_json"]
+        )
+
+    if clean_empty_slugs:
+        clean_empty_desc = ", ".join(
+            f"{slug}({clean_empty_reasons.get(slug, 'unspecified')})"
+            for slug in clean_empty_slugs
+        )
+        logger.info(
+            "Pre-warmed machinery Discover %s (%d/%d groupings active, %d cleanly empty: %s, live=%s, ttl=%ds/%ds)",
+            label,
+            len(produced),
+            len(producers),
+            len(clean_empty_slugs),
+            clean_empty_desc,
+            bundle["live"],
+            m_ttl,
+            m_stale_ttl,
+        )
+    else:
+        logger.info(
+            "Pre-warmed machinery Discover %s (%d/%d groupings, live=%s, ttl=%ds/%ds)",
+            label,
+            len(produced),
+            len(producers),
+            bundle["live"],
+            m_ttl,
+            m_stale_ttl,
+        )
+    return {
+        "outcome": "ok",
+        "groupings": len(produced),
+        "clean_empty": clean_empty_slugs,
+        "clean_empty_reasons": clean_empty_reasons,
+        "live": bundle["live"],
+        "cache_key": bundle["cache_key"],
+        "page_base_key": bundle["page_base_key"],
+    }
+
+
+def _absent_machinery_slugs(rc, *, registered_slugs: list[str], exclude: set[str]) -> list[str]:
+    """Return registered machinery slugs whose Redis cache entry is absent or due for proactive refresh (#12288)."""
+    import time as _time
+
+    from app.utils.roundup_containers import ROUNDUP_CACHE_TTL_S, _redis_cache_key
+
+    absent: list[str] = []
+    now_ts = _time.time()
+    for slug in registered_slugs:
+        if slug in exclude:
+            continue
+        key = _redis_cache_key(slug)
+        try:
+            if not rc.exists(key):
+                absent.append(slug)
+                continue
+            if hasattr(rc, "get"):
+                raw = rc.get(key)
+                if isinstance(raw, (bytes, bytearray)):
+                    raw = raw.decode("utf-8", errors="ignore")
+                if isinstance(raw, str) and raw.startswith("{"):
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, dict) and isinstance(
+                        parsed.get("built_at"), (int, float)
+                    ):
+                        soft_ttl = float(parsed.get("ttl_s") or ROUNDUP_CACHE_TTL_S)
+                        if (now_ts - float(parsed["built_at"])) >= (0.70 * soft_ttl):
+                            absent.append(slug)
+        except Exception:
+            logger.debug("machinery cache exists check failed for %s", slug, exc_info=True)
+    return absent
+
+
+async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 20.0) -> dict:
+    """Republish live (60s TTL) and absent machinery groupings on the 30s realtime rail.
+
+    - Live machinery groupings (or slates with a game starting within 3 minutes)
+      are rebuilt FIRST so a 60s live entry always outlasts the 30s wait for the
+      next refresh (~29s headroom) and never disappears from Discover during games.
+    - Absent non-live machinery keys are rebuilt SECOND with remaining budget as
+      a LAT-P112 safety net if the 120s host beat lags past the 300s non-live TTL.
+    - Returns immediately with zero Redis/DB calls when the machinery switch is off.
+    """
+    import time as _time
+
+    from app.routes.containers import containers_read_enabled
+    from app.utils.container_machinery import container_machinery_enabled
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        _is_machinery_producer_slug,
+        ensure_optional_roundup_candidates,
+    )
+
+    if not container_machinery_enabled() or not containers_read_enabled():
+        return {"outcome": "disabled", "warmed": 0}
+
+    ensure_optional_roundup_candidates()
+    registered = sorted(
+        p.slug
+        for p in ROUNDUP_PRODUCERS.values()
+        if _is_machinery_producer_slug(p.slug)
+        and (p.enabled is None or p.enabled())
+        and getattr(p, "stage", "public") == "public"
+    )
+    registered_set = set(registered)
+    live_slugs = sorted(s for s in _live_machinery_slugs(rc) if s in registered_set)
+    absent_slugs = _absent_machinery_slugs(
+        rc, registered_slugs=registered, exclude=set(live_slugs)
+    )
+    if not live_slugs and not absent_slugs:
+        return {
+            "outcome": "idle",
+            "warmed": 0,
+            "live_slugs": [],
+            "absent_slugs": [],
+            "slugs": {},
+        }
+
+    started = _time.monotonic()
+    combined_slugs: dict[str, dict] = {}
+    warmed = 0
+
+    if live_slugs and deadline_s >= 1.0:
+        res_live = await _prewarm_machinery_roundups(
+            deadline_s=deadline_s, slugs=live_slugs
+        )
+        combined_slugs.update(res_live.get("slugs") or {})
+        warmed += int(res_live.get("warmed") or 0)
+
+    remaining_s = deadline_s - (_time.monotonic() - started)
+    if absent_slugs and remaining_s >= 1.5:
+        res_absent = await _prewarm_machinery_roundups(
+            deadline_s=remaining_s, slugs=absent_slugs
+        )
+        combined_slugs.update(res_absent.get("slugs") or {})
+        warmed += int(res_absent.get("warmed") or 0)
+
+    return {
+        "outcome": "ok" if warmed else "empty",
+        "warmed": warmed,
+        "live_slugs": live_slugs,
+        "absent_slugs": absent_slugs,
+        "wall_ms": round((_time.monotonic() - started) * 1000.0, 1),
+        "total_db_ms": round(
+            sum(float(v.get("elapsed_ms") or 0.0) for v in combined_slugs.values()), 1
+        ),
+        "slugs": combined_slugs,
+    }
 
 
 async def _prewarm_live_feed_shapes():
@@ -1994,7 +2605,22 @@ async def _prewarm_live_feed_shapes():
                 dict(shape), rc, deadline_s=remaining_s
             )
 
-    await asyncio.gather(*(_republish(label, shape) for label, shape in targets))
+    # #12288: run live/due machinery roundup prewarm CONCURRENTLY with the feed
+    # shapes inside the same bounded pass budget so slow discover builds (~19s
+    # out of 20s) never starve machinery refreshes to <1.5s. Zero Redis/DB work
+    # when machinery is switched off, and <2ms idle when all 5 keys are fresh.
+    machinery_live_result: dict = {"outcome": "disabled", "warmed": 0}
+
+    async def _run_machinery_live() -> None:
+        nonlocal machinery_live_result
+        machinery_live_result = await _prewarm_live_machinery_roundups(
+            rc, deadline_s=min(20.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
+        )
+
+    await asyncio.gather(
+        *(_republish(label, shape) for label, shape in targets),
+        _run_machinery_live(),
+    )
 
     # The idle pass reports too, and that is deliberate (gotcha #53). "Nothing was
     # live" and "this beat has not run since the deploy" are different facts with
@@ -2025,6 +2651,8 @@ async def _prewarm_live_feed_shapes():
             1,
         ),
     }
+    if machinery_live_result.get("outcome") != "disabled":
+        report["machinery"] = machinery_live_result
     try:
         rc.setex(
             FEED_LIVE_PREWARM_STATUS_KEY,
@@ -2262,18 +2890,9 @@ def _write_precompute_report(report: dict) -> None:
         logger.warning("Category precompute report write failed: %s", exc)
 
 
-async def _precompute_all_category_pages():
-    """Precompute all category page caches.
-
-    #1484: the run is now self-reporting. Each section records dispatch →
-    start → success/failure with a duration, and the whole report is written to
-    Redis even when a section blows up, so ``/api/admin/category-precompute/last``
-    can answer "did the MLB grid warm actually run, and how long did it take?"
-    without reading worker logs.
-    """
-    import time as _time
-
-    sections = [
+def _category_sections():
+    """The sections of one category precompute, in run order."""
+    return [
         ("politics", _precompute_politics),
         ("entertainment", _precompute_entertainment),
         ("economics", _precompute_economics),
@@ -2285,6 +2904,147 @@ async def _precompute_all_category_pages():
         ("golf_schedule", _precompute_golf_schedule),
         ("grids", _precompute_grids),
     ]
+
+
+def category_section_names() -> list[str]:
+    """#12042: the names the hourly dispatcher sends, one task each, in order."""
+    return [name for name, _ in _category_sections()]
+
+
+#: #12042: set while ``precompute_discover_candidate_base`` runs (every 2 min, on
+#: the same two-child worker, peaks ~280-330 MB). A category section that finds it
+#: set waits its turn instead of building beside it. TTL = that task's hard limit.
+DISCOVER_BASE_RUNNING_KEY = "bainluck:precompute:discover_base:running"
+DISCOVER_BASE_RUNNING_TTL_S = 180
+
+
+@contextlib.contextmanager
+def mark_discover_base_running():
+    """Hold the base-build flag for the duration of one build. Never raises."""
+    token = uuid.uuid4().hex
+    rc = None
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client()
+        rc.set(DISCOVER_BASE_RUNNING_KEY, token, ex=DISCOVER_BASE_RUNNING_TTL_S)
+    except Exception as exc:
+        logger.warning("discover base running flag not set: %s", exc)
+        rc = None
+    try:
+        yield
+    finally:
+        if rc is not None:
+            try:
+                held = rc.get(DISCOVER_BASE_RUNNING_KEY)
+                if (held.decode() if isinstance(held, bytes) else held) == token:
+                    rc.delete(DISCOVER_BASE_RUNNING_KEY)
+            except Exception as exc:
+                logger.warning("discover base running flag not cleared: %s", exc)
+
+
+def discover_base_running() -> bool:
+    """Whether a base build holds the flag now. False when Redis can't say."""
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        return bool(get_redis_client().exists(DISCOVER_BASE_RUNNING_KEY))
+    except Exception:
+        return False
+
+
+def start_section_report() -> None:
+    """#12042: open this hour's report before any section is sent. Never raises.
+
+    Sections merge into the report already in Redis, so without a fresh one each
+    hour a section that never ran (the worker killed first) would keep last
+    hour's ``ok`` under this hour's ``generated_at``, and the rail would read it
+    as fresh and complete. Every section starts ``not_attempted``.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    order = category_section_names()
+    _write_precompute_report(
+        {
+            "mode": "per_section",
+            "started_at": now,
+            "generated_at": now,
+            "sections": {n: {"outcome": "not_attempted"} for n in order},
+            "section_order": order,
+        }
+    )
+
+
+def _merge_section_report(name: str, entry: dict, started_at: str) -> None:
+    """#12042: fold one section's result into the shared run report. Never raises.
+
+    Each section now runs as its own task, so two can finish at once; the merge
+    is a WATCH transaction that retries, so neither result overwrites the other.
+    """
+    order = category_section_names()
+    try:
+        from redis.exceptions import WatchError
+
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client()
+        for _ in range(5):
+            with rc.pipeline(transaction=True) as pipe:
+                try:
+                    pipe.watch(PRECOMPUTE_STATUS_KEY)
+                    raw = pipe.get(PRECOMPUTE_STATUS_KEY)
+                    try:
+                        report = json.loads(raw) if raw else {}
+                    except (TypeError, ValueError):
+                        report = {}
+                    if not isinstance(report, dict):
+                        report = {}
+                    old = report.get("sections") if isinstance(report.get("sections"), dict) else {}
+                    sections = {n: old.get(n, {"outcome": "not_attempted"}) for n in order}
+                    sections[name] = entry
+                    now = datetime.now(timezone.utc).isoformat()
+                    report.update(
+                        mode="per_section",
+                        sections=sections,
+                        section_order=order,
+                        started_at=report.get("started_at") or started_at,
+                        generated_at=now,
+                        finished_at=now,
+                    )
+                    pipe.multi()
+                    pipe.setex(
+                        PRECOMPUTE_STATUS_KEY,
+                        PRECOMPUTE_STATUS_TTL,
+                        json.dumps(report, default=str),
+                    )
+                    pipe.execute()
+                    return
+                except WatchError:
+                    continue
+        logger.warning("Category precompute report: %s not merged after 5 tries", name)
+    except Exception as exc:
+        logger.warning("Category precompute report merge failed: %s", exc)
+
+
+async def _precompute_all_category_pages(only: str | None = None):
+    """Precompute all category page caches.
+
+    #1484: the run is now self-reporting. Each section records dispatch →
+    start → success/failure with a duration, and the whole report is written to
+    Redis even when a section blows up, so ``/api/admin/category-precompute/last``
+    can answer "did the MLB grid warm actually run, and how long did it take?"
+    without reading worker logs.
+
+    #12042: ``only`` runs one section and merges its result into the report.
+    The hourly beat sends one task per section, so the worker checks a child's
+    memory after each section instead of after all seven.
+    """
+    import time as _time
+
+    sections = _category_sections()
+    if only is not None:
+        sections = [(name, fn) for name, fn in sections if name == only]
+        if not sections:
+            raise ValueError(f"unknown category section: {only}")
     run_started = _time.monotonic()
     report: dict = {
         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -2322,7 +3082,10 @@ async def _precompute_all_category_pages():
         # leaves evidence of exactly how far the run got.
         report["duration_s"] = round(_time.monotonic() - run_started, 1)
         report["finished_at"] = datetime.now(timezone.utc).isoformat()
-        _write_precompute_report(report)
+        if only is not None:
+            _merge_section_report(only, report["sections"][only], report["started_at"])
+        else:
+            _write_precompute_report(report)
 
     logger.info("Category page precompute complete: %s", results)
     return {"status": "ok", "results": results}

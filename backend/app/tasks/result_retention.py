@@ -153,6 +153,9 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.precompute_backfill_winners_status",
         "app.tasks.precompute_calibration_main",
         "app.tasks.precompute_category_pages",
+        # #12042: POST /admin/precompute-category-pages now sends the seven
+        # section tasks and returns their ids, so their results are kept.
+        "app.tasks.precompute_category_section",
         "app.tasks.recategorize_other",
         "app.tasks.recover_datagolf_participation",
         "app.tasks.refresh_event_concept",

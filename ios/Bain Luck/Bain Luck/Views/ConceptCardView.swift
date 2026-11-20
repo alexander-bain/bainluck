@@ -23,6 +23,14 @@ struct ConceptCardView: View {
         _vm = StateObject(wrappedValue: ConceptCardViewModel(key: key))
     }
 
+    #if DEBUG
+    init(key: String, displayName: String, loadedPresentationForTest: ConceptCardPresentation) {
+        self.key = key
+        self.displayName = displayName
+        _vm = StateObject(wrappedValue: ConceptCardViewModel(key: key, loadedPresentation: loadedPresentationForTest))
+    }
+    #endif
+
     var body: some View {
         Group {
             switch vm.state {
@@ -79,9 +87,13 @@ struct ConceptCardView: View {
             }
             .padding(.horizontal)
             .padding(.bottom, 40)
+            .frame(maxWidth: Self.readableDetailMaxWidth)
+            .frame(maxWidth: .infinity)
         }
         .refreshable { await vm.load() }
     }
+
+    static let readableDetailMaxWidth: CGFloat = 720
 
     /// The title bar already says the card's name (`GolfTournamentView`'s
     /// measured lesson), so this says what the bar does not: which sport, when,

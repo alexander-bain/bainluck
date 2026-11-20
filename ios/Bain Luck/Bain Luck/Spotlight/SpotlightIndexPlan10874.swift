@@ -46,15 +46,29 @@ nonisolated struct SpotlightSubject10874: Codable, Equatable, Sendable {
     /// Main-actor because the app's display-name helpers are.
     /// The detail page and My Stuff build it from the same fields, so the two
     /// never disagree about one game and rewrite each other.
+    ///
+    /// #12315 — a reader also types a team the short way: its short name
+    /// ("Chiefs") and the abbreviation the server sends ("KC"). Only a served
+    /// abbreviation: `TeamShortName.abbreviation` guesses ("CHI" for the
+    /// Chiefs), and a guess would send "CHI" to the wrong team. Measured on the
+    /// iOS 26.2 simulator (2026-11-08): system Spotlight matched only title words,
+    /// and only searches of four letters or more, so how far a keyword reaches
+    /// is a device question.
     @MainActor static func game(id: Int, away: String, home: String, sportKey: String?,
-                                commenceTime: String?) -> Self? {
+                                commenceTime: String?, awayAbbreviation: String? = nil,
+                                homeAbbreviation: String? = nil) -> Self? {
         let away = away.trimmingCharacters(in: .whitespacesAndNewlines)
         let home = home.trimmingCharacters(in: .whitespacesAndNewlines)
         guard id > 0, !away.isEmpty, !home.isEmpty else { return nil }
         let competition = sportDisplayName(for: sportKey)
+        let short = TeamShortName.shortPair(away: away, home: home, sportKey: sportKey)
         return Self(kind: .game, id: id, title: "\(away) at \(home)", competition: competition,
                     date: commenceTime?.asDate,
-                    aliases: SpotlightIndexPlan10874.aliases([away, home, competition]))
+                    aliases: SpotlightIndexPlan10874.aliases([
+                        away, home, competition, short.away, short.home,
+                        SpotlightIndexPlan10874.servedAbbreviation(awayAbbreviation),
+                        SpotlightIndexPlan10874.servedAbbreviation(homeAbbreviation),
+                    ]))
     }
 
     /// A market, by the name its own page shows and its category.
@@ -195,6 +209,31 @@ nonisolated enum SpotlightIndexPlan10874 {
         var seen = Set<String>()
         return names.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+    }
+
+    /// #12315 — a team abbreviation as the server sent it ("KC", "NYJ"), or nil
+    /// for anything that is not one: empty, longer than six characters, or
+    /// carrying anything but letters and digits.
+    static func servedAbbreviation(_ raw: String?) -> String? {
+        guard let text = raw?.trimmingCharacters(in: .whitespacesAndNewlines), (1...6).contains(text.count),
+              text.unicodeScalars.allSatisfy(CharacterSet.alphanumerics.contains) else { return nil }
+        return text
+    }
+
+    /// #12315 — the Siri and Shortcuts entity a Spotlight entry stands for: the
+    /// same game or market by its canonical id, described only by the entry's
+    /// own title and detail. Never the live status Siri's "Which one?" list
+    /// shows, because Spotlight can show an entry long after it was written.
+    static func entity(for item: SpotlightIndexItem10874) -> GameOrMarketEntity10873? {
+        let detail = item.detail.isEmpty ? nil : item.detail
+        switch StoryContinuation.destination(from: URL(string: item.identifier)) {
+        case .event(let id)?:
+            return GameOrMarketEntity10873(kind: .game, recordID: id, title: item.title, detail: detail)
+        case .futures(let id)?:
+            return GameOrMarketEntity10873(kind: .market, recordID: id, title: item.title, detail: detail)
+        case nil:
+            return nil
+        }
     }
 }
 

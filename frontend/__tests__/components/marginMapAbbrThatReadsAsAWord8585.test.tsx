@@ -30,7 +30,11 @@ function visibleText(html: string): string {
     .trim();
 }
 
-function render(homeAbbr: string | undefined, homeTeam = "Ole Miss Rebels"): string {
+function render(
+  homeAbbr: string | undefined,
+  homeTeam = "Ole Miss Rebels",
+  sportKey = "americanfootball_ncaaf",
+): string {
   return visibleText(
     renderToStaticMarkup(
       <MarketMapSection
@@ -40,7 +44,7 @@ function render(homeAbbr: string | undefined, homeTeam = "Ole Miss Rebels"): str
         awayTeam="LSU Tigers"
         homeAbbr={homeAbbr}
         awayAbbr="LSU"
-        sportKey="americanfootball_ncaaf"
+        sportKey={sportKey}
       />
     )
   );
@@ -50,9 +54,9 @@ describe("#8585 margin labels never print an abbreviation that reads as a word",
   it("names Ole Miss by the hero's short name on the production card", () => {
     const text = render("MISS");
     expect(text).toContain("Margin: expected vs final");
-    expect(text).toContain("Final Rebels by 8");
-    expect(text).toContain("Rebels by 18+");
-    expect(text).toContain("Rebels by 7.5+ cleared");
+    expect(text).toContain("Final Ole Miss by 8");
+    expect(text).toContain("Ole Miss by 18+");
+    expect(text).toContain("Ole Miss by 7.5+ cleared");
     expect(text).not.toMatch(/\bMISS\b/);
     // The other side keeps its served code.
     expect(text).toContain("LSU by 18+");
@@ -61,12 +65,12 @@ describe("#8585 margin labels never print an abbreviation that reads as a word",
 
   it("matches the word case-insensitively", () => {
     const text = render("Miss");
-    expect(text).toContain("Final Rebels by 8");
-    expect(text).not.toMatch(/\bMiss by\b/);
+    expect(text).toContain("Final Ole Miss by 8");
+    expect(text).not.toMatch(/(?<!Ole )\bMiss by\b/);
   });
 
   it("covers New Orleans's NO the same way", () => {
-    const text = render("NO", "New Orleans Saints");
+    const text = render("NO", "New Orleans Saints", "americanfootball_nfl");
     expect(text).toContain("Final Saints by 8");
     expect(text).not.toMatch(/\bNO by\b/);
   });
@@ -74,6 +78,6 @@ describe("#8585 margin labels never print an abbreviation that reads as a word",
   it("control: a code that is not a word is printed as served", () => {
     const text = render("OM");
     expect(text).toContain("Final OM by 8");
-    expect(text).not.toContain("Rebels by");
+    expect(text).not.toContain("Ole Miss by");
   });
 });

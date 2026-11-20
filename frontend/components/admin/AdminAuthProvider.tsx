@@ -108,14 +108,15 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
     let cancelled = false;
     (async () => {
       try {
-        if (hasStoredAccountSession(SIGNED_IN_MARKER, BACKEND_AUTH_KEY)) {
-          const session = await probeAdminAccount({
-            getToken: async () => (await import("@/lib/firebase")).getIdToken(),
-            whoami: (token) => adminFetchJSON("/api/admin/whoami", token),
-          });
-          if (!cancelled && session) {
-            setAuth(adminAuthAccount(session.token, session.email));
-          }
+        const session = await probeAdminAccount({
+          hasStoredSession: () =>
+            hasStoredAccountSession(SIGNED_IN_MARKER, BACKEND_AUTH_KEY),
+          getToken: async () =>
+            (await import("@/lib/firebase")).getIdTokenAfterAuthReady(),
+          whoami: (token) => adminFetchJSON("/api/admin/whoami", token),
+        });
+        if (!cancelled && session) {
+          setAuth(adminAuthAccount(session.token, session.email));
         }
       } finally {
         // ALWAYS, on every path. `checking` renders "Loading admin..." and
