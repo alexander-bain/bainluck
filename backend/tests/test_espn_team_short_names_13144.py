@@ -385,10 +385,41 @@ class TestEspnIdNameAgreement:
     @pytest.mark.parametrize(
         "db_name, espn_team, expected",
         [
+            # Exact display_name and St<->State expansions
             ("Sacramento St Hornets", SACRAMENTO, True),
             ("Murray St Racers", MURRAY, True),
             ("Penn State Nittany Lions", PENN_STATE, True),
             ("Texas St Bobcats", TEXAS_STATE, True),
+            # Bare school name equals ESPN location exactly
+            ("Sacramento St", SACRAMENTO, True),
+            ("Sacramento State", SACRAMENTO, True),
+            ("Penn State", PENN_STATE, True),
+            ("Arkansas", ARKANSAS, True),
+            # location + " " + name exact match when display_name differs
+            (
+                "Sacramento State Hornets",
+                _espn("16", "Sac State", "Sac St", "SAC", location="Sacramento State"),
+                False,  # name is "State" here so location+name != Hornets
+            ),
+            (
+                "Sacramento State Hornets",
+                ESPNTeam(
+                    espn_id="16",
+                    name="Hornets",
+                    abbreviation="SAC",
+                    display_name="Sac St Hornets",
+                    short_name="Sac St",
+                    nickname="Hornets",
+                    primary_color="#00573C",
+                    secondary_color="#ffffff",
+                    logo_url="https://a.espncdn.com/i/teamlogos/ncaa/500/16.png",
+                    logo_url_dark=None,
+                    record=None,
+                    location="Sacramento State",
+                ),
+                True,
+            ),
+            # Crossed unrelated anchors
             ("Stanford Cardinal", ARKANSAS, False),
             ("Qarabağ FK", VIKING, False),
             ("Delaware St Hornets", SACRAMENTO, False),
@@ -401,3 +432,49 @@ class TestEspnIdNameAgreement:
     )
     def test_agreement_cases(self, db_name, espn_team, expected):
         assert espn_id_name_agrees(db_name, espn_team) is expected
+
+    @pytest.mark.parametrize(
+        "school_a_name, school_a_loc, school_b_name, school_b_loc",
+        [
+            # Every namesake pair from Fable's review, tested in BOTH directions.
+            ("Michigan Wolverines", "Michigan", "Michigan State Spartans", "Michigan State"),
+            ("Michigan St Spartans", "Michigan State", "Michigan Wolverines", "Michigan"),
+            ("Oregon Ducks", "Oregon", "Oregon State Beavers", "Oregon State"),
+            ("Washington Huskies", "Washington", "Washington State Cougars", "Washington State"),
+            ("Penn Quakers", "Penn", "Penn State Nittany Lions", "Penn State"),
+            ("Texas Longhorns", "Texas", "Texas A&M Aggies", "Texas A&M"),
+            ("Texas A&M Aggies", "Texas A&M", "Texas A&M-Corpus Christi Islanders", "Texas A&M-Corpus Christi"),
+            ("Miami Hurricanes", "Miami", "Miami (OH) RedHawks", "Miami (OH)"),
+            ("North Carolina Tar Heels", "North Carolina", "North Carolina State Wolfpack", "North Carolina State"),
+            ("Georgia Bulldogs", "Georgia", "Georgia Tech Yellow Jackets", "Georgia Tech"),
+            ("Georgia Bulldogs", "Georgia", "Georgia State Panthers", "Georgia State"),
+            ("Mississippi St Bulldogs", "Mississippi State", "Mississippi Rebels", "Mississippi"),
+            ("Boston College Eagles", "Boston College", "Boston University Terriers", "Boston University"),
+            ("Iowa Hawkeyes", "Iowa", "Iowa State Cyclones", "Iowa State"),
+            ("Kansas Jayhawks", "Kansas", "Kansas State Wildcats", "Kansas State"),
+            ("Arizona Wildcats", "Arizona", "Arizona State Sun Devils", "Arizona State"),
+            ("Ohio Bobcats", "Ohio", "Ohio State Buckeyes", "Ohio State"),
+            ("Indiana Hoosiers", "Indiana", "Indiana State Sycamores", "Indiana State"),
+            ("Illinois Fighting Illini", "Illinois", "Illinois State Redbirds", "Illinois State"),
+            ("Tennessee Volunteers", "Tennessee", "Tennessee State Tigers", "Tennessee State"),
+            ("Tennessee Volunteers", "Tennessee", "Tennessee Tech Golden Eagles", "Tennessee Tech"),
+            ("Loyola Chicago Ramblers", "Loyola Chicago", "Loyola Maryland Greyhounds", "Loyola Maryland"),
+        ],
+    )
+    def test_namesake_schools_refuse_in_both_directions(
+        self, school_a_name, school_a_loc, school_b_name, school_b_loc
+    ):
+        espn_a = _espn("101", school_a_name, school_a_loc, "AAA", location=school_a_loc)
+        espn_b = _espn("202", school_b_name, school_b_loc, "BBB", location=school_b_loc)
+
+        # Full names disagree in both directions
+        assert espn_id_name_agrees(school_a_name, espn_b) is False
+        assert espn_id_name_agrees(school_b_name, espn_a) is False
+        # Bare school names disagree with the namesake school in both directions
+        assert espn_id_name_agrees(school_a_loc, espn_b) is False
+        assert espn_id_name_agrees(school_b_loc, espn_a) is False
+        # Each school still agrees with itself (full and bare location)
+        assert espn_id_name_agrees(school_a_name, espn_a) is True
+        assert espn_id_name_agrees(school_a_loc, espn_a) is True
+        assert espn_id_name_agrees(school_b_name, espn_b) is True
+        assert espn_id_name_agrees(school_b_loc, espn_b) is True

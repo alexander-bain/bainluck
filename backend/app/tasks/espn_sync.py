@@ -3746,21 +3746,6 @@ def espn_abbreviation_may_be_written(
     return bool(match_was_exact or repointed_from or fuzzy_identical)
 
 
-_ESPN_ID_NAME_STOP_TOKENS = frozenset({
-    "fc", "sc", "cf", "ac", "afc", "bc", "club", "the", "of", "at",
-    "de", "la", "cd", "ud", "sv", "bk", "fk", "if", "sk", "as", "ss", "us",
-})
-_ESPN_ID_NAME_GENERIC_TOKENS = frozenset({
-    "state", "university", "college", "united", "city", "real", "athletic",
-    "sporting", "inter", "san", "santa", "saint", "new", "north", "south",
-    "east", "west", "central", "southern", "northern", "eastern", "western",
-})
-_ESPN_ID_NAME_DIRECTION_TOKENS = frozenset({
-    "north", "south", "east", "west", "central",
-    "northern", "southern", "eastern", "western",
-})
-
-
 def _espn_id_norm_basic(value: str) -> str:
     if not value:
         return ""
@@ -3785,25 +3770,24 @@ def _espn_id_norm_expanded(value: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
-def _espn_id_tokens(value: str) -> set[str]:
-    return {
-        tok
-        for tok in _espn_id_norm_expanded(value).split()
-        if tok and tok not in _ESPN_ID_NAME_STOP_TOKENS
-    }
-
-
 def espn_id_name_agrees(team_name: str, espn_team) -> bool:
-    """Whether ``team_name`` agrees with the ESPN team resolved by ``espn_id`` (#13144).
+    """Whether ``team_name`` names the exact same school/club as ``espn_team`` (#13144).
 
     Guards the ``team.espn_id in espn_by_id`` branch of ``_backfill_team_logos``
-    against #12762-class crossed anchors (e.g. Stanford carrying Arkansas's
-    ESPN id, or Qarabağ FK carrying Viking FK's id) once ``get_teams`` returns
-    the full 1,000-team roster. Reads only ``team_name`` — never
-    ``alternate_names``, which may carry borrowed names (#8353) — and prefers
-    school/club-bearing ESPN fields (``display_name``, ``short_name``,
-    ``location``) over bare mascot ``name`` so two schools sharing a mascot
-    cannot falsely agree.
+    against #12762-class crossed anchors once ``get_teams`` returns the full
+    1,000-team roster. Reads only ``team_name`` — never ``alternate_names``,
+    which may carry borrowed names (#8353) — and requires exact equality after
+    punctuation/diacritic folding and spelling expansions (``St`` -> ``State``,
+    ``Mt`` -> ``Mount``, ``Ft`` -> ``Fort``, cardinal letters) against:
+
+    - ESPN's ``display_name``,
+    - ESPN's ``location + " " + name`` (when both are populated), or
+    - ESPN's ``location`` (for bare school/club rows like ``Penn State``).
+
+    Never accepts partial token overlap, so namesake schools (Michigan vs
+    Michigan State, Oregon vs Oregon State, Texas vs Texas A&M, Miami vs
+    Miami (OH), Georgia vs Georgia Tech / Georgia State, Loyola Chicago vs
+    Loyola Maryland, etc.) always refuse in both directions.
     """
     if not team_name or espn_team is None:
         return False
@@ -3812,54 +3796,23 @@ def espn_id_name_agrees(team_name: str, espn_team) -> bool:
     if not db_basic:
         return False
 
-    primary_forms = [
-        f
-        for f in (
-            getattr(espn_team, "display_name", None) or "",
-            getattr(espn_team, "short_name", None) or "",
-            getattr(espn_team, "location", None) or "",
-        )
-        if f.strip()
-    ]
-    if not primary_forms:
-        primary_forms = [
-            f
-            for f in (
-                getattr(espn_team, "nickname", None) or "",
-                getattr(espn_team, "name", None) or "",
-            )
-            if f.strip()
-        ]
-    if not primary_forms:
+    display = (getattr(espn_team, "display_name", None) or "").strip()
+    location = (getattr(espn_team, "location", None) or "").strip()
+    name = (getattr(espn_team, "name", None) or "").strip()
+
+    accepted: list[str] = []
+    if display:
+        accepted.append(display)
+    if location and name:
+        accepted.append(f"{location} {name}")
+    if location:
+        accepted.append(location)
+    if not accepted:
         return False
 
-    if db_basic in {_espn_id_norm_basic(f) for f in primary_forms}:
+    if db_basic in {_espn_id_norm_basic(f) for f in accepted}:
         return True
-    if db_exp in {_espn_id_norm_expanded(f) for f in primary_forms}:
-        return True
-
-    mascot_toks = _espn_id_tokens(getattr(espn_team, "name", None) or "")
-    loc_short_toks: set[str] = set()
-    for field in (
-        getattr(espn_team, "location", None) or "",
-        getattr(espn_team, "short_name", None) or "",
-    ):
-        loc_short_toks |= _espn_id_tokens(field)
-    disp_toks = _espn_id_tokens(getattr(espn_team, "display_name", None) or "")
-    espn_id_toks = loc_short_toks or (disp_toks - mascot_toks) or disp_toks
-    db_toks = _espn_id_tokens(team_name)
-    if not db_toks or not espn_id_toks:
-        return False
-
-    db_dirs = db_toks & _ESPN_ID_NAME_DIRECTION_TOKENS
-    espn_dirs = espn_id_toks & _ESPN_ID_NAME_DIRECTION_TOKENS
-    if db_dirs != espn_dirs and (db_dirs or espn_dirs):
-        return False
-
-    overlap = db_toks & espn_id_toks
-    if not (overlap - _ESPN_ID_NAME_GENERIC_TOKENS):
-        return False
-    return (len(overlap) / min(len(db_toks), len(espn_id_toks))) >= 0.5
+    return db_exp in {_espn_id_norm_expanded(f) for f in accepted}
 
 
 async def _backfill_team_logos(*, dry_run: bool = False):
