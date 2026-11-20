@@ -2,6 +2,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import MachinerySectionRenderer, {
   MachineryDiscoverCard,
+  machineryCardOpenLabel,
   type MachineryCardContract,
 } from "@/components/collections/MachinerySectionRenderer";
 import type { MachineryVisualBlock } from "@/lib/collections";
@@ -117,5 +118,43 @@ describe("#12288 Slice 3 — chart form, <=3 row cap + Show all, Direction 228 s
     expect(html).toContain('data-testid="machinery-card-mini-chart"');
     expect(html).toContain("Open all 4 sections");
     expect(html).not.toContain("settles from official");
+  });
+
+  it("#13234: single-section grouping card avoids 'Open all 1 sections' and uses item count/noun or 'Open the full set'", () => {
+    expect(machineryCardOpenLabel({ section_count: 4 })).toBe("Open all 4 sections ›");
+    expect(machineryCardOpenLabel({ section_count: 1 })).toBe("Open the full set ›");
+    expect(
+      machineryCardOpenLabel({ section_count: 1, item_count: 7, item_noun: "markets" }),
+    ).toBe("See all 7 markets ›");
+    expect(
+      machineryCardOpenLabel({ section_count: 1, item_count: 11, item_noun: "cities" }),
+    ).toBe("See all 11 cities ›");
+    expect(
+      machineryCardOpenLabel({ section_count: 1, item_count: 16, item_noun: "couples" }),
+    ).toBe("See all 16 couples ›");
+
+    const bondCard: MachineryCardContract = {
+      slug: "machinery-next-james-bond",
+      form_id: "stacked_bar_list",
+      kicker: "ENTERTAINMENT · JAMES BOND",
+      title: "Raye leads James Bond Theme at 47%, with Olivia Colman to play M at 29%",
+      subtitle: "Leading contenders across every casting and theme-song market for the next Bond film.",
+      footer: "",
+      section_count: 1,
+      destination_href: "/collections/machinery-next-james-bond",
+      rows: [
+        { outcome_id: 1, name: "Raye", rendered_percent: 47, art: {} },
+        { outcome_id: 2, name: "Olivia Dean", rendered_percent: 30, art: {} },
+      ],
+    };
+    const fallbackHtml = renderToStaticMarkup(<MachineryDiscoverCard card={bondCard} />);
+    expect(fallbackHtml).toContain("Open the full set ›");
+    expect(fallbackHtml).not.toContain("Open all 1 sections");
+
+    const countedHtml = renderToStaticMarkup(
+      <MachineryDiscoverCard card={{ ...bondCard, item_count: 7, item_noun: "markets" }} />,
+    );
+    expect(countedHtml).toContain("See all 7 markets ›");
+    expect(countedHtml).not.toContain("Open all 1 sections");
   });
 });
