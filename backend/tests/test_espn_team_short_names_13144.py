@@ -31,6 +31,7 @@ from app.tasks import espn_sync
 from app.tasks.espn_sync import (
     espn_abbreviation_may_be_written,
     espn_id_name_agrees,
+    fuzzy_hit_is_identical,
 )
 
 
@@ -478,3 +479,78 @@ class TestEspnIdNameAgreement:
         assert espn_id_name_agrees(school_a_loc, espn_a) is True
         assert espn_id_name_agrees(school_b_name, espn_b) is True
         assert espn_id_name_agrees(school_b_loc, espn_b) is True
+
+
+class TestNumberDifferenceRefusal:
+    """Decision 286: B (#13144) — refuse a team name that differs from the
+    ESPN club name only by a number (e.g. ``Columbus Crew 2`` vs
+    ``Columbus Crew``).
+    """
+
+    def test_fuzzy_hit_is_identical_refuses_number_only_difference(self):
+        assert not fuzzy_hit_is_identical(
+            "Columbus Crew 2",
+            "Columbus Crew 2",
+            1.0,
+            {"183"},
+            matched_espn_name="columbus crew",
+        )
+        assert not fuzzy_hit_is_identical(
+            "Columbus Crew",
+            "Columbus Crew",
+            1.0,
+            {"999"},
+            matched_espn_name="columbus crew 2",
+        )
+        assert not fuzzy_hit_is_identical(
+            "Bayern Munich 2",
+            "Bayern Munich 2",
+            1.0,
+            {"132"},
+            matched_espn_name="bayern munich",
+        )
+        # Same number on both sides still passes
+        assert fuzzy_hit_is_identical(
+            "1. FSV Mainz 05",
+            "1. FSV Mainz 05",
+            1.0,
+            {"2950"},
+            matched_espn_name="1. fsv mainz 05",
+        )
+        # Unnumbered St/State spelling variant still passes
+        assert fuzzy_hit_is_identical(
+            "Sacramento St Hornets",
+            "Sacramento St Hornets",
+            1.0,
+            {"16"},
+            matched_espn_name="sacramento state hornets",
+        )
+
+    def test_backfill_pass_refuses_columbus_crew_2_against_columbus_crew(self, monkeypatch):
+        columbus_crew = _espn(
+            "183", "Columbus Crew", "Columbus", "CLB", "f5cc00", location="Columbus Crew"
+        )
+        crew_2_crested = _team(
+            14535,
+            "Columbus Crew 2",
+            logo="https://a.espncdn.com/i/teamlogos/soccer/500/21226.png",
+            abbreviation=None,
+        )
+        crew_2_uncrested = _team(14536, "Columbus Crew 2", abbreviation=None)
+        crew_2_anchored = _team(14537, "Columbus Crew 2", espn_id="183", abbreviation=None)
+
+        stats = _run_pass(
+            monkeypatch,
+            [crew_2_crested, crew_2_uncrested, crew_2_anchored],
+            [columbus_crew],
+            sport_key="soccer_usa_mls",
+        )
+
+        for row in (crew_2_crested, crew_2_uncrested, crew_2_anchored):
+            assert row.abbreviation is None
+        assert crew_2_uncrested.logo_url_small is None
+        assert crew_2_crested.espn_id is None
+        assert stats["teams_updated"] == 0
+        assert stats["fuzzy_media_refused"] == 2
+        assert stats["espn_id_name_disagreement"] == 1
+        assert espn_id_name_agrees("Columbus Crew 2", columbus_crew) is False

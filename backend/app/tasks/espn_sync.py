@@ -3690,15 +3690,33 @@ def espn_aliases_to_store(team_name, existing, matched_espn, *, match_was_exact,
     return list(alt_names) if alt_names else None
 
 
-def fuzzy_hit_is_identical(checked_name, team_name, best_score, best_ids):
+def _name_number_tokens(name: str) -> tuple[str, ...]:
+    """Ordered numeric tokens in ``name`` (e.g. ``"Columbus Crew 2"`` -> ``("2",)``)."""
+    return tuple(re.findall(r"\d+", name or ""))
+
+
+def fuzzy_hit_is_identical(
+    checked_name,
+    team_name,
+    best_score,
+    best_ids,
+    matched_espn_name: str | None = None,
+):
     """A token-overlap hit that is the row's own name in other spelling.
 
     Score 1.0 (same words once "St"/"LA" expand), from exactly one ESPN club,
     on the row's OWN name, and that name has at least two words. An alias is
     not enough: "C Arkansas" drops its one-letter token and scores 1.0 against
     ESPN's "Arkansas" (#9127, Central Arkansas re-wearing the Razorbacks crest).
+    A name that differs from the matched ESPN name by a number ("Columbus Crew 2"
+    vs "Columbus Crew") is also refused: ``normalize_name`` strips trailing
+    reserve numbers and single-digit tokens before scoring (#13144).
     """
     if checked_name != team_name or best_score < 1.0 or len(best_ids) != 1:
+        return False
+    if matched_espn_name is not None and (
+        _name_number_tokens(team_name) != _name_number_tokens(matched_espn_name)
+    ):
         return False
     return len(_normalize_name_canonical(team_name).split()) >= 2
 
@@ -3960,15 +3978,25 @@ async def _backfill_team_logos(*, dry_run: bool = False):
                                 # Token-overlap scoring (replaces substring matching)
                                 best_score = 0.0
                                 best_et = None
+                                best_espn_name = None
                                 best_ids = set()
+                                checked_nums = _name_number_tokens(name)
                                 for espn_name, et in espn_by_name.items():
                                     score = _team_name_match_score(name, espn_name)
                                     if score > best_score:
                                         best_score = score
                                         best_et = et
+                                        best_espn_name = espn_name
                                         best_ids = {et.espn_id}
                                     elif score and score == best_score:
                                         best_ids.add(et.espn_id)
+                                        if (
+                                            best_et is not None
+                                            and et.espn_id == best_et.espn_id
+                                            and _name_number_tokens(espn_name) == checked_nums
+                                            and _name_number_tokens(best_espn_name or "") != checked_nums
+                                        ):
+                                            best_espn_name = espn_name
                                 if best_score > 0.5:
                                     matched_espn = best_et
                                     match_was_exact = False
@@ -3977,6 +4005,7 @@ async def _backfill_team_logos(*, dry_run: bool = False):
                                         team.name,
                                         best_score,
                                         best_ids,
+                                        matched_espn_name=best_espn_name,
                                     )
                                     break
 
