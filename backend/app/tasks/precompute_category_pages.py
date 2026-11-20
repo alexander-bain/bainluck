@@ -1551,6 +1551,51 @@ async def _prewarm_feed_shape(
     body = dumps_feed_cache(payload)
     rc.setex(cache_key, ttl, body)
     rc.setex(f"{cache_key}:stale", stale_ttl, body)
+    # #12288: also publish the anonymous page base via sync Redis (Celery
+    # ForkPoolWorker closes asyncio loops between tasks) and, when the
+    # machinery switch is on for Discover shapes, splice the cached machinery
+    # groupings onto the just-built base in pure Python (<5 ms, 0 DB queries)
+    # so `machinery=1` readers hit warm Redis (~15 ms) with zero 5-minute misses.
+    from app.utils.feed_cache import (
+        FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY,
+        encode_base_last_good,
+        feed_page_base_last_good_key,
+    )
+
+    _mach_base_ctx = request.scope.get(FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY)
+    if isinstance(_mach_base_ctx, dict) and _mach_base_ctx.get("page_base_key"):
+        try:
+            _pb_key = str(_mach_base_ctx["page_base_key"])
+            _pb_json = dumps_feed_cache(_mach_base_ctx["page_base_body"])
+            _pb_fresh = int(_mach_base_ctx.get("page_base_fresh_ttl") or ttl)
+            _pb_stale = int(_mach_base_ctx.get("page_base_stale_ttl") or stale_ttl)
+            _pb_lg_ttl = int(_mach_base_ctx.get("page_base_last_good_ttl") or stale_ttl)
+            rc.setex(_pb_key, _pb_fresh, _pb_json)
+            rc.setex(f"{_pb_key}:stale", _pb_stale, _pb_json)
+            rc.setex(
+                feed_page_base_last_good_key(_pb_key),
+                _pb_lg_ttl,
+                encode_base_last_good(_pb_json),
+            )
+        except Exception:
+            logger.debug("Sync page-base publish failed for %s", label, exc_info=True)
+        if (
+            shape.get("mode") is None
+            and shape.get("include_events")
+            and shape.get("include_futures")
+        ):
+            try:
+                _publish_machinery_feed_from_prewarm_base(
+                    rc,
+                    mach_base=_mach_base_ctx,
+                    label=label,
+                )
+            except Exception:
+                logger.warning(
+                    "Machinery feed pre-warm splice failed for %s",
+                    label,
+                    exc_info=True,
+                )
     # #2236: the shape's liveness is recorded by the writer that just measured
     # it. Whichever pass called this — the 120s one or the republish one — the live set
     # now describes the payload actually on the key, so the republish pass can
@@ -1954,6 +1999,120 @@ def _live_machinery_slugs(rc) -> set[str]:
     return out
 
 
+def _publish_machinery_feed_from_prewarm_base(
+    rc,
+    *,
+    mach_base: dict,
+    label: str,
+) -> dict:
+    """Splice cached machinery groupings onto a freshly built Discover base via sync Redis (#12288).
+
+    Pure-Python + sync Redis only (zero DB queries, <5 ms). Keeps both the
+    `machinery=1` offset-0 response key AND the `:machinery` page base warm on
+    every prewarm beat (120s background + 30s live) while leaving the plain
+    1.0.6-safe response key and page base byte-for-byte untouched.
+    """
+    import copy
+    import time as _time
+
+    from app.routes.containers import containers_read_enabled
+    from app.utils.container_machinery import container_machinery_enabled
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        _is_machinery_producer_slug,
+        _redis_cache_key,
+        _roundup_payload_has_live_event,
+        ensure_optional_roundup_candidates,
+        render_machinery_prewarm_bundle,
+    )
+
+    if not container_machinery_enabled() or not containers_read_enabled():
+        return {"outcome": "disabled"}
+
+    ensure_optional_roundup_candidates()
+    producers = [
+        p
+        for p in ROUNDUP_PRODUCERS.values()
+        if _is_machinery_producer_slug(p.slug) and (p.enabled is None or p.enabled())
+    ]
+    if not producers:
+        return {"outcome": "empty"}
+
+    produced: list[dict] = []
+    oldest_live_built_at: float | None = None
+    now_ts = _time.time()
+    for prod in producers:
+        raw = rc.get(_redis_cache_key(prod.slug)) if hasattr(rc, "get") else None
+        if not raw:
+            continue
+        if isinstance(raw, (bytes, bytearray)):
+            raw = raw.decode("utf-8", errors="ignore")
+        if not isinstance(raw, str):
+            continue
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        fi = parsed.get("feed_item")
+        cp = parsed.get("container_payload")
+        built_at = parsed.get("built_at")
+        if not isinstance(fi, dict) or not isinstance(cp, dict):
+            continue
+        if _roundup_payload_has_live_event(cp) and isinstance(built_at, (int, float)):
+            if oldest_live_built_at is None or float(built_at) < oldest_live_built_at:
+                oldest_live_built_at = float(built_at)
+        produced.append(copy.deepcopy(fi))
+
+    # All-or-nothing: never publish a half-populated (e.g. 2/5) machinery Discover page.
+    if len(produced) < len(producers):
+        logger.warning(
+            "Skipping machinery Discover pre-warm for %s: only %d/%d groupings in Redis",
+            label,
+            len(produced),
+            len(producers),
+        )
+        return {"outcome": "incomplete", "have": len(produced), "need": len(producers)}
+
+    bundle = render_machinery_prewarm_bundle(
+        mach_base=mach_base,
+        produced=produced,
+        oldest_live_built_at=oldest_live_built_at,
+        now_ts=now_ts,
+    )
+    if bundle is None:
+        return {"outcome": "render_none"}
+
+    m_ttl = int(bundle["ttl"])
+    m_stale_ttl = int(bundle["stale_ttl"])
+    rc.setex(bundle["cache_key"], m_ttl, bundle["page_json"])
+    rc.setex(f"{bundle['cache_key']}:stale", m_stale_ttl, bundle["page_json"])
+    rc.setex(bundle["page_base_key"], m_ttl, bundle["page_base_json"])
+    rc.setex(f"{bundle['page_base_key']}:stale", m_stale_ttl, bundle["page_base_json"])
+    if bundle.get("manifest_key") and bundle.get("manifest_json"):
+        rc.setex(
+            bundle["manifest_key"], int(bundle["manifest_ttl"]), bundle["manifest_json"]
+        )
+
+    logger.info(
+        "Pre-warmed machinery Discover %s (%d/%d groupings, live=%s, ttl=%ds/%ds)",
+        label,
+        len(produced),
+        len(producers),
+        bundle["live"],
+        m_ttl,
+        m_stale_ttl,
+    )
+    return {
+        "outcome": "ok",
+        "groupings": len(produced),
+        "live": bundle["live"],
+        "cache_key": bundle["cache_key"],
+        "page_base_key": bundle["page_base_key"],
+    }
+
+
 def _absent_machinery_slugs(rc, *, registered_slugs: list[str], exclude: set[str]) -> list[str]:
     """Return registered machinery slugs whose Redis cache entry is absent or due for proactive refresh (#12288)."""
     import time as _time
@@ -1987,7 +2146,7 @@ def _absent_machinery_slugs(rc, *, registered_slugs: list[str], exclude: set[str
     return absent
 
 
-async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 10.0) -> dict:
+async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 20.0) -> dict:
     """Republish live (60s TTL) and absent machinery groupings on the 30s realtime rail.
 
     - Live machinery groupings (or slates with a game starting within 3 minutes)

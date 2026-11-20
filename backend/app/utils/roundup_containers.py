@@ -1515,6 +1515,38 @@ async def evaluate_roundup_producer(
                 )
                 return None, None
 
+    if (
+        _is_machinery_producer_slug(producer.slug)
+        and feed_item is not None
+        and isinstance(db, AsyncSession)
+    ):
+        # Ruling 188 (#11937, #12288): screen every machinery Discover feed card
+        # ONCE at build time before caching (covering BOTH Celery prewarm AND
+        # reader-path inline rebuilds), so no unscreened entry can ever land in
+        # Redis and hot `machinery_only` splices pay zero DB queries.
+        try:
+            from app.utils.not_trading import drop_not_trading_roundup_members
+
+            _screened = await drop_not_trading_roundup_members(
+                db,
+                [feed_item],
+                now_dt or datetime.now(timezone.utc),
+                _roundup_covered_market_ids,
+            )
+            feed_item = _screened[0] if _screened else None
+        except Exception:  # noqa: BLE001 — keep card on transient screen error
+            logger.warning(
+                "roundup_containers: not-trading screen failed for %s; keeping card",
+                producer.slug,
+                exc_info=True,
+            )
+        if feed_item is None:
+            if use_cache:
+                await _store_roundup_cache_entry(
+                    cache_key, producer.slug, ts, None, None, db
+                )
+            return None, None
+
     if use_cache:
         await _store_roundup_cache_entry(
             cache_key, producer.slug, ts, feed_item, container_payload, db
@@ -3200,14 +3232,18 @@ async def add_roundup_feed_items(
         return items
     # Ruling 188 (#11937): a market nobody is trading is not featured, and a
     # round-up is rated by its stalest member, so those members leave the card.
-    try:
-        from app.utils.not_trading import drop_not_trading_roundup_members
+    # For `machinery_only=True` splices, `_prewarm_machinery_roundups` already
+    # runs this screen once on the worker before saving each grouping to Redis,
+    # so reader requests do not pay a ~580 ms PostgreSQL query on every hit.
+    if not machinery_only:
+        try:
+            from app.utils.not_trading import drop_not_trading_roundup_members
 
-        produced = await drop_not_trading_roundup_members(
-            db, produced, now or datetime.now(timezone.utc), _roundup_covered_market_ids
-        )
-    except Exception:  # noqa: BLE001 — one failed read must not empty the page (gotcha #42)
-        logger.warning("Discover round-up not-trading check failed; keeping the cards", exc_info=True)
+            produced = await drop_not_trading_roundup_members(
+                db, produced, now or datetime.now(timezone.utc), _roundup_covered_market_ids
+            )
+        except Exception:  # noqa: BLE001 — one failed read must not empty the page (gotcha #42)
+            logger.warning("Discover round-up not-trading check failed; keeping the cards", exc_info=True)
     if not produced:
         return items
     return insert_roundup_feed_items(
@@ -3223,6 +3259,163 @@ async def add_roundup_feed_items(
         novelty_seat_cap=novelty_seat_cap,
         preserve_existing_roundups=machinery_only,
     )
+
+
+def render_machinery_prewarm_bundle(
+    *,
+    mach_base: dict[str, Any],
+    produced: list[dict[str, Any]],
+    oldest_live_built_at: Optional[float],
+    now_ts: float,
+) -> Optional[dict[str, Any]]:
+    """Pure-Python render of `machinery=1` page + `:machinery` page base + edition manifest (#12288).
+
+    Lives in `utils/roundup_containers.py` so `precompute_category_pages.py` stays
+    agnostic to opening seating (`#5105`) and `routes/feed.py` keeps a single
+    `_publish_feed_item` call site inside `get_feed` (`#6444`).
+    """
+    from app.routes.feed import (
+        DISCOVER_COMPOSITION_WINDOW,
+        _apply_opening_envelope,
+        _publish_feed_item,
+    )
+    from app.utils.discover_opening_edition import compose_opening_edition
+    from app.utils.feed_cache import (
+        FEED_EDITION_FIELD,
+        FEED_PAGE_BASE_BUILT_AT_FIELD,
+        build_feed_cache_metadata,
+        dumps_feed_cache,
+        feed_edition_token,
+        feed_machinery_page_base_key,
+        feed_response_cache_key,
+        feed_response_cache_ttls,
+        payload_contains_live_event,
+        render_feed_page_from_base,
+    )
+    from app.utils.feed_editions import (
+        EDITION_LEASE_SECONDS,
+        build_edition_manifest,
+        edition_manifest_cache_key,
+    )
+
+    base_body = mach_base["page_base_body"]
+    base_items = list(base_body.get("items") or [])
+    if not base_items:
+        return None
+
+    now_dt = datetime.fromtimestamp(now_ts, tz=timezone.utc)
+    spliced_items = insert_roundup_feed_items(
+        copy.deepcopy(base_items),
+        produced,
+        page_window=DISCOVER_COMPOSITION_WINDOW,
+        now=now_dt,
+        preserve_existing_roundups=True,
+    )
+    for item in spliced_items:
+        _publish_feed_item(item)
+
+    base_age_origin = float(mach_base.get("age_origin") or now_ts)
+    mach_age_origin = (
+        min(base_age_origin, oldest_live_built_at)
+        if oldest_live_built_at is not None
+        else base_age_origin
+    )
+    use_opening = bool(mach_base.get("opening_seating"))
+    edition_policy = str(mach_base.get("edition_policy") or "default")
+    limit = int(mach_base.get("limit") or 20)
+    offset = int(mach_base.get("offset") or 0)
+
+    mach_base_body = dict(base_body)
+    mach_base_body["items"] = spliced_items
+    mach_base_body["total"] = len(spliced_items)
+    mach_base_body[FEED_PAGE_BASE_BUILT_AT_FIELD] = mach_age_origin
+
+    manifest_key = None
+    manifest_obj = None
+    if use_opening:
+        opening = compose_opening_edition(
+            spliced_items,
+            None,
+            requested_token=None,
+            requested_policy=edition_policy,
+            now=now_dt,
+        )
+        if not opening.usable:
+            return None
+        for _per_req in (FEED_EDITION_FIELD, "continuation_start"):
+            mach_base_body.pop(_per_req, None)
+        if opening.token is not None:
+            mach_base_body[FEED_EDITION_FIELD] = opening.token
+            if opening.continuation_start is not None:
+                mach_base_body["continuation_start"] = opening.continuation_start
+            if opening.manifest is not None:
+                manifest_key = edition_manifest_cache_key(
+                    token=opening.token, policy=edition_policy
+                )
+                manifest_obj = opening.manifest
+        page_payload = render_feed_page_from_base(
+            {
+                **mach_base_body,
+                "items": opening.items,
+                "total": len(opening.items),
+            },
+            limit=limit,
+            offset=offset,
+        )
+        if page_payload is not None:
+            _apply_opening_envelope(page_payload, opening, requested=False)
+    else:
+        ed_token = feed_edition_token(spliced_items)
+        if ed_token is not None:
+            mach_base_body[FEED_EDITION_FIELD] = ed_token
+            manifest_obj = build_edition_manifest(
+                spliced_items,
+                token=ed_token,
+                policy=edition_policy,
+                built_at=now_ts,
+            )
+            if manifest_obj is not None:
+                manifest_key = edition_manifest_cache_key(
+                    token=ed_token, policy=edition_policy
+                )
+        page_payload = render_feed_page_from_base(
+            mach_base_body, limit=limit, offset=offset
+        )
+
+    if page_payload is None:
+        return None
+
+    mach_live = payload_contains_live_event(mach_base_body)
+    m_ttl, m_stale_ttl = feed_response_cache_ttls(
+        my_teams_only=False, identified=False, live=mach_live
+    )
+    page_payload["cache"] = build_feed_cache_metadata(
+        "miss",
+        ttl_seconds=m_ttl,
+        stale_ttl_seconds=m_stale_ttl,
+        live=mach_live,
+        built_at=mach_age_origin,
+    )
+
+    cache_shape = dict(mach_base["cache_shape"])
+    cache_shape["machinery"] = True
+    mach_cache_key = feed_response_cache_key(
+        user_id=None, session_id=None, **cache_shape
+    )
+    mach_pb_key = feed_machinery_page_base_key(str(mach_base["page_base_key"]))
+
+    return {
+        "live": mach_live,
+        "ttl": m_ttl,
+        "stale_ttl": m_stale_ttl,
+        "cache_key": mach_cache_key,
+        "page_base_key": mach_pb_key,
+        "page_json": dumps_feed_cache(page_payload),
+        "page_base_json": dumps_feed_cache(mach_base_body),
+        "manifest_key": manifest_key,
+        "manifest_json": dumps_feed_cache(manifest_obj) if manifest_obj is not None else None,
+        "manifest_ttl": EDITION_LEASE_SECONDS,
+    }
 
 
 def _splice_machinery_in_place(

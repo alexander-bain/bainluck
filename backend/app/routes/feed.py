@@ -247,6 +247,7 @@ from app.utils.discover_image_policy import (
 from app.utils.feed_cache import (
     FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS,
     FEED_PREWARM_KEY_SCOPE_KEY,
+    FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY,
     FEED_PREWARM_OPENING_SCOPE_KEY,
     FEED_PREWARM_SCOPE_KEY,
     FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
@@ -258,6 +259,7 @@ from app.utils.feed_cache import (
     dumps_feed_cache,
     encode_base_last_good,
     feed_edition_token,
+    feed_machinery_page_base_key,
     feed_page_base_built_at,
     feed_page_base_cache_key,
     feed_page_base_enabled,
@@ -5259,17 +5261,37 @@ async def get_feed(
                 if k not in ("offset", "edition", "machinery")
             }
             _page_base_key = feed_page_base_cache_key(**_page_base_shape)
-            _base_raw, _base_status = (
-                (None, None)
-                if _prewarm_rebuild
-                else await _read_shared_feed_cache(_shared_redis, _page_base_key)
-            )
-            _base_body = (
-                _safe_cache_payload(_base_raw) if _base_raw is not None else None
-            )
+            if _prewarm_rebuild:
+                _base_raw, _base_status, _base_body = None, None, None
+                _used_machinery_page_base = False
+            else:
+                _base_raw, _base_status, _base_body = None, None, None
+                _used_machinery_page_base = False
+                if _include_machinery_feed:
+                    _mach_pb_key = feed_machinery_page_base_key(_page_base_key)
+                    _base_raw, _base_status = await _read_shared_feed_cache(
+                        _shared_redis, _mach_pb_key
+                    )
+                    _base_body = (
+                        _safe_cache_payload(_base_raw)
+                        if _base_raw is not None
+                        else None
+                    )
+                    if _base_body is not None:
+                        _used_machinery_page_base = True
+                if _base_body is None:
+                    _base_raw, _base_status = await _read_shared_feed_cache(
+                        _shared_redis, _page_base_key
+                    )
+                    _base_body = (
+                        _safe_cache_payload(_base_raw)
+                        if _base_raw is not None
+                        else None
+                    )
             if (
                 _base_body is not None
                 and _include_machinery_feed
+                and not _used_machinery_page_base
                 and isinstance(_base_body.get("items"), list)
             ):
                 from app.utils.roundup_containers import (
@@ -5302,6 +5324,40 @@ async def get_feed(
                         "items": _spliced_items,
                         "total": len(_spliced_items),
                     }
+                    try:
+                        _mach_pb_key = feed_machinery_page_base_key(_page_base_key)
+                        _pb_origin = feed_page_base_built_at(_base_body)
+                        _pb_age_s = (
+                            max(0.0, time.time() - _pb_origin)
+                            if isinstance(_pb_origin, (int, float))
+                            else 0.0
+                        )
+                        _mpb_fresh, _mpb_stale = _live_ttls(
+                            _base_body,
+                            oldest_artifact_age_s=_pb_age_s,
+                        )
+                        _mpb_json = dumps_feed_cache(_base_body)
+
+                        async def _publish_spliced_mach_page_base(
+                            _client=_shared_redis,
+                            _json=_mpb_json,
+                            _key=_mach_pb_key,
+                            _fresh_ttl=_mpb_fresh,
+                            _stale_ttl=_mpb_stale,
+                        ):
+                            await _rc.bounded_redis_call(
+                                lambda: _client.setex(_key, _fresh_ttl, _json)
+                            )
+                            await _rc.bounded_redis_call(
+                                lambda: _client.setex(f"{_key}:stale", _stale_ttl, _json)
+                            )
+
+                        _rc.schedule_background(_publish_spliced_mach_page_base())
+                    except Exception:
+                        logger.debug(
+                            "machinery page-base background publish failed",
+                            exc_info=True,
+                        )
             # T4-B2 / #5102. The base is the WHOLE current list, which is
             # precisely what a pin needs: reorder it into the requested
             # edition's order and slice that, so the reader keeps their place
@@ -7348,8 +7404,115 @@ async def get_feed(
                         )
 
                     _rc.schedule_background(_publish_feed_page_base())
+                    if _prewarm_rebuild and request is not None and _cache_shape is not None:
+                        request.scope[FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY] = {
+                            "page_base_key": _page_base_key,
+                            "page_base_body": _page_base_body,
+                            "page_base_fresh_ttl": _base_fresh_ttl,
+                            "page_base_stale_ttl": _base_stale_ttl,
+                            "page_base_last_good_ttl": _base_last_good_ttl,
+                            "cache_shape": dict(_cache_shape),
+                            "limit": limit,
+                            "offset": offset,
+                            "opening_seating": bool(_opening_seating),
+                            "edition_policy": _edition_policy,
+                            "age_origin": _age_origin,
+                        }
+                    if _include_machinery_feed and _base_feed_items_without_machinery is not None:
+                        _mach_base_body = dict(_page_base_body)
+                        _mach_base_body["items"] = feed_items
+                        _mach_base_body["total"] = len(feed_items)
+                        if _opening is None and _edition is not None:
+                            _mach_base_body[FEED_EDITION_FIELD] = _edition
+                        _mach_fresh_ttl, _mach_stale_ttl = feed_response_cache_ttls(
+                            my_teams_only=False,
+                            identified=False,
+                            live=payload_contains_live_event(_mach_base_body),
+                            oldest_artifact_age_s=_consumed_age_s,
+                            strict_artifact_age_s=_strict_age_s,
+                        )
+                        _mach_base_json = dumps_feed_cache(_mach_base_body)
+                        _mach_base_key = feed_machinery_page_base_key(_page_base_key)
+
+                        async def _publish_machinery_feed_page_base(
+                            _client=_shared_redis,
+                            _json=_mach_base_json,
+                            _key=_mach_base_key,
+                            _fresh_ttl=_mach_fresh_ttl,
+                            _stale_ttl=_mach_stale_ttl,
+                        ):
+                            await _rc.bounded_redis_call(
+                                lambda: _client.setex(_key, _fresh_ttl, _json)
+                            )
+                            await _rc.bounded_redis_call(
+                                lambda: _client.setex(f"{_key}:stale", _stale_ttl, _json)
+                            )
+
+                        _rc.schedule_background(_publish_machinery_feed_page_base())
                 except Exception:
                     pass
+
+        if (
+            _prewarm_rebuild
+            and request is not None
+            and _cache_shape is not None
+            and not _is_degraded_build
+            and not my_teams_only
+            and feed_page_base_enabled()
+            and FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY not in request.scope
+        ):
+            try:
+                _fb_page_base_key = feed_page_base_cache_key(
+                    **{
+                        k: v
+                        for k, v in _cache_shape.items()
+                        if k not in ("offset", "edition", "machinery")
+                    }
+                )
+                _fb_page_base_body = dict(payload)
+                _fb_page_base_body["items"] = (
+                    _base_feed_items_without_machinery
+                    if _base_feed_items_without_machinery is not None
+                    else feed_items
+                )
+                _fb_page_base_body["total"] = len(_fb_page_base_body["items"])
+                for _per_serve in ("cache", "limit", "offset", "has_more"):
+                    _fb_page_base_body.pop(_per_serve, None)
+                if _opening is not None:
+                    for _per_request in (
+                        FEED_EDITION_FIELD,
+                        "continuation_start",
+                        FEED_EDITION_STATUS_FIELD,
+                    ):
+                        _fb_page_base_body.pop(_per_request, None)
+                _fb_page_base_body[FEED_PAGE_BASE_BUILT_AT_FIELD] = _age_origin
+                _fb_fresh, _fb_stale = feed_response_cache_ttls(
+                    my_teams_only=False,
+                    identified=False,
+                    live=payload_contains_live_event(_fb_page_base_body),
+                    oldest_artifact_age_s=_consumed_age_s,
+                    strict_artifact_age_s=_strict_age_s,
+                )
+                request.scope[FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY] = {
+                    "page_base_key": _fb_page_base_key,
+                    "page_base_body": _fb_page_base_body,
+                    "page_base_fresh_ttl": _fb_fresh,
+                    "page_base_stale_ttl": _fb_stale,
+                    "page_base_last_good_ttl": feed_page_base_last_good_max_age_s(
+                        live=payload_contains_live_event(_fb_page_base_body)
+                    ),
+                    "cache_shape": dict(_cache_shape),
+                    "limit": limit,
+                    "offset": offset,
+                    "opening_seating": bool(_opening_seating),
+                    "edition_policy": _edition_policy,
+                    "age_origin": _age_origin,
+                }
+            except Exception:
+                logger.debug(
+                    "prewarm machinery base scope stash failed",
+                    exc_info=True,
+                )
 
         # Item 1 (Queue 273 → centralized Queue 275): identity-free per-stage +
         # card-type-coverage export on the built (cold/degraded) response so an

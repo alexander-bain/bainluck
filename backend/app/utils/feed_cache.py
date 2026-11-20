@@ -28,6 +28,12 @@ FEED_PREWARM_KEY_SCOPE_KEY = "bainluck_feed_prewarm_key"
 # cards per shape without coupling the public response payload to internal state.
 FEED_PREWARM_OPENING_SCOPE_KEY = "bainluck_feed_prewarm_opening"
 
+# #12288: Scope slot the route writes the freshly built anonymous page-base deck
+# and cache shape into during a pre-warm so the warmer can publish the
+# `machinery=1` Discover response and `:machinery` page base from the same DB
+# build in pure Python (<5 ms, zero duplicate DB queries) via sync Redis.
+FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY = "bainluck_feed_prewarm_machinery_base"
+
 # Response-cache TTLs by principal (see ``feed_response_cache_ttl``).
 FEED_RESPONSE_TTL_ANON_SECONDS = 60
 FEED_RESPONSE_TTL_IDENTIFIED_SECONDS = 5
@@ -543,6 +549,20 @@ def feed_page_base_cache_key(
         # stay byte-identical and toggling the switch never reads a stale build.
         parts = f"fun=1|{parts}"
     return f"{FEED_PAGE_BASE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
+
+
+def feed_machinery_page_base_key(page_base_key: str) -> str:
+    """Derived Redis key for the `machinery=1` spliced page base (#12288).
+
+    Lives under the `feed:` invalidation prefix (`feed:machinery_pagebase:...`)
+    distinct from `feed:pagebase:...` so `feed_page_base_cache_key` keeps its
+    exact signature and 1.0.6/plain readers never read a machinery card, while
+    `machinery=1` readers hit a pre-spliced base in ~15 ms with zero DB work.
+    """
+    prefix = f"{FEED_PAGE_BASE_CACHE_PREFIX}:"
+    if page_base_key.startswith(prefix):
+        return f"feed:machinery_pagebase:{page_base_key[len(prefix):]}"
+    return f"feed:machinery_pagebase:{page_base_key}"
 
 
 def render_feed_page_from_base(
