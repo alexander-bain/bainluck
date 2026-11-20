@@ -709,7 +709,7 @@ async def _discover_events():
                 await _link_upcoming_unlinked_events_pass(
                     session,
                     now=datetime.now(timezone.utc),
-                    sport_key_by_id={s.id: s.key for s in active_sports},
+                    sport_key_by_id=dict(sports),
                 )
                 await session.commit()
             except Exception as link_err:
