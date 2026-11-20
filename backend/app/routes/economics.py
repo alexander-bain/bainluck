@@ -285,7 +285,9 @@ def _leader_name(market: FuturesMarket, outcome, outcomes: list) -> str | None:
         enumerated = sum(1 for o in outcomes if _appears_in(o.name, market.name))
         if enumerated < 2 and not _VERSUS_RE.search(market.name or ""):
             return None
-    return name
+    from app.utils.plain_rate_outcome import plain_rate_outcome_label
+
+    return plain_rate_outcome_label(name, market_name=market.name) or name
 
 
 def _market_row(market: FuturesMarket) -> dict | None:
@@ -960,16 +962,19 @@ def _brackets_from_outcomes(market: FuturesMarket, normalize: bool = True) -> li
         o.current_probability is not None and bool((o.name or "").strip())
         for o in raw_outcomes
     )
+    from app.utils.plain_rate_outcome import plain_rate_outcome_label
+
     outcome_dicts = []
     for idx, o in enumerate(sorted_outcomes):
         label = (o.name or "").strip()
         if not label:
             field_complete = False
             continue
+        display_label = plain_rate_outcome_label(label, market_name=market.name) or label
         outcome_dicts.append(
             {
                 "id": getattr(o, "id", idx),
-                "name": label,
+                "name": display_label,
                 "probability": float(o.current_probability or 0),
                 "is_winner": getattr(o, "is_winner", None),
                 "resolution_source": getattr(o, "resolution_source", None),

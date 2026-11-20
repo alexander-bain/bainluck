@@ -263,37 +263,11 @@ _PLAIN_MAGNITUDE_BPS: dict[str, float] = {
 }
 
 
-def _plain_rate_move_label(val_bps: float, direction: int, is_open: bool) -> str:
-    """Ruling 244: A — format Fed/central-bank rate moves in plain English, never 'bps'."""
-    word = "cut" if direction < 0 else "increase"
-    rounded = round(val_bps, 4)
-    if abs(rounded - 25.0) < 1e-6:
-        mag = "Quarter-point"
-    elif abs(rounded - 50.0) < 1e-6:
-        mag = "Half-point"
-    elif abs(rounded - 75.0) < 1e-6:
-        mag = "Three-quarter-point"
-    elif abs(rounded - 100.0) < 1e-6:
-        mag = "Full-point"
-    else:
-        pts = val_bps / 100.0
-        mag = f"{pts:g}-point"
-    if is_open:
-        return f"{mag} or larger {word}"
-    return f"{mag} {word}"
-
-
-def _plain_bps_step_words(val_bps: float) -> str:
-    rounded = round(val_bps, 4)
-    if abs(rounded - 25.0) < 1e-6:
-        return "quarter point"
-    if abs(rounded - 50.0) < 1e-6:
-        return "half point"
-    if abs(rounded - 75.0) < 1e-6:
-        return "three-quarter point"
-    if abs(rounded - 100.0) < 1e-6:
-        return "full point"
-    return f"{val_bps / 100.0:g} points"
+from app.utils.plain_rate_outcome import (
+    plain_bps_step_words as _plain_bps_step_words,
+    plain_rate_move_label as _plain_rate_move_label,
+    plain_rate_outcome_label as _plain_rate_outcome_label,
+)
 
 
 def _prose_rate_outcome(label: str, *, capitalize_first: bool = False) -> str:
@@ -506,54 +480,14 @@ def _clean_outcome_label(label: str) -> str:
     if re.match(r"^exactly\s+[-+$€£\d]", trimmed, re.IGNORECASE):
         trimmed = re.sub(r"^exactly\s+", "", trimmed, flags=re.IGNORECASE).strip()
 
-    # Ruling 244: A — plain-English Fed/rate-move labels (never 'bps').
+    # Ruling 244: A / #13196 — plain-English Fed/rate-move labels (never 'bps'),
+    # shared with series_card_labels.reader_outcome_name via plain_rate_outcome.py.
     if _HOLD_MOVE_RE.match(trimmed):
         return "No change"
 
-    m_cnt = _COUNT_BPS_PAREN_RE.match(trimmed)
-    if m_cnt:
-        cnt = int(m_cnt.group(1))
-        cnt_plus = "+" if m_cnt.group(2) else ""
-        bps_v = _parse_float(m_cnt.group(3))
-        bps_plus = bool(m_cnt.group(4))
-        if math.isfinite(bps_v):
-            if cnt == 0 and not cnt_plus:
-                return "0 hikes"
-            noun = "hike" if (cnt == 1 and not cnt_plus) else "hikes"
-            step_txt = _plain_bps_step_words(bps_v)
-            if bps_plus:
-                step_txt = f"{step_txt} or more"
-            return f"{cnt}{cnt_plus} {noun} ({step_txt})"
-
-    m_pre = _SIGNED_PREFIX_MOVE_RE.match(trimmed)
-    if m_pre and re.search(r"bps|basis\s+points?", trimmed, re.IGNORECASE):
-        direction = -1 if m_pre.group(1).lower() in {"cut", "cuts", "decrease", "lower"} else 1
-        op_tok = (m_pre.group(2) or "").strip()
-        plus_tok = (m_pre.group(4) or "").strip()
-        val = _parse_float(m_pre.group(3))
-        if math.isfinite(val):
-            # Strict '>' on the FOMC 25-bps grid ('Hike >25bps', 'Cut >25bps') means 50+ bps.
-            if op_tok.startswith(">") and not op_tok.startswith(">=") and abs(val - 25.0) < 1e-6:
-                val = 50.0
-                is_open = True
-            else:
-                is_open = bool(op_tok or plus_tok)
-            return _plain_rate_move_label(val, direction, is_open)
-
-    m_suf = _SIGNED_SUFFIX_MOVE_RE.match(trimmed)
-    if m_suf and re.search(r"bps|basis\s+points?", trimmed, re.IGNORECASE):
-        direction = -1 if m_suf.group(4).lower() in {"cut", "cuts", "decrease"} else 1
-        op_tok = (m_suf.group(1) or "").strip()
-        plus_tok = (m_suf.group(3) or "").strip()
-        or_more = bool(re.search(r"\bor\s+(?:more|larger|greater)$", trimmed, re.IGNORECASE))
-        val = _parse_float(m_suf.group(2))
-        if math.isfinite(val):
-            if op_tok.startswith(">") and not op_tok.startswith(">=") and abs(val - 25.0) < 1e-6:
-                val = 50.0
-                is_open = True
-            else:
-                is_open = bool(op_tok or plus_tok or or_more)
-            return _plain_rate_move_label(val, direction, is_open)
+    plain_rate = _plain_rate_outcome_label(trimmed, default_count_noun="hike")
+    if plain_rate is not None:
+        return plain_rate
 
     return _proper_case_outcome_label(trimmed)
 

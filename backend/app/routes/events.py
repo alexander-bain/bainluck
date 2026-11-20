@@ -39938,7 +39938,13 @@ def _build_search_top_outcomes(
     # `game_market_club_names.repair_field_outcome_name`.
     threshold_label = market_threshold_label(market)  # #9383
     named = [
-        (o, reader_outcome_name(o.external_id, o.name, threshold_label) or o.name)
+        (
+            o,
+            reader_outcome_name(
+                o.external_id, o.name, threshold_label, market_name=market.name
+            )
+            or o.name,
+        )
         for o in top
     ]
     # #6195: A `0.0` IS A PRICE, AND THIS IS THE LINE THAT PRINTED IT AS A DASH.

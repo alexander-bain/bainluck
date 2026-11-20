@@ -204,8 +204,19 @@ async def get_market_was_wrong(
             if market.llm_sport_category in ("basketball", "football", "baseball", "hockey"):
                 mover_score += 5
 
+            from app.utils.series_card_labels import market_threshold_label, reader_outcome_name
+
+            display_outcome_name = (
+                reader_outcome_name(
+                    outcome.external_id,
+                    outcome.name,
+                    market_threshold_label(market),
+                    market_name=market.name,
+                )
+                or outcome.name
+            )
             description = (
-                f"{outcome.name} {direction} {pct_change}% to {round(current_prob * 100)}% "
+                f"{display_outcome_name} {direction} {pct_change}% to {round(current_prob * 100)}% "
                 f"in {market.name}"
             )
 
@@ -223,7 +234,7 @@ async def get_market_was_wrong(
                     else None
                 ),
                 "llm_sport_category": market.llm_sport_category,
-                "outcome_name": outcome.name,
+                "outcome_name": display_outcome_name,
                 "current_probability": round(current_prob, 3),
                 "change_24h": round(change_24h, 3),
                 "direction": direction,
