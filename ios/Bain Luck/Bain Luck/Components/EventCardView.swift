@@ -1020,18 +1020,21 @@ struct EventCardView: View {
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 Spacer(minLength: 0)
                 if showsMediumColumn12616 {
-                    mediumSlotView(score: score, won: won, side: side)
-                        .frame(width: effectiveMediumColWidth, alignment: .trailing)
+                    reservedTrailingColumn13121(width: effectiveMediumColWidth) {
+                        mediumSlotView(score: score, won: won, side: side)
+                    }
                 }
                 if showsInlineLiveProjected204C {
-                    liveInlineProjectedSlotView(for: side)
-                        .frame(width: effectiveLiveProjectedColWidth204C, alignment: .trailing)
-                        .padding(.leading, pregameColumnLeadingGap12616)
+                    reservedTrailingColumn13121(width: effectiveLiveProjectedColWidth204C) {
+                        liveInlineProjectedSlotView(for: side)
+                    }
+                    .padding(.leading, pregameColumnLeadingGap12616)
                 }
                 if showsLargeColumn12616 {
-                    largeSlotView(score: score, won: won, side: side)
-                        .frame(width: effectiveLargeColWidth, alignment: .trailing)
-                        .padding(.leading, largeColumnLeadingGap12616)
+                    reservedTrailingColumn13121(width: effectiveLargeColWidth) {
+                        largeSlotView(score: score, won: won, side: side)
+                    }
+                    .padding(.leading, largeColumnLeadingGap12616)
                 }
             }
         }
@@ -1194,23 +1197,40 @@ struct EventCardView: View {
                 Spacer(minLength: 0)
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
                     if showsMediumColumn12616 {
-                        mediumSlotView(score: score, won: won, side: side)
-                            .frame(width: effectiveMediumColWidth, alignment: .trailing)
+                        reservedTrailingColumn13121(width: effectiveMediumColWidth) {
+                            mediumSlotView(score: score, won: won, side: side)
+                        }
                     }
                     if showsInlineLiveProjected204C {
-                        liveInlineProjectedSlotView(for: side)
-                            .frame(width: effectiveLiveProjectedColWidth204C, alignment: .trailing)
-                            .padding(.leading, pregameColumnLeadingGap12616)
+                        reservedTrailingColumn13121(width: effectiveLiveProjectedColWidth204C) {
+                            liveInlineProjectedSlotView(for: side)
+                        }
+                        .padding(.leading, pregameColumnLeadingGap12616)
                     }
                     if showsLargeColumn12616 {
-                        largeSlotView(score: score, won: won, side: side)
-                            .frame(width: effectiveLargeColWidth, alignment: .trailing)
-                            .padding(.leading, largeColumnLeadingGap12616)
+                        reservedTrailingColumn13121(width: effectiveLargeColWidth) {
+                            largeSlotView(score: score, won: won, side: side)
+                        }
+                        .padding(.leading, largeColumnLeadingGap12616)
                     }
                 }
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private func reservedTrailingColumn13121<Content: View>(
+        width: CGFloat,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        ZStack(alignment: .trailing) {
+            Text("0")
+                .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactScoreSize, 20)))
+                .opacity(0)
+                .accessibilityHidden(true)
+            content()
+        }
+        .frame(width: width, alignment: .trailing)
     }
 
     private func singleRowTeamRow(
@@ -1270,18 +1290,21 @@ struct EventCardView: View {
             Spacer(minLength: 8)
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 if showsMediumColumn12616 {
-                    mediumSlotView(score: score, won: won, side: side)
-                        .frame(width: effectiveMediumColWidth, alignment: .trailing)
+                    reservedTrailingColumn13121(width: effectiveMediumColWidth) {
+                        mediumSlotView(score: score, won: won, side: side)
+                    }
                 }
                 if showsInlineLiveProjected204C {
-                    liveInlineProjectedSlotView(for: side)
-                        .frame(width: effectiveLiveProjectedColWidth204C, alignment: .trailing)
-                        .padding(.leading, pregameColumnLeadingGap12616)
+                    reservedTrailingColumn13121(width: effectiveLiveProjectedColWidth204C) {
+                        liveInlineProjectedSlotView(for: side)
+                    }
+                    .padding(.leading, pregameColumnLeadingGap12616)
                 }
                 if showsLargeColumn12616 {
-                    largeSlotView(score: score, won: won, side: side)
-                        .frame(width: effectiveLargeColWidth, alignment: .trailing)
-                        .padding(.leading, largeColumnLeadingGap12616)
+                    reservedTrailingColumn13121(width: effectiveLargeColWidth) {
+                        largeSlotView(score: score, won: won, side: side)
+                    }
+                    .padding(.leading, largeColumnLeadingGap12616)
                 }
             }
         }
@@ -1394,7 +1417,7 @@ struct EventCardView: View {
 
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 if showsMediumColumn12616 {
-                    Group {
+                    reservedTrailingColumn13121(width: effectiveMediumColWidth) {
                         if isFinished {
                             Text(drawChance)
                                 .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactPregameSize, 18)))
@@ -1403,7 +1426,6 @@ struct EventCardView: View {
                                 .fixedSize(horizontal: true, vertical: false)
                         }
                     }
-                    .frame(width: effectiveMediumColWidth, alignment: .trailing)
                 }
 
                 if showsInlineLiveProjected204C {

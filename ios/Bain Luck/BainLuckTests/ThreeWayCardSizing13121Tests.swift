@@ -4,10 +4,12 @@ import Vision
 import XCTest
 @testable import Bain_Luck
 
-/// #13121 (`1.0.7`): On a three-way soccer card (`EventCardView` in `My Stuff`, `Sports`, `Search`),
-/// nothing shrinks below a two-way card's type size, and no line ends in `"…"`.
-/// Multi-word club names wrap cleanly; when a single word exceeds the inline width beside
-/// trailing columns, the row grows vertically rather than shrinking the font.
+/// #13121 (`1.0.7`): On a soccer card (`EventCardView` in `My Stuff`, `Sports`, `Search`),
+/// nothing shrinks below a two-way card's type size, no line ends in `"…"`, and when
+/// `away_probability` is withheld (`#5363`, e.g. live MLS event `15345867`
+/// `Philadelphia Union @ New England Revolution` from TestFlight report `236`), the empty
+/// `Chance` cell keeps its column width so `Proj.` (`2`) stays under `Proj.` above `1`
+/// rather than sliding into the `Chance` column.
 @MainActor
 final class ThreeWayCardSizing13121Tests: XCTestCase {
 
@@ -21,6 +23,42 @@ final class ThreeWayCardSizing13121Tests: XCTestCase {
         try makeDecoder().decode(FeedEventData.self, from: Data(json.utf8))
     }
 
+    /// Exact shape of `GET /api/events/15345867` (`MLS · Sat, Nov 21 — Philadelphia Union @ New England Revolution`)
+    /// from TestFlight bug report `236` (`#13121`): `home_probability: 0.31`, `away_probability: null`,
+    /// `draw_probability: null`, `projected_away_score: 1.7` (`2`), `projected_home_score: 1.2` (`1`).
+    private func unionAtRevolutionReport236() throws -> FeedEventData {
+        try decodeEvent("""
+        {
+          "id": 15345867,
+          "external_id": "b7ca8ba1c5ab8138e04db89aeb91b98a",
+          "sport": "soccer_usa_mls",
+          "sport_name": "MLS",
+          "away_team": "Philadelphia Union",
+          "home_team": "New England Revolution",
+          "commence_time": "2026-11-21T19:00:00Z",
+          "status": "scheduled",
+          "away_team_data": {
+            "primary_color": "#051f31",
+            "logo_small": "https://a.espncdn.com/i/teamlogos/soccer/500/10739.png",
+            "abbreviation": "PHI"
+          },
+          "home_team_data": {
+            "primary_color": "#022166",
+            "logo_small": "https://a.espncdn.com/i/teamlogos/soccer/500/189.png",
+            "abbreviation": "NE"
+          },
+          "current_odds": {
+            "home_probability": 0.31,
+            "away_probability": null,
+            "away_rendered_percent": null,
+            "home_rendered_percent": 31,
+            "projected_home_score": 1.2,
+            "projected_away_score": 1.7
+          }
+        }
+        """)
+    }
+
     private func wolvesAtForestScheduled() throws -> FeedEventData {
         try decodeEvent("""
         {
@@ -32,6 +70,16 @@ final class ThreeWayCardSizing13121Tests: XCTestCase {
           "home_team": "Nottingham Forest",
           "commence_time": "2026-11-21T15:00:00Z",
           "status": "scheduled",
+          "away_team_data": {
+            "primary_color": "#fdb913",
+            "logo_small": "https://a.espncdn.com/i/teamlogos/soccer/500/380.png",
+            "abbreviation": "WOL"
+          },
+          "home_team_data": {
+            "primary_color": "#dd0000",
+            "logo_small": "https://a.espncdn.com/i/teamlogos/soccer/500/393.png",
+            "abbreviation": "NFO"
+          },
           "current_odds": {
             "away_probability": 0.28,
             "home_probability": 0.46,
@@ -56,6 +104,16 @@ final class ThreeWayCardSizing13121Tests: XCTestCase {
           "status": "live",
           "away_score": 1,
           "home_score": 1,
+          "away_team_data": {
+            "primary_color": "#fdb913",
+            "logo_small": "https://a.espncdn.com/i/teamlogos/soccer/500/380.png",
+            "abbreviation": "WOL"
+          },
+          "home_team_data": {
+            "primary_color": "#dd0000",
+            "logo_small": "https://a.espncdn.com/i/teamlogos/soccer/500/393.png",
+            "abbreviation": "NFO"
+          },
           "espn": {"game_clock": "68'", "period": "2nd Half"},
           "current_odds": {
             "away_probability": 0.29,
@@ -73,57 +131,53 @@ final class ThreeWayCardSizing13121Tests: XCTestCase {
         """)
     }
 
-    private func celticsAtLakersScheduled() throws -> FeedEventData {
+    private func celticsAtKingsScheduled() throws -> FeedEventData {
         try decodeEvent("""
         {
-          "id": 91312103,
-          "external_id": "nba_bos_lal",
+          "id": 15349058,
+          "external_id": "nba_bos_sac",
           "sport": "basketball_nba",
           "sport_name": "NBA",
           "away_team": "Boston Celtics",
-          "home_team": "Los Angeles Lakers",
-          "commence_time": "2026-11-21T03:00:00Z",
+          "home_team": "Sacramento Kings",
+          "commence_time": "2026-11-22T03:00:00Z",
           "status": "scheduled",
           "current_odds": {
-            "away_probability": 0.58,
-            "home_probability": 0.42,
-            "away_rendered_percent": 58,
-            "home_rendered_percent": 42,
-            "projected_away_score": 116.2,
-            "projected_home_score": 111.4
+            "away_probability": 0.8825,
+            "home_probability": 0.1175,
+            "away_rendered_percent": 88,
+            "home_rendered_percent": 12
           }
         }
         """)
     }
 
     func testThreeWaySoccerCardUsesExactSameTeamNameFontSizeAsTwoWayBasketballCard() throws {
+        let report236MLS = EventCardView(event: try unionAtRevolutionReport236(), reason: nil)
         let scheduledSoccer = EventCardView(event: try wolvesAtForestScheduled(), reason: "Starting Saturday — tight match")
         let liveSoccer = EventCardView(event: try wolvesAtForestLive(), reason: nil)
-        let basketball = EventCardView(event: try celticsAtLakersScheduled(), reason: "Rivalry matchup")
+        let basketball = EventCardView(event: try celticsAtKingsScheduled(), reason: nil)
 
+        XCTAssertTrue(report236MLS.isThreeWayCard13121)
         XCTAssertTrue(scheduledSoccer.isThreeWayCard13121)
         XCTAssertTrue(liveSoccer.isThreeWayCard13121)
         XCTAssertFalse(basketball.isThreeWayCard13121)
 
-        XCTAssertEqual(
-            scheduledSoccer.resolvedCompactTeamNameFontSizeForTest13121,
-            basketball.resolvedCompactTeamNameFontSizeForTest13121,
-            accuracy: 0.01,
-            "Scheduled three-way soccer card must never shrink below a two-way basketball card's name size"
-        )
-        XCTAssertEqual(
-            liveSoccer.resolvedCompactTeamNameFontSizeForTest13121,
-            basketball.resolvedCompactTeamNameFontSizeForTest13121,
-            accuracy: 0.01,
-            "Live three-way soccer card must never shrink below a two-way basketball card's name size"
-        )
+        for soccerCard in [report236MLS, scheduledSoccer, liveSoccer] {
+            XCTAssertEqual(
+                soccerCard.resolvedCompactTeamNameFontSizeForTest13121,
+                basketball.resolvedCompactTeamNameFontSizeForTest13121,
+                accuracy: 0.01,
+                "Soccer card must never shrink below a two-way basketball card's name size"
+            )
+        }
     }
 
     private func captureSnapshot<V: View>(
         _ content: V,
         scheme: ColorScheme,
         width: CGFloat = 390,
-        height: CGFloat = 760
+        height: CGFloat = 860
     ) async throws -> UIImage {
         let host = hostForMeasurement(content.environment(\.colorScheme, scheme), at: .large)
         let uiStyle: UIUserInterfaceStyle = scheme == .light ? .light : .dark
@@ -151,7 +205,7 @@ final class ThreeWayCardSizing13121Tests: XCTestCase {
         host.view.frame = bounds
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
-        try await Task.sleep(nanoseconds: 550_000_000)
+        try await Task.sleep(nanoseconds: 1_200_000_000)
         for _ in 0..<6 {
             host.view.setNeedsLayout()
             host.view.layoutIfNeeded()
@@ -168,8 +222,7 @@ final class ThreeWayCardSizing13121Tests: XCTestCase {
         }
     }
 
-    private func recognizeLines(in image: UIImage) throws -> [String] {
-        // Upscale 2x for crisp Vision OCR on 1x 390px snapshots
+    private func recognizeObservations(in image: UIImage) throws -> [(text: String, box: CGRect)] {
         let upscaledSize = CGSize(width: image.size.width * 2, height: image.size.height * 2)
         let fmt = UIGraphicsImageRendererFormat()
         fmt.scale = 1.0
@@ -181,13 +234,50 @@ final class ThreeWayCardSizing13121Tests: XCTestCase {
         req.recognitionLevel = .accurate
         req.usesLanguageCorrection = false
         try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([req])
-        return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        return (req.results ?? []).compactMap { obs in
+            guard let top = obs.topCandidates(1).first?.string else { return nil }
+            return (text: top, box: obs.boundingBox)
+        }
+    }
+
+    func testReport236MLSCardKeepsProjectedScoreInProjColumnWhenAwayChanceIsNil() async throws {
+        let mls = try unionAtRevolutionReport236()
+        let suiteName = "Test13121.MLS.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let pinManager = PinManager(defaults: defaults)
+
+        let cardList = List {
+            EventCardView(event: mls, reason: nil)
+                .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+        }
+        .listStyle(.insetGrouped)
+        .environmentObject(pinManager)
+
+        let img = try await captureSnapshot(cardList, scheme: .light, width: 390, height: 320)
+        let obs = try recognizeObservations(in: img)
+        let joined = obs.map(\.text).joined(separator: " | ")
+
+        let proj2 = try XCTUnwrap(
+            obs.first(where: { $0.text.trimmingCharacters(in: .whitespaces) == "2" }),
+            "Expected away projected score '2' in OCR: \(joined)"
+        )
+        let chance31 = try XCTUnwrap(
+            obs.first(where: { $0.text.contains("31%") }),
+            "Expected home chance '31%' in OCR: \(joined)"
+        )
+        XCTAssertLessThan(
+            proj2.box.maxX,
+            chance31.box.minX,
+            "Away projected score '2' must stay in the Proj. column to the left of '31%', never sliding under Chance when away_probability is nil (report 236)"
+        )
     }
 
     func testMyStuffSoccerCardBesideBasketballCardHasZeroEllipsisAndExports390Renders() async throws {
+        let report236MLS = try unionAtRevolutionReport236()
         let scheduledSoccer = try wolvesAtForestScheduled()
         let liveSoccer = try wolvesAtForestLive()
-        let basketball = try celticsAtLakersScheduled()
+        let basketball = try celticsAtKingsScheduled()
 
         let suiteName = "Test13121.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -196,9 +286,11 @@ final class ThreeWayCardSizing13121Tests: XCTestCase {
 
         let myStuffList = List {
             Section {
-                EventCardView(event: scheduledSoccer, reason: "Close match on Saturday")
+                EventCardView(event: basketball, reason: nil)
                     .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
-                EventCardView(event: basketball, reason: "Rivalry matchup")
+                EventCardView(event: report236MLS, reason: nil)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                EventCardView(event: scheduledSoccer, reason: "Close match on Saturday")
                     .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                 EventCardView(event: liveSoccer, reason: nil)
                     .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
@@ -212,11 +304,11 @@ final class ThreeWayCardSizing13121Tests: XCTestCase {
         .listStyle(.insetGrouped)
         .environmentObject(pinManager)
 
-        let lightImg = try await captureSnapshot(myStuffList, scheme: .light, width: 390, height: 840)
-        let darkImg = try await captureSnapshot(myStuffList, scheme: .dark, width: 390, height: 840)
+        let lightImg = try await captureSnapshot(myStuffList, scheme: .light, width: 390, height: 940)
+        let darkImg = try await captureSnapshot(myStuffList, scheme: .dark, width: 390, height: 940)
 
-        let joined = try recognizeLines(in: lightImg).joined(separator: " | ")
-        for expected in ["Wolverhampton", "Wanderers", "Draw", "Nottingham", "Forest", "Celtics", "Lakers"] {
+        let joined = try recognizeObservations(in: lightImg).map(\.text).joined(separator: " | ")
+        for expected in ["Celtics", "Kings", "Philadelphia", "Union", "Revolution", "Wolverhampton", "Wanderers", "Draw", "Nottingham", "Forest"] {
             XCTAssertTrue(
                 joined.localizedCaseInsensitiveContains(expected),
                 "Expected full word '\(expected)' in rendered My Stuff list; OCR read: \(joined)"
