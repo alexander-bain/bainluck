@@ -211,3 +211,101 @@ async def test_preview_stage_hidden_from_public_machinery_feed_and_search_but_se
             for it in out_preview
         )
 
+
+@pytest.mark.asyncio
+async def test_more_sets_excludes_preview_stage_under_public_set(monkeypatch: Any) -> None:
+    """#13104 review: `select_more_sets` never offers stage='preview' sets under a public set page."""
+    from unittest.mock import patch
+
+    from app.utils.roundup_containers import (
+        RoundupMembers,
+        RoundupProducer,
+        _roundup_local_cache,
+        register_roundup_producer,
+        reset_roundup_cache_for_tests,
+        select_more_sets,
+    )
+
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+    as_of = NOW.isoformat()
+    now_ts = NOW.timestamp()
+    fake_db = object()
+
+    def _seed_producer(slug: str, name: str, category: str, stage: str) -> None:
+        prod = RoundupProducer(
+            slug=slug,
+            name=name,
+            kind="roundup",
+            category=category,
+            section_title="Markets",
+            footer="2 markets",
+            stage=stage,
+            produce=lambda _db: RoundupMembers(()),
+            enabled=lambda: True,
+        )
+        register_roundup_producer(prod)
+        payload = {
+            "slug": slug,
+            "state": "published",
+            "revision": 1,
+            "subtitle": name,
+            "member_count": 2,
+            "container": {
+                "id": 1000,
+                "slug": slug,
+                "name": name,
+                "kind": "roundup",
+                "category": category,
+                "status": "open",
+            },
+            "sections": [
+                {
+                    "key": "0:roundup",
+                    "class": "roundup",
+                    "title": name,
+                    "count": 1,
+                    "members": [
+                        {
+                            "id": 700001,
+                            "type": "market",
+                            "card": {
+                                "id": 700001,
+                                "name": f"{name} leader",
+                                "status": "open",
+                                "price_observed_at": as_of,
+                                "top_outcomes": [
+                                    {"id": 1, "name": "Leader", "probability": 0.62, "rendered_percent": 62}
+                                ],
+                            },
+                            "destination": {
+                                "kind": "market",
+                                "id": 700001,
+                                "web": "/futures/700001",
+                                "api": "/api/futures/700001",
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+        _roundup_local_cache[(slug, id(fake_db))] = (now_ts, {"type": "bundle"}, payload)
+
+    with patch.dict(ROUNDUP_PRODUCERS, {}, clear=True):
+        reset_roundup_cache_for_tests()
+        _seed_producer("machinery-oscars-best-picture", "Oscars Best Picture", "entertainment", "public")
+        _seed_producer("machinery-fed-and-macro", "Fed & Macro", "economics", "public")
+        _seed_producer("machinery-next-james-bond", "The Next James Bond Film", "entertainment", "preview")
+
+        cards = await select_more_sets(
+            fake_db,
+            exclude_slugs={"machinery-oscars-best-picture"},
+            current_slug="machinery-oscars-best-picture",
+            current_category="entertainment",
+            limit=2,
+            now=NOW,
+            evaluate_uncached=False,
+        )
+        slugs = [c["slug"] for c in cards]
+        assert slugs == ["machinery-fed-and-macro"], f"preview set leaked into more_sets: {slugs}"
+

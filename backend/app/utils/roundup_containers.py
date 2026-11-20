@@ -1911,6 +1911,7 @@ async def select_more_sets(
             slug in excluded
             or slug.startswith("for-scale-")
             or (_is_machinery_producer_slug(slug) and not machinery_public)
+            or getattr(producer, "stage", "public") != "public"
         ):
             continue
         if producer.enabled is not None and not producer.enabled():
