@@ -140,16 +140,16 @@ export function RoundupCard({
       />
       {model.presentation === "strip" ? (
         <div className="roundup-strip-container">
-          <div className="roundup-strip-grid grid grid-cols-3 gap-1.5" data-testid="roundup-rows" data-presentation="strip">
+          <div className="roundup-strip-grid -mx-2 grid grid-cols-3 gap-1" data-testid="roundup-rows" data-presentation="strip">
             {model.rows.map((row) => (
               <div
                 key={row.marketId}
-                className="roundup-strip-box flex min-w-0 flex-col justify-between rounded-xl border border-surface-border bg-surface-elevated/40 px-1.5 py-2.5"
+                className="roundup-strip-box flex min-w-0 flex-col justify-between rounded-xl border border-surface-border bg-surface-elevated/40 px-[3px] py-2.5"
                 data-testid="roundup-row"
                 data-market-id={row.marketId}
               >
                 <div className="min-w-0" data-testid="roundup-row-label">
-                  <div className="roundup-strip-opponent whitespace-normal break-words text-[13px] font-medium leading-[1.25] tracking-[-0.015em] text-text-primary">
+                  <div className="roundup-strip-opponent whitespace-normal break-words text-[13px] font-medium leading-[1.25] tracking-[-0.025em] text-text-primary">
                     {row.opponentLabel ?? row.label}
                   </div>
                   {row.dateLabel ? (
