@@ -2,6 +2,7 @@
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
+import { useRouter } from "next/navigation";
 import FactoryFloor from "@/app/factory/FactoryFloor";
 import {
   beltFlowing,
@@ -262,6 +263,25 @@ it("names the change waiting for inspection and uses a singular day", () => {
       now,
     ),
   ).toBe("#12998 has waited 40 minutes for inspection.");
+});
+
+it("checks for a new floor every minute while the page is visible", async () => {
+  watchMotion();
+  const refresh = jest.mocked(useRouter().refresh);
+  refresh.mockClear();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  try {
+    await act(async () =>
+      root.render(<FactoryFloor data={snapshot} lastGoodAt={now} renderedAt={now} />),
+    );
+    await act(async () => { jest.advanceTimersByTime(59_999); });
+    expect(refresh).toHaveBeenCalledTimes(0);
+    await act(async () => { jest.advanceTimersByTime(1); });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  } finally {
+    await act(async () => root.unmount());
+  }
 });
 
 it("plays one event at a time in order, pauses and preserves the remaining delay", async () => {

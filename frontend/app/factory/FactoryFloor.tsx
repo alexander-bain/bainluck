@@ -28,7 +28,7 @@ import type { Builder, Change, FactoryData, Jam, Line, Station, Stop } from "./t
 import styles from "./factory.module.css";
 import Worker from "./Worker";
 import EventScene from "./EventScene";
-import { crossesSegment, eventText, FACTORY_READ_INTERVAL_MS, useEventPlayer } from "./playback";
+import { crossesSegment, eventText, useEventPlayer } from "./playback";
 import { factoryTabTitle, floorVerdict, type FloorVerdict } from "./verdict";
 import {
   stations,
@@ -48,6 +48,7 @@ import {
 } from "./activity";
 
 const lines: Line[] = ["Server", "Website", "Apps"];
+const PAGE_REFRESH_MS = 60_000;
 type NamedBuilder = Exclude<Builder, "Other">;
 const builders: { key: NamedBuilder; name: string }[] = [
   { key: "S", name: "Speed" },
@@ -274,7 +275,7 @@ export default function FactoryFloor({
       setTabVisible(visible);
       if (visible) {
         setNow(new Date().toISOString());
-        if (Date.now() - lastRefresh.current >= FACTORY_READ_INTERVAL_MS) {
+        if (Date.now() - lastRefresh.current >= PAGE_REFRESH_MS) {
           lastRefresh.current = Date.now();
           router.refresh();
         }
@@ -284,7 +285,7 @@ export default function FactoryFloor({
     refresh();
     preference.addEventListener("change", preferenceChanged);
     document.addEventListener("visibilitychange", refresh);
-    const interval = window.setInterval(refresh, FACTORY_READ_INTERVAL_MS);
+    const interval = window.setInterval(refresh, PAGE_REFRESH_MS);
     return () => {
       preference.removeEventListener("change", preferenceChanged);
       document.removeEventListener("visibilitychange", refresh);
@@ -450,8 +451,9 @@ export default function FactoryFloor({
                 timeZone: "America/Los_Angeles",
                 month: "short",
                 day: "numeric",
-              }).format(new Date(data.generated_at))}{" "}
-              at {time(data.generated_at)} PT
+              }).format(new Date(data.generated_at))}
+              {(behind || !readAt || time(readAt) !== time(data.generated_at)) &&
+                ` at ${time(data.generated_at)} PT`}
             </span>
           </div>
         </div>
@@ -1026,7 +1028,7 @@ export default function FactoryFloor({
       <footer className={styles.notes}>
         <p>
           The floor is re-read after CI finishes and when master changes, with a
-          five-minute timer as a backstop. This page refreshes every five minutes
+          five-minute timer as a backstop. This page refreshes once a minute
           while visible. All times are Pacific.
         </p>
         {data.coverage.map((note) => (

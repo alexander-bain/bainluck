@@ -969,6 +969,10 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   border-radius: 8px;
   background: var(--paper);
 }
+.eventLog .summary {
+  font-size: 13px;
+  font-weight: 600;
+}
 .eventLog :is(ol, p) {
   max-height: 220px;
   overflow: auto;

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FloorEvent } from "./types";
 import { stationNames, stations } from "./activity";
 
-export const FACTORY_READ_INTERVAL_MS = 5 * 60_000;
+const PLAYBACK_WINDOW_MS = 5 * 60_000;
 
 type TimerState = {
   reading: string;
@@ -57,7 +57,7 @@ export function useEventPlayer(
       batch.current = {
         reading,
         events: queue,
-        step: playbackStep(queue.length, FACTORY_READ_INTERVAL_MS),
+        step: playbackStep(queue.length, PLAYBACK_WINDOW_MS),
         remaining: 0,
       };
       setActive(null);
