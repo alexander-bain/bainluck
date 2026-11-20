@@ -68,9 +68,45 @@ private struct MyStuffLandingBody295A: View {
                     && landingVM.nextEvents.isEmpty
                     && landingVM.nextMarkets.isEmpty
                     && landingVM.movedEntries.isEmpty {
-                    ProgressView("Loading your stuff…")
+                    ProgressView("Loading your stuff")
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 32)
+                }
+
+                if landingVM.loadFailed && !landingVM.loading {
+                    HStack(spacing: 12) {
+                        Image(systemName: "wifi.exclamationmark")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text("Couldn't load your stuff.")
+                            .font(.subheadline)
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Button {
+                            Task { await onRefresh() }
+                        } label: {
+                            Text("Try again")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(colorScheme == .dark ? DS.emerald : DS.greenReadable)
+                                .padding(.horizontal, 12)
+                                .frame(minHeight: 36)
+                                .background(
+                                    Capsule()
+                                        .fill((colorScheme == .dark ? DS.emerald : DS.greenReadable).opacity(0.12))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("myStuff295A.retryLoad")
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(cardSurface))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(cardBorder, lineWidth: 1)
+                    )
+                    .accessibilityIdentifier("myStuff295A.loadErrorBanner")
                 }
 
                 // 1. Live now

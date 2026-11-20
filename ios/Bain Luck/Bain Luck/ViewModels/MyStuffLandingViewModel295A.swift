@@ -137,22 +137,42 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         var discoverItems: [FeedItem] = []
     }
 
+    struct HydratedSubjectPack: Sendable {
+        var events: [(event: FeedEventData, awayVerified: Bool)] = []
+        var markets: [MyStuffMarketItem295A] = []
+        var didFail: Bool = false
+    }
+
+    typealias SubjectHydrator = @Sendable ([FollowedSubject295A]) async -> [HydratedSubjectPack]
+    typealias DiscoverFetcher = @Sendable () async throws -> FeedResponse
+
     @Published private(set) var liveEvents: [(event: FeedEventData, awayVerified: Bool)] = []
     @Published private(set) var nextEvents: [(event: FeedEventData, awayVerified: Bool)] = []
     @Published private(set) var nextMarkets: [MyStuffMarketItem295A] = []
     @Published private(set) var movedEntries: [MyStuffMovedEntry295A] = []
     @Published private(set) var discoverItems: [FeedItem] = []
     @Published private(set) var loading: Bool = false
+    @Published private(set) var loadFailed: Bool = false
 
     private let defaults: UserDefaults
     private let isPreloaded: Bool
+    private let subjectHydrator: SubjectHydrator
+    private let discoverFetcher: DiscoverFetcher
     private var hasRotatedSession = false
 
     init(
         defaults: UserDefaults = .standard,
-        preloaded: PreloadedSnapshot? = nil
+        preloaded: PreloadedSnapshot? = nil,
+        subjectHydrator: SubjectHydrator? = nil,
+        discoverFetcher: DiscoverFetcher? = nil
     ) {
         self.defaults = defaults
+        self.subjectHydrator = subjectHydrator ?? { subjects in
+            await Self.fetchFollowedSubjects(subjects)
+        }
+        self.discoverFetcher = discoverFetcher ?? {
+            try await APIClient.shared.fetchFeed(limit: 12, mode: "discover")
+        }
         if let preloaded {
             self.isPreloaded = true
             self.liveEvents = preloaded.liveEvents
@@ -161,9 +181,20 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             self.movedEntries = preloaded.movedEntries
             self.discoverItems = Self.stripModelWrittenText(preloaded.discoverItems, limit: 3)
             self.loading = false
+            self.loadFailed = false
         } else {
             self.isPreloaded = false
         }
+    }
+
+    /// Seeds sections for unit tests exercising refresh failure preservation.
+    func seedSectionsForTesting(_ snapshot: PreloadedSnapshot) {
+        self.liveEvents = snapshot.liveEvents
+        self.nextEvents = snapshot.nextEvents
+        self.nextMarkets = snapshot.nextMarkets
+        self.movedEntries = snapshot.movedEntries
+        self.discoverItems = Self.stripModelWrittenText(snapshot.discoverItems, limit: 3)
+        self.loadFailed = false
     }
 
     /// Computes the moved-game banner line from the exact `CompactGameCard12616.currentOddsForCard`
@@ -319,12 +350,22 @@ final class MyStuffLandingViewModel295A: ObservableObject {
 
         // Hydrate followed subjects in parallel (bounded to first 8 subjects for snappy launch).
         let subjectsToHydrate = Array(followedSubjects.prefix(8))
+        let hydrator = self.subjectHydrator
+        let feedFetcher = self.discoverFetcher
 
-        async let hydratedSubjectsTask = Self.fetchFollowedSubjects(subjectsToHydrate)
-        async let discoverFeedTask: FeedResponse? = try? await APIClient.shared.fetchFeed(limit: 12, mode: "discover")
+        async let hydratedSubjectsTask = hydrator(subjectsToHydrate)
+        async let discoverFeedResultTask: (FeedResponse?, Bool) = {
+            do {
+                let res = try await feedFetcher()
+                return (res, false)
+            } catch {
+                return (nil, true)
+            }
+        }()
 
         let hydrated = await hydratedSubjectsTask
-        let discoverFeed = await discoverFeedTask
+        let (discoverFeed, discoverFailed) = await discoverFeedResultTask
+        let anyHydrationFailed = hydrated.contains(where: \.didFail)
 
         var seenEventIds: Set<Int> = []
         var collectedEvents: [(event: FeedEventData, awayVerified: Bool)] = []
@@ -587,11 +628,40 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             return false
         }
 
+        let cleanedDiscover = Self.stripModelWrittenText(rawDiscover, limit: 3)
+        let newFollowedSectionsEmpty = live.isEmpty
+            && boundedNextEvents.isEmpty
+            && boundedNextMarkets.isEmpty
+            && boundedMoved.isEmpty
+        let hadExistingSections = !liveEvents.isEmpty
+            || !nextEvents.isEmpty
+            || !nextMarkets.isEmpty
+            || !movedEntries.isEmpty
+            || !discoverItems.isEmpty
+
+        if (anyHydrationFailed || discoverFailed) && newFollowedSectionsEmpty && cleanedDiscover.isEmpty {
+            loadFailed = true
+            loading = false
+            return
+        }
+
+        if anyHydrationFailed && newFollowedSectionsEmpty && !subjectsToHydrate.isEmpty {
+            loadFailed = true
+            if !hadExistingSections {
+                discoverItems = cleanedDiscover
+            }
+            loading = false
+            return
+        }
+
+        loadFailed = false
         liveEvents = live
         nextEvents = boundedNextEvents
         nextMarkets = boundedNextMarkets
         movedEntries = boundedMoved
-        discoverItems = Self.stripModelWrittenText(rawDiscover, limit: 3)
+        if !discoverFailed || discoverItems.isEmpty {
+            discoverItems = cleanedDiscover
+        }
         loading = false
     }
 
@@ -641,11 +711,6 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         )
     }
 
-    private struct HydratedSubjectPack: Sendable {
-        var events: [(event: FeedEventData, awayVerified: Bool)] = []
-        var markets: [MyStuffMarketItem295A] = []
-    }
-
     nonisolated private static func fetchFollowedSubjects(
         _ subjects: [FollowedSubject295A]
     ) async -> [HydratedSubjectPack] {
@@ -675,7 +740,11 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             } else {
                 return pack
             }
-            guard let page = try? await APIClient.shared.fetchTeamPage(slug: identifier) else {
+            let page: TeamPageResponse
+            do {
+                page = try await APIClient.shared.fetchTeamPage(slug: identifier)
+            } catch {
+                pack.didFail = true
                 return pack
             }
             for ev in page.upcomingEvents {
@@ -733,44 +802,57 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             let sportKey = subject.sportKey.flatMap { $0.isEmpty ? nil : $0 }
                 ?? myStuffLeagueSlugToSportKey295A[subject.slug]
                 ?? subject.slug
+            var leagueCallSucceeded = false
             if let markets = try? await APIClient.shared.fetchLeagueMarkets(sportKey: sportKey) {
+                leagueCallSucceeded = true
                 for ev in markets.allGames.prefix(6) {
                     pack.events.append((ev, false))
                 }
             }
-            if let grid = try? await APIClient.shared.fetchChampionshipGrid(slug: subject.slug),
-               let champMarketId = grid.championshipMarketId {
-                for mover in grid.movers.prefix(3) {
-                    guard let move = MyStuffVisitLedger295A.formatPointMove(
-                        deltaProbability: mover.change24H,
-                        sinceLastVisit: false
-                    ) else { continue }
-                    let matchingTeam = grid.teams.first { $0.name == mover.name }
-                    let cellProb = matchingTeam?.cells[mover.column]?.mergedProbability
-                    guard let prob = cellProb, prob > 0 else { continue }
-                    pack.markets.append(
-                        MyStuffMarketItem295A(
-                            id: "\(champMarketId):\(mover.name.lowercased()):\(mover.column)",
-                            marketId: champMarketId,
-                            marketTitle: "\(grid.name) · \(mover.column.replacingOccurrences(of: "_", with: " ").capitalized)",
-                            outcomeLabel: mover.name,
-                            subjectName: grid.name,
-                            logoUrl: mover.logoUrl,
-                            primaryColor: mover.primaryColor,
-                            probability: prob,
-                            changePoints: move.points,
-                            movementNote: move.text,
-                            sourceMark: nil
+            if let grid = try? await APIClient.shared.fetchChampionshipGrid(slug: subject.slug) {
+                leagueCallSucceeded = true
+                if let champMarketId = grid.championshipMarketId {
+                    for mover in grid.movers.prefix(3) {
+                        guard let move = MyStuffVisitLedger295A.formatPointMove(
+                            deltaProbability: mover.change24H,
+                            sinceLastVisit: false
+                        ) else { continue }
+                        let matchingTeam = grid.teams.first { $0.name == mover.name }
+                        let cellProb = matchingTeam?.cells[mover.column]?.mergedProbability
+                        guard let prob = cellProb, prob > 0 else { continue }
+                        pack.markets.append(
+                            MyStuffMarketItem295A(
+                                id: "\(champMarketId):\(mover.name.lowercased()):\(mover.column)",
+                                marketId: champMarketId,
+                                marketTitle: "\(grid.name) · \(mover.column.replacingOccurrences(of: "_", with: " ").capitalized)",
+                                outcomeLabel: mover.name,
+                                subjectName: grid.name,
+                                logoUrl: mover.logoUrl,
+                                primaryColor: mover.primaryColor,
+                                probability: prob,
+                                changePoints: move.points,
+                                movementNote: move.text,
+                                sourceMark: nil
+                            )
                         )
-                    )
+                    }
                 }
+            }
+            if !leagueCallSucceeded {
+                pack.didFail = true
             }
 
         case .set:
             switch subject.setKind ?? .container {
             case .container:
-                guard let hub = try? await APIClient.shared.fetchContainerHub(slug: subject.slug),
-                      hub.state == .published else {
+                let hub: ContainerHubResponse
+                do {
+                    hub = try await APIClient.shared.fetchContainerHub(slug: subject.slug)
+                } catch {
+                    pack.didFail = true
+                    return pack
+                }
+                guard hub.state == .published else {
                     return pack
                 }
                 for section in hub.sections {
@@ -804,8 +886,14 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                     }
                 }
             case .golfTournament:
-                guard let detail = try? await APIClient.shared.fetchGolfTournament(slug: subject.slug),
-                      let marketId = detail.evolutionMarketId,
+                let detail: GolfTournamentDetailResponse
+                do {
+                    detail = try await APIClient.shared.fetchGolfTournament(slug: subject.slug)
+                } catch {
+                    pack.didFail = true
+                    return pack
+                }
+                guard let marketId = detail.evolutionMarketId,
                       let leader = detail.golfers.first,
                       leader.probability > 0 else {
                     return pack

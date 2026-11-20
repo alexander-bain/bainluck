@@ -183,21 +183,40 @@ nonisolated struct FollowedSubject295A: Codable, Identifiable, Hashable, Sendabl
     func matches(_ other: FollowedSubject295A) -> Bool {
         if id == other.id { return true }
         guard kind == .team && other.kind == .team else { return false }
-        if let lhsId = teamId, let rhsId = other.teamId, lhsId > 0, lhsId == rhsId {
-            return true
+
+        let lhsValidId = (teamId ?? 0) > 0 ? teamId : nil
+        let rhsValidId = (other.teamId ?? 0) > 0 ? other.teamId : nil
+
+        // Explicit team IDs always win when both sides carry one.
+        if let lhsId = lhsValidId, let rhsId = rhsValidId {
+            return lhsId == rhsId
         }
-        let lhsNameSlug = Self.normalizeSlug(name)
-        let rhsNameSlug = Self.normalizeSlug(other.name)
+
         let lhsSlug = Self.normalizeSlug(slug)
         let rhsSlug = Self.normalizeSlug(other.slug)
-        let nameOrSlugMatches = (!lhsNameSlug.isEmpty && lhsNameSlug == rhsNameSlug)
-            || (!lhsSlug.isEmpty && lhsSlug == rhsNameSlug)
-            || (!rhsSlug.isEmpty && rhsSlug == lhsNameSlug)
-        guard nameOrSlugMatches else { return false }
-        if let s1 = sportKey?.lowercased(), let s2 = other.sportKey?.lowercased(), !s1.isEmpty, !s2.isEmpty {
-            return s1 == s2 || s1.split(separator: "_").first == s2.split(separator: "_").first
+        let lhsIsNumericSlug = !lhsSlug.isEmpty && lhsSlug.allSatisfy(\.isNumber)
+        let rhsIsNumericSlug = !rhsSlug.isEmpty && rhsSlug.allSatisfy(\.isNumber)
+
+        // Non-numeric canonical slug equality (respecting sportKey when both have one).
+        if !lhsSlug.isEmpty, !lhsIsNumericSlug, !rhsIsNumericSlug, lhsSlug == rhsSlug {
+            if let s1 = sportKey?.lowercased(), let s2 = other.sportKey?.lowercased(), !s1.isEmpty, !s2.isEmpty {
+                return s1 == s2 || s1.split(separator: "_").first == s2.split(separator: "_").first
+            }
+            return true
         }
-        return true
+
+        // Name fallback is restricted strictly to subjects where NEITHER side has a teamId
+        // and BOTH sides carry matching non-empty sport keys.
+        guard lhsValidId == nil && rhsValidId == nil else { return false }
+        guard let s1 = sportKey?.lowercased(), let s2 = other.sportKey?.lowercased(), !s1.isEmpty, !s2.isEmpty else {
+            return false
+        }
+        let sameSportFamily = s1 == s2 || s1.split(separator: "_").first == s2.split(separator: "_").first
+        guard sameSportFamily else { return false }
+
+        let lhsNameSlug = Self.normalizeSlug(name)
+        let rhsNameSlug = Self.normalizeSlug(other.name)
+        return !lhsNameSlug.isEmpty && lhsNameSlug == rhsNameSlug
     }
 }
 
@@ -225,6 +244,7 @@ final class FollowManager295A: ObservableObject {
 
     static let subjectsPrefName = "bainluck_followed_subjects"
     static let serverFavoritesFlagName = "bainluck_server_favorites_nonempty"
+    static let locallyUnfollowedIdsPrefName = "bainluck_locally_unfollowed_team_ids"
 
     typealias TeamFavoriteSync = @Sendable (_ teamId: Int, _ following: Bool) async -> Void
 
@@ -266,9 +286,11 @@ final class FollowManager295A: ObservableObject {
 
     @MainActor
     func mergeServerFavorites(_ favorites: [FavoriteItem]) {
-        defaults.set(!favorites.isEmpty, forKey: Self.serverFavoritesFlagName)
+        let suppressedIds = loadLocallyUnfollowedTeamIds()
+        let activeFavorites = favorites.filter { $0.relationType != "rival" && !suppressedIds.contains($0.teamId) }
+        defaults.set(!activeFavorites.isEmpty, forKey: Self.serverFavoritesFlagName)
         var changed = false
-        for fav in favorites where fav.relationType != "rival" {
+        for fav in activeFavorites {
             let candidate = FollowedSubject295A.team(
                 slug: "\(fav.teamId)",
                 teamId: fav.teamId,
@@ -295,6 +317,12 @@ final class FollowManager295A: ObservableObject {
     func toggle(_ subject: FollowedSubject295A) -> Bool {
         if let idx = subjects.firstIndex(where: { $0.matches(subject) }) {
             let removed = subjects.remove(at: idx)
+            if let tid = removed.teamId, tid > 0 {
+                markLocallyUnfollowed(teamId: tid, unfollowed: true)
+            }
+            if subjects.isEmpty {
+                defaults.set(false, forKey: Self.serverFavoritesFlagName)
+            }
             save()
             #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -304,6 +332,9 @@ final class FollowManager295A: ObservableObject {
         } else {
             var added = subject
             added.followedAt = Date()
+            if let tid = added.teamId, tid > 0 {
+                markLocallyUnfollowed(teamId: tid, unfollowed: false)
+            }
             subjects.insert(added, at: 0)
             save()
             #if os(iOS)
@@ -314,6 +345,21 @@ final class FollowManager295A: ObservableObject {
         }
     }
 
+    private func loadLocallyUnfollowedTeamIds() -> Set<Int> {
+        let arr = defaults.array(forKey: Self.locallyUnfollowedIdsPrefName) as? [Int] ?? []
+        return Set(arr)
+    }
+
+    private func markLocallyUnfollowed(teamId: Int, unfollowed: Bool) {
+        var current = loadLocallyUnfollowedTeamIds()
+        if unfollowed {
+            current.insert(teamId)
+        } else {
+            current.remove(teamId)
+        }
+        defaults.set(Array(current).sorted(), forKey: Self.locallyUnfollowedIdsPrefName)
+    }
+
     private func syncServerTeamIfNeeded(_ subject: FollowedSubject295A, following: Bool) {
         guard subject.kind == .team, let teamId = subject.teamId, teamId > 0 else { return }
         if let teamSync {
@@ -321,11 +367,14 @@ final class FollowManager295A: ObservableObject {
             return
         }
         guard isAuthenticated else { return }
+        let defaultsRef = defaults
         Task {
             if following {
                 _ = try? await APIClient.shared.addFavorite(teamId: teamId, relationType: "follow")
-            } else {
-                _ = try? await APIClient.shared.removeFavorite(teamId: teamId, relationType: "follow")
+            } else if (try? await APIClient.shared.removeFavorite(teamId: teamId, relationType: "follow")) != nil {
+                var set = Set((defaultsRef.array(forKey: Self.locallyUnfollowedIdsPrefName) as? [Int]) ?? [])
+                set.remove(teamId)
+                defaultsRef.set(Array(set).sorted(), forKey: Self.locallyUnfollowedIdsPrefName)
             }
         }
     }
