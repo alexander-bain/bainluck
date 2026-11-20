@@ -9653,9 +9653,29 @@ def _leader_is_ladder_rung(
     ) is not None
 
 
+def _dated_awards_movement_24h(
+    market: Any,
+    outcome_id: Any,
+    current_probability: float | None,
+    stored_change: float | None,
+    *,
+    now: datetime,
+) -> float | None:
+    """Dated 24h movement fraction for the #13100 awards gravity gate (ranking, not display copy)."""
+    return dated_movement_points(
+        market,
+        outcome_id,
+        current_probability,
+        stored_change,
+        now=now,
+    )
+
+
 def _top_outcomes_for_trace(
     market: FuturesMarket,
     team_names: dict[int, str] | None = None,
+    *,
+    now: datetime | None = None,
 ) -> tuple[list[dict], str | None, float | None]:
     # Q480: one condition, one outcome. The TRACE must agree with the card it
     # explains — a debug view that still shows the dropped leg would send the next
@@ -9669,51 +9689,60 @@ def _top_outcomes_for_trace(
     )
     outcomes_data = []
     for outcome in sorted_outcomes[:10]:
-        outcomes_data.append(
-            {
-                # #4079: the key the dated-movement bank is stored under. This
-                # dict is the SCORING row and never reaches the wire (the card's
-                # rows are `top_outcomes_data`), so the id costs nothing a
-                # reader pays for.
-                #
-                # `getattr` with a default, like `team_id` below and for the
-                # same rule — a reduced fixture that does not carry the
-                # attribute must mean UNKNOWN, not raise
-                # (`test_an_outcome_object_without_the_attribute_is_unknown_not_a_crash`).
-                # It cannot lazy-load: `id` is the primary key and is the first
-                # entry in `OUTCOME_COLUMNS`, so it is always loaded and gotcha
-                # #42 has nothing to fire on. Unknown degrades to no bank cell,
-                # i.e. no dated sentence — the same honest-unavailable path as
-                # every other refusal.
-                "id": getattr(outcome, "id", None),
-                "name": outcome.name,
-                # #4700: the leader's subject-verb agreement is decided on THIS,
-                # not on the spelling of the name. See `_leader_outcome_is_team`.
-                "team_id": getattr(outcome, "team_id", None),
-                # #6550: and on whether the printed name reaches the nickname.
-                # See `_leader_outcome_team_name`.
-                "team_name": (team_names or {}).get(getattr(outcome, "team_id", None)),
-                "probability": (
-                    float(outcome.current_probability)
-                    if outcome.current_probability is not None
-                    else None
-                ),
-                "probability_change_24h": (
-                    float(outcome.probability_change_24h)
-                    if outcome.probability_change_24h is not None
-                    else None
-                ),
-                "rank": outcome.rank,
-                "rank_change_24h": outcome.rank_change_24h,
-                # #8784 — see `rank_claim_is_evidence`.
-                "prior_priced": outcome.probability_change_24h is not None,
-                "opening_probability": (
-                    float(outcome.opening_probability)
-                    if outcome.opening_probability is not None
-                    else None
-                ),
-            }
+        prob = (
+            float(outcome.current_probability)
+            if outcome.current_probability is not None
+            else None
         )
+        change = (
+            float(outcome.probability_change_24h)
+            if outcome.probability_change_24h is not None
+            else None
+        )
+        row = {
+            # #4079: the key the dated-movement bank is stored under. This
+            # dict is the SCORING row and never reaches the wire (the card's
+            # rows are `top_outcomes_data`), so the id costs nothing a
+            # reader pays for.
+            #
+            # `getattr` with a default, like `team_id` below and for the
+            # same rule — a reduced fixture that does not carry the
+            # attribute must mean UNKNOWN, not raise
+            # (`test_an_outcome_object_without_the_attribute_is_unknown_not_a_crash`).
+            # It cannot lazy-load: `id` is the primary key and is the first
+            # entry in `OUTCOME_COLUMNS`, so it is always loaded and gotcha
+            # #42 has nothing to fire on. Unknown degrades to no bank cell,
+            # i.e. no dated sentence — the same honest-unavailable path as
+            # every other refusal.
+            "id": getattr(outcome, "id", None),
+            "name": outcome.name,
+            # #4700: the leader's subject-verb agreement is decided on THIS,
+            # not on the spelling of the name. See `_leader_outcome_is_team`.
+            "team_id": getattr(outcome, "team_id", None),
+            # #6550: and on whether the printed name reaches the nickname.
+            # See `_leader_outcome_team_name`.
+            "team_name": (team_names or {}).get(getattr(outcome, "team_id", None)),
+            "probability": prob,
+            "probability_change_24h": change,
+            "rank": outcome.rank,
+            "rank_change_24h": outcome.rank_change_24h,
+            # #8784 — see `rank_claim_is_evidence`.
+            "prior_priced": outcome.probability_change_24h is not None,
+            "opening_probability": (
+                float(outcome.opening_probability)
+                if outcome.opening_probability is not None
+                else None
+            ),
+        }
+        if now is not None:
+            row["dated_movement_24h"] = _dated_awards_movement_24h(
+                market,
+                getattr(outcome, "id", None),
+                prob,
+                change,
+                now=now,
+            )
+        outcomes_data.append(row)
 
     leader_name = None
     leader_prob = None
@@ -10444,7 +10473,7 @@ def _score_market_trace(
     # debug view that disagreed with the card about a word would send the next
     # reader hunting the wrong rule.
     outcomes_data, leader_name, leader_prob = _top_outcomes_for_trace(
-        market, team_names
+        market, team_names, now=now
     )
     runtime_filters = _market_runtime_filter_trace(
         market,
@@ -10571,12 +10600,24 @@ def _score_market_trace(
         headline=headline,
         quality=quality,
     )
-    curator_bonus = _EXTERNAL_CURATOR_RECALL_SCORE_BONUS if is_external_curator_recall else 0
+    _awards_gravity_deferred = (
+        "awards_gravity_deferred" in highlight_result.reasons
+    )
+    _effective_curator_recall = (
+        is_external_curator_recall and not _awards_gravity_deferred
+    )
+    curator_bonus = (
+        _EXTERNAL_CURATOR_RECALL_SCORE_BONUS if _effective_curator_recall else 0
+    )
     explanation_score = _apply_external_curator_recall_score(
         explanation_score,
         highlight_result.reasons,
-        is_external_curator_recall=is_external_curator_recall,
+        is_external_curator_recall=_effective_curator_recall,
     )
+    if _awards_gravity_deferred and is_external_curator_recall:
+        highlight_result.reasons.append(
+            "external_curator_recall_deferred_awards"
+        )
     p_result = compute_futures_multiplier(
         ctx=PersonalizationContext(),
         sport_category=market.llm_sport_category,
@@ -15720,6 +15761,13 @@ async def _score_futures(
                         "team_name": team_names.get(getattr(o, "team_id", None)),
                         "probability": prob,
                         "probability_change_24h": change,
+                        "dated_movement_24h": _dated_awards_movement_24h(
+                            market,
+                            getattr(o, "id", None),
+                            prob,
+                            change,
+                            now=now,
+                        ),
                         "rank": o.rank,
                         "rank_change_24h": o.rank_change_24h,
                         # #8784 — see `rank_claim_is_evidence`. `change` above
@@ -16170,22 +16218,46 @@ async def _score_futures(
                 headline=headline,
                 quality=quality,
             )
+            _awards_gravity_deferred = (
+                "awards_gravity_deferred" in highlight_result.reasons
+            )
+            _effective_curator_recall = (
+                market.id in external_curator_recall_ids
+                and not _awards_gravity_deferred
+            )
             base_score = _apply_external_curator_recall_score(
                 base_score,
                 highlight_result.reasons,
-                is_external_curator_recall=market.id in external_curator_recall_ids,
+                is_external_curator_recall=_effective_curator_recall,
             )
+            if _awards_gravity_deferred and market.id in external_curator_recall_ids:
+                highlight_result.reasons.append(
+                    "external_curator_recall_deferred_awards"
+                )
             # One accessor, four consumers below: the score adjustment, the
             # personalization feature tokens, the card-archetype axes, and the
             # public `discover_llm` payload. v1 profiles read natively; v2
             # profiles are adapted to the v1 shape (#1808).
             discover_llm_metadata = _get_discover_llm_view(market.market_metadata)
             llm_score_adjustment = _discover_llm_score_adjustment(discover_llm_metadata)
-            if llm_score_adjustment:
-                base_score = max(0, min(98, base_score + llm_score_adjustment))
-                highlight_result.reasons.append(
-                    f"discover_llm_score:{llm_score_adjustment:+d}"
+            # #13100 (Ruling 277: A): a far-out quiet awards market whose gravity
+            # is deferred gets no positive discover_llm_score lift above its
+            # futures_highlights score (negative penalties still apply). When the
+            # gate opens (<=45 days or moved), the lift returns automatically.
+            _effective_llm_score_adjustment = (
+                0
+                if (_awards_gravity_deferred and llm_score_adjustment > 0)
+                else llm_score_adjustment
+            )
+            if _effective_llm_score_adjustment:
+                base_score = max(
+                    0, min(98, base_score + _effective_llm_score_adjustment)
                 )
+                highlight_result.reasons.append(
+                    f"discover_llm_score:{_effective_llm_score_adjustment:+d}"
+                )
+            elif _awards_gravity_deferred and llm_score_adjustment > 0:
+                highlight_result.reasons.append("discover_llm_score_deferred_awards")
 
             # === UNCAPPED ORDERING SCORE (de-saturated) === #141/Item 1
             # Mirror the display pipeline WITHOUT the flat-98 clamps so distinct
@@ -16201,10 +16273,10 @@ async def _score_futures(
                 headline=headline,
                 quality=quality,
             )
-            if market.id in external_curator_recall_ids:
+            if _effective_curator_recall:
                 rank_score += _EXTERNAL_CURATOR_RECALL_SCORE_BONUS
-            if llm_score_adjustment:
-                rank_score = max(0.0, rank_score + llm_score_adjustment)
+            if _effective_llm_score_adjustment:
+                rank_score = max(0.0, rank_score + _effective_llm_score_adjustment)
 
             # === INTERESTINGNESS BLEND ===
             # Read precomputed interestingness from Redis and blend with base_score.
