@@ -1675,15 +1675,17 @@ async def select_more_sets(
       queries), then evaluates additional eligible producers within
       ``budget_seconds`` on a live ``AsyncSession``, failing open.
     """
-    from sqlalchemy.ext.asyncio import AsyncSession
+    import importlib
 
-    from app.utils.container_machinery import container_machinery_enabled
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     if limit <= 0:
         return []
 
     ensure_optional_roundup_candidates()
-    machinery_public = container_machinery_enabled()
+    machinery_public = bool(
+        importlib.import_module("app.utils.container_machinery").container_machinery_enabled()
+    )
     excluded = {str(s).strip() for s in exclude_slugs if str(s).strip()}
     ts, _now_dt = _normalize_roundup_now(now)
     cur_cat = current_category.strip().lower() if isinstance(current_category, str) and current_category.strip() else None
