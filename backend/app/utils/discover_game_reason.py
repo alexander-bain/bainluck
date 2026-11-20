@@ -226,22 +226,20 @@ async def _execute_signal_rows(db: Any, stmt: Any, *, timeout_ms: int = GAME_SIG
 
     Follows the `card_projected_pair.read_card_projected_pairs_bounded` pattern:
     rolling back the savepoint resets `SET LOCAL statement_timeout` so it never
-    leaks into later stages on the same session, and a timed-out or failed read
-    degrades to empty signals (pregame/upset reasons stay intact) rather than
-    stalling Discover (#11931).
+    leaks into later stages on the same session. Exceptions (including statement
+    timeouts) propagate out of the savepoint so `_pic.get_or_build` never caches
+    an empty answer for a failed read and `feed.py` logs the warning before
+    continuing with pregame/upset reasons (#11931).
     """
     from sqlalchemy import text
 
-    try:
-        if _is_postgres_async_session(db):
-            async with db.begin_nested() as savepoint:
-                await db.execute(text(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'"))
-                rows = (await db.execute(stmt)).all()
-                await savepoint.rollback()
-            return list(rows)
-        return list((await db.execute(stmt)).all())
-    except Exception:
-        return []
+    if _is_postgres_async_session(db):
+        async with db.begin_nested() as savepoint:
+            await db.execute(text(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'"))
+            rows = (await db.execute(stmt)).all()
+            await savepoint.rollback()
+        return list(rows)
+    return list((await db.execute(stmt)).all())
 
 
 async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -> None:
@@ -340,12 +338,13 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
                 if _use_shared
                 else FuturesOutcome.team_id.in_(team_ids)
             )
-            # #11931: `FuturesMarket.max_movement_24h` is a provable superset of
-            # `abs(FuturesOutcome.probability_change_24h)` (see `movement_pool.py`),
-            # narrowing the join from ~35k open markets to only moved markets so
+            # #11931: `FuturesMarket.max_movement_24h` is recomputed every 10 min
+            # (`update_max_movement`), so it is a superset of outcome moves as of
+            # the last recompute (a team whose futures jump immediately after a
+            # final can be picked up up to 10 min later). That bounded trade
+            # narrows the join from ~35k open markets to only moved markets so
             # Postgres probes `ix_fo_market_movement (market_id, probability_change_24h)`
-            # via its leading `market_id` column instead of scanning unindexed
-            # `team_id IS NOT NULL` rows under contention.
+            # via its leading `market_id` column instead of stalling for 22.5 s.
             max_mv = FuturesMarket.max_movement_24h
             stmt = (
                 select(

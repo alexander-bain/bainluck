@@ -2,10 +2,14 @@
 
 1. `discover_game_reason.annotate_game_signals`:
    - `_load_team_moves` filters on `FuturesMarket.max_movement_24h >= TEAM_MOVE_POINTS`
-     (provable superset) so Postgres probes `ix_fo_market_movement` by `market_id`
-     instead of scanning all open markets under write contention.
+     (refreshed every 10 minutes by `update_max_movement`, so a post-final jump
+     can be picked up up to 10 minutes later) so Postgres probes
+     `ix_fo_market_movement` by `market_id` instead of scanning all open markets
+     under write contention.
    - Real PostgreSQL AsyncSessions bound each read inside a SAVEPOINT with
-     `SET LOCAL statement_timeout = '1000ms'` and fail open on timeout.
+     `SET LOCAL statement_timeout = '1000ms'` and let timeouts propagate so
+     `feed.py` logs the warning and `_pic.get_or_build` never caches an empty
+     answer for a failed read.
 2. `graded_out_field_legs.graded_out_leg_ids_by_market`:
    - Discover's `FuturesOutcomeSnapshot` rows carry `is_winner` + `resolution_source`
      from `OUTCOME_LOAD_ONLY_EXTRA` and skip the redundant DB round trip.
@@ -126,7 +130,7 @@ class TestDiscoverGameReasonMaxMovementAndTimeout:
         assert items[0][game_reason.SIGNALS_KEY]["team_moves"][0]["market_id"] == 99
 
     @pytest.mark.asyncio
-    async def test_postgres_session_uses_savepoint_timeout_and_fails_open(self):
+    async def test_postgres_session_uses_savepoint_timeout_and_propagates_without_caching(self):
         db = _RecordingAsyncSession(replies=[], postgres_dialect=True, fail_query=True)
         items = [
             {
@@ -141,10 +145,20 @@ class TestDiscoverGameReasonMaxMovementAndTimeout:
                 },
             }
         ]
-        await game_reason.annotate_game_signals(db, items, FIXED_NOW)
+        with pytest.raises(TimeoutError, match="statement timeout"):
+            await game_reason.annotate_game_signals(db, items, FIXED_NOW)
         assert db.savepoints_opened == 1
         assert any("SET LOCAL statement_timeout = '1000ms'" in str(s) for s in db.statements)
         assert game_reason.SIGNALS_KEY not in items[0]
+        # Verify the timed-out read was NOT cached as an empty answer: a subsequent
+        # healthy read in the same time bucket still queries the DB and populates signals.
+        db_ok = _RecordingAsyncSession(
+            replies=[[(42, "Yes", 0.35, 0.12, 99, "Team A wins title?")]],
+            postgres_dialect=True,
+        )
+        await game_reason.annotate_game_signals(db_ok, items, FIXED_NOW)
+        assert db_ok.savepoints_opened == 1
+        assert items[0][game_reason.SIGNALS_KEY]["team_moves"][0]["market_id"] == 99
 
     @pytest.mark.asyncio
     async def test_postgres_session_rolls_back_savepoint_on_success(self):
