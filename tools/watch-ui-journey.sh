@@ -313,8 +313,11 @@ python3 "$ROOT/tools/watch_ui_products.py" verify --repo "$ROOT" --sha "$SHA" \
   --output "$RUN/package" > "$OUT/products-verification.json"
 boot_until_ready "$PHONE_UDID"
 boot_until_ready "$TEST_UDID"
-wait_services_ready "$PHONE_UDID" com.apple.SpringBoard
-wait_services_ready "$TEST_UDID" com.apple.Carousel
+if ! wait_services_ready "$PHONE_UDID" com.apple.SpringBoard \
+  || ! wait_services_ready "$TEST_UDID" com.apple.Carousel; then
+  echo 'pre-suite simulator services not ready; one shutdown and boot of this pair' >> "$OUT/preflight.log"
+  reboot_pair_until_ready
+fi
 XCODE_ARGS=(-xctestrun "$XCTESTRUN" -destination "platform=watchOS Simulator,id=$TEST_UDID" -parallel-testing-enabled NO)
 # Warm-up, never counted: xcodebuild installs the runner and re-installs the app,
 # and the first launch plus first pick afterwards (first complication reload) can
