@@ -16,6 +16,7 @@ struct WatchSavedComplicationContent: View {
             ViewThatFits(in: [.horizontal, .vertical]) {
                 readingCard(reading, preferCompact: false)
                 readingCard(reading, preferCompact: true)
+                wrappingFallbackCard(reading)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .ignore)
@@ -62,6 +63,53 @@ struct WatchSavedComplicationContent: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("watch.complication.rectangular.metadata")
         }
+    }
+
+    /// Multi-line fallback when a team lacks a short name so long matchup headers never truncate (#13144).
+    /// Inner `ViewThatFits(in: .vertical)` proposes the slot's real width so each tier wraps cleanly
+    /// and selects the largest type step whose wrapped height fits inside 41 mm / 45 mm slots.
+    private func wrappingFallbackCard(_ reading: WatchRectangularReading) -> some View {
+        ViewThatFits(in: .vertical) {
+            wrappedReadingCard(reading, headerSize: 10.5, primarySize: 13, metadataSize: 10, spacing: 1.5)
+            wrappedReadingCard(reading, headerSize: 9.5, primarySize: 11.5, metadataSize: 9.5, spacing: 1)
+            wrappedReadingCard(reading, headerSize: 8.5, primarySize: 10.5, metadataSize: 9, spacing: 1)
+            wrappedReadingCard(reading, headerSize: 8, primarySize: 9.5, metadataSize: 8.5, spacing: 0.5)
+        }
+    }
+
+    private func wrappedReadingCard(
+        _ reading: WatchRectangularReading,
+        headerSize: CGFloat,
+        primarySize: CGFloat,
+        metadataSize: CGFloat,
+        spacing: CGFloat
+    ) -> some View {
+        VStack(alignment: .leading, spacing: spacing) {
+            Text(reading.headerLine(preferCompact: true).replacingOccurrences(of: " · ", with: "\u{00A0}·\u{00A0}"))
+                .font(HeadlineStyleTable199.headers(.wristTile, scaledSize: headerSize))
+                .foregroundStyle(.secondary)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("watch.complication.rectangular.header")
+            Text(reading.primaryLine(preferCompact: false, at: now))
+                .font(HeadlineStyleTable199.secondNumbers(.wristTile, prominent: true, scaledSize: primarySize))
+                .foregroundStyle(
+                    (reading.kind == .liveForecast || reading.kind == .scheduledForecast || reading.kind == .futureForecast)
+                        ? accentColor : .primary
+                )
+                .monospacedDigit()
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("watch.complication.rectangular.primary")
+            Text(reading.metadataLine(at: now))
+                .font(HeadlineStyleTable199.quietText(.wristTile, scaledSize: metadataSize))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("watch.complication.rectangular.metadata")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
