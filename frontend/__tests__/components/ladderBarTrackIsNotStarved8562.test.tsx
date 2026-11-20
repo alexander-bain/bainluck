@@ -31,10 +31,12 @@ const rowClasses = (html: string) =>
 describe("#8562 the wide label slot is sized from its ink, capped at 45%", () => {
   test("a short dollar ladder reserves what '$730' needs, not 45% of the card", () => {
     const html = renderToStaticMarkup(<QuantityGroup bare compact wideLabels sort={false} rungs={meta} />);
-    expect(widths(html)).toEqual(Array(3).fill("clamp(2.75rem, calc(4ch + 0.75rem), 45%)"));
+    expect(widths(html)).toEqual(
+      Array(3).fill("clamp(2.75rem, max(calc(4ch + 0.75rem), calc(12ch + 0.5rem)), 45%)"),
+    );
     expect(html).not.toContain("w-[45%]");
     // the mover is still there — the fix makes room beside it, it does not drop it
-    expect(html).toContain("▲56.0 pts");
+    expect(html).toContain("▲56.0 points");
   });
 
   test("ONE width per ladder: every rung, leader included, carries the same label width", () => {

@@ -112,7 +112,7 @@ describe("the movement caption names the same side the hero does", () => {
     // "Yes down 14.6 pts from opening."
     expect(
       movementExplanation({ name: "No", probability: 0.664, opening_probability: 0.81 }),
-    ).toBe("No down 14.6 pts from opening.");
+    ).toBe("No down 14.6 points from opening.");
   });
 
   it("still says `Yes` when the leader has no name at all", () => {
@@ -127,6 +127,6 @@ describe("the movement caption names the same side the hero does", () => {
   it("still names an entity leader", () => {
     expect(
       movementExplanation({ name: "Amazon", probability: 0.5, opening_probability: 0.365 }),
-    ).toBe("Amazon up 13.5 pts from opening.");
+    ).toBe("Amazon up 13.5 points from opening.");
   });
 });
