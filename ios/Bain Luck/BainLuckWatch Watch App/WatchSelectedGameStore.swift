@@ -103,7 +103,7 @@ final class WatchSelectedGameStore: ObservableObject {
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             version = try values.decode(Int.self, forKey: .version)
-            game = try values.decode(WatchSelectedGame.self, forKey: .game)
+            game = try values.decode(WatchSelectedGame.CachedReading.self, forKey: .game).game
             fetchedAt = try values.decode(Date.self, forKey: .fetchedAt)
             // Optional identity corruption must not destroy a valid saved reading.
             selectedIdentityIDs = try? values.decodeIfPresent([Int].self, forKey: .selectedIdentityIDs)
