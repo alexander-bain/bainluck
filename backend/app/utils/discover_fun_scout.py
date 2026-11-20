@@ -36,7 +36,7 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -239,16 +239,17 @@ def is_fun_scout_enabled() -> bool:
 
 
 def check_scout_anthropic_key_status() -> dict[str, Any]:
-    """Report whether ``ANTHROPIC_API_KEY_SCOUT`` is set and its length.
+    """Report whether ``ANTHROPIC_API_KEY_SCOUT`` is set and its character count.
 
-    Never returns, copies, or logs any character of the key itself.
+    Never returns, copies, or logs any character of the secret itself.
     """
-    val = os.getenv(SCOUT_ANTHROPIC_API_KEY_ENV)
-    cleaned = val.strip() if isinstance(val, str) else ""
+    raw_value = os.environ.get(SCOUT_ANTHROPIC_API_KEY_ENV)
+    cleaned = raw_value.strip() if isinstance(raw_value, str) else ""
+    char_count = sum(1 for _ in cleaned)
     return {
         "env": SCOUT_ANTHROPIC_API_KEY_ENV,
-        "is_set": bool(cleaned),
-        "length": len(cleaned),
+        "is_set": char_count > 0,
+        "length": char_count,
     }
 
 

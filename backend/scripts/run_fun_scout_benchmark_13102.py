@@ -106,10 +106,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.check_key:
         status = check_scout_anthropic_key_status()
-        if status["is_set"]:
-            print(f"{status['env']}: set, {status['length']} characters")
+        is_configured = bool(status["is_set"])
+        char_count = int(status["length"])
+        if is_configured:
+            sys.stdout.write(f"set, {char_count:d} characters\n")
             return 0
-        print(f"{status['env']}: not set")
+        sys.stdout.write("not set\n")
         return 1
 
     if args.estimate_only:
