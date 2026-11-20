@@ -122,14 +122,62 @@ final class MyStuffViewModel: ObservableObject {
     }
 
     var justHappened: [FeedItem] {
-        items.filter { EventState.section(of: $0.event) == .finished }
+        Self.sortJustHappened(items.filter { EventState.section(of: $0.event) == .finished })
     }
 
     var upcoming: [FeedItem] {
-        items.filter {
-            guard $0.type == "event" else { return false }
-            return EventState.section(of: $0.event) == .upcoming
-        }
+        Self.sortUpcoming(
+            items.filter {
+                guard $0.type == "event" else { return false }
+                return EventState.section(of: $0.event) == .upcoming
+            }
+        )
+    }
+
+    /// #13122 — My Stuff sorts `Upcoming` chronologically ascending (soonest
+    /// kickoff first, preserving feed order on ties, `nil` timestamps last),
+    /// matching `frontend/app/my-stuff/page.tsx:385-392`.
+    static func sortUpcoming(_ items: [FeedItem]) -> [FeedItem] {
+        items.enumerated()
+            .sorted { lhs, rhs in
+                let leftDate = lhs.element.event?.commenceTime?.asDate
+                let rightDate = rhs.element.event?.commenceTime?.asDate
+                switch (leftDate, rightDate) {
+                case let (l?, r?):
+                    if l != r { return l < r }
+                    return lhs.offset < rhs.offset
+                case (_?, nil):
+                    return true
+                case (nil, _?):
+                    return false
+                case (nil, nil):
+                    return lhs.offset < rhs.offset
+                }
+            }
+            .map(\.element)
+    }
+
+    /// #13122 — My Stuff sorts `Just Happened` chronologically descending (most
+    /// recent kickoff first, preserving feed order on ties, `nil` timestamps
+    /// last), matching `frontend/app/my-stuff/page.tsx:394-399`.
+    static func sortJustHappened(_ items: [FeedItem]) -> [FeedItem] {
+        items.enumerated()
+            .sorted { lhs, rhs in
+                let leftDate = lhs.element.event?.commenceTime?.asDate
+                let rightDate = rhs.element.event?.commenceTime?.asDate
+                switch (leftDate, rightDate) {
+                case let (l?, r?):
+                    if l != r { return l > r }
+                    return lhs.offset < rhs.offset
+                case (_?, nil):
+                    return true
+                case (nil, _?):
+                    return false
+                case (nil, nil):
+                    return lhs.offset < rhs.offset
+                }
+            }
+            .map(\.element)
     }
 
     var topMarkets: [FeedItem] {
