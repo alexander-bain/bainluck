@@ -13983,18 +13983,65 @@ async def _score_sports_mode_futures(
                         FuturesMarket.external_id.ilike(f"%{sport_filter}%"),
                     )
 
-        # Single query: top 120 sports futures by tier then volume (id tie-breaker)
-        id_result = await db.execute(
-            select(FuturesMarket.id)
-            .where(*base_filters, sports_filter)
-            .order_by(
-                FuturesMarket.market_tier.asc().nulls_last(),
-                FuturesMarket.volume_24h.desc().nulls_last(),
-                FuturesMarket.id.asc(),
-            )
-            .limit(120)
+        # #11931: two-pass tier-bounded ID query for Sports futures.
+        # Because results are ordered by `market_tier ASC NULLS LAST, volume_24h
+        # DESC NULLS LAST, id ASC`, querying `market_tier IN (1, 2)` first lets
+        # Postgres stay on the small Tier 1-2 slice of `ix_fm_feed_open_sports`
+        # instead of scanning all ~31k Tier 3-5 rows. Whenever Pass 1 returns
+        # 120 rows, no Tier >= 3 or NULL row can outrank any of them (exact
+        # byte-identical ID list and order). Pass 2 runs only when Pass 1 yields
+        # fewer than 120 rows (e.g. a narrow sport pill).
+        _SPORTS_FUTURES_LIMIT = 120
+        _tier_pass_on = (
+            isinstance(db, AsyncSession)
+            and os.environ.get("SPORTS_FUTURES_TIER_PASS_ENABLED", "1").strip().lower()
+            not in {"0", "false", "no", "off"}
         )
-        market_ids = list(id_result.scalars().all())
+        _order_cols = (
+            FuturesMarket.market_tier.asc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+            FuturesMarket.id.asc(),
+        )
+        if _tier_pass_on:
+            _p1_result = await db.execute(
+                select(FuturesMarket.id)
+                .where(
+                    *base_filters,
+                    sports_filter,
+                    FuturesMarket.market_tier.in_((1, 2)),
+                )
+                .order_by(*_order_cols)
+                .limit(_SPORTS_FUTURES_LIMIT)
+            )
+            market_ids = list(_p1_result.scalars().all())
+            _remaining = _SPORTS_FUTURES_LIMIT - len(market_ids)
+            if _remaining > 0:
+                _p2_result = await db.execute(
+                    select(FuturesMarket.id)
+                    .where(
+                        *base_filters,
+                        sports_filter,
+                        or_(
+                            FuturesMarket.market_tier >= 3,
+                            FuturesMarket.market_tier.is_(None),
+                        ),
+                    )
+                    .order_by(*_order_cols)
+                    .limit(_remaining)
+                )
+                _seen_ids = set(market_ids)
+                for _mid in _p2_result.scalars().all():
+                    if _mid not in _seen_ids:
+                        _seen_ids.add(_mid)
+                        market_ids.append(_mid)
+        else:
+            id_result = await db.execute(
+                select(FuturesMarket.id)
+                .where(*base_filters, sports_filter)
+                .order_by(*_order_cols)
+                .limit(_SPORTS_FUTURES_LIMIT)
+            )
+            market_ids = list(id_result.scalars().all())
         _mark_sf_stage("id_query")
         if not market_ids:
             return []
@@ -14303,54 +14350,12 @@ async def _score_sports_mode_futures(
                 else None
             )
 
-        # UX-P163: same removal as `_score_futures`, and it has to be here too —
-        # the two serializers print the same card type and a fix in one of them
-        # would just move the disagreement between surfaces instead of ending it.
-        # Sports mode has no mixed-binary strip, so this IS its card list. Scoring
-        # (`sorted_outcomes[:10]`), the leader pick and `outcomes_data`'s settled
-        # filter deliberately keep reading the full list: this narrows what the card
-        # SAYS, never what surfaces or ranks.
-        card_outcomes = drop_dominant_field_outcomes(
-            sorted_outcomes,
-            lambda o: o.name,
-            lambda o: float(o.current_probability) if o.current_probability is not None else None,
-        )
-        # Queue 283 (#1487): ONE display-probability basis, shared by the
-        # mini-list, distribution, and headline/context leader copy. Sports mode
-        # draws every outcome surface from card_outcomes (no mixed-binary
-        # strip). leader_prob stays RAW for hook staleness/eligibility below.
-        _display_scale = _feed_display_scale(
-            card_outcomes,
-            market.name,
-            mutually_exclusive=_market_exclusivity(market),
-            field_complete=not _field_incomplete,
-        )
-        display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
-        _display_comparisons = normalized_field_comparisons(
-            market,
-            [
-                {
-                    "id": o.id,
-                    "name": o.name,
-                    "probability": o.current_probability,
-                    "opening_probability": getattr(o, "opening_probability", None),
-                    "probability_change_24h": getattr(
-                        o, "probability_change_24h", None
-                    ),
-                    "is_winner": getattr(o, "is_winner", None),
-                    "resolution_source": getattr(o, "resolution_source", None),
-                }
-                for o in card_outcomes
-            ],
-            field_complete=not _field_incomplete,
-            now=now,
-        )
-
         probs_available = [
             o["probability"] for o in outcomes_data if o["probability"] is not None
         ]
 
-        # Filter settled/dead markets
+        # Filter settled/dead markets BEFORE computing display scales / field
+        # comparisons (#11931) so dropped markets never pay that CPU cost.
         all_settled = len(probs_available) >= 2 and all(
             p < 0.05 or p > 0.95 for p in probs_available
         )
@@ -14472,6 +14477,49 @@ async def _score_sports_mode_futures(
                         break
             if not matched_by_id and not matched_by_name:
                 continue
+
+        # UX-P163: same removal as `_score_futures`, and it has to be here too —
+        # the two serializers print the same card type and a fix in one of them
+        # would just move the disagreement between surfaces instead of ending it.
+        # Sports mode has no mixed-binary strip, so this IS its card list. Scoring
+        # (`sorted_outcomes[:10]`), the leader pick and `outcomes_data`'s settled
+        # filter deliberately keep reading the full list: this narrows what the card
+        # SAYS, never what surfaces or ranks.
+        card_outcomes = drop_dominant_field_outcomes(
+            sorted_outcomes,
+            lambda o: o.name,
+            lambda o: float(o.current_probability) if o.current_probability is not None else None,
+        )
+        # Queue 283 (#1487): ONE display-probability basis, shared by the
+        # mini-list, distribution, and headline/context leader copy. Sports mode
+        # draws every outcome surface from card_outcomes (no mixed-binary
+        # strip). leader_prob stays RAW for hook staleness/eligibility below.
+        _display_scale = _feed_display_scale(
+            card_outcomes,
+            market.name,
+            mutually_exclusive=_market_exclusivity(market),
+            field_complete=not _field_incomplete,
+        )
+        display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
+        _display_comparisons = normalized_field_comparisons(
+            market,
+            [
+                {
+                    "id": o.id,
+                    "name": o.name,
+                    "probability": o.current_probability,
+                    "opening_probability": getattr(o, "opening_probability", None),
+                    "probability_change_24h": getattr(
+                        o, "probability_change_24h", None
+                    ),
+                    "is_winner": getattr(o, "is_winner", None),
+                    "resolution_source": getattr(o, "resolution_source", None),
+                }
+                for o in card_outcomes
+            ],
+            field_complete=not _field_incomplete,
+            now=now,
+        )
 
         # --- Scoring (lightweight — no editorial/quality caps) ---
         source_count = 1
@@ -14982,6 +15030,9 @@ async def _score_sports_mode_futures(
             "outcome_names": [str(n) for n in outcome_names],
         }
         scored_items.append(item)
+
+    if not _from_shared_cache:
+        _mark_sf_stage("scoring_loop")
 
     if _defer_pers:
         return scored_items

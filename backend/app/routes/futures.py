@@ -4648,6 +4648,14 @@ def _newest_capture_per_outcome(outcome_ids: list[int], bookmaker: str):
     )
 
 
+def _withheld_trades_engine_key(db: AsyncSession) -> int:
+    try:
+        bind = db.get_bind()
+        return id(bind) if bind is not None else 0
+    except Exception:
+        return 0
+
+
 async def _newest_kalshi_trades(db: AsyncSession, outcome_ids: list[int]) -> dict:
     """`{outcome_id: last_price}` at each leg's newest Kalshi capture (#7632).
 
@@ -4664,26 +4672,70 @@ async def _newest_kalshi_trades(db: AsyncSession, outcome_ids: list[int]) -> dic
     """
     if not outcome_ids:
         return {}
-    newest = _newest_capture_per_outcome(outcome_ids, KALSHI_BOOKMAKER)
-    rows = await db.execute(
-        select(
-            FuturesOddsSnapshot.outcome_id,
-            func.max(FuturesOddsSnapshot.last_price),
-        )
-        .join(
-            newest,
-            and_(
-                FuturesOddsSnapshot.outcome_id == newest.c.outcome_id,
-                FuturesOddsSnapshot.captured_at == newest.c.captured_at,
-            ),
-        )
-        .where(FuturesOddsSnapshot.bookmaker == KALSHI_BOOKMAKER)
-        .group_by(FuturesOddsSnapshot.outcome_id)
+    from app.utils.withheld_trades_cache import (
+        resolve_cached_venue_trades,
+        store_cached_venue_trades,
+        withheld_trades_cache_enabled,
     )
-    # Two Kalshi snapshots can share one `captured_at`; the aggregate above keeps
-    # the HIGHEST last_price among them, which is the fail-open direction — any
-    # trade evidence at all leaves the price on the page.
-    return {outcome_id: price for outcome_id, price in rows.all()}
+
+    use_cache = isinstance(db, AsyncSession) and withheld_trades_cache_enabled()
+    cached_hits: dict[int, list[float | None]] = {}
+    query_ids = outcome_ids
+    engine_key = 0
+    _kalshi_max_ns = f"{KALSHI_BOOKMAKER}:max"
+    if use_cache:
+        engine_key = _withheld_trades_engine_key(db)
+        # Reuse raw `"kalshi"` entries populated by `_newest_venue_trade_rows`
+        # (read-only), then check our own `"kalshi:max"` namespace so collapsed
+        # max-only rows never shadow multi-row tie-breaks in `"kalshi"`.
+        raw_hits, remaining_ids = await resolve_cached_venue_trades(
+            KALSHI_BOOKMAKER, outcome_ids, engine_key=engine_key
+        )
+        cached_hits.update(raw_hits)
+        if remaining_ids:
+            max_hits, query_ids = await resolve_cached_venue_trades(
+                _kalshi_max_ns, remaining_ids, engine_key=engine_key
+            )
+            cached_hits.update(max_hits)
+        else:
+            query_ids = []
+
+    fetched_rows: list = []
+    if query_ids:
+        newest = _newest_capture_per_outcome(query_ids, KALSHI_BOOKMAKER)
+        rows = await db.execute(
+            select(
+                FuturesOddsSnapshot.outcome_id,
+                func.max(FuturesOddsSnapshot.last_price),
+            )
+            .join(
+                newest,
+                and_(
+                    FuturesOddsSnapshot.outcome_id == newest.c.outcome_id,
+                    FuturesOddsSnapshot.captured_at == newest.c.captured_at,
+                ),
+            )
+            .where(FuturesOddsSnapshot.bookmaker == KALSHI_BOOKMAKER)
+            .group_by(FuturesOddsSnapshot.outcome_id)
+        )
+        fetched_rows = list(rows.all())
+        if use_cache:
+            await store_cached_venue_trades(
+                _kalshi_max_ns, query_ids, fetched_rows, engine_key=engine_key
+            )
+
+    # Two Kalshi snapshots can share one `captured_at`; keep the HIGHEST
+    # last_price among them (fail-open direction — any trade evidence at all
+    # leaves the price on the page). Preserve empty (`[]`) vs null (`[None]`).
+    out: dict = {}
+    for oid, prices in cached_hits.items():
+        if not prices:
+            continue
+        non_null = [p for p in prices if p is not None]
+        out[oid] = max(non_null) if non_null else None
+    for outcome_id, price in fetched_rows:
+        out[outcome_id] = price
+    return out
 
 
 _KALSHI_MULTI_SELECTION_AWARD_SERIES = frozenset({
@@ -4851,22 +4903,51 @@ async def _newest_venue_trade_rows(
     """
     if not outcome_ids:
         return []
-    newest = _newest_capture_per_outcome(outcome_ids, venue)
-    rows = await db.execute(
-        select(
-            FuturesOddsSnapshot.outcome_id,
-            FuturesOddsSnapshot.last_price,
-        )
-        .join(
-            newest,
-            and_(
-                FuturesOddsSnapshot.outcome_id == newest.c.outcome_id,
-                FuturesOddsSnapshot.captured_at == newest.c.captured_at,
-            ),
-        )
-        .where(FuturesOddsSnapshot.bookmaker == venue)
+    from app.utils.withheld_trades_cache import (
+        resolve_cached_venue_trades,
+        store_cached_venue_trades,
+        withheld_trades_cache_enabled,
     )
-    return list(rows.all())
+
+    use_cache = isinstance(db, AsyncSession) and withheld_trades_cache_enabled()
+    cached_hits: dict[int, list[float | None]] = {}
+    query_ids = outcome_ids
+    engine_key = 0
+    if use_cache:
+        engine_key = _withheld_trades_engine_key(db)
+        cached_hits, query_ids = await resolve_cached_venue_trades(
+            venue, outcome_ids, engine_key=engine_key
+        )
+
+    fetched_rows: list = []
+    if query_ids:
+        newest = _newest_capture_per_outcome(query_ids, venue)
+        rows = await db.execute(
+            select(
+                FuturesOddsSnapshot.outcome_id,
+                FuturesOddsSnapshot.last_price,
+            )
+            .join(
+                newest,
+                and_(
+                    FuturesOddsSnapshot.outcome_id == newest.c.outcome_id,
+                    FuturesOddsSnapshot.captured_at == newest.c.captured_at,
+                ),
+            )
+            .where(FuturesOddsSnapshot.bookmaker == venue)
+        )
+        fetched_rows = list(rows.all())
+        if use_cache:
+            await store_cached_venue_trades(
+                venue, query_ids, fetched_rows, engine_key=engine_key
+            )
+
+    out: list = []
+    for oid, prices in cached_hits.items():
+        for price in prices:
+            out.append((oid, price))
+    out.extend(fetched_rows)
+    return out
 
 
 def _closest_trade_by_outcome(candidates: list, rows: list) -> dict:
