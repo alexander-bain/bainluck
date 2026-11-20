@@ -19,7 +19,7 @@ What Candidate 3 changes over Candidate 2 (Ruling 277: A, #13100, #13106, #13097
    can reach the opening ten), caps opening-ten politics/world at <=1 and only
    when major/moving (keeping quiet/minor foreign elections out), caps fun at
    <=3 (<=1 long-shot single), caps entertainment at <=3 (<=1 weekly Netflix
-   chart card), and caps sports at <=4 across distinct sports (<=1 per sport).
+   chart card), and caps sports at <=2 across distinct sports (<=1 per sport).
 
 The harness reaches it with
 ``scorecard.py --replay app.utils.discover_rank_c3:rank_c3_mix``. Discover itself
@@ -53,7 +53,7 @@ MAX_ENTERTAINMENT_OPENING = 3
 MAX_WEEKLY_CHART_OPENING = 1
 MAX_POLITICS_OPENING = 1
 POLITICS_OPENING_MIN_SCORE = 85.0
-MAX_SPORTS_OPENING = 4
+MAX_SPORTS_OPENING = 2
 MAX_PER_SPORT_OPENING = 1
 
 #: Bounded grouped-card lift (replaces Candidate 2's flat +1.0).
@@ -235,10 +235,9 @@ def is_entertainment(card: dict) -> bool:
     return _category(card) in ENTERTAINMENT_CATEGORIES
 
 
-def is_sports(card: dict) -> bool:
-    if card.get("type") in ("event", "tournament"):
-        return True
-    cat = _category(card)
+def _is_sports_category(cat: str) -> bool:
+    if not cat:
+        return False
     if cat in SPORTS_CATEGORIES:
         return True
     return any(
@@ -257,8 +256,39 @@ def is_sports(card: dict) -> bool:
     )
 
 
+def _member_sport_categories(card: dict) -> list[str]:
+    data = (card.get("card") or {}).get("data") or {}
+    found: list[str] = []
+    for member in data.get("items") or []:
+        if not isinstance(member, dict):
+            continue
+        md = member.get("data") or {}
+        if member.get("type") in ("event", "tournament"):
+            sport = str(md.get("sport") or md.get("llm_sport_category") or "sports").strip().lower()
+            found.append(sport)
+        else:
+            mc = str(md.get("sport") or md.get("llm_sport_category") or "").strip().lower()
+            if _is_sports_category(mc):
+                found.append(mc)
+    return found
+
+
+def is_sports(card: dict) -> bool:
+    if card.get("type") in ("event", "tournament"):
+        return True
+    if _is_sports_category(_category(card)):
+        return True
+    if card.get("type") == "bundle":
+        return bool(_member_sport_categories(card))
+    return False
+
+
 def _sport_bucket(card: dict) -> str:
     cat = _category(card)
+    if not _is_sports_category(cat) and card.get("type") == "bundle":
+        member_cats = _member_sport_categories(card)
+        if member_cats:
+            cat = member_cats[0]
     if card.get("type") == "tournament" or "golf" in cat:
         return "golf"
     if "hockey" in cat or cat == "nhl":
@@ -491,10 +521,12 @@ def rank_c3_mix(
                 return True
         return False
 
+    for index, card in fixed.items():
+        if index < OPENING and index < len(seats):
+            _record_opening(card)
+
     for index in range(len(seats)):
         if seats[index] is not None:
-            if index < OPENING:
-                _record_opening(seats[index])  # type: ignore[arg-type]
             continue
         previous = seats[index - 1] if index > 0 else None
         following = seats[index + 1] if index + 1 < len(seats) else None

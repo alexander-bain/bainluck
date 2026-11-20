@@ -162,9 +162,11 @@ def test_opening_ten_enforces_mix_caps_adjacency_and_blocks_minor_foreign_politi
         _card("nhl_1", served_position=10, kind="event", score=95.0, category="icehockey_nhl", title="Stars @ Knights", hours_until_start=2.0),
         _card("nba_1", served_position=11, kind="event", score=93.0, category="basketball_nba", title="Lakers @ Celtics", hours_until_start=3.0),
         _card("nfl_1", served_position=12, kind="bundle", score=96.0, category="football", title="CFP picture"),
-        # Economics & Tech non-grouped singles
+        # Economics & Tech non-grouped singles (enough to fill opening ten without Pass 2)
         _card("econ_1", served_position=13, score=82.0, category="economics", title="Panama Canal traffic", days_until=7.0),
         _card("tech_1", served_position=14, score=83.0, category="tech", title="Next frontier model", days_until=10.0),
+        _card("econ_2", served_position=15, score=81.0, category="economics", title="CPI print", days_until=12.0),
+        _card("tech_2", served_position=16, score=80.0, category="tech", title="Chip supply", days_until=14.0),
         # Fun cards seated beyond 20 (including 2 long-shot singles; only 1 long-shot allowed)
         _card("fun_1", served_position=25, kind="bundle", score=92.0, category="politics", title="Aliens & UFOs", market_id=1001, days_until=200.0),
         _card("fun_2", served_position=30, score=86.0, category="entertainment", title="TIME Person of the Year", market_id=1002, days_until=220.0),
@@ -195,13 +197,44 @@ def test_opening_ten_enforces_mix_caps_adjacency_and_blocks_minor_foreign_politi
     assert len(fun_cards) == 3
     assert len(ls_cards) <= 1
 
-    # Golf does not triple up (<= 1 per sport)
+    # Golf does not triple up (<= 1 per sport) and total sports capped at <= 2
     golf_cards = [c for c in top10 if c3._sport_bucket(c) == "golf"]
     assert len(golf_cards) == 1
+    sports_cards = [c for c in top10 if c3.is_sports(c)]
+    assert len(sports_cards) <= 2
 
     # Never two grouped cards adjacent
     for a, b in zip(top10, top10[1:]):
         assert not (c3.is_grouped(a) and c3.is_grouped(b))
+
+
+def test_fixed_finished_game_and_blank_category_sports_bundle_count_toward_sports_cap():
+    """A finished game pinned in the opening ten and a blank-category team-schedule
+    bundle (member items with type='event') both count toward MAX_SPORTS_OPENING=2."""
+    team_bundle = _card("nba_bundle", served_position=1, kind="bundle", score=98.0, category="", title="Boston Celtics: next 3 games")
+    team_bundle["card"]["data"]["items"] = [
+        {"type": "event", "data": {"sport": "basketball_nba"}},
+    ]
+    slate = [
+        team_bundle,
+        _card("golf_1", served_position=2, kind="tournament", score=99.0, category="golf", title="The RSM Classic", days_until=2.0),
+        _card("nfl_1", served_position=3, kind="bundle", score=96.0, category="football", title="CFP picture"),
+        _card("tech_1", served_position=4, score=83.0, category="tech", title="Next frontier model"),
+        _card("tech_2", served_position=5, score=82.0, category="tech", title="Chip supply"),
+        _card("econ_1", served_position=6, score=81.0, category="economics", title="Inflation print"),
+        _card("econ_2", served_position=7, score=80.0, category="economics", title="Yield curve"),
+        _card("nhl_fin", served_position=8, kind="event", score=63.0, category="NHL", title="Canadiens @ Hurricanes", settled=True),
+        _card("ent_1", served_position=9, score=84.0, category="entertainment", title="Box office lead"),
+        _card("ent_2", served_position=10, score=83.0, category="entertainment", title="Album debut"),
+        _card("tech_3", served_position=11, score=79.0, category="tech", title="Cloud spend"),
+        _card("econ_3", served_position=12, score=78.0, category="economics", title="Housing starts"),
+    ]
+    ordered = c3.rank_c3_mix(slate, now=FROZEN_NOW, fun_ids=FUN_IDS, long_shot_ids=LONG_SHOT_IDS)
+    top10 = ordered[:10]
+    assert ordered[7]["item_key"] == "nhl_fin"
+    assert c3.is_sports(team_bundle)
+    assert c3._sport_bucket(team_bundle) == "basketball"
+    assert sum(1 for c in top10 if c3.is_sports(c)) == 2
 
 
 def test_truth_gate_failures_leave_page_and_finished_games_keep_seat():
@@ -219,4 +252,4 @@ def test_truth_gate_failures_leave_page_and_finished_games_keep_seat():
 def test_frozen_discover_rank_c3_sha256_matches_recorded_freeze():
     rank_path = Path(c3.__file__).resolve()
     digest = hashlib.sha256(rank_path.read_bytes()).hexdigest()
-    assert digest == "cc0a27408b90afc7840ae7a8df1b42cdcb843dcd3754efc5ecdd26e98ad00812"
+    assert digest == "e1becccb02926053fca4e261484032b42d7751ecdc7588e35220682d0baf0bf6"
