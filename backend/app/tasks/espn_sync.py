@@ -3727,6 +3727,25 @@ def espn_media_may_be_written(*, had_media, match_was_exact, repointed_from, fuz
     return bool(fuzzy_identical)
 
 
+def espn_abbreviation_may_be_written(
+    *, has_abbreviation, match_was_exact, repointed_from, fuzzy_identical
+):
+    """Whether the logo backfill may fill a blank ``Team.abbreviation`` (#13144).
+
+    Never overwrites a populated abbreviation. Fills a missing short name from
+    an exact match, a repoint, or a ``fuzzy_identical`` match (score 1.0 on the
+    row's own multi-word name with one unique ESPN club — e.g. ``Sacramento St
+    Hornets`` matching ``Sacramento State Hornets``). Partial fuzzy scores
+    (0.67 mascot hits like ``Delaware St Hornets``) and alias hits (``C Arkansas``)
+    stay refused, keeping the #9127 bar intact while letting already-crested
+    ``St``/``State`` schools receive their short name without touching media,
+    ``espn_id``, or ``alternate_names``.
+    """
+    if has_abbreviation:
+        return False
+    return bool(match_was_exact or repointed_from or fuzzy_identical)
+
+
 async def _backfill_team_logos():
     """Async implementation of backfill_team_logos."""
     from app.services.espn_api import ESPNAPIService, SPORT_LEAGUE_MAP
@@ -3875,6 +3894,18 @@ async def _backfill_team_logos():
                             repointed_from=repointed_from,
                             fuzzy_identical=fuzzy_identical,
                         ):
+                            if (
+                                matched_espn.abbreviation
+                                and espn_abbreviation_may_be_written(
+                                    has_abbreviation=bool(team.abbreviation),
+                                    match_was_exact=match_was_exact,
+                                    repointed_from=repointed_from,
+                                    fuzzy_identical=fuzzy_identical,
+                                )
+                            ):
+                                team.abbreviation = matched_espn.abbreviation
+                                stats["teams_updated"] += 1
+                                continue
                             stats["fuzzy_media_refused"] += 1
                             continue
 
@@ -3909,8 +3940,12 @@ async def _backfill_team_logos():
                                 team.espn_id = matched_espn.espn_id
                             if (
                                 matched_espn.abbreviation
-                                and not team.abbreviation
-                                and (match_was_exact or repointed_from)
+                                and espn_abbreviation_may_be_written(
+                                    has_abbreviation=bool(team.abbreviation),
+                                    match_was_exact=match_was_exact,
+                                    repointed_from=repointed_from,
+                                    fuzzy_identical=fuzzy_identical,
+                                )
                             ):
                                 team.abbreviation = matched_espn.abbreviation
                             if matched_espn.primary_color and not team.primary_color:

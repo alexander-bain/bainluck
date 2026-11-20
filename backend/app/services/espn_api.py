@@ -874,7 +874,11 @@ class ESPNAPIService:
             return []
 
         sport, league = path
-        url = f"{ESPN_API_BASE}/{sport}/{league}/teams?limit=100"
+        # #13144: ESPN defaults/caps at 100 when limit=100, which truncates
+        # Division I college leagues alphabetically around F (NCAAB ~365,
+        # WNCAAB ~363, NCAAF ~763). ESPN_GROUP_SCOPED_BOARDS already returned
+        # [] above (#5697).
+        url = f"{ESPN_API_BASE}/{sport}/{league}/teams?limit=1000"
 
         try:
             data = await self._get(url)
