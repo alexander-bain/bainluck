@@ -17,7 +17,7 @@ python-dotenv>=1.2.2
 # testing 2.1, not by deleting it (guard: tests/test_requirements_sqlalchemy_asyncio_8454.py).
 sqlalchemy[asyncio]>=2.0.50,<2.1
 asyncpg>=0.31.0
-psycopg2-binary>=2.9.9
+psycopg2-binary>=2.9.13
 alembic>=1.13.1
 
 # HTTP Client (for odds API)
