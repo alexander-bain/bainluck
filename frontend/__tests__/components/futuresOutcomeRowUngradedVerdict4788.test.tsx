@@ -426,3 +426,22 @@ describe("#4788 a retraction is not a verdict (CERT-2517 repair)", () => {
     expect(outcomeRowVerdict(retracted({ is_winner: false }), false)).toBeNull();
   });
 });
+
+test("an eliminated contender on an open field prints only Out as its value", () => {
+  const row = render(
+    outcome({
+      name: "I Just Might — Bruno Mars",
+      probability: null,
+      opening_probability: null,
+      probability_change_24h: null,
+      is_out: true,
+      is_winner: false,
+      resolution_source: "api_settlement",
+    }),
+    false,
+  );
+  expect(row).toContain(">Out<");
+  expect(row).not.toContain(">%<");
+  expect(row).not.toContain("outcome-price");
+  expect(row).not.toContain("No current price");
+});

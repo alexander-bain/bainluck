@@ -76,6 +76,7 @@ enum FuturesAtlasPresentation11666 {
         case noRecentProbability(lastRecordedText: String?)
         case won
         case lost
+        case out
         case resultUnconfirmed(lastRecordedText: String?)
 
         var primaryLabel: String {
@@ -88,6 +89,8 @@ enum FuturesAtlasPresentation11666 {
                 return EventAtlasStates11666.wonWithCheck
             case .lost:
                 return EventAtlasStates11666.lostWithCross
+            case .out:
+                return "Out"
             case .resultUnconfirmed:
                 return EventAtlasStates11666.resultNotConfirmed
             }
@@ -418,6 +421,7 @@ enum FuturesAtlasPresentation11666 {
             leaderOutcomeId = orderedOutcomes.first?.id
         case .twoWayDuel, .mutuallyExclusiveField, .participationField:
             orderedOutcomes = market.outcomes.sorted { a, b in
+                if (a.isOut == true) != (b.isOut == true) { return a.isOut != true }
                 let lhs = a.probability ?? -1
                 let rhs = b.probability ?? -1
                 if lhs != rhs { return lhs > rhs }
@@ -464,6 +468,7 @@ enum FuturesAtlasPresentation11666 {
         now: Date,
         timeZone: TimeZone
     ) -> RowDisplayValue {
+        if outcome.isOut == true { return .out }
         let rowValue = FuturesDetailRowValue.of(
             outcome,
             marketStatus: market.status,
@@ -1304,7 +1309,7 @@ struct FuturesAtlasHeadlineCard192A: View {
             Text(row.displayValue.primaryLabel)
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(DS.emerald)
-        case .lost, .noRecentProbability, .resultUnconfirmed:
+        case .lost, .out, .noRecentProbability, .resultUnconfirmed:
             Text(row.displayValue.primaryLabel)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(DS.textSecondary)
@@ -1591,7 +1596,7 @@ struct FuturesAtlasHeaderCardView11666: View {
             return .system(size: 38, weight: .black, design: .rounded)
         case .won, .lost:
             return .title.weight(.bold)
-        case .noRecentProbability, .resultUnconfirmed:
+        case .out, .noRecentProbability, .resultUnconfirmed:
             return .headline.weight(.semibold)
         }
     }
@@ -1602,7 +1607,7 @@ struct FuturesAtlasHeaderCardView11666: View {
             return DS.textPrimary
         case .won:
             return DS.emerald
-        case .lost, .noRecentProbability, .resultUnconfirmed:
+        case .lost, .out, .noRecentProbability, .resultUnconfirmed:
             return DS.textSecondary
         }
     }
@@ -1922,7 +1927,7 @@ struct FuturesAtlasBodyCardView11666: View {
         switch value {
         case .won:
             return DS.emerald
-        case .lost, .noRecentProbability, .resultUnconfirmed:
+        case .lost, .out, .noRecentProbability, .resultUnconfirmed:
             return DS.textSecondary
         case .chance:
             return isLeading ? DS.emerald : DS.textPrimary

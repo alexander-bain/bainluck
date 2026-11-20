@@ -835,12 +835,14 @@ _WEATHER_SERIES_TICKERS = [
     "KXRAIN", "KXRAINWKND",
 ] + _WEATHER_MONTHLY_SERIES_TICKERS
 
-# What the supplementary rescue actually walks. Sport was the whole of this
-# policy until weather joined it; the two lists stay separate because they
-# carry separate evidence, and every consumer below reads the concatenation so
-# the fetch, the discovery hand-off and the empty-event backfill cannot drift
-# apart on which series the net covers.
-_RESCUE_SERIES_TICKERS = _SPORTS_SERIES_TICKERS + _WEATHER_SERIES_TICKERS
+# The main cursor can be deep in settled history when the nominees open.
+# Fetch the active Grammy fields with their markets in the reserved pass.
+# On Nov 20 the general series had 98 open events and 819 nested markets.
+_OPEN_GRAMMY_SERIES_TICKERS = ["KXGRAMMY", "KXGRAMAOTY", "KXGRAMBNA"]
+
+_RESCUE_SERIES_TICKERS = (
+    _SPORTS_SERIES_TICKERS + _WEATHER_SERIES_TICKERS + _OPEN_GRAMMY_SERIES_TICKERS
+)
 
 #: Outcomes of merging one fetched event into the accumulator.
 MERGE_ADDED = "added"        # the event was not held at all
@@ -1042,7 +1044,7 @@ _BACKFILL_SERIES_MAX_PAGES = 10
 # first, so golf keeps its first claim; what rain jumps is the ~50 non-priority
 # sports series behind it.
 _PRIORITY_RESCUE_PREFIXES = (
-    "KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD", "KXRAIN",
+    "KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD", "KXRAIN", "KXGRAM",
 )
 
 # ---------------------------------------------------------------------------
@@ -2891,6 +2893,7 @@ class KalshiAPIService(BaseAPIClient):
             key=lambda s: 0 if s.upper().startswith(_PRIORITY_RESCUE_PREFIXES) else 1,
         )
         for st in _ordered_series:
+            open_grammy_series = st in _OPEN_GRAMMY_SERIES_TICKERS
             _supp_nested = not any(tok in st.upper() for tok in _HEAVY_TOKENS)
             _progress(f"fetch:supp:{st}")
             if _past_supp_deadline():
@@ -2908,7 +2911,7 @@ class KalshiAPIService(BaseAPIClient):
             # (the championship) is a prefix of every MLB series, so once the
             # open pass above holds tonight's KXMLBHIT events, a prefix test
             # would skip the World Series rescue on every game day.
-            if st not in _ALWAYS_FETCH_SERIES and any(
+            if not (open_grammy_series or st in _ALWAYS_FETCH_SERIES) and any(
                 event_series_ticker(e.event_ticker) == st.upper()
                 for e in all_events.values()
             ):
@@ -2934,7 +2937,7 @@ class KalshiAPIService(BaseAPIClient):
                     # except below swallows → skip to the next series.
                     events_page, series_cursor = await asyncio.wait_for(
                         self.get_events(
-                            status=None,
+                            status="open" if open_grammy_series else None,
                             series_ticker=st,
                             with_nested_markets=_supp_nested,
                             limit=200,

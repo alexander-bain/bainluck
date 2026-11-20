@@ -10744,7 +10744,9 @@ def _format_market_detail(
     """
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
     from app.utils.superseded_name_twins import drop_superseded_name_twins
+    from app.utils.event_awards import GRAMMY_GENERAL_FIELD_POLYMARKET_IDS
     from app.utils.field_opening_coherence import field_openings_publishable
+    from app.utils.graded_out_field_legs import TERMINAL_LOSER_CEILING
     from app.utils.odds_api_retirement import NOT_LIVE_STATUSES, WITHDRAWN_STATUS
     from app.utils.market_staleness import (
         expired_ladder_rungs,
@@ -11400,6 +11402,39 @@ def _format_market_detail(
     if _board_status == WITHDRAWN_STATUS:
         withheld = withheld | {o.id for o in sorted_outcomes}
 
+    eliminated = []
+    if (
+        _board_status == "open"
+        and market.source == "polymarket"
+        and market.external_id in GRAMMY_GENERAL_FIELD_POLYMARKET_IDS
+        and getattr(market, "mutually_exclusive", None) is True
+    ):
+        # A venue-graded No is out of the field even if an old trade was
+        # written over its terminal price. Keep it on the board, without a
+        # quote or clock, and compute the live distribution without it.
+        for row in outcomes:
+            if (
+                row["is_winner"] is False
+                and row["resolution_source"] == "api_settlement"
+                and (
+                    row["probability"] is None
+                    or row["probability"] < TERMINAL_LOSER_CEILING
+                )
+            ):
+                row["is_out"] = True
+                for field in (
+                    *WITHHELD_PRICE_FIELDS,
+                    "rank_change_24h",
+                    "opening_probability",
+                    "opening_american_odds",
+                    "last_updated",
+                    "price_changed_at",
+                ):
+                    row[field] = None
+                eliminated.append(row)
+        if eliminated:
+            outcomes = [row for row in outcomes if not row.get("is_out")]
+
     prices_withheld = 0
     if withheld:
         for o in outcomes:
@@ -11573,7 +11608,9 @@ def _format_market_detail(
     # two-row count is what the combat adapters read as a fight — so letting the
     # expiry drop feed this would invent a breadcrumb on a river-level market.
     # The identity answer stays bit-identical to the one served before #7274.
-    concept_outcome_count = len(outcomes) + expired_rungs_dropped + raw_dominant_dropped
+    concept_outcome_count = (
+        len(outcomes) + len(eliminated) + expired_rungs_dropped + raw_dominant_dropped
+    )
 
     # #4253: a single-winner field cannot have five different winners. Measured
     # live 2026-09-09, `/api/futures/12764689` (*Dancing with the Stars*) served
@@ -11668,6 +11705,7 @@ def _format_market_detail(
     #
     # Prices and eligibility are untouched by design — this only overwrites the one
     # field whose whole job is to say where the row sits, using the list it sits in.
+    outcomes.extend(eliminated)
     assign_display_ranks(outcomes)
 
     # The source price is the selected stored input, before field normalization.

@@ -768,7 +768,7 @@ export default function OutcomeRow({
               data-testid="outcome-current-unavailable"
               className="text-xs text-text-secondary"
             >
-              No current price
+              {outcome.is_out === true ? "Out" : "No current price"}
             </div>
           ) : (
             <>

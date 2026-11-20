@@ -1022,7 +1022,11 @@ struct FuturesDetailView: View {
                     }
                     .multilineTextAlignment(.trailing)
                 case .none:
-                    EmptyView()
+                    if outcome.isOut == true {
+                        Text("Out")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(DS.textSecondary)
+                    }
                 }
             }
 
