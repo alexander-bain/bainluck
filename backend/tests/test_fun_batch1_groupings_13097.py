@@ -77,19 +77,19 @@ async def test_batch1_three_fun_groupings_build_cleanly_with_full_parity_and_twi
     c_p, p_p = _compute_member_number_parity(wc_fi, wc_cp)
     assert c_p["passes"] is True and p_p["passes"] is True
 
-    # 2. The Next James Bond Film (including "to play M" role phrasing)
+    # 2. The Next James Bond Film (promoted to public after Fable's 7:07 AM PT preview look)
     jb_def = load_machinery_definition("data/groupings/candidates/machinery-next-james-bond.json")
-    assert jb_def["stage"] == "preview"
+    assert jb_def["stage"] == "public"
     assert jb_def["look"] == "faces"
     jb_prod = build_container_machinery_producer(jb_def)
-    assert jb_prod.stage == "preview" and jb_prod.look == "faces"
+    assert jb_prod.stage == "public" and jb_prod.look == "faces"
     bond_markets = list(_sample_markets()) + [
         {"id": 108259, "name": "Next James Bond film: Actor cast as M", "status": "open", "source": "kalshi", "category": "entertainment", "outcomes": [{"id": 91, "name": "Ralph Fiennes", "probability": 0.34}, {"id": 92, "name": "Gary Oldman", "probability": 0.12}, {"id": 93, "name": "Idris Elba", "probability": 0.08}]},
     ]
     jb_db = {"events": [], "markets": bond_markets, "paired_sets": {}, "market_histories": {}}
     jb_res = await produce_container_machinery(jb_db, jb_def, now=NOW)
     assert jb_res.machinery_card["form_id"] == "sibling_fields_grid"
-    assert jb_res.machinery_card["stage"] == "preview"
+    assert jb_res.machinery_card["stage"] == "public"
     assert jb_res.machinery_card["look"] == "faces"
     assert len(jb_res.members) == 4
     assert jb_res.machinery_card["rows"][0]["name"].startswith("James Bond Theme · Raye")
@@ -295,7 +295,7 @@ async def test_more_sets_excludes_preview_stage_under_public_set(monkeypatch: An
         reset_roundup_cache_for_tests()
         _seed_producer("machinery-oscars-best-picture", "Oscars Best Picture", "entertainment", "public")
         _seed_producer("machinery-fed-and-macro", "Fed & Macro", "economics", "public")
-        _seed_producer("machinery-next-james-bond", "The Next James Bond Film", "entertainment", "preview")
+        _seed_producer("machinery-white-christmas", "White Christmas", "weather", "preview")
 
         cards = await select_more_sets(
             fake_db,
