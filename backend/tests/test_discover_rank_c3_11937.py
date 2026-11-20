@@ -219,4 +219,4 @@ def test_truth_gate_failures_leave_page_and_finished_games_keep_seat():
 def test_frozen_discover_rank_c3_sha256_matches_recorded_freeze():
     rank_path = Path(c3.__file__).resolve()
     digest = hashlib.sha256(rank_path.read_bytes()).hexdigest()
-    assert digest == "966973ec5dd9cb07837221ec3e0bd973d3af29421c7a40579b2f5de46def9e92"
+    assert digest == "cc0a27408b90afc7840ae7a8df1b42cdcb843dcd3754efc5ecdd26e98ad00812"

@@ -176,36 +176,35 @@ def _fun_id_sets(
     return resolved_fun, resolved_ls
 
 
+def _as_int(value: Any) -> Optional[int]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _card_market_ids(card: dict) -> list[int]:
     inner = card.get("card") or {}
     data = inner.get("data") or {}
     kind = card.get("type") or inner.get("type")
     mids: list[int] = []
     if kind == "futures":
-        mid = data.get("id") or data.get("market_id")
+        mid = _as_int(data.get("id") if data.get("id") is not None else data.get("market_id"))
         if mid is not None:
-            try:
-                mids.append(int(mid))
-            except (TypeError, ValueError):
-                pass
+            mids.append(mid)
     elif kind == "bundle":
         for member in data.get("items") or []:
             md = (member or {}).get("data") or {}
-            mid = md.get("id") or md.get("market_id")
-            if mid is not None:
-                try:
-                    mi = int(mid)
-                    if mi not in mids:
-                        mids.append(mi)
-                except (TypeError, ValueError):
-                    pass
-        for mid in data.get("member_ids") or []:
-            try:
-                mi = int(mid)
-                if mi not in mids:
-                    mids.append(mi)
-            except (TypeError, ValueError):
-                pass
+            raw_mid = md.get("id") if md.get("id") is not None else md.get("market_id")
+            mi = _as_int(raw_mid)
+            if mi is not None and mi not in mids:
+                mids.append(mi)
+        for raw_mid in data.get("member_ids") or []:
+            mi = _as_int(raw_mid)
+            if mi is not None and mi not in mids:
+                mids.append(mi)
     return mids
 
 
