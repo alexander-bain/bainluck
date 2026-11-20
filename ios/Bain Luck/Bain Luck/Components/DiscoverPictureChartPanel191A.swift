@@ -299,7 +299,7 @@ enum DiscoverPictureChart191A {
             if let openP = openingProb {
                 let openPct = Int((openP * 100.0).rounded())
                 if openPct <= 40 {
-                    return "Upset \u{00B7} Opened at \(openPct)%"
+                    return "Upset \u{00B7} \(openPct)% pregame"
                 }
                 if let minP = lowestInPlayProb {
                     let minPct = Int((minP * 100.0).rounded())
@@ -307,7 +307,7 @@ enum DiscoverPictureChart191A {
                         return "Rallied from \(minPct)%"
                     }
                 }
-                return "Opened at \(openPct)% \u{00B7} Won"
+                return "\(openPct)% pregame \u{00B7} Won"
             }
             if let minP = lowestInPlayProb {
                 let minPct = Int((minP * 100.0).rounded())

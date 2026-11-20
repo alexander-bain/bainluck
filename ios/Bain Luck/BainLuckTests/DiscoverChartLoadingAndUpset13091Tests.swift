@@ -13,8 +13,8 @@ import Vision
 ///    (`"Loading win-chance chart"`) instead of a blank box while history loads.
 /// 2. Two-way Discover game charts label whose win chance the curve represents
 ///    (`"Nuggets win chance"`, `"Jazz win chance"`) and state the deterministic
-///    pregame-to-final outcome (`"Upset · Opened at 15%"`, `"Rallied from 14%"`,
-///    `"Opened at 64% · Won"`) with zero model-written text and zero `"…"`.
+///    pregame-to-final outcome (`"Upset · 15% pregame"`, `"Rallied from 14%"`,
+///    `"64% pregame · Won"`) with zero model-written text and zero `"…"`.
 /// 3. Finished two-way Discover cards whose `/api/feed` payload omitted `prematch_odds`
 ///    recover the `Pregame` column (`15%` / `85%`) from `EventHistoryResponse`.
 @MainActor
@@ -163,7 +163,51 @@ final class DiscoverChartLoadingAndUpset13091Tests: XCTestCase {
         )
         XCTAssertEqual(jazzChartModel.perspective, .away)
         XCTAssertEqual(jazzChartModel.chartHeaderTitle, "Jazz win chance")
-        XCTAssertEqual(jazzChartModel.finishedSummaryLabel, "Upset · Opened at 15%")
+        XCTAssertEqual(jazzChartModel.finishedSummaryLabel, "Upset · 15% pregame")
+
+        // 3. Favorite win with no deep dip -> "<N>% pregame · Won" (never "Opened at")
+        let favEvent = try decodeEvent(#"""
+        {
+          "id": 15350800,
+          "sport": "basketball_nba",
+          "sport_name": "NBA",
+          "away_team": "Miami Heat",
+          "home_team": "Boston Celtics",
+          "commence_time": "2026-11-19T00:30:00Z",
+          "status": "completed",
+          "away_score": 98,
+          "home_score": 112,
+          "prematch_odds": {"away_probability": 0.36, "home_probability": 0.64, "away_rendered_percent": 36, "home_rendered_percent": 64, "source": "kalshi"}
+        }
+        """#)
+        let favHistory = try decodeHistory(#"""
+        {
+          "event_id": 15350800,
+          "home_team": "Boston Celtics",
+          "away_team": "Miami Heat",
+          "status": "completed",
+          "completed_at": "2026-11-19T02:55:00Z",
+          "history": [],
+          "win_prob_history": {
+            "kalshi": [
+              {"timestamp": "2026-11-19T00:28:00Z", "home_probability": 0.64},
+              {"timestamp": "2026-11-19T02:52:00Z", "home_probability": 1.0}
+            ]
+          },
+          "aggregate_line": [
+            {"timestamp": "2026-11-19T00:28:00Z", "home_probability": 0.64},
+            {"timestamp": "2026-11-19T01:15:00Z", "home_probability": 0.72},
+            {"timestamp": "2026-11-19T02:52:00Z", "home_probability": 1.0}
+          ]
+        }
+        """#)
+        let favPrematch = PrematchReading.resolve(prematch: favEvent.prematchOdds, opening: favEvent.openingOdds)
+        let favModel = DiscoverPictureChart191A.build(
+            event: favEvent,
+            prematch: favPrematch,
+            history: favHistory
+        )
+        XCTAssertEqual(favModel.finishedSummaryLabel, "64% pregame · Won")
     }
 
     #if canImport(UIKit)
@@ -323,7 +367,7 @@ final class DiscoverChartLoadingAndUpset13091Tests: XCTestCase {
                         chartHistory: nuggetsHistory
                     )
 
-                    // 3. Loaded #13092 Jazz upset card (`prematch_odds` recovered from history -> `15%` / `85%` + `Upset · Opened at 15%`)
+                    // 3. Loaded #13092 Jazz upset card (`prematch_odds` recovered from history -> `15%` / `85%` + `Upset · 15% pregame`)
                     NativeEventDiscoverCard(
                         event: jazzEvent,
                         feedContext: nil,
@@ -385,7 +429,8 @@ final class DiscoverChartLoadingAndUpset13091Tests: XCTestCase {
                 XCTAssertTrue(spaceJoined.contains("Nuggets win chance"), "Expected Nuggets win chance header (\(typeTag), \(scheme)); got: \(joined)")
                 XCTAssertTrue(spaceJoined.contains("Rallied from 14%"), "Expected Rallied from 14% summary (\(typeTag), \(scheme)); got: \(joined)")
                 XCTAssertTrue(spaceJoined.contains("Jazz win chance"), "Expected Jazz win chance header (\(typeTag), \(scheme)); got: \(joined)")
-                XCTAssertTrue(spaceJoined.contains("Opened at 15%"), "Expected Upset · Opened at 15% summary (\(typeTag), \(scheme)); got: \(joined)")
+                XCTAssertTrue(spaceJoined.contains("15% pregame"), "Expected Upset · 15% pregame summary (\(typeTag), \(scheme)); got: \(joined)")
+                XCTAssertFalse(spaceJoined.contains("Opened at"), "Discover summary must never use 'Opened at' (\(typeTag), \(scheme)); got: \(joined)")
                 XCTAssertFalse(
                     lines.contains(where: { $0.contains("…") || $0.contains("...") }),
                     "Discover cards (\(typeTag), \(scheme)) must have zero ellipsis; got: \(joined)"
