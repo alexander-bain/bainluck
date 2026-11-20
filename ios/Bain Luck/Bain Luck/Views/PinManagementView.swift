@@ -56,10 +56,14 @@ struct PinManagementView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .macPinManagementDoneShortcut()
+                }
             }
             .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
         }
+        .macPinManagementSheetFrame()
         #if DEBUG
         .safeAreaInset(edge: .bottom) {
             if let runtime = PinManagementRuntime9875.shared {
@@ -112,5 +116,12 @@ struct PinManagementView: View {
             .accessibilityIdentifier("removePin.\(pin.id)")
         }
         .accessibilityIdentifier("savedPin.\(pin.id)")
+        .macPinManagementRowMenu(
+            pin: pin,
+            metadata: vm.metadata[pin],
+            isSaving: pinManager.isSaving(type: pin.type, id: pin.value),
+            onRetryDetails: { Task { await vm.load(pinManager.savedPins, retryFailed: true) } },
+            onRemove: { pinManager.togglePin(type: pin.type, id: pin.value) }
+        )
     }
 }
