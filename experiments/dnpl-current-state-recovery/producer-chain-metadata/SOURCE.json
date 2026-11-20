@@ -1,0 +1,35 @@
+{
+  "current_commit": "b2b92fe86467d0accdb02f7b765ada020b594aec",
+  "checked_at_utc": "2026-10-21T15:37:00Z",
+  "read_route": "GitHub connector fetch_file at exact commit",
+  "reference_modules": {
+    "backend/app/utils/blend_preview.py": {
+      "git_blob": "984e5fc22486789b75764b2d6e92bc5ac2b6e5ee",
+      "sha256": "a02404b14b6aba5df63da81add1bebe422c776ec956eeee12d454068bcf28281",
+      "bytes": 26426
+    },
+    "backend/app/tasks/live_blend_refresh.py": {
+      "git_blob": "0879bbc6e8c06e82ac13aa74df79c3d17007a350",
+      "sha256": "1939e56e07a36e3d0071df88e4d2a1ba310b5e975ffcf667613b9e5e9141a22b",
+      "bytes": 245586
+    }
+  },
+  "dependency_checkout": "a43949050b966b8009bddd5dda1afd65ddf1f9f6",
+  "aggregation_blob_current_and_pinned": "afed3903c0287c9f75a6ce88bc4a7c1653c8c474",
+  "full_current_checkout_executed": false,
+  "owners": [
+    {
+      "pr": 11366,
+      "state": "merged",
+      "commit": "b2b92fe86467d0accdb02f7b765ada020b594aec",
+      "url": "https://github.com/alexander-bain/bainluck/pull/11366"
+    },
+    {
+      "pr": 11372,
+      "state": "open",
+      "head": "0a7d40e13127102e36af02bb2780f209ed990b98",
+      "url": "https://github.com/alexander-bain/bainluck/pull/11372"
+    }
+  ],
+  "claim": "Read-only overlap check; Live retains DNPL ownership, Speed owns same-value observation work. No owner takeover or acknowledgment inferred."
+}

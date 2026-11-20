@@ -1,0 +1,41 @@
+{
+  "extends": "../source/frontend/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    "baseUrl": "../source/frontend",
+    "paths": {
+      "@/*": [
+        "./*"
+      ],
+      "@/lib/blendPreview": [
+        "../../monotonic-candidate/blendPreview.ts"
+      ],
+      "@/lib/liveStreamController": [
+        "../../monotonic-candidate/liveStreamController.ts"
+      ],
+      "react": [
+        "node_modules/@types/react"
+      ],
+      "react/*": [
+        "node_modules/@types/react/*"
+      ]
+    },
+    "typeRoots": [
+      "../source/frontend/node_modules/@types"
+    ],
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "../monotonic-candidate/useLiveEventStream.ts",
+    "../monotonic-candidate/requestLease.ts",
+    "../monotonic-candidate/acceptCurrentPreview.ts",
+    "../monotonic-candidate/blendPreview.ts",
+    "../monotonic-candidate/PendingHero.tsx"
+  ],
+  "exclude": [
+    "../source/frontend/node_modules"
+  ]
+}

@@ -1,0 +1,300 @@
+✔ actual hook GET admission ignores wall offset -1000000000000 (265.856497ms)
+✔ actual hook GET admission ignores wall offset 0 (95.485349ms)
+✔ actual hook GET admission ignores wall offset 100000 (103.864444ms)
+✔ actual hook GET admission ignores wall offset 1000000000000 (106.084337ms)
+✔ fetch body parsing delay is charged to original dispatch, not headers or JSON completion (64.641434ms)
+✔ wall jump -1000000000000 while GET is in flight neither rejects nor extends lease (35.650149ms)
+✔ wall jump 1000000000000 while GET is in flight neither rejects nor extends lease (95.493938ms)
+✔ response exactly at request-start lease expiry cannot adopt (55.360462ms)
+✔ stalled timers cannot admit lease-expired response before probe lifetime ends (63.613691ms)
+✔ stalled probe expiry timer still aborts and rejects response at original arm deadline (64.224327ms)
+✔ unrelated render after stalled expiry timer cannot redisplay expired GET authority (65.679108ms)
+✔ hidden invalidates inflight result even when fetch ignores abort (43.38856ms)
+✔ navigation invalidates inflight result even when fetch ignores abort (56.484627ms)
+✔ native-open invalidates inflight result even when fetch ignores abort (40.574638ms)
+✔ terminal invalidates inflight result even when fetch ignores abort (39.625602ms)
+✔ rollover invalidates inflight result even when fetch ignores abort (80.934957ms)
+✔ unmount invalidates inflight result without touching retired hook (70.695821ms)
+✔ newer revoke received while GET is inflight fences captured response (65.448101ms)
+✔ newer committed frame cancels and fences captured GET response (41.454053ms)
+✔ newer reconcile floor fences captured response without presenting a probability (45.06863ms)
+✔ actual committed page adoption cancels probe without restoring lifetime credit (44.740001ms)
+✔ pending duplicate OPEN does not extend 250 ms no-probability deadline (87.471006ms)
+✔ pending unavailable resolves only after actual newer page adoption, not receipt (42.541766ms)
+✔ late same-transport snapshot retains existing pending recovery semantics (92.192305ms)
+✔ expired GET response fences later same-chain live packet after wall rollback (26.242482ms)
+✔ frame-null zero-budget GET fences late same-chain live under wall rollback (50.657392ms)
+✔ request-start admission is independent of wall offset -1000000000000000 (8.417092ms)
+✔ request-start admission is independent of wall offset -60000 (0.364476ms)
+✔ request-start admission is independent of wall offset 0 (0.269359ms)
+✔ request-start admission is independent of wall offset 10400 (0.477131ms)
+✔ request-start admission is independent of wall offset 1000000000000000 (0.266016ms)
+✔ transit consumes budget, never granting receipt plus remaining (0.824726ms)
+✔ response at or beyond anchored deadline 11000 fails closed (1.201969ms)
+✔ response at or beyond anchored deadline 11000.001 fails closed (2.212991ms)
+✔ response at or beyond anchored deadline 11500 fails closed (0.972834ms)
+✔ response at or beyond anchored deadline 100000000 fails closed (0.45283ms)
+✔ independent end-to-end delay matrix never crosses true original server deadline (12.997207ms)
+✔ wall jumps after admission cannot affect display lease or observation time (0.672855ms)
+✔ duplicate equal sequence with inflated budget preserves original deadline (4.091738ms)
+✔ reopened same sequence cannot refresh an expired lease even with a later request (1.381591ms)
+✔ reopened same sequence before expiry keeps the earliest lease cap (0.286127ms)
+✔ later same-chain sequence cannot acquire a fresh wall or relative lease (0.298517ms)
+✔ later same-chain sequence after expiry remains invisible (0.220099ms)
+✔ newer revoke defeats captured older successful GET (0.697168ms)
+✔ newer live sequence defeats older successful GET without clearing newer value (0.52001ms)
+✔ newer committed floor defeats captured old-base response and subsequent old-base data (0.487385ms)
+✔ replacement epoch defeats captured old owner response (0.855167ms)
+✔ foreign event response cannot change current reader (0.626887ms)
+✔ invalid remaining lease undefined cannot grant GET authority (5.833043ms)
+✔ invalid remaining lease null cannot grant GET authority (0.99182ms)
+✔ invalid remaining lease 0 cannot grant GET authority (0.124535ms)
+✔ invalid remaining lease -1 cannot grant GET authority (0.124724ms)
+✔ invalid remaining lease 0.5 cannot grant GET authority (0.052981ms)
+✔ invalid remaining lease 60001 cannot grant GET authority (0.040546ms)
+✔ invalid remaining lease Infinity cannot grant GET authority (0.215735ms)
+✔ invalid remaining lease NaN cannot grant GET authority (0.040579ms)
+✔ invalid remaining lease 600 cannot grant GET authority (0.041363ms)
+✔ invalid remaining lease [object Object] cannot grant GET authority (0.039349ms)
+✔ invalid remaining lease true cannot grant GET authority (0.261363ms)
+✔ invalid local timing start=NaN, now=10500 fails closed (0.155069ms)
+✔ invalid local timing start=Infinity, now=10500 fails closed (0.077537ms)
+✔ invalid local timing start=-1, now=10500 fails closed (0.044615ms)
+✔ invalid local timing start=10501, now=10500 fails closed (0.035158ms)
+✔ invalid local timing start=10400, now=NaN fails closed (0.034564ms)
+✔ invalid local timing start=10400, now=Infinity fails closed (0.031508ms)
+✔ invalid lease identity undefined:undefined fails closed (0.104289ms)
+✔ invalid lease identity object:null fails closed (0.041308ms)
+✔ invalid lease identity string: fails closed (0.09688ms)
+✔ invalid lease identity number:1 fails closed (0.084275ms)
+✔ invalid lease identity object:[object Object] fails closed (0.198641ms)
+✔ invalid lease identity string:xxxxxxxxxxxxxxxxxxxx fails closed (1.379445ms)
+✔ wire-shaped client deadline cannot replace private local request binding (0.543993ms)
+✔ private binding never survives serialization onto unrelated wire objects (0.201264ms)
+✔ maximum allowed budget is bounded by request start (0.139623ms)
+✔ expired GET retains cap so wall rollback cannot revive higher sequence from same chain (1.265212ms)
+✔ frame-null zero-budget snapshot caps higher sequence late live despite wall rollback (0.160342ms)
+✔ frame-null positive budget already consumed in transit still fences later same-chain live (0.087933ms)
+✔ zero budget remains valid non-renewal metadata but never visible authority (0.088832ms)
+✔ expired empty older-sequence snapshot clears already-held newer same-chain preview (0.142234ms)
+✔ empty older-sequence snapshot shortens held same-chain lease without renewing it (0.151491ms)
+✔ expired empty older-sequence snapshot cannot poison unrelated held chain (0.168443ms)
+ℹ tests 81
+ℹ suites 0
+ℹ pass 81
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3466.802669
+✔ GET lease ignores initial wall clock -2000000000000 (754.087183ms)
+✔ GET lease ignores initial wall clock 100000 (128.732162ms)
+✔ GET lease ignores initial wall clock 2000000000000 (92.679194ms)
+✔ wall jumps during request and after adoption do not change deadline (54.495782ms)
+✔ slow JSON/body settlement consumes original request budget (76.690983ms)
+✔ exact conservative lease boundary is rejected before adoption (110.625106ms)
+✔ same-chain higher live sequence cannot extend GET expiry after wall rollback (97.761142ms)
+✔ native-open equal-sequence envelope retains original monotonic cap (82.599751ms)
+✔ expiry survives same-base update and replay after held reset (86.696839ms)
+✔ revoke watermark survives native reset and earlier same-chain replay (63.946982ms)
+✔ new commit and snapshot floors beat a valid remaining lease (40.358049ms)
+✔ actual page adoption cancels request despite a valid server lease (72.349707ms)
+✔ hidden queued callback cannot adopt (59.999877ms)
+✔ wire-supplied local deadline cannot forge the private request binding (83.02482ms)
+✔ expired GET must not leave a later same-chain live escape through wall fallback (43.264704ms)
+✔ same-sequence GET tightens an already held live lease (66.479208ms)
+✔ expired empty snapshot retains same-chain non-renewal cap (63.051267ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2853.924164
+........                                                                 [100%]
+8 passed in 0.04s
+PASS distinct exact owner claims after 9999999999999
+PASS distinct exact owner claims after 99999999999999
+PASS distinct exact owner claims after 100000000000000
+PASS distinct exact owner claims after 999999999999999
+PASS distinct exact owner claims after 9007199254740989
+PASS MAX claim exhaustion disables replay before wrapping or rounding
+PASS large owner fence accepts exact current and rejects previous
+PASS large sequence stored exactly 100000000000001
+PASS large sequence stored exactly 9007199254740990
+PASS large sequence stored exactly 9007199254740991
+PASS large revoke own seq rejects older blend
+PASS large commit floor and equal preview base preserve exact values
+PASS large original expiry serializes exact and does not extend
+PASS noncanonical or unsafe seq refused 9007199254740992
+PASS noncanonical or unsafe seq refused 9007199254740991.1
+PASS noncanonical or unsafe seq refused 9007199254740991.4
+PASS noncanonical or unsafe seq refused 1.0
+PASS noncanonical or unsafe seq refused 1e2
+PASS noncanonical or unsafe seq refused 01
+PASS noncanonical or unsafe seq refused -1
+PASS noncanonical or unsafe seq refused +1
+PASS noncanonical or unsafe seq refused -0
+PASS noncanonical or unsafe seq refused 0x10
+PASS noncanonical or unsafe seq refused nan
+PASS noncanonical or unsafe seq refused inf
+PASS noncanonical or unsafe seq refused
+PASS noncanonical or unsafe seq refused  1
+PASS noncanonical or unsafe seq refused 1
+PASS noncanonical or unsafe seq refused 1
+PASS malformed coverage cannot become known floor
+PASS zero remains exact for base and coverage
+PASS present corrupt epoch disables rather than defaulting
+PASS present corrupt seq disables rather than defaulting
+PASS present corrupt base disables rather than defaulting
+PASS present corrupt expiry disables rather than defaulting
+PASS present corrupt floor disables rather than defaulting
+PASS legacy scientific owner cannot be treated as valid authority
+PASS legacy invalid counter cannot be incremented or reenabled
+RESULT 38 passed, 0 failed; engine=Lua 5.1
+PASS accepted publication retained in same operation
+PASS higher owner without first publication refuses predecessor
+PASS owner claim before old offer fences
+PASS old owner revoke still publishes and cannot erase successor
+PASS current revoke seq prevents delayed older blend
+PASS duplicates and newer same-chain cannot extend deadline
+PASS revoke preserves fixed same-chain deadline
+PASS remaining duration freshly decreases without write
+PASS commit higher floor invalidates older base
+PASS preview recomposed on equal commit floor survives
+PASS commit floor survives new owner claim
+PASS out-of-order commits cannot lower known floor
+PASS fresh DB floor catches commit without notification
+PASS same WPS revision terminal coverage blocks and latches
+PASS different nonterminal status refuses mismatched preview
+PASS missing owner fails closed
+PASS missing marker cannot be restored by snapshot offer or commit
+PASS HSET before error leaves replay disabled after healthy publication
+PASS marker restore before error does not reopen replay
+PASS PUBLISH before error cannot retain offered authority
+PASS commit write before error disables replay, publish survives
+PASS coverage write before error disables replay
+PASS HSET after error leaves replay disabled after healthy publication
+PASS marker restore after error does not reopen replay
+PASS PUBLISH after error cannot retain offered authority
+PASS commit write after error disables replay, publish survives
+PASS coverage write after error disables replay
+PASS failed delete barrier stops before PUBLISH
+PASS cold/wrong-type retention does not suppress accepted live
+PASS owner read error is not bypassed as healthy acceptance
+PASS new claim after disabled epoch can recover only successor authority
+PASS failed claim owner mutation cannot leave replay enabled
+PASS invalid original deadline preserves live but disables replay
+PASS expired preview retains floor but cannot replay
+PASS commit/offer race offer-first
+PASS commit/offer race commit-first
+PASS first successor revoke does not inherit predecessor lease cap
+PASS coverage behind Redis floor cannot certify current status
+PASS future issued time cannot produce oversized remaining lease
+PASS preview newer base itself requires newer DB coverage
+PASS owner read failure does not suppress independent committed publication
+PASS uncached producer frame preserves live and invalidates replay
+PASS optional marker read failure preserves proven owner live acceptance
+RESULT 43 passed, 0 failed
+PASS split publication then write resurrects revoked preview (negative control)
+PASS PUBLISH newer plus failed SET leaves old replay (negative control)
+PASS atomic ordering one,three,revoke,commit
+PASS atomic ordering one,three,commit,revoke
+PASS atomic ordering one,revoke,three,commit
+PASS atomic ordering one,revoke,commit,three
+PASS atomic ordering one,commit,three,revoke
+PASS atomic ordering one,commit,revoke,three
+PASS atomic ordering three,one,revoke,commit
+PASS atomic ordering three,one,commit,revoke
+PASS atomic ordering three,revoke,one,commit
+PASS atomic ordering three,revoke,commit,one
+PASS atomic ordering three,commit,one,revoke
+PASS atomic ordering three,commit,revoke,one
+PASS atomic ordering revoke,one,three,commit
+PASS atomic ordering revoke,one,commit,three
+PASS atomic ordering revoke,three,one,commit
+PASS atomic ordering revoke,three,commit,one
+PASS atomic ordering revoke,commit,one,three
+PASS atomic ordering revoke,commit,three,one
+PASS atomic ordering commit,one,three,revoke
+PASS atomic ordering commit,one,revoke,three
+PASS atomic ordering commit,three,one,revoke
+PASS atomic ordering commit,three,revoke,one
+PASS atomic ordering commit,revoke,one,three
+PASS atomic ordering commit,revoke,three,one
+PASS owner ordering claim,old-blend,old-revoke
+PASS owner ordering claim,old-revoke,old-blend
+PASS owner ordering old-blend,claim,old-revoke
+PASS owner ordering old-blend,old-revoke,claim
+PASS owner ordering old-revoke,claim,old-blend
+PASS owner ordering old-revoke,old-blend,claim
+PASS partial failure PUBLISH before
+PASS partial failure PUBLISH after
+PASS partial failure HSET before
+PASS partial failure HSET after
+PASS partial failure SET before
+PASS partial failure SET after
+PASS DB status after coverage before notification is outside atomic Redis proof
+RESULT 39 passed, 0 failed
+test_boolean_epoch_rejected (test_adapter.AdapterTests.test_boolean_epoch_rejected) ... ok
+test_committed_disguise_rejected (test_adapter.AdapterTests.test_committed_disguise_rejected) ... ok
+test_committed_status_not_passed_as_authority (test_adapter.AdapterTests.test_committed_status_not_passed_as_authority) ... ok
+test_invalid_revoke_rejected (test_adapter.AdapterTests.test_invalid_revoke_rejected) ... ok
+test_later_than_original_budget_is_uncached (test_adapter.AdapterTests.test_later_than_original_budget_is_uncached) ... ok
+test_mutating_caller_does_not_change_built_payload (test_adapter.AdapterTests.test_mutating_caller_does_not_change_built_payload) ... ok
+test_nan_probability_rejected (test_adapter.AdapterTests.test_nan_probability_rejected) ... ok
+test_no_lease_id_is_uncached (test_adapter.AdapterTests.test_no_lease_id_is_uncached) ... ok
+test_payload_and_metadata_same_object (test_adapter.AdapterTests.test_payload_and_metadata_same_object) ... ok
+test_production_frame_without_original_deadline_is_uncached_not_dropped (test_adapter.AdapterTests.test_production_frame_without_original_deadline_is_uncached_not_dropped) ... ok
+test_retained_payload_is_bounded_without_dropping_healthy_live (test_adapter.AdapterTests.test_retained_payload_is_bounded_without_dropping_healthy_live) ... ok
+test_revoke_orders_on_own_seq (test_adapter.AdapterTests.test_revoke_orders_on_own_seq) ... ok
+test_snapshot_requires_complete_coverage (test_adapter.AdapterTests.test_snapshot_requires_complete_coverage) ... ok
+test_snapshot_supplies_status_separately (test_adapter.AdapterTests.test_snapshot_supplies_status_separately) ... ok
+test_wrong_event_rejected (test_adapter.AdapterTests.test_wrong_event_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 15 tests in 0.002s
+
+OK
+PASS large predecessor owner cannot publish after exact successor claim
+PASS rounded legacy sequence cannot let delayed payload replace newer
+PASS MAX owner is exact and exhaustion changes neither counter nor owner
+PASS MAX revoke dominates immediately preceding preview
+PASS large floor advancement cannot be rounded away or decreased
+PASS MAX expiry budget remains exact through TIME and same-chain cap
+PASS numeric MAX plus ttl cannot extend a canonically bounded expiry
+PASS malformed epoch, sequence, floor and counter inputs cannot grant authority
+PASS malformed retention-only metadata preserves accepted live but never replay
+PASS corrupt stored numeric fence disables snapshot and newer offer cannot heal it
+PASS corrupt stored floor cannot be treated as missing during committed publication
+PASS valid missing floor remains zero rather than falsely corrupt
+PASS corrupt owner refuses blends without suppressing independent committed truth
+PASS large old-owner revoke delivers but cannot mutate current epoch record
+RESULT 14 independent cases passed; engine=Lua 5.1; deterministic Redis commands only
+baseline: delayed-old result=published_retained; stored seq=1e+14; retained payload=OLD
+baseline: newer-revoke result=published_duplicate_or_older; stored seq=1.0000000000001e+14; retained kind=blend
+candidate: delayed-old result=published_duplicate_or_older; stored seq=100000000000004; retained payload=NEW
+candidate: newer-revoke result=published_retained; stored seq=100000000000007; retained kind=revoke
+PASS both old failures reproduced and corrected; interpreter plus deterministic commands only
+test_commit_and_coverage_floor_use_exact_bytes (__main__.Boundary.test_commit_and_coverage_floor_use_exact_bytes) ... ok
+test_invalid_expiry_preserves_live_without_retention (__main__.Boundary.test_invalid_expiry_preserves_live_without_retention) ... ok
+test_maximum_metadata_reaches_lua_as_exact_decimal_bytes (__main__.Boundary.test_maximum_metadata_reaches_lua_as_exact_decimal_bytes) ... ok
+test_unsafe_or_noninteger_ordering_never_reaches_encoder (__main__.Boundary.test_unsafe_or_noninteger_ordering_never_reaches_encoder) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.001s
+
+OK
+...........................                                              [100%]
+27 passed in 2.06s
+PASS actual current producer repeated lease retains exactly one original deadline
+PASS original expiry is final even without later publication
+PASS actual commit floor independently retires earlier-base producer preview
+PASS optional retained write error preserves accepted live and disables later replay
+PASS post-mutation retained error does not imply rollback or epoch healing
+PASS superseded producer offer cannot create retained authority
+PASS missing original metadata is explicit live-only rather than TTL reanchoring
+RESULT 7 deterministic composition checks passed; no atomic batch or Redis server claim
+............                                                             [100%]
+12 passed in 1.95s

@@ -1,0 +1,165 @@
+FFFFFFFFF..................                                              [100%]
+=================================== FAILURES ===================================
+_ test_actual_current_quiet_retry_preserves_source_and_lease_before_real_commit_path _
+
+    async def test_actual_current_quiet_retry_preserves_source_and_lease_before_real_commit_path():
+     with ProducerDriver() as d:
+      for t in [0,2,4,6,8]:await d.step(t,locked=t!=8)
+      out=blends(d)
+>     assert [f['preview']['ttl_ms'] for f in out]==[60000,58000,56000,54000,52000]
+E     assert [59999, 59910... 59894, 59887] == [60000, 58000... 54000, 52000]
+E
+E       At index 0 diff: 59999 != 60000
+E       Use -v to get more diff
+
+producer-chain-metadata/tests/test_current_producer.py:27: AssertionError
+______________ test_actual_current_expiry_refuses_quiet_reopening ______________
+
+    async def test_actual_current_expiry_refuses_quiet_reopening():
+     with ProducerDriver(max_uncommitted_s=3) as d:
+      for t in [0,2,4,6]:await d.step(t,locked=True)
+>     assert [f['preview']['ttl_ms'] for f in blends(d)]==[3000,1000]
+E     assert [] == [3000, 1000]
+E
+E       Right contains 2 more items, first extra item: 3000
+E       Use -v to get more diff
+
+producer-chain-metadata/tests/test_current_producer.py:39: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  app.tasks.live_blend_refresh:live_blend_refresh.py:4694 live_blend_refresh[polymarket]: 1 preview frame(s) fenced: epoch=1 owner=missing
+WARNING  app.tasks.live_blend_refresh:live_blend_refresh.py:4694 live_blend_refresh[polymarket]: 1 preview frame(s) fenced: epoch=1 owner=missing
+WARNING  app.tasks.live_blend_refresh:live_blend_refresh.py:4694 live_blend_refresh[polymarket]: 1 preview frame(s) fenced: epoch=1 owner=missing
+WARNING  app.tasks.live_blend_refresh:live_blend_refresh.py:4694 live_blend_refresh[polymarket]: 1 preview frame(s) fenced: epoch=1 owner=missing
+___ test_entire_current_batch_claimed_once_and_serialized_in_original_order ____
+
+    async def test_entire_current_batch_claimed_once_and_serialized_in_original_order():
+     with ProducerDriver() as d:
+      commands=track(d);frames=direct(d)+direct(d,event_id=2)+d.registry.refused(1,d.source,'withdrawn')
+      assert all(f['preview']['epoch'] is None for f in frames)
+      await d.refresher._publish_previews(frames)
+>     assert len(commands)==2;assert commands[0][1]==bp.FENCE_CLAIM_SCRIPT;assert commands[1][1]==bp.FENCE_PUBLISH_SCRIPT
+      ^^^^^^^^^^^^^^^^^^^^^^^
+E     assert 1 == 2
+E      +  where 1 = len([('EVAL', "local owner = redis.call('GET', KEYS[1]) local published, fenced = 0, 0 for i = 2, #ARGV, 3 do if ARGV[i] =...enced + 1 end end return {published, fenced, owner or ''}", 1, 'live:blend_preview:owner:polymarket', 1, 'blend', ...)])
+
+producer-chain-metadata/tests/test_current_producer.py:48: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  app.tasks.live_blend_refresh:live_blend_refresh.py:4694 live_blend_refresh[polymarket]: 2 preview frame(s) fenced: epoch=1 owner=missing
+________ test_optional_metadata_failure_keeps_whole_healthy_batch_live _________
+
+    async def test_optional_metadata_failure_keeps_whole_healthy_batch_live():
+     with ProducerDriver() as d:
+      def fail():raise RuntimeError('optional wall clock failed')
+      d.registry._wall_clock=fail;commands=track(d)
+      frames=direct(d)+direct(d,event_id=2)
+      await d.refresher._publish_previews(frames)
+>     assert len(commands)==2;assert len(d.frames)==2;assert d.refresher.preview_stats['publish_errors']==0
+      ^^^^^^^^^^^^^^^^^^^^^^^
+E     assert 1 == 2
+E      +  where 1 = len([('EVAL', "local owner = redis.call('GET', KEYS[1]) local published, fenced = 0, 0 for i = 2, #ARGV, 3 do if ARGV[i] =...enced + 1 end end return {published, fenced, owner or ''}", 1, 'live:blend_preview:owner:polymarket', 1, 'blend', ...)])
+
+producer-chain-metadata/tests/test_current_producer.py:61: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  app.tasks.live_blend_refresh:live_blend_refresh.py:4694 live_blend_refresh[polymarket]: 2 preview frame(s) fenced: epoch=1 owner=missing
+_______________ test_known_owner_loss_does_not_reclaim_or_retain _______________
+
+    async def test_known_owner_loss_does_not_reclaim_or_retain():
+     with ProducerDriver() as d:
+      commands=track(d);await d.refresher._publish_previews(direct(d));commands.clear();d.frames.clear()
+      d.connection.owner=None;d.clock.seconds=2
+      await d.refresher._publish_previews(direct(d))
+      assert len(commands)==1 and commands[0][1]==bp.FENCE_PUBLISH_SCRIPT
+>     assert not d.frames;assert d.registry.epoch==1;assert d.refresher.preview_stats['fenced']==1
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E     assert None == 1
+E      +  where None = <app.utils.blend_preview.PreviewRegistry object at 0x7f7faecb9340>.epoch
+E      +    where <app.utils.blend_preview.PreviewRegistry object at 0x7f7faecb9340> = <producer_driver.ProducerDriver object at 0x7f7faecb7c20>.registry
+
+producer-chain-metadata/tests/test_current_producer.py:70: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  app.tasks.live_blend_refresh:live_blend_refresh.py:4694 live_blend_refresh[polymarket]: 1 preview frame(s) fenced: epoch=1 owner=missing
+WARNING  app.tasks.live_blend_refresh:live_blend_refresh.py:4694 live_blend_refresh[polymarket]: 1 preview frame(s) fenced: epoch=1 owner=missing
+_______ test_superseded_owner_revoke_still_publishes_but_blend_is_fenced _______
+
+    async def test_superseded_owner_revoke_still_publishes_but_blend_is_fenced():
+     with ProducerDriver() as d:
+      await d.refresher._publish_previews(direct(d));d.frames.clear();d.connection.owner=2;commands=track(d)
+      d.clock.seconds=2;frames=direct(d)+d.registry.refused(1,d.source,'withdrawn')
+      await d.refresher._publish_previews(frames)
+      assert len(commands)==1;assert len(d.frames)==1;assert d.frames[0]['frame']['preview']['kind']=='revoke'
+>     assert d.connection.owner==2 and d.registry.epoch==1
+E     assert (2 == 2 and None == 1)
+E      +  where 2 = <producer_driver.MemoryFenceConnection object at 0x7f7faecb94f0>.owner
+E      +    where <producer_driver.MemoryFenceConnection object at 0x7f7faecb94f0> = <producer_driver.ProducerDriver object at 0x7f7faecb8a70>.connection
+E      +  and   None = <app.utils.blend_preview.PreviewRegistry object at 0x7f7faecba5a0>.epoch
+E      +    where <app.utils.blend_preview.PreviewRegistry object at 0x7f7faecba5a0> = <producer_driver.ProducerDriver object at 0x7f7faecb8a70>.registry
+
+producer-chain-metadata/tests/test_current_producer.py:78: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  app.tasks.live_blend_refresh:live_blend_refresh.py:4694 live_blend_refresh[polymarket]: 1 preview frame(s) fenced: epoch=1 owner=missing
+WARNING  app.tasks.live_blend_refresh:live_blend_refresh.py:4694 live_blend_refresh[polymarket]: 1 preview frame(s) fenced: epoch=1 owner=2
+___ test_unknown_batch_ack_disconnects_without_resending_or_undoing_pending ____
+
+    async def test_unknown_batch_ack_disconnects_without_resending_or_undoing_pending():
+     with ProducerDriver() as d:
+      await d.refresher.claim_preview_display();commands=track(d)
+      async def ambiguous():raise ConnectionError('injected lost ACK after delivery')
+      d.connection.read_response=ambiguous
+      await d.refresher._publish_previews(direct(d)+direct(d,event_id=2))
+>     assert len(commands)==1;assert len(d.frames)==2;assert d.connection.disconnected
+                              ^^^^^^^^^^^^^^^^^^^^^^^
+E     assert 0 == 2
+E      +  where 0 = len([])
+E      +    where [] = <producer_driver.ProducerDriver object at 0x7f7faecb9d60>.frames
+
+producer-chain-metadata/tests/test_current_producer.py:86: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  app.tasks.live_blend_refresh:live_blend_refresh.py:4700 live_blend_refresh[polymarket]: preview publication incomplete (2 frames)
+Traceback (most recent call last):
+  File "/workspace/shared/preview-state-recovery-20261021/producer-chain-metadata/reference/backend/app/tasks/live_blend_refresh.py", line 4680, in _publish_previews
+    published, fenced, owner = await connection.read_response()
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/shared/preview-state-recovery-20261021/producer-chain-metadata/tests/test_current_producer.py", line 83, in ambiguous
+    async def ambiguous():raise ConnectionError('injected lost ACK after delivery')
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ConnectionError: injected lost ACK after delivery
+_____ test_lost_initial_claim_ack_may_reclaim_but_old_known_epoch_may_not ______
+
+    async def test_lost_initial_claim_ack_may_reclaim_but_old_known_epoch_may_not():
+     with ProducerDriver() as d:
+      original=d.connection.read_response
+      async def lost():raise ConnectionError('injected first claim ACK loss')
+      d.connection.read_response=lost
+>     await d.refresher.claim_preview_display();assert d.registry.epoch is None;assert d.connection.owner==1
+                                                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E     assert None == 1
+E      +  where None = <producer_driver.MemoryFenceConnection object at 0x7f7faecbae70>.owner
+E      +    where <producer_driver.MemoryFenceConnection object at 0x7f7faecbae70> = <producer_driver.ProducerDriver object at 0x7f7faecbbc20>.connection
+
+producer-chain-metadata/tests/test_current_producer.py:94: AssertionError
+_ test_current_prepare_frames_runs_after_claim_and_can_abstain_without_mutation _
+
+    async def test_current_prepare_frames_runs_after_claim_and_can_abstain_without_mutation():
+     with ProducerDriver() as d:
+      commands=track(d);seen=[]
+      async def prepare_frames():seen.append(d.registry.epoch);return []
+      await d.refresher._publish_previews([],prepare_frames=prepare_frames)
+>     assert seen==[1];assert len(commands)==1;assert not d.registry.has_pending(1);assert not d.frames
+      ^^^^^^^^^^^^^^^^
+E     assert [None] == [1]
+E
+E       At index 0 diff: None != 1
+E       Use -v to get more diff
+
+producer-chain-metadata/tests/test_current_producer.py:105: AssertionError
+=========================== short test summary info ============================
+FAILED producer-chain-metadata/tests/test_current_producer.py::test_actual_current_quiet_retry_preserves_source_and_lease_before_real_commit_path
+FAILED producer-chain-metadata/tests/test_current_producer.py::test_actual_current_expiry_refuses_quiet_reopening
+FAILED producer-chain-metadata/tests/test_current_producer.py::test_entire_current_batch_claimed_once_and_serialized_in_original_order
+FAILED producer-chain-metadata/tests/test_current_producer.py::test_optional_metadata_failure_keeps_whole_healthy_batch_live
+FAILED producer-chain-metadata/tests/test_current_producer.py::test_known_owner_loss_does_not_reclaim_or_retain
+FAILED producer-chain-metadata/tests/test_current_producer.py::test_superseded_owner_revoke_still_publishes_but_blend_is_fenced
+FAILED producer-chain-metadata/tests/test_current_producer.py::test_unknown_batch_ack_disconnects_without_resending_or_undoing_pending
+FAILED producer-chain-metadata/tests/test_current_producer.py::test_lost_initial_claim_ack_may_reclaim_but_old_known_epoch_may_not
+FAILED producer-chain-metadata/tests/test_current_producer.py::test_current_prepare_frames_runs_after_claim_and_can_abstain_without_mutation
+9 failed, 18 passed in 2.36s
