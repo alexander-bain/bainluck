@@ -119,6 +119,101 @@ def _dropped_keys(standings) -> tuple:
 LAG_ALLOWANCE_BASE_GAMES = 3
 LAG_ALLOWANCE_GAMES_PER_DAY = 2
 
+# #13229. Minimum number of teams with a readable record in one league before
+# the league's own median games played establishes a ceiling for this season.
+MIN_LEAGUE_SEASON_SAMPLE = 6
+
+# Non-team individual sports carry career records, not synchronized season totals.
+_INDIVIDUAL_SPORT_PREFIXES = ("mma_", "boxing_", "tennis_", "golf_")
+
+# Knockout and cup competitions have eliminated teams frozen at early rounds
+# while finalists play roughly twice as many matches in the same season.
+_KNOCKOUT_SPORT_TOKENS = (
+    "champs_league",
+    "champions_league",
+    "europa_league",
+    "conference_league",
+    "world_cup",
+    "nations_league",
+    "fa_cup",
+    "efl_cup",
+    "carabao",
+    "copa_",
+    "dfb_pokal",
+    "coupe_de_france",
+    "coppa_italia",
+    "libertadores",
+    "sudamericana",
+    "concacaf",
+    "olympics",
+    "euro_",
+)
+
+
+def league_season_games_ceiling(game_counts, *, sport_key: str | None = None) -> int | None:
+    """Upper bound on plausible games played in one league's current season (#13229).
+
+    Every team in a regular-season league moves through the calendar together.
+    When an entire league sits around matchday 10 (EPL `3-2-5`, `3-3-4`) and a
+    stale duplicate row still holds last season's finished 38-match campaign
+    (`10-11-17`, `14-7-17`, `11-11-16`), the league's own median proves the
+    stale row cannot belong to this season — even when no standings board or
+    timestamp exists on the row.
+
+    Returns ``None`` (fail open — refuse nothing) for individual sports,
+    knockout/cup tournaments, or leagues with fewer than
+    ``MIN_LEAGUE_SEASON_SAMPLE`` recorded rows.
+    """
+    key = (sport_key or "").strip().lower()
+    if key.startswith(_INDIVIDUAL_SPORT_PREFIXES):
+        return None
+    if any(token in key for token in _KNOCKOUT_SPORT_TOKENS):
+        return None
+    valid = [g for g in game_counts if type(g) is int and g >= 0]
+    if len(valid) < MIN_LEAGUE_SEASON_SAMPLE:
+        return None
+    valid.sort()
+    median = valid[len(valid) // 2]
+    return median + max(6, median // 3)
+
+
+def record_exceeds_season_ceiling(record, ceiling: int | None) -> bool:
+    """True when ``record`` implies more games than this league's season allows."""
+    if ceiling is None:
+        return False
+    games = _count_games(record)
+    return games is not None and games > ceiling
+
+
+def standings_exceeds_season_ceiling(standings, ceiling: int | None) -> bool:
+    """True when ``standings`` implies more games than this league's season allows."""
+    if ceiling is None:
+        return False
+    games = _count_games(_board_record(standings))
+    return games is not None and games > ceiling
+
+
+def record_leads_fresh_board(
+    current_record, standings, standings_updated_at=None, now=None
+) -> bool:
+    """True when ``current_record`` leads a fresh played-game board by more
+    games than could have been played since the board was written (#13229 / #10311).
+
+    Unlike full ``record_text``, this never flips a rolled-over ``0-0`` record
+    back to a stale high-game board (#6266's Toronto hazard): it only flags
+    ``current_record`` when it has STRICTLY MORE games than the board and the
+    lead exceeds ``_lead_is_a_lag``.
+    """
+    snapshot = _board_record(standings)
+    parsed = _parse_record(current_record)
+    if snapshot is None or parsed is None:
+        return False
+    snapshot_games = _count_games(snapshot)
+    current_games = _count_games(parsed)
+    if snapshot_games is None or current_games is None or current_games <= snapshot_games:
+        return False
+    return not _lead_is_a_lag(current_games - snapshot_games, standings_updated_at, now)
+
 
 def record_text(current_record, standings, standings_updated_at=None, now=None):
     """Return the W-L(-D) string a reader should be shown, or None.

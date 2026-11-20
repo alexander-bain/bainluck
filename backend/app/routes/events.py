@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from contextlib import asynccontextmanager, suppress
 
 logger = logging.getLogger(__name__)
-from copy import deepcopy
+from copy import copy as shallow_copy, deepcopy
 from dataclasses import dataclass, fields as dataclass_fields, replace as dataclass_replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -186,9 +186,14 @@ from app.utils.venue_settlement_reader import (
     mark_venue_closed_no_winner,
 )
 from app.utils.standings_shape import (
+    _count_games,
+    _parse_record,
+    league_season_games_ceiling,
     public_standings,
     reconciled_record_and_standings,
+    record_exceeds_season_ceiling,
     record_text,
+    standings_exceeds_season_ceiling,
 )
 from app.utils import (
     moneyline_to_probability,
@@ -36783,7 +36788,7 @@ def _abbreviation_is_vouched(team, rows) -> bool:
     )
 
 
-def _rows_by_league(rows) -> dict:
+def _rows_by_league(rows, *, stale_only_ids: set | None = None) -> dict:
     """For ONE name key, the best row per LEAGUE — corroborated crests only (#7262).
 
     The name→row map can only ever hold one answer, so a school's four rows
@@ -36853,8 +36858,12 @@ def _rows_by_league(rows) -> dict:
             continue
         identity = _team_league_identity(team)
         incumbent = best.get(identity)
-        if incumbent is None or _same_league_row_preference(team) > _same_league_row_preference(
-            incumbent
+        if incumbent is None or _same_league_row_preference(
+            team,
+            stale_only=bool(stale_only_ids and id(team) in stale_only_ids),
+        ) > _same_league_row_preference(
+            incumbent,
+            stale_only=bool(stale_only_ids and id(incumbent) in stale_only_ids),
         ):
             # Two rows of one league under one key: #7132's total order decides,
             # so this map is no more order-dependent than the lookup beside it.
@@ -36872,12 +36881,13 @@ class TeamNameLookup(dict):
     sport in hand cannot be made worse off by a map it never reads.
     """
 
-    __slots__ = ("by_league", "by_id")
+    __slots__ = ("by_league", "by_id", "league_ceilings")
 
-    def __init__(self, mapping=None, by_league=None, by_id=None):
+    def __init__(self, mapping=None, by_league=None, by_id=None, league_ceilings=None):
         super().__init__(mapping or {})
         self.by_league = by_league or {}
         self.by_id = by_id or {}
+        self.league_ceilings = league_ceilings or {}
 
     def subset(self, names) -> "TeamNameLookup":
         """The rows for `names`, keeping the per-league map with them.
@@ -36892,6 +36902,7 @@ class TeamNameLookup(dict):
             {k: v for k, v in self.items() if k in names},
             {k: v for k, v in self.by_league.items() if k in names},
             self.by_id,
+            self.league_ceilings,
         )
 
     def __eq__(self, other):
@@ -36911,6 +36922,7 @@ class TeamNameLookup(dict):
         return (
             self.by_league == getattr(other, "by_league", {})
             and self.by_id == getattr(other, "by_id", {})
+            and self.league_ceilings == getattr(other, "league_ceilings", {})
         )
 
     def __ne__(self, other):
@@ -37106,7 +37118,85 @@ def _standings_vintage(team):
         return (0, 0.0)
 
 
-def _same_league_row_preference(team):
+def _effective_team_record(team) -> str | None:
+    """Best current-season record string carried by ``team`` for cohort sizing."""
+    standings = getattr(team, "standings_data", None)
+    if standings:
+        return record_text(
+            getattr(team, "current_record", None),
+            public_standings(standings),
+            getattr(team, "standings_updated_at", None),
+        )
+    return _parse_record(getattr(team, "current_record", None))
+
+
+def _compute_league_season_ceilings(teams) -> dict:
+    """Map league identity → maximum plausible games played this season (#13229)."""
+    counts_by_league: dict = {}
+    sport_key_by_league: dict = {}
+    for team in teams:
+        sport_key = getattr(team, "sport_key", None)
+        if is_season_variant(sport_key):
+            continue
+        identity = _team_league_identity(team)
+        if sport_key and identity not in sport_key_by_league:
+            sport_key_by_league[identity] = sport_key
+        games = _count_games(_effective_team_record(team))
+        if games is not None:
+            counts_by_league.setdefault(identity, []).append(games)
+
+    ceilings: dict = {}
+    for identity, counts in counts_by_league.items():
+        ceiling = league_season_games_ceiling(
+            counts, sport_key=sport_key_by_league.get(identity)
+        )
+        if ceiling is not None:
+            ceilings[identity] = ceiling
+    return ceilings
+
+
+def _sanitize_stale_season_team(team, ceiling: int | None):
+    """Strip any prior-season record or standings board exceeding ``ceiling`` (#13229).
+
+    Returns ``(row, stale_only)``. Untouched rows are returned by identity.
+    ``stale_only`` is True when stripping leaves the row with neither a record
+    nor a standings board — i.e., its only season claim belonged to an earlier
+    season, so a same-league twin carrying this season's data must beat it.
+    """
+    if ceiling is None:
+        return team, False
+    stale_record = record_exceeds_season_ceiling(
+        getattr(team, "current_record", None), ceiling
+    )
+    stale_standings = standings_exceeds_season_ceiling(
+        public_standings(getattr(team, "standings_data", None)), ceiling
+    )
+    if not stale_record and not stale_standings:
+        return team, False
+
+    updates: dict = {}
+    if stale_record:
+        updates["current_record"] = None
+    if stale_standings:
+        updates["standings_data"] = None
+        updates["standings_updated_at"] = None
+
+    if isinstance(team, TeamSnapshot):
+        sanitized = dataclass_replace(team, **updates)
+    else:
+        sanitized = shallow_copy(team)
+        for field_name, value in updates.items():
+            if hasattr(sanitized, field_name):
+                setattr(sanitized, field_name, value)
+
+    stale_only = (
+        getattr(sanitized, "current_record", None) is None
+        and getattr(sanitized, "standings_data", None) is None
+    )
+    return sanitized, stale_only
+
+
+def _same_league_row_preference(team, *, stale_only: bool = False):
     """Rank two rows of the SAME league that both claim one name key.
 
     #7132. Where two rows for one club collide the old code kept whichever
@@ -37126,7 +37216,13 @@ def _same_league_row_preference(team):
        `baseball_mlb_preseason` twin that carries a crest but no
        `standings_data`, and preferring it silently coin-flipped the standings
        away.
-    2. **The more recently WRITTEN board.** This is the term that settles the
+    2. **Current-season row over prior-season-only row (#13229).** In leagues
+       without `standings_data` (EPL, Bundesliga, Ligue 1), `_standings_vintage`
+       ties at `(0, 0.0)` and the higher-id orphan duplicate carrying last
+       season's 38-match `current_record` (`14545` Tottenham `10-11-17`,
+       `15292` Newcastle `14-7-17`) used to beat the live club row (`146`
+       `3-3-4`, `143` `3-3-4`) on the final id tie-break.
+    3. **The more recently WRITTEN board.** This is the term that settles the
        duplicate-club case, and it is the only column that can: the two rows
        disagree about which SEASON their board describes, and neither the name,
        the id, nor the record's own contents say which is current. Of the six
@@ -37136,7 +37232,7 @@ def _same_league_row_preference(team):
        Ottawa's and the Rangers' are on 12715, 13381 and 8293. Preferring the
        row's own `.name` over another row's alias, or the lower id, picks the
        stale board for three of those six.
-    3. **`_crest_row_preference`**, which is already a TOTAL order (it ends on
+    4. **`_crest_row_preference`**, which is already a TOTAL order (it ends on
        the id). A preference that can tie is still order-dependent on precisely
        the rows it failed to separate.
 
@@ -37146,9 +37242,25 @@ def _same_league_row_preference(team):
     """
     return (
         0 if is_season_variant(getattr(team, "sport_key", None)) else 1,
+        0 if stale_only else 1,
         _standings_vintage(team),
         _crest_row_preference(team),
     )
+
+
+def cached_league_season_ceiling(
+    sport_key: str | None, sport_id: int | None = None
+) -> int | None:
+    """Return the cached current-season games ceiling for a league, if warm (#13229)."""
+    cache = _team_cache
+    if not isinstance(cache, TeamNameLookup) or not cache.league_ceilings:
+        return None
+    identity = league_identity(sport_key)
+    if identity is not None and identity in cache.league_ceilings:
+        return cache.league_ceilings[identity]
+    if sport_id is not None:
+        return cache.league_ceilings.get(("sport_id", sport_id))
+    return None
 
 
 def _dedupe_team_name_lookup(teams) -> dict:
@@ -37192,6 +37304,18 @@ def _dedupe_team_name_lookup(teams) -> dict:
     descending id order. `_same_league_row_preference` decides all of them,
     with #4945's rule as its first term.
     """
+    league_ceilings = _compute_league_season_ceilings(teams)
+    sanitized_teams = []
+    stale_only_ids: set[int] = set()
+    for raw_team in teams:
+        identity = _team_league_identity(raw_team)
+        sanitized, stale_only = _sanitize_stale_season_team(
+            raw_team, league_ceilings.get(identity)
+        )
+        sanitized_teams.append(sanitized)
+        if stale_only:
+            stale_only_ids.add(id(sanitized))
+
     lookup: dict = {}
     key_sport: dict = {}
     ambiguous: set = set()
@@ -37222,7 +37346,11 @@ def _dedupe_team_name_lookup(teams) -> dict:
                 ambiguous.add(key)
                 lookup.pop(key, None)
                 key_sport.pop(key, None)
-        elif _same_league_row_preference(team) > _same_league_row_preference(lookup[key]):
+        elif _same_league_row_preference(
+            team, stale_only=id(team) in stale_only_ids
+        ) > _same_league_row_preference(
+            lookup[key], stale_only=id(lookup[key]) in stale_only_ids
+        ):
             # Same league, two rows: pick one, deterministically. Which row an
             # unordered query yields first is arbitrary, so #4945's
             # parent-league-over-season-variant rule is now the first term of a
@@ -37231,7 +37359,7 @@ def _dedupe_team_name_lookup(teams) -> dict:
             # branch used to settle by arrival order are the #7132 defect.
             lookup[key] = team
 
-    for team in teams:
+    for team in sanitized_teams:
         identity = _team_league_identity(team)
         _register(team.name, team, identity)
         for alt_name in (team.alternate_names or []):
@@ -37239,7 +37367,7 @@ def _dedupe_team_name_lookup(teams) -> dict:
 
     by_league = {}
     for key, rows in rows_by_key.items():
-        per_league = _rows_by_league(rows)
+        per_league = _rows_by_league(rows, stale_only_ids=stale_only_ids)
         if per_league:
             by_league[key] = per_league
 
@@ -37248,7 +37376,7 @@ def _dedupe_team_name_lookup(teams) -> dict:
     # event's raw spelling, falling back to `team_id` still picks the fresher
     # standings row (e.g. Ottawa Senators row 13381 over stale row 56).
     by_id: dict = {}
-    for team in teams:
+    for team in sanitized_teams:
         tid = getattr(team, "id", None)
         if tid is None:
             continue
@@ -37256,7 +37384,7 @@ def _dedupe_team_name_lookup(teams) -> dict:
         preferred = (by_league.get(team.name) or {}).get(identity)
         by_id[tid] = preferred if preferred is not None else team
 
-    return TeamNameLookup(lookup, by_league, by_id)
+    return TeamNameLookup(lookup, by_league, by_id, league_ceilings)
 
 
 async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
