@@ -247,6 +247,7 @@ from app.utils.discover_image_policy import (
 from app.utils.feed_cache import (
     FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS,
     FEED_PREWARM_KEY_SCOPE_KEY,
+    FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY,
     FEED_PREWARM_OPENING_SCOPE_KEY,
     FEED_PREWARM_SCOPE_KEY,
     FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
@@ -258,6 +259,7 @@ from app.utils.feed_cache import (
     dumps_feed_cache,
     encode_base_last_good,
     feed_edition_token,
+    feed_machinery_page_base_key,
     feed_page_base_built_at,
     feed_page_base_cache_key,
     feed_page_base_enabled,
@@ -5259,21 +5261,42 @@ async def get_feed(
                 if k not in ("offset", "edition", "machinery")
             }
             _page_base_key = feed_page_base_cache_key(**_page_base_shape)
-            _base_raw, _base_status = (
-                (None, None)
-                if _prewarm_rebuild
-                else await _read_shared_feed_cache(_shared_redis, _page_base_key)
-            )
-            _base_body = (
-                _safe_cache_payload(_base_raw) if _base_raw is not None else None
-            )
+            if _prewarm_rebuild:
+                _base_raw, _base_status, _base_body = None, None, None
+                _used_machinery_page_base = False
+            else:
+                _base_raw, _base_status, _base_body = None, None, None
+                _used_machinery_page_base = False
+                if _include_machinery_feed:
+                    _mach_pb_key = feed_machinery_page_base_key(_page_base_key)
+                    _base_raw, _base_status = await _read_shared_feed_cache(
+                        _shared_redis, _mach_pb_key
+                    )
+                    _base_body = (
+                        _safe_cache_payload(_base_raw)
+                        if _base_raw is not None
+                        else None
+                    )
+                    if _base_body is not None:
+                        _used_machinery_page_base = True
+                if _base_body is None:
+                    _base_raw, _base_status = await _read_shared_feed_cache(
+                        _shared_redis, _page_base_key
+                    )
+                    _base_body = (
+                        _safe_cache_payload(_base_raw)
+                        if _base_raw is not None
+                        else None
+                    )
             if (
                 _base_body is not None
                 and _include_machinery_feed
+                and not _used_machinery_page_base
                 and isinstance(_base_body.get("items"), list)
             ):
                 from app.utils.roundup_containers import (
                     ROUNDUP_READ_BUDGET_SECONDS,
+                    _is_machinery_roundup_item,
                     add_roundup_feed_items,
                     roundup_feed_enabled,
                 )
@@ -5302,6 +5325,41 @@ async def get_feed(
                         "items": _spliced_items,
                         "total": len(_spliced_items),
                     }
+                    if any(_is_machinery_roundup_item(it) for it in _spliced_items):
+                        try:
+                            _mach_pb_key = feed_machinery_page_base_key(_page_base_key)
+                            _pb_origin = feed_page_base_built_at(_base_body)
+                            _pb_age_s = (
+                                max(0.0, time.time() - _pb_origin)
+                                if isinstance(_pb_origin, (int, float))
+                                else 0.0
+                            )
+                            _mpb_fresh, _mpb_stale = _live_ttls(
+                                _base_body,
+                                oldest_artifact_age_s=_pb_age_s,
+                            )
+                            _mpb_json = dumps_feed_cache(_base_body)
+
+                            async def _publish_spliced_mach_page_base(
+                                _client=_shared_redis,
+                                _json=_mpb_json,
+                                _key=_mach_pb_key,
+                                _fresh_ttl=_mpb_fresh,
+                                _stale_ttl=_mpb_stale,
+                            ):
+                                await _rc.bounded_redis_call(
+                                    lambda: _client.setex(_key, _fresh_ttl, _json)
+                                )
+                                await _rc.bounded_redis_call(
+                                    lambda: _client.setex(f"{_key}:stale", _stale_ttl, _json)
+                                )
+
+                            _rc.schedule_background(_publish_spliced_mach_page_base())
+                        except Exception:
+                            logger.debug(
+                                "machinery page-base background publish failed",
+                                exc_info=True,
+                            )
             # T4-B2 / #5102. The base is the WHOLE current list, which is
             # precisely what a pin needs: reorder it into the requested
             # edition's order and slice that, so the reader keeps their place
@@ -7348,8 +7406,127 @@ async def get_feed(
                         )
 
                     _rc.schedule_background(_publish_feed_page_base())
+                    if _prewarm_rebuild and request is not None and _cache_shape is not None:
+                        request.scope[FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY] = {
+                            "page_base_key": _page_base_key,
+                            "page_base_body": _page_base_body,
+                            "page_base_fresh_ttl": _base_fresh_ttl,
+                            "page_base_stale_ttl": _base_stale_ttl,
+                            "page_base_last_good_ttl": _base_last_good_ttl,
+                            "cache_shape": dict(_cache_shape),
+                            "limit": limit,
+                            "offset": offset,
+                            "opening_seating": bool(_opening_seating),
+                            "edition_policy": _edition_policy,
+                            "age_origin": _age_origin,
+                        }
+                    if (
+                        _include_machinery_feed
+                        and _base_feed_items_without_machinery is not None
+                    ):
+                        from app.utils.roundup_containers import (
+                            _is_machinery_roundup_item as _is_mach_card,
+                        )
+                    else:
+                        _is_mach_card = None
+                    if (
+                        _is_mach_card is not None
+                        and any(_is_mach_card(it) for it in feed_items)
+                    ):
+                        _mach_base_body = dict(_page_base_body)
+                        _mach_base_body["items"] = feed_items
+                        _mach_base_body["total"] = len(feed_items)
+                        if _opening is None and _edition is not None:
+                            _mach_base_body[FEED_EDITION_FIELD] = _edition
+                        _mach_fresh_ttl, _mach_stale_ttl = feed_response_cache_ttls(
+                            my_teams_only=False,
+                            identified=False,
+                            live=payload_contains_live_event(_mach_base_body),
+                            oldest_artifact_age_s=_consumed_age_s,
+                            strict_artifact_age_s=_strict_age_s,
+                        )
+                        _mach_base_json = dumps_feed_cache(_mach_base_body)
+                        _mach_base_key = feed_machinery_page_base_key(_page_base_key)
+
+                        async def _publish_machinery_feed_page_base(
+                            _client=_shared_redis,
+                            _json=_mach_base_json,
+                            _key=_mach_base_key,
+                            _fresh_ttl=_mach_fresh_ttl,
+                            _stale_ttl=_mach_stale_ttl,
+                        ):
+                            await _rc.bounded_redis_call(
+                                lambda: _client.setex(_key, _fresh_ttl, _json)
+                            )
+                            await _rc.bounded_redis_call(
+                                lambda: _client.setex(f"{_key}:stale", _stale_ttl, _json)
+                            )
+
+                        _rc.schedule_background(_publish_machinery_feed_page_base())
                 except Exception:
                     pass
+
+        if (
+            _prewarm_rebuild
+            and request is not None
+            and _cache_shape is not None
+            and not _is_degraded_build
+            and not my_teams_only
+            and feed_page_base_enabled()
+            and FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY not in request.scope
+        ):
+            try:
+                _fb_page_base_key = feed_page_base_cache_key(
+                    **{
+                        k: v
+                        for k, v in _cache_shape.items()
+                        if k not in ("offset", "edition", "machinery")
+                    }
+                )
+                _fb_page_base_body = dict(payload)
+                _fb_page_base_body["items"] = (
+                    _base_feed_items_without_machinery
+                    if _base_feed_items_without_machinery is not None
+                    else feed_items
+                )
+                _fb_page_base_body["total"] = len(_fb_page_base_body["items"])
+                for _per_serve in ("cache", "limit", "offset", "has_more"):
+                    _fb_page_base_body.pop(_per_serve, None)
+                if _opening is not None:
+                    for _per_request in (
+                        FEED_EDITION_FIELD,
+                        "continuation_start",
+                        FEED_EDITION_STATUS_FIELD,
+                    ):
+                        _fb_page_base_body.pop(_per_request, None)
+                _fb_page_base_body[FEED_PAGE_BASE_BUILT_AT_FIELD] = _age_origin
+                _fb_fresh, _fb_stale = feed_response_cache_ttls(
+                    my_teams_only=False,
+                    identified=False,
+                    live=payload_contains_live_event(_fb_page_base_body),
+                    oldest_artifact_age_s=_consumed_age_s,
+                    strict_artifact_age_s=_strict_age_s,
+                )
+                request.scope[FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY] = {
+                    "page_base_key": _fb_page_base_key,
+                    "page_base_body": _fb_page_base_body,
+                    "page_base_fresh_ttl": _fb_fresh,
+                    "page_base_stale_ttl": _fb_stale,
+                    "page_base_last_good_ttl": feed_page_base_last_good_max_age_s(
+                        live=payload_contains_live_event(_fb_page_base_body)
+                    ),
+                    "cache_shape": dict(_cache_shape),
+                    "limit": limit,
+                    "offset": offset,
+                    "opening_seating": bool(_opening_seating),
+                    "edition_policy": _edition_policy,
+                    "age_origin": _age_origin,
+                }
+            except Exception:
+                logger.debug(
+                    "prewarm machinery base scope stash failed",
+                    exc_info=True,
+                )
 
         # Item 1 (Queue 273 → centralized Queue 275): identity-free per-stage +
         # card-type-coverage export on the built (cold/degraded) response so an
@@ -12051,6 +12228,52 @@ def _build_personalization_trace(
 _EVENT_SPORT_ID_INDEX_CAP = 8
 
 
+def _set_event_attr_untracked(event: Any, attr: str, value: Any) -> None:
+    """Apply a serve-time folded value without dirtying an ORM session (#13142)."""
+    if hasattr(event, "_sa_instance_state"):
+        set_committed_value(event, attr, value)
+    else:
+        setattr(event, attr, value)
+
+
+async def _apply_proven_duplicate_folds(
+    db: AsyncSession, events: list[Any]
+) -> dict[int, tuple[int, ...]]:
+    """Fold suppressed ``provenance:duplicate-of:<id>`` twins onto feed events (#13142).
+
+    ``event_candidate_ids`` already excludes tagged duplicates in SQL via
+    ``not_a_proven_duplicate()``, so ``fold_twin_events(events)`` never sees
+    them. Calling ``folded_card_numbers_batch`` here — the same batch lookup
+    ``routes/events.py``, ``containers.py`` and ``league_futures.py`` use —
+    keeps each tagged duplicate's live prediction-market prices and opening
+    line on the canonical card on ``/sports`` and Discover.
+
+    Returns ``{canonical_event_id: absorbed_twin_ids}`` for rows that absorbed
+    at least one tagged duplicate.
+    """
+    if not events:
+        return {}
+    from app.utils.proven_duplicates import folded_card_numbers_batch
+
+    folded_map = await folded_card_numbers_batch(db, events)
+    absorbed_by_canonical: dict[int, tuple[int, ...]] = {}
+    for ev in events:
+        fn = folded_map.get(ev.id)
+        if fn is None or not fn.absorbed_ids:
+            continue
+        absorbed_by_canonical[ev.id] = fn.absorbed_ids
+        if fn.win_probability_sources:
+            _set_event_attr_untracked(
+                ev, "win_probability_sources", fn.win_probability_sources
+            )
+        open_h, open_a = fn.opening
+        if open_h is not None and getattr(ev, "opening_home_probability", None) is None:
+            _set_event_attr_untracked(ev, "opening_home_probability", open_h)
+        if open_a is not None and getattr(ev, "opening_away_probability", None) is None:
+            _set_event_attr_untracked(ev, "opening_away_probability", open_a)
+    return absorbed_by_canonical
+
+
 async def _score_events(
     db: AsyncSession,
     now: datetime,
@@ -12427,6 +12650,21 @@ async def _score_events(
             except Exception:
                 logger.exception("feed twin fold failed; serving the unfolded candidate set")
 
+        # #13142: tagged duplicates (`provenance:duplicate-of:<id>`) were
+        # dropped in SQL before `fold_twin_events` ran; pull their live
+        # prediction-market prices and opening lines back onto their canonical
+        # rows so Sports list and Discover cards keep those prices.
+        _proven_absorbed_by_canonical: dict[int, tuple[int, ...]] = {}
+        if price_refresh_events is None and events:
+            try:
+                _proven_absorbed_by_canonical = await _apply_proven_duplicate_folds(
+                    db, events
+                )
+            except Exception:
+                logger.exception(
+                    "feed proven-duplicate fold failed; serving canonical rows unfolded"
+                )
+
         # Batch fallback: for events where _compute_aggregate_probability() returns
         # None, query the latest win_prob_snapshot per event. This catches
         # Kalshi/Polymarket pregame data that's only in snapshots (not on Event model).
@@ -12442,6 +12680,13 @@ async def _score_events(
             # events in a historical fallback they never used before. Their
             # current chance stays absent until an admitted source returns.
             and getattr(e, "opening_home_probability", None) is None
+            # #11931: settled events already receive `final_hero.home_probability`
+            # before `snapshot_fallbacks` is ever consulted (see loop below), so
+            # querying full-history `win_prob_snapshots` for them is dead work.
+            and not (
+                (settled_hero := resolve_hero(e)) is not None
+                and settled_hero.source == "settled"
+            )
         ]
         # #1480: both id sets below come from the candidates alone — after the twin
         # fold, before any per-reader suppression — so every reader of one candidate
@@ -12513,6 +12758,51 @@ async def _score_events(
                 )
             else:
                 prematch_by_event = await read_prematch_priors(db, pm_binds)
+            # #13142: if a settled canonical event absorbed a tagged duplicate
+            # holding pre-game Kalshi/Polymarket snapshots, fill any missing
+            # source from the twin without mutating a shared cache dict.
+            if _proven_absorbed_by_canonical:
+                twin_ids: list[int] = []
+                twin_cutoffs: list[datetime] = []
+                twin_to_canonical: dict[int, int] = {}
+                for _ev in events:
+                    _abs_ids = _proven_absorbed_by_canonical.get(_ev.id)
+                    if not _abs_ids:
+                        continue
+                    if getattr(_ev, "status", None) not in ("completed", "closed"):
+                        continue
+                    _cutoff = getattr(_ev, "commence_time", None)
+                    if _cutoff is None:
+                        continue
+                    for _tid in _abs_ids:
+                        twin_ids.append(_tid)
+                        twin_cutoffs.append(_cutoff)
+                        twin_to_canonical[_tid] = _ev.id
+                if twin_ids:
+                    try:
+                        _twin_priors = await read_prematch_priors(
+                            db,
+                            {
+                                "ids": twin_ids,
+                                "cutoffs": twin_cutoffs,
+                                "sources": list(pm_binds["sources"]),
+                            },
+                        )
+                        if _twin_priors:
+                            prematch_by_event = {
+                                _k: dict(_v) for _k, _v in prematch_by_event.items()
+                            }
+                            for _tid, _srcs in _twin_priors.items():
+                                _cid = twin_to_canonical.get(_tid)
+                                if _cid is None:
+                                    continue
+                                _dest = prematch_by_event.setdefault(_cid, {})
+                                for _src_name, _reading in _srcs.items():
+                                    _dest.setdefault(_src_name, _reading)
+                    except Exception:
+                        logger.exception(
+                            "feed proven-duplicate prematch prior merge failed"
+                        )
             _mark_event_stage("prematch")
 
         # Score each event using aggregate probabilities from all available sources
@@ -12543,6 +12833,28 @@ async def _score_events(
             def fixture_marquee_pinned(*_a, **_k):  # type: ignore[misc]
                 return False
 
+
+        from app.utils.draw_priced_winner import (
+            resolve_three_way_probabilities as _resolve_three_way_probs,
+            sport_prices_a_draw as _sport_prices_a_draw,
+        )
+
+        # #13131: live draw-priced events (typically 0-5 rows) read their latest
+        # filtered per-book (home, away) consensus using the same stale-book and
+        # reversed-book pipeline as `/api/events/{id}` so live soccer feed cards
+        # (including just-kicked-off games promoted to `live`) serve Home, Draw,
+        # and Away summing to 100%.
+        from app.routes.events import latest_odds_per_bookmaker_query
+        from app.utils.draw_priced_winner import read_live_three_way_books
+
+        live_three_way_books: dict[int, tuple[float, float]] = (
+            await read_live_three_way_books(
+                db,
+                events,
+                now,
+                latest_odds_query=latest_odds_per_bookmaker_query,
+            )
+        )
 
     for event in events:
         try:
@@ -12947,6 +13259,34 @@ async def _score_events(
             card_hero = resolve_hero(
                 event, source_inputs=hero_inputs, source_method=hero_method,
             )
+            # #13131: on draw-priced sports (soccer), resolve (home, away, draw)
+            # when sportsbooks provide both sides summing < 0.99; otherwise
+            # suppress orphan single-leg chances on non-settled cards.
+            _card_home_prob = current_home_prob
+            _card_away_prob = current_away_prob
+            _card_draw_prob: float | None = None
+            if _sport_prices_a_draw(sport_key) and not (
+                card_hero is not None and card_hero.source == "settled"
+            ):
+                if served_status == "live":
+                    _bh, _ba = live_three_way_books.get(event.id, (None, None))
+                elif served_status == "scheduled":
+                    _bh, _ba = opening_home_prob, opening_away_prob
+                else:
+                    _bh, _ba = None, None
+                _card_3 = _resolve_three_way_probs(
+                    current_home_prob,
+                    books_home=_bh,
+                    books_away=_ba,
+                    sport_key=sport_key,
+                )
+                if _card_3 is not None:
+                    _card_home_prob, _card_away_prob, _card_draw_prob = _card_3
+                elif served_status == "scheduled":
+                    _card_home_prob = None
+                    _card_away_prob = None
+                    _card_draw_prob = None
+
             event_data = format_event_data(
                 event_id=event.id,
                 external_id=event.external_id,
@@ -12961,8 +13301,9 @@ async def _score_events(
                 status=served_status,
                 home_score=event.home_score,
                 away_score=event.away_score,
-                current_home_prob=current_home_prob,
-                current_away_prob=current_away_prob,
+                current_home_prob=_card_home_prob,
+                current_away_prob=_card_away_prob,
+                current_draw_prob=_card_draw_prob,
                 opening_home_prob=opening_home_prob,
                 opening_away_prob=opening_away_prob,
                 opening_favorite=event.opening_favorite,
@@ -12998,18 +13339,29 @@ async def _score_events(
             from app.utils.draw_priced_winner import printable_away
             from app.utils.source_mark import headline_source_marks
 
+            _card_effective_hero = (
+                None
+                if (
+                    card_hero is not None
+                    and card_hero.source != "settled"
+                    and event_data.get("hero_probability") is None
+                )
+                else card_hero
+            )
             away_available = (
-                card_hero is not None
+                _card_effective_hero is not None
                 and (
-                    card_hero.source == "settled"
+                    _card_effective_hero.source == "settled"
+                    or event_data.get("hero_probability_draw") is not None
                     or printable_away(
-                        card_hero.away_probability, card_hero.home_probability,
+                        _card_effective_hero.away_probability,
+                        _card_effective_hero.home_probability,
                         sport_key,
                     ) is not None
                 )
             )
             event_data["source_mark"], event_data["away_source_mark"] = headline_source_marks(
-                event, card_hero, hero_inputs,
+                event, _card_effective_hero, hero_inputs,
                 method=hero_method[0] if hero_method else None,
                 away_available=away_available,
             )
@@ -13644,6 +13996,54 @@ async def _score_sports_mode_futures(
         if not markets:
             return []
 
+        user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
+
+        # #11931: drop markets guaranteed to be skipped in the loop below by
+        # withheld-independent checks BEFORE running `withheld_price_outcome_ids_for_markets`
+        # (which queries the 51 GB `futures_odds_snapshots` table), canonical
+        # counts, and team-name lookups. Every predicate here is strictly a
+        # superset of the identical check below (never touches probabilities):
+        # 1. `resolution_date < now`
+        # 2. `_prices_have_stopped(_price_poll_stamp(market), now)`
+        # 3. `days_stale > 2` when NO outcome on the market moved > 0.001
+        # 4. golf markets with `commence_time < now - 6 days`
+        # 5. `my_teams_only` markets outside allowed sports/categories
+        _live_markets = []
+        for _m in markets:
+            _res_dt = _utc(getattr(_m, "resolution_date", None))
+            if _res_dt and _res_dt < now:
+                continue
+            if _prices_have_stopped(_price_poll_stamp(_m), now):
+                continue
+            _upd = getattr(_m, "updated_at", None)
+            if _upd is not None:
+                _upd_utc = _upd.replace(
+                    tzinfo=timezone.utc if _upd.tzinfo is None else _upd.tzinfo
+                )
+                if (now - _upd_utc).total_seconds() / 86400 > 2:
+                    _has_any_move = any(
+                        getattr(_o, "probability_change_24h", None) is not None
+                        and abs(float(_o.probability_change_24h)) > 0.001
+                        for _o in (getattr(_m, "outcomes", None) or ())
+                    )
+                    if not _has_any_move:
+                        continue
+            if (getattr(_m, "llm_sport_category", None) or "").lower() == "golf":
+                _comm = _utc(getattr(_m, "commence_time", None))
+                if _comm and _comm < now - timedelta(days=6):
+                    continue
+            if my_teams_only:
+                _m_sport_key = _m.sport.key if getattr(_m, "sport", None) else None
+                if _m_sport_key and _m_sport_key not in MY_STUFF_ALLOWED_SPORT_KEYS:
+                    continue
+                if not _m_sport_key and getattr(_m, "llm_sport_category", None):
+                    if _m.llm_sport_category not in MY_STUFF_ALLOWED_CATEGORIES:
+                        continue
+            _live_markets.append(_m)
+        markets = _live_markets
+        if not markets:
+            return []
+
         # Build canonical source counts for the candidate set
         candidate_canonical_keys = {
             m.canonical_market_key for m in markets if m.canonical_market_key
@@ -13693,8 +14093,6 @@ async def _score_sports_mode_futures(
         # #11493: and the open-field legs the venue has graded out — the twin read.
         graded_out_legs = await graded_out_leg_ids_by_market(db, markets)
         _mark_sf_stage("out_legs")
-
-        user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
         scored_items: list[dict] = []
     for market in markets:
@@ -15894,6 +16292,7 @@ async def _score_futures(
             # odds while still enforcing every liveness/staleness/book gate.
             _admitted_fun_entry = None
             _allow_fun_extreme_odds = False
+            effective_sport_category = market.llm_sport_category
             if (
                 not price_refresh
                 and not category_filter
@@ -15907,6 +16306,7 @@ async def _score_futures(
                     check_fun_taste_guard,
                     fun_entry_allows_extreme_odds,
                     get_fun_market_entry,
+                    resolve_fun_effective_category,
                 )
 
                 _candidate_fun_entry = get_fun_market_entry(market.id)
@@ -15926,12 +16326,9 @@ async def _score_futures(
                         _allow_fun_extreme_odds = fun_entry_allows_extreme_odds(
                             _admitted_fun_entry
                         )
-
-            effective_sport_category = (
-                _admitted_fun_entry.discover_category
-                if _admitted_fun_entry is not None
-                else market.llm_sport_category
-            )
+                        effective_sport_category = resolve_fun_effective_category(
+                            market.llm_sport_category, _admitted_fun_entry
+                        )
 
             # --- Staleness filters ---
             # Keep serving-time exclusions on the same helper used by admin trace

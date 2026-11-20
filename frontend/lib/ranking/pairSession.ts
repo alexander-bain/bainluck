@@ -34,7 +34,7 @@ export const MORNING_NOT_READY_MESSAGE =
   "This morning's cards are not ready yet. They arrive at 7:15 AM.";
 
 export const MORNING_PAIR_PAUSED_MESSAGE =
-  "Nothing to grade right now. Candidate 2 ended under Ruling 277: A; grading resumes when Candidate 3 is declared.";
+  "Nothing to grade right now. Grading is paused until the next candidate is declared.";
 
 const PT_DATE_FORMAT = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/Los_Angeles",
@@ -110,6 +110,10 @@ export function pairPath(slate: string | null, pair: string | null): string {
 }
 
 /** After a pick, the morning goes on to that slate's deck (amendment 2). */
-export function gradeDeckHref(slateId: string): string {
-  return `/grade?${new URLSearchParams({ slate: slateId }).toString()}`;
+export function gradeDeckHref(slateId: string, setName?: string | null): string {
+  const params = new URLSearchParams({ slate: slateId });
+  if (setName && REF.test(setName)) {
+    params.set("set", setName);
+  }
+  return `/grade?${params.toString()}`;
 }

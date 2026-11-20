@@ -38,7 +38,7 @@ it("draws an old valid floor, dimmed and motionless, with its age", () => {
   expect(html).toContain(
     "Last read 7:58 AM PT, 1 hr 51 min ago. Updates have stopped.",
   );
-  expect(html).toContain("On the floor now");
+  expect(html).toContain('data-factory-row="Server"');
   expect(html).not.toContain("The floor can&#x27;t be read right now");
 });
 
@@ -86,7 +86,26 @@ it("runs only recently crossed belts and stops them for an old read or a blockin
   expect(readerBehind(flowing, "2026-11-18T18:15:00Z")).toBe(false);
 });
 
-it("limits a Live bay to eight crates while retaining its full count", () => {
+it("pairs each factory station with its engineering name", () => {
+  const html = renderToStaticMarkup(
+    <FactoryFloor data={data} lastGoodAt={data.generated_at} renderedAt={data.generated_at} />,
+  );
+  for (const [name, term] of [
+    ["Bench", "writing"],
+    ["Checks", "automated tests"],
+    ["Inspection", "review"],
+    ["Loading dock", "merge queue"],
+    ["Truck", "deploying"],
+    ["Live", "in readers’ hands"],
+  ]) {
+    expect(html).toContain(`<strong>${name}</strong><span>${term}</span>`);
+  }
+  expect(html).toContain("A crate is one change.");
+});
+
+it.each(["Live", "Test"] as const)(
+  "shows two crates and an overflow control at %s",
+  (station) => {
   const live = data.changes.find((c) => c.station === "Live")!;
   const floor = {
     ...data,
@@ -94,6 +113,7 @@ it("limits a Live bay to eight crates while retaining its full count", () => {
       ...live,
       number: 30000 + i,
       line: "Server" as const,
+      station,
       live_at: "2026-11-18T18:00:00Z",
     })),
     generated_at: "2026-11-18T18:00:00Z",
@@ -106,10 +126,11 @@ it("limits a Live bay to eight crates while retaining its full count", () => {
       renderedAt={floor.generated_at}
     />,
   );
-  expect((html.match(/data-crate=/g) ?? []).length).toBe(8);
-  expect(html).toContain("+4 earlier today");
-  expect(html).toContain("12 today");
-});
+    expect((html.match(/data-crate=/g) ?? []).length).toBe(2);
+    expect(html).toContain("+10 more");
+    expect(html).toContain(station === "Live" ? "12 shipped" : "12 here");
+  },
+);
 
 it("shows active workers even when their crates have not changed bays", () => {
   const now = "2026-11-18T18:00:00Z";
@@ -227,7 +248,6 @@ it("puts sent-back changes at Write and bot updates on a separate shelf", () => 
   );
   expect(html).toContain('data-crate="12765" data-station="Server/Write"');
   expect(html).toContain("Sent back");
-  expect(html.indexOf('data-crate="12211"')).toBeGreaterThan(
-    html.indexOf("Bot updates"),
-  );
+  expect(html).not.toContain('data-crate="12211"');
+  expect(html).toContain("Bot updates <strong>1</strong>");
 });

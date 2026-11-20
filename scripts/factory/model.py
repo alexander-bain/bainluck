@@ -95,6 +95,43 @@ def unchanged_after(pull, commit_id):
     )
 
 
+def fable_decision(pull):
+    return max(
+        (
+            c
+            for c in pull.get("comments", [])
+            if c.get("association") in TRUSTED
+            and (c.get("fable_changes") or c.get("fable_accept"))
+        ),
+        key=lambda c: (instant(c["created_at"]), bool(c.get("fable_changes"))),
+        default={},
+    )
+
+
+def bot_review(pull):
+    return max(
+        (
+            r
+            for r in pull.get("reviews", [])
+            if r.get("login") == "claude[bot]"
+            and unchanged_after(pull, r.get("commit_id"))
+        ),
+        key=lambda r: r.get("submitted_at") or "",
+        default={},
+    )
+
+
+def last_authored(pull):
+    return next(
+        (
+            c
+            for c in reversed(pull.get("commits", []))
+            if not c.get("merge_from_master") and not c.get("test_only")
+        ),
+        None,
+    )
+
+
 def classify(pull, deployments, now, line, uncertain_line):
     reasons = ["Changed files could not be confirmed."] if uncertain_line else []
     builder = next(
@@ -162,16 +199,7 @@ def classify(pull, deployments, now, line, uncertain_line):
     )
     if pull.get("draft") and park_when_quiet:
         change["parked"] = True
-    fable = max(
-        (
-            c
-            for c in pull.get("comments", [])
-            if c.get("association") in TRUSTED
-            and (c.get("fable_changes") or c.get("fable_accept"))
-        ),
-        key=lambda c: (instant(c["created_at"]), bool(c.get("fable_changes"))),
-        default={},
-    )
+    fable = fable_decision(pull)
     if fable.get("fable_changes"):
         change["sent_back"] = True
         return change
@@ -195,33 +223,21 @@ def classify(pull, deployments, now, line, uncertain_line):
         change["unsure"] = True
         change["reasons"].append("Review evidence could not be confirmed.")
         return change
-    bot_reviews = [
-        r
-        for r in pull.get("reviews", [])
-        if r.get("login") == "claude[bot]" and unchanged_after(pull, r.get("commit_id"))
-    ]
-    latest_review = max(
-        bot_reviews, key=lambda r: r.get("submitted_at") or "", default={}
-    )
-    if latest_review.get("state") != "APPROVED":
+    if bot_review(pull).get("state") != "APPROVED":
         return change
     if pull.get("fable_needed") and not pull.get("fable_not_needed"):
-        non_merge = [
-            c
-            for c in pull.get("commits", [])
-            if not c.get("merge_from_master") and not c.get("test_only")
-        ]
+        last_change = last_authored(pull)
         if (
             not pull.get("commits_complete")
             or not pull.get("comments_complete")
-            or not non_merge
+            or not last_change
         ):
             change["unsure"] = True
             change["reasons"].append("The final review could not be confirmed.")
             return change
         # The API returns commits in topological order. Merge-only syncs do not
         # invalidate an acceptance of the last authored (non-merge) change.
-        last_commit = non_merge[-1]["at"]
+        last_commit = last_change["at"]
         accepted = fable.get("fable_accept") and instant(
             fable["created_at"]
         ) >= instant(last_commit)

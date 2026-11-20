@@ -5497,11 +5497,43 @@ async def withheld_price_outcome_ids_for_markets(
             venue = (market.source or "").strip().lower()
             venue_ids.setdefault(venue, []).extend(o.id for o in midpoint)
 
-    latest_kalshi_trade = await _newest_kalshi_trades(db, kalshi_ids)
-    venue_rows = {
-        venue: await _newest_venue_trade_rows(db, venue, ids)
-        for venue, ids in venue_ids.items()
-    }
+    kalshi_id_set = set(kalshi_ids)
+    kalshi_midpoint_ids = venue_ids.get(KALSHI_BOOKMAKER)
+    venue_rows: dict[str, list] = {}
+    if kalshi_id_set and kalshi_midpoint_ids:
+        # #11931: both arms read `(outcome_id, last_price)` at each leg's newest
+        # Kalshi capture from the 51 GB `futures_odds_snapshots` table. Query
+        # the union ONCE and fold `max(last_price)` in Python identically to
+        # `_newest_kalshi_trades` while reusing the raw rows for the midpoint
+        # arm (`_closest_trade_by_outcome` filters by each board's candidates).
+        kalshi_union = sorted(kalshi_id_set | set(kalshi_midpoint_ids))
+        kalshi_rows = await _newest_venue_trade_rows(
+            db, KALSHI_BOOKMAKER, kalshi_union
+        )
+        venue_rows[KALSHI_BOOKMAKER] = kalshi_rows
+        latest_kalshi_trade: dict = {}
+        for oid, price in kalshi_rows:
+            if oid not in kalshi_id_set:
+                continue
+            if oid not in latest_kalshi_trade:
+                latest_kalshi_trade[oid] = price
+            elif price is not None and (
+                latest_kalshi_trade[oid] is None or price > latest_kalshi_trade[oid]
+            ):
+                latest_kalshi_trade[oid] = price
+    else:
+        latest_kalshi_trade = (
+            await _newest_kalshi_trades(db, sorted(kalshi_id_set))
+            if kalshi_id_set
+            else {}
+        )
+
+    for venue, ids in venue_ids.items():
+        if venue in venue_rows:
+            continue
+        venue_rows[venue] = await _newest_venue_trade_rows(
+            db, venue, sorted(set(ids))
+        )
 
     withheld: dict[int, set[int]] = {}
     for market in markets:

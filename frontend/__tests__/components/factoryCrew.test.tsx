@@ -2,6 +2,7 @@
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
+import { useRouter } from "next/navigation";
 import FactoryFloor from "@/app/factory/FactoryFloor";
 import {
   beltFlowing,
@@ -9,7 +10,9 @@ import {
   duration,
   stopText,
 } from "@/app/factory/activity";
-import type { Change, FactoryData } from "@/app/factory/types";
+import type { Change, FactoryData, FloorEvent } from "@/app/factory/types";
+import { useEventPlayer } from "@/app/factory/playback";
+import { factoryTabTitle, floorVerdict } from "@/app/factory/verdict";
 
 jest.mock("next/navigation", () => {
   const router = { refresh: jest.fn() };
@@ -167,10 +170,8 @@ it("keeps the same crate, hold, machine queue, build and caption information und
     expect(text).toContain("TestFlight build 5801 is posted.");
     expect(text).toContain("Written by a model from the counts on this page");
     expect(
-      container.querySelector(
-        '[aria-labelledby="parked-heading"] [data-crate="13000"]',
-      ),
-    ).not.toBeNull();
+      container.querySelector('[aria-label="Side shelves"]')?.textContent,
+    ).toContain("Parked 1");
     await act(async () => reduce());
     expect(floor.getAttribute("data-motion")).toBe("paused");
     expect(floor.textContent).toBe(text);
@@ -193,7 +194,7 @@ it("shows carrying, standing in line, working and sleeping from snapshot evidenc
   ).toBe("working");
 });
 
-it("counts each delivery line and keeps held changes and quiet drafts off the floor total", async () => {
+it("counts deliveries in each Live bay and keeps held changes and quiet drafts off the floor", async () => {
   watchMotion();
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -217,17 +218,16 @@ it("counts each delivery line and keeps held changes and quiet drafts off the fl
         />,
       ),
     );
-    const stats = container.querySelector('[aria-label="The factory at a glance"]')!;
-    expect(Array.from(stats.querySelectorAll("strong"), (n) => n.textContent)).toEqual([
-      "1", "1", "1",
-    ]);
+    expect(container.textContent).not.toMatch(/Shipped today|On the floor now|Busiest station/);
     for (const line of ["Website", "Apps"]) {
       const row = container.querySelector(`[data-factory-row="${line}"]`)!;
-      expect(row.textContent).toContain("1 shipped");
-      expect(row.querySelector(`[data-bay="Live"] [data-crate="${shipped.number}"]`)).not.toBeNull();
+      const live = row.querySelector('[data-bay="Live"]')!;
+      expect(live.textContent).toContain("1 shipped");
+      expect(live.querySelector(`[data-crate="${shipped.number}"]`)).not.toBeNull();
     }
-    expect(container.querySelector('[aria-labelledby="held-heading"] [data-crate="13070"]')).not.toBeNull();
-    expect(container.querySelector('[aria-labelledby="parked-heading"] [data-crate="12621"]')).not.toBeNull();
+    const shelf = container.querySelector('[aria-label="Side shelves"]')!;
+    expect(shelf.textContent).toContain("Held for 1.0.8 1");
+    expect(shelf.textContent).toContain("Parked 1");
     expect(container.querySelector('[data-factory-row] [data-crate="13070"]')).toBeNull();
     expect(container.querySelector('[data-factory-row] [data-crate="12621"]')).toBeNull();
     expect(beltFlowing({ ...snapshot, changes, transitions: [] }, "Server", 1, now)).toBe(false);
@@ -265,6 +265,126 @@ it("names the change waiting for inspection and uses a singular day", () => {
   ).toBe("#12998 has waited 40 minutes for inspection.");
 });
 
+it("checks for a new floor every minute while the page is visible", async () => {
+  watchMotion();
+  const refresh = jest.mocked(useRouter().refresh);
+  refresh.mockClear();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  try {
+    await act(async () =>
+      root.render(<FactoryFloor data={snapshot} lastGoodAt={now} renderedAt={now} />),
+    );
+    await act(async () => { jest.advanceTimersByTime(59_999); });
+    expect(refresh).toHaveBeenCalledTimes(0);
+    await act(async () => { jest.advanceTimersByTime(1); });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("plays one event at a time in order, pauses and preserves the remaining delay", async () => {
+  const events: FloorEvent[] = ["commit", "bot"].map((kind, index) => ({
+    id: String(index),
+    kind: kind === "commit" ? "commit" : "bot",
+    number: 12998,
+    line: "Server",
+    builder: "B",
+    station: kind === "commit" ? "Write" : "Review",
+    at: now,
+    observed_at: now,
+  }));
+  function Sample({ running }: { running: boolean }) {
+    const current = useEventPlayer(now, events, running);
+    return <span>{current?.event.kind ?? "quiet"}</span>;
+  }
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const draw = (running: boolean) => act(async () => root.render(<Sample running={running} />));
+  const advance = (ms: number) => act(async () => { jest.advanceTimersByTime(ms); });
+  try {
+    await draw(true);
+    await advance(0);
+    expect(container.textContent).toBe("commit");
+    await advance(10_000);
+    await draw(false);
+    await advance(180_000);
+    expect(container.textContent).toBe("commit");
+    await draw(true);
+    await advance(139_999);
+    expect(container.textContent).toBe("commit");
+    await advance(1);
+    expect(container.textContent).toBe("bot");
+    await advance(1200);
+    expect(container.textContent).toBe("quiet");
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("puts the same sourced hold on the stack light, bay, note and tab", async () => {
+  watchMotion();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  try {
+    await act(async () =>
+      root.render(
+        <FactoryFloor data={snapshot} lastGoodAt={now} renderedAt={now} />,
+      ),
+    );
+    const text = "Loading dock, Server: on hold since 9:20 AM PT after test_floor failed.";
+    expect(container.querySelector('[data-verdict="red"] strong')?.textContent).toBe(text);
+    expect(container.querySelector('[aria-label="Foreman’s note"] p')?.textContent).toMatch(new RegExp(`^${text}`));
+    expect(container.querySelector('[data-line="Server"][data-bay="Merge line"]')?.getAttribute("data-alert")).toBe("red");
+    expect(container.querySelectorAll('[data-alert="red"]')).toHaveLength(1);
+    expect(document.title).toBe(`${text} | The Factory`);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("uses amber for a missing reading or a stopped refresh and green only for a verified clear floor", () => {
+  const clear = {
+    ...snapshot,
+    stops: [],
+    signals: { tests: "passing", testflight: "success" },
+  };
+  expect(floorVerdict(clear, false, now)).toMatchObject({ level: "green", text: "All clear." });
+  expect(floorVerdict(clear, true, now)).toMatchObject({ level: "amber", text: "Not updating." });
+  expect(floorVerdict({ ...clear, stops: undefined }, false, now).level).toBe("amber");
+  expect(floorVerdict({ ...clear, signals: { ...clear.signals, tests: "unknown" } }, false, now).level).toBe("amber");
+  expect(floorVerdict(null, true, now).level).toBe("amber");
+  expect(factoryTabTitle(floorVerdict(clear, false, now))).toBe("All clear. | The Factory");
+});
+
+it("marks a crowded bay after its recorded jam reaches 30 minutes", () => {
+  const jam = {
+    key: "crowd:Test",
+    kind: "crowd",
+    line: null,
+    station: "Test",
+    started_at: "2026-11-18T17:29:59Z",
+    qualifies_at: "2026-11-18T17:59:59Z",
+    ended_at: null,
+    count: 11,
+  } as const;
+  const clear: FactoryData = {
+    ...snapshot,
+    changes: [
+      ...Array.from({ length: 10 }, (_, index) => ({ ...base, number: base.number + index })),
+      { ...base, line: "Website", number: base.number + 10 },
+    ],
+    stops: [],
+    jams: [jam],
+    signals: { tests: "passing", testflight: "success" },
+  };
+  expect(floorVerdict(clear, false, "2026-11-18T17:59:58Z").level).toBe("green");
+  expect(floorVerdict(clear, false, now).bays).toEqual([
+    { line: "Server", station: "Test", level: "amber", text: "Checks, Server: 10 changes are backed up here.", crowded: true },
+  ]);
+});
+
 it("leaves the previous snapshot's notes off the current floor", async () => {
   watchMotion();
   const container = document.createElement("div");
@@ -279,7 +399,7 @@ it("leaves the previous snapshot's notes off the current floor", async () => {
         <FactoryFloor data={mismatched} lastGoodAt={now} renderedAt={now} />,
       ),
     );
-    expect(container.textContent).not.toContain("Foreman’s note");
+    expect(container.textContent).not.toContain(snapshot.notes!.floor);
     expect(container.querySelector('[data-crate="12998"]')).not.toBeNull();
     await act(async () =>
       root.render(

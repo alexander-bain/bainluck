@@ -54,8 +54,10 @@ describe("the three answers", () => {
 });
 
 describe("gradeDeckHref", () => {
-  it("goes on to the same slate's deck after the pick", () => {
+  it("goes on to the same slate's deck after the pick and passes the pair set when given", () => {
     expect(gradeDeckHref("59da9307253a78dc")).toBe("/grade?slate=59da9307253a78dc");
+    expect(gradeDeckHref("59da9307253a78dc", "p3")).toBe("/grade?slate=59da9307253a78dc&set=p3");
+    expect(gradeDeckHref("59da9307253a78dc", "../bad")).toBe("/grade?slate=59da9307253a78dc");
   });
 });
 

@@ -13,6 +13,8 @@ import MachinerySectionRenderer, {
 } from "./MachinerySectionRenderer";
 import { fetchPairedMetricsByCeremony } from "@/lib/api";
 import { APP_STORE_URL } from "@/lib/brandCopy";
+import { formatAsOfStamp } from "@/lib/asOfStamp";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { PairedMetricSet } from "@/lib/discover/visualForms";
 import type { FeedFuturesData, FeedItem } from "@/lib/types";
 import { useDiscoverPriceStream } from "@/hooks/useDiscoverPriceStream";
@@ -471,6 +473,57 @@ export default function CollectionHub({ slug, initialHub = null }: { slug: strin
       {shown.theme.nextCursor && <button type="button" disabled={paging} onClick={() => void loadMore()} className="rounded-card border border-surface-border bg-surface-card px-4 py-2 text-sm font-semibold text-text-primary hover:bg-surface-elevated disabled:text-text-muted">{paging ? "Loading…" : "Load more"}</button>}
       {pageError && <p role="status" className="text-sm text-text-secondary">{pageError}</p>}
     </div>}
+    {!machineryReadIncomplete && shown?.moreSets && shown.moreSets.length > 0 && (
+      <section data-collection-more-sets aria-labelledby="collection-more-sets-heading" className="space-y-3">
+        <h2 id="collection-more-sets-heading" className="text-base font-semibold text-text-primary">
+          More sets worth a look
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {shown.moreSets.map((set) => {
+            const asOfLabel = formatAsOfStamp(set.asOf);
+            return (
+              <Link
+                key={set.slug}
+                href={set.href}
+                data-collection-more-set={set.slug}
+                className="flex flex-col justify-between gap-2.5 rounded-card border border-surface-border bg-surface-card p-4 hover:bg-surface-elevated transition-colors"
+              >
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-text-primary leading-snug">{set.name}</p>
+                  {set.dek && (
+                    <p className="text-xs text-text-secondary leading-relaxed">{set.dek}</p>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 pt-2 border-t border-surface-border/60 text-xs">
+                  {set.leadLabel && set.leadProbability != null ? (
+                    <span className="text-text-secondary">
+                      <span className="font-medium text-text-primary">{set.leadLabel}</span>{" "}
+                      <span className="font-mono font-semibold text-accent-brand">
+                        {formatProbabilityPercent(set.leadProbability, { rendered: set.leadRenderedPercent })}
+                      </span>
+                      {asOfLabel && (
+                        <>
+                          {" "}
+                          <span className="text-text-muted whitespace-nowrap" suppressHydrationWarning>
+                            · {asOfLabel}
+                          </span>
+                        </>
+                      )}
+                    </span>
+                  ) : (
+                    <span className="text-text-muted">Live probabilities</span>
+                  )}
+                  <span className="text-text-muted whitespace-nowrap">
+                    {set.memberCount} {set.memberCount === 1 ? "market" : "markets"}{" "}
+                    <span aria-hidden>›</span>
+                  </span>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </section>
+    )}
     <footer data-collection-landing-footer className="rounded-card border border-surface-border bg-surface-card p-4 sm:p-5 space-y-3">
       <div className="space-y-1">
         <p className="text-sm font-semibold text-text-primary">Explore more live probabilities on Bain Luck</p>

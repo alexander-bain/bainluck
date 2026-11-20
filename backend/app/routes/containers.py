@@ -829,6 +829,16 @@ async def _get_container(
                   "withheld_count": len(withheld), "assembled": bool(published.members),
                   "twin_report": twin_report}
         result["discover_pin"] = midterms_pin(result)
+        from app.utils.roundup_containers import select_more_sets
+
+        midterms_excluded = {slug} | {
+            str(ch.get("slug")) for ch in children if isinstance(ch, dict) and ch.get("slug")
+        }
+        more_sets = await select_more_sets(
+            db, exclude_slugs=midterms_excluded, current_slug=slug, current_category="politics"
+        )
+        if more_sets:
+            result["more_sets"] = more_sets
         return result
 
     if (edition or {}).get("kind") == EDITION_NFL_WEEK and any(
@@ -1082,6 +1092,20 @@ async def _build_published_payload(
         }
     if week_metadata is not None:
         result.update(week_metadata)
+    if week_page is None and published.state == READ_PUBLISHED:
+        from app.utils.roundup_containers import select_more_sets
+
+        hub_excluded = {published.slug} | {
+            str(ch.get("slug")) for ch in children if isinstance(ch, dict) and ch.get("slug")
+        }
+        more_sets = await select_more_sets(
+            db,
+            exclude_slugs=hub_excluded,
+            current_slug=published.slug,
+            current_category=(header or {}).get("category") if isinstance(header, dict) else None,
+        )
+        if more_sets:
+            result["more_sets"] = more_sets
     return result
 
 
@@ -1678,7 +1702,7 @@ async def _serve_theme_page(
         order_classes=lambda present: _theme_order_classes(present, defn),
         unclassified=CLASS_UNCLASSIFIED,
     )
-    return {
+    theme_result = {
         **_state_payload(published, edition),
         "container": _container_header(head) if head is not None else None,
         "children": [],
@@ -1702,3 +1726,16 @@ async def _serve_theme_page(
             "next_cursor": encode_theme_cursor(next_key) if next_key is not None else None,
         },
     }
+    if cursor is None and published.state == READ_PUBLISHED:
+        from app.utils.roundup_containers import select_more_sets
+
+        theme_header = theme_result["container"]
+        more_sets = await select_more_sets(
+            db,
+            exclude_slugs={published.slug},
+            current_slug=published.slug,
+            current_category=(theme_header or {}).get("category") if isinstance(theme_header, dict) else None,
+        )
+        if more_sets:
+            theme_result["more_sets"] = more_sets
+    return theme_result
