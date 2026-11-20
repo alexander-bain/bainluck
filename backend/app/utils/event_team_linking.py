@@ -26,7 +26,6 @@ Design invariants:
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
@@ -41,8 +40,6 @@ from app.utils.team_binding_invariant import (
     expand_event_team_key,
     normalize_event_team_key,
 )
-
-logger = logging.getLogger(__name__)
 
 __all__ = [
     "SportTeamIndex",
