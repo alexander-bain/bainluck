@@ -217,11 +217,30 @@ async def test_default_morning_pair_computes_frozen_candidate_without_pairs_file
     assert exc.value.status_code == 404
 
 
-async def test_morning_pair_is_paused_by_default_under_ruling_277a(wired, monkeypatch):
-    """#13100 (Ruling 277: A): Candidate 2 ended after one morning; opening bare
-    /grade/pair says nothing is open to grade until Candidate 3 is declared."""
+async def test_morning_pair_is_open_for_candidate_3_and_pausable_by_env(wired, monkeypatch):
+    """#11937 (Ruling 277: A): Candidate 3 (pair="p3") is the default morning
+    pair; setting RANKING_MORNING_PAIR_PAUSED=true still pauses bare /grade/pair."""
     monkeypatch.delenv(admin.MORNING_PAIR_PAUSED_ENV, raising=False)
+    monkeypatch.setattr(admin, "load_pairs", lambda path=None: {})
     monkeypatch.setattr(admin, "_captured_today_pt", lambda captured_at, now=None: True)
+    assert admin.DEFAULT_MORNING_PAIR == "p3"
+
+    out = await admin.get_pair(
+        _request(), slate="latest", pair=admin.DEFAULT_MORNING_PAIR, surface="discover", secret=None, db=FakeDB()
+    )
+    assert out["slate_id"] == SLATE_ID and out["pair"] == "p3"
+    assert len(out["left"]) == len(out["right"]) == 10
+
+    # Step 2 (/grade-deck?slate=<id>&set=p3) resolves frozen Candidate 3's top-10
+    # cards dynamically so promoted cards from beyond seat 20 are graded unlabeled.
+    deck = await admin.get_grade_deck(
+        _request(), surface="discover", slate=SLATE_ID, card_set="p3", secret=None, db=FakeDB()
+    )
+    assert deck["slate_id"] == SLATE_ID and deck["mode"] == "spread"
+    assert len(deck["items"]) >= 10
+
+    # Explicit env pause still refuses bare morning link cleanly.
+    monkeypatch.setenv(admin.MORNING_PAIR_PAUSED_ENV, "true")
     with pytest.raises(HTTPException) as exc:
         await admin.get_pair(
             _request(), slate="latest", pair=admin.DEFAULT_MORNING_PAIR, surface="discover", secret=None, db=FakeDB()
