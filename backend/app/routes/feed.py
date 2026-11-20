@@ -12051,6 +12051,52 @@ def _build_personalization_trace(
 _EVENT_SPORT_ID_INDEX_CAP = 8
 
 
+def _set_event_attr_untracked(event: Any, attr: str, value: Any) -> None:
+    """Apply a serve-time folded value without dirtying an ORM session (#13142)."""
+    if hasattr(event, "_sa_instance_state"):
+        set_committed_value(event, attr, value)
+    else:
+        setattr(event, attr, value)
+
+
+async def _apply_proven_duplicate_folds(
+    db: AsyncSession, events: list[Any]
+) -> dict[int, tuple[int, ...]]:
+    """Fold suppressed ``provenance:duplicate-of:<id>`` twins onto feed events (#13142).
+
+    ``event_candidate_ids`` already excludes tagged duplicates in SQL via
+    ``not_a_proven_duplicate()``, so ``fold_twin_events(events)`` never sees
+    them. Calling ``folded_card_numbers_batch`` here — the same batch lookup
+    ``routes/events.py``, ``containers.py`` and ``league_futures.py`` use —
+    keeps each tagged duplicate's live prediction-market prices and opening
+    line on the canonical card on ``/sports`` and Discover.
+
+    Returns ``{canonical_event_id: absorbed_twin_ids}`` for rows that absorbed
+    at least one tagged duplicate.
+    """
+    if not events:
+        return {}
+    from app.utils.proven_duplicates import folded_card_numbers_batch
+
+    folded_map = await folded_card_numbers_batch(db, events)
+    absorbed_by_canonical: dict[int, tuple[int, ...]] = {}
+    for ev in events:
+        fn = folded_map.get(ev.id)
+        if fn is None or not fn.absorbed_ids:
+            continue
+        absorbed_by_canonical[ev.id] = fn.absorbed_ids
+        if fn.win_probability_sources:
+            _set_event_attr_untracked(
+                ev, "win_probability_sources", fn.win_probability_sources
+            )
+        open_h, open_a = fn.opening
+        if open_h is not None and getattr(ev, "opening_home_probability", None) is None:
+            _set_event_attr_untracked(ev, "opening_home_probability", open_h)
+        if open_a is not None and getattr(ev, "opening_away_probability", None) is None:
+            _set_event_attr_untracked(ev, "opening_away_probability", open_a)
+    return absorbed_by_canonical
+
+
 async def _score_events(
     db: AsyncSession,
     now: datetime,
@@ -12427,6 +12473,21 @@ async def _score_events(
             except Exception:
                 logger.exception("feed twin fold failed; serving the unfolded candidate set")
 
+        # #13142: tagged duplicates (`provenance:duplicate-of:<id>`) were
+        # dropped in SQL before `fold_twin_events` ran; pull their live
+        # prediction-market prices and opening lines back onto their canonical
+        # rows so Sports list and Discover cards keep those prices.
+        _proven_absorbed_by_canonical: dict[int, tuple[int, ...]] = {}
+        if price_refresh_events is None and events:
+            try:
+                _proven_absorbed_by_canonical = await _apply_proven_duplicate_folds(
+                    db, events
+                )
+            except Exception:
+                logger.exception(
+                    "feed proven-duplicate fold failed; serving canonical rows unfolded"
+                )
+
         # Batch fallback: for events where _compute_aggregate_probability() returns
         # None, query the latest win_prob_snapshot per event. This catches
         # Kalshi/Polymarket pregame data that's only in snapshots (not on Event model).
@@ -12520,6 +12581,51 @@ async def _score_events(
                 )
             else:
                 prematch_by_event = await read_prematch_priors(db, pm_binds)
+            # #13142: if a settled canonical event absorbed a tagged duplicate
+            # holding pre-game Kalshi/Polymarket snapshots, fill any missing
+            # source from the twin without mutating a shared cache dict.
+            if _proven_absorbed_by_canonical:
+                twin_ids: list[int] = []
+                twin_cutoffs: list[datetime] = []
+                twin_to_canonical: dict[int, int] = {}
+                for _ev in events:
+                    _abs_ids = _proven_absorbed_by_canonical.get(_ev.id)
+                    if not _abs_ids:
+                        continue
+                    if getattr(_ev, "status", None) not in ("completed", "closed"):
+                        continue
+                    _cutoff = getattr(_ev, "commence_time", None)
+                    if _cutoff is None:
+                        continue
+                    for _tid in _abs_ids:
+                        twin_ids.append(_tid)
+                        twin_cutoffs.append(_cutoff)
+                        twin_to_canonical[_tid] = _ev.id
+                if twin_ids:
+                    try:
+                        _twin_priors = await read_prematch_priors(
+                            db,
+                            {
+                                "ids": twin_ids,
+                                "cutoffs": twin_cutoffs,
+                                "sources": list(pm_binds["sources"]),
+                            },
+                        )
+                        if _twin_priors:
+                            prematch_by_event = {
+                                _k: dict(_v) for _k, _v in prematch_by_event.items()
+                            }
+                            for _tid, _srcs in _twin_priors.items():
+                                _cid = twin_to_canonical.get(_tid)
+                                if _cid is None:
+                                    continue
+                                _dest = prematch_by_event.setdefault(_cid, {})
+                                for _src_name, _reading in _srcs.items():
+                                    _dest.setdefault(_src_name, _reading)
+                    except Exception:
+                        logger.exception(
+                            "feed proven-duplicate prematch prior merge failed"
+                        )
             _mark_event_stage("prematch")
 
         # Score each event using aggregate probabilities from all available sources
