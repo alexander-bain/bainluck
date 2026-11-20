@@ -1654,3 +1654,152 @@ async def test_machinery_stale_while_revalidate_prevents_feed_drop_and_proactive
         ROUNDUP_PRODUCERS.clear()
         ROUNDUP_PRODUCERS.update(saved)
         reset_roundup_cache_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_celery_prewarm_publishes_machinery_via_sync_redis_and_web_path_never_calls_sync_redis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#12288 12-minute hold catch + Fable 7:46 PM review (#969 NEVER-AGAIN):
+    In Celery ForkPoolWorker, `asyncio.run()` closes the event loop between tasks so
+    process-global `get_shared_async_redis()` returns `RedisResult(ERROR)` and silently
+    drops Redis writes. Verify:
+    1. On the web path (`_store_roundup_cache_entry`), when `bounded_redis_call`
+       returns `ERROR` or `TIMEOUT`, ZERO sync Redis (`get_redis_client`) calls are
+       made so a slow Redis never freezes the web dyno event loop.
+    2. `_prewarm_machinery_roundups(..., rc=...)` explicitly publishes both live and
+       non-live groupings through sync Redis and reports `redis_written == warmed`.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.request_cache import ERROR, TIMEOUT, RedisResult
+    from app.utils.roundup_containers import (
+        MACHINERY_LIVE_SLUGS_KEY,
+        ROUNDUP_MACHINERY_LIVE_STALE_TTL_S,
+        ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S,
+        _redis_cache_key,
+        _store_roundup_cache_entry,
+    )
+
+    class _FakeSyncRedis:
+        def __init__(self) -> None:
+            self.kv: dict[str, tuple[str, int | None]] = {}
+            self.hashes: dict[str, dict[str, str]] = {}
+            self.expires: dict[str, int] = {}
+
+        def set(self, key: str, value: str, ex: int | None = None) -> bool:
+            self.kv[key] = (value, ex)
+            return True
+
+        def hset(self, name: str, key: str, value: str) -> int:
+            self.hashes.setdefault(name, {})[key] = value
+            return 1
+
+        def hdel(self, name: str, key: str) -> int:
+            self.hashes.setdefault(name, {}).pop(key, None)
+            return 1
+
+        def expire(self, name: str, ttl: int) -> bool:
+            self.expires[name] = ttl
+            return True
+
+    live_cp = {
+        "sections": [
+            {"members": [{"type": "event", "id": 10, "card": {"id": 10, "status": "live"}}]}
+        ]
+    }
+    non_live_cp = {
+        "sections": [
+            {"members": [{"type": "market", "id": 20, "card": {"id": 20, "status": "open"}}]}
+        ]
+    }
+
+    sync_client_calls = 0
+
+    def _forbidden_sync_client():
+        nonlocal sync_client_calls
+        sync_client_calls += 1
+        raise AssertionError("web path must never call sync get_redis_client()")
+
+    async def _fake_async_client():
+        return object()
+
+    monkeypatch.setattr("app.utils.request_cache.get_shared_async_redis", _fake_async_client)
+    monkeypatch.setattr("app.tasks.redis_state.get_redis_client", _forbidden_sync_client)
+
+    # 1. On the web path, async ERROR and TIMEOUT must NEVER invoke sync Redis
+    fake_session = AsyncSession.__new__(AsyncSession)
+    for fail_status in (ERROR, TIMEOUT):
+        async def _broken_async_call(*args, _st=fail_status, **kwargs):
+            return RedisResult(_st)
+
+        monkeypatch.setattr("app.utils.request_cache.bounded_redis_call", _broken_async_call)
+        await _store_roundup_cache_entry(
+            ("machinery-nba-night", "live"),
+            "machinery-nba-night",
+            1_800_000_000.0,
+            {"type": "bundle", "data": {"status": "live"}},
+            live_cp,
+            fake_session,
+        )
+    assert sync_client_calls == 0
+
+    # 2. `_prewarm_machinery_roundups` publishes live + non-live directly via sync `rc`
+    fake_rc2 = _FakeSyncRedis()
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    saved = dict(ROUNDUP_PRODUCERS)
+
+    def _make_prod(slug: str) -> RoundupProducer:
+        return RoundupProducer(
+            slug=slug,
+            name=slug,
+            kind="roundup",
+            category="other",
+            section_title="Markets",
+            footer="",
+            produce=AsyncMock(),
+            membership="computed-produced",
+            relations=("same_subject",),
+            level="member",
+            rule={"producer": "container_machinery"},
+            enabled=lambda: True,
+        )
+
+    @asynccontextmanager
+    async def _fake_session(**kwargs):
+        yield object()
+
+    async def _fake_eval(prod, db, *, force_refresh=False, **kwargs):
+        cp = live_cp if prod.slug == "machinery-nfl-week" else non_live_cp
+        return {"type": "bundle", "slug": prod.slug}, cp
+
+    try:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS["machinery-nfl-week"] = _make_prod("machinery-nfl-week")
+        ROUNDUP_PRODUCERS["machinery-fed-and-macro"] = _make_prod("machinery-fed-and-macro")
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ensure_optional_roundup_candidates",
+            lambda: None,
+        )
+        monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.evaluate_roundup_producer", _fake_eval
+        )
+        res = await _prewarm_machinery_roundups(deadline_s=5.0, rc=fake_rc2)
+        assert res["outcome"] == "ok"
+        assert res["warmed"] == 2
+        assert res["redis_written"] == 2
+        assert fake_rc2.kv[_redis_cache_key("machinery-nfl-week")][1] == int(
+            ROUNDUP_MACHINERY_LIVE_STALE_TTL_S
+        )
+        assert fake_rc2.kv[_redis_cache_key("machinery-fed-and-macro")][1] == int(
+            ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+        )
+        assert "machinery-nfl-week" in fake_rc2.hashes.get(MACHINERY_LIVE_SLUGS_KEY, {})
+        assert "machinery-fed-and-macro" not in fake_rc2.hashes.get(
+            MACHINERY_LIVE_SLUGS_KEY, {}
+        )
+    finally:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS.update(saved)
