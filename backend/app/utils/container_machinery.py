@@ -264,8 +264,6 @@ _PLAIN_MAGNITUDE_BPS: dict[str, float] = {
 
 
 from app.utils.plain_rate_outcome import (
-    plain_bps_step_words as _plain_bps_step_words,
-    plain_rate_move_label as _plain_rate_move_label,
     plain_rate_outcome_label as _plain_rate_outcome_label,
 )
 
