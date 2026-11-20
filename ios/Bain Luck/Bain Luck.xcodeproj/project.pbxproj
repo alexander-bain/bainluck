@@ -235,6 +235,7 @@
 				Widgets10875/SavedWidgetDetail10875.swift,
 				Widgets10875/SavedWidgetReading10875.swift,
 				Widgets10875/SavedWidgetTimeline10875.swift,
+				Widgets10875/WidgetMarketAndDashboardViews13160.swift,
 			);
 			target = A7C0000000000000000000F1 /* BainLuckWidget */;
 		};

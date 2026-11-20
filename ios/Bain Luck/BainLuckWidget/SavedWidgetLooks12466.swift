@@ -407,31 +407,16 @@ struct SavedMarketLook12466: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(model.reading.subject)
-                .font((family == .systemMedium ? Font.subheadline : .caption).weight(.semibold))
-                .lineLimit(2)
-                .minimumScaleFactor(0.8)
-            Spacer(minLength: 0)
-            if let headline = model.reading.headline {
-                // Beside the number where the outcome's name fits whole there,
-                // otherwise on its own line above it: never "San Francis…".
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .lastTextBaseline) {
-                        outcomeName(headline.label)
-                        Spacer(minLength: 4)
-                        value(headline)
-                    }
-                    VStack(alignment: .leading, spacing: 0) {
-                        outcomeName(headline.label).minimumScaleFactor(0.7)
-                        value(headline)
-                    }
-                }
-            }
+            SavedMarketWidgetHeaderAndOutcome13161(
+                subject: model.reading.subject,
+                isMediumFamily: family == .systemMedium,
+                headline: model.reading.headline
+            )
             if let shares = model.reading.shares {
                 SavedChanceBar12466(shares: shares, awayColor: barTrack, homeColor: barFill, height: 7, track: barTrack)
             }
             Text(model.footer)
-                .font(.caption2)
+                .font(.system(size: 10.5))
                 .opacity(inkOnFill ? 0.8 : 0.6)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -439,13 +424,12 @@ struct SavedMarketLook12466: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
-}
 
-extension SavedMarketLook12466 {
-    func outcomeName(_ name: String) -> some View {
+    /// Preserves `HeadlineStyleTable199` widget surface hooks verified by `OneTypeTableEverywhere199Tests`.
+    func outcomeName(_ name: String, lineLimit: Int = 1) -> some View {
         Text(name)
             .font(HeadlineStyleTable199.names(.widget, scaledSize: HeadlineStyleTable199.nameBaseSize(.widget)))
-            .lineLimit(1)
+            .lineLimit(lineLimit)
             .opacity(0.85)
     }
 
@@ -461,35 +445,58 @@ extension SavedMarketLook12466 {
 
 #if os(iOS)
 /// The rectangle: the matchup, a bar between the two chances, and the clock.
+/// A saved market wraps its full title and outcome name with fixed Lock-Screen
+/// sizing so neither cuts off with "…" inside the 157×66 pt accessory slot.
 /// A result keeps today's fitted drawing (`SavedRectangular10875`).
 struct SavedLockRectangle12466: View {
     let model: SavedLookModel12466
 
     var body: some View {
+        if model.isGame {
+            gameRectangle
+        } else {
+            SavedMarketLockRectangleView13160(
+                shortSubject: model.reading.shortSubject,
+                headline: model.reading.headline,
+                footer: model.footer
+            )
+            .widgetAccentable()
+        }
+    }
+
+    private var gameRectangle: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(model.reading.shortSubject)
                 .font(.headline)
                 .lineLimit(1)
+                .minimumScaleFactor(0.75)
                 .widgetAccentable()
             if let shares = model.reading.shares {
                 HStack(spacing: 5) {
-                    if model.isGame, model.away.figure != nil {
-                        Text(model.away.figure ?? "").font(.caption.weight(.semibold).monospacedDigit())
+                    if model.away.figure != nil {
+                        Text(model.away.figure ?? "")
+                            .font(.caption.weight(.semibold).monospacedDigit())
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     } else if let headline = model.reading.headline {
-                        Text(model.isGame ? headline.shortLabel : headline.label)
+                        Text(headline.shortLabel)
                             .font(.caption.weight(.semibold))
                             .lineLimit(1)
+                            .minimumScaleFactor(0.75)
                     }
                     SavedChanceBar12466(shares: shares, awayColor: .primary.opacity(0.35), homeColor: .primary,
                                         height: 6, track: .primary.opacity(0.25), leadsHome: model.headlineIsHome)
-                    Text((model.isGame ? model.home.figure : model.reading.headline?.figure) ?? "—")
+                    Text(model.home.figure ?? "—")
                         .font(.caption.weight(.semibold).monospacedDigit())
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
             }
             Text(model.footer)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

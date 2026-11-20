@@ -130,172 +130,15 @@ struct SmallLiveGameView: View {
 
 struct MediumLiveGamesView: View {
     let entry: BainLuckWidgetEntry
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if entry.liveGames.isEmpty && entry.discoverItems.isEmpty {
             emptyView
         } else {
-            HStack(spacing: 0) {
-                // Left side: live games
-                if !entry.liveGames.isEmpty {
-                    liveGamesColumn
-                        .frame(maxWidth: .infinity)
-                }
-
-                // Divider if both sections have content
-                if !entry.liveGames.isEmpty && !entry.discoverItems.isEmpty {
-                    Divider()
-                        .padding(.vertical, 8)
-                }
-
-                // Right side: discover items (only show if we have space)
-                if !entry.discoverItems.isEmpty {
-                    discoverColumn
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .padding(12)
-        }
-    }
-
-    private var liveGamesColumn: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: "circle.fill")
-                    .font(.system(size: 5))
-                    .foregroundStyle(.green)
-                Text("LIVE")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.green)
-                Spacer()
-            }
-            .padding(.bottom, 6)
-
-            ForEach(Array(entry.liveGames.prefix(3).enumerated()), id: \.element.id) { index, game in
-                if index > 0 {
-                    Divider()
-                        .padding(.vertical, 3)
-                }
-                compactGameRow(game)
-            }
-
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func compactGameRow(_ game: WidgetGame) -> some View {
-        Link(destination: URL(string: "bainluck://events/\(game.id)")!) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(game.sport.uppercased())
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    if !game.period.isEmpty {
-                        Text(game.period)
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundStyle(.green)
-                    }
-                }
-
-                HStack(spacing: 4) {
-                    // Team color dot
-                    Circle()
-                        .fill(Color(hex: game.resolvedAwayColor(for: colorScheme) ?? "#666666"))
-                        .frame(width: 6, height: 6)
-                    Text(game.awayAbbrev)
-                        .font(.system(size: 11, weight: .medium))
-                        .frame(width: 28, alignment: .leading)
-                    Text("\(game.awayScore ?? 0)")
-                        .font(.system(size: 11, weight: .heavy, design: .rounded).monospacedDigit())
-                        .frame(width: 16, alignment: .trailing)
-
-                    Text("-")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.tertiary)
-
-                    Text("\(game.homeScore ?? 0)")
-                        .font(.system(size: 11, weight: .heavy, design: .rounded).monospacedDigit())
-                        .frame(width: 16, alignment: .leading)
-                    Text(game.homeAbbrev)
-                        .font(.system(size: 11, weight: .medium))
-                        .frame(width: 28, alignment: .trailing)
-                    Circle()
-                        .fill(Color(hex: game.resolvedHomeColor(for: colorScheme) ?? "#0A84FF"))
-                        .frame(width: 6, height: 6)
-
-                    Spacer()
-
-                    // #5363 — names the survivor rather than holding an empty
-                    // slot: at 9pt in a compact accessory there is no room for
-                    // an absence a reader could interpret.
-                    Text(game.awayProb.map { "\($0)-\(game.homeProb)" }
-                         ?? "\(game.homeAbbrev) \(game.homeProb)")
-                        .font(.system(size: 9, weight: .medium, design: .rounded).monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    private var discoverColumn: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: "chart.line.uptrend.xyaxis")
-                    .font(.system(size: 8))
-                    .foregroundStyle(.secondary)
-                Text("DISCOVER")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(.bottom, 6)
-
-            ForEach(Array(entry.discoverItems.prefix(3).enumerated()), id: \.element.id) { index, item in
-                if index > 0 {
-                    Divider()
-                        .padding(.vertical, 3)
-                }
-                compactDiscoverRow(item)
-            }
-
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func compactDiscoverRow(_ item: WidgetDiscoverItem) -> some View {
-        Link(destination: URL(string: "bainluck://futures/\(item.id)")!) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.category.uppercased())
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.secondary)
-
-                HStack {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(item.leader)
-                            .font(.system(size: 11, weight: .semibold))
-                            .lineLimit(1)
-                        Text(item.name)
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-
-                    Spacer(minLength: 4)
-
-                    VStack(alignment: .trailing, spacing: 1) {
-                        Text("\(item.probability)%")
-                            .font(.system(size: 13, weight: .heavy, design: .rounded).monospacedDigit())
-
-                        if let movement = item.movement, movement != 0 {
-                            Text("\(movement > 0 ? "+" : "")\(movement)")
-                                .font(.system(size: 8, weight: .semibold, design: .rounded))
-                                .foregroundStyle(movement > 0 ? .green : .red)
-                        }
-                    }
-                }
-            }
+            MediumDashboardContentView13162(
+                liveGames: entry.dashboardGames13162,
+                discoverItems: entry.dashboardMarkets13162
+            )
         }
     }
 
@@ -322,183 +165,15 @@ struct MediumLiveGamesView: View {
 
 struct LargeDashboardView: View {
     let entry: BainLuckWidgetEntry
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if entry.liveGames.isEmpty && entry.discoverItems.isEmpty {
             emptyView
         } else {
-            VStack(alignment: .leading, spacing: 0) {
-                // Live games section
-                if !entry.liveGames.isEmpty {
-                    liveGamesSection
-                }
-
-                if !entry.liveGames.isEmpty && !entry.discoverItems.isEmpty {
-                    Divider()
-                        .padding(.vertical, 6)
-                }
-
-                // Discover section
-                if !entry.discoverItems.isEmpty {
-                    discoverSection
-                }
-
-                Spacer(minLength: 0)
-            }
-            .padding(14)
-        }
-    }
-
-    private var liveGamesSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: "circle.fill")
-                    .font(.system(size: 5))
-                    .foregroundStyle(.green)
-                Text("LIVE GAMES")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.green)
-                Spacer()
-                Text("\(entry.liveGames.count) game\(entry.liveGames.count == 1 ? "" : "s")")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.bottom, 8)
-
-            ForEach(Array(entry.liveGames.prefix(5).enumerated()), id: \.element.id) { index, game in
-                if index > 0 {
-                    Divider()
-                        .padding(.vertical, 4)
-                }
-                largeGameRow(game)
-            }
-        }
-    }
-
-    private func largeGameRow(_ game: WidgetGame) -> some View {
-        Link(destination: URL(string: "bainluck://events/\(game.id)")!) {
-            HStack(spacing: 8) {
-                // Away team
-                HStack(spacing: 6) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color(hex: game.resolvedAwayColor(for: colorScheme) ?? "#666666"))
-                        .frame(width: 4, height: 24)
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(game.awayAbbrev)
-                            .font(.system(size: 13, weight: game.awayIsLeading ? .bold : .medium))
-                        // #5363 — withheld on a draw-priced sport.
-                        Text(game.awayProb.map { "\($0)%" } ?? "")
-                            .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(width: 40, alignment: .leading)
-                }
-
-                // Score
-                HStack(spacing: 4) {
-                    Text("\(game.awayScore ?? 0)")
-                        .font(.system(size: 15, weight: .heavy, design: .rounded).monospacedDigit())
-                        .frame(width: 20, alignment: .trailing)
-                    Text("-")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                    Text("\(game.homeScore ?? 0)")
-                        .font(.system(size: 15, weight: .heavy, design: .rounded).monospacedDigit())
-                        .frame(width: 20, alignment: .leading)
-                }
-
-                // Home team
-                HStack(spacing: 6) {
-                    VStack(alignment: .trailing, spacing: 1) {
-                        Text(game.homeAbbrev)
-                            .font(.system(size: 13, weight: game.homeIsLeading ? .bold : .medium))
-                        Text("\(game.homeProb)%")
-                            .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(width: 40, alignment: .trailing)
-
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color(hex: game.resolvedHomeColor(for: colorScheme) ?? "#0A84FF"))
-                        .frame(width: 4, height: 24)
-                }
-
-                Spacer()
-
-                // Sport + period
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(game.sport.uppercased())
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.secondary)
-                    if !game.period.isEmpty {
-                        Text(game.period)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.green)
-                    }
-                }
-            }
-        }
-    }
-
-    private var discoverSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: "chart.line.uptrend.xyaxis")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
-                Text("TRENDING")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(.bottom, 8)
-
-            ForEach(Array(entry.discoverItems.prefix(5).enumerated()), id: \.element.id) { index, item in
-                if index > 0 {
-                    Divider()
-                        .padding(.vertical, 4)
-                }
-                largeDiscoverRow(item)
-            }
-        }
-    }
-
-    private func largeDiscoverRow(_ item: WidgetDiscoverItem) -> some View {
-        Link(destination: URL(string: "bainluck://futures/\(item.id)")!) {
-            HStack(spacing: 8) {
-                // Category pill
-                Text(item.category.uppercased())
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.6), in: Capsule())
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(item.leader)
-                        .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(1)
-                    Text(item.name)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 4)
-
-                VStack(alignment: .trailing, spacing: 1) {
-                    Text("\(item.probability)%")
-                        .font(.system(size: 14, weight: .heavy, design: .rounded).monospacedDigit())
-
-                    if let movement = item.movement, movement != 0 {
-                        Text("\(movement > 0 ? "+" : "")\(movement)")
-                            .font(.system(size: 9, weight: .semibold, design: .rounded))
-                            .foregroundStyle(movement > 0 ? .green : .red)
-                    }
-                }
-            }
+            LargeDashboardContentView13162(
+                liveGames: entry.dashboardGames13162,
+                discoverItems: entry.dashboardMarkets13162
+            )
         }
     }
 
@@ -517,6 +192,41 @@ struct LargeDashboardView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(14)
         .widgetURL(URL(string: "bainluck://events"))
+    }
+}
+
+private extension BainLuckWidgetEntry {
+    var dashboardGames13162: [WidgetDashboardGameRow13162] {
+        liveGames.map { game in
+            WidgetDashboardGameRow13162(
+                id: game.id,
+                awayAbbrev: game.awayAbbrev,
+                homeAbbrev: game.homeAbbrev,
+                awayScore: game.awayScore,
+                homeScore: game.homeScore,
+                awayProb: game.awayProb,
+                homeProb: game.homeProb,
+                period: game.period,
+                sport: game.sport,
+                awayColorHex: game.awayColor,
+                homeColorHex: game.homeColor,
+                awayDarkColorHex: game.awayDarkColor,
+                homeDarkColorHex: game.homeDarkColor
+            )
+        }
+    }
+
+    var dashboardMarkets13162: [WidgetDashboardMarketRow13162] {
+        discoverItems.map { item in
+            WidgetDashboardMarketRow13162(
+                id: item.id,
+                name: item.name,
+                category: item.category,
+                leader: item.leader,
+                probability: item.probability,
+                movement: item.movement
+            )
+        }
     }
 }
 
