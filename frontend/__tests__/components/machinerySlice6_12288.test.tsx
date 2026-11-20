@@ -554,6 +554,55 @@ describe("#12288 Slice 6 — Website parity, error states, and non-repeating fir
     expect(html).not.toContain("Toss-up");
   });
 
+  it("#13097 batch-1 wording: benchmark_strip uses visualBlock.item_noun ('cities', 'couples') and falls back to 'benchmarks'", () => {
+    const makeItems = () =>
+      [1, 2, 3, 4].map((n) => ({
+        market_id: 9000 + n,
+        title: `Entry ${n}`,
+        outcomes: [{ outcome_id: n, name: "Yes", rendered_percent: 40 - n }],
+      }));
+
+    const citiesHtml = renderToStaticMarkup(
+      <MachinerySectionRenderer
+        visualBlock={{
+          form_id: "benchmark_strip",
+          initial_visible_limit: 3,
+          item_noun: "cities",
+          items: makeItems(),
+        }}
+        members={[]}
+      />,
+    );
+    expect(citiesHtml).toContain("Show all 4 cities (+1 more)");
+    expect(citiesHtml).not.toContain("benchmarks");
+
+    const couplesHtml = renderToStaticMarkup(
+      <MachinerySectionRenderer
+        visualBlock={{
+          form_id: "benchmark_strip",
+          initial_visible_limit: 3,
+          item_noun: "couples",
+          items: makeItems(),
+        }}
+        members={[]}
+      />,
+    );
+    expect(couplesHtml).toContain("Show all 4 couples (+1 more)");
+    expect(couplesHtml).not.toContain("benchmarks");
+
+    const defaultHtml = renderToStaticMarkup(
+      <MachinerySectionRenderer
+        visualBlock={{
+          form_id: "benchmark_strip",
+          initial_visible_limit: 3,
+          items: makeItems(),
+        }}
+        members={[]}
+      />,
+    );
+    expect(defaultHtml).toContain("Show all 4 benchmarks (+1 more)");
+  });
+
   it("252: A: bootFeedPath appends machinery=1 only when NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 is true", () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { bootFeedPath } = require("@/lib/discover/feedBoot");

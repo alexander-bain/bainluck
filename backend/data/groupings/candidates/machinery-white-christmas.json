@@ -27,6 +27,7 @@
       {
         "key": "christmas_snow",
         "title": "Snow on Christmas",
+        "item_noun": "cities",
         "note": "Chance of measurable snow on Christmas Day across U.S. cities.",
         "atom_query": {
           "kind": "markets",

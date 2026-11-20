@@ -649,9 +649,11 @@ function SiblingFieldsGridBlock({
 function BenchmarkStripBlock({
   items,
   limit = 3,
+  itemNoun,
 }: {
   items: Record<string, unknown>[];
   limit?: number;
+  itemNoun?: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const shown = expanded ? items : items.slice(0, limit);
@@ -697,7 +699,7 @@ function BenchmarkStripBlock({
         expanded={expanded}
         totalCount={items.length}
         visibleLimit={limit}
-        noun="benchmarks"
+        noun={itemNoun && itemNoun.trim() ? itemNoun.trim() : "benchmarks"}
         onToggle={() => setExpanded((v) => !v)}
       />
     </div>
@@ -855,7 +857,7 @@ export default function MachinerySectionRenderer({
   visualBlock: MachineryVisualBlock;
   members: CollectionMember[];
 }) {
-  const { form_id, initial_visible_limit, paired_metric_set, items = [] } = visualBlock;
+  const { form_id, initial_visible_limit, item_noun, paired_metric_set, items = [] } = visualBlock;
   const limit = Math.min(3, Math.max(1, Number(initial_visible_limit ?? 3)));
   if (form_id === "paired_stage_bars" && paired_metric_set) {
     return (
@@ -885,7 +887,7 @@ export default function MachinerySectionRenderer({
     return <ContenderSpotlightBlock items={items} limit={limit} />;
   }
   if (form_id === "benchmark_strip") {
-    return <BenchmarkStripBlock items={items} limit={limit} />;
+    return <BenchmarkStripBlock items={items} limit={limit} itemNoun={item_noun} />;
   }
   return <SiblingFieldsGridBlock items={items} limit={limit} />;
 }

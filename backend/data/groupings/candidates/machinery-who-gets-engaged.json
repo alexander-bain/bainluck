@@ -23,14 +23,17 @@
     "extra_llm_categories": ["politics"],
     "card_rows": 3,
     "card_section_key": "engaged_couples",
+    "headline_predicate": "are the likeliest to get engaged",
     "sections": [
       {
         "key": "engaged_couples",
         "title": "Couples to Watch",
+        "item_noun": "couples",
         "note": "Engagement odds across celebrity and public-figure couples, one row per couple.",
         "atom_query": {
           "kind": "markets",
           "title_all_tokens": ["engaged"],
+          "any_tokens": [" and ", " & "],
           "exclude_tokens": [
             "roblox",
             "hours",

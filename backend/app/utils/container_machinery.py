@@ -3619,20 +3619,25 @@ async def produce_container_machinery(
                 seen_member_keys.add((MEMBER_MARKET, mid))
                 all_member_envelopes.append(env)
 
+        vb_payload: dict[str, Any] = {
+            "form_id": form_id,
+            "initial_visible_limit": initial_visible,
+            "items": [
+                {k: v for k, v in it.items() if k not in ("card", "_twin_market_ids")}
+                for it in matched
+            ],
+        }
+        sec_item_noun = str(sec_cfg.get("item_noun") or "").strip()
+        if sec_item_noun:
+            vb_payload["item_noun"] = sec_item_noun
+
         built_by_idx[sec_idx] = {
             "class": sec_key,
             "title": eff_title,
             "note": eff_note,
             "layout": form_id,
             "members": sec_members,
-            "visual_block": {
-                "form_id": form_id,
-                "initial_visible_limit": initial_visible,
-                "items": [
-                    {k: v for k, v in it.items() if k not in ("card", "_twin_market_ids")}
-                    for it in matched
-                ],
-            },
+            "visual_block": vb_payload,
         }
 
     built_sections = [built_by_idx[idx] for idx in sorted(built_by_idx)]
