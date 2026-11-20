@@ -265,18 +265,15 @@ class TestTheBundesligaCard:
         assert CANONICAL in rail
 
     def test_the_live_number_comes_across_too(self):
-        """The bag half, on the same row: the canonical held no speaker at all.
-
-        `betting` is the only one of the three that survives a completed game
-        (the blend drops Kalshi and Polymarket once a game is over), so this is
-        the settled sportsbook price and the assertion names it outright.
-        """
+        """#13172 Option B: a completed Bundesliga loss serves its settled result
+        (home 0.0 / away 1.0 / draw 0.0), not the last live sportsbook price 0.0028."""
         card = _results_rail(*_the_production_pair())[CANONICAL]
 
-        assert card["home_win_probability"] == pytest.approx(0.0028), (
-            "the card's blend is still empty while three venues sit on the row "
-            f"it suppressed (got {card['home_win_probability']!r})"
-        )
+        assert card["home_win_probability"] == 0.0
+        assert card["current_odds"]["home_probability"] == 0.0
+        assert card["current_odds"]["away_probability"] == 1.0
+        assert card["current_odds"]["draw_probability"] == 0.0
+        assert card["source_mark"]["state"] == "settled"
 
     def test_the_sources_fold_alone_would_have_left_the_card_blank(self):
         """🔴 READ THIS ONE FIRST — it fails on the DESIGN, not the code.

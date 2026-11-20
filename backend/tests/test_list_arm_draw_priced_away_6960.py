@@ -225,8 +225,9 @@ class TestTheListFormatterRefusesToWithhold:
             "settled means settled: a result is not a price and was never "
             "derived from the home number"
         )
-        assert response["hero_probability"] == pytest.approx(0.5)
-        assert response["hero_probability_away"] == pytest.approx(0.5)
+        assert response["hero_probability"] == pytest.approx(0.0)
+        assert response["hero_probability_away"] == pytest.approx(0.0)
+        assert response["hero_probability_draw"] == pytest.approx(1.0)
 
 
 # ── THE DURABLE ONE ──────────────────────────────────────────────────────────

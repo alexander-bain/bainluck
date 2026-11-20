@@ -499,28 +499,96 @@ def format_event_data(
 
     _is_settled_hero = hero is not None and hero.source == "settled"
     _draw_priced = sport_prices_a_draw(sport_key)
-    _suppress_scheduled_orphan = _draw_priced and not _is_settled_hero and status == "scheduled"
+    from app.utils.settled_hero import is_finished_status, settled_current_chance
 
-    if current_home_prob is not None:
-        if (
-            _draw_priced
-            and not _is_settled_hero
-            and current_draw_prob is not None
-            and current_away_prob is not None
-        ):
-            home_pct, draw_pct, away_pct = rendered_three_way_percents(
-                current_home_prob, current_draw_prob, current_away_prob
-            )
+    if is_finished_status(status):
+        # #13172 Option B — finished games serve their resolved result in
+        # current_odds (draw 100 / home 0 / away 0 for draw-priced draws) and
+        # omit current_odds when final_unresolved. Scoring and reason lines ran
+        # before format_event_data and stay completely unchanged.
+        _sc = settled_current_chance(hero, sport_key=sport_key)
+        if _sc.resolved:
             odds_data: dict[str, Any] = {
-                "home_probability": current_home_prob,
-                "away_probability": current_away_prob,
-                "draw_probability": current_draw_prob,
-                "home_rendered_percent": home_pct,
-                "away_rendered_percent": away_pct,
-                "draw_rendered_percent": draw_pct,
+                "home_probability": _sc.home_probability,
+                "away_probability": _sc.away_probability,
+                "home_rendered_percent": _sc.home_rendered_percent,
+                "away_rendered_percent": _sc.away_rendered_percent,
             }
-        elif _suppress_scheduled_orphan:
-            # #13131 step 3: scheduled one-leg draw-priced card -> nothing for chance.
+            if _draw_priced:
+                odds_data["draw_probability"] = _sc.draw_probability
+                odds_data["draw_rendered_percent"] = _sc.draw_rendered_percent
+            if prob_source:
+                odds_data["source"] = prob_source
+            data["current_odds"] = odds_data
+
+        if hero is not None:
+            if _sc.resolved:
+                data["hero_probability"] = _sc.home_probability
+                data["hero_probability_away"] = _sc.away_probability
+                if _draw_priced:
+                    data["hero_probability_draw"] = _sc.draw_probability
+            else:
+                data["hero_probability"] = hero.home_probability
+                data["hero_probability_away"] = (
+                    printable_away(hero.away_probability, hero.home_probability, sport_key)
+                    if _draw_priced
+                    else hero.away_probability
+                )
+            data["hero_probability_source"] = hero.source
+            if hero.settled_result is not None:
+                data["hero_settled_result"] = hero.settled_result
+    else:
+        _suppress_scheduled_orphan = _draw_priced and not _is_settled_hero and status == "scheduled"
+
+        if current_home_prob is not None:
+            if (
+                _draw_priced
+                and not _is_settled_hero
+                and current_draw_prob is not None
+                and current_away_prob is not None
+            ):
+                home_pct, draw_pct, away_pct = rendered_three_way_percents(
+                    current_home_prob, current_draw_prob, current_away_prob
+                )
+                odds_data = {
+                    "home_probability": current_home_prob,
+                    "away_probability": current_away_prob,
+                    "draw_probability": current_draw_prob,
+                    "home_rendered_percent": home_pct,
+                    "away_rendered_percent": away_pct,
+                    "draw_rendered_percent": draw_pct,
+                }
+            elif _suppress_scheduled_orphan:
+                # #13131 step 3: scheduled one-leg draw-priced card -> nothing for chance.
+                odds_data = {
+                    "home_probability": None,
+                    "away_probability": None,
+                    "draw_probability": None,
+                    "home_rendered_percent": None,
+                    "away_rendered_percent": None,
+                    "draw_rendered_percent": None,
+                }
+            else:
+                away_pct, home_pct = rendered_duel_percents(current_away_prob, current_home_prob)
+                _served_away = (
+                    printable_away(current_away_prob, current_home_prob, sport_key)
+                    if (_draw_priced and not _is_settled_hero)
+                    else current_away_prob
+                )
+                odds_data = {
+                    "home_probability": current_home_prob,
+                    "away_probability": _served_away,
+                    "home_rendered_percent": home_pct,
+                    "away_rendered_percent": away_pct if _served_away is not None else None,
+                }
+                if _draw_priced and not _is_settled_hero:
+                    odds_data["draw_probability"] = None
+                    odds_data["draw_rendered_percent"] = None
+            if prob_source:
+                odds_data["source"] = prob_source
+            data["current_odds"] = odds_data
+        elif _suppress_scheduled_orphan and (hero is not None or prob_source):
+            # Preserve `current_odds` key with nulled chance fields when suppressed.
             odds_data = {
                 "home_probability": None,
                 "away_probability": None,
@@ -529,64 +597,35 @@ def format_event_data(
                 "away_rendered_percent": None,
                 "draw_rendered_percent": None,
             }
-        else:
-            away_pct, home_pct = rendered_duel_percents(current_away_prob, current_home_prob)
-            _served_away = (
-                printable_away(current_away_prob, current_home_prob, sport_key)
-                if (_draw_priced and not _is_settled_hero)
-                else current_away_prob
-            )
-            odds_data = {
-                "home_probability": current_home_prob,
-                "away_probability": _served_away,
-                "home_rendered_percent": home_pct,
-                "away_rendered_percent": away_pct if _served_away is not None else None,
-            }
-            if _draw_priced and not _is_settled_hero:
-                odds_data["draw_probability"] = None
-                odds_data["draw_rendered_percent"] = None
-        if prob_source:
-            odds_data["source"] = prob_source
-        data["current_odds"] = odds_data
-    elif _suppress_scheduled_orphan and (hero is not None or prob_source):
-        # Preserve `current_odds` key with nulled chance fields when suppressed.
-        odds_data = {
-            "home_probability": None,
-            "away_probability": None,
-            "draw_probability": None,
-            "home_rendered_percent": None,
-            "away_rendered_percent": None,
-            "draw_rendered_percent": None,
-        }
-        if prob_source:
-            odds_data["source"] = prob_source
-        data["current_odds"] = odds_data
+            if prob_source:
+                odds_data["source"] = prob_source
+            data["current_odds"] = odds_data
 
-    if hero is not None:
-        if _draw_priced and not _is_settled_hero:
-            if (
-                current_home_prob is not None
-                and current_away_prob is not None
-                and current_draw_prob is not None
-            ):
-                data["hero_probability"] = current_home_prob
-                data["hero_probability_away"] = current_away_prob
-                data["hero_probability_draw"] = current_draw_prob
-            elif _suppress_scheduled_orphan:
-                data["hero_probability"] = None
-                data["hero_probability_away"] = None
-                data["hero_probability_draw"] = None
+        if hero is not None:
+            if _draw_priced and not _is_settled_hero:
+                if (
+                    current_home_prob is not None
+                    and current_away_prob is not None
+                    and current_draw_prob is not None
+                ):
+                    data["hero_probability"] = current_home_prob
+                    data["hero_probability_away"] = current_away_prob
+                    data["hero_probability_draw"] = current_draw_prob
+                elif _suppress_scheduled_orphan:
+                    data["hero_probability"] = None
+                    data["hero_probability_away"] = None
+                    data["hero_probability_draw"] = None
+                else:
+                    data["hero_probability"] = hero.home_probability
+                    data["hero_probability_away"] = printable_away(
+                        hero.away_probability, hero.home_probability, sport_key
+                    )
             else:
                 data["hero_probability"] = hero.home_probability
-                data["hero_probability_away"] = printable_away(
-                    hero.away_probability, hero.home_probability, sport_key
-                )
-        else:
-            data["hero_probability"] = hero.home_probability
-            data["hero_probability_away"] = hero.away_probability
-        data["hero_probability_source"] = hero.source
-        if hero.settled_result is not None:
-            data["hero_settled_result"] = hero.settled_result
+                data["hero_probability_away"] = hero.away_probability
+            data["hero_probability_source"] = hero.source
+            if hero.settled_result is not None:
+                data["hero_settled_result"] = hero.settled_result
 
     if opening_home_prob is not None:
         data["opening_odds"] = {

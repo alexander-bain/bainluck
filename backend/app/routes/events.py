@@ -168,7 +168,12 @@ from app.utils.hero_probability import resolve_hero
 # `resolve_settled_hero` survives here for the graded-card gate around L12626,
 # which asks the settled question on its own account. The hero cascade itself
 # left with #3903 — see `utils/hero_probability`.
-from app.utils.settled_hero import resolve_settled_hero
+from app.utils.settled_hero import (
+    apply_settled_current_odds,
+    is_finished_status,
+    resolve_settled_hero,
+    settled_current_chance,
+)
 from app.utils.settled_price import priceless_leg_keeps_its_row
 from app.utils.settledness import market_assigned_settled
 from app.utils.venue_settlement import (
@@ -21153,6 +21158,25 @@ async def get_event(
 
             response["hero_sportsbook_count"] = hero_sportsbook_count(blend_view)
 
+    # #13172 Option B — settled means settled: a finished game serves its
+    # resolved result (draw 100 / home 0 / away 0 for three-way draws; empty for
+    # final_unresolved) in current_odds, never the last live price. Non-chance
+    # metadata (spread, over_under, bookmaker_count, captured_at, projections)
+    # and pregame fields (opening_odds, prematch_odds, pregame_projection) stay.
+    if is_finished_status(response.get("status")):
+        if _hero is not None and _hero.source == "settled" and sport_prices_a_draw(event_sport_key):
+            _sc = settled_current_chance(_hero, sport_key=event_sport_key)
+            response["hero_probability"] = _sc.home_probability
+            response["hero_probability_away"] = _sc.away_probability
+            response["hero_probability_draw"] = _sc.draw_probability
+        if isinstance(response.get("current_odds"), dict):
+            response["current_odds"] = apply_settled_current_odds(
+                response["current_odds"],
+                _hero,
+                sport_key=event_sport_key,
+                include_rendered=True,
+            )
+
     from app.utils.source_mark import headline_source_marks
 
     response["source_mark"], response["away_source_mark"] = headline_source_marks(
@@ -37940,6 +37964,17 @@ def _format_event_with_odds(event: Event) -> dict:
             ),
         }
 
+    if is_finished_status(response.get("status")) and isinstance(
+        response.get("current_odds"), dict
+    ):
+        _ev_sport_key = _loaded_event_sport_key(event)
+        response["current_odds"] = apply_settled_current_odds(
+            response["current_odds"],
+            resolve_hero(event),
+            sport_key=_ev_sport_key,
+            include_rendered=True,
+        )
+
     return response
 
 
@@ -37980,6 +38015,17 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
                 else {}
             ),
         }
+
+    if is_finished_status(response.get("status")) and isinstance(
+        response.get("current_odds"), dict
+    ):
+        _ev_sport_key = _loaded_event_sport_key(event)
+        response["current_odds"] = apply_settled_current_odds(
+            response["current_odds"],
+            resolve_hero(event),
+            sport_key=_ev_sport_key,
+            include_rendered=True,
+        )
 
     return response
 
@@ -38266,6 +38312,23 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         response["hero_probability_source"] = _hero.source
         if _hero.settled_result is not None:
             response["hero_settled_result"] = _hero.settled_result
+
+    # #13172 Option B — settled means settled at the serving boundary only
+    # (current_home_prob / current_away_prob flowing to compute_highlight stay
+    # untouched so no highlight flag or score shifts).
+    if is_finished_status(response.get("status")):
+        if _hero is not None and _hero.source == "settled" and sport_prices_a_draw(_event_sport_key):
+            _sc = settled_current_chance(_hero, sport_key=_event_sport_key)
+            response["hero_probability"] = _sc.home_probability
+            response["hero_probability_away"] = _sc.away_probability
+            response["hero_probability_draw"] = _sc.draw_probability
+        if isinstance(response.get("current_odds"), dict):
+            response["current_odds"] = apply_settled_current_odds(
+                response["current_odds"],
+                _hero,
+                sport_key=_event_sport_key,
+                include_rendered=True,
+            )
 
     # #12581: list/search headlines carry the same admitted evidence as detail.
     # The fold was read in the existing batch; formatting adds no query or clock.
