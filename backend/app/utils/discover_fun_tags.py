@@ -336,6 +336,41 @@ def fun_entry_allows_extreme_odds(entry: Optional[FunMarketEntry]) -> bool:
     return entry is not None and "long-shot" in entry.sub_tags
 
 
+_FUN_PRESERVED_STORED_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "politics",
+        "geopolitics",
+        "economics",
+        "tech",
+        "entertainment",
+        "culture",
+        "health",
+        "weather",
+    }
+)
+
+
+def resolve_fun_effective_category(
+    stored_category: Optional[str],
+    entry: Optional[FunMarketEntry],
+) -> Optional[str]:
+    """Keep a valid stored editorial category; use the fun tag only as fallback (#13097).
+
+    Markets already classified into a Discover editorial category (e.g. TIME
+    Person of the Year in ``entertainment`` or Nobel Peace Prize in
+    ``politics``) keep their stored category so a fun tag's ``culture`` bucket
+    cannot downgrade their base score while the card still competes under its
+    stored category cap. Missing, ``other``, ``crypto``, ``esports``, or
+    sport-tagged fun markets still receive ``entry.discover_category``.
+    """
+    normalized = (stored_category or "").strip().lower()
+    if normalized in _FUN_PRESERVED_STORED_CATEGORIES:
+        return stored_category
+    if entry is not None:
+        return entry.discover_category
+    return stored_category
+
+
 def fun_market_ids_for_sub_tag(sub_tag: str) -> tuple[int, ...]:
     """Selector helper: return tagged market IDs carrying ``sub_tag``."""
     target = (sub_tag or "").strip().lower()

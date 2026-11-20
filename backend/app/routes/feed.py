@@ -15894,6 +15894,7 @@ async def _score_futures(
             # odds while still enforcing every liveness/staleness/book gate.
             _admitted_fun_entry = None
             _allow_fun_extreme_odds = False
+            effective_sport_category = market.llm_sport_category
             if (
                 not price_refresh
                 and not category_filter
@@ -15907,6 +15908,7 @@ async def _score_futures(
                     check_fun_taste_guard,
                     fun_entry_allows_extreme_odds,
                     get_fun_market_entry,
+                    resolve_fun_effective_category,
                 )
 
                 _candidate_fun_entry = get_fun_market_entry(market.id)
@@ -15926,12 +15928,9 @@ async def _score_futures(
                         _allow_fun_extreme_odds = fun_entry_allows_extreme_odds(
                             _admitted_fun_entry
                         )
-
-            effective_sport_category = (
-                _admitted_fun_entry.discover_category
-                if _admitted_fun_entry is not None
-                else market.llm_sport_category
-            )
+                        effective_sport_category = resolve_fun_effective_category(
+                            market.llm_sport_category, _admitted_fun_entry
+                        )
 
             # --- Staleness filters ---
             # Keep serving-time exclusions on the same helper used by admin trace

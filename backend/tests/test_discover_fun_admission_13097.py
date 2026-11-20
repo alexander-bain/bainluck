@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -26,6 +26,7 @@ from app.utils.discover_fun_tags import (
     get_fun_market_entry,
     is_discover_fun_admission_enabled,
     load_fun_markets_registry,
+    resolve_fun_effective_category,
 )
 from app.utils.feed_cache import (
     feed_page_base_cache_key,
@@ -452,3 +453,178 @@ class TestFunAdmissionAndSwitch:
         assert fun_entry_allows_extreme_odds(get_fun_market_entry(109315)) is False
         assert fun_entry_allows_extreme_odds(get_fun_market_entry(108505)) is False
         assert fun_entry_allows_extreme_odds(None) is False
+
+    def test_resolve_fun_effective_category_preserves_valid_stored_editorial_category(self):
+        # Follow-up on #13097 live flip: TIME Person of the Year (27467306) is stored
+        # as entertainment (base 40) while its fun entry has discover_category="culture"
+        # (base 38); Nobel Peace Prize (65544835) is stored as politics (base 45).
+        # Keep valid stored editorial categories so fun admission cannot downgrade them.
+        time_entry = get_fun_market_entry(27467306)
+        nobel_entry = get_fun_market_entry(65544835)
+        satoshi_entry = get_fun_market_entry(9997262)
+        halftime_entry = get_fun_market_entry(70239521)
+
+        assert resolve_fun_effective_category("entertainment", time_entry) == "entertainment"
+        assert resolve_fun_effective_category("politics", nobel_entry) == "politics"
+        assert resolve_fun_effective_category("economics", get_fun_market_entry(52755535)) == "economics"
+        assert resolve_fun_effective_category("tech", get_fun_market_entry(109435)) == "tech"
+
+        # Missing, other, crypto, esports, or sport-filed fun markets still fall back
+        # to the fun entry's discover_category.
+        assert resolve_fun_effective_category(None, time_entry) == "culture"
+        assert resolve_fun_effective_category("", time_entry) == "culture"
+        assert resolve_fun_effective_category("other", time_entry) == "culture"
+        assert resolve_fun_effective_category("crypto", satoshi_entry) == "tech"
+        assert resolve_fun_effective_category("esports", time_entry) == "culture"
+        assert resolve_fun_effective_category("football", halftime_entry) == "entertainment"
+        assert resolve_fun_effective_category("crypto", None) == "crypto"
+
+    @pytest.mark.asyncio
+    async def test_score_futures_keeps_time_person_of_the_year_score_with_fun_admission_on(
+        self, monkeypatch
+    ):
+        """Real _score_futures check: TIME Person of the Year (27467306) must not lose
+        points when DISCOVER_FUN_ADMISSION_ENABLED turns on."""
+        outcomes = [
+            SimpleNamespace(
+                id=274673061,
+                name="James Talarico",
+                display_name="James Talarico",
+                current_probability=0.25,
+                opening_probability=0.25,
+                probability_change_24h=0.0,
+                probability_change_7d=0.0,
+                is_winner=None,
+                resolution_source=None,
+                rank=1,
+                team_id=None,
+                updated_at=FROZEN_NOW - timedelta(minutes=10),
+                last_updated=FROZEN_NOW - timedelta(minutes=10),
+                outcome_metadata=None,
+                external_outcome_id=None,
+            ),
+            SimpleNamespace(
+                id=274673062,
+                name="Zohran Mamdani",
+                display_name="Zohran Mamdani",
+                current_probability=0.22,
+                opening_probability=0.22,
+                probability_change_24h=0.0,
+                probability_change_7d=0.0,
+                is_winner=None,
+                resolution_source=None,
+                rank=2,
+                team_id=None,
+                updated_at=FROZEN_NOW - timedelta(minutes=10),
+                last_updated=FROZEN_NOW - timedelta(minutes=10),
+                outcome_metadata=None,
+                external_outcome_id=None,
+            ),
+            SimpleNamespace(
+                id=274673063,
+                name="Abdul El-Sayed",
+                display_name="Abdul El-Sayed",
+                current_probability=0.18,
+                opening_probability=0.18,
+                probability_change_24h=0.0,
+                probability_change_7d=0.0,
+                is_winner=None,
+                resolution_source=None,
+                rank=3,
+                team_id=None,
+                updated_at=FROZEN_NOW - timedelta(minutes=10),
+                last_updated=FROZEN_NOW - timedelta(minutes=10),
+                outcome_metadata=None,
+                external_outcome_id=None,
+            ),
+        ]
+        market = SimpleNamespace(
+            id=27467306,
+            name="TIME Person of the Year 2026",
+            source="kalshi",
+            sport=None,
+            sport_id=None,
+            sport_name="Entertainment",
+            llm_sport_category="entertainment",
+            description="",
+            llm_league=None,
+            llm_gender=None,
+            llm_level=None,
+            category="entertainment",
+            market_tier=2,
+            market_type="outright",
+            status="open",
+            resolution_date=FROZEN_NOW + timedelta(days=170),
+            volume=500000,
+            volume_24h=15000,
+            canonical_market_key=None,
+            group_id=None,
+            group_type=None,
+            external_id="KXTIMEPOTY-26",
+            event_id=None,
+            image_url=None,
+            image_width=None,
+            image_height=None,
+            hook_description=None,
+            market_metadata={},
+            curation_score_adj=0,
+            updated_at=FROZEN_NOW - timedelta(minutes=10),
+            created_at=FROZEN_NOW - timedelta(days=60),
+            outcomes=outcomes,
+        )
+
+        def _make_db():
+            db = AsyncMock()
+
+            def _exec(*_args, **_kwargs):
+                res = MagicMock()
+                scalars = MagicMock()
+                scalars.all.return_value = [market.id]
+                unique = MagicMock()
+                unique.all.return_value = [market]
+                scalars.unique.return_value = unique
+                res.scalars.return_value = scalars
+                res.all.return_value = []
+                return res
+
+            db.execute = AsyncMock(side_effect=_exec)
+            return db
+
+        async def _score(fun_enabled: bool) -> dict:
+            if fun_enabled:
+                monkeypatch.setenv(DISCOVER_FUN_ADMISSION_ENV, "true")
+            else:
+                monkeypatch.delenv(DISCOVER_FUN_ADMISSION_ENV, raising=False)
+            with (
+                patch(
+                    "app.routes.feed._external_curator_recall_market_ids",
+                    new=AsyncMock(return_value=[]),
+                ),
+                patch(
+                    "app.routes.feed._get_canonical_source_counts",
+                    new=AsyncMock(return_value={}),
+                ),
+                patch(
+                    "app.utils.discover_fun_tags.discover_fun_admission_market_ids",
+                    new=AsyncMock(return_value=[27467306] if fun_enabled else []),
+                ),
+                patch(
+                    "app.tasks.redis_state.get_async_redis_client",
+                    side_effect=Exception("no redis in test"),
+                ),
+            ):
+                items = await feed_mod._score_futures(
+                    _make_db(),
+                    FROZEN_NOW,
+                    None,
+                    feed_mod.PersonalizationContext(),
+                )
+            by_id = {it["data"]["id"]: it for it in items if it.get("type") == "futures"}
+            assert 27467306 in by_id
+            return by_id[27467306]
+
+        card_off = await _score(False)
+        card_on = await _score(True)
+        assert card_on["score"] == card_off["score"]
+        assert card_on["data"]["llm_sport_category"] == "entertainment"
+        assert "year-end" in card_on.get("_fun_tags", [])
