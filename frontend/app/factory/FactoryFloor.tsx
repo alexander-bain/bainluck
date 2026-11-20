@@ -27,6 +27,7 @@ import { useEngagementTime } from "@/hooks/useEngagementTime";
 import type { Builder, Change, FactoryData, Jam, Line, Station, Stop } from "./types";
 import styles from "./factory.module.css";
 import Worker from "./Worker";
+import { factoryTabTitle, floorVerdict, type FloorVerdict } from "./verdict";
 import {
   stations,
   stationNames,
@@ -34,6 +35,7 @@ import {
   duration,
   readerBehind,
   stopText,
+  stopWaitText,
   bayActivity,
   crewActivity,
   machineText,
@@ -117,6 +119,20 @@ function bayCrates(changes: Change[], line: Line, station: Station) {
     );
 }
 
+function HoldOrigin({ stop }: { stop: Stop }) {
+  if (!stop.source) return null;
+  return (
+    <small className={styles.stopOrigin}>
+      <a
+        href={`https://github.com/alexander-bain/bainluck/issues/12779#issuecomment-${stop.source.id}`}
+      >
+        NOW · stuck
+      </a>
+      {` · ${time(stop.since)} PT · ${stop.source.author}`}
+    </small>
+  );
+}
+
 function notice(stop: Stop, now: string) {
   return (
     <p key={`${stop.kind}-${stop.line}`} data-level={stop.level}>
@@ -126,17 +142,39 @@ function notice(stop: Stop, now: string) {
       {stop.machines && (
         <small className={styles.stopOrigin}>{machineText(stop.machines)}</small>
       )}
-      {stop.level === "red" && stop.source && (
-        <small className={styles.stopOrigin}>
-          <a
-            href={`https://github.com/alexander-bain/bainluck/issues/12779#issuecomment-${stop.source.id}`}
-          >
-            NOW · stuck
-          </a>
-          {` · ${time(stop.since)} PT · ${stop.source.author}`}
-        </small>
-      )}
+      {stop.kind === "hold" && <HoldOrigin stop={stop} />}
     </p>
+  );
+}
+
+function StackLight({
+  verdict,
+  hold,
+  now,
+}: {
+  verdict: FloorVerdict;
+  hold?: Stop;
+  now: string;
+}) {
+  const waited = hold && stopWaitText(hold, now);
+  return (
+    <div
+      className={styles.verdict}
+      data-verdict={verdict.level}
+      data-level={hold && "red"}
+      role="status"
+    >
+      <div className={styles.stackLight} aria-hidden="true">
+        <i data-light="red" />
+        <i data-light="amber" />
+        <i data-light="green" />
+      </div>
+      <div>
+        <strong>{verdict.text}</strong>
+        {waited && <small className={styles.stopOrigin}>{waited}</small>}
+        {hold && <HoldOrigin stop={hold} />}
+      </div>
+    </div>
   );
 }
 
@@ -195,6 +233,12 @@ export default function FactoryFloor({
   const lastRefresh = useRef(Date.parse(renderedAt));
   const behind = data !== null && (readFailed || readerBehind(data, now));
   const motion = !behind && tabVisible && !reducedMotion;
+  const verdict = floorVerdict(data, readFailed, now);
+  const tabTitle = factoryTabTitle(verdict);
+
+  useEffect(() => {
+    document.title = tabTitle;
+  }, [tabTitle]);
 
   useEffect(() => {
     if (data) setLastShown(data);
@@ -348,7 +392,8 @@ export default function FactoryFloor({
         <header className={styles.heading}>
           <h1>The Factory</h1>
         </header>
-        <section className={styles.unavailable} role="status">
+        <StackLight verdict={verdict} now={now} />
+        <section className={styles.unavailable}>
           <h2>{"The floor can't be read right now"}</h2>
           <p>
             {knownGoodAt
@@ -395,9 +440,9 @@ export default function FactoryFloor({
       note: "Changes with no activity for three days.",
     },
   };
-  const stops = shownStops(data);
-  const holds = stops.filter((stop) => stop.level === "red");
-  const waits = stops.filter((stop) => stop.level === "amber");
+  const stops = behind ? [] : shownStops(data);
+  const holds = stops.filter((stop) => stop.kind === "hold");
+  const waits = stops.filter((stop) => stop.kind !== "hold");
   const serverHold = holds.find((stop) => stop.line === "Server");
   const notes =
     data.notes?.snapshot_at === data.generated_at ? data.notes : null;
@@ -405,6 +450,9 @@ export default function FactoryFloor({
     notes?.source === "model"
       ? "Written by a model from the counts on this page"
       : "From the counts on this page";
+  const floorNote = notes && `${verdict.text} ${notes.floor}`.trim().split(/\s+/).length <= 30
+    ? notes.floor
+    : null;
   const visible = [...onFloor, ...shipped];
   const jams = data.jams.filter(
     (jam) =>
@@ -497,6 +545,7 @@ export default function FactoryFloor({
         </div>
       </header>
 
+      <StackLight verdict={verdict} hold={holds[0]} now={now} />
       {behind && (
         <div className={styles.readerWarning} role="status">
           <Pause size={20} aria-hidden="true" />
@@ -508,16 +557,17 @@ export default function FactoryFloor({
         </div>
       )}
 
-      {notes && (
-        <aside className={styles.foremanNote} aria-label="Foreman’s note">
-          <ClipboardCheck size={21} aria-hidden="true" />
-          <div>
-            <strong>Foreman’s note</strong>
-            <p>{notes.floor}</p>
-            <small>{noteCredit}</small>
-          </div>
-        </aside>
-      )}
+      <aside className={styles.foremanNote} aria-label="Foreman’s note">
+        <ClipboardCheck size={21} aria-hidden="true" />
+        <div>
+          <strong>Foreman’s note</strong>
+          <p>
+            <b>{verdict.text}</b>
+            {floorNote && ` ${floorNote}`}
+          </p>
+          {(floorNote || Object.keys(notes?.stations ?? {}).length > 0) && <small>{noteCredit}</small>}
+        </div>
+      </aside>
 
       <section className={styles.floorCard} aria-labelledby="floor-heading">
         <div className={styles.sectionHeading}>
@@ -526,9 +576,9 @@ export default function FactoryFloor({
             Tap a crate to see the change <ArrowDown size={14} />
           </span>
         </div>
-        {holds.length > 0 && (
+        {holds.length > 1 && (
           <div className={styles.stopNotices} role="status">
-            {holds.map((stop) => notice(stop, now))}
+            {holds.slice(1).map((stop) => notice(stop, now))}
           </div>
         )}
         {waits.length > 0 && (
@@ -568,7 +618,6 @@ export default function FactoryFloor({
                   {notes?.stations[stationNames[station]] && (
                     <div className={styles.stationNote}>
                       <p>{notes.stations[stationNames[station]]}</p>
-                      <small>{noteCredit}</small>
                     </div>
                   )}
                 </div>
@@ -603,6 +652,11 @@ export default function FactoryFloor({
                       const changes = bayCrates(visible, line, station);
                       const crates = changes.slice(0, bayLimit);
                       const more = changes.length - crates.length;
+                      const bayAlerts = verdict.bays.filter(
+                        (alert) => alert.station === station &&
+                          (alert.line === null || alert.line === line),
+                      );
+                      const bayAlert = bayAlerts.find((alert) => alert.level === "red") ?? bayAlerts[0];
                       const activity = bayActivity(
                         data,
                         line,
@@ -639,7 +693,7 @@ export default function FactoryFloor({
                               null,
                             )
                           : null;
-                      const backup = station !== "Live" && changes.length >= 10;
+                      const backup = bayAlerts.some((alert) => alert.crowded);
                       const jammed = activeJams.some(
                         (j) =>
                           j.station === station &&
@@ -651,6 +705,7 @@ export default function FactoryFloor({
                           className={`${styles.machine} ${station === "Live" ? styles.liveMachine : ""} ${backup ? styles.backedUp : ""} ${jammed ? styles.jammed : ""}`}
                           data-line={line}
                           data-bay={station}
+                          data-alert={bayAlert?.level}
                           data-waiting={changes.length}
                           data-worker-state={workerState}
                           data-flashing={
@@ -703,17 +758,17 @@ export default function FactoryFloor({
                             )}
                             <span
                               className={styles.baySignals}
-                              title={activity.stop ? stopText(activity.stop, now) : undefined}
+                              title={bayAlert?.text}
                             >
                               <span
                                 className={styles.lamp}
                                 data-state={
-                                  activity.stop?.level === "red"
+                                  bayAlert?.level === "red"
                                     ? "stopped"
-                                    : !behind && activity.flowing
-                                      ? "flowing"
-                                      : backup
-                                        ? "crowded"
+                                    : bayAlert?.level === "amber"
+                                      ? backup ? "crowded" : "caution"
+                                      : !behind && activity.flowing
+                                        ? "flowing"
                                         : "idle"
                                 }
                                 aria-hidden="true"
@@ -724,7 +779,9 @@ export default function FactoryFloor({
                                   : station === "Ship" &&
                                       changes.some((c) => c.merge_announced_at)
                                     ? "Merge announced"
-                                    : activity.label}
+                                    : bayAlert && !activity.stop
+                                      ? "Needs attention"
+                                      : activity.label}
                               </span>
                             </span>
                           </div>
@@ -810,7 +867,7 @@ export default function FactoryFloor({
             <i className={styles.keyCrate} /> A change can ship on more than one line
           </span>
           <span>
-            <i className={styles.keyAmber} /> Ten or more waiting
+            <i className={styles.keyAmber} /> Ten or more waiting for 30 minutes
           </span>
           <span>
             <b>?</b> Evidence is incomplete
