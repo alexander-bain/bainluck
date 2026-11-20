@@ -416,6 +416,26 @@ class TestScheduledCardProjectionCache:
         assert await cpp.read_card_projected_pairs_bounded(db_zero, [_card(501)], timeout_ms=0) == {}
         assert db_zero.savepoints == 0
 
+    @pytest.mark.asyncio
+    async def test_monkeypatched_reader_bypasses_cache_inside_savepoint(self, monkeypatch):
+        rows = {601: [_snap(601, "draftkings", -3.5, 47.0)]}
+        db = _CardAsyncSession(rows)
+        # Warm cache first.
+        await cpp.read_card_projected_pairs_bounded(db, [_card(601)], timeout_ms=1500)
+        assert db.savepoints == 1
+
+        called = []
+
+        async def _custom_reader(session, cards):
+            called.append([c["id"] for c in cards])
+            raise RuntimeError("simulated statement timeout")
+
+        monkeypatch.setattr(cpp, "read_card_projected_pairs", _custom_reader)
+        with pytest.raises(RuntimeError, match="simulated statement timeout"):
+            await cpp.read_card_projected_pairs_bounded(db, [_card(601)], timeout_ms=100)
+        assert called == [[601]]
+        assert db.savepoints == 2
+
 
 # ── Cut 3: Pass-2 snapshot fallback negative cache ───────────────────────────
 

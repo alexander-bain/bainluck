@@ -783,6 +783,9 @@ async def read_card_projected_pairs(
     return pairs
 
 
+_DEFAULT_READ_CARD_PROJECTED_PAIRS = read_card_projected_pairs
+
+
 async def read_card_projected_pairs_bounded(
     db: Any, cards: list[dict], *, timeout_ms: int
 ) -> dict[int, dict]:
@@ -806,6 +809,13 @@ async def read_card_projected_pairs_bounded(
             wanted[int(card["id"])] = card
     if not wanted:
         return {}
+
+    if read_card_projected_pairs is not _DEFAULT_READ_CARD_PROJECTED_PAIRS:
+        async with db.begin_nested() as savepoint:
+            await db.execute(text(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'"))
+            pairs = await read_card_projected_pairs(db, cards)
+            await savepoint.rollback()
+        return pairs
 
     use_cache = isinstance(db, AsyncSession) and card_projection_cache_enabled()
     cached_pairs: dict[int, dict] = {}
