@@ -84,6 +84,44 @@
   margin-top: 4px;
   background: var(--green);
 }
+.verdict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--green);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.verdict[data-verdict="amber"] {
+  color: var(--amber);
+  background: var(--amber-light);
+}
+.verdict[data-verdict="red"] {
+  color: var(--red);
+  background: var(--red-light);
+}
+.stackLight {
+  display: grid;
+  gap: 2px;
+  padding: 3px 4px;
+  flex: none;
+  border-radius: 4px;
+  background: var(--housing);
+}
+.stackLight > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #64717e;
+}
+[data-verdict="green"] .stackLight [data-light="green"] { background: #6edbae; }
+[data-verdict="amber"] .stackLight [data-light="amber"] { background: #ffd58c; }
+[data-verdict="red"] .stackLight [data-light="red"] { background: #ff838d; }
 .unavailable {
   padding: 26px;
   border: 1px solid var(--edge);
@@ -142,7 +180,7 @@
   padding-left: 1px;
 }
 .stationHeadings strong {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   display: block;
 }
@@ -301,6 +339,7 @@
   font-size: 9px;
 }
 .liveTally {
+  white-space: nowrap;
   color: #8dd9bb;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -312,6 +351,7 @@
   gap: 4px;
 }
 .more {
+  white-space: nowrap;
   color: #f5f5f0;
   padding: 0 3px;
   min-height: 24px;
@@ -350,36 +390,12 @@
   color: #ffdb9b;
 }
 .pulse {
-  animation: pulse 2.6s ease-in-out infinite;
+  box-shadow: 0 0 0 2px var(--amber-light);
 }
 .floorKey {
-  padding: 2px var(--floor-inset) 6px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px 12px;
-  font-size: 10px;
+  padding: 3px var(--floor-inset) 6px;
+  font-size: 11px;
   color: var(--secondary);
-}
-.floorKey > span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.floorKey i {
-  width: 9px;
-  height: 9px;
-  border-radius: 2px;
-}
-.keyCrate {
-  background: #6d28d9;
-}
-.keyAmber {
-  background: var(--amber-light);
-  border: 1px solid var(--amber);
-}
-.floorKey b {
-  font-size: 10px;
-  color: var(--amber);
 }
 .detail {
   border: 1px solid var(--edge);
@@ -480,7 +496,7 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 }
 .records {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
 }
 .records:has(> details[open]) {
@@ -699,11 +715,6 @@ details[open] > .summary > svg { transform: rotate(90deg); }
     transform: translateX(25px);
   }
 }
-@keyframes pulse {
-  50% {
-    opacity: 0.4;
-  }
-}
 @media (max-width: 895px) {
   .scrollHint {
     display: flex;
@@ -911,9 +922,9 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   fill: #ffb3b6;
   font-size: 18px;
 }
-.worker[data-worker="working"] .workerArm {
+.eventScene[data-event="commit"] .workerArm {
   transform-origin: 50px 45px;
-  animation: work 2.4s ease-in-out infinite;
+  animation: work var(--event-length) ease-in-out both;
 }
 .baySignals {
   display: flex;
@@ -942,7 +953,110 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 .lamp[data-state="crowded"] {
   background: #ffd58c;
   box-shadow: 0 0 0 3px #ffd58c24;
-  animation: pulse 2.6s ease-in-out infinite;
+}
+.lamp[data-state="caution"] {
+  background: #ffd58c;
+}
+.machine[data-alert="amber"] {
+  border-color: var(--amber);
+}
+.machine[data-alert="red"] {
+  border-color: var(--red);
+}
+.eventLog {
+  margin-bottom: 6px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--paper);
+}
+.eventLog .summary {
+  font-size: 13px;
+  font-weight: 600;
+}
+.eventLog :is(ol, p) {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 4px 14px 10px;
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.eventScene {
+  --event-column: calc((100% + var(--lane-gap)) / 6);
+  position: absolute;
+  z-index: 4;
+  top: 20px;
+  left: calc(var(--event-column) * var(--event-start));
+  width: calc(var(--event-column) - var(--lane-gap));
+  display: grid;
+  justify-items: center;
+  pointer-events: none;
+}
+.eventAction {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 5px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--green);
+  border-radius: 5px;
+  font-size: 10px;
+  animation: eventStamp var(--event-length) ease both;
+}
+.eventAction .worker {
+  width: 34px;
+  height: 27px;
+}
+.eventCrate {
+  border-radius: 3px;
+  color: #fff;
+  padding: 2px 3px;
+  font-variant-numeric: tabular-nums;
+}
+.eventScene[data-transfer="true"] {
+  animation: eventTravel var(--event-length) ease-in-out both;
+}
+.eventScene[data-event="returned"] .eventAction {
+  border-color: var(--red);
+  color: var(--red);
+}
+.eventScene[data-event="merge"] .eventCrate {
+  animation: loadTruck var(--event-length) ease-in-out both;
+}
+.eventScene:is([data-event="deploy"], [data-event="live"]) .eventAction > svg {
+  animation: driveTruck var(--event-length) ease-in-out both;
+}
+.eventScene[data-event="live"] .eventAction > svg {
+  animation-direction: reverse;
+}
+.eventScene[data-event="live"] .eventCrate {
+  animation: deliveryFlash var(--event-length) ease-out both;
+}
+@keyframes eventStamp {
+  from { opacity: 0; }
+  15%, 85% { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes eventTravel {
+  from { transform: translateX(0); }
+  to { transform: translateX(calc((100% + var(--lane-gap)) * var(--event-steps))); }
+}
+@keyframes loadTruck {
+  from { transform: translateY(16px); }
+  65%, to { transform: translateY(0); }
+}
+@keyframes driveTruck {
+  from { transform: translateX(0); }
+  to { transform: translateX(12px); opacity: 0; }
+}
+@keyframes deliveryFlash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  35% { box-shadow: 0 0 0 4px var(--green); }
 }
 .lamp[data-state="stopped"] {
   width: 13px;
@@ -950,14 +1064,6 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   border-radius: 7px 7px 2px 2px;
   background: #b82e3b;
   border-bottom: 2px solid #7f919f;
-}
-.lamp[data-state="stopped"]::after {
-  content: "";
-  position: absolute;
-  inset: 1px;
-  background: conic-gradient(from 0deg, transparent, #ffc4c8, transparent 55%);
-  border-radius: inherit;
-  animation: beacon 2s linear infinite;
 }
 .backedUp {
   border-color: var(--amber);
@@ -998,8 +1104,8 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   border-color: var(--green);
   color: var(--green);
 }
-.beltSegment[data-flowing="true"] i {
-  animation: belt 3.5s linear infinite;
+.beltSegment[data-moving="true"] i {
+  animation: belt 1s linear both;
 }
 .beltSegment svg {
   z-index: 1;
@@ -1076,21 +1182,6 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   font-size: 10px;
   margin-right: 5px;
 }
-.dispatch {
-  position: absolute;
-  width: 46px;
-  height: 30px;
-  right: 4px;
-  bottom: 0;
-  fill: #8cd2b7;
-  stroke: #d0eee2;
-  stroke-width: 1.5;
-  animation: dispatch 2.4s ease-in-out both;
-}
-.travelling {
-  z-index: 5;
-  animation: crateTravel 1.4s ease-in-out both;
-}
 .factory[data-motion="paused"] *,
 .factory[data-motion="paused"] *::before,
 .factory[data-motion="paused"] *::after {
@@ -1099,37 +1190,6 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 @keyframes work {
   50% {
     transform: rotate(-7deg);
-  }
-}
-@keyframes beacon {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@keyframes dispatch {
-  0%,
-  15% {
-    opacity: 1;
-    transform: translateX(-15px);
-  }
-  90%,
-  100% {
-    transform: translateX(16px);
-    opacity: 0;
-  }
-}
-@keyframes crateTravel {
-  0% {
-    transform: translate(var(--travel-x), var(--travel-y));
-  }
-  25% {
-    transform: translate(var(--travel-x), var(--belt-y));
-  }
-  75% {
-    transform: translate(0, var(--belt-y));
-  }
-  100% {
-    transform: translate(0, 0);
   }
 }
 @media (max-width: 640px) {
@@ -1200,8 +1260,7 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   font-size: 12px;
   line-height: 1.4;
 }
-.foremanNote small,
-.stationNote small {
+.foremanNote small {
   color: var(--secondary);
   font-size: 10px;
 }
@@ -1217,11 +1276,6 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   font-size: 10px;
   line-height: 1.3;
 }
-.stationNote small {
-  display: block;
-  line-height: 1.2;
-  font-size: 9px;
-}
 .inspectionDesk {
   display: flex;
   align-items: center;
@@ -1231,15 +1285,14 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   width: 32px;
   height: 25px;
 }
-.bayWorker {
-  min-width: 0;
-  display: flex;
-  align-items: center;
+.bayWorkerName {
+  display: block;
+  padding-inline: 2px;
   color: #e6edf3;
   font-size: 9px;
   line-height: 1.18;
 }
-.bayWorker .worker {
+.machineTop > .worker {
   width: 34px;
   height: 27px;
   margin-left: -3px;
@@ -1322,15 +1375,12 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   font-size: 9px;
 }
 .builderCard > span { text-align: center; }
-.factory[data-motion="running"] .machine[data-flashing="true"] {
-  animation: liveFlash 0.85s ease-out;
+.factory[data-motion="running"] .eventScene[data-event="live"] {
+  animation: liveFlash var(--event-length) ease-out;
 }
 @keyframes liveFlash {
-  35% { box-shadow: inset 0 0 0 2px #74dfb1, inset 0 0 20px #74dfb145; }
+  35% { filter: drop-shadow(0 0 8px #74dfb1); }
 }
 @media (max-width: 640px) {
   .builderCard > .worker { width: 60px; height: 49px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .factory .dispatch { display: none; }
 }

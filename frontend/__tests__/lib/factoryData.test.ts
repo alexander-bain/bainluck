@@ -23,14 +23,17 @@ describe("Factory live reads", () => {
         json: async () => ({ ...data, generated_at: "invalid" }),
       });
     const read = createFactoryReader(fetcher as typeof fetch);
-    expect(await read()).toEqual({
+    const first = await read();
+    expect(first).toEqual({
       data,
       lastGoodAt: data.generated_at,
+      readAt: expect.any(String),
       readFailed: false,
     });
     expect(await read()).toEqual({
       data,
       lastGoodAt: data.generated_at,
+      readAt: first.readAt,
       readFailed: true,
     });
   });

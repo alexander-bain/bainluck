@@ -53,33 +53,45 @@ export function RoundupCard({
 }) {
   const [clock] = useState(() => nowMs ?? Date.now());
   const now = nowMs ?? clock;
-  const { model } = buildRoundupCardModel(title, contract, now);
   const destination = previewOnly ? null : admitCollectionRef(collectionRef);
-  if (!model || (!previewOnly && !destination)) return null;
+  if (!previewOnly && !destination) return null;
 
-  // #12577: Award category paired-metric card (Nominated % + Wins %, with TMDB posters & expander)
+  // #12577: Award category paired-metric card (Nominated % + Wins %, with TMDB posters & expander).
+  // Checked before legacy `buildRoundupCardModel` because machinery groupings (#12288)
+  // carry their own card contract and intentionally omit the legacy roundup `footer`.
   if (contract?.paired_metric_set) {
+    const paired = contract.paired_metric_set;
+    if (
+      !paired.title?.trim() ||
+      !Array.isArray(paired.entries) ||
+      paired.entries.length === 0
+    ) {
+      return null;
+    }
     return (
       <div data-testid="roundup-card-slot">
         <AwardCategoryPairedCard
-          set={contract.paired_metric_set}
+          set={paired}
           surface="discover"
         />
         {isMachinerySlice1Enabled() && destination && contract?.machinery_card && (
           <Link
             href={destination.href}
-            className="mt-2 flex items-center justify-between rounded-card border border-surface-border bg-surface-card px-3.5 py-2 text-xs font-semibold text-accent-brand transition-colors hover:bg-surface-elevated"
+            data-testid="paired-card-machinery-link"
+            className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-card border border-surface-border bg-surface-card px-3.5 py-2 text-xs font-semibold text-accent-brand transition-colors hover:bg-surface-elevated"
           >
-            <span className="text-text-secondary">{destination.name}</span>
-            <span>Open all {contract.machinery_card.section_count} sections ›</span>
+            <span className="min-w-0 text-text-secondary">{destination.name}</span>
+            <span className="ml-auto shrink-0 whitespace-nowrap">
+              Open all {contract.machinery_card.section_count} sections ›
+            </span>
           </Link>
         )}
         {!previewOnly && (
           <div className="mt-[10px]">
             <BundleActionBar
               items={items}
-              title={contract.paired_metric_set.title || model.title}
-              sharedQuestion={contract.paired_metric_set.title || model.title}
+              title={paired.title || title}
+              sharedQuestion={paired.title || title}
               storyKey={storyKey ?? bundleId}
               positionIndex={positionIndex}
             />
@@ -89,7 +101,8 @@ export function RoundupCard({
     );
   }
 
-  // #12288 Direction 223 / Decision 224: topic-free container machinery visual Discover card
+  // #12288 Direction 223 / Decision 224: topic-free container machinery visual Discover card.
+  // Checked before legacy `buildRoundupCardModel` so empty legacy `footer` never drops the card.
   if (isMachinerySlice1Enabled() && contract?.machinery_card) {
     return (
       <div data-testid="roundup-card-slot">
@@ -98,8 +111,8 @@ export function RoundupCard({
           <div className="mt-[10px]">
             <BundleActionBar
               items={items}
-              title={contract.machinery_card.title || model.title}
-              sharedQuestion={contract.machinery_card.title || model.title}
+              title={contract.machinery_card.title || title}
+              sharedQuestion={contract.machinery_card.title || title}
               storyKey={storyKey ?? bundleId}
               positionIndex={positionIndex}
             />
@@ -108,6 +121,9 @@ export function RoundupCard({
       </div>
     );
   }
+
+  const { model } = buildRoundupCardModel(title, contract, now);
+  if (!model) return null;
 
   const label = `${model.title}. ${model.rows
     .map((r) => `${r.label}, ${r.marker === "<" ? "under " : r.marker === ">" ? "over " : ""}${r.digits}%`)

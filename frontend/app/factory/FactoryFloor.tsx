@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowDown,
@@ -27,6 +27,9 @@ import { useEngagementTime } from "@/hooks/useEngagementTime";
 import type { Builder, Change, FactoryData, Jam, Line, Station, Stop } from "./types";
 import styles from "./factory.module.css";
 import Worker from "./Worker";
+import EventScene from "./EventScene";
+import { crossesSegment, eventText, useEventPlayer } from "./playback";
+import { factoryTabTitle, floorVerdict, type FloorVerdict } from "./verdict";
 import {
   stations,
   stationNames,
@@ -34,17 +37,18 @@ import {
   duration,
   readerBehind,
   stopText,
+  stopWaitText,
   bayActivity,
   crewActivity,
   machineText,
   beltFlowing,
-  recentTransfers,
   shownStops,
   knownOrigin,
   onActiveFloor,
 } from "./activity";
 
 const lines: Line[] = ["Server", "Website", "Apps"];
+const PAGE_REFRESH_MS = 60_000;
 type NamedBuilder = Exclude<Builder, "Other">;
 const builders: { key: NamedBuilder; name: string }[] = [
   { key: "S", name: "Speed" },
@@ -68,14 +72,14 @@ const stationIcons = {
   Ship: Truck,
   Live: Check,
 };
-const descriptions = [
-  "Taking shape",
-  "Checking it works",
-  "Fable’s inspection desk",
-  "Ready for a turn",
-  "On its way",
-  "In your hands",
-];
+const engineering: Record<Station, string> = {
+  Write: "writing",
+  Test: "automated tests",
+  Review: "review",
+  "Merge line": "merge queue",
+  Ship: "deploying",
+  Live: "in readers’ hands",
+};
 const bayLimit = 2;
 const shelfKeys = ["held", "parked", "bot", "side"] as const;
 type Shelf = (typeof shelfKeys)[number];
@@ -117,6 +121,20 @@ function bayCrates(changes: Change[], line: Line, station: Station) {
     );
 }
 
+function HoldOrigin({ stop }: { stop: Stop }) {
+  if (!stop.source) return null;
+  return (
+    <small className={styles.stopOrigin}>
+      <a
+        href={`https://github.com/alexander-bain/bainluck/issues/12779#issuecomment-${stop.source.id}`}
+      >
+        NOW · stuck
+      </a>
+      {` · ${time(stop.since)} PT · ${stop.source.author}`}
+    </small>
+  );
+}
+
 function notice(stop: Stop, now: string) {
   return (
     <p key={`${stop.kind}-${stop.line}`} data-level={stop.level}>
@@ -126,17 +144,39 @@ function notice(stop: Stop, now: string) {
       {stop.machines && (
         <small className={styles.stopOrigin}>{machineText(stop.machines)}</small>
       )}
-      {stop.level === "red" && stop.source && (
-        <small className={styles.stopOrigin}>
-          <a
-            href={`https://github.com/alexander-bain/bainluck/issues/12779#issuecomment-${stop.source.id}`}
-          >
-            NOW · stuck
-          </a>
-          {` · ${time(stop.since)} PT · ${stop.source.author}`}
-        </small>
-      )}
+      {stop.kind === "hold" && <HoldOrigin stop={stop} />}
     </p>
+  );
+}
+
+function StackLight({
+  verdict,
+  hold,
+  now,
+}: {
+  verdict: FloorVerdict;
+  hold?: Stop;
+  now: string;
+}) {
+  const waited = hold && stopWaitText(hold, now);
+  return (
+    <div
+      className={styles.verdict}
+      data-verdict={verdict.level}
+      data-level={hold && "red"}
+      role="status"
+    >
+      <div className={styles.stackLight} aria-hidden="true">
+        <i data-light="red" />
+        <i data-light="amber" />
+        <i data-light="green" />
+      </div>
+      <div>
+        <strong>{verdict.text}</strong>
+        {waited && <small className={styles.stopOrigin}>{waited}</small>}
+        {hold && <HoldOrigin stop={hold} />}
+      </div>
+    </div>
   );
 }
 
@@ -158,11 +198,13 @@ function jamTitle(jam: Jam) {
 export default function FactoryFloor({
   data: snapshot,
   lastGoodAt,
+  readAt,
   readFailed = false,
   renderedAt,
 }: {
   data: FactoryData | null;
   lastGoodAt: string | null;
+  readAt?: string;
   readFailed?: boolean;
   renderedAt: string;
 }) {
@@ -182,19 +224,19 @@ export default function FactoryFloor({
       Date.parse(snapshot.generated_at) >= Date.parse(lastShown.generated_at))
       ? snapshot
       : lastShown;
-  const floor = useRef<HTMLDivElement>(null);
-  const oldPositions = useRef(
-    new Map<string, { rect: DOMRect; station: Station }>(),
-  );
   const detail = useRef<HTMLDialogElement>(null);
   const [tabVisible, setTabVisible] = useState(true);
-  const [reducedMotion, setReducedMotion] = useState(false);
-  const [shippingLines, setShippingLines] = useState<Line[]>([]);
-  const [departingLines, setDepartingLines] = useState<Line[]>([]);
-  const lastPublication = useRef<string | null>(null);
+  const [reducedMotion, setReducedMotion] = useState<boolean | null>(null);
   const lastRefresh = useRef(Date.parse(renderedAt));
   const behind = data !== null && (readFailed || readerBehind(data, now));
-  const motion = !behind && tabVisible && !reducedMotion;
+  const motion = !behind && tabVisible && reducedMotion === false;
+  const verdict = floorVerdict(data, readFailed, now);
+  const tabTitle = factoryTabTitle(verdict);
+  const playing = useEventPlayer(data?.generated_at, data?.events, motion);
+
+  useEffect(() => {
+    document.title = tabTitle;
+  }, [tabTitle]);
 
   useEffect(() => {
     if (data) setLastShown(data);
@@ -233,7 +275,7 @@ export default function FactoryFloor({
       setTabVisible(visible);
       if (visible) {
         setNow(new Date().toISOString());
-        if (Date.now() - lastRefresh.current >= 60_000) {
+        if (Date.now() - lastRefresh.current >= PAGE_REFRESH_MS) {
           lastRefresh.current = Date.now();
           router.refresh();
         }
@@ -243,100 +285,13 @@ export default function FactoryFloor({
     refresh();
     preference.addEventListener("change", preferenceChanged);
     document.addEventListener("visibilitychange", refresh);
-    const interval = window.setInterval(refresh, 60_000);
+    const interval = window.setInterval(refresh, PAGE_REFRESH_MS);
     return () => {
       preference.removeEventListener("change", preferenceChanged);
       document.removeEventListener("visibilitychange", refresh);
       window.clearInterval(interval);
     };
   }, [router]);
-
-  useLayoutEffect(() => {
-    const nextPositions = new Map<string, { rect: DOMRect; station: Station }>();
-    floor.current
-      ?.querySelectorAll<HTMLButtonElement>("[data-crate]")
-      .forEach((button) => {
-        const number = Number(button.dataset.crate);
-        const line = button.dataset.line as Line;
-        const id = crateKey(line, number);
-        const rect = button.getBoundingClientRect();
-        const station = button.dataset.station!.split("/")[1] as Station;
-        const previous = oldPositions.current.get(id);
-        button.classList.remove(styles.travelling);
-        if (
-          previous &&
-          previous.station !== station &&
-          motion &&
-          data &&
-          recentTransfers(data, now).some(
-            (t) => t.number === number && t.line === line && t.to === station,
-          )
-        ) {
-          const from = stations.indexOf(previous.station);
-          const to = stations.indexOf(station);
-          const stopped = shownStops(data).some(
-            (stop) =>
-              stop.level === "red" &&
-              (stop.line === null || stop.line === line) &&
-              stations.indexOf(stop.station) >= Math.min(from, to) &&
-              stations.indexOf(stop.station) <= Math.max(from, to),
-          );
-          if (!stopped) {
-            const row = button.closest("[data-factory-row]");
-            const belt = row
-              ?.querySelector("[data-belts]")
-              ?.getBoundingClientRect();
-            button.style.setProperty(
-              "--travel-x",
-              `${previous.rect.left - rect.left}px`,
-            );
-            button.style.setProperty(
-              "--travel-y",
-              `${previous.rect.top - rect.top}px`,
-            );
-            button.style.setProperty(
-              "--belt-y",
-              `${(belt?.top ?? rect.bottom) - rect.top}px`,
-            );
-            void button.offsetWidth;
-            button.classList.add(styles.travelling);
-          }
-        }
-        nextPositions.set(id, { rect, station });
-      });
-    oldPositions.current = nextPositions;
-  }, [data, motion, now]);
-
-  useEffect(() => {
-    if (!data || lastPublication.current === data.generated_at) return;
-    const previous = lastPublication.current;
-    lastPublication.current = data.generated_at;
-    if (!previous) return;
-    const since = Date.parse(previous);
-    const departures = data.changes.filter(
-      (c) =>
-        c.station === "Live" &&
-        c.live_posted_at &&
-        Date.parse(c.live_post_observed_at ?? c.live_posted_at) > since,
-    );
-    const arrivals = recentTransfers(data, data.generated_at).filter(
-      (move) =>
-        move.to === "Live" && Date.parse(move.observed_at ?? move.at) > since,
-    );
-    setShippingLines([
-      ...new Set([...departures, ...arrivals].map((c) => c.line)),
-    ]);
-    setDepartingLines([...new Set(departures.map((c) => c.line))]);
-  }, [data]);
-
-  useEffect(() => {
-    if (!shippingLines.length && !departingLines.length) return;
-    const timer = window.setTimeout(() => {
-      setShippingLines([]);
-      setDepartingLines([]);
-    }, 2600);
-    return () => window.clearTimeout(timer);
-  }, [shippingLines, departingLines]);
 
   if (!data) {
     return (
@@ -348,7 +303,8 @@ export default function FactoryFloor({
         <header className={styles.heading}>
           <h1>The Factory</h1>
         </header>
-        <section className={styles.unavailable} role="status">
+        <StackLight verdict={verdict} now={now} />
+        <section className={styles.unavailable}>
           <h2>{"The floor can't be read right now"}</h2>
           <p>
             {knownGoodAt
@@ -395,9 +351,9 @@ export default function FactoryFloor({
       note: "Changes with no activity for three days.",
     },
   };
-  const stops = shownStops(data);
-  const holds = stops.filter((stop) => stop.level === "red");
-  const waits = stops.filter((stop) => stop.level === "amber");
+  const stops = behind ? [] : shownStops(data);
+  const holds = stops.filter((stop) => stop.kind === "hold");
+  const waits = stops.filter((stop) => stop.kind !== "hold");
   const serverHold = holds.find((stop) => stop.line === "Server");
   const notes =
     data.notes?.snapshot_at === data.generated_at ? data.notes : null;
@@ -405,6 +361,9 @@ export default function FactoryFloor({
     notes?.source === "model"
       ? "Written by a model from the counts on this page"
       : "From the counts on this page";
+  const floorNote = notes && `${verdict.text} ${notes.floor}`.trim().split(/\s+/).length <= 30
+    ? notes.floor
+    : null;
   const visible = [...onFloor, ...shipped];
   const jams = data.jams.filter(
     (jam) =>
@@ -484,19 +443,23 @@ export default function FactoryFloor({
         <div className={styles.updated}>
           <span className={styles.statusDot} aria-hidden="true" />
           <div>
-            <strong>{behind ? "Not updating" : "Read from GitHub"}</strong>
-            <span>
+            <strong>
+              {behind ? "Not updating" : readAt ? `Read at ${time(readAt)} PT` : "Read from GitHub"}
+            </strong>
+            <span title="Published snapshot">
               {new Intl.DateTimeFormat("en-US", {
                 timeZone: "America/Los_Angeles",
                 month: "short",
                 day: "numeric",
-              }).format(new Date(data.generated_at))}{" "}
-              at {time(data.generated_at)} PT
+              }).format(new Date(data.generated_at))}
+              {(behind || !readAt || time(readAt) !== time(data.generated_at)) &&
+                ` at ${time(data.generated_at)} PT`}
             </span>
           </div>
         </div>
       </header>
 
+      <StackLight verdict={verdict} hold={holds[0]} now={now} />
       {behind && (
         <div className={styles.readerWarning} role="status">
           <Pause size={20} aria-hidden="true" />
@@ -508,16 +471,17 @@ export default function FactoryFloor({
         </div>
       )}
 
-      {notes && (
-        <aside className={styles.foremanNote} aria-label="Foreman’s note">
-          <ClipboardCheck size={21} aria-hidden="true" />
-          <div>
-            <strong>Foreman’s note</strong>
-            <p>{notes.floor}</p>
-            <small>{noteCredit}</small>
-          </div>
-        </aside>
-      )}
+      <aside className={styles.foremanNote} aria-label="Foreman’s note">
+        <ClipboardCheck size={21} aria-hidden="true" />
+        <div>
+          <strong>Foreman’s note</strong>
+          <p>
+            <b>{verdict.text}</b>
+            {floorNote && ` ${floorNote}`}
+          </p>
+          {(floorNote || Object.keys(notes?.stations ?? {}).length > 0) && <small>{noteCredit}</small>}
+        </div>
+      </aside>
 
       <section className={styles.floorCard} aria-labelledby="floor-heading">
         <div className={styles.sectionHeading}>
@@ -526,9 +490,9 @@ export default function FactoryFloor({
             Tap a crate to see the change <ArrowDown size={14} />
           </span>
         </div>
-        {holds.length > 0 && (
+        {holds.length > 1 && (
           <div className={styles.stopNotices} role="status">
-            {holds.map((stop) => notice(stop, now))}
+            {holds.slice(1).map((stop) => notice(stop, now))}
           </div>
         )}
         {waits.length > 0 && (
@@ -550,15 +514,14 @@ export default function FactoryFloor({
           tabIndex={0}
           role="region"
           aria-label="Factory floor, scroll horizontally to see all six stations"
-          ref={floor}
         >
           <div className={styles.floorGrid}>
             <div className={styles.stationHeadings}>
               <span />
-              {stations.map((station, index) => (
+              {stations.map((station) => (
                 <div key={station}>
                   <strong>{stationNames[station]}</strong>
-                  <span>{descriptions[index]}</span>
+                  <span>{engineering[station]}</span>
                   {station === "Review" && (
                     <div className={styles.inspectionDesk}>
                       <Worker station="Review" identity="Fable" state="idle" />
@@ -568,7 +531,6 @@ export default function FactoryFloor({
                   {notes?.stations[stationNames[station]] && (
                     <div className={styles.stationNote}>
                       <p>{notes.stations[stationNames[station]]}</p>
-                      <small>{noteCredit}</small>
                     </div>
                   )}
                 </div>
@@ -603,6 +565,13 @@ export default function FactoryFloor({
                       const changes = bayCrates(visible, line, station);
                       const crates = changes.slice(0, bayLimit);
                       const more = changes.length - crates.length;
+                      const check = station === "Test" ? changes.find((c) => c.check_progress) : undefined;
+                      const inspection = station === "Review" ? changes.find((c) => c.approvals) : undefined;
+                      const bayAlerts = verdict.bays.filter(
+                        (alert) => alert.station === station &&
+                          (alert.line === null || alert.line === line),
+                      );
+                      const bayAlert = bayAlerts.find((alert) => alert.level === "red") ?? bayAlerts[0];
                       const activity = bayActivity(
                         data,
                         line,
@@ -612,6 +581,7 @@ export default function FactoryFloor({
                       );
                       const crew = crewActivity(data, now, changes);
                       const worker = crew.change ?? changes[0];
+                      const workerId = worker?.builder === "Other" ? undefined : worker?.builder;
                       const workerState = changes.length
                         ? crew.pose
                         : activity.worker;
@@ -639,7 +609,7 @@ export default function FactoryFloor({
                               null,
                             )
                           : null;
-                      const backup = station !== "Live" && changes.length >= 10;
+                      const backup = bayAlerts.some((alert) => alert.crowded);
                       const jammed = activeJams.some(
                         (j) =>
                           j.station === station &&
@@ -651,11 +621,9 @@ export default function FactoryFloor({
                           className={`${styles.machine} ${station === "Live" ? styles.liveMachine : ""} ${backup ? styles.backedUp : ""} ${jammed ? styles.jammed : ""}`}
                           data-line={line}
                           data-bay={station}
+                          data-alert={bayAlert?.level}
                           data-waiting={changes.length}
                           data-worker-state={workerState}
-                          data-flashing={
-                            station === "Live" && shippingLines.includes(line)
-                          }
                         >
                           {station === "Merge line" && line === "Server" && (
                             <div
@@ -684,15 +652,12 @@ export default function FactoryFloor({
                                   <li>+{dockBuilders.length - 3}</li>
                                 )}
                               </ul>
-                            ) : worker && worker.builder !== "Other" ? (
-                              <div className={styles.bayWorker}>
-                                <Worker
-                                  station={station}
-                                  identity={worker.builder}
-                                  state={workerState}
-                                />
-                                <span>{names[worker.builder]}</span>
-                              </div>
+                            ) : workerId ? (
+                              <Worker
+                                station={station}
+                                identity={workerId}
+                                state={workerState}
+                              />
                             ) : (
                               <Icon
                                 className={styles.stationObject}
@@ -703,17 +668,17 @@ export default function FactoryFloor({
                             )}
                             <span
                               className={styles.baySignals}
-                              title={activity.stop ? stopText(activity.stop, now) : undefined}
+                              title={bayAlert?.text}
                             >
                               <span
                                 className={styles.lamp}
                                 data-state={
-                                  activity.stop?.level === "red"
+                                  bayAlert?.level === "red"
                                     ? "stopped"
-                                    : !behind && activity.flowing
-                                      ? "flowing"
-                                      : backup
-                                        ? "crowded"
+                                    : bayAlert?.level === "amber"
+                                      ? backup ? "crowded" : "caution"
+                                      : !behind && activity.flowing
+                                        ? "flowing"
                                         : "idle"
                                 }
                                 aria-hidden="true"
@@ -724,10 +689,15 @@ export default function FactoryFloor({
                                   : station === "Ship" &&
                                       changes.some((c) => c.merge_announced_at)
                                     ? "Merge announced"
-                                    : activity.label}
+                                    : bayAlert && !activity.stop
+                                      ? "Needs attention"
+                                      : activity.label}
                               </span>
                             </span>
                           </div>
+                          {workerId && !dockBuilders.length && (
+                            <span className={styles.bayWorkerName}>{names[workerId]}</span>
+                          )}
                           <div className={styles.crates}>
                             {crates.map(crate)}
                             {!changes.length && (
@@ -740,18 +710,6 @@ export default function FactoryFloor({
                               </span>
                             )}
                           </div>
-                          {station === "Live" &&
-                            departingLines.includes(line) && (
-                              <svg
-                                className={styles.dispatch}
-                                viewBox="0 0 48 30"
-                                aria-hidden="true"
-                              >
-                                <path d="M3 5h26v16H3zM29 12h10l6 6v3H29z" />
-                                <circle cx="12" cy="23" r="4" />
-                                <circle cx="36" cy="23" r="4" />
-                              </svg>
-                            )}
                           <div className={styles.machineCaption}>
                             <div className={styles.machineSummary}>
                               {station === "Live" ? (
@@ -777,27 +735,39 @@ export default function FactoryFloor({
                                 Last {time(last)} PT
                               </span>
                             )}
+                            {check?.check_progress && (
+                              <span>#{check.number} · {check.check_progress.done} of {check.check_progress.total} checks</span>
+                            )}
+                            {inspection?.approvals?.bot && <span>Bot approved #{inspection.number}</span>}
+                            {inspection?.approvals?.fable && <span>Fable cleared #{inspection.number}</span>}
                           </div>
                         </div>
                       );
                     })}
+                    {reducedMotion === false && !behind && playing?.event.line === line && (
+                      <EventScene key={playing.event.id} {...playing} />
+                    )}
                     <div
                       className={styles.belts}
                       data-belts="true"
                       aria-hidden="true"
                     >
-                      {stations.slice(0, -1).map((station, segment) => (
+                      {stations.slice(0, -1).map((station, segment) => {
+                        const moving = playing?.event.line === line && crossesSegment(playing.event, segment);
+                        return (
                         <span
                           key={station}
                           className={styles.beltSegment}
                           data-flowing={
                             !behind && beltFlowing(data, line, segment, now)
                           }
+                          data-moving={moving}
                         >
-                          <i />
+                          <i key={moving ? playing?.event.id : "still"} />
                           <ChevronRight size={14} />
                         </span>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -805,17 +775,7 @@ export default function FactoryFloor({
             })}
           </div>
         </div>
-        <div className={styles.floorKey}>
-          <span>
-            <i className={styles.keyCrate} /> A change can ship on more than one line
-          </span>
-          <span>
-            <i className={styles.keyAmber} /> Ten or more waiting
-          </span>
-          <span>
-            <b>?</b> Evidence is incomplete
-          </span>
-        </div>
+        <p className={styles.floorKey}>A crate is one change.</p>
         {(selected || group) && (
           <dialog
             className={styles.detail}
@@ -846,6 +806,11 @@ export default function FactoryFloor({
                 {selected.testflight_build && (
                   <p>TestFlight build {selected.testflight_build} was posted.</p>
                 )}
+                {selected.check_progress && (
+                  <p>{selected.check_progress.done} of {selected.check_progress.total} checks finished.</p>
+                )}
+                {selected.approvals?.bot && <p>Bot approved.</p>}
+                {selected.approvals?.fable && <p>Fable cleared.</p>}
                 {selected.unsure && <p>Unsure. {selected.reasons.join(" ")}</p>}
                 <a
                   href={`https://github.com/alexander-bain/bainluck/pull/${selected.number}`}
@@ -1044,6 +1009,20 @@ export default function FactoryFloor({
             Only changes merged since recording began are timed. “Within” uses the
             first confirmed sighting.
           </p>
+        </details>
+        <details className={styles.eventLog}>
+          <summary className={styles.summary}>
+            <ChevronRight size={13} aria-hidden="true" />
+            {playing ? `${playing.event.line} · ${eventText(playing.event)}` : "Events from the last read"}
+            {data.events && <span className={styles.sectionNote}>{data.events.length}</span>}
+          </summary>
+          {data.events?.length ? (
+            <ol>
+              {data.events.map((event) => (
+                <li key={event.id}>{time(event.at)} PT · {event.line} · {eventText(event)}</li>
+              ))}
+            </ol>
+          ) : <p>{data.events ? "No new events in this read." : "Event details are missing from this read."}</p>}
         </details>
       </div>
       <footer className={styles.notes}>

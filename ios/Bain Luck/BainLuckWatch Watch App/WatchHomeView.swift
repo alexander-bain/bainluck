@@ -236,7 +236,13 @@ struct WatchHomeView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            splitBar(game.split)
+            if let split = game.split {
+                splitBar(split)
+            } else if let resultText = game.resultText {
+                Text(resultText)
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(8)
         .background(Color.white.opacity(0.05))

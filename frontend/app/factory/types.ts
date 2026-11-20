@@ -33,6 +33,27 @@ export interface Change {
   live_posted_at?: string;
   live_post_observed_at?: string;
   testflight_build?: number;
+  check_progress?: { done: number; total: number };
+  approvals?: { bot?: string; fable?: string };
+}
+
+export const factoryEventKinds = [
+  "commit", "check", "bot", "fable", "returned", "move", "merge", "deploy", "live",
+] as const;
+
+export interface FloorEvent {
+  id: string;
+  kind: (typeof factoryEventKinds)[number];
+  number: number;
+  line: Line;
+  builder: Builder;
+  station: Station;
+  from?: Station;
+  at: string;
+  observed_at: string;
+  done?: number;
+  total?: number;
+  outcome?: "passed" | "failed" | "finished";
 }
 
 export interface Transfer {
@@ -84,6 +105,7 @@ export interface FactoryData {
   observed_since: string;
   read_expires_at?: string;
   transitions?: Transfer[];
+  events?: FloorEvent[];
   stops?: Stop[];
   notes?: {
     snapshot_at: string;

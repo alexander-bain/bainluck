@@ -963,16 +963,13 @@ struct EventDetailView: View {
                    !Self.gameMarketsHaveContent(gameMarkets) {
                     noGameMarketsNote(status: event.status)
                 }
-                // Series Probability (playoff series context)
-                if let tags = event.eventTags,
-                   (tags.contains("competitive_structure:series") || tags.contains("competitive_structure:best_of_7")),
-                   event.heroProbabilitySource != OpeningLineHero.openingSource,
-                   let homeProb = event.currentOdds?.homeProbability {
+                // Series Probability (playoff series context) — uses game result + pregame baseline once finished, never stale current_odds
+                if let seriesInputs = SeriesProbabilityView.resolvedMountInputs(for: event) {
                     SeriesProbabilityView(
-                        homeWinProb: homeProb,
-                        homeSeriesWins: event.espn?.seriesHomeWins ?? 0,
-                        awaySeriesWins: event.espn?.seriesAwayWins ?? 0,
-                        gamesToWin: tags.contains("competitive_structure:best_of_7") ? 4 : 4,
+                        homeWinProb: seriesInputs.homeWinProb,
+                        homeSeriesWins: seriesInputs.homeSeriesWins,
+                        awaySeriesWins: seriesInputs.awaySeriesWins,
+                        gamesToWin: seriesInputs.gamesToWin,
                         homeTeam: event.homeTeam,
                         awayTeam: event.awayTeam,
                         homeTeamColor: teamColors(event).home,

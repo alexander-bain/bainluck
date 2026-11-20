@@ -233,7 +233,7 @@ function PairSession() {
       {alreadyPicked && (
         <p className="mt-1 text-sm text-text-secondary" role="status">
           Already picked for this morning. The first pick stands.{" "}
-          <a className="font-semibold text-accent-brand hover:underline" href={gradeDeckHref(deck.slate_id)}>
+          <a className="font-semibold text-accent-brand hover:underline" href={gradeDeckHref(deck.slate_id, deck.pair)}>
             Continue to Step 2 of 3: the deck →
           </a>
         </p>
@@ -241,7 +241,7 @@ function PairSession() {
       {saved && (
         <p className="mt-1 text-sm text-text-secondary" role="status">
           Saved: {PAIR_CHOICE_LABELS[saved]}.{" "}
-          <a className="font-semibold text-accent-brand hover:underline" href={gradeDeckHref(deck.slate_id)}>
+          <a className="font-semibold text-accent-brand hover:underline" href={gradeDeckHref(deck.slate_id, deck.pair)}>
             Continue to Step 2 of 3: the deck →
           </a>
         </p>

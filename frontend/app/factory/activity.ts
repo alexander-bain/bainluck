@@ -73,18 +73,21 @@ export function readerBehind(data: FactoryData, now: string) {
   return Date.parse(now) > deadline;
 }
 
-export function stopText(stop: Stop, now: string) {
-  const age = duration((Date.parse(now) - Date.parse(stop.since)) / 1000);
+export function stopWaitText(stop: Stop, now: string) {
   const minutes = stop.waiting_since
     ? Math.max(
         0,
         Math.floor((Date.parse(now) - Date.parse(stop.waiting_since)) / 60_000),
       )
     : null;
-  const waited =
-    stop.number && minutes !== null
-      ? `#${stop.number} has waited ${minutes < 60 ? `${minutes} ${minutes === 1 ? "minute" : "minutes"}` : duration(minutes * 60)} for ${stop.station === "Review" ? "inspection" : "a turn at the loading dock"}.`
-      : null;
+  return stop.number && minutes !== null
+    ? `#${stop.number} has waited ${minutes < 60 ? `${minutes} ${minutes === 1 ? "minute" : "minutes"}` : duration(minutes * 60)} for ${stop.station === "Review" ? "inspection" : "a turn at the loading dock"}.`
+    : null;
+}
+
+export function stopText(stop: Stop, now: string) {
+  const age = duration((Date.parse(now) - Date.parse(stop.since)) / 1000);
+  const waited = stopWaitText(stop, now);
   if (stop.kind === "line-stalled")
     return waited
       ? `${stop.line}: nothing merged for ${age}. ${waited}`

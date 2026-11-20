@@ -79,16 +79,27 @@ def candidate_leg_ids(markets: Iterable) -> dict[int, int]:
 
 
 def _loaded_grade(outcome) -> tuple[bool, bool]:
-    """Return ``(has_loaded_grade, is_graded_out)`` for a DB-loaded ORM row.
+    """Return ``(has_loaded_grade, is_graded_out)`` for a loaded ORM or snapshot row.
 
     Direct ORM reads (``_score_sports_mode_futures``, ``load_sports_markets``)
-    already load ``is_winner`` and ``resolution_source`` via
-    ``OUTCOME_LOAD_ONLY_EXTRA``; reading them directly from ``__dict__`` on a
-    non-transient ``FuturesOutcome`` whose SQLAlchemy state confirms both
-    columns are loaded avoids a second ``futures_outcomes`` round trip (up to
-    ~2 s on a busy Sports cold build, #11931) without risking a lazy load or
-    reading defaults off snapshot/stub objects.
+    and Discover's ``FuturesOutcomeSnapshot`` objects (``futures_market_snapshot``)
+    both carry ``is_winner`` and ``resolution_source`` loaded via
+    ``OUTCOME_LOAD_ONLY_EXTRA``; reading them directly from ``__dict__`` avoids
+    a redundant ``futures_outcomes`` round trip (up to ~2-3.3 s on busy Sports
+    and Discover cold builds, #11931) without risking a lazy load or reading
+    defaults off arbitrary test stubs.
     """
+    from app.utils.futures_market_snapshot import FuturesOutcomeSnapshot
+
+    if isinstance(outcome, FuturesOutcomeSnapshot):
+        values = outcome.__dict__
+        if not values.get("_settlement_loaded"):
+            return (False, False)
+        return (
+            True,
+            values.get("is_winner") is False
+            and values.get("resolution_source") in AUTHORITATIVE_SOURCES,
+        )
     if not isinstance(outcome, FuturesOutcome):
         return (False, False)
     state = sa_inspect(outcome, raiseerr=False)

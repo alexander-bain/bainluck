@@ -21,9 +21,11 @@ import re
 import time
 import zlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
+from uuid import UUID
 
 from app.utils.container_presentation import (
     MEMBER_MARKET,
@@ -1059,6 +1061,42 @@ def _roundup_cache_stale_ttl_seconds(
     return _roundup_cache_ttl_seconds(slug, container_payload)
 
 
+def _roundup_cache_json_default(obj: Any) -> Any:
+    """JSON fallback for roundup cache payloads containing non-primitive scalars."""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, UUID):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _encode_roundup_cache_entry(
+    *,
+    ts: float,
+    ttl_s: float,
+    stale_ttl_s: float,
+    feed_item: Optional[dict[str, Any]],
+    container_payload: Optional[dict[str, Any]],
+    clean_empty: bool = False,
+) -> str:
+    payload: dict[str, Any] = {
+        "built_at": ts,
+        "ttl_s": ttl_s,
+        "stale_ttl_s": stale_ttl_s,
+        "feed_item": feed_item,
+        "container_payload": container_payload,
+    }
+    if clean_empty:
+        payload["clean_empty"] = True
+    return json.dumps(
+        payload,
+        separators=(",", ":"),
+        default=_roundup_cache_json_default,
+    )
+
+
 def store_roundup_cache_sync(
     rc: Any,
     slug: str,
@@ -1076,17 +1114,14 @@ def store_roundup_cache_sync(
         return False
     ttl_s = _roundup_cache_ttl_seconds(slug, container_payload)
     stale_ttl_s = _roundup_cache_stale_ttl_seconds(slug, container_payload)
-    encoded = json.dumps(
-        {
-            "built_at": ts,
-            "ttl_s": ttl_s,
-            "stale_ttl_s": stale_ttl_s,
-            "feed_item": feed_item,
-            "container_payload": container_payload,
-        },
-        separators=(",", ":"),
-    )
     try:
+        encoded = _encode_roundup_cache_entry(
+            ts=ts,
+            ttl_s=ttl_s,
+            stale_ttl_s=stale_ttl_s,
+            feed_item=feed_item,
+            container_payload=container_payload,
+        )
         rc.set(_redis_cache_key(slug), encoded, ex=int(stale_ttl_s))
         if _is_machinery_producer_slug(slug) and container_payload is not None:
             if _roundup_payload_needs_live_rail(container_payload, now_ts=ts):
@@ -1107,6 +1142,96 @@ def store_roundup_cache_sync(
         return False
 
 
+def store_roundup_clean_empty_sync(
+    rc: Any,
+    slug: str,
+    ts: float,
+    *,
+    ttl_s: float = ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S,
+    lifetime_s: float = ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S,
+) -> bool:
+    """Record a clean-empty marker in Redis when a grouping producer ran cleanly with nothing to show (#13183).
+
+    Used by Celery prewarm workers only (never on the web event loop — #969).
+    Lets `_publish_machinery_feed_from_prewarm_base` distinguish an intentionally
+    quiet/out-of-season grouping from a failed or expired one.
+    """
+    if rc is None or not hasattr(rc, "set"):
+        return False
+    try:
+        encoded = _encode_roundup_cache_entry(
+            ts=ts,
+            ttl_s=float(ttl_s),
+            stale_ttl_s=float(lifetime_s),
+            feed_item=None,
+            container_payload=None,
+            clean_empty=True,
+        )
+        rc.set(_redis_cache_key(slug), encoded, ex=int(lifetime_s))
+        if _is_machinery_producer_slug(slug) and hasattr(rc, "hdel"):
+            rc.hdel(MACHINERY_LIVE_SLUGS_KEY, slug)
+        return True
+    except Exception:  # noqa: BLE001 — cache write is best-effort
+        logger.warning(
+            "roundup_containers: sync Redis clean-empty write failed for %s",
+            slug,
+            exc_info=True,
+        )
+        return False
+
+
+def verify_roundup_cache_sync(
+    rc: Any,
+    slug: str,
+    *,
+    allow_clean_empty: bool = False,
+) -> tuple[bool, Optional[int]]:
+    """Read back a just-written roundup cache key via sync Redis and verify TTL + decode.
+
+    Used by Celery prewarm workers only (never on the web event loop — #969, #12288).
+    Returns ``(ok, ttl_seconds)`` where ``ok`` is True only when the key exists,
+    decodes through the same JSON reader path as ``evaluate_roundup_producer``,
+    carries both ``feed_item`` and ``container_payload`` (or a valid ``clean_empty``
+    marker when ``allow_clean_empty=True``), and (when ``rc.ttl`` is available)
+    has a positive TTL remaining.
+    """
+    if rc is None or not hasattr(rc, "get"):
+        return False, None
+    key = _redis_cache_key(slug)
+    try:
+        raw_val = rc.get(key)
+        if not raw_val:
+            return False, None
+        ttl_remaining: Optional[int] = None
+        if hasattr(rc, "ttl"):
+            raw_ttl = rc.ttl(key)
+            if isinstance(raw_ttl, (int, float)):
+                ttl_remaining = int(raw_ttl)
+                if ttl_remaining <= 0:
+                    return False, ttl_remaining
+        decoded = json.loads(
+            raw_val.decode("utf-8")
+            if isinstance(raw_val, (bytes, bytearray))
+            else raw_val
+        )
+        if not isinstance(decoded, dict):
+            return False, ttl_remaining
+        if not isinstance(decoded.get("built_at"), (int, float)):
+            return False, ttl_remaining
+        if allow_clean_empty and decoded.get("clean_empty") is True:
+            return True, ttl_remaining
+        if decoded.get("feed_item") is None or decoded.get("container_payload") is None:
+            return False, ttl_remaining
+        return True, ttl_remaining
+    except Exception:  # noqa: BLE001 — verification is best-effort
+        logger.warning(
+            "roundup_containers: sync Redis read-back failed for %s",
+            slug,
+            exc_info=True,
+        )
+        return False, None
+
+
 async def _store_roundup_cache_entry(
     cache_key: tuple[str, Any],
     slug: str,
@@ -1125,20 +1250,25 @@ async def _store_roundup_cache_entry(
         copy.deepcopy(container_payload),
     )
     if isinstance(db, AsyncSession):
+        try:
+            encoded = _encode_roundup_cache_entry(
+                ts=ts,
+                ttl_s=ttl_s,
+                stale_ttl_s=stale_ttl_s,
+                feed_item=feed_item,
+                container_payload=container_payload,
+            )
+        except (TypeError, ValueError):
+            logger.warning(
+                "roundup_containers: shared cache encode failed for %s",
+                slug,
+                exc_info=True,
+            )
+            return
         wrote_async = False
         try:
             from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
-            encoded = json.dumps(
-                {
-                    "built_at": ts,
-                    "ttl_s": ttl_s,
-                    "stale_ttl_s": stale_ttl_s,
-                    "feed_item": feed_item,
-                    "container_payload": container_payload,
-                },
-                separators=(",", ":"),
-            )
             client = await get_shared_async_redis()
             set_res = await bounded_redis_call(
                 lambda: client.set(
@@ -1224,13 +1354,20 @@ async def evaluate_roundup_producer(
     licences_path: Optional[Path | str] = None,
     force_refresh: bool = False,
     allow_stale: bool = False,
+    outcome_meta: Optional[dict[str, Any]] = None,
 ) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
     """Run ``producer`` once and return ``(feed_item, container_payload)``, cached 60s per slug."""
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.utils.container_read_cache import container_read_cache_enabled
 
+    if outcome_meta is not None:
+        outcome_meta["clean_empty"] = False
+        outcome_meta["reason"] = None
+
     if producer.enabled is not None and not producer.enabled():
+        if outcome_meta is not None:
+            outcome_meta["reason"] = "disabled"
         return None, None
 
     is_fixture_seq = isinstance(db, (list, tuple))
@@ -1240,6 +1377,9 @@ async def evaluate_roundup_producer(
     if (producer.valid_from is not None and ts < producer.valid_from) or (
         producer.valid_until is not None and ts >= producer.valid_until
     ):
+        if outcome_meta is not None:
+            outcome_meta["clean_empty"] = True
+            outcome_meta["reason"] = "outside_window"
         return None, None
     rule_cfg = producer.rule if isinstance(producer.rule, Mapping) else {}
     producer_kind = str(rule_cfg.get("producer") or "").strip()
@@ -1258,6 +1398,8 @@ async def evaluate_roundup_producer(
             producer_kind in (active_licences.get("kinds") or {})
             and get_kind_licence_status(active_licences, producer_kind) == "SUSPENDED"
         ):
+            if outcome_meta is not None:
+                outcome_meta["reason"] = "suspended"
             logger.warning(
                 "flow_sentinel matching_defect: roundup %s skipped because kind %s is SUSPENDED",
                 producer.slug,
@@ -1356,12 +1498,16 @@ async def evaluate_roundup_producer(
 
     if outcome is None or isinstance(outcome, RoundupRefusal):
         reasons = list(outcome.reasons) if isinstance(outcome, RoundupRefusal) else []
+        cacheable = _is_cacheable_refusal(reasons)
+        if outcome_meta is not None:
+            outcome_meta["clean_empty"] = bool(cacheable)
+            outcome_meta["reason"] = "clean_empty_refusal" if cacheable else "transient_refusal"
         logger.warning(
             "flow_sentinel matching_defect: roundup %s refused reasons=%s",
             producer.slug,
             reasons,
         )
-        if use_cache and _is_cacheable_refusal(reasons):
+        if use_cache and cacheable:
             await _store_roundup_cache_entry(
                 cache_key, producer.slug, ts, None, None, db
             )
@@ -1386,6 +1532,9 @@ async def evaluate_roundup_producer(
     if container_payload is None or (
         feed_item is None and not getattr(outcome, "suppress_feed_item", False)
     ):
+        if outcome_meta is not None:
+            outcome_meta["clean_empty"] = True
+            outcome_meta["reason"] = "empty_payload"
         if use_cache:
             await _store_roundup_cache_entry(
                 cache_key, producer.slug, ts, None, None, db
@@ -1424,6 +1573,9 @@ async def evaluate_roundup_producer(
                     registry=licences_registry,
                     licences_path=licences_path,
                 )
+                if outcome_meta is not None:
+                    outcome_meta["clean_empty"] = False
+                    outcome_meta["reason"] = "licence_violation"
                 logger.warning(
                     "flow_sentinel matching_defect: roundup %s suspended kind %s (%s)",
                     producer.slug,
@@ -1431,6 +1583,41 @@ async def evaluate_roundup_producer(
                     bad_reason,
                 )
                 return None, None
+
+    if (
+        _is_machinery_producer_slug(producer.slug)
+        and feed_item is not None
+        and isinstance(db, AsyncSession)
+    ):
+        # Ruling 188 (#11937, #12288): screen every machinery Discover feed card
+        # ONCE at build time before caching (covering BOTH Celery prewarm AND
+        # reader-path inline rebuilds), so no unscreened entry can ever land in
+        # Redis and hot `machinery_only` splices pay zero DB queries.
+        try:
+            from app.utils.not_trading import drop_not_trading_roundup_members
+
+            _screened = await drop_not_trading_roundup_members(
+                db,
+                [feed_item],
+                now_dt or datetime.now(timezone.utc),
+                _roundup_covered_market_ids,
+            )
+            feed_item = _screened[0] if _screened else None
+        except Exception:  # noqa: BLE001 — keep card on transient screen error
+            logger.warning(
+                "roundup_containers: not-trading screen failed for %s; keeping card",
+                producer.slug,
+                exc_info=True,
+            )
+        if feed_item is None:
+            if outcome_meta is not None:
+                outcome_meta["clean_empty"] = True
+                outcome_meta["reason"] = "not_trading_screen_empty"
+            if use_cache:
+                await _store_roundup_cache_entry(
+                    cache_key, producer.slug, ts, None, None, db
+                )
+            return None, None
 
     if use_cache:
         await _store_roundup_cache_entry(
@@ -2847,13 +3034,21 @@ def insert_roundup_feed_items(
                         )
                     ]
                     if len(kept_children) != len(orig_children):
-                        changed = True
-                        if (
-                            earliest_post_opening_seat is None
-                            and seat_floor <= idx < page_window
+                        # Ruling 275 (#13100): a card never loses a row to a card seated
+                        # below it. Only full dissolution where a machinery grouping takes
+                        # over the card's own seat (e.g. Fed & Rates -> Fed & U.S. Macro)
+                        # or a post-opening bundle dissolves runs before seating; partial
+                        # overlap is pruned after final seats are known, and ONLY against
+                        # round-ups seated strictly above the bundle.
+                        if len(kept_children) < 2 and (
+                            is_machinery or idx >= initial_floor_idx
                         ):
-                            earliest_post_opening_seat = idx
-                        if len(kept_children) < 2:
+                            changed = True
+                            if (
+                                earliest_post_opening_seat is None
+                                and seat_floor <= idx < page_window
+                            ):
+                                earliest_post_opening_seat = idx
                             # Absorbing an older bundle's markets so it dissolves takes
                             # over that card's seat for machinery groupings only; standing
                             # round-ups seat identically to master (Fable 12:16 PM PT, #12288).
@@ -2867,17 +3062,6 @@ def insert_roundup_feed_items(
                                     if prev_post is None or idx < prev_post:
                                         dissolved_post_opening_seat_by_id[r_id] = idx
                             continue
-                        updated_existing = copy.deepcopy(dict(existing))
-                        updated_existing["data"]["items"] = kept_children
-                        updated_existing["data"]["item_count"] = len(kept_children)
-                        if isinstance(updated_existing["data"].get("member_ids"), list):
-                            updated_existing["data"]["member_ids"] = [
-                                mid
-                                for mid in updated_existing["data"]["member_ids"]
-                                if mid not in covered_ids
-                            ]
-                        filtered.append(updated_existing)
-                        continue
                 filtered.append(existing)
             result = filtered
         earliest_seat_by_id[r_id] = (
@@ -2995,7 +3179,68 @@ def insert_roundup_feed_items(
             now=now,
         )
 
-    return result
+    # Ruling 275 (#13100): a card never loses a row to a card seated below it.
+    # Prune overlapping rows from surviving theme bundles ONLY when an accepted
+    # round-up covering those markets ended up seated strictly ABOVE the bundle.
+    accepted_ids = {r["data"].get("id") for r in accepted_roundups}
+    return _prune_bundles_below_roundups(result, accepted_ids)
+
+
+def _prune_bundles_below_roundups(
+    result: list[dict[str, Any]],
+    accepted_ids: set[Any],
+) -> list[dict[str, Any]]:
+    """Prune overlapping rows from theme bundles seated strictly BELOW accepted round-ups (Ruling 275)."""
+    if not accepted_ids:
+        return result
+    covered_above: set[int] = set()
+    pruned_result: list[dict[str, Any]] = []
+    for card in result:
+        if (
+            isinstance(card, Mapping)
+            and card.get("type") == "bundle"
+            and isinstance(card.get("data"), Mapping)
+            and card["data"].get("id") in accepted_ids
+        ):
+            covered_above.update(_roundup_covered_market_ids(card))
+            pruned_result.append(card)
+            continue
+        if (
+            covered_above
+            and isinstance(card, Mapping)
+            and card.get("type") == "bundle"
+            and isinstance(card.get("data"), Mapping)
+            and card["data"].get("kind") != "roundup"
+            and isinstance(card["data"].get("items"), list)
+        ):
+            orig_children = card["data"]["items"]
+            kept_children = [
+                ch
+                for ch in orig_children
+                if not (
+                    isinstance(ch, Mapping)
+                    and ch.get("type") == "futures"
+                    and isinstance(ch.get("data"), Mapping)
+                    and ch["data"].get("id") in covered_above
+                )
+            ]
+            if len(kept_children) != len(orig_children):
+                if len(kept_children) < 2:
+                    continue
+                updated_card = copy.deepcopy(dict(card))
+                updated_card["data"]["items"] = kept_children
+                updated_card["data"]["item_count"] = len(kept_children)
+                if isinstance(updated_card["data"].get("member_ids"), list):
+                    updated_card["data"]["member_ids"] = [
+                        mid
+                        for mid in updated_card["data"]["member_ids"]
+                        if mid not in covered_above
+                    ]
+                pruned_result.append(updated_card)
+                continue
+        pruned_result.append(card)
+
+    return pruned_result
 
 
 def _is_machinery_producer_slug(slug: Any) -> bool:
@@ -3056,10 +3301,22 @@ async def add_roundup_feed_items(
     if not producers:
         return items
     produced: list[dict[str, Any]] = []
+    machinery_producers = [
+        p
+        for p in producers
+        if _is_machinery_producer_slug(p.slug) and (p.enabled is None or p.enabled())
+    ]
+    machinery_incomplete = False
     for idx, producer in enumerate(producers):
         elapsed = time.perf_counter() - started
         remaining = stage_budget - elapsed
         if remaining <= 0:
+            if any(
+                _is_machinery_producer_slug(rem.slug)
+                and (rem.enabled is None or rem.enabled())
+                for rem in producers[idx:]
+            ):
+                machinery_incomplete = True
             logger.warning(
                 "Discover round-up stage budget exhausted after %d/%d producers "
                 "(budget_seconds=%.3f, stage_budget=%.3f, produced=%d)",
@@ -3071,6 +3328,9 @@ async def add_roundup_feed_items(
             )
             break
         per_timeout = min(remaining, ROUNDUP_PRODUCER_TIMEOUT_SECONDS)
+        is_mach_prod = _is_machinery_producer_slug(producer.slug) and (
+            producer.enabled is None or producer.enabled()
+        )
         try:
             eval_coro = (
                 evaluate_roundup_producer(producer, db, now=now, allow_stale=True)
@@ -3082,11 +3342,13 @@ async def add_roundup_feed_items(
                 timeout=per_timeout,
             )
         except asyncio.TimeoutError:
+            if is_mach_prod:
+                machinery_incomplete = True
             if hasattr(db, "rollback") and callable(db.rollback):
                 try:
                     await db.rollback()
                 except Exception:  # noqa: BLE001
-                    pass
+                    logger.debug("roundup_containers: rollback failed after timeout")
             if (
                 per_timeout >= ROUNDUP_PRODUCER_TIMEOUT_SECONDS
                 and not _is_machinery_producer_slug(producer.slug)
@@ -3099,11 +3361,13 @@ async def add_roundup_feed_items(
             )
             continue
         except Exception:
+            if is_mach_prod:
+                machinery_incomplete = True
             if hasattr(db, "rollback") and callable(db.rollback):
                 try:
                     await db.rollback()
                 except Exception:  # noqa: BLE001
-                    pass
+                    logger.debug("roundup_containers: rollback failed after error")
             logger.warning(
                 "Discover round-up read failed for %s; keeping ordinary cards",
                 producer.slug,
@@ -3113,18 +3377,36 @@ async def add_roundup_feed_items(
         if feed_item is not None and container_payload is not None:
             produced.append(feed_item)
 
+    # Goal Step 7 (#12288): five or none during cold-restart warm-up.
+    # If any registered machinery grouping timed out, errored, or was skipped
+    # by stage budget exhaustion, drop all partial machinery cards from this
+    # response (standing round-ups stay untouched) rather than serving 2/5 or 3/5.
+    if machinery_incomplete and machinery_producers:
+        ready_mach = sum(1 for it in produced if _is_machinery_roundup_item(it))
+        if ready_mach > 0:
+            produced = [it for it in produced if not _is_machinery_roundup_item(it)]
+            logger.warning(
+                "Discover machinery groupings incomplete (%d/%d ready); serving none until all ready",
+                ready_mach,
+                len(machinery_producers),
+            )
+
     if not produced:
         return items
     # Ruling 188 (#11937): a market nobody is trading is not featured, and a
     # round-up is rated by its stalest member, so those members leave the card.
-    try:
-        from app.utils.not_trading import drop_not_trading_roundup_members
+    # For `machinery_only=True` splices, `_prewarm_machinery_roundups` already
+    # runs this screen once on the worker before saving each grouping to Redis,
+    # so reader requests do not pay a ~580 ms PostgreSQL query on every hit.
+    if not machinery_only:
+        try:
+            from app.utils.not_trading import drop_not_trading_roundup_members
 
-        produced = await drop_not_trading_roundup_members(
-            db, produced, now or datetime.now(timezone.utc), _roundup_covered_market_ids
-        )
-    except Exception:  # noqa: BLE001 — one failed read must not empty the page (gotcha #42)
-        logger.warning("Discover round-up not-trading check failed; keeping the cards", exc_info=True)
+            produced = await drop_not_trading_roundup_members(
+                db, produced, now or datetime.now(timezone.utc), _roundup_covered_market_ids
+            )
+        except Exception:  # noqa: BLE001 — one failed read must not empty the page (gotcha #42)
+            logger.warning("Discover round-up not-trading check failed; keeping the cards", exc_info=True)
     if not produced:
         return items
     return insert_roundup_feed_items(
@@ -3140,6 +3422,163 @@ async def add_roundup_feed_items(
         novelty_seat_cap=novelty_seat_cap,
         preserve_existing_roundups=machinery_only,
     )
+
+
+def render_machinery_prewarm_bundle(
+    *,
+    mach_base: dict[str, Any],
+    produced: list[dict[str, Any]],
+    oldest_live_built_at: Optional[float],
+    now_ts: float,
+) -> Optional[dict[str, Any]]:
+    """Pure-Python render of `machinery=1` page + `:machinery` page base + edition manifest (#12288).
+
+    Lives in `utils/roundup_containers.py` so `precompute_category_pages.py` stays
+    agnostic to opening seating (`#5105`) and `routes/feed.py` keeps a single
+    `_publish_feed_item` call site inside `get_feed` (`#6444`).
+    """
+    from app.routes.feed import (
+        DISCOVER_COMPOSITION_WINDOW,
+        _apply_opening_envelope,
+        _publish_feed_item,
+    )
+    from app.utils.discover_opening_edition import compose_opening_edition
+    from app.utils.feed_cache import (
+        FEED_EDITION_FIELD,
+        FEED_PAGE_BASE_BUILT_AT_FIELD,
+        build_feed_cache_metadata,
+        dumps_feed_cache,
+        feed_edition_token,
+        feed_machinery_page_base_key,
+        feed_response_cache_key,
+        feed_response_cache_ttls,
+        payload_contains_live_event,
+        render_feed_page_from_base,
+    )
+    from app.utils.feed_editions import (
+        EDITION_LEASE_SECONDS,
+        build_edition_manifest,
+        edition_manifest_cache_key,
+    )
+
+    base_body = mach_base["page_base_body"]
+    base_items = list(base_body.get("items") or [])
+    if not base_items:
+        return None
+
+    now_dt = datetime.fromtimestamp(now_ts, tz=timezone.utc)
+    spliced_items = insert_roundup_feed_items(
+        copy.deepcopy(base_items),
+        produced,
+        page_window=DISCOVER_COMPOSITION_WINDOW,
+        now=now_dt,
+        preserve_existing_roundups=True,
+    )
+    for item in spliced_items:
+        _publish_feed_item(item)
+
+    base_age_origin = float(mach_base.get("age_origin") or now_ts)
+    mach_age_origin = (
+        min(base_age_origin, oldest_live_built_at)
+        if oldest_live_built_at is not None
+        else base_age_origin
+    )
+    use_opening = bool(mach_base.get("opening_seating"))
+    edition_policy = str(mach_base.get("edition_policy") or "default")
+    limit = int(mach_base.get("limit") or 20)
+    offset = int(mach_base.get("offset") or 0)
+
+    mach_base_body = dict(base_body)
+    mach_base_body["items"] = spliced_items
+    mach_base_body["total"] = len(spliced_items)
+    mach_base_body[FEED_PAGE_BASE_BUILT_AT_FIELD] = mach_age_origin
+
+    manifest_key = None
+    manifest_obj = None
+    if use_opening:
+        opening = compose_opening_edition(
+            spliced_items,
+            None,
+            requested_token=None,
+            requested_policy=edition_policy,
+            now=now_dt,
+        )
+        if not opening.usable:
+            return None
+        for _per_req in (FEED_EDITION_FIELD, "continuation_start"):
+            mach_base_body.pop(_per_req, None)
+        if opening.token is not None:
+            mach_base_body[FEED_EDITION_FIELD] = opening.token
+            if opening.continuation_start is not None:
+                mach_base_body["continuation_start"] = opening.continuation_start
+            if opening.manifest is not None:
+                manifest_key = edition_manifest_cache_key(
+                    token=opening.token, policy=edition_policy
+                )
+                manifest_obj = opening.manifest
+        page_payload = render_feed_page_from_base(
+            {
+                **mach_base_body,
+                "items": opening.items,
+                "total": len(opening.items),
+            },
+            limit=limit,
+            offset=offset,
+        )
+        if page_payload is not None:
+            _apply_opening_envelope(page_payload, opening, requested=False)
+    else:
+        ed_token = feed_edition_token(spliced_items)
+        if ed_token is not None:
+            mach_base_body[FEED_EDITION_FIELD] = ed_token
+            manifest_obj = build_edition_manifest(
+                spliced_items,
+                token=ed_token,
+                policy=edition_policy,
+                built_at=now_ts,
+            )
+            if manifest_obj is not None:
+                manifest_key = edition_manifest_cache_key(
+                    token=ed_token, policy=edition_policy
+                )
+        page_payload = render_feed_page_from_base(
+            mach_base_body, limit=limit, offset=offset
+        )
+
+    if page_payload is None:
+        return None
+
+    mach_live = payload_contains_live_event(mach_base_body)
+    m_ttl, m_stale_ttl = feed_response_cache_ttls(
+        my_teams_only=False, identified=False, live=mach_live
+    )
+    page_payload["cache"] = build_feed_cache_metadata(
+        "miss",
+        ttl_seconds=m_ttl,
+        stale_ttl_seconds=m_stale_ttl,
+        live=mach_live,
+        built_at=mach_age_origin,
+    )
+
+    cache_shape = dict(mach_base["cache_shape"])
+    cache_shape["machinery"] = True
+    mach_cache_key = feed_response_cache_key(
+        user_id=None, session_id=None, **cache_shape
+    )
+    mach_pb_key = feed_machinery_page_base_key(str(mach_base["page_base_key"]))
+
+    return {
+        "live": mach_live,
+        "ttl": m_ttl,
+        "stale_ttl": m_stale_ttl,
+        "cache_key": mach_cache_key,
+        "page_base_key": mach_pb_key,
+        "page_json": dumps_feed_cache(page_payload),
+        "page_base_json": dumps_feed_cache(mach_base_body),
+        "manifest_key": manifest_key,
+        "manifest_json": dumps_feed_cache(manifest_obj) if manifest_obj is not None else None,
+        "manifest_ttl": EDITION_LEASE_SECONDS,
+    }
 
 
 def _splice_machinery_in_place(
@@ -3232,7 +3671,18 @@ def _splice_machinery_in_place(
             remove_indices.add(idx)
 
     # Pass 2: Covered standalone futures and theme bundles -> in-place takeover on dissolution
-    # or first covered standalone card; prune extra duplicates only.
+    # or first covered standalone card ONLY when it sits at or above where non-replacing
+    # groupings would seat on their own (Fable 12:16 PM PT & 4:37 AM PT on #12288:
+    # absorbing a far-down card like seat 95 never drags a grouping down to seat 95).
+    pre_pass2_standing_last = max(
+        (
+            i
+            for i, it in enumerate(result)
+            if _is_roundup_bundle_card(it) and not _is_machinery_roundup_item(it)
+        ),
+        default=-1,
+    )
+    own_seat_ceiling = max(initial_floor_idx, pre_pass2_standing_last + 2)
     for r_item in ordered_roundups:
         r_id = r_item["data"].get("id")
         covered_ids = _roundup_covered_market_ids(r_item)
@@ -3249,7 +3699,7 @@ def _splice_machinery_in_place(
                 and existing["data"].get("id") in covered_ids
             ):
                 changed = True
-                if r_id not in placed_rids:
+                if r_id not in placed_rids and idx <= own_seat_ceiling:
                     card = _hydrate_at(r_item, idx)
                     if idx < initial_floor_idx:
                         card["data"]["inherited_opening_seat"] = True
@@ -3275,40 +3725,37 @@ def _splice_machinery_in_place(
                         and ch["data"].get("id") in covered_ids
                     )
                 ]
-                if len(kept_children) != len(orig_children):
+                if len(kept_children) != len(orig_children) and len(kept_children) < 2:
+                    # Ruling 275 (#13100): only full dissolution runs before seating;
+                    # partial overlap is pruned after final seats are settled via
+                    # `_prune_bundles_below_roundups` so a card never loses a row to
+                    # a machinery grouping seated below it.
                     changed = True
-                    if len(kept_children) < 2:
-                        if r_id not in placed_rids:
-                            card = _hydrate_at(r_item, idx)
-                            if idx < initial_floor_idx:
-                                card["data"]["inherited_opening_seat"] = True
-                            result[idx] = card
-                            placed_rids.add(r_id)
-                        else:
-                            remove_indices.add(idx)
+                    if r_id not in placed_rids and idx <= own_seat_ceiling:
+                        card = _hydrate_at(r_item, idx)
+                        if idx < initial_floor_idx:
+                            card["data"]["inherited_opening_seat"] = True
+                        result[idx] = card
+                        placed_rids.add(r_id)
                     else:
-                        updated_existing = copy.deepcopy(dict(existing))
-                        updated_existing["data"]["items"] = kept_children
-                        updated_existing["data"]["item_count"] = len(kept_children)
-                        if isinstance(updated_existing["data"].get("member_ids"), list):
-                            updated_existing["data"]["member_ids"] = [
-                                mid
-                                for mid in updated_existing["data"]["member_ids"]
-                                if mid not in covered_ids
-                            ]
-                        result[idx] = updated_existing
+                        remove_indices.add(idx)
 
     if remove_indices:
         for idx in sorted(remove_indices, reverse=True):
             result.pop(idx)
 
     # Pass 3: Non-replacing machinery groupings seat strictly after the last standing
-    # round-up with non-adjacent spacing so zero standing round-ups shift.
+    # round-up (never counting already-placed machinery groupings!) with non-adjacent
+    # spacing so zero standing round-ups shift.
     unplaced = [r for r in ordered_roundups if r["data"].get("id") not in placed_rids]
     if unplaced:
         floor_idx = _opening_eligible_floor_index(result, seat_floor, now=now)
         last_standing_idx = max(
-            (i for i, it in enumerate(result) if _is_roundup_bundle_card(it)),
+            (
+                i
+                for i, it in enumerate(result)
+                if _is_roundup_bundle_card(it) and not _is_machinery_roundup_item(it)
+            ),
             default=-1,
         )
         next_desired = max(floor_idx, last_standing_idx + 2)
@@ -3342,7 +3789,8 @@ def _splice_machinery_in_place(
             now=now,
         )
 
-    return result
+    accepted_ids = {r["data"].get("id") for r in ordered_roundups}
+    return _prune_bundles_below_roundups(result, accepted_ids)
 
 
 ROUNDUP_PRODUCERS: dict[str, RoundupProducer] = {}
