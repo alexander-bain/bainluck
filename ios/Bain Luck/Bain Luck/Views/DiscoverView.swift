@@ -3622,7 +3622,8 @@ struct NativeGroupCard: View {
                         .font(.caption2.weight(.bold))
                         .tracking(0.8)
                         .foregroundStyle(secondaryReadableInk)
-                        .lineLimit(2)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                        .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 0.72 : 1.0)
                         .fixedSize(horizontal: false, vertical: true)
                     if sharedQuestion?.isEmpty != false {
                         Text("\(items.count)")
@@ -3690,28 +3691,34 @@ struct NativeGroupCard: View {
     private func compactRow(_ data: FeedFuturesData) -> some View {
         let summary = DiscoverGroupRows.compactSummary(for: data)
         let hasMark = summary.sourceMark?.draws == true
-        return HStack(alignment: .center, spacing: 12) {
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        let rowLayout = isAX
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+        return rowLayout {
             VStack(alignment: .leading, spacing: 4) {
                 Text(data.name)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(primaryInk)
-                    .lineLimit(3)
+                    .lineLimit(isAX ? nil : 3)
                     .fixedSize(horizontal: false, vertical: true)
                 if let label = summary.label {
                     Text(label)
                         .font(.caption)
                         .foregroundStyle(secondaryInk)
-                        .lineLimit(2)
+                        .lineLimit(isAX ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if let probability = summary.probability {
-                VStack(alignment: .trailing, spacing: 4) {
+                VStack(alignment: isAX ? .leading : .trailing, spacing: 4) {
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
                         Text(formatProbability(probability))
                             .font(.title2.weight(.bold).monospacedDigit())
                             .foregroundStyle(primaryInk)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                         if let mark = SourceMarkButton(
                             summary.sourceMark,
                             number: summary.sourceMark?.state == .settled ? nil : probability,
@@ -3724,8 +3731,8 @@ struct NativeGroupCard: View {
                     }
                     MovementBadge(movement: summary.movement)
                 }
-                .frame(minWidth: 58, alignment: .trailing)
-                .layoutPriority(1)
+                .frame(minWidth: 58, alignment: isAX ? .leading : .trailing)
+                .layoutPriority(isAX ? 0 : 1)
             }
         }
         .contentShape(Rectangle())
