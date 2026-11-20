@@ -1505,17 +1505,22 @@ _STATE_QUALIFIED_PAIRS: frozenset[tuple[str, str]] = _build_state_qualified_pair
 
 
 def _build_venue_spelling_pairs() -> frozenset[tuple[str, str]]:
-    """#8100 — a venue's whole-name spelling of a club, the same shape again.
+    """#8100 / #13238 — a venue's whole-name spelling of a club, the same shape again.
 
-    ``app.utils.venue_club_spellings`` holds the table because the twin fold
-    reads it too, and the two must not hold two lists. Polymarket's "South East
-    Melbourne Phoenix" is teams 2919 "S.E. Melbourne Phoenix"; no structural
-    rule below reaches ``s e`` from ``south east`` and none safely could.
+    ``app.utils.venue_club_spellings`` holds both ``VENUE_CLUB_SPELLINGS`` and
+    ``LEAGUE_CLUB_SPELLINGS`` because the twin fold and league placement read
+    them too, and the consumers must not drift apart.
     """
-    from app.utils.venue_club_spellings import VENUE_CLUB_SPELLINGS
+    from app.utils.venue_club_spellings import (
+        LEAGUE_CLUB_SPELLINGS,
+        VENUE_CLUB_SPELLINGS,
+    )
 
     pairs: set[tuple[str, str]] = set()
-    for venue, ours in VENUE_CLUB_SPELLINGS.items():
+    all_items: list[tuple[str, str]] = list(VENUE_CLUB_SPELLINGS.items())
+    for league_map in LEAGUE_CLUB_SPELLINGS.values():
+        all_items.extend(league_map.items())
+    for venue, ours in all_items:
         a = _normalize_for_matching(venue)
         b = _normalize_for_matching(ours)
         if a and b and a != b:

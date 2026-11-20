@@ -149,6 +149,23 @@ _NATION_NAME_ALIASES: dict[str, str] = {
 #: before this runs, for every name alike; this table does not change that.)
 _CLUB_NAME_ALIASES: dict[str, str] = {
     "lafc": "los angeles fc",
+    # #13238: Bundesliga exonym (ESPN/Polymarket/Kalshi "FC Cologne" vs
+    # Odds API "1. FC Köln", live pair 15351899 / 15342140 on 2026-11-20).
+    "fc cologne": "1. fc koln",
+    # #13238: EuroLeague club spellings (Odds API vs Polymarket/Kalshi,
+    # live pairs 15350440 / 15348467, 15349594 / 15348468 / 15350188,
+    # 15349544 / 15348466 / 15350189, and upcoming 15351534 / 15351541).
+    "fc barcelona basquet": "barcelona",
+    "besiktas j. k.": "besiktas",
+    "besiktas jk": "besiktas",
+    "kk partizan nis": "partizan",
+    "kk partizan belgrade": "partizan",
+    "olympiacos b. c.": "olympiacos",
+    "bc olympiakos piraeus": "olympiacos",
+    "fenerbahce sk": "fenerbahce",
+    "fc bayern munchen": "bayern munich",
+    # #13142: Women's college basketball spelling (pair 15347844 / 15351848).
+    "little rock trojans": "arkansas-little rock trojans",
 }
 
 
