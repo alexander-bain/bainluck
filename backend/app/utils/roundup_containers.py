@@ -1515,6 +1515,38 @@ async def evaluate_roundup_producer(
                 )
                 return None, None
 
+    if (
+        _is_machinery_producer_slug(producer.slug)
+        and feed_item is not None
+        and isinstance(db, AsyncSession)
+    ):
+        # Ruling 188 (#11937, #12288): screen every machinery Discover feed card
+        # ONCE at build time before caching (covering BOTH Celery prewarm AND
+        # reader-path inline rebuilds), so no unscreened entry can ever land in
+        # Redis and hot `machinery_only` splices pay zero DB queries.
+        try:
+            from app.utils.not_trading import drop_not_trading_roundup_members
+
+            _screened = await drop_not_trading_roundup_members(
+                db,
+                [feed_item],
+                now_dt or datetime.now(timezone.utc),
+                _roundup_covered_market_ids,
+            )
+            feed_item = _screened[0] if _screened else None
+        except Exception:  # noqa: BLE001 — keep card on transient screen error
+            logger.warning(
+                "roundup_containers: not-trading screen failed for %s; keeping card",
+                producer.slug,
+                exc_info=True,
+            )
+        if feed_item is None:
+            if use_cache:
+                await _store_roundup_cache_entry(
+                    cache_key, producer.slug, ts, None, None, db
+                )
+            return None, None
+
     if use_cache:
         await _store_roundup_cache_entry(
             cache_key, producer.slug, ts, feed_item, container_payload, db

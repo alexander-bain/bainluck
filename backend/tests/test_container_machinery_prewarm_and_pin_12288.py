@@ -2556,3 +2556,122 @@ async def test_flip6_machinery_prewarm_publishes_response_and_page_base_and_skip
     finally:
         ROUNDUP_PRODUCERS.clear()
         ROUNDUP_PRODUCERS.update(saved)
+
+
+@pytest.mark.asyncio
+async def test_inline_reader_rebuild_screens_not_trading_before_writing_redis(
+    monkeypatch,
+):
+    """Ruling 188 (#11937, #12288): when a machinery grouping misses Redis and is
+    rebuilt inline on the reader path (`evaluate_roundup_producer` with an
+    `AsyncSession`), `drop_not_trading_roundup_members` runs BEFORE storing to
+    Redis so no unscreened member can reach Redis or a subsequent served page.
+    """
+    import json
+    from unittest.mock import AsyncMock
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.request_cache import OK, RedisResult
+    from app.utils.roundup_containers import (
+        RoundupMembers,
+        RoundupProducer,
+        _redis_cache_key,
+        evaluate_roundup_producer,
+        reset_roundup_cache_for_tests,
+    )
+
+    reset_roundup_cache_for_tests()
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+
+    async_kv: dict[str, str] = {}
+
+    class _FakeAsyncRedis:
+        async def get(self, k: str):
+            return async_kv.get(k)
+
+        async def set(self, k: str, v: str, ex=None):
+            async_kv[k] = v
+            return True
+
+        async def hdel(self, *args):
+            return 0
+
+    async def _fake_bounded(fn, *, treat_none_as_miss=True):
+        val = await fn()
+        return RedisResult(status=OK, value=val)
+
+    monkeypatch.setattr(
+        "app.utils.request_cache.get_shared_async_redis",
+        AsyncMock(return_value=_FakeAsyncRedis()),
+    )
+    monkeypatch.setattr("app.utils.request_cache.bounded_redis_call", _fake_bounded)
+
+    async def _fake_screen(db, produced, now, covered_ids):
+        # Trim the not-trading market (id=2222) while keeping trading market (id=1111).
+        out = []
+        for item in produced:
+            trimmed = dict(item)
+            data = dict(trimmed["data"])
+            data["member_ids"] = [m for m in data.get("member_ids", []) if m != 2222]
+            data["items"] = [
+                it for it in data.get("items", []) if (it.get("data") or {}).get("id") != 2222
+            ]
+            trimmed["data"] = data
+            out.append(trimmed)
+        return out
+
+    screen_spy = AsyncMock(side_effect=_fake_screen)
+    monkeypatch.setattr(
+        "app.utils.not_trading.drop_not_trading_roundup_members",
+        screen_spy,
+    )
+
+    members = RoundupMembers(
+        members=[
+            {"type": "market", "id": 1111, "card": {"id": 1111, "name": "Trading market"}},
+            {"type": "market", "id": 2222, "card": {"id": 2222, "name": "Not-trading market"}},
+        ],
+        rows=[
+            {"label": "Trading market", "market_id": 1111, "value": "60%"},
+            {"label": "Not-trading market", "market_id": 2222, "value": "40%"},
+        ],
+    )
+    produce_spy = AsyncMock(return_value=members)
+    prod = RoundupProducer(
+        slug="machinery-fed-and-macro",
+        name="Fed & Macro",
+        kind="roundup",
+        category="economics",
+        section_title="",
+        footer="",
+        produce=produce_spy,
+        membership="computed-produced",
+        relations=("same_subject",),
+        level="member",
+        rule={"producer": "container_machinery"},
+        enabled=lambda: True,
+    )
+
+    fake_db = AsyncSession.__new__(AsyncSession)
+    fi, cp = await evaluate_roundup_producer(prod, fake_db, allow_stale=True)
+    assert fi is not None and cp is not None
+    assert screen_spy.await_count == 1
+    assert 1111 in fi["data"]["member_ids"]
+    assert 2222 not in fi["data"]["member_ids"]
+
+    # Stored Redis copy must ALREADY exclude the not-trading member.
+    stored = json.loads(async_kv[_redis_cache_key("machinery-fed-and-macro")])
+    assert 2222 not in stored["feed_item"]["data"]["member_ids"]
+    assert 1111 in stored["feed_item"]["data"]["member_ids"]
+
+    # Cold reader hitting Redis gets the screened copy with 0 additional screen calls.
+    reset_roundup_cache_for_tests()
+    screen_spy.reset_mock()
+    produce_spy.reset_mock()
+    fi2, cp2 = await evaluate_roundup_producer(prod, fake_db, allow_stale=True)
+    assert fi2 is not None and cp2 is not None
+    assert produce_spy.await_count == 0
+    assert screen_spy.await_count == 0
+    assert 2222 not in fi2["data"]["member_ids"]
+    assert 1111 in fi2["data"]["member_ids"]

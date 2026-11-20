@@ -1904,26 +1904,6 @@ async def _prewarm_machinery_roundups(
                     timeout=deadline_s,
                 )
                 elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
-                if fi is not None and cp is not None:
-                    # Ruling 188 (#11937, #12288): run the not-trading screen ONCE
-                    # here on the worker's already-open DB session before saving to
-                    # Redis, so hot `machinery=1` Discover splices never pay a ~580 ms
-                    # PostgreSQL query on every cache hit.
-                    try:
-                        from datetime import datetime as _dt, timezone as _tz
-                        from app.utils.not_trading import drop_not_trading_roundup_members
-                        from app.utils.roundup_containers import _roundup_covered_market_ids
-
-                        _screened = await drop_not_trading_roundup_members(
-                            db, [fi], _dt.now(_tz.utc), _roundup_covered_market_ids
-                        )
-                        fi = _screened[0] if _screened else None
-                    except Exception:  # noqa: BLE001 — keep card on transient screen error
-                        logger.warning(
-                            "Machinery pre-warm not-trading check failed for %s; keeping card",
-                            prod.slug,
-                            exc_info=True,
-                        )
                 ok = fi is not None and cp is not None
                 redis_written = False
                 redis_read_back = False
