@@ -2174,8 +2174,16 @@ async def _load_snapshot_from_db(
                     "volume": float(fm.volume or 0.0),
                     "image_url": fm.image_url,
                     "llm_sport_category": fm.llm_sport_category,
-                    "resolution_date": getattr(fm, "resolution_date", None),
-                    "event_date": getattr(fm, "event_date", None),
+                    "resolution_date": (
+                        res_dt_raw.isoformat()
+                        if isinstance((res_dt_raw := getattr(fm, "resolution_date", None)), (datetime, date))
+                        else res_dt_raw
+                    ),
+                    "event_date": (
+                        ev_dt_raw.isoformat()
+                        if isinstance((ev_dt_raw := getattr(fm, "event_date", None)), (datetime, date))
+                        else ev_dt_raw
+                    ),
                     "top_outcomes": top_outs,
                 }
             )
