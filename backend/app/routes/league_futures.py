@@ -1796,11 +1796,12 @@ def _format_game_brief(
     _finished_sc = None
     source_inputs: list[tuple[str, float]] = []
     source_method: list[str] = []
+    home_prob = None
+    away_prob = None
     if _is_finished:
         _finished_hero = resolve_hero(event)
         _finished_sc = settled_current_chance(_finished_hero, sport_key=sport_key)
         home_prob = _finished_sc.home_probability if _finished_sc.resolved else None
-        away_prob = _finished_sc.away_probability if _finished_sc.resolved else None
     else:
         home_prob = _event_probability(
             event, source_inputs=source_inputs, source_method=source_method

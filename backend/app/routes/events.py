@@ -21169,15 +21169,13 @@ async def get_event(
             response["hero_probability"] = _sc.home_probability
             response["hero_probability_away"] = _sc.away_probability
             response["hero_probability_draw"] = _sc.draw_probability
-        _settled_co = apply_settled_current_odds(
-            response.get("current_odds"),
-            _hero,
-            sport_key=event_sport_key,
-            include_rendered=True,
-            fallback_metadata={"source": "settled", "bookmaker_count": 0},
-        )
-        if _settled_co is not None:
-            response["current_odds"] = _settled_co
+        if isinstance(response.get("current_odds"), dict):
+            response["current_odds"] = apply_settled_current_odds(
+                response["current_odds"],
+                _hero,
+                sport_key=event_sport_key,
+                include_rendered=True,
+            )
 
     from app.utils.source_mark import headline_source_marks
 
@@ -37966,17 +37964,16 @@ def _format_event_with_odds(event: Event) -> dict:
             ),
         }
 
-    if is_finished_status(response.get("status")):
+    if is_finished_status(response.get("status")) and isinstance(
+        response.get("current_odds"), dict
+    ):
         _ev_sport_key = _loaded_event_sport_key(event)
-        _settled_co = apply_settled_current_odds(
-            response.get("current_odds"),
+        response["current_odds"] = apply_settled_current_odds(
+            response["current_odds"],
             resolve_hero(event),
             sport_key=_ev_sport_key,
             include_rendered=True,
-            fallback_metadata={"source": "settled", "bookmaker_count": 0},
         )
-        if _settled_co is not None:
-            response["current_odds"] = _settled_co
 
     return response
 
@@ -38019,17 +38016,16 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
             ),
         }
 
-    if is_finished_status(response.get("status")):
+    if is_finished_status(response.get("status")) and isinstance(
+        response.get("current_odds"), dict
+    ):
         _ev_sport_key = _loaded_event_sport_key(event)
-        _settled_co = apply_settled_current_odds(
-            response.get("current_odds"),
+        response["current_odds"] = apply_settled_current_odds(
+            response["current_odds"],
             resolve_hero(event),
             sport_key=_ev_sport_key,
             include_rendered=True,
-            fallback_metadata={"source": "settled", "bookmaker_count": 0},
         )
-        if _settled_co is not None:
-            response["current_odds"] = _settled_co
 
     return response
 
@@ -38326,15 +38322,13 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             response["hero_probability"] = _sc.home_probability
             response["hero_probability_away"] = _sc.away_probability
             response["hero_probability_draw"] = _sc.draw_probability
-        _settled_co = apply_settled_current_odds(
-            response.get("current_odds"),
-            _hero,
-            sport_key=_event_sport_key,
-            include_rendered=True,
-            fallback_metadata={"source": "settled", "bookmaker_count": 0},
-        )
-        if _settled_co is not None:
-            response["current_odds"] = _settled_co
+        if isinstance(response.get("current_odds"), dict):
+            response["current_odds"] = apply_settled_current_odds(
+                response["current_odds"],
+                _hero,
+                sport_key=_event_sport_key,
+                include_rendered=True,
+            )
 
     # #12581: list/search headlines carry the same admitted evidence as detail.
     # The fold was read in the existing batch; formatting adds no query or clock.

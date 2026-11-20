@@ -118,9 +118,10 @@ def test_the_card_stops_naming_the_loser_as_the_favourite():
         hero=resolve_hero(row), current_home_prob=0.707, current_away_prob=0.293
     )
 
-    # the market's number is UNCHANGED and still served — this is additive
-    assert data["current_odds"]["home_probability"] == 0.707
-    # ...but the one number says the home side lost
+    # #13172 Option B: finished games serve the settled result in current_odds
+    # as well as hero_probability, never the loser's last live price.
+    assert data["current_odds"]["home_probability"] == 0.0
+    assert data["current_odds"]["away_probability"] == 1.0
     assert data["hero_probability"] == 0.0
     assert data["hero_settled_result"] == "away"
 
