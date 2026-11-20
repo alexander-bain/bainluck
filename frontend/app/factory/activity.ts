@@ -18,6 +18,17 @@ export const stationNames: Record<Station, string> = {
   Live: "Live",
 };
 
+const pacificDate = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Los_Angeles",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+export function pacificDay(value: string) {
+  return pacificDate.format(new Date(value));
+}
+
 export function time(value: string) {
   return new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Los_Angeles",

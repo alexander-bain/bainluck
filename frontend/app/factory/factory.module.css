@@ -973,6 +973,37 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   font-size: 13px;
   font-weight: 600;
 }
+.replayBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--secondary);
+}
+.sectionHeading h2 {
+  flex-shrink: 0;
+}
+.floorActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.replayBar button,
+.replayButton {
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  background: var(--paper);
+  min-height: 26px;
+  padding: 3px 7px;
+  color: var(--green);
+  font-weight: 600;
+}
+.replayBar button:focus-visible,
+.replayButton:focus-visible { outline: 2px solid var(--green); }
 .eventLog :is(ol, p) {
   max-height: 220px;
   overflow: auto;

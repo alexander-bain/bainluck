@@ -28,11 +28,14 @@ import type { Builder, Change, FactoryData, Jam, Line, Station, Stop } from "./t
 import styles from "./factory.module.css";
 import Worker from "./Worker";
 import EventScene from "./EventScene";
+import { useDayReplay } from "./useDayReplay";
+import { useReplayJournal } from "./replayJournal";
 import { crossesSegment, eventText, useEventPlayer } from "./playback";
 import { factoryTabTitle, floorVerdict, type FloorVerdict } from "./verdict";
 import {
   stations,
   stationNames,
+  pacificDay,
   time,
   duration,
   readerBehind,
@@ -86,15 +89,6 @@ type Shelf = (typeof shelfKeys)[number];
 type CrateGroup =
   | { line: Line; station: Station }
   | { shelf: Shelf };
-
-function pacificDay(value: string) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Los_Angeles",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(value));
-}
 
 function crateKey(line: Line, number: number) {
   return `${line}/${number}`;
@@ -232,7 +226,11 @@ export default function FactoryFloor({
   const motion = !behind && tabVisible && reducedMotion === false;
   const verdict = floorVerdict(data, readFailed, now);
   const tabTitle = factoryTabTitle(verdict);
-  const playing = useEventPlayer(data?.generated_at, data?.events, motion);
+  const today = pacificDay(now);
+  const journal = useReplayJournal(data, today);
+  const replay = useDayReplay(motion);
+  const livePlaying = useEventPlayer(data?.generated_at, data?.events, motion && !replay.session);
+  const playing = replay.session ? replay.playing : livePlaying;
 
   useEffect(() => {
     document.title = tabTitle;
@@ -317,7 +315,6 @@ export default function FactoryFloor({
     );
   }
 
-  const today = pacificDay(now);
   const shipped = data.changes.filter(
     (c) => c.station === "Live" && c.live_at && pacificDay(c.live_at) === today,
   );
@@ -375,6 +372,11 @@ export default function FactoryFloor({
   const selected = data.changes.find(
     (c) => crateKey(c.line, c.number) === selectedCrate,
   );
+  const selectedLines = selected
+    ? lines.filter((line) =>
+        data.changes.some((change) => change.number === selected.number && change.line === line),
+      )
+    : [];
   const group = selectedGroup && (
     "shelf" in selectedGroup
       ? shelves[selectedGroup.shelf]
@@ -460,6 +462,37 @@ export default function FactoryFloor({
       </header>
 
       <StackLight verdict={verdict} hold={holds[0]} now={now} />
+      {replay.session && (
+        <div className={styles.replayBar}>
+            <button type="button" onClick={replay.close}>Close replay</button>
+            <strong>
+              {replay.clock && `${time(replay.clock)} PT`}
+              {replay.finished ? " · Replay finished" : replay.playing ? ` · ${eventText(replay.playing.event)}` : ""}
+            </strong>
+            {replay.finished && (
+              <button type="button" onClick={replay.restart}>
+                Play again
+              </button>
+            )}
+        </div>
+      )}
+      {replay.session && (
+        <details className={styles.eventLog} open={reducedMotion || behind || undefined}>
+          <summary className={styles.summary}>
+            <ChevronRight size={13} aria-hidden="true" />
+            Recorded transfers
+          </summary>
+          <p>
+            Transfers this browser saw today, starting at {time(replay.session.journal.events[0].at)} PT.
+            The replay may cover part of the day.
+          </p>
+          <ol>
+            {replay.session.journal.events.map((event) => (
+              <li key={event.id}>{time(event.at)} PT · {event.line} · {eventText(event)}</li>
+            ))}
+          </ol>
+        </details>
+      )}
       {behind && (
         <div className={styles.readerWarning} role="status">
           <Pause size={20} aria-hidden="true" />
@@ -486,9 +519,26 @@ export default function FactoryFloor({
       <section className={styles.floorCard} aria-labelledby="floor-heading">
         <div className={styles.sectionHeading}>
           <h2 id="floor-heading">The floor</h2>
-          <span className={styles.tapHint}>
-            Tap a crate to see the change <ArrowDown size={14} />
-          </span>
+          <div className={styles.floorActions}>
+            <span className={styles.tapHint}>
+              Tap a crate to see the change <ArrowDown size={14} />
+            </span>
+            {!replay.session && (
+              journal?.events.length ? (
+                <button
+                  type="button"
+                  className={styles.replayButton}
+                  onClick={() => replay.open(journal)}
+                >
+                  Replay today
+                </button>
+              ) : (
+                <span className={styles.tapHint}>
+                  {journal ? "No transfers seen in this browser today" : "Today’s replay is missing"}
+                </span>
+              )
+            )}
+          </div>
         </div>
         {holds.length > 1 && (
           <div className={styles.stopNotices} role="status">
@@ -802,6 +852,12 @@ export default function FactoryFloor({
                         : stationNames[selected.station]}
                 </span>
                 <h3 id="factory-change-title">{selected.title}</h3>
+                {selectedLines.length > 1 && (
+                  <p>
+                    This change appears on the{" "}
+                    {new Intl.ListFormat("en-US").format(selectedLines)} lines.
+                  </p>
+                )}
                 {selected.sent_back && <p>Sent back by Fable.</p>}
                 {selected.testflight_build && (
                   <p>TestFlight build {selected.testflight_build} was posted.</p>
@@ -1013,7 +1069,7 @@ export default function FactoryFloor({
         <details className={styles.eventLog}>
           <summary className={styles.summary}>
             <ChevronRight size={13} aria-hidden="true" />
-            {playing ? `${playing.event.line} · ${eventText(playing.event)}` : "Events from the last read"}
+            {livePlaying && !replay.session ? `${livePlaying.event.line} · ${eventText(livePlaying.event)}` : "Events from the last read"}
             {data.events && <span className={styles.sectionNote}>{data.events.length}</span>}
           </summary>
           {data.events?.length ? (

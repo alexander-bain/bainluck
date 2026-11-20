@@ -43,6 +43,8 @@ export function useEventPlayer(
   reading: string | undefined,
   events: FloorEvent[] | undefined,
   running: boolean,
+  durationMs = PLAYBACK_WINDOW_MS,
+  remember = true,
 ) {
   const seen = useRef(new Set<string>());
   const batch = useRef<TimerState>();
@@ -52,12 +54,12 @@ export function useEventPlayer(
     if (reading === undefined) return;
     if (batch.current?.reading !== reading) {
       const current = new Set(events?.map((event) => event.id));
-      seen.current = new Set([...seen.current].filter((id) => current.has(id)));
+      seen.current = new Set(remember ? [...seen.current].filter((id) => current.has(id)) : []);
       const queue = (events ?? []).filter((event) => !seen.current.has(event.id));
       batch.current = {
         reading,
         events: queue,
-        step: playbackStep(queue.length, PLAYBACK_WINDOW_MS),
+        step: playbackStep(queue.length, durationMs),
         remaining: 0,
       };
       setActive(null);
@@ -87,7 +89,7 @@ export function useEventPlayer(
       window.clearTimeout(timer);
       state.remaining = Math.max(0, dueAt - performance.now());
     };
-  }, [reading, events, running]);
+  }, [reading, events, running, durationMs, remember]);
 
-  return active;
+  return batch.current?.reading === reading ? active : null;
 }
