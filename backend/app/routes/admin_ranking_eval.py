@@ -390,6 +390,8 @@ async def get_grade_deck(
         graded = {r.item_key for r in rows}
     if set_name:
         keys = load_extra_sets().get(row["slate_id"], {}).get(set_name)
+        if keys is None and set_name in _frozen_pair_rankers():
+            keys = _resolve_pair_keys(row, set_name)
         if keys is None:
             raise HTTPException(status_code=404, detail=f"no set {set_name!r} for this slate")
         try:
@@ -1382,16 +1384,15 @@ SURFACE_PAIR = "pair"
 PAIRS_PATH = Path(__file__).resolve().parents[1] / "data" / "ranking_pairs.json"
 PAIR_CHOICES = ("left", "right", "none")
 PAIR_SIZE = 10
-DEFAULT_MORNING_PAIR = "p1"
+DEFAULT_MORNING_PAIR = "p3"
 MORNING_PAIR_PAUSED_ENV = "RANKING_MORNING_PAIR_PAUSED"
 MORNING_PAIR_PAUSED_DETAIL = (
-    "Nothing to grade right now. Candidate 2 ended under Ruling 277: A; "
-    "grading resumes when Candidate 3 is declared."
+    "Nothing to grade right now. Grading is paused until the next candidate is declared."
 )
 
 
 def is_morning_pair_paused() -> bool:
-    """True while no morning ranking candidate is open for grading (#13100 / 277: A)."""
+    """True by default until explicitly opened via RANKING_MORNING_PAIR_PAUSED=0 (#11937 / 277: A)."""
     raw = os.getenv(MORNING_PAIR_PAUSED_ENV, "true")
     return raw.strip().lower() not in ("0", "false", "no", "off")
 # Stored through ranking_grades' grade check (shareable/interesting/neither), as
@@ -1403,13 +1404,14 @@ _DB_TO_PAIR_PICK: dict[str, str] = {v: k for k, v in _PAIR_TO_DB_GRADE.items()}
 def _frozen_pair_rankers() -> dict[str, Any]:
     """Server-side frozen candidates for opaque morning pair names (#11937).
 
-    Used only by the admin grading pair routes so Thursday morning works from
+    Used only by the admin grading pair routes so morning grading works from
     one bookmarkable link without a daily PR or attended read. Discover itself
     never calls these while the ranking switch is off.
     """
     from app.utils.discover_rank import rank_c1_story, rank_c2_score
+    from app.utils.discover_rank_c3 import rank_c3_mix
 
-    return {"p1": rank_c2_score, "p2": rank_c1_story}
+    return {"p1": rank_c2_score, "p2": rank_c1_story, "p3": rank_c3_mix}
 
 
 def load_pairs(path: Path = PAIRS_PATH) -> dict[str, dict[str, list[str]]]:
