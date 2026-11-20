@@ -422,6 +422,8 @@ class TestBeatScheduleCompleteness:
         "grid-sentinel-daily",
         # #12231 — weekly grouping sentinel, report-only on #12221 until Nov 26.
         "grouping-sentinel-weekly",
+        # #13102 (Ruling 276: B) — nightly fun scout (background queue, gated OFF until Wed Nov 25).
+        "discover-fun-scout-nightly",
         "grid-register-sentinel-daily",
         "tournament-register-sentinel-daily",
         # UX-P139 — targeted re-price of register-pinned tournament markets.

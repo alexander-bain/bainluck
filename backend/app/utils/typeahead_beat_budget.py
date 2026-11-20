@@ -2188,7 +2188,14 @@ def free_background_slots(
 #: and a single-flight lease, so a run never laps the next. Composed with 179-A
 #: (#12767): the census RUN over the tree merged with `2e276ac262` printed
 #: `explicit 111 implicit 38 total 149`.
-BACKGROUND_BEAT_COUNT = 149
+#: 🔴 RE-DERIVED at builder-e (2026-11-19, #13102, Ruling 276: B): 149 → 150,
+#: explicit 111 → 112, fall-through UNMOVED at 38. `discover-fun-scout-nightly`
+#: names `background` once daily at 09:00 UTC (1:00 AM PT, off-peak), on the
+#: same `bainluck` worker where `ANTHROPIC_API_KEY_SCOUT` and `grouping_sentinel`
+#: live; gated OFF by default behind `DISCOVER_FUN_SCOUT_ENABLED`. Cost: 1 fire
+#: per day (0.04/hr), no-op while disabled. Census over assembled `beat_schedule`
+#: prints `explicit 112 implicit 38 total 150`.
+BACKGROUND_BEAT_COUNT = 150
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
