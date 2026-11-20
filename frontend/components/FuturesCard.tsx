@@ -20,7 +20,7 @@ import { outcomeDisplayNames } from "@/lib/outcomeLabels";
 import { answerRung, inThresholdOrder, ladderSlice, leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 import { renderedPricesAsOf } from "@/lib/futuresCardPriceAge";
-import { formatAsOfStamp } from "@/lib/asOfStamp";
+import { AsOfStamp } from "@/components/AsOfStamp";
 // #5552 — the SAME predicate `components/futures/OutcomeRow` uses, imported rather
 // than restated. Its docstring records that restating `isResolved && is_winner === X`
 // per branch is exactly how that surface drifted, so this card calls the one function
@@ -345,9 +345,7 @@ export default function FuturesCard({
                 nothing: an empty corner claims nothing, the old pip claimed
                 something false. */}
             {pricesAsOf && !listing && (
-              <span className="text-micro text-text-muted">
-                {formatRelativeTime(pricesAsOf)}
-              </span>
+              <AsOfStamp iso={pricesAsOf} className="text-micro text-text-muted" />
             )}
           </div>
         </Card>
@@ -550,10 +548,6 @@ function OutcomeRow({
       </div>
     </div>
   );
-}
-
-function formatRelativeTime(isoString: string): string {
-  return formatAsOfStamp(isoString) ?? "";
 }
 
 /* #7165 — the local `PinIcon` is gone; this card imports the shared one. Its

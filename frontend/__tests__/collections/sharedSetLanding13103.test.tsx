@@ -203,7 +203,8 @@ describe("#13103 — Shared set SSR landing and stranger-first header", () => {
     expect(html).toContain("This week&#x27;s economic data");
     expect(html).toContain("Fed cuts rates in December");
     expect(html).toContain("72%");
-    expect(html).toContain("As of");
+    // #13203: SSR omits the clock-dependent "As of" stamp so server UTC never leaks.
+    expect(html).not.toContain("As of");
     expect(html).toContain("4 markets");
     expect(html).toContain("Oscars Best Picture");
     expect(html).toContain("Anora");
@@ -214,6 +215,12 @@ describe("#13103 — Shared set SSR landing and stranger-first header", () => {
     expect(html.indexOf("data-collection-more-sets")).toBeLessThan(
       html.indexOf("data-collection-landing-footer"),
     );
+
+    // Once mounted in the browser, the client-timezone "As of" stamp renders.
+    act(() => {
+      root.render(<CollectionHub slug={slug} initialHub={parsed} />);
+    });
+    expect(element.textContent).toContain("As of");
   });
 
   it("prints lead_rendered_percent when provided and keeps As of on one line", () => {
@@ -242,6 +249,11 @@ describe("#13103 — Shared set SSR landing and stranger-first header", () => {
     const html = renderToStaticMarkup(<CollectionHub slug={slug} initialHub={parsed} />);
     expect(html).toContain("88%");
     expect(html).not.toContain("87%");
-    expect(html).toMatch(/class="[^"]*whitespace-nowrap[^"]*"[^>]*>· As of/);
+    expect(html).not.toContain("As of");
+
+    act(() => {
+      root.render(<CollectionHub slug={slug} initialHub={parsed} />);
+    });
+    expect(element.innerHTML).toMatch(/class="[^"]*whitespace-nowrap[^"]*"[^>]*>\s*· As of/);
   });
 });
