@@ -215,4 +215,33 @@ describe("#13103 — Shared set SSR landing and stranger-first header", () => {
       html.indexOf("data-collection-landing-footer"),
     );
   });
+
+  it("prints lead_rendered_percent when provided and keeps As of on one line", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { renderToStaticMarkup } = require("react-dom/server") as typeof import("react-dom/server");
+    const slug = "nfl-2026-week-4";
+    const { body } = makePublishedHub(slug);
+    const bodyWithRendered = {
+      ...body,
+      more_sets: [
+        {
+          slug: "roundup-fed-rate",
+          name: "Year-end Fed rate",
+          href: "/collections/roundup-fed-rate",
+          category: "economics",
+          member_count: 3,
+          lead_label: "3.50-3.75%",
+          lead_probability: 0.874,
+          lead_rendered_percent: 88,
+          as_of: "2026-11-19T19:45:00+00:00",
+        },
+      ],
+    };
+    const parsed = parseCollection(bodyWithRendered, slug);
+    expect(parsed.moreSets?.[0]?.leadRenderedPercent).toBe(88);
+    const html = renderToStaticMarkup(<CollectionHub slug={slug} initialHub={parsed} />);
+    expect(html).toContain("88%");
+    expect(html).not.toContain("87%");
+    expect(html).toMatch(/class="[^"]*whitespace-nowrap[^"]*"[^>]*>· As of/);
+  });
 });

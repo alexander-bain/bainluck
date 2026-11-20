@@ -2743,6 +2743,12 @@ async def search_with_bears_namesakes(seeded_db, search):
             hour=12, minute=0, second=0, microsecond=0,
         )
 
+    # Keep the live fixture on today's Eastern calendar date even during the
+    # first five minutes after 00:00 America/New_York (when `now - 5m` would
+    # fall on yesterday Eastern and drop out of `"bears today"`).
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    live_kickoff = max(now - timedelta(minutes=5), day_start)
+
     async with maker() as session:
         sports = {
             row.key: row
@@ -2760,7 +2766,7 @@ async def search_with_bears_namesakes(seeded_db, search):
             ("americanfootball_nfl", "Chicago Bears", "New Orleans Saints", on_day(1), "scheduled"),
             ("americanfootball_nfl", "Detroit Lions", "Chicago Bears", on_day(8), "scheduled"),
             ("americanfootball_nfl", "Chicago Bears", "Tampa Bay Buccaneers", on_day(-2), "completed"),
-            ("basketball_ncaab", "Maine Black Bears", "Manhattan Jaspers", now - timedelta(minutes=5), "live"),
+            ("basketball_ncaab", "Maine Black Bears", "Manhattan Jaspers", live_kickoff, "live"),
             ("basketball_wncaab", "Wyoming Cowgirls", "Missouri State Bears", on_day(-1), "completed"),
         ):
             session.add(Event(

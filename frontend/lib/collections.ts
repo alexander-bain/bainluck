@@ -83,6 +83,7 @@ export interface CollectionMoreSet {
   memberCount: number;
   leadLabel: string | null;
   leadProbability: number | null;
+  leadRenderedPercent?: number | null;
   asOf: string | null;
 }
 export interface CollectionHub {
@@ -383,6 +384,13 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
       const leadLabel = prob !== null && text(item.lead_label) ? item.lead_label.trim() : null;
       const asOf = prob !== null && text(item.as_of) ? item.as_of.trim() : null;
       if (prob === null || leadLabel === null || asOf === null) continue;
+      const leadRenderedPercent =
+        typeof item.lead_rendered_percent === "number" &&
+        Number.isInteger(item.lead_rendered_percent) &&
+        item.lead_rendered_percent >= 0 &&
+        item.lead_rendered_percent <= 100
+          ? item.lead_rendered_percent
+          : null;
       seenMore.add(item.slug);
       admittedMoreSets.push({
         slug: item.slug,
@@ -393,6 +401,7 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
         memberCount: item.member_count,
         leadLabel,
         leadProbability: prob,
+        leadRenderedPercent,
         asOf,
       });
     }

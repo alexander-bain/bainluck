@@ -1654,3 +1654,659 @@ async def test_machinery_stale_while_revalidate_prevents_feed_drop_and_proactive
         ROUNDUP_PRODUCERS.clear()
         ROUNDUP_PRODUCERS.update(saved)
         reset_roundup_cache_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_celery_prewarm_publishes_machinery_via_sync_redis_and_web_path_never_calls_sync_redis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#12288 12-minute hold catch + Fable 7:46 PM review (#969 NEVER-AGAIN):
+    In Celery ForkPoolWorker, `asyncio.run()` closes the event loop between tasks so
+    process-global `get_shared_async_redis()` returns `RedisResult(ERROR)` and silently
+    drops Redis writes. Verify:
+    1. On the web path (`_store_roundup_cache_entry`), when `bounded_redis_call`
+       returns `ERROR` or `TIMEOUT`, ZERO sync Redis (`get_redis_client`) calls are
+       made so a slow Redis never freezes the web dyno event loop.
+    2. `_prewarm_machinery_roundups(..., rc=...)` explicitly publishes both live and
+       non-live groupings through sync Redis and reports `redis_written == warmed`.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.request_cache import ERROR, TIMEOUT, RedisResult
+    from app.utils.roundup_containers import (
+        MACHINERY_LIVE_SLUGS_KEY,
+        ROUNDUP_MACHINERY_LIVE_STALE_TTL_S,
+        ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S,
+        _redis_cache_key,
+        _store_roundup_cache_entry,
+    )
+
+    class _FakeSyncRedis:
+        def __init__(self) -> None:
+            self.kv: dict[str, tuple[str, int | None]] = {}
+            self.hashes: dict[str, dict[str, str]] = {}
+            self.expires: dict[str, int] = {}
+
+        def set(self, key: str, value: str, ex: int | None = None) -> bool:
+            self.kv[key] = (value, ex)
+            return True
+
+        def get(self, key: str) -> str | None:
+            entry = self.kv.get(key)
+            return entry[0] if entry is not None else None
+
+        def ttl(self, key: str) -> int:
+            entry = self.kv.get(key)
+            if entry is None:
+                return -2
+            return int(entry[1]) if entry[1] is not None else -1
+
+        def hset(self, name: str, key: str, value: str) -> int:
+            self.hashes.setdefault(name, {})[key] = value
+            return 1
+
+        def hdel(self, name: str, key: str) -> int:
+            self.hashes.setdefault(name, {}).pop(key, None)
+            return 1
+
+        def expire(self, name: str, ttl: int) -> bool:
+            self.expires[name] = ttl
+            return True
+
+    live_cp = {
+        "sections": [
+            {"members": [{"type": "event", "id": 10, "card": {"id": 10, "status": "live"}}]}
+        ]
+    }
+    non_live_cp = {
+        "sections": [
+            {"members": [{"type": "market", "id": 20, "card": {"id": 20, "status": "open"}}]}
+        ]
+    }
+
+    sync_client_calls = 0
+
+    def _forbidden_sync_client():
+        nonlocal sync_client_calls
+        sync_client_calls += 1
+        raise AssertionError("web path must never call sync get_redis_client()")
+
+    async def _fake_async_client():
+        return object()
+
+    monkeypatch.setattr("app.utils.request_cache.get_shared_async_redis", _fake_async_client)
+    monkeypatch.setattr("app.tasks.redis_state.get_redis_client", _forbidden_sync_client)
+
+    # 1. On the web path, async ERROR and TIMEOUT must NEVER invoke sync Redis
+    fake_session = AsyncSession.__new__(AsyncSession)
+    for fail_status in (ERROR, TIMEOUT):
+        async def _broken_async_call(*args, _st=fail_status, **kwargs):
+            return RedisResult(_st)
+
+        monkeypatch.setattr("app.utils.request_cache.bounded_redis_call", _broken_async_call)
+        await _store_roundup_cache_entry(
+            ("machinery-nba-night", "live"),
+            "machinery-nba-night",
+            1_800_000_000.0,
+            {"type": "bundle", "data": {"status": "live"}},
+            live_cp,
+            fake_session,
+        )
+    assert sync_client_calls == 0
+
+    # 2. `_prewarm_machinery_roundups` publishes live + non-live directly via sync `rc`
+    fake_rc2 = _FakeSyncRedis()
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    saved = dict(ROUNDUP_PRODUCERS)
+
+    def _make_prod(slug: str) -> RoundupProducer:
+        return RoundupProducer(
+            slug=slug,
+            name=slug,
+            kind="roundup",
+            category="other",
+            section_title="Markets",
+            footer="",
+            produce=AsyncMock(),
+            membership="computed-produced",
+            relations=("same_subject",),
+            level="member",
+            rule={"producer": "container_machinery"},
+            enabled=lambda: True,
+        )
+
+    @asynccontextmanager
+    async def _fake_session(**kwargs):
+        yield object()
+
+    async def _fake_eval(prod, db, *, force_refresh=False, **kwargs):
+        cp = live_cp if prod.slug == "machinery-nfl-week" else non_live_cp
+        return {"type": "bundle", "slug": prod.slug}, cp
+
+    try:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS["machinery-nfl-week"] = _make_prod("machinery-nfl-week")
+        ROUNDUP_PRODUCERS["machinery-fed-and-macro"] = _make_prod("machinery-fed-and-macro")
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ensure_optional_roundup_candidates",
+            lambda: None,
+        )
+        monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.evaluate_roundup_producer", _fake_eval
+        )
+        res = await _prewarm_machinery_roundups(deadline_s=5.0, rc=fake_rc2)
+        assert res["outcome"] == "ok"
+        assert res["warmed"] == 2
+        assert res["redis_written"] == 2
+        assert res["redis_read_back"] == 2
+        assert res["slugs"]["machinery-nfl-week"]["redis_read_back"] is True
+        assert res["slugs"]["machinery-nfl-week"]["redis_ttl_s"] == int(
+            ROUNDUP_MACHINERY_LIVE_STALE_TTL_S
+        )
+        assert res["slugs"]["machinery-fed-and-macro"]["redis_read_back"] is True
+        assert res["slugs"]["machinery-fed-and-macro"]["redis_ttl_s"] == int(
+            ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+        )
+        assert fake_rc2.kv[_redis_cache_key("machinery-nfl-week")][1] == int(
+            ROUNDUP_MACHINERY_LIVE_STALE_TTL_S
+        )
+        assert fake_rc2.kv[_redis_cache_key("machinery-fed-and-macro")][1] == int(
+            ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+        )
+        assert "machinery-nfl-week" in fake_rc2.hashes.get(MACHINERY_LIVE_SLUGS_KEY, {})
+        assert "machinery-fed-and-macro" not in fake_rc2.hashes.get(
+            MACHINERY_LIVE_SLUGS_KEY, {}
+        )
+    finally:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS.update(saved)
+
+
+@pytest.mark.asyncio
+async def test_roundup_cache_serializes_datetime_date_decimal_uuid_in_sync_and_async_writers(
+    monkeypatch, caplog
+):
+    """Regression (#12288 Flip 4): ORM `datetime` fields (e.g. `resolution_date` / `event_date`)
+    must serialize cleanly in BOTH `store_roundup_cache_sync` (Celery) and
+    `_store_roundup_cache_entry` (web async), and truly unserializable objects must log WARNING
+    instead of silently disappearing at DEBUG or raising out of `store_roundup_cache_sync`.
+    """
+    from datetime import date, datetime, timezone
+    from decimal import Decimal
+    import json
+    import logging
+    from unittest.mock import AsyncMock
+    from uuid import UUID
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.request_cache import OK, RedisResult
+    from app.utils.roundup_containers import (
+        _redis_cache_key,
+        _store_roundup_cache_entry,
+        reset_roundup_cache_for_tests,
+        store_roundup_cache_sync,
+    )
+
+    reset_roundup_cache_for_tests()
+    sample_dt = datetime(2026, 12, 18, 19, 0, tzinfo=timezone.utc)
+    sample_date = date(2026, 12, 18)
+    sample_dec = Decimal("0.875")
+    sample_uuid = UUID("12345678-1234-5678-1234-567812345678")
+
+    feed_item = {
+        "type": "bundle",
+        "data": {
+            "items": [
+                {
+                    "type": "futures",
+                    "data": {
+                        "id": 114367,
+                        "resolution_date": sample_dt,
+                        "event_date": sample_date,
+                        "price": sample_dec,
+                        "trace_id": sample_uuid,
+                    },
+                }
+            ]
+        },
+    }
+    container_payload = {
+        "slug": "machinery-fed-and-macro",
+        "sections": [
+            {
+                "members": [
+                    {
+                        "type": "market",
+                        "id": 114367,
+                        "card": {
+                            "resolution_date": sample_dt,
+                            "event_date": sample_date,
+                        },
+                    }
+                ]
+            }
+        ],
+    }
+
+    class _SyncFake:
+        def __init__(self):
+            self.kv = {}
+
+        def set(self, k, v, ex=None):
+            self.kv[k] = (v, ex)
+            return True
+
+        def hdel(self, *args):
+            return 0
+
+    sync_rc = _SyncFake()
+    ok = store_roundup_cache_sync(
+        sync_rc,
+        "machinery-fed-and-macro",
+        1700000000.0,
+        feed_item,
+        container_payload,
+    )
+    assert ok is True
+    raw_sync, _ex = sync_rc.kv[_redis_cache_key("machinery-fed-and-macro")]
+    parsed_sync = json.loads(raw_sync)
+    card_sync = parsed_sync["feed_item"]["data"]["items"][0]["data"]
+    assert card_sync["resolution_date"] == sample_dt.isoformat()
+    assert card_sync["event_date"] == sample_date.isoformat()
+    assert card_sync["price"] == pytest.approx(0.875)
+    assert card_sync["trace_id"] == str(sample_uuid)
+
+    # Async web writer must also serialize datetime payloads cleanly without calling sync Redis.
+    async_kv = {}
+
+    class _AsyncFake:
+        async def set(self, k, v, ex=None):
+            async_kv[k] = (v, ex)
+            return True
+
+        async def hdel(self, *args):
+            return 0
+
+    async def _fake_bounded(fn, *, treat_none_as_miss=True):
+        val = await fn()
+        return RedisResult(status=OK, value=val)
+
+    monkeypatch.setattr(
+        "app.utils.request_cache.get_shared_async_redis",
+        AsyncMock(return_value=_AsyncFake()),
+    )
+    monkeypatch.setattr("app.utils.request_cache.bounded_redis_call", _fake_bounded)
+
+    fake_db = AsyncSession.__new__(AsyncSession)
+    await _store_roundup_cache_entry(
+        ("machinery-fed-and-macro", "live"),
+        "machinery-fed-and-macro",
+        1700000000.0,
+        feed_item,
+        container_payload,
+        fake_db,
+    )
+    assert _redis_cache_key("machinery-fed-and-macro") in async_kv
+    parsed_async = json.loads(async_kv[_redis_cache_key("machinery-fed-and-macro")][0])
+    assert (
+        parsed_async["container_payload"]["sections"][0]["members"][0]["card"][
+            "resolution_date"
+        ]
+        == sample_dt.isoformat()
+    )
+
+    # Truly unserializable objects must return False (sync) and log WARNING (both sync and async).
+    bad_payload = {"bad": object()}
+    with caplog.at_level(logging.WARNING, logger="app.utils.roundup_containers"):
+        assert (
+            store_roundup_cache_sync(
+                sync_rc,
+                "machinery-fed-and-macro",
+                1700000000.0,
+                bad_payload,
+                None,
+            )
+            is False
+        )
+        await _store_roundup_cache_entry(
+            ("machinery-fed-and-macro", "live"),
+            "machinery-fed-and-macro",
+            1700000000.0,
+            bad_payload,
+            None,
+            fake_db,
+        )
+    warnings = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("sync Redis cache write failed" in m for m in warnings)
+    assert any("shared cache encode failed" in m for m in warnings)
+
+
+@pytest.mark.asyncio
+async def test_real_nba_grouping_payload_round_trips_from_sync_prewarm_to_cold_web_reader(
+    monkeypatch, caplog
+):
+    """Fable 9:42 PM (#12288 Flip 5 prereq): build a real `machinery-nba-night` grouping
+    carrying raw `datetime` fields on its market cards, publish via `store_roundup_cache_sync`,
+    confirm `verify_roundup_cache_sync` (exists + positive TTL + decode) and
+    `redis_read_back=1/1` log line, then clear local cache and read back through the
+    reader's own `evaluate_roundup_producer` path with zero DB calls.
+    """
+    from contextlib import asynccontextmanager
+    from datetime import datetime, timezone
+    import logging
+    from unittest.mock import AsyncMock
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.tasks.precompute_category_pages import _prewarm_machinery_roundups
+    from app.utils.container_machinery import (
+        _CANDIDATES_DIR,
+        load_machinery_definition,
+        produce_container_machinery,
+    )
+    from app.utils.request_cache import OK, RedisResult
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        RoundupMembers,
+        RoundupProducer,
+        compose_roundup_container,
+        compose_roundup_feed_item,
+        evaluate_roundup_producer,
+        reset_roundup_cache_for_tests,
+        verify_roundup_cache_sync,
+    )
+
+    reset_roundup_cache_for_tests()
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+
+    defn = load_machinery_definition(_CANDIDATES_DIR / "machinery-nba-night.json")
+    now_dt = datetime(2026, 11, 20, 2, 0, tzinfo=timezone.utc)
+    raw_events = [
+        {
+            "id": 990001,
+            "sport": "basketball_nba",
+            "sport_name": "NBA",
+            "home_team": "Boston Celtics",
+            "away_team": "Miami Heat",
+            "commence_time": "2026-11-20T01:30:00+00:00",
+            "status": "live",
+            "home_score": 54,
+            "away_score": 52,
+            "hero_probability": 0.52,
+            "hero_probability_away": 0.48,
+            "current_odds": {
+                "home_probability": 0.52,
+                "away_probability": 0.48,
+                "home_rendered_percent": 52,
+                "away_rendered_percent": 48,
+            },
+        },
+        {
+            "id": 990002,
+            "sport": "basketball_nba",
+            "sport_name": "NBA",
+            "home_team": "Los Angeles Lakers",
+            "away_team": "Denver Nuggets",
+            "commence_time": "2026-11-20T03:00:00+00:00",
+            "status": "scheduled",
+            "hero_probability": 0.54,
+            "hero_probability_away": 0.46,
+            "current_odds": {
+                "home_probability": 0.54,
+                "away_probability": 0.46,
+                "home_rendered_percent": 54,
+                "away_rendered_percent": 46,
+            },
+        },
+        {
+            "id": 990003,
+            "sport": "basketball_nba",
+            "sport_name": "NBA",
+            "home_team": "New York Knicks",
+            "away_team": "Milwaukee Bucks",
+            "commence_time": "2026-11-20T00:30:00+00:00",
+            "status": "scheduled",
+            "hero_probability": 0.61,
+            "hero_probability_away": 0.39,
+            "current_odds": {
+                "home_probability": 0.61,
+                "away_probability": 0.39,
+                "home_rendered_percent": 61,
+                "away_rendered_percent": 39,
+            },
+        },
+        {
+            "id": 990004,
+            "sport": "basketball_nba",
+            "sport_name": "NBA",
+            "home_team": "Golden State Warriors",
+            "away_team": "Phoenix Suns",
+            "commence_time": "2026-11-20T03:30:00+00:00",
+            "status": "scheduled",
+            "hero_probability": 0.72,
+            "hero_probability_away": 0.28,
+            "current_odds": {
+                "home_probability": 0.72,
+                "away_probability": 0.28,
+                "home_rendered_percent": 72,
+                "away_rendered_percent": 28,
+            },
+        },
+        {
+            "id": 990005,
+            "sport": "basketball_nba",
+            "sport_name": "NBA",
+            "home_team": "Cleveland Cavaliers",
+            "away_team": "Chicago Bulls",
+            "commence_time": "2026-11-20T04:00:00+00:00",
+            "status": "scheduled",
+            "hero_probability": 0.76,
+            "hero_probability_away": 0.24,
+            "current_odds": {
+                "home_probability": 0.76,
+                "away_probability": 0.24,
+                "home_rendered_percent": 76,
+                "away_rendered_percent": 24,
+            },
+        },
+    ]
+    raw_markets = [
+        {
+            "id": 880001,
+            "name": "NBA Points Per Game Leader 2026-27",
+            "status": "active",
+            "source": "kalshi",
+            "mutually_exclusive": True,
+            "volume": 500000.0,
+            "llm_sport_category": "basketball_nba",
+            "resolution_date": datetime(2027, 6, 25, 0, 0, tzinfo=timezone.utc),
+            "event_date": datetime(2027, 6, 20, 0, 0, tzinfo=timezone.utc),
+            "newest_outcome_updated_at": now_dt.isoformat(),
+            "top_outcomes": [
+                {"id": 1, "name": "Shai Gilgeous-Alexander", "probability": 0.42, "rendered_percent": 42},
+                {"id": 2, "name": "Luka Doncic", "probability": 0.31, "rendered_percent": 31},
+                {"id": 3, "name": "Giannis Antetokounmpo", "probability": 0.14, "rendered_percent": 14},
+            ],
+        },
+        {
+            "id": 880002,
+            "name": "NBA Rebounds Per Game Leader 2026-27",
+            "status": "active",
+            "source": "kalshi",
+            "mutually_exclusive": True,
+            "volume": 420000.0,
+            "llm_sport_category": "basketball_nba",
+            "resolution_date": datetime(2027, 5, 15, 0, 0, tzinfo=timezone.utc),
+            "event_date": datetime(2027, 5, 10, 0, 0, tzinfo=timezone.utc),
+            "newest_outcome_updated_at": now_dt.isoformat(),
+            "top_outcomes": [
+                {"id": 11, "name": "Domantas Sabonis", "probability": 0.36, "rendered_percent": 36},
+                {"id": 12, "name": "Nikola Jokic", "probability": 0.31, "rendered_percent": 31},
+                {"id": 13, "name": "Victor Wembanyama", "probability": 0.17, "rendered_percent": 17},
+            ],
+        },
+        {
+            "id": 880003,
+            "name": "NBA MVP Winner 2026-27",
+            "status": "active",
+            "source": "polymarket",
+            "mutually_exclusive": True,
+            "volume": 310000.0,
+            "llm_sport_category": "basketball_nba",
+            "resolution_date": datetime(2027, 5, 1, 0, 0, tzinfo=timezone.utc),
+            "event_date": datetime(2027, 4, 28, 0, 0, tzinfo=timezone.utc),
+            "newest_outcome_updated_at": now_dt.isoformat(),
+            "top_outcomes": [
+                {"id": 21, "name": "Shai Gilgeous-Alexander", "probability": 0.58, "rendered_percent": 58},
+                {"id": 22, "name": "Nikola Jokic", "probability": 0.24, "rendered_percent": 24},
+                {"id": 23, "name": "Luka Doncic", "probability": 0.11, "rendered_percent": 11},
+            ],
+        },
+        {
+            "id": 880004,
+            "name": "NBA Sixth Man of the Year Winner 2026-27",
+            "status": "active",
+            "source": "kalshi",
+            "mutually_exclusive": True,
+            "volume": 240000.0,
+            "llm_sport_category": "basketball_nba",
+            "resolution_date": datetime(2027, 5, 5, 0, 0, tzinfo=timezone.utc),
+            "event_date": datetime(2027, 5, 2, 0, 0, tzinfo=timezone.utc),
+            "newest_outcome_updated_at": now_dt.isoformat(),
+            "top_outcomes": [
+                {"id": 31, "name": "Payton Pritchard", "probability": 0.44, "rendered_percent": 44},
+                {"id": 32, "name": "Naz Reid", "probability": 0.26, "rendered_percent": 26},
+                {"id": 33, "name": "Malik Monk", "probability": 0.15, "rendered_percent": 15},
+            ],
+        },
+        {
+            "id": 880005,
+            "name": "NBA Defensive Player of the Year Winner 2026-27",
+            "status": "active",
+            "source": "polymarket",
+            "mutually_exclusive": True,
+            "volume": 290000.0,
+            "llm_sport_category": "basketball_nba",
+            "resolution_date": datetime(2027, 5, 8, 0, 0, tzinfo=timezone.utc),
+            "event_date": datetime(2027, 5, 4, 0, 0, tzinfo=timezone.utc),
+            "newest_outcome_updated_at": now_dt.isoformat(),
+            "top_outcomes": [
+                {"id": 41, "name": "Victor Wembanyama", "probability": 0.56, "rendered_percent": 56},
+                {"id": 42, "name": "Evan Mobley", "probability": 0.21, "rendered_percent": 21},
+                {"id": 43, "name": "Chet Holmgren", "probability": 0.12, "rendered_percent": 12},
+            ],
+        },
+    ]
+    members = await produce_container_machinery(
+        {"events": raw_events, "markets": raw_markets},
+        defn,
+        now=now_dt,
+    )
+    assert isinstance(members, RoundupMembers), f"Unexpected refusal: {members!r}"
+
+    produce_spy = AsyncMock(return_value=members)
+    prod = RoundupProducer(
+        slug="machinery-nba-night",
+        name=defn["name"],
+        kind="roundup",
+        category=defn["category"],
+        section_title="",
+        footer="",
+        produce=produce_spy,
+        membership="computed-produced",
+        relations=("same_subject",),
+        level="member",
+        rule={"producer": "container_machinery"},
+        enabled=lambda: True,
+    )
+    fi_built = compose_roundup_feed_item(prod, members)
+    cp_built = compose_roundup_container(prod, members)
+    assert fi_built is not None and cp_built is not None
+
+    # Shared fake Redis store used by sync prewarm writer AND async web reader.
+    store: dict[str, tuple[bytes, int]] = {}
+
+    class _SharedSyncRedis:
+        def set(self, k: str, v: str, ex: int | None = None) -> bool:
+            store[k] = (v.encode("utf-8"), int(ex or 0))
+            return True
+
+        def get(self, k: str) -> bytes | None:
+            ent = store.get(k)
+            return ent[0] if ent is not None else None
+
+        def ttl(self, k: str) -> int:
+            ent = store.get(k)
+            return ent[1] if ent is not None else -2
+
+        def hset(self, *args) -> int:
+            return 1
+
+        def hdel(self, *args) -> int:
+            return 0
+
+        def expire(self, *args) -> bool:
+            return True
+
+    class _SharedAsyncRedis:
+        async def get(self, k: str) -> bytes | None:
+            ent = store.get(k)
+            return ent[0] if ent is not None else None
+
+    async def _fake_bounded(fn, *, treat_none_as_miss=True):
+        val = await fn()
+        return RedisResult(status=OK, value=val)
+
+    @asynccontextmanager
+    async def _fake_session(**kwargs):
+        yield object()
+
+    saved = dict(ROUNDUP_PRODUCERS)
+    try:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS["machinery-nba-night"] = prod
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ensure_optional_roundup_candidates",
+            lambda: None,
+        )
+        monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
+        monkeypatch.setattr(
+            "app.utils.request_cache.get_shared_async_redis",
+            AsyncMock(return_value=_SharedAsyncRedis()),
+        )
+        monkeypatch.setattr("app.utils.request_cache.bounded_redis_call", _fake_bounded)
+
+        sync_rc = _SharedSyncRedis()
+        with caplog.at_level(logging.INFO, logger="app.tasks.precompute_category_pages"):
+            res = await _prewarm_machinery_roundups(deadline_s=5.0, rc=sync_rc)
+
+        assert res["warmed"] == 1
+        assert res["redis_written"] == 1
+        assert res["redis_read_back"] == 1
+        assert any(
+            "redis_written=1/1 redis_read_back=1/1" in r.message for r in caplog.records
+        )
+
+        rb_ok, rb_ttl = verify_roundup_cache_sync(sync_rc, "machinery-nba-night")
+        assert rb_ok is True
+        assert rb_ttl is not None and rb_ttl > 0
+
+        # Simulate a cold web dyno: clear local cache and reset produce_spy, then
+        # read back via evaluate_roundup_producer(prod, AsyncSession).
+        reset_roundup_cache_for_tests()
+        produce_spy.reset_mock()
+        fake_async_db = AsyncSession.__new__(AsyncSession)
+        read_fi, read_cp = await evaluate_roundup_producer(
+            prod, fake_async_db, allow_stale=True
+        )
+        assert produce_spy.await_count == 0
+        assert read_fi is not None and read_cp is not None
+        assert read_cp["slug"] == "machinery-nba-night"
+        assert read_fi["type"] == "bundle"
+        assert read_fi["data"]["collection_ref"]["slug"] == "machinery-nba-night"
+        assert len(read_cp["sections"]) >= 1
+    finally:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS.update(saved)
