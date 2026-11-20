@@ -2,8 +2,13 @@ import SwiftUI
 
 struct MainTabView: View {
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
+    @EnvironmentObject private var authManager: AuthManager
+    @EnvironmentObject private var pinManager: PinManager
+    @Environment(\.followManager295A) private var followManager
+    @Environment(\.gameAlertsPrompt295A) private var alertsPrompt
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
+    @State private var didApplyLaunchLanding295A = false
 
     var body: some View {
         // #10878: the Mac gets its own window; iPhone and iPad keep the
@@ -12,22 +17,42 @@ struct MainTabView: View {
         case .macWindow:
             #if os(macOS)
             MacMainWindowView()
+                .modifier(mainTabLandingAndAlerts295A)
             #else
             EmptyView() // unreachable: `root` answers `.macWindow` only on macOS
             #endif
         case .iPadSplit:
             iPadLayout
                 .onAppear { navCoordinator.usesSidebarQuickLinks = true }
+                .modifier(mainTabLandingAndAlerts295A)
         case .phoneTabs:
             iPhoneLayout
                 .onAppear { navCoordinator.usesSidebarQuickLinks = false }
+                .modifier(mainTabLandingAndAlerts295A)
         }
     }
 
     // MARK: - iPhone (Compact)
 
+    private var mainTabLandingAndAlerts295A: some ViewModifier {
+        MainTabLandingAndAlertsModifier295A(
+            navCoordinator: navCoordinator,
+            authManager: authManager,
+            pinManager: pinManager,
+            followManager: followManager,
+            alertsPrompt: alertsPrompt,
+            didApplyLaunchLanding295A: $didApplyLaunchLanding295A
+        )
+    }
+
     private var iPhoneLayout: some View {
         TabView(selection: $navCoordinator.selectedTab) {
+            MyStuffView()
+                .tabItem {
+                    Label("My Stuff", systemImage: "person.fill")
+                }
+                .tag(AppTab.myStuff)
+
             DiscoverView()
                 .tabItem {
                     Label("Discover", systemImage: "safari")
@@ -55,12 +80,6 @@ struct MainTabView: View {
                 #if os(macOS)
                 .keyboardShortcut("k", modifiers: .command)
                 #endif
-
-            MyStuffView()
-                .tabItem {
-                    Label("My Stuff", systemImage: "person.fill")
-                }
-                .tag(AppTab.myStuff)
         }
     }
 
@@ -81,6 +100,9 @@ struct MainTabView: View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             List(selection: tabSelection) {
                 Section {
+                    Label("My Stuff", systemImage: "person.fill")
+                        .tag(AppTab.myStuff)
+
                     Label("Discover", systemImage: "safari")
                         .tag(AppTab.discover)
 
@@ -105,9 +127,6 @@ struct MainTabView: View {
 
                     Label("Search", systemImage: "magnifyingglass")
                         .tag(AppTab.search)
-
-                    Label("My Stuff", systemImage: "person.fill")
-                        .tag(AppTab.myStuff)
                 }
 
                 Section("Quick Links") {
@@ -168,6 +187,73 @@ struct MainTabView: View {
                 .minimumScaleFactor(0.82)
         } icon: {
             Image(systemName: systemImage)
+        }
+    }
+}
+
+private struct MainTabLandingAndAlertsModifier295A: ViewModifier {
+    let navCoordinator: NavigationCoordinator
+    @ObservedObject var authManager: AuthManager
+    @ObservedObject var pinManager: PinManager
+    @ObservedObject var followManager: FollowManager295A
+    @ObservedObject var alertsPrompt: GameAlertsPromptController295A
+    @Binding var didApplyLaunchLanding295A: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear {
+                followManager.setAuthenticated(authManager.isAuthenticated)
+                guard !didApplyLaunchLanding295A else { return }
+                didApplyLaunchLanding295A = true
+                navCoordinator.applyLaunchLanding295A(
+                    followedCount: followManager.subjects.count,
+                    pinnedCount: pinManager.savedPins.count,
+                    hasPersistedServerFollows: followManager.hasPersistedServerFollows
+                )
+            }
+            .onChange(of: authManager.isAuthenticated) { _, authed in
+                followManager.setAuthenticated(authed)
+                if authed {
+                    Task {
+                        if let prefs = try? await APIClient.shared.fetchPreferences() {
+                            followManager.mergeServerFavorites(prefs.favorites)
+                            navCoordinator.applyLaunchLanding295A(
+                                followedCount: followManager.subjects.count,
+                                pinnedCount: pinManager.savedPins.count,
+                                hasPersistedServerFollows: followManager.hasPersistedServerFollows
+                            )
+                        }
+                    }
+                }
+            }
+            .modifier(GameAlertsRootSheetModifier295A(controller: alertsPrompt))
+    }
+}
+
+private struct GameAlertsRootSheetModifier295A: ViewModifier {
+    @ObservedObject var controller: GameAlertsPromptController295A
+
+    func body(content: Content) -> some View {
+        content.sheet(isPresented: $controller.isSheetPresented) {
+            VStack(spacing: 16) {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.25))
+                    .frame(width: 36, height: 4)
+                    .padding(.top, 10)
+
+                GameAlertsOfferCard295A(
+                    subjectName: controller.sheetSubjectName,
+                    onTurnOn: { controller.acceptOffer() },
+                    onNotNow: { controller.declineOffer() }
+                )
+                .padding(.horizontal, 16)
+
+                Spacer(minLength: 8)
+            }
+            #if os(iOS)
+            .presentationDetents([.height(220)])
+            .presentationDragIndicator(.hidden)
+            #endif
         }
     }
 }

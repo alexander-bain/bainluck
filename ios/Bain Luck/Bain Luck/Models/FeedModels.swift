@@ -1032,7 +1032,7 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let imageUrl: String?
     var imagePresentation: String? = nil
     var imageMonogram: DiscoverImageMonogram? = nil
-    let hookDescription: String?
+    var hookDescription: String?
     let matchedOutcomes: [MatchedOutcome]?
     let discoverCard: FeedDiscoverCard?
     // #490 (L2-172 native half): confidence signal (1-3 bars). Decoded from

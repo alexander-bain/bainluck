@@ -1366,6 +1366,12 @@ actor APIClient {
         return try await fetch("/api/me/preferences")
     }
 
+    /// Adds a favorite-team relation for the signed-in user (`POST /api/me/favorites`).
+    func addFavorite(teamId: Int, relationType: String = "follow") async throws -> StatusResponse {
+        let body = AddFavoriteRequest(teamId: teamId, relationType: relationType)
+        return try await postEncodable("/api/me/favorites", body: body)
+    }
+
     /// Removes a favorite-team relation from the current user's preferences.
     func removeFavorite(teamId: Int, relationType: String) async throws -> StatusResponse {
         return try await delete("/api/me/favorites/\(teamId)", query: ["relation_type": relationType])
