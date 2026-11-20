@@ -132,8 +132,7 @@ test("a refresh holds the links' place instead of collapsing it, and never draws
   await mount();
   await answerNavigation(withLinks);
   const before = cardTop();
-  const refresh = Array.from(element.querySelectorAll("button")).find((button) => button.textContent === "Refresh")!;
-  await act(async () => refresh.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await act(async () => { window.dispatchEvent(new Event("focus")); });
   expect(element.querySelector(NAV)).toBeNull();
   expect(element.querySelector(RESERVED)).not.toBeNull();
   expect(cardTop()).toBe(before);

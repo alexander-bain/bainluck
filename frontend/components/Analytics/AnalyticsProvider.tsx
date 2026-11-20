@@ -6,6 +6,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useRef,
   type ReactNode,
 } from 'react';
 import { usePathname } from 'next/navigation';
@@ -27,7 +28,11 @@ import {
   type AnalyticsEventName,
   type UserProperties,
 } from '@/lib/analytics';
-import { startConsentBannerScheduler } from '@/lib/analytics/consentBanner';
+import {
+  CONSENT_BANNER_SCROLL_THRESHOLD_PX,
+  isSharedSetLandingPath,
+  startConsentBannerScheduler,
+} from '@/lib/analytics/consentBanner';
 
 // ============================================================================
 // Context Types
@@ -81,6 +86,8 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
   const [consent, setConsentState] = useState<ConsentLevel>(null);
   const [showConsentBanner, setShowConsentBanner] = useState(false);
   const pathname = usePathname();
+  const initialPathnameRef = useRef<string | null>(pathname ?? null);
+  const releaseDeferredBannerRef = useRef<(() => void) | null>(null);
 
   // Mirror the ONE consent authority. This provider no longer reads or writes
   // the persisted choice itself — `lib/analytics/telemetryConsent` is the only
@@ -97,13 +104,47 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
     initTelemetryConsent();
     sync();
 
+    const landingPath =
+      initialPathnameRef.current ??
+      (typeof window !== 'undefined' ? window.location.pathname : null);
+    initialPathnameRef.current = landingPath;
+    const deferOnArrival = isSharedSetLandingPath(landingPath);
+
     // The banner's raise rule lives in `lib/analytics/consentBanner` so the
     // timing matrix — including "a Preferences grant at t<1.5s must never raise
-    // a stale banner" — is provable under fake timers without a DOM.
+    // a stale banner" and Ruling 279: A shared-set arrival deferral — is
+    // provable under fake timers without a DOM.
     const stopBanner = startConsentBannerScheduler({
       getConsent: getTelemetryConsent,
       subscribe: subscribeTelemetryConsent,
       setVisible: setShowConsentBanner,
+      deferUntilEngaged: deferOnArrival,
+      subscribeEngagement: deferOnArrival
+        ? (onEngage) => {
+            releaseDeferredBannerRef.current = onEngage;
+            const handleScroll = () => {
+              if (
+                typeof window !== 'undefined' &&
+                window.scrollY > CONSENT_BANNER_SCROLL_THRESHOLD_PX
+              ) {
+                releaseDeferredBannerRef.current = null;
+                window.removeEventListener('scroll', handleScroll);
+                onEngage();
+              }
+            };
+            if (typeof window !== 'undefined') {
+              window.addEventListener('scroll', handleScroll, { passive: true });
+            }
+            return () => {
+              if (releaseDeferredBannerRef.current === onEngage) {
+                releaseDeferredBannerRef.current = null;
+              }
+              if (typeof window !== 'undefined') {
+                window.removeEventListener('scroll', handleScroll);
+              }
+            };
+          }
+        : undefined,
     });
 
     return () => {
@@ -112,6 +153,17 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
       unsubscribe();
     };
   }, []);
+
+  // Ruling 279: A (#13103): if a visitor arrived on a shared set and opens a
+  // second page without scrolling first, release the deferred consent banner.
+  useEffect(() => {
+    if (!pathname || !initialPathnameRef.current) return;
+    if (pathname !== initialPathnameRef.current && releaseDeferredBannerRef.current) {
+      const release = releaseDeferredBannerRef.current;
+      releaseDeferredBannerRef.current = null;
+      release();
+    }
+  }, [pathname]);
 
   // Return-visit bookkeeping. Runs on EVERY visit: it previously sat after an
   // early `return` in the consent effect, so it silently never ran for a

@@ -6149,6 +6149,8 @@ async def get_feed(
                             my_team_names=my_team_names,
                             my_team_sport_categories=my_team_sport_categories,
                             share_inputs=not debug and not exclude_reviewed,
+                            timing_records=_timings,
+                            timing_started_at=_started_at,
                         ),
                         timeout=_futures_budget_s(),
                     )
@@ -13497,6 +13499,8 @@ async def _score_sports_mode_futures(
     *,
     share_inputs: bool = False,
     defer_personalization: bool = False,
+    timing_records: Optional[list[dict[str, float | str]]] = None,
+    timing_started_at: Optional[float] = None,
 ) -> list[dict]:
     """Fast sports-mode futures: single query, no editorial pools.
 
@@ -13507,6 +13511,21 @@ async def _score_sports_mode_futures(
     tier then volume, scores them with the standard highlight/quality
     pipeline, and returns.  Typically finishes in <200 ms.
     """
+    _sf_timing_started = (
+        timing_started_at if timing_started_at is not None else time.perf_counter()
+    )
+    _sf_timing_prev = time.perf_counter()
+
+    def _mark_sf_stage(stage: str) -> None:
+        nonlocal _sf_timing_prev
+        if timing_records is not None:
+            _sf_timing_prev = _record_feed_timing(
+                timing_records,
+                _sf_timing_started,
+                _sf_timing_prev,
+                f"sports_futures.{stage}",
+            )
+
     _defer_pers = defer_personalization and not my_teams_only
     _from_shared_cache = False
     if (
@@ -13533,6 +13552,8 @@ async def _score_sports_mode_futures(
                     my_teams_only=False,
                     share_inputs=False,
                     defer_personalization=True,
+                    timing_records=timing_records,
+                    timing_started_at=_sf_timing_started,
                 )
 
         scored_items = await _pic.get_or_build(
@@ -13583,17 +13604,19 @@ async def _score_sports_mode_futures(
                         FuturesMarket.external_id.ilike(f"%{sport_filter}%"),
                     )
 
-        # Single query: top 120 sports futures by tier then volume
+        # Single query: top 120 sports futures by tier then volume (id tie-breaker)
         id_result = await db.execute(
             select(FuturesMarket.id)
             .where(*base_filters, sports_filter)
             .order_by(
                 FuturesMarket.market_tier.asc().nulls_last(),
                 FuturesMarket.volume_24h.desc().nulls_last(),
+                FuturesMarket.id.asc(),
             )
             .limit(120)
         )
         market_ids = list(id_result.scalars().all())
+        _mark_sf_stage("id_query")
         if not market_ids:
             return []
 
@@ -13616,6 +13639,7 @@ async def _score_sports_mode_futures(
                 market.id: market for market in markets_result.scalars().unique().all()
             }
             markets = [markets_by_id[mid] for mid in market_ids if mid in markets_by_id]
+        _mark_sf_stage("market_load")
 
         if not markets:
             return []
@@ -13627,11 +13651,13 @@ async def _score_sports_mode_futures(
         canonical_source_counts = await _get_canonical_source_counts(
             db, keys=candidate_canonical_keys
         )
+        _mark_sf_stage("canonical_counts")
 
         # #6550: one PK SELECT for the whole pool, beside the canonical counts and
         # for the same reason — the two serializers print the same card, so the verb
         # has to be answerable in both or the fix lands on one surface only.
         team_names = await _team_names_by_id(db, [o for m in markets for o in m.outcomes])
+        _mark_sf_stage("team_names")
 
         # #7632 / CERT-3330: THE DETAIL PAGE'S WITHHELD SET FOR THIS POOL TOO.
         # Discover gets this on the carrier out of the snapshot builder; sports mode
@@ -13660,11 +13686,13 @@ async def _score_sports_mode_futures(
         # are loaded here. That is not luck: it is the ONE-list contract in
         # `_futures_feed_load_options`'s own docstring paying out.
         withheld_by_market = await withheld_price_outcome_ids_for_markets(db, markets)
+        _mark_sf_stage("withheld")
         # #11493: and the grid's out divisions, for #4610's reason — see the twin
         # read in `_score_futures`.
         grid_out_legs = await out_legs_by_market(markets)
         # #11493: and the open-field legs the venue has graded out — the twin read.
         graded_out_legs = await graded_out_leg_ids_by_market(db, markets)
+        _mark_sf_stage("out_legs")
 
         user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
@@ -14833,6 +14861,7 @@ def _discover_candidate_pool_specs(
         .order_by(
             FuturesMarket.market_tier.asc().nulls_last(),
             FuturesMarket.resolution_date.asc().nulls_last(),
+            FuturesMarket.id.asc(),
         )
         .limit(80)
     )
@@ -14846,6 +14875,7 @@ def _discover_candidate_pool_specs(
         .order_by(
             FuturesMarket.resolution_date.asc().nulls_last(),
             FuturesMarket.updated_at.desc().nulls_last(),
+            FuturesMarket.id.asc(),
         )
         .limit(80)
     )
@@ -14862,6 +14892,7 @@ def _discover_candidate_pool_specs(
             FuturesMarket.market_tier.asc().nulls_last(),
             FuturesMarket.volume_24h.desc().nulls_last(),
             FuturesMarket.updated_at.desc().nulls_last(),
+            FuturesMarket.id.asc(),
         )
         .limit(80)
     )
@@ -14881,6 +14912,7 @@ def _discover_candidate_pool_specs(
         .order_by(
             FuturesMarket.volume_24h.desc().nulls_last(),
             FuturesMarket.market_tier.asc().nulls_last(),
+            FuturesMarket.id.asc(),
         )
         .limit(120)
     )
@@ -14897,6 +14929,7 @@ def _discover_candidate_pool_specs(
         .order_by(
             FuturesMarket.max_movement_24h.desc().nulls_last(),
             FuturesMarket.volume_24h.desc().nulls_last(),
+            FuturesMarket.id.asc(),
         )
         .limit(100)
     )
@@ -14915,6 +14948,7 @@ def _discover_candidate_pool_specs(
         .order_by(
             FuturesMarket.hook_generated_at.desc().nulls_last(),
             FuturesMarket.updated_at.desc().nulls_last(),
+            FuturesMarket.id.asc(),
         )
         .limit(100)
     )
@@ -14931,6 +14965,7 @@ def _discover_candidate_pool_specs(
             FuturesMarket.market_tier.asc().nulls_last(),
             FuturesMarket.volume_24h.desc().nulls_last(),
             FuturesMarket.updated_at.desc().nulls_last(),
+            FuturesMarket.id.asc(),
         )
         .limit(80)
     )
@@ -14946,6 +14981,7 @@ def _discover_candidate_pool_specs(
         .order_by(
             FuturesMarket.resolution_date.asc().nulls_last(),
             FuturesMarket.volume_24h.desc().nulls_last(),
+            FuturesMarket.id.asc(),
         )
         .limit(80)
     )
