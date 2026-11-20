@@ -1864,6 +1864,7 @@ async def _prewarm_machinery_roundups(
         ensure_optional_roundup_candidates,
         evaluate_roundup_producer,
         store_roundup_cache_sync,
+        store_roundup_clean_empty_sync,
         verify_roundup_cache_sync,
     )
 
@@ -1899,8 +1900,14 @@ async def _prewarm_machinery_roundups(
             async with get_task_session(
                 statement_timeout_ms=max(1000, int(deadline_s * 1000))
             ) as db:
+                import inspect as _inspect
+
+                eval_meta: dict[str, Any] = {}
+                eval_kwargs: dict[str, Any] = {"force_refresh": True}
+                if "outcome_meta" in _inspect.signature(evaluate_roundup_producer).parameters:
+                    eval_kwargs["outcome_meta"] = eval_meta
                 fi, cp = await asyncio.wait_for(
-                    evaluate_roundup_producer(prod, db, force_refresh=True),
+                    evaluate_roundup_producer(prod, db, **eval_kwargs),
                     timeout=deadline_s,
                 )
                 elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
@@ -1908,6 +1915,7 @@ async def _prewarm_machinery_roundups(
                 redis_written = False
                 redis_read_back = False
                 redis_ttl_s = None
+                outcome_label = "ok" if ok else "refused"
                 if ok and sync_rc is not None:
                     redis_written = store_roundup_cache_sync(
                         sync_rc, prod.slug, _time.time(), fi, cp
@@ -1916,8 +1924,22 @@ async def _prewarm_machinery_roundups(
                         redis_read_back, redis_ttl_s = verify_roundup_cache_sync(
                             sync_rc, prod.slug
                         )
+                elif not ok and eval_meta.get("clean_empty") is True:
+                    # #13183: strictly opt-in clean-empty marker. Only recorded
+                    # when `evaluate_roundup_producer` positively confirms a clean
+                    # empty result (never on SUSPENDED kinds, served-card licence
+                    # violations, transient refusals, timeouts, or errors).
+                    outcome_label = "clean_empty"
+                    if sync_rc is not None:
+                        redis_written = store_roundup_clean_empty_sync(
+                            sync_rc, prod.slug, _time.time()
+                        )
+                        if redis_written:
+                            redis_read_back, redis_ttl_s = verify_roundup_cache_sync(
+                                sync_rc, prod.slug, allow_clean_empty=True
+                            )
                 return prod.slug, {
-                    "outcome": "ok" if ok else "refused",
+                    "outcome": outcome_label,
                     "elapsed_ms": elapsed_ms,
                     "live": bool(_roundup_payload_has_live_event(cp)) if ok else False,
                     "redis_written": redis_written,
@@ -2018,6 +2040,7 @@ def _publish_machinery_feed_from_prewarm_base(
     from app.routes.containers import containers_read_enabled
     from app.utils.container_machinery import container_machinery_enabled
     from app.utils.roundup_containers import (
+        ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S,
         ROUNDUP_PRODUCERS,
         _is_machinery_producer_slug,
         _redis_cache_key,
@@ -2039,41 +2062,74 @@ def _publish_machinery_feed_from_prewarm_base(
         return {"outcome": "empty"}
 
     produced: list[dict] = []
+    clean_empty_slugs: list[str] = []
+    absent_slugs: list[str] = []
     oldest_live_built_at: float | None = None
     now_ts = _time.time()
     for prod in producers:
         raw = rc.get(_redis_cache_key(prod.slug)) if hasattr(rc, "get") else None
         if not raw:
+            absent_slugs.append(prod.slug)
             continue
         if isinstance(raw, (bytes, bytearray)):
             raw = raw.decode("utf-8", errors="ignore")
         if not isinstance(raw, str):
+            absent_slugs.append(prod.slug)
             continue
         try:
             parsed = json.loads(raw)
         except (ValueError, TypeError):
+            absent_slugs.append(prod.slug)
             continue
         if not isinstance(parsed, dict):
+            absent_slugs.append(prod.slug)
+            continue
+        built_at = parsed.get("built_at")
+        if not isinstance(built_at, (int, float)):
+            absent_slugs.append(prod.slug)
+            continue
+        lifetime_s = float(
+            parsed.get("stale_ttl_s") or ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+        )
+        age_s = now_ts - float(built_at)
+        if age_s >= lifetime_s:
+            # #13183: an entry or clean-empty marker older than its lifetime is treated as absent.
+            absent_slugs.append(prod.slug)
+            continue
+        if parsed.get("clean_empty") is True:
+            clean_empty_slugs.append(prod.slug)
             continue
         fi = parsed.get("feed_item")
         cp = parsed.get("container_payload")
-        built_at = parsed.get("built_at")
         if not isinstance(fi, dict) or not isinstance(cp, dict):
+            absent_slugs.append(prod.slug)
             continue
-        if _roundup_payload_has_live_event(cp) and isinstance(built_at, (int, float)):
+        if _roundup_payload_has_live_event(cp):
             if oldest_live_built_at is None or float(built_at) < oldest_live_built_at:
                 oldest_live_built_at = float(built_at)
         produced.append(copy.deepcopy(fi))
 
-    # All-or-nothing: never publish a half-populated (e.g. 2/5) machinery Discover page.
-    if len(produced) < len(producers):
+    # All-or-nothing against failed/absent groupings (#12288, #13183):
+    # publish when every registered grouping is either active OR cleanly empty
+    # within its lifetime; keep refusing when any grouping is absent or failed.
+    if absent_slugs:
         logger.warning(
-            "Skipping machinery Discover pre-warm for %s: only %d/%d groupings in Redis",
+            "Skipping machinery Discover pre-warm for %s: %d/%d groupings absent/failed (%s); "
+            "active=%d clean_empty=%d",
             label,
-            len(produced),
+            len(absent_slugs),
             len(producers),
+            ", ".join(absent_slugs),
+            len(produced),
+            len(clean_empty_slugs),
         )
-        return {"outcome": "incomplete", "have": len(produced), "need": len(producers)}
+        return {
+            "outcome": "incomplete",
+            "have": len(produced),
+            "clean_empty": len(clean_empty_slugs),
+            "absent": absent_slugs,
+            "need": len(producers),
+        }
 
     bundle = render_machinery_prewarm_bundle(
         mach_base=mach_base,
@@ -2095,18 +2151,32 @@ def _publish_machinery_feed_from_prewarm_base(
             bundle["manifest_key"], int(bundle["manifest_ttl"]), bundle["manifest_json"]
         )
 
-    logger.info(
-        "Pre-warmed machinery Discover %s (%d/%d groupings, live=%s, ttl=%ds/%ds)",
-        label,
-        len(produced),
-        len(producers),
-        bundle["live"],
-        m_ttl,
-        m_stale_ttl,
-    )
+    if clean_empty_slugs:
+        logger.info(
+            "Pre-warmed machinery Discover %s (%d/%d groupings active, %d cleanly empty: %s, live=%s, ttl=%ds/%ds)",
+            label,
+            len(produced),
+            len(producers),
+            len(clean_empty_slugs),
+            ", ".join(clean_empty_slugs),
+            bundle["live"],
+            m_ttl,
+            m_stale_ttl,
+        )
+    else:
+        logger.info(
+            "Pre-warmed machinery Discover %s (%d/%d groupings, live=%s, ttl=%ds/%ds)",
+            label,
+            len(produced),
+            len(producers),
+            bundle["live"],
+            m_ttl,
+            m_stale_ttl,
+        )
     return {
         "outcome": "ok",
         "groupings": len(produced),
+        "clean_empty": clean_empty_slugs,
         "live": bundle["live"],
         "cache_key": bundle["cache_key"],
         "page_base_key": bundle["page_base_key"],
@@ -2446,7 +2516,7 @@ async def _prewarm_live_feed_shapes():
     async def _run_machinery_live() -> None:
         nonlocal machinery_live_result
         machinery_live_result = await _prewarm_live_machinery_roundups(
-            rc, deadline_s=min(10.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
+            rc, deadline_s=min(20.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
         )
 
     await asyncio.gather(
