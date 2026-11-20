@@ -230,6 +230,119 @@ final class FollowAndMyStuff295ATests: XCTestCase {
         XCTAssertNil(sanitized[0].futures?.hookDescription)
     }
 
+    func testMovedEventSummaryHonorsSinceOpeningWithheldAwayOpeningSourceAndDrawSports() throws {
+        // 1. First-time reader (no prior ledger reading): opening -> current move says "since opening", never "today"
+        let nbaOpeningMove = try decodeFeedItem("""
+        {
+          "type": "event",
+          "score": 80.0,
+          "data": {
+            "id": 99101,
+            "sport": "basketball_nba",
+            "away_team": "Miami Heat",
+            "home_team": "Boston Celtics",
+            "status": "scheduled",
+            "current_odds": {"away_probability": 0.34, "home_probability": 0.66},
+            "opening_odds": {"away_probability": 0.41, "home_probability": 0.59}
+          }
+        }
+        """).event!
+        let openingSummary = try XCTUnwrap(
+            MyStuffLandingViewModel295A.movedEventSummary(
+                for: nbaOpeningMove,
+                awayVerified: true,
+                priorHomeProbability: nil
+            )
+        )
+        XCTAssertEqual(openingSummary.points, 7)
+        XCTAssertEqual(openingSummary.summary, "Celtics up 7 points since opening")
+        XCTAssertFalse(openingSummary.summary.contains("today"))
+
+        // 2. Prior visit ledger reading says "since your last visit" and attributes negative home delta to verified away side
+        let awayVisitMove = try XCTUnwrap(
+            MyStuffLandingViewModel295A.movedEventSummary(
+                for: nbaOpeningMove,
+                awayVerified: true,
+                priorHomeProbability: 0.72
+            )
+        )
+        XCTAssertEqual(awayVisitMove.points, 6)
+        XCTAssertEqual(awayVisitMove.summary, "Heat up 6 points since your last visit")
+
+        // 3. Withheld away reading (`away_probability: null`) never attributes a move to the away team
+        let withheldAway = try decodeFeedItem("""
+        {
+          "type": "event",
+          "score": 80.0,
+          "data": {
+            "id": 99102,
+            "sport": "basketball_nba",
+            "away_team": "Miami Heat",
+            "home_team": "Boston Celtics",
+            "status": "scheduled",
+            "current_odds": {"home_probability": 0.52},
+            "opening_odds": {"away_probability": 0.40, "home_probability": 0.60}
+          }
+        }
+        """).event!
+        XCTAssertNil(
+            MyStuffLandingViewModel295A.movedEventSummary(
+                for: withheldAway,
+                awayVerified: false,
+                priorHomeProbability: 0.60
+            )
+        )
+
+        // 4. `hero_probability_source == "opening"` (withheld by `CompactGameCard12616.currentOddsForCard`) produces no move banner
+        let openingOnlyCard = try decodeFeedItem("""
+        {
+          "type": "event",
+          "score": 80.0,
+          "data": {
+            "id": 99103,
+            "sport": "basketball_nba",
+            "away_team": "Miami Heat",
+            "home_team": "Boston Celtics",
+            "status": "scheduled",
+            "hero_probability_source": "opening",
+            "current_odds": {"away_probability": 0.34, "home_probability": 0.66},
+            "opening_odds": {"away_probability": 0.41, "home_probability": 0.59}
+          }
+        }
+        """).event!
+        XCTAssertNil(
+            MyStuffLandingViewModel295A.movedEventSummary(
+                for: openingOnlyCard,
+                awayVerified: true,
+                priorHomeProbability: 0.58
+            )
+        )
+
+        // 5. Three-way / draw-capable sport (`soccer_epl`) skips moved-game attribution
+        let soccerGame = try decodeFeedItem("""
+        {
+          "type": "event",
+          "score": 80.0,
+          "data": {
+            "id": 99104,
+            "sport": "soccer_epl",
+            "away_team": "Liverpool",
+            "home_team": "Arsenal",
+            "status": "scheduled",
+            "current_odds": {"away_probability": 0.35, "home_probability": 0.40, "draw_probability": 0.25},
+            "opening_odds": {"away_probability": 0.28, "home_probability": 0.50}
+          }
+        }
+        """).event!
+        XCTAssertNil(
+            MyStuffLandingViewModel295A.movedEventSummary(
+                for: soccerGame,
+                awayVerified: true,
+                priorHomeProbability: 0.50
+            )
+        )
+    }
+
     // MARK: - 4. OCR + Zero-Truncation Verification (+ Optional 390 pt Render Export)
 
     func testRenderedMyStuffLandingAndTeamFollowHaveZeroEllipsis390() throws {

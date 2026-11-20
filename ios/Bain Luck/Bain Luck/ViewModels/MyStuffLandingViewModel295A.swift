@@ -35,6 +35,7 @@ nonisolated struct MyStuffMovedEntry295A: Identifiable, Sendable {
     let id: String
     let movementSummary: String
     let magnitudePoints: Int
+    var isFinishedResult: Bool = false
     let payload: Payload
 }
 
@@ -78,14 +79,34 @@ enum MyStuffVisitLedger295A {
         return dict
     }
 
-    static func formatPointMove(deltaProbability: Double, sinceLastVisit: Bool) -> (points: Int, text: String)? {
+    enum Timeframe: Sendable, Equatable {
+        case sinceLastVisit
+        case today
+        case sinceOpening
+
+        var suffix: String {
+            switch self {
+            case .sinceLastVisit: return "since your last visit"
+            case .today: return "today"
+            case .sinceOpening: return "since opening"
+            }
+        }
+    }
+
+    static func formatPointMove(
+        deltaProbability: Double,
+        timeframe: Timeframe
+    ) -> (points: Int, text: String)? {
         let pts = Int((deltaProbability * 100.0).rounded())
         let absPts = abs(pts)
         guard absPts >= 2 else { return nil }
         let direction = pts > 0 ? "Up" : "Down"
         let noun = absPts == 1 ? "point" : "points"
-        let suffix = sinceLastVisit ? "since your last visit" : "today"
-        return (absPts, "\(direction) \(absPts) \(noun) \(suffix)")
+        return (absPts, "\(direction) \(absPts) \(noun) \(timeframe.suffix)")
+    }
+
+    static func formatPointMove(deltaProbability: Double, sinceLastVisit: Bool) -> (points: Int, text: String)? {
+        formatPointMove(deltaProbability: deltaProbability, timeframe: sinceLastVisit ? .sinceLastVisit : .today)
     }
 }
 
@@ -143,6 +164,59 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         } else {
             self.isPreloaded = false
         }
+    }
+
+    /// Computes the moved-game banner line from the exact `CompactGameCard12616.currentOddsForCard`
+    /// reading shown on `EventCardView`:
+    /// - Skips draw-capable sports (a negative home delta does not imply the away side rose).
+    /// - Uses `.sinceLastVisit` when `priorHomeProbability` is recorded in the visit ledger,
+    ///   and `.sinceOpening` (never `"today"`) when comparing against `prematchOdds` / `openingOdds`.
+    /// - Attributes a negative home delta to the away team ONLY when the away reading is
+    ///   present on `currentOddsForCard` and verified (`!currentAwayIsWithheld`).
+    nonisolated static func movedEventSummary(
+        for event: FeedEventData,
+        awayVerified: Bool,
+        priorHomeProbability: Double?
+    ) -> (points: Int, summary: String)? {
+        guard !DrawPricedWinner.sportPricesADraw(event.sport) else { return nil }
+        guard let cardOdds = CompactGameCard12616.currentOddsForCard(event),
+              let currentHome = cardOdds.homeProbability else {
+            return nil
+        }
+
+        let baseHome: Double
+        let timeframe: MyStuffVisitLedger295A.Timeframe
+        if let prior = priorHomeProbability {
+            baseHome = prior
+            timeframe = .sinceLastVisit
+        } else if let openingHome = event.prematchOdds?.homeProbability ?? event.openingOdds?.homeProbability {
+            baseHome = openingHome
+            timeframe = .sinceOpening
+        } else {
+            return nil
+        }
+
+        let delta = currentHome - baseHome
+        let short = TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+
+        if delta >= 0 {
+            guard let move = MyStuffVisitLedger295A.formatPointMove(deltaProbability: delta, timeframe: timeframe),
+                  move.points >= 4 else {
+                return nil
+            }
+            return (move.points, "\(short.home) \(move.text.lowercased())")
+        }
+
+        let currentAwayIsWithheld = cardOdds.awayProbability == nil
+            || (DrawPricedWinner.sportPricesADraw(event.sport) && !awayVerified)
+        guard !currentAwayIsWithheld, cardOdds.awayProbability != nil else {
+            return nil
+        }
+        guard let awayMove = MyStuffVisitLedger295A.formatPointMove(deltaProbability: -delta, timeframe: timeframe),
+              awayMove.points >= 4 else {
+            return nil
+        }
+        return (awayMove.points, "\(short.away) \(awayMove.text.lowercased())")
     }
 
     /// Removes all model-written narrative fields (`reason`, `headline`, `contextSummary`, `hookDescription`)
@@ -263,7 +337,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             let sanitized = Self.stripEventNarrative(ev)
             collectedEvents.append((sanitized, awayVerified))
             if EventState.canStillBeGraded(sanitized.status, commenceTime: sanitized.commenceTime?.asDate),
-               let hp = sanitized.currentOdds?.homeProbability {
+               let hp = CompactGameCard12616.currentOddsForCard(sanitized)?.homeProbability {
                 newReadings["event:\(sanitized.id)"] = hp
             }
         }
@@ -428,22 +502,16 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         for pair in upcomingSorted {
             let ev = pair.event
             let prior = priorSnapshot["event:\(ev.id)"]
-            let baseline = prior ?? ev.prematchOdds?.homeProbability ?? ev.openingOdds?.homeProbability
-            if let currentHome = ev.currentOdds?.homeProbability,
-               let baseHome = baseline,
-               let move = MyStuffVisitLedger295A.formatPointMove(
-                   deltaProbability: currentHome - baseHome,
-                   sinceLastVisit: prior != nil
-               ),
-               move.points >= 4 {
-                let short = TeamShortName.shortPair(away: ev.awayTeam, home: ev.homeTeam, sportKey: ev.sport)
-                let movedTeam = (currentHome - baseHome) >= 0 ? short.home : short.away
-                let summary = "\(movedTeam) \(move.text.lowercased())"
+            if let eventMove = Self.movedEventSummary(
+                for: ev,
+                awayVerified: pair.awayVerified,
+                priorHomeProbability: prior
+            ) {
                 moved.append(
                     MyStuffMovedEntry295A(
                         id: "moved-event-\(ev.id)",
-                        movementSummary: summary,
-                        magnitudePoints: move.points,
+                        movementSummary: eventMove.summary,
+                        magnitudePoints: eventMove.points,
                         payload: .event(ev, awayVerified: pair.awayVerified)
                     )
                 )
@@ -462,7 +530,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                 MyStuffMovedEntry295A(
                     id: "moved-final-\(pair.event.id)",
                     movementSummary: "Finished",
-                    magnitudePoints: 3,
+                    magnitudePoints: 0,
+                    isFinishedResult: true,
                     payload: .event(pair.event, awayVerified: pair.awayVerified)
                 )
             )
@@ -484,7 +553,12 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             }
         }
 
-        moved.sort { $0.magnitudePoints > $1.magnitudePoints }
+        moved.sort { lhs, rhs in
+            if lhs.isFinishedResult != rhs.isFinishedResult {
+                return !lhs.isFinishedResult
+            }
+            return lhs.magnitudePoints > rhs.magnitudePoints
+        }
         let boundedMoved = Array(moved.prefix(6))
 
         let movedEventIds = Set(boundedMoved.compactMap { entry -> Int? in
