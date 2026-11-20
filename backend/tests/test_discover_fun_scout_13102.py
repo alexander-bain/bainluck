@@ -417,3 +417,259 @@ class TestRuleFilesLicenceAndEndToEnd:
         bench = evaluate_scout_against_seed_sets(result["validated_sets"], seed)
         assert bench["matched_seed_count"] == 1
         assert bench["matched_seed_groups"][0]["recall"] == 1.0
+
+
+class TestScoutDurabilityPreFlip13124:
+    """Covers Fable's 3 pre-flip durability items on #13124 + real database import."""
+
+    def test_task_module_imports_real_database_session_maker(self):
+        import importlib
+
+        from app.services.database import async_session_maker
+
+        scout_task = importlib.import_module("app.tasks.discover_fun_scout")
+        assert scout_task.async_session_maker is async_session_maker
+
+    @pytest.mark.asyncio
+    async def test_nightly_run_persists_full_sets_singles_and_spend_to_redis_and_github(
+        self, tmp_path, monkeypatch
+    ):
+        import importlib
+        from unittest.mock import AsyncMock, MagicMock
+
+        scout_task = importlib.import_module("app.tasks.discover_fun_scout")
+        from app.utils.discover_fun_scout import ScoutValidatedSet
+
+        store: dict[str, Any] = {}
+
+        class _FakeRedis:
+            def get(self, key):
+                return store.get(key)
+
+            def set(self, key, val, ex=None):
+                store[key] = val
+
+            def incrbyfloat(self, key, delta):
+                cur = float(store.get(key, 0.0))
+                store[key] = str(cur + float(delta))
+                return float(store[key])
+
+            def expire(self, key, ttl):
+                return True
+
+        fake_redis = _FakeRedis()
+        monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: fake_redis)
+        monkeypatch.setattr(scout_task, "_UNRECORDED_SPEND_MONTHS", set())
+        monkeypatch.setenv("GITHUB_TOKEN", "test-scout-publish-token-value")
+
+        posted: list[dict[str, Any]] = []
+
+        def _fake_post(url, headers=None, json=None, timeout=None):
+            posted.append({"url": url, "body": (json or {}).get("body", "")})
+            resp = MagicMock()
+            resp.status_code = 201
+            resp.json.return_value = {
+                "html_url": "https://github.com/alexander-bain/bainluck/issues/13102#issuecomment-999"
+            }
+            return resp
+
+        monkeypatch.setattr(scout_task.httpx, "post", _fake_post)
+
+        members = (
+            ScoutMarketRow(
+                market_id=101,
+                source="kalshi",
+                title="Will GTA VI release in 2026?",
+                status="open",
+                category="culture",
+                volume=50000,
+            ),
+            ScoutMarketRow(
+                market_id=102,
+                source="polymarket",
+                title="Will Winds of Winter release?",
+                status="open",
+                category="culture",
+                volume=40000,
+            ),
+            ScoutMarketRow(
+                market_id=103,
+                source="kalshi",
+                title="Will Half-Life 3 be announced?",
+                status="open",
+                category="culture",
+                volume=30000,
+            ),
+        )
+        vset = ScoutValidatedSet(
+            slug="long-awaited-releases",
+            name="Long-awaited releases",
+            kicker="Waiting",
+            category="culture",
+            why_better_together="Three delayed cultural releases.",
+            look="bars",
+            members=members,
+            selector_kind="fun_tag",
+            title_ilike=None,
+            template=None,
+            footer="Updated nightly",
+        )
+        fake_result = {
+            "spend_line": "fun-scout pre-run: 3424 titles est=$0.09",
+            "actual_total_cost_usd": 0.11,
+            "set_model": CLAUDE_SONNET_MODEL,
+            "tagged_count": 4,
+            "verified_singles": [
+                {
+                    "market_id": 104,
+                    "title": "Will Costco raise hot dog price?",
+                    "fun_group": "food",
+                    "reason": "classic odd market",
+                }
+            ],
+            "validated_sets": [vset],
+            "rejected_sets": [{"slug": "bad-set", "reason": "too_few_members"}],
+            "written_rule_files": [],
+            "licence_state": {"status": "awaiting_look", "clean_days": 1},
+        }
+        monkeypatch.setattr(
+            scout_task, "fetch_open_non_sports_markets_for_scout", AsyncMock(return_value=list(members))
+        )
+        monkeypatch.setattr(scout_task, "build_scout_openai_client", lambda: object())
+        monkeypatch.setattr(scout_task, "build_scout_anthropic_client", lambda: object())
+        monkeypatch.setattr(scout_task, "run_nightly_fun_scout", lambda *a, **kw: fake_result)
+
+        out = await scout_task._run_discover_fun_scout(
+            force=True, output_dir=tmp_path, now=FROZEN_NOW
+        )
+
+        assert out["status"] == "completed"
+        assert out["monthly_ledger_recorded"] is True
+        assert out["redis_artifact_saved"] is True
+        assert out["verified_single_count"] == 1
+        assert out["verified_singles"][0]["market_id"] == 104
+        assert len(out["staged_sets"]) == 1
+        assert out["staged_sets"][0]["rule_definition"]["slug"] == "long-awaited-releases"
+        assert out["github_comment_url"].endswith("#issuecomment-999")
+
+        # Redis durable snapshot holds full staged sets, singles, and spend
+        assert "bainluck:fun_scout:latest" in store
+        saved_json = json.loads(store["bainluck:fun_scout:latest"])
+        assert saved_json["staged_sets"][0]["slug"] == "long-awaited-releases"
+        assert saved_json["verified_singles"][0]["market_id"] == 104
+
+        # GitHub comment on #13102 carries staged sets in full, verified singles, and spend
+        assert len(posted) == 1
+        assert "/issues/13102/comments" in posted[0]["url"]
+        body = posted[0]["body"]
+        assert "long-awaited-releases" in body
+        assert "Will Costco raise hot dog price?" in body
+        assert "fun-scout pre-run: 3424 titles est=$0.09" in body
+        assert "test-scout-publish-token-value" not in body
+
+    def test_durable_licence_state_and_retired_sets_persist_in_redis_and_fail_closed(
+        self, tmp_path, monkeypatch
+    ):
+        import importlib
+
+        scout_task = importlib.import_module("app.tasks.discover_fun_scout")
+        from app.utils.discover_fun_scout import (
+            LICENCE_AUTO,
+            LICENCE_AWAITING_LOOK,
+            ScoutLicenceState,
+        )
+
+        store: dict[str, Any] = {}
+
+        class _FakeRedis:
+            def get(self, key):
+                return store.get(key)
+
+            def set(self, key, val, ex=None):
+                store[key] = val
+
+        monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: _FakeRedis())
+
+        ok, err = scout_task.save_licence_state_durable(
+            ScoutLicenceState(status=LICENCE_AUTO, clean_days=7, last_clean_day="2025-05-01")
+        )
+        assert ok is True and err is None
+        loaded = scout_task._load_licence_state(tmp_path / "missing.json")
+        assert loaded.status == LICENCE_AUTO
+        assert loaded.clean_days == 7
+
+        ok_r, err_r = scout_task.retire_scout_set_durable("old-retired-slug")
+        assert ok_r is True and err_r is None
+        retired = scout_task._load_retired_sets_durable(tmp_path / "missing_retired.json")
+        assert "old-retired-slug" in retired
+
+        # If Redis fails, licence falls back safely to awaiting_look (0 clean days)
+        # and retired sets fail closed (raise).
+        def _broken_redis():
+            raise RuntimeError("redis down")
+
+        monkeypatch.setattr("app.tasks.redis_state.get_redis_client", _broken_redis)
+        fallback = scout_task._load_licence_state(tmp_path / "missing.json")
+        assert fallback.status == LICENCE_AWAITING_LOOK
+        assert fallback.clean_days == 0
+        with pytest.raises(RuntimeError, match="redis down"):
+            scout_task._load_retired_sets_durable(tmp_path / "missing_retired.json")
+
+    @pytest.mark.asyncio
+    async def test_failed_monthly_ledger_write_marks_month_unknown_and_closes_next_run(
+        self, tmp_path, monkeypatch
+    ):
+        import importlib
+        from unittest.mock import AsyncMock
+
+        scout_task = importlib.import_module("app.tasks.discover_fun_scout")
+
+        store: dict[str, Any] = {}
+
+        class _FailingSpendRedis:
+            def get(self, key):
+                return store.get(key)
+
+            def set(self, key, val, ex=None):
+                store[key] = val
+
+            def incrbyfloat(self, key, delta):
+                raise RuntimeError("write timeout")
+
+            def expire(self, key, ttl):
+                return True
+
+        monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: _FailingSpendRedis())
+        monkeypatch.setattr(scout_task, "_UNRECORDED_SPEND_MONTHS", set())
+        monkeypatch.setattr(
+            scout_task, "fetch_open_non_sports_markets_for_scout", AsyncMock(return_value=[])
+        )
+        monkeypatch.setattr(scout_task, "build_scout_openai_client", lambda: object())
+        monkeypatch.setattr(scout_task, "build_scout_anthropic_client", lambda: object())
+        monkeypatch.setattr(
+            scout_task,
+            "run_nightly_fun_scout",
+            lambda *a, **kw: {
+                "spend_line": "est=$0.10",
+                "actual_total_cost_usd": 0.12,
+                "set_model": CLAUDE_SONNET_MODEL,
+                "tagged_count": 0,
+                "verified_singles": [],
+                "validated_sets": [],
+                "rejected_sets": [],
+                "written_rule_files": [],
+                "licence_state": {"status": "awaiting_look", "clean_days": 0},
+            },
+        )
+
+        out = await scout_task._run_discover_fun_scout(
+            force=True, output_dir=tmp_path, now=FROZEN_NOW, publish_to_github=False
+        )
+        assert out["status"] == "completed_ledger_write_failed"
+        assert out["monthly_ledger_recorded"] is False
+        assert "write timeout" in (out["monthly_ledger_error"] or "")
+
+        # Next run's spend check MUST fail closed (inf) even after clearing in-process state
+        month_key = FROZEN_NOW.strftime("%Y-%m")
+        scout_task._UNRECORDED_SPEND_MONTHS.clear()
+        assert scout_task._read_monthly_spend_usd(month_key) == float("inf")
