@@ -478,6 +478,8 @@ nonisolated struct MachineryCardContract: Decodable, Equatable, Identifiable, Se
     let footer: String
     let scaleOrdered: Bool
     let sectionCount: Int
+    let itemCount: Int?
+    let itemNoun: String?
     let destinationHref: String
     let eventRows: [MachineryEventVisualItem]
     let outcomeRows: [MachineryOutcomeVisual]
@@ -489,6 +491,22 @@ nonisolated struct MachineryCardContract: Decodable, Equatable, Identifiable, Se
         formId == .coinFlipMatchups || formId == .matchupSlate
     }
 
+    /// #13234 — Multi-section sets say `"Open all N sections"`; single-section sets
+    /// name their count + item noun (`"See all 7 markets"`, `"See all 11 cities"`,
+    /// `"See all 16 couples"`) when served, or `"Open the full set"` otherwise —
+    /// never `"Open all 1 sections"`.
+    var openContainerCallToAction: String {
+        if sectionCount > 1 {
+            return "Open all \(sectionCount) sections"
+        }
+        if let count = itemCount, count > 1,
+           let noun = itemNoun?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !noun.isEmpty {
+            return "See all \(count) \(noun)"
+        }
+        return "Open the full set"
+    }
+
     init(
         slug: String,
         formId: MachineryFormId,
@@ -498,6 +516,8 @@ nonisolated struct MachineryCardContract: Decodable, Equatable, Identifiable, Se
         footer: String = "",
         scaleOrdered: Bool = false,
         sectionCount: Int = 1,
+        itemCount: Int? = nil,
+        itemNoun: String? = nil,
         destinationHref: String = "",
         eventRows: [MachineryEventVisualItem] = [],
         outcomeRows: [MachineryOutcomeVisual] = [],
@@ -511,6 +531,8 @@ nonisolated struct MachineryCardContract: Decodable, Equatable, Identifiable, Se
         self.footer = footer
         self.scaleOrdered = scaleOrdered
         self.sectionCount = sectionCount
+        self.itemCount = itemCount
+        self.itemNoun = itemNoun
         self.destinationHref = destinationHref.isEmpty ? "/collections/\(slug)" : destinationHref
         self.eventRows = Array(eventRows.prefix(3))
         self.outcomeRows = Array(MachineryMarketVisualItem.normalizedOutcomes(outcomeRows, scaleOrdered: scaleOrdered).prefix(3))
@@ -530,6 +552,8 @@ nonisolated struct MachineryCardContract: Decodable, Equatable, Identifiable, Se
         self.footer = c.decodeFirst(String.self, keys: ["footer"]) ?? ""
         let rawScaleOrdered = c.decodeFirst(Bool.self, keys: ["scaleOrdered", "scale_ordered"]) ?? false
         self.sectionCount = c.decodeFirst(Int.self, keys: ["sectionCount", "section_count"]) ?? 1
+        self.itemCount = c.decodeFirst(Int.self, keys: ["itemCount", "item_count", "memberCount", "member_count", "totalCount", "total_count"])
+        self.itemNoun = c.decodeFirst(String.self, keys: ["itemNoun", "item_noun", "unitNoun", "unit_noun"])
         self.destinationHref = c.decodeFirst(String.self, keys: ["destinationHref", "destination_href"]) ?? "/collections/\(decodedSlug)"
 
         if resolvedForm == .coinFlipMatchups || resolvedForm == .matchupSlate {
