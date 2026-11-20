@@ -539,7 +539,12 @@ class FactoryRules(unittest.TestCase):
         self.assertTrue(floor_changed({}, current))
 
     def test_unchanged_floor_skips_both_uploads_and_still_prints_metrics(self):
-        previous = {"generated_at": "2026-11-18T01:00:00Z", "changes": [], "jams": []}
+        previous = {
+            "generated_at": "2026-11-18T01:00:00Z",
+            "changes": [],
+            "jams": [],
+            "events": [],
+        }
         previous["notes"], _ = make_notes(previous, [], {}, "", None, None)
         current = {**previous, "generated_at": "2026-11-18T01:05:00Z"}
         api = MagicMock()
