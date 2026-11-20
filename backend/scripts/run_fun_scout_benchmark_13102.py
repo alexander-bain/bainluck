@@ -34,8 +34,10 @@ DEFAULT_BENCHMARK_FIXTURE = (
 )
 
 from app.services.llm_models import CLAUDE_OPUS_MODEL, CLAUDE_SONNET_MODEL
+from app.services.llm_request import JobBudget
 from app.utils.discover_fun_scout import (
     SCOUT_ANTHROPIC_API_KEY_ENV,
+    SCOUT_RUN_CAP_USD,
     ScoutMarketRow,
     ScoutUncoveredFamily,
     build_scout_anthropic_client,
@@ -46,6 +48,7 @@ from app.utils.discover_fun_scout import (
     evaluate_scout_against_seed_sets,
     format_fun_scout_pre_run_spend_line,
     run_nightly_fun_scout,
+    run_scout_tagging_pass,
 )
 from app.utils.discover_fun_tags import load_fun_markets_registry
 
@@ -119,15 +122,18 @@ def summarize_fixture_dry_run(
     spend_lines: list[str] = []
     combined_est_usd = 0.0
     prior = prior_month_usd
-    for model in models:
+    for idx, model in enumerate(models):
         est = estimate_fun_scout_spend(
             len(markets),
             set_model=model,
             prior_monthly_spend_usd=prior,
         )
         spend_lines.append(format_fun_scout_pre_run_spend_line(est))
-        combined_est_usd += float(est["estimated_run_cost_usd"])
-        prior += float(est["estimated_run_cost_usd"])
+        # The benchmark runs the small-model tagging pass once and feeds the
+        # exact same tagged candidate list to every Claude model.
+        incremental = float(est["estimated_run_cost_usd"]) if idx == 0 else float(est["set_cost_usd"])
+        combined_est_usd += incremental
+        prior += incremental
 
     return {
         "fixture": str(fixture_path),
@@ -170,6 +176,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--title-count", type=int, default=3424)
     parser.add_argument("--prior-month-usd", type=float, default=0.0)
     parser.add_argument(
+        "--max-estimate-usd",
+        type=float,
+        default=2.0,
+        help="Refuse --execute before any model call if combined pre-run estimate exceeds this USD ceiling.",
+    )
+    parser.add_argument(
         "--fixture",
         type=Path,
         default=DEFAULT_BENCHMARK_FIXTURE,
@@ -202,12 +214,12 @@ def main(argv: list[str] | None = None) -> int:
             print(format_fun_scout_pre_run_spend_line(est))
         return 0
 
+    summary = summarize_fixture_dry_run(
+        args.fixture,
+        models=list(args.models),
+        prior_month_usd=args.prior_month_usd,
+    )
     if args.dry_run or not args.execute:
-        summary = summarize_fixture_dry_run(
-            args.fixture,
-            models=list(args.models),
-            prior_month_usd=args.prior_month_usd,
-        )
         print(
             f"Fixture ready (dry-run, zero model calls): {summary['fixture']}\n"
             f"  captured_at={summary['captured_at']} total={summary['total_markets']} "
@@ -222,35 +234,100 @@ def main(argv: list[str] | None = None) -> int:
             print("Pass --execute after Alex's go to run paid Sonnet vs Opus calls.")
         return 0
 
-    markets, families, _captured_at = load_titles_fixture(args.fixture)
+    print(
+        f"Pre-run estimate: combined_est=${summary['combined_est_usd']:.4f} "
+        f"(limit=${args.max_estimate_usd:.2f})"
+    )
+    for line in summary["spend_lines"]:
+        print(line)
+    if float(summary["combined_est_usd"]) > float(args.max_estimate_usd):
+        sys.stderr.write(
+            f"STOP: combined pre-run estimate ${summary['combined_est_usd']:.4f} "
+            f"exceeds --max-estimate-usd ${args.max_estimate_usd:.2f}; zero model calls made.\n"
+        )
+        return 2
+
+    markets, families, captured_at = load_titles_fixture(args.fixture)
+    examples = list(load_fun_markets_registry().markets.values())
     openai_client = build_scout_openai_client()
     anthropic_client = build_scout_anthropic_client()
 
-    prior = args.prior_month_usd
-    for model in args.models:
-        os.environ["LLM_MODEL_FUN_SCOUT_SETS"] = model
-        run = run_nightly_fun_scout(
-            markets,
-            families,
-            openai_client=openai_client,
-            anthropic_client=anthropic_client,
-            prior_monthly_spend_usd=prior,
-        )
-        prior += float(run["actual_total_cost_usd"])
-        eval_report = evaluate_scout_against_seed_sets(run["validated_sets"])
-        print(f"\n=== Model: {model} ===")
-        print(run["spend_line"])
-        print(
-            f"Actual cost: ${run['actual_total_cost_usd']:.4f} "
-            f"(tag=${run['actual_tag_cost_usd']:.4f}, sets=${run['actual_set_cost_usd']:.4f})"
-        )
-        print(
-            f"Rebuilt {eval_report['matched_seed_count']}/{eval_report['seed_group_count']} "
-            f"hand-made seed sets; {len(eval_report['novel_scout_sets'])} novel sets; "
-            f"{len(run['rejected_sets'])} rejected by code checks."
-        )
-        for v in run["validated_sets"]:
-            print(f"  - [{v.look}] {v.name} ({v.slug}, {len(v.members)} live): {v.why_better_together}")
+    shared_tag_budget = JobBudget(SCOUT_RUN_CAP_USD)
+    tagged, shared_tag_cost = run_scout_tagging_pass(
+        markets,
+        openai_client=openai_client,
+        approved_examples=examples,
+        job_budget=shared_tag_budget,
+    )
+    print(
+        f"\nShared tagging pass complete: {len(tagged)} candidates tagged from {len(markets)} markets; "
+        f"actual_tag_cost=${shared_tag_cost:.4f}"
+    )
+
+    prior = args.prior_month_usd + shared_tag_cost
+    total_actual_usd = shared_tag_cost
+    prev_model_env = os.environ.get("LLM_MODEL_FUN_SCOUT_SETS")
+    try:
+        for model in args.models:
+            os.environ["LLM_MODEL_FUN_SCOUT_SETS"] = model
+            run = run_nightly_fun_scout(
+                markets,
+                families,
+                openai_client=openai_client,
+                anthropic_client=anthropic_client,
+                approved_examples=examples,
+                prior_monthly_spend_usd=prior,
+                now=captured_at,
+                pretagged=(tagged, 0.0),
+            )
+            set_cost = float(run["actual_set_cost_usd"])
+            prior += set_cost
+            total_actual_usd += set_cost
+            eval_report = evaluate_scout_against_seed_sets(run["validated_sets"])
+            print(f"\n=== Model: {model} ===")
+            print(run["spend_line"])
+            print(
+                f"Actual cost: set_pass=${set_cost:.4f} "
+                f"(with shared tag=${shared_tag_cost:.4f} -> standalone_equiv=${shared_tag_cost + set_cost:.4f})"
+            )
+            print(
+                f"Proposed={run['proposed_set_count']} Validated={len(run['validated_sets'])} "
+                f"Rejected={len(run['rejected_sets'])} VerifiedSingles={len(run['verified_singles'])}"
+            )
+            print(
+                f"Seed overlap: rebuilt {eval_report['matched_seed_count']}/{eval_report['seed_group_count']} "
+                f"hand-made seed sets; {len(eval_report['novel_scout_sets'])} novel sets."
+            )
+            if eval_report["matched_seed_groups"]:
+                print("Matched seed sets:")
+                for m in eval_report["matched_seed_groups"]:
+                    print(
+                        f"  * {m['seed_group']} -> {m['scout_slug']} "
+                        f"({m['overlap']}/{m['seed_size']}, recall={m['recall']:.3f})"
+                    )
+            if eval_report["missed_seed_groups"]:
+                print("Missed seed sets: " + ", ".join(eval_report["missed_seed_groups"]))
+            print("Validated sets:")
+            for v in run["validated_sets"]:
+                print(
+                    f"  - [{v.look}] {v.name} (slug={v.slug}, category={v.category}, "
+                    f"{len(v.members)} live): {v.why_better_together}"
+                )
+                for member in v.members:
+                    print(f"      * {member.market_id} [{member.source}] {member.title}")
+            if run["rejected_sets"]:
+                print("Rejected sets:")
+                for rej in run["rejected_sets"]:
+                    print(f"  - {rej.get('name')} ({rej.get('slug')}): {rej.get('reason')}")
+    finally:
+        if prev_model_env is None:
+            os.environ.pop("LLM_MODEL_FUN_SCOUT_SETS", None)
+        else:
+            os.environ["LLM_MODEL_FUN_SCOUT_SETS"] = prev_model_env
+    print(
+        f"\n=== Benchmark total actual spend: ${total_actual_usd:.4f} "
+        f"(shared_tag=${shared_tag_cost:.4f}, set_passes=${total_actual_usd - shared_tag_cost:.4f}) ==="
+    )
     return 0
 
 

@@ -331,10 +331,18 @@ def _provider_errors():
     return tuple(status_errors), tuple(transport_errors)
 
 
+_ANTHROPIC_UNSUPPORTED_KEYS = frozenset({"response_format", "temperature", "top_p", "top_k"})
+
+
 def _anthropic_payload(
     request: dict[str, Any], messages: list, extra: dict[str, Any]
 ) -> dict[str, Any]:
-    """Adapt chat-style messages + request kwargs into Anthropic Messages API shape."""
+    """Adapt chat-style messages + request kwargs into Anthropic Messages API shape.
+
+    Anthropic SDK v2.x removed sampling kwargs (``temperature``, ``top_p``,
+    ``top_k``) from ``Messages.create`` and raises ``TypeError`` if they are
+    forwarded; strip them here alongside OpenAI-only ``response_format``.
+    """
     system_parts: list[str] = []
     non_system: list[dict[str, Any]] = []
     for msg in messages:
@@ -349,12 +357,10 @@ def _anthropic_payload(
         "max_tokens": request.get("max_tokens") or request.get("max_completion_tokens"),
         "messages": non_system,
     }
-    if "temperature" in request:
-        payload["temperature"] = request["temperature"]
     if system_parts:
         payload["system"] = "\n\n".join(system_parts)
     for key, val in extra.items():
-        if key != "response_format":
+        if key not in _ANTHROPIC_UNSUPPORTED_KEYS:
             payload[key] = val
     return payload
 

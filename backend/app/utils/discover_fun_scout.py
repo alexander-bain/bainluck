@@ -106,7 +106,7 @@ _TAG_BATCH_SIZE = 150
 _DEFAULT_TOKENS_PER_TITLE = 22
 _DEFAULT_TAG_OUTPUT_TOKENS_PER_BATCH = 900
 _DEFAULT_SET_INPUT_TOKENS = 18_000
-_DEFAULT_SET_OUTPUT_TOKENS = 4_000
+_DEFAULT_SET_OUTPUT_TOKENS = 8_000
 
 
 class FunScoutSpendCapExceededError(RuntimeError):
@@ -262,7 +262,7 @@ def build_scout_anthropic_client() -> Any:
         )
     import anthropic
 
-    return anthropic.Anthropic(api_key=api_key, timeout=120.0, max_retries=0)
+    return anthropic.Anthropic(api_key=api_key, timeout=240.0, max_retries=0)
 
 
 def build_scout_openai_client() -> Any:
@@ -918,6 +918,13 @@ def run_scout_set_writing_pass(
         temperature=0.3,
         job_budget=job_budget,
     )
+    if getattr(result.response, "stop_reason", None) == "max_tokens":
+        logger.warning(
+            "[discover-fun-scout] set-writing pass hit max_tokens (%d) on model %s; "
+            "JSON output may be truncated",
+            _DEFAULT_SET_OUTPUT_TOKENS,
+            result.model,
+        )
     payload = _parse_json_object(_extract_response_text(result.response))
     proposals: list[ScoutProposedSet] = []
     for raw_set in payload.get("sets") or []:
@@ -966,6 +973,7 @@ def run_nightly_fun_scout(
     min_volume: float = FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME,
     max_new_per_day: int = SCOUT_MAX_NEW_SETS_PER_DAY,
     now: Optional[datetime] = None,
+    pretagged: Optional[tuple[Sequence[ScoutTaggedMarket], float]] = None,
 ) -> dict[str, Any]:
     """Run the full end-to-end Nightly Fun Scout pipeline under 61-A caps."""
     run_now = now or datetime.now(timezone.utc)
@@ -985,13 +993,17 @@ def run_nightly_fun_scout(
     job_budget = JobBudget(SCOUT_RUN_CAP_USD)
     catalog_by_id = {m.market_id: m for m in markets}
 
-    tagged, tag_cost = run_scout_tagging_pass(
-        markets,
-        openai_client=openai_client,
-        approved_examples=examples,
-        retired_sets=retired_sets,
-        job_budget=job_budget,
-    )
+    if pretagged is not None:
+        tagged = list(pretagged[0])
+        tag_cost = round(float(pretagged[1]), 6)
+    else:
+        tagged, tag_cost = run_scout_tagging_pass(
+            markets,
+            openai_client=openai_client,
+            approved_examples=examples,
+            retired_sets=retired_sets,
+            job_budget=job_budget,
+        )
     proposals, set_model_used, set_cost = run_scout_set_writing_pass(
         tagged,
         catalog_by_id,
