@@ -3346,10 +3346,22 @@ async def add_roundup_feed_items(
     if not producers:
         return items
     produced: list[dict[str, Any]] = []
+    machinery_producers = [
+        p
+        for p in producers
+        if _is_machinery_producer_slug(p.slug) and (p.enabled is None or p.enabled())
+    ]
+    machinery_incomplete = False
     for idx, producer in enumerate(producers):
         elapsed = time.perf_counter() - started
         remaining = stage_budget - elapsed
         if remaining <= 0:
+            if any(
+                _is_machinery_producer_slug(rem.slug)
+                and (rem.enabled is None or rem.enabled())
+                for rem in producers[idx:]
+            ):
+                machinery_incomplete = True
             logger.warning(
                 "Discover round-up stage budget exhausted after %d/%d producers "
                 "(budget_seconds=%.3f, stage_budget=%.3f, produced=%d)",
@@ -3361,6 +3373,9 @@ async def add_roundup_feed_items(
             )
             break
         per_timeout = min(remaining, ROUNDUP_PRODUCER_TIMEOUT_SECONDS)
+        is_mach_prod = _is_machinery_producer_slug(producer.slug) and (
+            producer.enabled is None or producer.enabled()
+        )
         try:
             eval_coro = (
                 evaluate_roundup_producer(producer, db, now=now, allow_stale=True)
@@ -3372,11 +3387,13 @@ async def add_roundup_feed_items(
                 timeout=per_timeout,
             )
         except asyncio.TimeoutError:
+            if is_mach_prod:
+                machinery_incomplete = True
             if hasattr(db, "rollback") and callable(db.rollback):
                 try:
                     await db.rollback()
                 except Exception:  # noqa: BLE001
-                    pass
+                    logger.debug("roundup_containers: rollback failed after timeout")
             if (
                 per_timeout >= ROUNDUP_PRODUCER_TIMEOUT_SECONDS
                 and not _is_machinery_producer_slug(producer.slug)
@@ -3389,11 +3406,13 @@ async def add_roundup_feed_items(
             )
             continue
         except Exception:
+            if is_mach_prod:
+                machinery_incomplete = True
             if hasattr(db, "rollback") and callable(db.rollback):
                 try:
                     await db.rollback()
                 except Exception:  # noqa: BLE001
-                    pass
+                    logger.debug("roundup_containers: rollback failed after error")
             logger.warning(
                 "Discover round-up read failed for %s; keeping ordinary cards",
                 producer.slug,
@@ -3402,6 +3421,20 @@ async def add_roundup_feed_items(
             continue
         if feed_item is not None and container_payload is not None:
             produced.append(feed_item)
+
+    # Goal Step 7 (#12288): five or none during cold-restart warm-up.
+    # If any registered machinery grouping timed out, errored, or was skipped
+    # by stage budget exhaustion, drop all partial machinery cards from this
+    # response (standing round-ups stay untouched) rather than serving 2/5 or 3/5.
+    if machinery_incomplete and machinery_producers:
+        ready_mach = sum(1 for it in produced if _is_machinery_roundup_item(it))
+        if ready_mach > 0:
+            produced = [it for it in produced if not _is_machinery_roundup_item(it)]
+            logger.warning(
+                "Discover machinery groupings incomplete (%d/%d ready); serving none until all ready",
+                ready_mach,
+                len(machinery_producers),
+            )
 
     if not produced:
         return items

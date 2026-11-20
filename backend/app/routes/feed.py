@@ -5306,6 +5306,7 @@ async def get_feed(
             ):
                 from app.utils.roundup_containers import (
                     ROUNDUP_READ_BUDGET_SECONDS,
+                    _is_machinery_roundup_item,
                     add_roundup_feed_items,
                     roundup_feed_enabled,
                 )
@@ -5335,7 +5336,9 @@ async def get_feed(
                         "items": _spliced_items,
                         "total": len(_spliced_items),
                     }
-                    if not _include_machinery_preview:
+                    if not _include_machinery_preview and any(
+                        _is_machinery_roundup_item(it) for it in _spliced_items
+                    ):
                         try:
                             _mach_pb_key = feed_machinery_page_base_key(_page_base_key)
                             _pb_origin = feed_page_base_built_at(_base_body)
@@ -7435,6 +7438,15 @@ async def get_feed(
                         _include_machinery_feed
                         and not _include_machinery_preview
                         and _base_feed_items_without_machinery is not None
+                    ):
+                        from app.utils.roundup_containers import (
+                            _is_machinery_roundup_item as _is_mach_card,
+                        )
+                    else:
+                        _is_mach_card = None
+                    if (
+                        _is_mach_card is not None
+                        and any(_is_mach_card(it) for it in feed_items)
                     ):
                         _mach_base_body = dict(_page_base_body)
                         _mach_base_body["items"] = feed_items
