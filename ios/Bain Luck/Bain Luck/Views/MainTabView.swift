@@ -217,11 +217,6 @@ private struct MainTabLandingAndAlertsModifier295A: ViewModifier {
                     Task {
                         if let prefs = try? await APIClient.shared.fetchPreferences() {
                             followManager.mergeServerFavorites(prefs.favorites)
-                            navCoordinator.applyLaunchLanding295A(
-                                followedCount: followManager.subjects.count,
-                                pinnedCount: pinManager.savedPins.count,
-                                hasPersistedServerFollows: followManager.hasPersistedServerFollows
-                            )
                         }
                     }
                 }

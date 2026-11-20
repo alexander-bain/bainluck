@@ -343,6 +343,55 @@ final class FollowAndMyStuff295ATests: XCTestCase {
         )
     }
 
+    func testFailedRefreshSetsLoadFailedPreservesExistingSectionsAndExplicitIdsWinInMatches() async throws {
+        // 1. Explicit teamId wins over identical team name; missing sportKey never name-matches
+        let nflGiants = FollowedSubject295A.team(slug: "new-york-giants", teamId: 19, name: "Giants", sportKey: "americanfootball_nfl")
+        let mlbGiants = FollowedSubject295A.team(slug: "san-francisco-giants", teamId: 26, name: "Giants", sportKey: "baseball_mlb")
+        let idlessUnknownSport = FollowedSubject295A.team(slug: "999", teamId: nil, name: "Giants", sportKey: nil)
+        XCTAssertFalse(nflGiants.matches(mlbGiants), "Different teamIds must never match even when names match")
+        XCTAssertFalse(nflGiants.matches(idlessUnknownSport), "Subject with a teamId must not name-match an id-less subject")
+
+        // 2. Failed network fetch surfaces `loadFailed == true` and preserves previously loaded sections
+        struct SimulatedOfflineError: Error {}
+        let defaults = makeIsolatedDefaults()
+        let vm = MyStuffLandingViewModel295A(
+            defaults: defaults,
+            subjectHydrator: { _ in
+                [MyStuffLandingViewModel295A.HydratedSubjectPack(events: [], markets: [], didFail: true)]
+            },
+            discoverFetcher: {
+                throw SimulatedOfflineError()
+            }
+        )
+
+        let celtics = FollowedSubject295A.team(slug: "boston-celtics", teamId: 2, name: "Boston Celtics", sportKey: "basketball_nba")
+        await vm.refresh(
+            followedSubjects: [celtics],
+            savedPins: [],
+            pinContent: [:],
+            signedInItems: [],
+            signedInTeamFutures: nil
+        )
+        XCTAssertTrue(vm.loadFailed, "Cold offline failure must set loadFailed rather than masquerading as empty data")
+
+        // Seed existing sections, then fail a subsequent refresh -> sections remain intact!
+        let sample = try makeSampleLandingSnapshot()
+        vm.seedSectionsForTesting(sample)
+        XCTAssertFalse(vm.liveEvents.isEmpty)
+        XCTAssertFalse(vm.loadFailed)
+
+        await vm.refresh(
+            followedSubjects: [celtics],
+            savedPins: [],
+            pinContent: [:],
+            signedInItems: [],
+            signedInTeamFutures: nil
+        )
+        XCTAssertTrue(vm.loadFailed, "Failed refresh must set loadFailed")
+        XCTAssertEqual(vm.liveEvents.count, sample.liveEvents.count, "Failed refresh must preserve existing live section")
+        XCTAssertEqual(vm.nextEvents.count, sample.nextEvents.count, "Failed refresh must preserve existing next section")
+    }
+
     // MARK: - 4. OCR + Zero-Truncation Verification (+ Optional 390 pt Render Export)
 
     func testRenderedMyStuffLandingAndTeamFollowHaveZeroEllipsis390() throws {
