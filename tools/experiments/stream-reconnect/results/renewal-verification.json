@@ -1,0 +1,62 @@
+{
+  "parent_commit": "58de889adbf63d5c659f19802602faaf8a07b964",
+  "wire_sha256": "bcb35334f4ebdaf23298ee90db638f573ac3faca14b34c61f65e985b2005e25f",
+  "node": "24.19.0",
+  "source_manifest": "source-sha256-before-security.json",
+  "source_manifest_recorded_after_run": true,
+  "source_manifest_limitation": "Post-run hash inventory of unchanged tested files; not a contemporaneous per-run copied source snapshot.",
+  "ttl_or_source_policy_changed": false,
+  "full_integration_harness_included": false,
+  "production_validation": false,
+  "browser_rerun_for_packaged_source": false,
+  "full_combined_runner_pass_claimed": false,
+  "integrated_recorded_evidence": "Separate reviewed normal run: 75 actual outputs, 75 unique DOM and PG identities, 77 assignments, 358/362 confirmed renewal requests, four failed requests/15 caller errors, maximum observed Node-input-to-DOM about 1.411 s. Later forced-reconnect browser run incomplete; no final browser receipt.",
+  "model_checks": {
+    "passed": 36,
+    "failed": 0
+  },
+  "transport_checks": {
+    "passed": 4,
+    "failed": 0
+  },
+  "independent_pure_checks": {
+    "passed": 16,
+    "failed": 0
+  },
+  "real_wire_cases": {
+    "passed": 18,
+    "failed": 2,
+    "overall_exit_code": 1,
+    "failures": [
+      "held-old-before-fence",
+      "held-old-after-fence"
+    ],
+    "receipt": "../tests/fixtures/held-fence-failures.json",
+    "full_receipt_sha256": "5f19850ce2a8e718db49275b1383ed4e323e225a703b01d5deba24a2db0141ac",
+    "qualification": "Not a compatibility pass. Deadlines expired before decisive held values arrived; renewal-specific settlement was not reached, but changed wrapper code did execute. No zero-scheduling-impact claim."
+  },
+  "wire_shutdown": {
+    "kind": "clean-shutdown",
+    "reason": "wire-suite-complete",
+    "startedAt": "2026-10-20T16:09:16.584Z",
+    "endedAt": "2026-10-20T16:10:05.323Z",
+    "remainingSockets": 0,
+    "remainingLabs": 0,
+    "cleanupTimedOut": false,
+    "labs": [],
+    "scope": "Bounded localhost synthetic server; no production, Internet partition, or physical-pixel claim"
+  },
+  "focused_contract_location": "../stream-backpressure/tests/renewal-{events,independent}.test.mjs",
+  "shared_runtime_equivalence": [
+    "src/wire-client.mjs",
+    "src/client.mjs",
+    "src/protocol.mjs",
+    "src/broker.mjs"
+  ],
+  "deterministic_failure_replay": {
+    "passed": 2,
+    "failed": 0,
+    "scope": "Replay of exact captured synthetic acceptance times; not a replacement compatibility run."
+  },
+  "subsequent_security_hardening": "This is historical verification, not a rerun of the descriptor-bound journal/security follow-on. See ../../SECURITY-UPDATE.md."
+}

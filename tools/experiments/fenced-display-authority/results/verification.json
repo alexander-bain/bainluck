@@ -1,0 +1,147 @@
+{
+  "packaged_run": "20261020T144606Z-351",
+  "node": "24.19.0",
+  "postgres": "17.11",
+  "pg": "8.23.1",
+  "synthetic_only": true,
+  "owned_cluster_stopped": true,
+  "browser_rerun": false,
+  "production_suites_run_locally": false,
+  "clean_online_dependency_install_verified": false,
+  "host_idle_or_exclusive": false,
+  "candidate_checks": 36,
+  "independent_checks": 24,
+  "sigkill_scenarios": 22,
+  "timing_samples": 5400,
+  "real_owned_pg_outage_passed": true,
+  "original_memory_model_max_ms": 2063,
+  "packaged_journal_before_model_max_ms": 2027.898149999999,
+  "timing_summary": [
+    {
+      "mode": "legacy-direct",
+      "delayMs": 0,
+      "offerReturn": {
+        "n": 900,
+        "p50": 0.014712000000145053,
+        "p95": 0.2594420000000355,
+        "p99": 1.2345219999997425,
+        "max": 4.235341000000005
+      },
+      "clientModelObservation": {
+        "n": 900,
+        "p50": 0.013560999999981505,
+        "p95": 0.21293100000002596,
+        "p99": 1.2300750000003973,
+        "max": 4.218645000000038
+      }
+    },
+    {
+      "mode": "legacy-direct",
+      "delayMs": 100,
+      "offerReturn": {
+        "n": 900,
+        "p50": 0.014130999999906635,
+        "p95": 0.3643099999999322,
+        "p99": 2.376244999999926,
+        "max": 147.988245
+      },
+      "clientModelObservation": {
+        "n": 900,
+        "p50": 0.01291899999978341,
+        "p95": 0.3528120000000854,
+        "p99": 2.1274089999999433,
+        "max": 144.60121400000003
+      }
+    },
+    {
+      "mode": "broker-memory",
+      "delayMs": 0,
+      "offerReturn": {
+        "n": 900,
+        "p50": 0.08006999999997788,
+        "p95": 0.5195039999998698,
+        "p99": 2.931040999999823,
+        "max": 10.372315000000526
+      },
+      "clientModelObservation": {
+        "n": 900,
+        "p50": 0.11299099999996542,
+        "p95": 0.6472469999998793,
+        "p99": 3.0229890000000523,
+        "max": 10.430331999999908
+      }
+    },
+    {
+      "mode": "broker-memory",
+      "delayMs": 100,
+      "offerReturn": {
+        "n": 900,
+        "p50": 0.10129299999971408,
+        "p95": 1.0571950000000356,
+        "p99": 4.088549,
+        "max": 58.21208899999965
+      },
+      "clientModelObservation": {
+        "n": 900,
+        "p50": 0.14676100000002634,
+        "p95": 1.6858229999998002,
+        "p99": 4.794310999999652,
+        "max": 127.39547599999969
+      }
+    },
+    {
+      "mode": "broker-journal-before",
+      "delayMs": 0,
+      "offerReturn": {
+        "n": 900,
+        "p50": 1.6846010000008391,
+        "p95": 7.025779999999941,
+        "p99": 12.191793999999845,
+        "max": 56.874843000000055
+      },
+      "clientModelObservation": {
+        "n": 900,
+        "p50": 1.8248929999999746,
+        "p95": 7.129789000000073,
+        "p99": 12.811648999999306,
+        "max": 57.3512310000001
+      }
+    },
+    {
+      "mode": "broker-journal-before",
+      "delayMs": 100,
+      "offerReturn": {
+        "n": 900,
+        "p50": 2.3418719999999666,
+        "p95": 14.267432999999983,
+        "p99": 75.12313499999982,
+        "max": 2027.4075399999983
+      },
+      "clientModelObservation": {
+        "n": 900,
+        "p50": 2.5047539999999344,
+        "p95": 14.379077000000507,
+        "p99": 84.29389900000024,
+        "max": 2027.898149999999
+      }
+    }
+  ],
+  "timing_window_utc": {
+    "approximate_start": "2026-10-20T14:46:19.843Z",
+    "approximate_end": "2026-10-20T14:46:35.252Z",
+    "source": "benchmark.log filesystem birth and final-write timestamps",
+    "shared_host_overlap": "Other authorized work overlapped this window. This is not an idle-host benchmark or causal overhead estimate."
+  },
+  "source_manifest": "source-sha256-before-security.json",
+  "source_manifest_recorded_after_run": true,
+  "runnable_source_changed_after_run": false,
+  "source_receipt_limitation": "This manifest was generated after the run from unchanged staged runnable files. It is not a contemporaneously copied per-run source snapshot.",
+  "executed_core_source_sha256": {
+    "src/broker.mjs": "26f3063d6a2813ee72752675a3568ec86c30b27055fffd383009fe67f8eda3ba",
+    "src/client.mjs": "4e859c884ef58c2158c04a706ebcbce4be8a52327cace86df3af68eda847e783",
+    "src/protocol.mjs": "42233065b7e45cede6509f933d26744b2d89e2da8ec7e4099dd9a38efe259e20",
+    "src/journal.mjs": "c925af20817f85153cb1ed0fd4b209ad388ae78a1c6927bcef252407e930ab38",
+    "src/benchmark.mjs": "1636d047f99b8d9a0d13277bd637c33bb7eb3979cd298202689711d14a579fc9"
+  },
+  "subsequent_security_hardening": "This is historical verification, not a rerun of the descriptor-bound journal/security follow-on. See ../../SECURITY-UPDATE.md."
+}

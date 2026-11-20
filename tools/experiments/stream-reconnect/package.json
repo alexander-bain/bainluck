@@ -1,0 +1,1 @@
+{"name":"isolated-real-sse-reconnect-lab","private":true,"type":"module","version":"0.1.0","engines":{"node":">=22"},"scripts":{"test":"bash run.sh test","serve":"bash run.sh serve"}}

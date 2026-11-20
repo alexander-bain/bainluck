@@ -1,0 +1,9 @@
+{
+  "src/outage.mjs": "44505cb660c5ca5632fef2cbce69350eb59247f2894bf28ab97a77eab40ab8fc",
+  "src/benchmark.mjs": "67348a2f00818c1b6ecba9e18bf135ece259c8549c62010b608084cd0d432df0",
+  "src/candidate.mjs": "db491dc15474326e8a82cc22e22b61d68c7d27cc70f04e82ea7bdad75531ca73",
+  "src/crash-child.mjs": "e57202326ec4b50ad860a9a82b79ff31444b1e5c9edc5bf388658f67e4bb304a",
+  "src/test.mjs": "5833b9b100d6cdd7fedcdbcc946991595f5a4bf63cc32b2c34665bb0000f478f",
+  "baseline/client-core.mjs": "1bcad480d08216513dc2f5670e80ab13ace0110523925aad72331ff66b2a1119",
+  "review/test_recovery_adversarial.mjs": "71d020569f3c2f17fcf382360bd61b615cdb2916ead24c872a769e56048160d6"
+}
