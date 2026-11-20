@@ -141,6 +141,17 @@ private struct GameActivityReading {
     }
     func scoreText(_ side: Side) -> String { score(side).map(String.init) ?? "–" }
 
+    /// #13000 (Decision 250-A) — omit the Score column completely when a live match
+    /// has no score feed carrying it (`scoreSourceUnavailable == true` and no scores).
+    var showsScore: Bool {
+        guard phase != .before else { return false }
+        if phase == .during && snapshot.scoreSourceUnavailable == true
+            && snapshot.homeScore == nil && snapshot.awayScore == nil {
+            return false
+        }
+        return true
+    }
+
     /// Both sides' chances, or neither: one number in a two-row column would read
     /// as a duel the game is not (a priced draw leaves the away side empty).
     var pair: (away: Int, home: Int)? {
@@ -280,7 +291,7 @@ private struct GameActivityReading {
 
     func rowSpoken(_ side: Side) -> String {
         var parts = [name(side)]
-        if phase != .before { parts.append(score(side).map { "\($0)" } ?? "score unavailable") }
+        if showsScore { parts.append(score(side).map { "\($0)" } ?? "score unavailable") }
         if let now = nowText(side) { parts.append("\(now) chance to win") }
         if let pregame = pregameText(side) { parts.append("\(pregame) chance before the game") }
         if let verdict = verdict(side) { parts.append(verdict) }
@@ -295,7 +306,9 @@ private struct GameActivityReading {
         guard matches else { return "Game reading unavailable" }
         var parts = [statusSpoken, "\(rowSpoken(.away)). \(rowSpoken(.home))"]
         if let single = singleChanceLabel { parts.append(single) }
-        parts.append(Self.ageSpoken("Score", age: snapshot.scoreAge(at: Date())))
+        if showsScore {
+            parts.append(Self.ageSpoken("Score", age: snapshot.scoreAge(at: Date())))
+        }
         if pair != nil || singleChanceLabel != nil {
             parts.append(Self.ageSpoken("Probability", age: snapshot.probabilityAge(at: Date())))
         }
@@ -407,7 +420,7 @@ private struct GameActivityLockScreenView: View {
             }
             if reading.matches {
                 VStack(spacing: 3) {
-                    if reading.phase != .before || reading.pair != nil {
+                    if reading.showsScore || reading.pair != nil {
                         GameActivityColumnLabels(reading: reading, metrics: m)
                     }
                     GameActivityTeamRow(reading: reading, side: .away, metrics: m)
@@ -458,7 +471,7 @@ private struct GameActivityTeamRow: View {
                     .fixedSize(horizontal: true, vertical: false)
                     .frame(minWidth: metrics.pregameWidth, alignment: .trailing)
             }
-            if reading.phase != .before {
+            if reading.showsScore {
                 let isFinalWinner = reading.phase == .after && reading.losingSide != side
                 Text(reading.scoreText(side))
                     .font(HeadlineStyleTable199.secondNumbers(
@@ -521,10 +534,12 @@ private struct GameActivityColumnLabels: View {
                     .fixedSize(horizontal: true, vertical: false)
                     .frame(minWidth: metrics.nowWidth, alignment: .trailing)
             case .during:
-                Text("Score")
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(minWidth: metrics.scoreWidth, alignment: .trailing)
+                if reading.showsScore {
+                    Text("Score")
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(minWidth: metrics.scoreWidth, alignment: .trailing)
+                }
                 if reading.pair != nil {
                     Text("Now")
                         .lineLimit(1)
@@ -665,11 +680,14 @@ private struct GameActivityExpandedSide: View {
                 }
             }
             // #199 / #12999 — live score is secondary (smaller than Now below it); final winner leads.
-            Text(reading.phase == .before ? " " : reading.scoreText(side))
-                .font(HeadlineStyleTable199.secondNumbers(.island, prominent: isFinalWinner))
-                .foregroundStyle(reading.phase == .after && reading.losingSide == side ? .secondary : .primary)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
+            // #13000 (250-A) — omit score line completely when no score feed carries this live match.
+            if reading.showsScore {
+                Text(reading.scoreText(side))
+                    .font(HeadlineStyleTable199.secondNumbers(.island, prominent: isFinalWinner))
+                    .foregroundStyle(reading.phase == .after && reading.losingSide == side ? .secondary : .primary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
         }
         .frame(maxWidth: .infinity, alignment: side == .away ? .leading : .trailing)
         .padding(.horizontal, 4)
@@ -798,9 +816,9 @@ private struct GameActivityCompactTrailing: View {
             } else if reading.snapshot.isTerminal {
                 Text("\(reading.scoreText(.home)) \(reading.badge(.home))")
                     .foregroundStyle(reading.lowerScoredSide == .home ? .secondary : .primary)
-            } else if reading.phase == .before, let now = reading.nowText(reading.trail) {
-                // #199 — before kickoff there is no score: the other side's chance,
-                // in its colour, so the island carries the page's pair.
+            } else if !reading.showsScore, let now = reading.nowText(reading.trail) {
+                // #199 / #13000 (250-A) — before kickoff or when no score feed carries a live
+                // match, show the other side's chance in its colour so the island carries the pair.
                 HStack(spacing: 4) {
                     Text(now)
                         .foregroundStyle(reading.color(reading.trail, onDark: true))

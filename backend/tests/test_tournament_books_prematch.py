@@ -77,6 +77,29 @@ def test_it_is_labelled_as_a_sportsbook_opening_and_not_as_a_market_one():
 
     assert players[SHELTON]["prematch_source"] == "books"
     assert players[HURKACZ]["prematch_source"] == "books"
+    for player, quote in ((SHELTON, 0.6792), (HURKACZ, 0.3208)):
+        assert players[player]["prematch_source_mark"] == {
+            "state": "single",
+            "sources": [{
+                "key": "betting",
+                "name": "Sportsbooks",
+                "probability": quote,
+                "observed_at": None,
+                "reason": "observation_unknown",
+            }],
+        }
+
+
+def test_a_reconstructed_away_prior_carries_an_incomplete_evidence_mark():
+    opening = dict(EVENT_15299858, opening_away_probability=None)
+    players = _by_key(apply_books_prematch(
+        _results(), by_espn={"182730": 15299858}, openings={15299858: opening},
+    ))
+
+    assert round(players[HURKACZ]["prematch_probability"], 4) == 0.3208
+    assert players[HURKACZ]["prematch_source_mark"] == {
+        "state": "none", "sources": [], "reason": "source_evidence_incomplete",
+    }
 
 
 def test_a_kalshi_prior_is_never_displaced_by_the_books_one():

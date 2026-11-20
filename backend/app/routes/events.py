@@ -145,7 +145,12 @@ from app.utils.event_completion import (
     started_without_result,
 )
 from app.utils.current_odds_probability import current_odds_probability
-from app.utils.draw_priced_winner import printable_away, sport_prices_a_draw
+from app.utils.draw_priced_winner import (
+    printable_away,
+    rendered_three_way_percents,
+    resolve_three_way_probabilities,
+    sport_prices_a_draw,
+)
 from app.utils.market_identity import ticker_game_date
 from app.utils.game_market_class import (
     is_game_winner_market,
@@ -192,7 +197,15 @@ from app.utils import (
     should_highlight,
 )
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
-from app.utils.odds_math import refuse_incoherent_projections
+from app.utils.odds_math import (
+    refuse_incoherent_projections,
+    sportsbook_handicap_is_pinned,
+)
+from app.utils.recent_line_readings import (
+    PINNED_HANDICAP as _PINNED_HANDICAP_REASON,
+    _loaded_sport_key as _loaded_event_sport_key,
+    withhold_pinned_handicap_projection as _withhold_pinned_handicap_projection,
+)
 from app.utils.projected_final_points import bookmaker_history_provenance
 from app.utils import period_markers as pm_source
 from app.utils.winprob_evidence import (
@@ -20715,6 +20728,7 @@ async def get_event(
     # it is today — the failure direction is the status quo, never a withheld
     # number on a sport nobody declared.
     event_sport_key = loaded_sport_key(event)
+    _detail_three_way: Optional[tuple[float, float, float]] = None
 
     if latest_snapshots:
         # latest_snapshots already contains only the most recent per bookmaker
@@ -20817,16 +20831,40 @@ async def get_event(
         # declaration is shared with both client halves that already withhold
         # this figure (ux/1301 web, native #5271) and the reasoning lives with
         # it, in `app/utils/draw_priced_winner.py`.
-        hero_away_prob = printable_away(hero_away_prob, hero_home_prob, event_sport_key)
+        # #13131: on a three-way (draw-priced) sport, when the sportsbooks give
+        # both home and away summing strictly below 1, serve all three legs
+        # (home, draw, away) adding to 100%. When a scheduled three-way game has
+        # only one leg (no 3-way books), serve nothing for chance (Step 3);
+        # live/suspended one-leg rows preserve the existing #6238/#12279/#12581
+        # away-withheld contract.
+        _hero_draw_prob: Optional[float] = None
+        _draw_pct: Optional[int] = None
+        if sport_prices_a_draw(event_sport_key):
+            _detail_three_way = resolve_three_way_probabilities(
+                hero_home_prob,
+                books_home=aggregated["home_probability"],
+                books_away=aggregated["away_probability"],
+                sport_key=event_sport_key,
+            )
+            if _detail_three_way is not None:
+                hero_home_prob, hero_away_prob, _hero_draw_prob = _detail_three_way
+                _home_pct, _draw_pct, _away_pct = rendered_three_way_percents(
+                    hero_home_prob, _hero_draw_prob, hero_away_prob
+                )
+            elif response.get("status") == "scheduled":
+                hero_home_prob = None
+                hero_away_prob = None
+                _away_pct, _home_pct = None, None
+            else:
+                hero_away_prob = printable_away(hero_away_prob, hero_home_prob, event_sport_key)
+                _away_pct, _home_pct = rendered_duel_percents(hero_away_prob, hero_home_prob)
+        else:
+            hero_away_prob = printable_away(hero_away_prob, hero_home_prob, event_sport_key)
+            _away_pct, _home_pct = rendered_duel_percents(hero_away_prob, hero_home_prob)
 
-        # #2085: the pair above is an exact complement BY CONSTRUCTION, so
-        # rounding each side independently prints 101 whenever `home * 100` lands
-        # on a half-percent (34 of 414 measured events, 8.2%). Serve the two whole
-        # percents the page must PRINT alongside the probabilities themselves —
-        # the probabilities do not move, and the underdog absorbs the derived
-        # point so the favourite's own number survives (`rendered_duel_percents`).
-        _away_pct, _home_pct = rendered_duel_percents(hero_away_prob, hero_home_prob)
-
+        aggregated = _withhold_pinned_handicap_projection(
+            aggregated, event_sport_key
+        )
         response["current_odds"] = {
             "captured_at": latest_time.isoformat(),
             "home_probability": hero_home_prob,
@@ -20840,21 +20878,10 @@ async def get_event(
             "bookmaker_count": aggregated["bookmaker_count"],
             # #12595: the pair's own stamp, count and reason (scheduled, in scope).
             **_recent_projection_keys(aggregated),
-            # #1854 (UX-P077, Alex ruling 2026-08-14): `probability_range` USED to
-            # sit here — the sportsbook min/max, served beside a hero that is the
-            # multi-source BLEND since #1829. Measured on production 2026-08-13:
-            # event 15191315 served home_probability 0.2813 with a range of
-            # 0.6117-0.626, and 15196976 served 0.999 with 0.426-0.9901. The hero
-            # was outside its own stated envelope in both, always in the same
-            # direction, because the range never moved off the sportsbook when the
-            # hero did. It was typed on web and iOS and rendered by neither, so it
-            # was a trap for the next person to render it, not a live lie.
-            # REMOVED rather than re-derived: an envelope around the hero would be
-            # a source-divergence display, and the standing ruling is that the
-            # blend IS the product - divergence is a data bug to fix, not a
-            # feature to show, outside a short closed list of comparison surfaces
-            # this payload is not on.
         }
+        if sport_prices_a_draw(event_sport_key):
+            response["current_odds"]["draw_probability"] = _hero_draw_prob
+            response["current_odds"]["draw_rendered_percent"] = _draw_pct
         # #2920 — the in-play pair, marked, by the cards' admission and from
         # this event's OWN rows of the read above (never the folded twins the
         # price table uses), so the page and its card cannot print two finals.
@@ -20914,28 +20941,40 @@ async def get_event(
                     "projected_away_score": float(s.projected_away_score)
                         if s.projected_away_score else None,
                 })
-        # #8231: a book's projected score that crowns its own moneyline underdog is refused.
-        response["bookmaker_odds"] = refuse_incoherent_projections(bookmaker_odds_list)
+        # #8231 / #13112: a book's projected score that crowns its own moneyline
+        # underdog or comes from a pinned handicap (puck/run line) is refused.
+        response["bookmaker_odds"] = refuse_incoherent_projections(
+            bookmaker_odds_list, sport_key=event_sport_key
+        )
 
     # Fallback: if no odds snapshots, use aggregate from alternative sources
     if "current_odds" not in response and agg_prob is not None:
-        # #2085 site 2 — same derive, same 101, same fix as the snapshot path above.
-        # #6238 site 2 for the same reason: this arm serves a page with NO book
-        # rows at all, so the fabricated away is the only away number on it and
-        # nothing else in the payload contradicts it. Withheld here too, or the
-        # defect simply moves to the events the books have gone quiet on.
-        _fb_away_prob = printable_away(
-            round(1.0 - agg_prob, 6), agg_prob, event_sport_key
-        )
-        _fb_away_pct, _fb_home_pct = rendered_duel_percents(_fb_away_prob, agg_prob)
-        response["current_odds"] = {
-            "home_probability": agg_prob,
-            "away_probability": _fb_away_prob,
-            "away_rendered_percent": _fb_away_pct,
-            "home_rendered_percent": _fb_home_pct,
-            "source": "aggregate",
-            "bookmaker_count": 0,
-        }
+        if sport_prices_a_draw(event_sport_key) and response.get("status") == "scheduled":
+            # #13131 step 3: scheduled draw-priced game with no 3-way books
+            # has only one leg — serve nothing for chance, not an orphan number.
+            response["current_odds"] = {
+                "home_probability": None,
+                "away_probability": None,
+                "draw_probability": None,
+                "away_rendered_percent": None,
+                "home_rendered_percent": None,
+                "draw_rendered_percent": None,
+                "source": "aggregate",
+                "bookmaker_count": 0,
+            }
+        else:
+            _fb_away_prob = printable_away(
+                round(1.0 - agg_prob, 6), agg_prob, event_sport_key
+            )
+            _fb_away_pct, _fb_home_pct = rendered_duel_percents(_fb_away_prob, agg_prob)
+            response["current_odds"] = {
+                "home_probability": agg_prob,
+                "away_probability": _fb_away_prob,
+                "away_rendered_percent": _fb_away_pct,
+                "home_rendered_percent": _fb_home_pct,
+                "source": "aggregate",
+                "bookmaker_count": 0,
+            }
 
     # Include opening odds in event detail response for frontend fallback
     #
@@ -20963,34 +21002,28 @@ async def get_event(
         # fallback. Two pairs in one response can answer this differently
         # because they are two different objects, which is why the predicate
         # asks about the pair in hand and not about the sport alone.
-        response["opening_odds"] = {
+        _open_away_out = printable_away(
+            float(event.opening_away_probability) if event.opening_away_probability else round(1.0 - _opening_home_prob, 4),
+            _opening_home_prob,
+            event_sport_key,
+        )
+        _opening_obj = {
             "home_probability": _opening_home_prob,
-            "away_probability": printable_away(
-                float(event.opening_away_probability) if event.opening_away_probability else round(1.0 - _opening_home_prob, 4),
-                _opening_home_prob,
-                event_sport_key,
-            ),
-            # #5414: the DETAIL formatter served three of the five opening
-            # columns and omitted exactly the two a "PRE-GAME" tile needs, while
-            # the LIST formatter for the same object (`_format_event_summary`,
-            # this file) has always carried them. So the event page had no
-            # pre-game spread or total on its payload at all, and the margin
-            # card's PRE-GAME tile fell back to "whichever quoted rung priced
-            # closest to a coin flip" — right by coincidence on Cubs-Pirates
-            # (opened -1.5, tile read 1.5+), wrong on Zverev-Khachanov (opened
-            # -5.5, tile read 2.5+). Serving them is the backend half of that
-            # fix; the frontend half is ux's.
-            #
-            # `is not None`, NOT the truthiness test the list formatter uses:
-            # a PICK'EM game opens at a spread of exactly 0.0, which is falsy,
-            # and `float(x) if x else None` reports it as "no line". Measured
-            # 2026-09-11 over 90 days: 557 of 7,717 events with an opening
-            # spread (7.2%) opened at 0. The list formatter's version of this
-            # line is corrected to match, below.
+            "away_probability": _open_away_out,
             "spread": float(event.opening_home_spread) if event.opening_home_spread is not None else None,
             "over_under": float(event.opening_over_under) if event.opening_over_under is not None else None,
             "favorite": event.opening_favorite,
         }
+        if sport_prices_a_draw(event_sport_key):
+            _open_3 = resolve_three_way_probabilities(
+                _opening_home_prob,
+                books_home=_opening_home_prob,
+                books_away=_open_away_out,
+                sport_key=event_sport_key,
+            )
+            if _open_3 is not None:
+                _opening_obj["draw_probability"] = _open_3[2]
+        response["opening_odds"] = _opening_obj
 
     # #8315/#12633 — the finished and live headlines share the kickoff prior.
     # Use the served status so a premature stored live claim cannot ask early.
@@ -21065,6 +21098,7 @@ async def get_event(
     # same entry as the hero and its clock, so a client can order two folds
     # without trusting any quote clock. `None` = no claim.
     response["blend_fold_revision"] = blend_fold_revision
+    _effective_hero = _hero
     if _hero is not None:
         response["hero_probability"] = _hero.home_probability
         if _hero.source == "blend":
@@ -21075,29 +21109,40 @@ async def get_event(
             )
             if observed_at is not None:
                 response["hero_probability_observed_at"] = observed_at.isoformat()
-        # ── #6238: THE SAME WITHHOLD, AND IT STOPS AT `settled` ──────────────
-        #
-        # Two of `resolve_hero`'s three arms build the away side as `1 - home`
-        # (the blend arm literally, the opening arm when the stored away is
-        # null), so the top-level pair carries the hero's own copy of the
-        # fabrication — 0.2063 for NEC on 15298553, the same number
-        # `current_odds` served.
-        #
-        # 🔴 THE SETTLED ARM IS EXEMPT, AND NOT BECAUSE OF ITS ARITHMETIC. A
-        # settled hero is 1.0/0.0 — or 0.5/0.5 with `result="draw"`
-        # (`settled_hero`) — and every one of those pairs sums to exactly 1.0,
-        # so the predicate alone would read a RESULT as a fabricated forecast
-        # and delete the losing side of a finished soccer match. "Settled means
-        # settled" outranks this issue: a result is not a price and was never
-        # derived from the home number. The gate is therefore the hero's own
-        # `source` vocabulary, which exists to carry exactly this kind of
-        # distinction, and not a numeric test that cannot tell 0.0 "they lost"
-        # from 0.0 "we made it up".
         _hero_away = _hero.away_probability
         if _hero.source != "settled":
-            _hero_away = printable_away(
-                _hero_away, _hero.home_probability, event_sport_key
-            )
+            if sport_prices_a_draw(event_sport_key):
+                _h3 = _detail_three_way
+                if (
+                    _h3 is None
+                    and _hero.source == "opening"
+                    and event.opening_home_probability is not None
+                    and event.opening_away_probability is not None
+                ):
+                    _h3 = resolve_three_way_probabilities(
+                        _hero.home_probability,
+                        books_home=event.opening_home_probability,
+                        books_away=event.opening_away_probability,
+                        sport_key=event_sport_key,
+                    )
+                if _h3 is not None:
+                    response["hero_probability"] = _h3[0]
+                    _hero_away = _h3[1]
+                    response["hero_probability_draw"] = _h3[2]
+                elif response.get("status") == "scheduled":
+                    # #13131 step 3: scheduled one-leg three-way game -> no orphan chance.
+                    response["hero_probability"] = None
+                    _hero_away = None
+                    response["hero_probability_draw"] = None
+                    _effective_hero = None
+                else:
+                    _hero_away = printable_away(
+                        _hero_away, _hero.home_probability, event_sport_key
+                    )
+            else:
+                _hero_away = printable_away(
+                    _hero_away, _hero.home_probability, event_sport_key
+                )
         response["hero_probability_away"] = _hero_away
         response["hero_probability_source"] = _hero.source
         if _hero.settled_result is not None:
@@ -21111,7 +21156,7 @@ async def get_event(
     from app.utils.source_mark import headline_source_marks
 
     response["source_mark"], response["away_source_mark"] = headline_source_marks(
-        blend_view, _hero, _hero_source_inputs,
+        blend_view, _effective_hero, _hero_source_inputs,
         method=_hero_source_method[0] if _hero_source_method else None,
         away_available=response.get("hero_probability_away") is not None,
     )
@@ -34036,12 +34081,16 @@ async def get_event_odds_history(
     # #6771 route half — one vote per sportsbook before anything reads the bucket,
     # so the reversal detector and the average see the same set and neither counts
     # a book twice. See `one_row_per_bookmaker_in_bucket`.
+    _hist_sport_key = _loaded_event_sport_key(event)
     history = []
     for timestamp in sorted(snapshots_by_time.keys()):
         snaps = one_row_per_bookmaker_in_bucket(snapshots_by_time[timestamp])
         reversed_bks = detect_reversed_bookmakers(snaps)
         agg_snaps = [s for s in snaps if s.bookmaker not in reversed_bks] if reversed_bks else snaps
-        aggregated = aggregate_bookmaker_odds(agg_snaps if agg_snaps else snaps)
+        aggregated = _withhold_pinned_handicap_projection(
+            aggregate_bookmaker_odds(agg_snaps if agg_snaps else snaps),
+            _hist_sport_key,
+        )
 
         history.append({
             "timestamp": timestamp.isoformat(),
@@ -34082,8 +34131,8 @@ async def get_event_odds_history(
                 "projected_home_score": float(snap.projected_home_score) if snap.projected_home_score is not None else None,
                 "projected_away_score": float(snap.projected_away_score) if snap.projected_away_score is not None else None,
             }
-            # #8231: the per-book line gets the consensus's refusal.
-            refuse_incoherent_projections([point_data])
+            # #8231 / #13112: the per-book line gets the consensus's refusal.
+            refuse_incoherent_projections([point_data], sport_key=_hist_sport_key)
             # #10461: additive `kind` ("recorded" / "synthetic") + `observed_at`
             # (the snapshot's original capture, never a venue trade clock), so a
             # client can tell a cutoff re-stamp from a new reading. Appended
@@ -35054,7 +35103,9 @@ async def get_event_odds_history(
                     else _live_snaps
                 )
                 _live_counted = _agg_live_snaps if _agg_live_snaps else _live_snaps
-                _live_agg = aggregate_bookmaker_odds(_live_counted)
+                _live_agg = _withhold_pinned_handicap_projection(
+                    aggregate_bookmaker_odds(_live_counted), _hist_sport_key
+                )
                 _live_sb_home = _live_agg.get("projected_home_score")
                 _live_sb_away = _live_agg.get("projected_away_score")
                 _live_sb_ou = _live_agg.get("over_under")
@@ -37856,6 +37907,7 @@ def _format_event_with_odds(event: Event) -> dict:
             event.odds_snapshots,
             key=lambda x: x.captured_at
         )
+        _pinned_hcap = sportsbook_handicap_is_pinned(_loaded_event_sport_key(event))
         response["current_odds"] = {
             "bookmaker": latest_odds.bookmaker,
             "captured_at": latest_odds.captured_at.isoformat(),
@@ -37869,10 +37921,23 @@ def _format_event_with_odds(event: Event) -> dict:
                 if latest_odds.home_spread else None,
             "over_under": float(latest_odds.over_under)
                 if latest_odds.over_under else None,
-            "projected_home_score": float(latest_odds.projected_home_score)
-                if latest_odds.projected_home_score else None,
-            "projected_away_score": float(latest_odds.projected_away_score)
-                if latest_odds.projected_away_score else None,
+            "projected_home_score": None if _pinned_hcap else (
+                float(latest_odds.projected_home_score)
+                if latest_odds.projected_home_score else None
+            ),
+            "projected_away_score": None if _pinned_hcap else (
+                float(latest_odds.projected_away_score)
+                if latest_odds.projected_away_score else None
+            ),
+            **(
+                {
+                    "projection_captured_at": None,
+                    "projection_bookmaker_count": 0,
+                    "projection_unavailable": _PINNED_HANDICAP_REASON,
+                }
+                if _pinned_hcap
+                else {}
+            ),
         }
 
     return response
@@ -37883,6 +37948,7 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
     response = _format_event(event)
 
     if latest_odds:
+        _pinned_hcap = sportsbook_handicap_is_pinned(_loaded_event_sport_key(event))
         response["current_odds"] = {
             "bookmaker": latest_odds.bookmaker,
             "captured_at": latest_odds.captured_at.isoformat(),
@@ -37896,10 +37962,23 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
                 if latest_odds.home_spread else None,
             "over_under": float(latest_odds.over_under)
                 if latest_odds.over_under else None,
-            "projected_home_score": float(latest_odds.projected_home_score)
-                if latest_odds.projected_home_score else None,
-            "projected_away_score": float(latest_odds.projected_away_score)
-                if latest_odds.projected_away_score else None,
+            "projected_home_score": None if _pinned_hcap else (
+                float(latest_odds.projected_home_score)
+                if latest_odds.projected_home_score else None
+            ),
+            "projected_away_score": None if _pinned_hcap else (
+                float(latest_odds.projected_away_score)
+                if latest_odds.projected_away_score else None
+            ),
+            **(
+                {
+                    "projection_captured_at": None,
+                    "projection_bookmaker_count": 0,
+                    "projection_unavailable": _PINNED_HANDICAP_REASON,
+                }
+                if _pinned_hcap
+                else {}
+            ),
         }
 
     return response
@@ -37979,6 +38058,7 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         compute_aggregate_probability_tiered as _agg_prob_tiered,
     )
     _blend, _blend_tier = _agg_prob_tiered(event)
+    _list_three_way: Optional[tuple[float, float, float]] = None
 
     if odds_data and odds_data.get("aggregated"):
         aggregated = odds_data["aggregated"]
@@ -38019,25 +38099,47 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         _served_home = current_odds_probability(
             _blend, _blend_tier, aggregated["home_probability"], event.status
         )
-        # Derived exactly as `_hero_away` is, from whichever home number is
-        # being served — one claim per ship. Substituting the books' own away
-        # consensus here would be a second, separate change: on a draw-priced
-        # sport it is not the complement, so `printable_away` would start
-        # printing an away figure the surface withholds today.
-        _served_away = (
-            round(1.0 - _served_home, 6)
-            if _served_home is not None
-            else None
-        )
+        _served_draw: Optional[float] = None
+        _list_home_pct: Optional[int] = None
+        _list_draw_pct: Optional[int] = None
+        _list_away_pct: Optional[int] = None
+        if sport_prices_a_draw(_event_sport_key):
+            _list_three_way = resolve_three_way_probabilities(
+                _served_home,
+                books_home=aggregated["home_probability"],
+                books_away=aggregated["away_probability"],
+                sport_key=_event_sport_key,
+            )
+            if _list_three_way is not None:
+                _served_home, _served_away, _served_draw = _list_three_way
+                _list_home_pct, _list_draw_pct, _list_away_pct = rendered_three_way_percents(
+                    _served_home, _served_draw, _served_away
+                )
+            elif response.get("status") == "scheduled":
+                _served_home = None
+                _served_away = None
+            else:
+                _served_away = (
+                    round(1.0 - _served_home, 6)
+                    if _served_home is not None
+                    else None
+                )
+                _served_away = printable_away(_served_away, _served_home, _event_sport_key)
+        else:
+            _served_away = (
+                round(1.0 - _served_home, 6)
+                if _served_home is not None
+                else None
+            )
+            _served_away = printable_away(_served_away, _served_home, _event_sport_key)
 
-        response["current_odds"] = {
+        aggregated = _withhold_pinned_handicap_projection(
+            aggregated, _event_sport_key
+        )
+        _list_current_odds = {
             "captured_at": captured_at.isoformat() if captured_at else None,
             "home_probability": _served_home,
-            # #6960 site 1. The home leg is NOT the defect and is left exactly
-            # as it is; only the invented slot goes.
-            "away_probability": printable_away(
-                _served_away, _served_home, _event_sport_key
-            ),
+            "away_probability": _served_away,
             "spread": aggregated["home_spread"],
             "over_under": aggregated["over_under"],
             "projected_home_score": aggregated["projected_home_score"],
@@ -38045,9 +38147,13 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             "bookmaker_count": aggregated["bookmaker_count"],
             # #12595: the pair's own stamp, count and reason (scheduled, in scope).
             **_recent_projection_keys(aggregated),
-            # #1854 (UX-P077): the second hero site. Same removal, same reason as
-            # `get_event` above - this object's `home_probability` is `_blend`.
         }
+        if sport_prices_a_draw(_event_sport_key):
+            _list_current_odds["draw_probability"] = _served_draw
+            _list_current_odds["home_rendered_percent"] = _list_home_pct
+            _list_current_odds["away_rendered_percent"] = _list_away_pct
+            _list_current_odds["draw_rendered_percent"] = _list_draw_pct
+        response["current_odds"] = _list_current_odds
 
         # Include ALL bookmakers in the table (not just filtered ones)
         # so users see every book we ever had odds from
@@ -38090,8 +38196,11 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
                         "projected_away_score": float(s.projected_away_score)
                             if s.projected_away_score else None,
                     })
-            # #8231: a book's projected score that crowns its own moneyline underdog is refused.
-            response["bookmaker_odds"] = refuse_incoherent_projections(bookmaker_odds_list)
+            # #8231 / #13112: a book's projected score that crowns its own moneyline
+            # underdog or comes from a pinned handicap (puck/run line) is refused.
+            response["bookmaker_odds"] = refuse_incoherent_projections(
+                bookmaker_odds_list, sport_key=_event_sport_key
+            )
 
     # #240 Item 1: emit a single, unambiguous hero probability (the blend) so
     # clients bind to ONE number per question instead of a divergent field.
@@ -38116,22 +38225,43 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     _hero = resolve_hero(
         _hero_view, source_inputs=_hero_inputs, source_method=_hero_method,
     )
+    _list_effective_hero = _hero
     if _hero is not None:
         response["hero_probability"] = _hero.home_probability
-        # #6960 site 2 — the field native, My Stuff and share cards bind to.
-        #
-        # THE SETTLED ARM IS EXEMPT, and not because of its arithmetic. A
-        # settled hero is 1.0/0.0, or 0.5/0.5 on a draw, and every one of those
-        # pairs sums to exactly 1.0 — so the predicate alone would read a RESULT
-        # as a fabricated forecast and delete the losing side of a finished
-        # soccer match. "Settled means settled" outranks this issue: a result is
-        # not a price and was never derived from the home number. The gate is
-        # the hero's own `source` vocabulary, exactly as in `get_event`.
         _hero_away_out = _hero.away_probability
         if _hero.source != "settled":
-            _hero_away_out = printable_away(
-                _hero_away_out, _hero.home_probability, _event_sport_key
-            )
+            if sport_prices_a_draw(_event_sport_key):
+                _lh3 = _list_three_way
+                if (
+                    _lh3 is None
+                    and _hero.source == "opening"
+                    and _open_home is not None
+                    and _open_away is not None
+                ):
+                    _lh3 = resolve_three_way_probabilities(
+                        _hero.home_probability,
+                        books_home=_open_home,
+                        books_away=_open_away,
+                        sport_key=_event_sport_key,
+                    )
+                if _lh3 is not None:
+                    response["hero_probability"] = _lh3[0]
+                    _hero_away_out = _lh3[1]
+                    response["hero_probability_draw"] = _lh3[2]
+                elif response.get("status") == "scheduled":
+                    # #13131 step 3: scheduled one-leg three-way game -> no orphan chance.
+                    response["hero_probability"] = None
+                    _hero_away_out = None
+                    response["hero_probability_draw"] = None
+                    _list_effective_hero = None
+                else:
+                    _hero_away_out = printable_away(
+                        _hero_away_out, _hero.home_probability, _event_sport_key
+                    )
+            else:
+                _hero_away_out = printable_away(
+                    _hero_away_out, _hero.home_probability, _event_sport_key
+                )
         response["hero_probability_away"] = _hero_away_out
         response["hero_probability_source"] = _hero.source
         if _hero.settled_result is not None:
@@ -38142,7 +38272,7 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     from app.utils.source_mark import headline_source_marks
 
     response["source_mark"], response["away_source_mark"] = headline_source_marks(
-        _hero_view, _hero, _hero_inputs,
+        _hero_view, _list_effective_hero, _hero_inputs,
         method=_hero_method[0] if _hero_method else None,
         away_available=response.get("hero_probability_away") is not None,
     )
@@ -38218,27 +38348,28 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     if _open_home and opening_consensus_has_frozen(
         event.commence_time, event.status, datetime.now(timezone.utc)
     ):
-        response["opening_odds"] = {
+        _list_open_away = printable_away(
+            float(_open_away) if _open_away else None,
+            float(_open_home),
+            _event_sport_key,
+        )
+        _list_opening_obj = {
             "home_probability": float(_open_home),
-            # #6960 site 3. This arm never derived `1 - home`, so what it drops
-            # is only a STORED pair that is itself an exact complement. A
-            # de-vigged three-way opening (0.3107 / 0.4216, sum 0.7323) is a
-            # real away price and survives — deleting one we can source is the
-            # mirror-image defect of printing one we cannot.
-            "away_probability": printable_away(
-                float(_open_away) if _open_away else None,
-                float(_open_home),
-                _event_sport_key,
-            ),
-            # #5414: `is not None`, not truthiness. A pick'em game opens at a
-            # spread of exactly 0.0 — falsy — so this reported "no opening line"
-            # for 557 of the 7,717 events with an opening spread (7.2%, measured
-            # 2026-09-11 over 90 days). The card reading this cannot tell a
-            # pick'em from an unpriced game.
+            "away_probability": _list_open_away,
             "spread": float(event.opening_home_spread) if event.opening_home_spread is not None else None,
             "over_under": float(event.opening_over_under) if event.opening_over_under is not None else None,
             "favorite": event.opening_favorite,
         }
+        if sport_prices_a_draw(_event_sport_key):
+            _list_open_3 = resolve_three_way_probabilities(
+                float(_open_home),
+                books_home=float(_open_home),
+                books_away=_list_open_away,
+                sport_key=_event_sport_key,
+            )
+            if _list_open_3 is not None:
+                _list_opening_obj["draw_probability"] = _list_open_3[2]
+        response["opening_odds"] = _list_opening_obj
 
     return response
 

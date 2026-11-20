@@ -270,7 +270,7 @@ private struct TournamentHubMatchCard: View {
 
 // MARK: - Result card
 
-private struct TournamentHubResultCard: View {
+struct TournamentHubResultCard: View {
     let row: TournamentHubPresentation.ResultRow
 
     var body: some View {
@@ -320,11 +320,15 @@ private struct TournamentHubResultCard: View {
                 resultSide(
                     name: row.winnerName,
                     prematchText: row.winnerPrematchText,
+                    prematchNumber: row.winnerPrematchNumber,
+                    sourceMark: row.winnerPrematchSourceMark,
                     isWinner: true
                 )
                 resultSide(
                     name: row.loserName,
                     prematchText: row.loserPrematchText,
+                    prematchNumber: row.loserPrematchNumber,
+                    sourceMark: row.loserPrematchSourceMark,
                     isWinner: false
                 )
             }
@@ -351,32 +355,53 @@ private struct TournamentHubResultCard: View {
     /// literal "def." was safe visually (the tick and the weight carry it, as
     /// they do on the web) but it was the only thing a screen reader had, so the
     /// row states its own outcome instead of spelling out a checkmark.
-    private func resultSide(name: String, prematchText: String?, isWinner: Bool) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.footnote)
-                .foregroundStyle(DS.emerald)
-                .opacity(isWinner ? 1 : 0)
-            Text(name)
-                .font(.subheadline.weight(isWinner ? .bold : .regular))
-                .foregroundStyle(isWinner ? DS.textPrimary : DS.textSecondary)
-                .lineLimit(1)
-            Spacer(minLength: 6)
-            if let prematchText {
-                Text(prematchText)
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(DS.textMuted)
+    private func resultSide(
+        name: String,
+        prematchText: String?,
+        prematchNumber: Double?,
+        sourceMark: SourceMark?,
+        isWinner: Bool
+    ) -> some View {
+        HStack(spacing: 4) {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(DS.emerald)
+                    .opacity(isWinner ? 1 : 0)
+                Text(name)
+                    .font(.subheadline.weight(isWinner ? .bold : .regular))
+                    .foregroundStyle(isWinner ? DS.textPrimary : DS.textSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                if let prematchText {
+                    Text(prematchText)
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(DS.textMuted)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                [
+                    isWinner ? "Winner, \(name)" : "\(name)",
+                    prematchText.map { "pre-match \($0)" }
+                ]
+                .compactMap { $0 }
+                .joined(separator: ", ")
+            )
+
+            if prematchText != nil,
+               let markButton = SourceMarkButton(
+                   sourceMark,
+                   number: prematchNumber,
+                   subject: name,
+                   subtitle: row.headline.isEmpty ? nil : row.headline,
+                   isPregame: true,
+                   numberSize: 15,
+                   compactRow: true
+               ) {
+                markButton
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            [
-                isWinner ? "Winner, \(name)" : "\(name)",
-                prematchText.map { "pre-match \($0)" }
-            ]
-            .compactMap { $0 }
-            .joined(separator: ", ")
-        )
     }
 }
 

@@ -5975,6 +5975,26 @@ def grouping_sentinel(self, post=True, file_issues=True):
     )
 
 
+@celery_app.task(
+    bind=True,
+    soft_time_limit=840,
+    time_limit=900,
+    name="app.tasks.discover_fun_scout",
+)
+def discover_fun_scout(self, force=False):
+    """Nightly Fun Scout (#13102, Ruling 276: B): tag fun single markets on the
+    small model and propose novel cross-family sets on Claude under Decide 61-A
+    caps ($5/run, $30/month). Runs on ``bainluck``'s ``background`` queue where
+    ``ANTHROPIC_API_KEY_SCOUT`` is configured; no-ops while
+    ``DISCOVER_FUN_SCOUT_ENABLED`` is off unless ``force=True``."""
+    from app.tasks.discover_fun_scout import _run_discover_fun_scout
+
+    return _tracked_run(
+        "discover_fun_scout",
+        _run_discover_fun_scout(force=force),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900,
                  name="app.tasks.anchor_schedule_sentinel")
 def anchor_schedule_sentinel(self, file_issues=True):
@@ -9463,6 +9483,15 @@ celery_app.conf.beat_schedule = {
         # one of #233's morning alarms that need a guaranteed heavy slot.
         "task": "app.tasks.grouping_sentinel",
         "schedule": crontab(minute=0, hour=16, day_of_week=4),  # Weekly Thursday 16:00 UTC
+        "options": {"queue": "background"},
+    },
+    "discover-fun-scout-nightly": {
+        # #13102 (Ruling 276: B): nightly fun singles + set-writing scout on
+        # bainluck's background queue (where ANTHROPIC_API_KEY_SCOUT lives).
+        # Runs 09:00 UTC (1:00 AM PT), gated behind DISCOVER_FUN_SCOUT_ENABLED
+        # (default OFF until Wed Nov 25).
+        "task": "app.tasks.discover_fun_scout",
+        "schedule": crontab(minute=0, hour=9),  # Daily 09:00 UTC (1:00 AM PT)
         "options": {"queue": "background"},
     },
     "grid-register-sentinel-daily": {

@@ -40,7 +40,7 @@ test("actual hub keeps ordinary members and saves reading context before week na
   global.fetch = jest.fn(async (url) => ({ ok: true, status: 200, json: async () => String(url).endsWith("week-navigation") ? answer(4, 6) : body })) as unknown as typeof fetch;
   await act(async () => root.render(<CollectionHub slug={slug} />));
   expect(element.querySelectorAll("[data-collection-member]")).toHaveLength(5);
-  expect(element.textContent).toContain("Back to Discover");
+  expect(element.textContent).toContain("Explore Discover");
   const first = document.getElementById(`collection-member-${hub.members[0].key}`)!;
   jest.spyOn(first, "getBoundingClientRect").mockReturnValue({ bottom: 100, top: 12 } as DOMRect);
   const next = element.querySelector('nav a[href="/collections/nfl-2026-week-6"]')!;
@@ -49,8 +49,7 @@ test("actual hub keeps ordinary members and saves reading context before week na
   expect(JSON.parse(sessionStorage.getItem(`collection-reading:${slug}`)!)).toMatchObject({ slug, memberKey: hub.members[0].key, offset: 12 });
   // Optional failure on the same mounted reader must leave the good cards.
   global.fetch = jest.fn(async (url) => String(url).endsWith("week-navigation") ? { ok: false } : { ok: true, status: 200, json: async () => body }) as unknown as typeof fetch;
-  const refresh = Array.from(element.querySelectorAll("button")).find((button) => button.textContent === "Refresh")!;
-  await act(async () => refresh.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await act(async () => { window.dispatchEvent(new Event("focus")); });
   expect(element.querySelectorAll("[data-collection-member]")).toHaveLength(5);
   expect(element.textContent).toContain("Week navigation isn't available right now.");
   expect(element.querySelector("nav")).toBeNull();
