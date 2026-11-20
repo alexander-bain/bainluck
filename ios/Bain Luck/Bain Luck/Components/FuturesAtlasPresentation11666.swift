@@ -1068,7 +1068,7 @@ struct FuturesAtlasPageView11666: View {
         }
         .sheet(isPresented: $showFullFieldSheet) {
             FuturesAtlasFullFieldSheetView11666(
-                marketTitle: market.name,
+                marketTitle: presentation.header.marketTitle,
                 subtitleBadge: presentation.body.subtitleBadge,
                 rows: presentation.body.allRows,
                 selectedOutcomeId: presentation.header.selectedOutcomeId,
@@ -2075,12 +2075,23 @@ struct FuturesAtlasFullFieldSheetView11666: View {
     var body: some View {
         NavigationStack {
             List {
-                if let badge = subtitleBadge {
-                    Section {
-                        Text(badge)
-                            .font(.caption)
-                            .foregroundStyle(DS.textSecondary)
+                Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(marketTitle)
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let badge = subtitleBadge {
+                            Text(badge)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
                 }
                 Section("All outcomes · \(filteredRows.count)") {
                     ForEach(filteredRows) { row in
@@ -2091,28 +2102,30 @@ struct FuturesAtlasFullFieldSheetView11666: View {
                                 if showsRank {
                                     Text("#\(row.rank)")
                                         .font(.caption.weight(.semibold).monospacedDigit())
-                                        .foregroundStyle(DS.textMuted)
-                                        .frame(width: 28, alignment: .leading)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                        .frame(minWidth: 28, alignment: .leading)
                                 }
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(row.name)
                                         .font(.subheadline.weight(row.id == selectedOutcomeId ? .semibold : .regular))
-                                        .foregroundStyle(DS.textPrimary)
+                                        .foregroundStyle(.primary)
                                     if let opening = row.openingText {
                                         Text(opening)
                                             .font(.caption2.monospacedDigit())
-                                            .foregroundStyle(DS.textMuted)
+                                            .foregroundStyle(.secondary)
                                     }
                                 }
                                 Spacer()
                                 VStack(alignment: .trailing, spacing: 2) {
                                     Text(row.displayValue.primaryLabel)
                                         .font(.subheadline.weight(.bold).monospacedDigit())
-                                        .foregroundStyle(row.displayValue.isWon ? DS.emerald : DS.textPrimary)
+                                        .foregroundStyle(row.displayValue.isWon ? DS.emerald : Color.primary)
                                     if let asOfText = row.displayValue.asOfText {
                                         Text(asOfText)
                                             .font(.caption2.monospacedDigit())
-                                            .foregroundStyle(DS.textMuted)
+                                            .foregroundStyle(.secondary)
                                     }
                                 }
                             }
@@ -2122,7 +2135,7 @@ struct FuturesAtlasFullFieldSheetView11666: View {
                 }
             }
             .searchable(text: $searchText, prompt: "Search outcomes")
-            .navigationTitle(marketTitle)
+            .navigationTitle("")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
