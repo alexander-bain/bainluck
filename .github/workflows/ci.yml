@@ -4088,7 +4088,8 @@ jobs:
         # pytest's exit code is read for its VALUE (gotcha #54): 1 is a result,
         # anything else is a story about the harness.
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-        run: bash ../.github/scripts/run-pg-junit-gate.sh --label "#4079 acceptance" --junit /tmp/mvacc-junit.xml --log /tmp/mvacc.txt --expected 27 -- tests/integration/test_numeric_movement_fields_4079_amended_real_postgres.py -p no:cacheprovider -rA --tb=short
+        run: |
+          bash ../.github/scripts/run-pg-junit-gate.sh --label "#4079 acceptance" --junit /tmp/mvacc-junit.xml --log /tmp/mvacc.txt --expected 27 -- tests/integration/test_numeric_movement_fields_4079_amended_real_postgres.py -p no:cacheprovider -rA --tb=short
       - name: "#7284 chart-route real-session guard — provision the disposable database"
         id: db_238_7284_chart_route_real_session_guard_prov
         # Same bargain as the #4079 step above and for the same reason: the guard
@@ -4127,7 +4128,8 @@ jobs:
         # read for its VALUE (gotcha #54) — 1 is a result, anything else is a
         # story about the harness.
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-        run: bash ../.github/scripts/run-pg-junit-gate.sh --label "#7284 guard" --pass-label "#7284 chart-route real-session guard" --junit /tmp/tlroute-junit.xml --log /tmp/tlroute.txt --expected 9 -- tests/integration/test_the_timeline_route_loads_on_a_real_session_7284.py -p no:cacheprovider -rA --tb=short
+        run: |
+          bash ../.github/scripts/run-pg-junit-gate.sh --label "#7284 guard" --pass-label "#7284 chart-route real-session guard" --junit /tmp/tlroute-junit.xml --log /tmp/tlroute.txt --expected 9 -- tests/integration/test_the_timeline_route_loads_on_a_real_session_7284.py -p no:cacheprovider -rA --tb=short
       - name: "#7351 generic-market history acceptance — provision the disposable Postgres + Redis"
         id: db_240_7351_generic_market_history_acceptance_p
         # Same bargain as the #4079 and #7284 steps: the suite DROPS AND RECREATES
@@ -4161,7 +4163,8 @@ jobs:
           REDIS_URL: redis://localhost:56379/15
           KALSHI_API_KEY: ""
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-        run: bash ../.github/scripts/run-pg-junit-gate.sh --label "#7351 acceptance" --pass-label "#7351 generic-market history acceptance" --junit /tmp/gmh-junit.xml --log /tmp/gmh.txt --expected 53 -- tests/integration/test_generic_market_history_7351_real_pg_redis.py -p no:cacheprovider -rA --tb=short
+        run: |
+          bash ../.github/scripts/run-pg-junit-gate.sh --label "#7351 acceptance" --pass-label "#7351 generic-market history acceptance" --junit /tmp/gmh-junit.xml --log /tmp/gmh.txt --expected 53 -- tests/integration/test_generic_market_history_7351_real_pg_redis.py -p no:cacheprovider -rA --tb=short
       - name: "#8000 supported venue history survives display selection"
         id: db_242_8000_supported_venue_history_survives_di
         # PILLAR: TRUTH / FORMATTING. SHIP: the ten displayed lines keep their
@@ -4191,7 +4194,8 @@ jobs:
           REDIS_URL: redis://localhost:56379/15
           KALSHI_API_KEY: ""
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-        run: bash ../.github/scripts/run-pg-junit-gate.sh --label "#8000 acceptance" --pass-label "#8000 display-selection acceptance" --junit /tmp/shds8000-junit.xml --log /tmp/shds8000.txt --expected 10 -- tests/integration/test_supported_history_survives_display_selection_8000_real_pg_redis.py -p no:cacheprovider -rA --tb=short
+        run: |
+          bash ../.github/scripts/run-pg-junit-gate.sh --label "#8000 acceptance" --pass-label "#8000 display-selection acceptance" --junit /tmp/shds8000-junit.xml --log /tmp/shds8000.txt --expected 10 -- tests/integration/test_supported_history_survives_display_selection_8000_real_pg_redis.py -p no:cacheprovider -rA --tb=short
       - name: "#7547 the phone's selected range keeps the venue's genuine turns"
         id: db_243_7547_the_phone_s_selected_range_keeps_th
         # PILLAR: TRUTH / FORMATTING. SHIP: the phone's selected history range
@@ -4210,7 +4214,8 @@ jobs:
           REDIS_URL: redis://localhost:56379/15
           KALSHI_API_KEY: ""
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-        run: bash ../.github/scripts/run-pg-junit-gate.sh --label "#7547 phone acceptance" --pass-label "#7547 phone history-detail acceptance" --junit /tmp/phone7547-junit.xml --log /tmp/phone7547.txt --expected 13 -- tests/integration/test_phone_history_detail_7547_real_pg_redis.py -p no:cacheprovider -rA --tb=short
+        run: |
+          bash ../.github/scripts/run-pg-junit-gate.sh --label "#7547 phone acceptance" --pass-label "#7547 phone history-detail acceptance" --junit /tmp/phone7547-junit.xml --log /tmp/phone7547.txt --expected 13 -- tests/integration/test_phone_history_detail_7547_real_pg_redis.py -p no:cacheprovider -rA --tb=short
       - name: "#7548 trade-print refusal — provision the disposable Postgres + Redis"
         id: db_244_7548_trade_print_refusal_provision_the_d
         # Same bargain as the #7351 step above: the suite DROPS AND RECREATES THE
@@ -4248,7 +4253,8 @@ jobs:
         env:
           REDIS_URL: redis://localhost:56379/14
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-        run: bash ../.github/scripts/run-pg-junit-gate.sh --label "#7548 gate" --pass-label "#7548 trade-print refusal" --junit /tmp/nascar7548-junit.xml --log /tmp/nascar7548.txt --expected 15 -- tests/integration/test_polymarket_trade_print_7548_real_pg.py -p no:cacheprovider -rA --tb=short
+        run: |
+          bash ../.github/scripts/run-pg-junit-gate.sh --label "#7548 gate" --pass-label "#7548 trade-print refusal" --junit /tmp/nascar7548-junit.xml --log /tmp/nascar7548.txt --expected 15 -- tests/integration/test_polymarket_trade_print_7548_real_pg.py -p no:cacheprovider -rA --tb=short
       - name: "#7147 a settled ESPN final survives a real scores pass (real Postgres)"
         id: db_246_7147_a_settled_espn_final_survives_a_rea
         # PILLAR: TRUTH. SHIP: a finished game keeps the score it finished with.
@@ -4291,7 +4297,8 @@ jobs:
         # count means something was deselected. The exit code is read for its
         # VALUE (gotcha #54) — 1 is a result, anything else is a harness story.
         if: ${{ !cancelled() && (matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true') }}
-        run: bash ../.github/scripts/run-pg-junit-gate.sh --label "#7147 PG guard" --pass-label "#7147 settled-final write gate" --junit /tmp/repoison7147-junit.xml --log /tmp/repoison7147.txt --expected 14 --require-grep "^#7147 PG PASS" --require-grep-msg "no #7147 PG PASS line — the pass summary cannot be quoted" -- tests/integration/test_completed_espn_final_is_not_repoisoned_7147_pg.py -p no:cacheprovider -rA -s --tb=short
+        run: |
+          bash ../.github/scripts/run-pg-junit-gate.sh --label "#7147 PG guard" --pass-label "#7147 settled-final write gate" --junit /tmp/repoison7147-junit.xml --log /tmp/repoison7147.txt --expected 14 --require-grep "^#7147 PG PASS" --require-grep-msg "no #7147 PG PASS line — the pass summary cannot be quoted" -- tests/integration/test_completed_espn_final_is_not_repoisoned_7147_pg.py -p no:cacheprovider -rA -s --tb=short
       - name: "#7640 stale-rank repair apply/restore round trip (real Postgres)"
         id: db_247_7640_stale_rank_repair_apply_restore_rou
         # `scripts/repair_7640_stale_futures_ranks.py` rewrites
@@ -4650,7 +4657,8 @@ jobs:
         # Both files create and drop only their own schema. The job's explicit
         # SEARCH_TEST_DATABASE_URL arms both the route and seed/undo cases.
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-        run: bash ../.github/scripts/run-pg-junit-gate.sh --label "#10319" --junit /tmp/seriea10319-junit.xml --log /tmp/seriea10319.txt --min-tests 32 --require-file test_serie_a_femminile_identity_10319_pg --require-file test_serie_a_femminile_seed_10319_pg -- tests/integration/test_serie_a_femminile_identity_10319_pg.py tests/integration/test_serie_a_femminile_seed_10319_pg.py -v -rs --tb=short
+        run: |
+          bash ../.github/scripts/run-pg-junit-gate.sh --label "#10319" --junit /tmp/seriea10319-junit.xml --log /tmp/seriea10319.txt --min-tests 32 --require-file test_serie_a_femminile_identity_10319_pg --require-file test_serie_a_femminile_seed_10319_pg -- tests/integration/test_serie_a_femminile_identity_10319_pg.py tests/integration/test_serie_a_femminile_seed_10319_pg.py -v -rs --tb=short
       - name: "#8430 a Polymarket child reuses the row its sibling holds (real Postgres)"
         id: db_276_8430_a_polymarket_child_reuses_the_row_i
         # #8430. Each child of one Polymarket game event used to mint its own
