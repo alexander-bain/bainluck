@@ -501,7 +501,8 @@ struct SavedLockCircle12466: View {
     let model: SavedLookModel12466
 
     var body: some View {
-        if let share = model.headlineShare, let headline = model.reading.headline, let figure = headline.figure {
+        if let headline = SavedLockScreenFit10875.ringHeadline(model.reading),
+           let share = model.headlineShare, let figure = headline.figure {
             Gauge(value: min(max(share, 0), 1)) {
                 Text(model.isGame ? headline.shortLabel : "")
             } currentValueLabel: {
