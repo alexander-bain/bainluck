@@ -3,7 +3,7 @@
 Measured twice: #11305's ci.yml at 512,135 bytes and #10090 attempt190's at
 513,260 each got a "workflow file issue" run with zero jobs and NO CI run on
 the pull request at all, while 511,542 ran (and #13212 hit 514,322 on
-2026-11-20 with the same silent 0-job failure). Nothing reddens; the CI row is
+Nov 20, 2026 with the same silent 0-job failure). Nothing reddens; the CI row is
 simply absent, which notice 28 reads as a STOP only if someone looks.
 
 This guard fails above 508,000 bytes (4,000 bytes of headroom before GitHub's
