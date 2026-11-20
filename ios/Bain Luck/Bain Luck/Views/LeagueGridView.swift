@@ -31,6 +31,15 @@ struct LeagueGridView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                FollowButton295A(
+                    subject: .league(slug: slug, sportKey: slug, name: viewModel.displayName),
+                    pageContextId: "league-grid:\(slug)",
+                    compact: true
+                )
+            }
+        }
         .task {
             await viewModel.load()
         }
@@ -79,6 +88,12 @@ struct LeagueGridView: View {
 
     private func gridContent(_ grid: ChampionshipGridResponse?) -> some View {
         List {
+            Section {
+                GameAlertsInlinePageSlot295A(contextId: "league-grid:\(slug)")
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+            }
+
             // #13001 + #12932: Games first (live, upcoming, recent), then futures.
             leagueGamesSections
 

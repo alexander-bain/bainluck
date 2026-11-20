@@ -9,8 +9,10 @@ struct MyStuffView: View {
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @EnvironmentObject private var pinManager: PinManager
+    @Environment(\.followManager295A) private var followManager
     @StateObject private var vm: MyStuffViewModel
     @StateObject private var pinContent: SavedPinContentViewModel
+    @StateObject private var landingVM: MyStuffLandingViewModel295A
     @State private var predictionStats: PredictionStats?
     @State private var path: NavigationPath
     @State private var showOnboarding = false
@@ -38,8 +40,19 @@ struct MyStuffView: View {
         self.macPlace = macPlace
         _vm = StateObject(wrappedValue: macPlace?.models(orMake: { MacReadingState10878.MyStuffModels() }).feed ?? MyStuffViewModel())
         _pinContent = StateObject(wrappedValue: macPlace?.models(orMake: { MacReadingState10878.MyStuffModels() }).pins ?? SavedPinContentViewModel())
+        _landingVM = StateObject(wrappedValue: MyStuffLandingViewModel295A())
         _path = State(initialValue: macPlace?.path ?? NavigationPath())
     }
+
+    #if DEBUG
+    init(preloadedLandingForTest: MyStuffLandingViewModel295A.PreloadedSnapshot) {
+        self.macPlace = nil
+        _vm = StateObject(wrappedValue: MyStuffViewModel())
+        _pinContent = StateObject(wrappedValue: SavedPinContentViewModel())
+        _landingVM = StateObject(wrappedValue: MyStuffLandingViewModel295A(preloaded: preloadedLandingForTest))
+        _path = State(initialValue: NavigationPath())
+    }
+    #endif
 
     /// Whether the gear that leads to Preferences — and so to Delete Account —
     /// is offered. Being signed in is the whole test.
@@ -66,41 +79,89 @@ struct MyStuffView: View {
     }
     #endif
 
+    private var usesLandingView295A: Bool {
+        !followManager.subjects.isEmpty
+            || hasPins
+            || (authManager.isAuthenticated && authManager.user?.onboardingCompleted == true)
+    }
+
+    private var landingRefreshKey295A: String {
+        let subj = followManager.subjects.map(\.id).joined(separator: ",")
+        let pins = pinManager.savedPins.map(\.id).joined(separator: ",")
+        return "\(subj)|\(pins)|\(pinContent.content.count)|\(vm.items.count)|\(vm.teamFutures?.items.count ?? 0)"
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
-                Button {
-                    showPinManagement = true
-                } label: {
-                    HStack {
-                        Label("Manage pins", systemImage: "bookmark.fill")
-                            .font(.subheadline.weight(.medium))
-                        Spacer()
-                        Text("\(pinManager.savedPins.count)")
-                            .font(.subheadline.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.tertiary)
+                if !usesLandingView295A {
+                    Button {
+                        showPinManagement = true
+                    } label: {
+                        HStack {
+                            Label("Manage pins", systemImage: "bookmark.fill")
+                                .font(.subheadline.weight(.medium))
+                            Spacer()
+                            Text("\(pinManager.savedPins.count)")
+                                .font(.subheadline.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(Color.cardBackgroundDark)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                        )
                     }
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color.cardBackgroundDark)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-                    )
+                    .padding(.top, 8)
+                    .padding(.bottom, 4)
+                    .frame(maxWidth: authManager.isAuthenticated ? Self.signedInManagePinsMaxWidth : Self.signInMaxWidth)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("myStuffManagePins")
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 4)
-                .frame(maxWidth: authManager.isAuthenticated ? Self.signedInManagePinsMaxWidth : Self.signInMaxWidth)
-                .frame(maxWidth: .infinity)
-                .accessibilityIdentifier("myStuffManagePins")
                 SiriProbabilityTip12315()
                 Group {
-                    if authManager.isLoading {
+                    if usesLandingView295A {
+                        MyStuffLandingView295A(
+                            landingVM: landingVM,
+                            path: $path,
+                            onOpenDiscover: { navCoordinator.selectedTab = .discover },
+                            onManagePins: { showPinManagement = true },
+                            onRefresh: {
+                                async let pins: Void = pinContent.load(pinManager.savedPins, refresh: true)
+                                if authManager.isAuthenticated {
+                                    await vm.startLoad()
+                                }
+                                await pins
+                                await landingVM.refresh(
+                                    followedSubjects: followManager.subjects,
+                                    savedPins: pinManager.savedPins,
+                                    pinContent: pinContent.content,
+                                    signedInItems: authManager.isAuthenticated ? vm.items : [],
+                                    signedInTeamFutures: authManager.isAuthenticated ? vm.teamFutures : nil
+                                )
+                            }
+                        )
+                        .task(id: landingRefreshKey295A) {
+                            if authManager.isAuthenticated, vm.items.isEmpty {
+                                vm.viewDidStart()
+                                Task { await vm.startLoad() }
+                            }
+                            await landingVM.refresh(
+                                followedSubjects: followManager.subjects,
+                                savedPins: pinManager.savedPins,
+                                pinContent: pinContent.content,
+                                signedInItems: authManager.isAuthenticated ? vm.items : [],
+                                signedInTeamFutures: authManager.isAuthenticated ? vm.teamFutures : nil
+                            )
+                        }
+                    } else if authManager.isLoading {
                         ProgressView()
                     } else if !authManager.isAuthenticated {
                         signInView

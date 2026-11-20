@@ -150,7 +150,14 @@ struct ContainerHubView: View {
     }
 
     private func hub(_ presentation: ContainerHubPresentation) -> some View {
-        GeometryReader { proxy in
+        let setName = presentation.title ?? displayName
+        let alertsContextId = "set-hub:\(vm.slug)"
+        let followSubject = FollowedSubject295A.set(
+            slug: vm.slug,
+            setKind: .container,
+            name: setName
+        )
+        return GeometryReader { proxy in
             let innerWidth = ContainerHubGridLayout13417.innerContentWidth(
                 containerWidth: proxy.size.width
             )
@@ -161,14 +168,33 @@ struct ContainerHubView: View {
             )
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
-                if let title = presentation.title {
-                    Text(title)
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(hubTextPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if let reasonLine = presentation.headerReasonLine {
-                    Text(reasonLine)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .center, spacing: 12) {
+                            if let title = presentation.title {
+                                Text(title)
+                                    .font(.title2.weight(.bold))
+                                    .foregroundStyle(hubTextPrimary)
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: true)
+                            }
+                            Spacer(minLength: 8)
+                            FollowButton295A(subject: followSubject, pageContextId: alertsContextId)
+                        }
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            if let title = presentation.title {
+                                Text(title)
+                                    .font(.title2.weight(.bold))
+                                    .foregroundStyle(hubTextPrimary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            FollowButton295A(subject: followSubject, pageContextId: alertsContextId)
+                        }
+                    }
+
+                    GameAlertsInlinePageSlot295A(contextId: alertsContextId)
+                    if let reasonLine = presentation.headerReasonLine {
+                        Text(reasonLine)
                         .font(.subheadline)
                         .foregroundStyle(hubTextSecondary)
                         .fixedSize(horizontal: false, vertical: true)
