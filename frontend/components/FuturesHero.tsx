@@ -116,7 +116,7 @@ export function FuturesHero({
   // Resolved markets show the final result, not a live movement pill.
   const movementStr =
     !resolved && movement != null && Math.abs(movement) >= 0.1
-      ? `${movementUp ? "↑" : "↓"} ${Math.abs(movement).toFixed(1)} pts`
+      ? `${movementUp ? "↑" : "↓"} ${Math.abs(movement).toFixed(1)} points`
       : null;
 
   if (atlas) {

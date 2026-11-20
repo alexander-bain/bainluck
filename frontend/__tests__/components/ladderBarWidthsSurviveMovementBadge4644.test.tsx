@@ -158,8 +158,8 @@ describe("#4644 the track is the same length on every row", () => {
         ]}
       />,
     );
-    expect(slotWidths(wide)[0]).toBe("calc(9ch + 0.5rem)");
-    expect(slotWidths(narrow)[0]).toBe("calc(8ch + 0.5rem)");
+    expect(slotWidths(wide)[0]).toBe("calc(12ch + 0.5rem)");
+    expect(slotWidths(narrow)[0]).toBe("calc(11ch + 0.5rem)");
   });
 });
 

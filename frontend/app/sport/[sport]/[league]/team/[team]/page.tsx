@@ -356,7 +356,7 @@ export default function TeamPage() {
                   headline.movement! > 0 ? "text-accent-live" : "text-accent-danger"
                 }`}
               >
-                {headline.movement! > 0 ? "↑" : "↓"} {formatMovementPoints(headline.movement)} pts today
+                {headline.movement! > 0 ? "↑" : "↓"} {formatMovementPoints(headline.movement)} points today
               </span>
             )}
           </div>

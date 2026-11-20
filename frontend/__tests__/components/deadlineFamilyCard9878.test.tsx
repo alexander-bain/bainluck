@@ -433,10 +433,10 @@ describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => 
     expect(html).not.toContain(
       'data-testid="deadline-family-hero-movement"',
     );
-    expect(html).not.toContain("7 pts");
+    expect(html).not.toContain("7 points");
   });
 
-  test("Case 2: Explicitly synthetic valid stored claim + dated basis selects Dec 31 with -6.5 pts", () => {
+  test("Case 2: Explicitly synthetic valid stored claim + dated basis selects Dec 31 with -6.5 points", () => {
     const oct31Syn = makeFeedItemFromContract(
       makeOct31Contract({ stored_movement_claim: -0.011 }),
     );
@@ -455,7 +455,7 @@ describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => 
     expect(model!.representative.movementStatus).toBe("hero");
     expect(model!.representative.supportedMovePoints).toBe(-6.5);
     expect(model!.representative.showHeroMovementChip).toBe(true);
-    expect(model!.representative.heroMovementChipText).toBe("↓ 7 pts");
+    expect(model!.representative.heroMovementChipText).toBe("↓ 7 points");
     expect(model!.representative.heroTimeframeText).toBe("since yesterday");
     expect(model!.representative.narrativeCaption).toBe(
       "Down 7 points since yesterday — 25% chance by Dec 31",
@@ -477,7 +477,7 @@ describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => 
       />,
     );
     expect(html).toContain('data-testid="deadline-family-hero-movement"');
-    expect(html).toContain("↓ 7 pts");
+    expect(html).toContain("↓ 7 points");
     expect(html).toContain("since yesterday");
     expect(html).toContain(
       "Down 7 points since yesterday — 25% chance by Dec 31",
@@ -1240,7 +1240,7 @@ describe("Alex's Oct 29 ruling: whole numbers on Discover cards", () => {
     )!;
     // Logic untouched: the model keeps the exact served move.
     expect(model.representative.supportedMovePoints).toBe(-6.5);
-    expect(model.representative.heroMovementChipText).toBe("↓ 7 pts");
+    expect(model.representative.heroMovementChipText).toBe("↓ 7 points");
     const html = renderToStaticMarkup(
       <DeadlineFamilyCard model={model} items={[oct31, dec31]} defaultExpanded />,
     );

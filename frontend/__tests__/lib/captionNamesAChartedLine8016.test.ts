@@ -95,7 +95,7 @@ describe("#8016 — the specimen that produced the screenshot", () => {
 
   it("captions the leading DRAWN line, not the settled winner", () => {
     expect(captionFor(seededSelection())).toBe(
-      "Andy Burnham up 5.0 pts from opening.",
+      "Andy Burnham up 5.0 points from opening.",
     );
   });
 
@@ -186,7 +186,7 @@ describe("#8016 — the general property, over the real 35-leg field", () => {
     // on the chart the +81.0 sentence is honest, and the fix must not suppress
     // it. This is the arm that stops "drop every graded leg" passing as the fix.
     expect(captionFor(new Set([MESSI]))).toBe(
-      "Lionel Messi up 81.0 pts from opening.",
+      "Lionel Messi up 81.0 points from opening.",
     );
   });
 
@@ -263,7 +263,7 @@ describe("#8016 — control: the rejected rule still fails on this population", 
 
   it("the pre-#8016 caption is the sentence Alex would have seen", () => {
     expect(movementExplanation(legacySubject(), BOARD)).toBe(
-      "Lionel Messi up 81.0 pts from opening.",
+      "Lionel Messi up 81.0 points from opening.",
     );
   });
 });
