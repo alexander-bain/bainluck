@@ -38,7 +38,7 @@ it("draws an old valid floor, dimmed and motionless, with its age", () => {
   expect(html).toContain(
     "Last read 7:58 AM PT, 1 hr 51 min ago. Updates have stopped.",
   );
-  expect(html).toContain("On the floor now");
+  expect(html).toContain('data-factory-row="Server"');
   expect(html).not.toContain("The floor can&#x27;t be read right now");
 });
 
@@ -111,7 +111,7 @@ it.each(["Live", "Test"] as const)(
   );
     expect((html.match(/data-crate=/g) ?? []).length).toBe(2);
     expect(html).toContain("+10 more");
-    expect(html).toContain(station === "Live" ? "12 today" : "12 here");
+    expect(html).toContain(station === "Live" ? "12 shipped" : "12 here");
   },
 );
 

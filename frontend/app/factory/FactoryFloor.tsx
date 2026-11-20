@@ -6,17 +6,14 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowRight,
-  Box,
   Check,
   CheckCheck,
   ChevronRight,
   CircleCheck,
   ClipboardCheck,
-  Clock3,
   Hammer,
   ListChecks,
   PackageOpen,
-  PackageCheck,
   Pause,
   Server,
   Smartphone,
@@ -368,7 +365,6 @@ export default function FactoryFloor({
   const shipped = data.changes.filter(
     (c) => c.station === "Live" && c.live_at && pacificDay(c.live_at) === today,
   );
-  const shippedCount = uniqueChanges(shipped).length;
   const onFloor = data.changes.filter(onActiveFloor);
   const held = uniqueChanges(data.changes.filter((c) => c.held_for_108));
   const sideTrack = uniqueChanges(
@@ -410,13 +406,6 @@ export default function FactoryFloor({
       ? "Written by a model from the counts on this page"
       : "From the counts on this page";
   const visible = [...onFloor, ...shipped];
-  const stationCounts = stations.slice(0, -1).map((station) => ({
-    station,
-    count: uniqueChanges(onFloor.filter((c) => c.station === station)).length,
-  }));
-  const busiest = stationCounts.reduce((best, current) =>
-    current.count > best.count ? current : best,
-  );
   const jams = data.jams.filter(
     (jam) =>
       Date.parse(jam.qualifies_at) <= Date.parse(now) &&
@@ -530,42 +519,6 @@ export default function FactoryFloor({
         </aside>
       )}
 
-      <section className={styles.numbers} aria-label="The factory at a glance">
-        <div>
-          <span className={styles.numberLabel}>
-            <PackageCheck size={17} /> Shipped today
-          </span>
-          <strong
-            key={shippedCount}
-            className={`${styles.shippedNumber} ${shippingLines.length ? styles.numberTick : ""}`}
-          >
-            {shippedCount}
-          </strong>
-          <span>Changes in your hands</span>
-        </div>
-        <div>
-          <span className={styles.numberLabel}>
-            <Box size={17} /> On the floor now
-          </span>
-          <strong>{uniqueChanges(onFloor).length}</strong>
-          <span>Making their way to live</span>
-        </div>
-        <div>
-          <span className={styles.numberLabel}>
-            <Clock3 size={17} /> Busiest station ·{" "}
-            {stationNames[busiest.station]}
-          </span>
-          <strong
-            className={busiest.count >= 10 ? styles.amberNumber : undefined}
-          >
-            {busiest.count}
-          </strong>
-          <span>
-            {busiest.count ? "Changes at this station" : "The floor is clear"}
-          </span>
-        </div>
-      </section>
-
       <section className={styles.floorCard} aria-labelledby="floor-heading">
         <div className={styles.sectionHeading}>
           <h2 id="floor-heading">The floor</h2>
@@ -638,7 +591,6 @@ export default function FactoryFloor({
                   <div className={styles.lineName}>
                     <LineIcon size={20} strokeWidth={1.6} />
                     <strong>{line}</strong>
-                    <span>{lineShipped.length} shipped</span>
                     {line === "Apps" && data.signals.testflight_post && (
                       <span className={styles.buildPlate}>
                         TestFlight build {data.signals.testflight_post.build}
@@ -802,13 +754,13 @@ export default function FactoryFloor({
                             )}
                           <div className={styles.machineCaption}>
                             <div className={styles.machineSummary}>
-                              <span>
-                                {station === "Live"
-                                  ? `${changes.length} today`
-                                  : changes.length
-                                    ? `${changes.length} here`
-                                    : "Clear"}
-                              </span>
+                              {station === "Live" ? (
+                                <strong className={styles.liveTally}>
+                                  {changes.length} shipped
+                                </strong>
+                              ) : (
+                                <span>{changes.length ? `${changes.length} here` : "Clear"}</span>
+                              )}
                               {more > 0 && (
                                 <button
                                   type="button"
