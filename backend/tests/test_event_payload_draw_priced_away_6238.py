@@ -195,11 +195,19 @@ async def test_snapshot_path_withholds_the_fabricated_away_on_soccer():
         "key's presence must be able to tell 'withheld' from 'this payload "
         "shape is older than the field'"
     )
-    assert odds["away_probability"] is None, (
-        f"served {odds['away_probability']} — the books in this same payload "
-        f"price the away side at {JUVENTUS_BOOKS_AWAY}"
+    assert odds["away_probability"] == pytest.approx(JUVENTUS_BOOKS_AWAY, abs=1e-4), (
+        "#13131: when books carry a real three-way away price, serve it rather than "
+        f"the fabricated complement ({JUVENTUS_FABRICATED_AWAY}) or None"
     )
-    assert odds["away_rendered_percent"] is None
+    assert odds["draw_probability"] == pytest.approx(
+        1.0 - JUVENTUS_HOME - JUVENTUS_BOOKS_AWAY, abs=1e-4
+    )
+    assert (
+        odds["home_rendered_percent"]
+        + odds["draw_rendered_percent"]
+        + odds["away_rendered_percent"]
+        == 100
+    )
 
 
 @pytest.mark.asyncio
@@ -337,16 +345,19 @@ async def test_a_two_way_opening_pair_is_untouched():
 
 @pytest.mark.asyncio
 async def test_the_hero_away_is_withheld_on_a_live_soccer_match():
+    """#13131: with real three-way books, the hero serves all three legs (never
+    the fabricated complement); without three-way books, all three are withheld."""
     payload = await _payload(
         _event(sport_key=SOCCER, home_prob=JUVENTUS_HOME, event_id=6238011),
         snapshots=[_snapshot(JUVENTUS_HOME, JUVENTUS_BOOKS_AWAY)],
     )
     assert payload["hero_probability_source"] == "blend"
     assert payload["hero_probability"] == pytest.approx(JUVENTUS_HOME)
-    assert payload["hero_probability_away"] is None, (
-        "the hero carries its own copy of the same derivation "
-        f"({JUVENTUS_FABRICATED_AWAY} on the production specimen)"
+    assert payload["hero_probability_away"] == pytest.approx(JUVENTUS_BOOKS_AWAY, abs=1e-4)
+    assert payload["hero_probability_draw"] == pytest.approx(
+        1.0 - JUVENTUS_HOME - JUVENTUS_BOOKS_AWAY, abs=1e-4
     )
+    assert payload["hero_probability_away"] != pytest.approx(JUVENTUS_FABRICATED_AWAY, abs=1e-2)
 
 
 @pytest.mark.asyncio

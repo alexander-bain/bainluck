@@ -12544,6 +12544,52 @@ async def _score_events(
                 return False
 
 
+        from app.utils.draw_priced_winner import (
+            resolve_three_way_probabilities as _resolve_three_way_probs,
+            sport_prices_a_draw as _sport_prices_a_draw,
+        )
+
+        # #13131: live draw-priced events (typically 0-5 rows) read their latest
+        # per-book (home, away) consensus in one small batch so live soccer feed
+        # cards carry the same three-way (home, draw, away) triple as detail.
+        live_three_way_books: dict[int, tuple[float, float]] = {}
+        _live_draw_ids = [
+            e.id
+            for e in events
+            if e.status == "live"
+            and _sport_prices_a_draw(e.sport.key if e.sport else None)
+        ]
+        if _live_draw_ids:
+            try:
+                from sqlalchemy import text as _sa_text
+
+                _lw_res = await db.execute(
+                    _sa_text("""
+                        SELECT event_id,
+                               AVG(home_win_probability) AS books_home,
+                               AVG(away_win_probability) AS books_away
+                        FROM (
+                            SELECT DISTINCT ON (event_id, bookmaker)
+                                   event_id, home_win_probability, away_win_probability
+                            FROM odds_snapshots
+                            WHERE event_id = ANY(:ids)
+                              AND home_win_probability IS NOT NULL
+                              AND away_win_probability IS NOT NULL
+                            ORDER BY event_id, bookmaker, captured_at DESC
+                        ) latest
+                        GROUP BY event_id
+                    """),
+                    {"ids": _live_draw_ids},
+                )
+                for _row in _lw_res.all():
+                    if _row.books_home is not None and _row.books_away is not None:
+                        live_three_way_books[int(_row.event_id)] = (
+                            float(_row.books_home),
+                            float(_row.books_away),
+                        )
+            except Exception:
+                live_three_way_books = {}
+
     for event in events:
         try:
             if not my_teams_only and price_refresh_events is None:
@@ -12947,6 +12993,34 @@ async def _score_events(
             card_hero = resolve_hero(
                 event, source_inputs=hero_inputs, source_method=hero_method,
             )
+            # #13131: on draw-priced sports (soccer), resolve (home, away, draw)
+            # when sportsbooks provide both sides summing < 0.99; otherwise
+            # suppress orphan single-leg chances on non-settled cards.
+            _card_home_prob = current_home_prob
+            _card_away_prob = current_away_prob
+            _card_draw_prob: float | None = None
+            if _sport_prices_a_draw(sport_key) and not (
+                card_hero is not None and card_hero.source == "settled"
+            ):
+                if served_status == "live":
+                    _bh, _ba = live_three_way_books.get(event.id, (None, None))
+                elif served_status == "scheduled":
+                    _bh, _ba = opening_home_prob, opening_away_prob
+                else:
+                    _bh, _ba = None, None
+                _card_3 = _resolve_three_way_probs(
+                    current_home_prob,
+                    books_home=_bh,
+                    books_away=_ba,
+                    sport_key=sport_key,
+                )
+                if _card_3 is not None:
+                    _card_home_prob, _card_away_prob, _card_draw_prob = _card_3
+                elif served_status == "scheduled":
+                    _card_home_prob = None
+                    _card_away_prob = None
+                    _card_draw_prob = None
+
             event_data = format_event_data(
                 event_id=event.id,
                 external_id=event.external_id,
@@ -12961,8 +13035,9 @@ async def _score_events(
                 status=served_status,
                 home_score=event.home_score,
                 away_score=event.away_score,
-                current_home_prob=current_home_prob,
-                current_away_prob=current_away_prob,
+                current_home_prob=_card_home_prob,
+                current_away_prob=_card_away_prob,
+                current_draw_prob=_card_draw_prob,
                 opening_home_prob=opening_home_prob,
                 opening_away_prob=opening_away_prob,
                 opening_favorite=event.opening_favorite,
@@ -12998,18 +13073,29 @@ async def _score_events(
             from app.utils.draw_priced_winner import printable_away
             from app.utils.source_mark import headline_source_marks
 
+            _card_effective_hero = (
+                None
+                if (
+                    card_hero is not None
+                    and card_hero.source != "settled"
+                    and event_data.get("hero_probability") is None
+                )
+                else card_hero
+            )
             away_available = (
-                card_hero is not None
+                _card_effective_hero is not None
                 and (
-                    card_hero.source == "settled"
+                    _card_effective_hero.source == "settled"
+                    or event_data.get("hero_probability_draw") is not None
                     or printable_away(
-                        card_hero.away_probability, card_hero.home_probability,
+                        _card_effective_hero.away_probability,
+                        _card_effective_hero.home_probability,
                         sport_key,
                     ) is not None
                 )
             )
             event_data["source_mark"], event_data["away_source_mark"] = headline_source_marks(
-                event, card_hero, hero_inputs,
+                event, _card_effective_hero, hero_inputs,
                 method=hero_method[0] if hero_method else None,
                 away_available=away_available,
             )
