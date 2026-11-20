@@ -227,12 +227,14 @@ def _category(id_, name, ticker, *, status="open", outcomes=None, deadline=None)
         resolution_date=deadline,
         outcomes=[
             SimpleNamespace(
+                id=id_ * 100 + index,
                 name=name,
                 current_probability=probability,
                 is_winner=won,
+                resolution_source=None,
                 last_updated=None,
             )
-            for name, probability, won in (
+            for index, (name, probability, won) in enumerate(
                 outcomes or [("Favorite", 0.55, False), ("Other nominee", 0.45, False)]
             )
         ],
@@ -254,12 +256,15 @@ class _AwardsResult:
 
 
 class _AwardsDB:
-    def __init__(self, markets):
+    def __init__(self, markets, fleet_stamp=None):
         self.markets = markets
+        self.fleet_stamp = fleet_stamp
         self.queries = []
 
     async def execute(self, query):
         self.queries.append(query)
+        if "max(futures_outcomes.last_updated)" in str(query):
+            return SimpleNamespace(scalar_one_or_none=lambda: self.fleet_stamp)
         return _AwardsResult(self.markets)
 
 
@@ -453,3 +458,44 @@ async def test_wrong_edition_remains_absent_and_ceremony_identity_independent():
     assert current["children"][0]["settled"] is False
     assert await _build(markets, "oscars-2025") is None
     assert await _build(markets, "golden-globes") is None
+
+
+async def test_old_best_actor_prices_cannot_appear_in_the_awards_hero_or_rail():
+    # #13114: the same 16-row prior Oscars field the market page withheld.
+    old_actor = _category(
+        109566,
+        "Oscar for Best Actor?",
+        "KXOSCARACTO-26",
+        outcomes=[
+            ("Michael B. Jordan", 0.45, False),
+            ("Timothée Chalamet", 0.41, False),
+            ("Jesse Plemons", 0.50, False),
+            *((f"Nominee {i}", 0.50, False) for i in range(13)),
+        ],
+    )
+    old_actor.updated_at = datetime(2026, 3, 12, tzinfo=timezone.utc)
+    for outcome in old_actor.outcomes:
+        outcome.last_updated = old_actor.updated_at
+
+    fresh = _category(120000, "Oscar for Best Director?", "KXOSCARDIR-26")
+    fleet_stamp = datetime(2026, 11, 20, tzinfo=timezone.utc)
+    fresh.updated_at = fleet_stamp
+    for outcome in fresh.outcomes:
+        outcome.last_updated = fleet_stamp
+
+    db = _AwardsDB([fresh, old_actor], fleet_stamp)
+    body = await AwardsEventAdapter().build_event("oscars-2026", db)
+
+    assert body["primary"]["evolution_market_id"] == fresh.id
+    assert [child["market_id"] for child in body["children"]] == [fresh.id]
+    assert body["sections"][0]["market_ids"] == [fresh.id]
+    assert [o["probability"] for o in body["primary"]["competitors"]] == [0.55, 0.45]
+    assert len(db.queries) == 2  # Selection and one shared fleet read.
+
+    old_actor.status = "resolved"
+    old_actor.outcomes[0].is_winner = True
+    body = await AwardsEventAdapter().build_event("oscars-2026", db)
+    result = next(child for child in body["children"] if child["market_id"] == 109566)
+    assert result["graded_winner"] == "Michael B. Jordan"
+    assert result["probability"] is None
+    assert all(outcome["probability"] is None for outcome in result["outcomes"])

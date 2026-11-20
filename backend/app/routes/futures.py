@@ -5156,7 +5156,7 @@ def _board_has_a_verdict(outcomes) -> bool:
 
 
 async def _fleet_newest_observation(
-    db: AsyncSession, market: FuturesMarket
+    db: AsyncSession, market: FuturesMarket, *other_markets: FuturesMarket
 ) -> "datetime | None":
     """The newest futures leg observation the system holds, anywhere (#8011).
 
@@ -5182,7 +5182,8 @@ async def _fleet_newest_observation(
     is newly eligible is exactly the defect population: settled, ungraded, and
     last observed beyond the floor. This route serves ONE board per request, so
     the worst case it adds is a single 0.042 ms Index Only Scan Backward to a
-    detail page that would otherwise print a coin flip.
+    detail page that would otherwise print a coin flip. A multi-board caller
+    can share that same fleet observation when any of its boards qualify.
 
     The bound is one-directional by construction: it can only suppress the
     read, never cause a withhold. `unobserved_board_keys` still decides against
@@ -5227,24 +5228,20 @@ async def _fleet_newest_observation(
     # caller that never supplies it — which is why the repair below is a
     # ROUTE-level regression, not another formatter unit.
     #
-    # Named, not inverted, for the reason the formatter states: `status` is
-    # exactly {open, resolved} today, so a new status inherits today's
-    # behaviour and must come back through this line deliberately.
-    if getattr(market, "status", None) not in ("open", "resolved"):
-        return None
-    # A settled board WITH A VERDICT is a result and is exempt, so there is
-    # nothing to ask the fleet about. Checked here as well as in the rule so a
-    # graded board costs no query either — and so the two places cannot
-    # disagree about which semantics decide it. This is the line that keeps
-    # `/futures/413` ("Jalen Brunson 99%", api_settlement on all 57 legs)
-    # protected by construction now that the status gate admits "resolved".
-    if _board_has_a_verdict(getattr(market, "outcomes", None) or []):
-        return None
-    if board_cannot_be_unobserved(
-        ((o.id, o.last_updated) for o in (getattr(market, "outcomes", None) or [])),
-        board_touched_at=board_touched_at(market),
-        now=datetime.now(timezone.utc),
-    ):
+    now = datetime.now(timezone.utc)
+    for candidate in (market, *other_markets):
+        if getattr(candidate, "status", None) not in ("open", "resolved"):
+            continue
+        outcomes = getattr(candidate, "outcomes", None) or []
+        if _board_has_a_verdict(outcomes):
+            continue
+        if not board_cannot_be_unobserved(
+            ((o.id, o.last_updated) for o in outcomes),
+            board_touched_at=board_touched_at(candidate),
+            now=now,
+        ):
+            break
+    else:
         return None
 
     try:
