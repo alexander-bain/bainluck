@@ -9657,11 +9657,14 @@ async def _record_no_match_reason(
     )
 
 
-#: Maximum kickoff gap between two rows representing the same fixture (e.g. a
-#: sportsbook row and an auto-created Polymarket/Kalshi twin whose start was
-#: stamped from venue metadata or UTC midnight) without conflating separate
-#: games in a multi-day series (#13142).
-_SAME_FIXTURE_TWIN_WINDOW_SECONDS = 24 * 3600
+#: Maximum kickoff gap between two rows representing the same fixture (#13142).
+#: Back-to-back games in a series routinely sit 18–24 hours apart, so normal
+#: timestamps require a tight 4-hour window; only an id-less row carrying a
+#: date-only/midnight placeholder stamp gets a wider 16-hour window (strictly
+#: below 18 hours so back-to-back games can never cross).
+_SAME_FIXTURE_TWIN_WINDOW_SECONDS = 4 * 3600
+_SAME_FIXTURE_PLACEHOLDER_WINDOW_SECONDS = 16 * 3600
+_OPEN_TWIN_STATUSES = frozenset({"scheduled", "live"})
 
 
 def _is_sportsbook_row(event) -> bool:
@@ -9673,17 +9676,57 @@ def _is_sportsbook_row(event) -> bool:
     return bool(ext) and not str(ext).startswith("pm_")
 
 
-def _same_fixture_twin(event_a, event_b) -> bool:
-    """True when two name-matched candidates are twins of one game (#13142)."""
-    sport_a = event_a.sport.key if getattr(event_a, "sport", None) else None
-    sport_b = event_b.sport.key if getattr(event_b, "sport", None) else None
+def _is_placeholder_start(event) -> bool:
+    """True when an id-less row's start time is a date-only/midnight placeholder."""
+    tags = getattr(event, "event_tags", None) or ()
+    if any(
+        isinstance(t, str) and "placeholder" in t.lower()
+        for t in tags
+    ):
+        return True
+    src = getattr(event, "commence_time_source", None)
+    if isinstance(src, str) and src in (
+        TICKER_DERIVED_COMMENCE_SOURCE,
+        KALSHI_TICKER_TIME_COMMENCE_SOURCE,
+    ):
+        return True
+    t = getattr(event, "commence_time", None)
+    return (
+        t is not None
+        and t.hour == 0
+        and t.minute == 0
+        and t.second == 0
+    )
+
+
+def _same_fixture_twin(idless_event, sportsbook_event) -> bool:
+    """True when two name-matched candidates are twins of one game (#13142).
+
+    A finished row is never the twin of an open game, missing start times
+    never match, normal starts must fall within 4 hours, and a placeholder
+    midnight/date-only stamp on the id-less row allows up to 16 hours.
+    """
+    sport_a = idless_event.sport.key if getattr(idless_event, "sport", None) else None
+    sport_b = sportsbook_event.sport.key if getattr(sportsbook_event, "sport", None) else None
     if sport_a and sport_b and sport_a != sport_b:
         return False
-    t_a = getattr(event_a, "commence_time", None)
-    t_b = getattr(event_b, "commence_time", None)
-    if t_a is not None and t_b is not None:
-        return abs((t_a - t_b).total_seconds()) <= _SAME_FIXTURE_TWIN_WINDOW_SECONDS
-    return True
+
+    status_a = getattr(idless_event, "status", None)
+    status_b = getattr(sportsbook_event, "status", None)
+    if (status_a in _OPEN_TWIN_STATUSES) != (status_b in _OPEN_TWIN_STATUSES):
+        return False
+
+    t_a = getattr(idless_event, "commence_time", None)
+    t_b = getattr(sportsbook_event, "commence_time", None)
+    if t_a is None or t_b is None:
+        return False
+
+    max_gap = (
+        _SAME_FIXTURE_PLACEHOLDER_WINDOW_SECONDS
+        if _is_placeholder_start(idless_event)
+        else _SAME_FIXTURE_TWIN_WINDOW_SECONDS
+    )
+    return abs((t_a - t_b).total_seconds()) <= max_gap
 
 
 def _score_candidates(
@@ -9891,6 +9934,7 @@ def _score_candidates(
             and best_event is not None
             and _is_sportsbook_row(event)
             and not _is_sportsbook_row(best_event)
+            and _same_fixture_twin(best_event, event)
         ):
             best_score = score
             best_event = event

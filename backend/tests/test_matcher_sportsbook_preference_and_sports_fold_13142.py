@@ -63,8 +63,9 @@ def _market(name: str = "New Mexico State vs Arizona", source: str = "polymarket
 
 
 def test_matcher_prefers_sportsbook_row_over_higher_scoring_idless_twin():
-    """Even when the id-less row is live (+5) and closer to ref (+10), the
-    same-game sportsbook row (within 24h) wins over the auto-created twin."""
+    """For the same fixture (within 4h, both open), the sportsbook row wins
+    over an auto-created id-less twin even when the id-less row is live and
+    closer to ref."""
     idless_twin = _event(
         15348230,
         away="New Mexico State Aggies",
@@ -77,7 +78,7 @@ def test_matcher_prefers_sportsbook_row_over_higher_scoring_idless_twin():
         away="New Mexico St Aggies",
         external_id="odds_api_wbb_15351654",
         status="scheduled",
-        commence_time=FROZEN_NOW + timedelta(hours=18),
+        commence_time=FROZEN_NOW + timedelta(hours=3),
     )
     matchup = MatchupInfo(
         team_a="New Mexico State",
@@ -95,6 +96,32 @@ def test_matcher_prefers_sportsbook_row_over_higher_scoring_idless_twin():
     assert result["event_id"] == 15351654
 
 
+def test_matcher_allows_wide_gap_only_for_placeholder_midnight_start():
+    """An id-less row stamped at UTC midnight (placeholder) pairs with a
+    same-day sportsbook row up to 16h away; missing start times never pair."""
+    midnight = datetime(2025, 5, 15, 0, 0, 0, tzinfo=timezone.utc)
+    placeholder_idless = _event(
+        15348231,
+        away="New Mexico State Aggies",
+        external_id=None,
+        status="scheduled",
+        commence_time=midnight,
+    )
+    same_day_books = _event(
+        15351655,
+        away="New Mexico St Aggies",
+        external_id="odds_api_wbb_15351655",
+        status="scheduled",
+        commence_time=midnight + timedelta(hours=14),
+    )
+    assert pmm._same_fixture_twin(placeholder_idless, same_day_books)
+
+    no_time = _event(15348232, external_id=None, status="scheduled", commence_time=midnight)
+    no_time.commence_time = None
+    assert not pmm._same_fixture_twin(no_time, same_day_books)
+    assert not pmm._same_fixture_twin(placeholder_idless, no_time)
+
+
 def test_matcher_ignores_legacy_pm_external_id_as_sportsbook():
     """Legacy `pm_*` placeholder ids are not sportsbook anchors."""
     pm_placeholder = _event(
@@ -107,7 +134,7 @@ def test_matcher_ignores_legacy_pm_external_id_as_sportsbook():
         2002,
         external_id="odds_api_real_2002",
         status="scheduled",
-        commence_time=FROZEN_NOW + timedelta(hours=12),
+        commence_time=FROZEN_NOW + timedelta(hours=2),
     )
     matchup = MatchupInfo(
         team_a="New Mexico State",
@@ -193,6 +220,74 @@ def test_matcher_does_not_override_todays_game_with_next_weeks_sportsbook_game()
     )
     assert result is not None
     assert result["event_id"] == 3001
+
+
+@pytest.mark.parametrize("gap_hours", [-24, -20, -18, 18, 20, 24])
+@pytest.mark.parametrize("other_status", ["completed", "scheduled"])
+@pytest.mark.parametrize("x_status", ["live", "scheduled"])
+def test_back_to_back_series_games_are_never_treated_as_twins(
+    gap_hours: int, other_status: str, x_status: str
+):
+    """Fable review on #13159: same two teams 18, 20, or 24 hours apart (in
+    either order, whether the other game is finished or scheduled) are NEVER
+    treated as twins of one game by `_same_fixture_twin`."""
+    game_x = _event(
+        4001,
+        external_id=None,
+        status=x_status,
+        commence_time=FROZEN_NOW,
+    )
+    other_game = _event(
+        4002,
+        external_id="odds_api_other_game",
+        status=other_status,
+        commence_time=FROZEN_NOW + timedelta(hours=gap_hours),
+    )
+    assert not pmm._same_fixture_twin(game_x, other_game)
+
+
+@pytest.mark.parametrize(
+    ("x_status", "gap_hours", "other_status"),
+    [
+        ("live", 24, "scheduled"),
+        ("live", -18, "completed"),
+        ("live", -20, "completed"),
+        ("scheduled", -24, "completed"),
+        ("live", -24, "completed"),
+        ("scheduled", 40, "scheduled"),
+    ],
+)
+def test_matcher_keeps_todays_game_over_adjacent_day_sportsbook_game(
+    x_status: str, gap_hours: int, other_status: str
+):
+    """Every cell where master picks tonight's game X (id-less) over an
+    adjacent-day finished/scheduled sportsbook game still picks X."""
+    game_x = _event(
+        4101,
+        external_id=None,
+        status=x_status,
+        commence_time=FROZEN_NOW,
+    )
+    other_game = _event(
+        4102,
+        external_id="odds_api_adjacent_day",
+        status=other_status,
+        commence_time=FROZEN_NOW + timedelta(hours=gap_hours),
+    )
+    matchup = MatchupInfo(
+        team_a="New Mexico State",
+        team_b="Arizona",
+        yes_team="New Mexico State",
+        format_type="vs",
+    )
+    result = pmm._score_candidates(
+        [game_x, other_game],
+        matchup,
+        _market(),
+        FROZEN_NOW,
+    )
+    assert result is not None
+    assert result["event_id"] == 4101
 
 
 @pytest.mark.asyncio
