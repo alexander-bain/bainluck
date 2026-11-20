@@ -162,20 +162,73 @@ final class OddsChartNoReadingsTests: XCTestCase {
         let framed = try renderedHeight("one-reading-frame", try oneReadingPayload())
         let drawable = try renderedHeight("drawable-frame", try drawablePayload())
 
-        // Not equal to the drawn chart — a drawn chart also carries the E2
-        // scrub/legend header bar above the plot and the legend row under it,
-        // which the sentence state has never had (384.0pt against 464.7pt =
-        // 82.6%). The property is that the sentence state still reserves a FULL
-        // frame: close to the drawn chart, and nowhere near the collapse.
+        // #12756 overlaid EventAtlasChartHeaderView11666 at 0pt at rest and #12554
+        // reserves the closed legend slot in the one-reading state, keeping the
+        // one-reading frame matched to the drawn chart (> 0.90 * drawable and
+        // within <= 30pt) so sections below never jump on the second reading.
         XCTAssertGreaterThan(
-            framed, drawable * 0.80,
+            framed, drawable * 0.90,
             "a payload with one reading (\(framed)pt) no longer reserves a frame "
             + "comparable to a drawn chart (\(drawable)pt) — #3278's honest empty "
             + "frame has been collapsed by mistake")
+        XCTAssertLessThanOrEqual(
+            abs(drawable - framed), 30,
+            "one-reading (\(framed)pt) vs drawable (\(drawable)pt) exceeded 30pt jump budget")
         XCTAssertGreaterThan(
             framed, empty * 5,
             "the one-reading state collapsed with the empty one — the fix is firing "
             + "on 'cannot draw a line' instead of 'has nothing at all'")
+    }
+
+    /// #12554 — both single-source and multi-source (blend + revealable sources)
+    /// payloads hold identical vertical height across the 1-reading -> 2-reading
+    /// transition while keeping the 0-reading empty payload collapsed.
+    func testOneReadingToDrawableDoesNotJumpOnSingleOrMultiSourcePayloads12554() throws {
+        let singleOne = try renderedHeight("12554-single-1", try oneReadingPayload())
+        let singleTwo = try renderedHeight("12554-single-2", try drawablePayload())
+        XCTAssertEqual(singleOne, singleTwo, accuracy: 1.0)
+
+        let multiOne = try history("""
+        {"event_id": 15305748, "home_team": "Isurus", "away_team": "wachoskys",
+         "status": "live", "history": [],
+         "aggregate_line": [{"timestamp": "2026-09-05T17:58:00Z", "home_probability": 0.62}],
+         "win_prob_history": {
+           "betting": [{"timestamp": "2026-09-05T17:58:00Z", "home_probability": 0.63}],
+           "kalshi": [{"timestamp": "2026-09-05T17:58:00Z", "home_probability": 0.60}]
+         },
+         "win_prob_sources": {
+           "betting": {"label": "Sportsbooks", "weight": 3.0},
+           "kalshi": {"label": "Kalshi", "weight": 0.8}
+         }}
+        """)
+        let multiTwo = try history("""
+        {"event_id": 15305748, "home_team": "Isurus", "away_team": "wachoskys",
+         "status": "live", "history": [],
+         "aggregate_line": [
+           {"timestamp": "2026-09-05T17:58:00Z", "home_probability": 0.62},
+           {"timestamp": "2026-09-05T18:03:00Z", "home_probability": 0.71}
+         ],
+         "win_prob_history": {
+           "betting": [
+             {"timestamp": "2026-09-05T17:58:00Z", "home_probability": 0.63},
+             {"timestamp": "2026-09-05T18:03:00Z", "home_probability": 0.72}
+           ],
+           "kalshi": [
+             {"timestamp": "2026-09-05T17:58:00Z", "home_probability": 0.60},
+             {"timestamp": "2026-09-05T18:03:00Z", "home_probability": 0.69}
+           ]
+         },
+         "win_prob_sources": {
+           "betting": {"label": "Sportsbooks", "weight": 3.0},
+           "kalshi": {"label": "Kalshi", "weight": 0.8}
+         }}
+        """)
+        let multiOneH = try renderedHeight("12554-multi-1", multiOne)
+        let multiTwoH = try renderedHeight("12554-multi-2", multiTwo)
+        XCTAssertEqual(multiOneH, multiTwoH, accuracy: 1.0,
+                       "Multi-source 1-reading (\(multiOneH)pt) vs 2-reading (\(multiTwoH)pt) jumped")
+        _ = try render("12554-multi-one", multiOne)
+        _ = try render("12554-multi-two", multiTwo)
     }
 
     /// The sentence #3278 owns is untouched on the payload it owns.
