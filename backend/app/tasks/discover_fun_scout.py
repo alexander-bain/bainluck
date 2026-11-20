@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -329,65 +330,184 @@ def _persist_run_artifact_redis(
         return False, err
 
 
-def format_scout_nightly_comment_markdown(artifact: dict[str, Any]) -> str:
-    """Format the full nightly scout output (sets, singles, spend) for #13102."""
-    lines: list[str] = [
-        f"## Nightly Fun Scout Report — {artifact['run_date']}",
+SCOUT_GITHUB_COMMENT_MAX_CHARS = 65_000
+_BACKTICK_RUN_RE = re.compile(r"`+")
+
+
+def _md_code_span(value: Any, *, table: bool = False) -> str:
+    """Wrap untrusted venue/model text in a safe CommonMark code span.
+
+    Code spans suppress GitHub @mentions and #123 issue links. Newlines are
+    collapsed to spaces so rows stay single-line, pipes are escaped when placed
+    inside a Markdown table cell (GFM splits table cells before parsing code
+    spans), and the backtick fence is always longer than any run in the text.
+    """
+    text = " ".join(str("" if value is None else value).split())
+    if not text:
+        return "`—`"
+    if table:
+        text = text.replace("|", r"\|")
+    runs = _BACKTICK_RUN_RE.findall(text)
+    fence = "`" * (max((len(r) for r in runs), default=0) + 1)
+    if text.startswith("`") or text.endswith("`") or (text.startswith(" ") and text.endswith(" ")):
+        return f"{fence} {text} {fence}"
+    return f"{fence}{text}{fence}"
+
+
+def _md_code_fence(text: str, lang: str = "json") -> list[str]:
+    """Emit a fenced code block whose fence cannot be closed by ``text``."""
+    runs = _BACKTICK_RUN_RE.findall(text)
+    fence = "`" * max(3, max((len(r) for r in runs), default=0) + 1)
+    return [f"{fence}{lang}", text, fence]
+
+
+def format_scout_nightly_comment_markdown(
+    artifact: dict[str, Any],
+    *,
+    max_chars: int = SCOUT_GITHUB_COMMENT_MAX_CHARS,
+) -> str:
+    """Format the nightly scout output (sets, singles, spend) for #13102.
+
+    Escapes every venue/model string into an inert code span/fence and caps the
+    comment strictly under GitHub's 65,536-character limit (keeping the header,
+    spend line, and staged sets whole and trimming the verified-singles table
+    with an explicit "first N of M" line when needed).
+    """
+    run_date = str(artifact.get("run_date") or "")
+    day_key = f"{_RUN_ARTIFACT_REDIS_PREFIX}:{run_date}"
+
+    header_lines: list[str] = [
+        f"## Nightly Fun Scout Report — {_md_code_span(run_date)}",
         "",
-        f"- **Run time (UTC):** `{artifact['run_at']}`",
-        f"- **Model:** `{artifact['set_model']}`",
-        f"- **Spend:** `{artifact['spend_line']}` (actual: `${artifact['actual_total_cost_usd']:.4f}`)",
-        f"- **Licence:** `{json.dumps(artifact.get('licence_state') or {}, sort_keys=True)}`",
+        f"- **Run time (UTC):** {_md_code_span(artifact.get('run_at'))}",
+        f"- **Model:** {_md_code_span(artifact.get('set_model'))}",
+        f"- **Spend:** {_md_code_span(artifact.get('spend_line'))} "
+        f"(actual: `${float(artifact.get('actual_total_cost_usd') or 0.0):.4f}`)",
+        f"- **Licence:** {_md_code_span(json.dumps(artifact.get('licence_state') or {}, sort_keys=True))}",
     ]
     if not artifact.get("monthly_ledger_recorded", True):
-        lines.append(
-            f"- **WARNING — MONTHLY LEDGER WRITE FAILED:** `{artifact.get('monthly_ledger_error')}` "
+        header_lines.append(
+            f"- **WARNING — MONTHLY LEDGER WRITE FAILED:** "
+            f"{_md_code_span(artifact.get('monthly_ledger_error'))} "
             "(month marked unknown / fail-closed for next run)"
         )
 
     staged = artifact.get("staged_sets") or []
-    lines.extend(["", f"### Staged Sets ({len(staged)})"])
+    sets_lines: list[str] = ["", f"### Staged Sets ({len(staged)})"]
     if not staged:
-        lines.append("_None tonight._")
+        sets_lines.append("_None tonight._")
     for idx, s in enumerate(staged, 1):
-        lines.append(
-            f"#### {idx}. {s['name']} (`{s['slug']}` · `{s['category']}` · look=`{s['look']}`)"
+        sets_lines.append(
+            f"#### {idx}. {_md_code_span(s.get('name'))} "
+            f"({_md_code_span(s.get('slug'))} · {_md_code_span(s.get('category'))} "
+            f"· look={_md_code_span(s.get('look'))})"
         )
-        lines.append(f"- **Kicker:** {s['kicker']}")
-        lines.append(f"- **Why better together:** {s['why_better_together']}")
-        lines.append("- **Members:**")
+        sets_lines.append(f"- **Kicker:** {_md_code_span(s.get('kicker'))}")
+        sets_lines.append(
+            f"- **Why better together:** {_md_code_span(s.get('why_better_together'))}"
+        )
+        sets_lines.append("- **Members:**")
         for m in s.get("members") or []:
             vol = f"{int(m['volume']):,}" if m.get("volume") is not None else "n/a"
-            lines.append(
-                f"  - `{m['market_id']}` ({m['source']}, vol `{vol}`): {m['title']}"
+            sets_lines.append(
+                f"  - {_md_code_span(m.get('market_id'))} "
+                f"({_md_code_span(m.get('source'))}, vol `{vol}`): "
+                f"{_md_code_span(m.get('title'))}"
             )
-        lines.append("<details><summary>Rule definition JSON</summary>\n")
-        lines.append("```json")
-        lines.append(json.dumps(s.get("rule_definition") or {}, indent=2))
-        lines.append("```")
-        lines.append("</details>")
-        lines.append("")
-
-    singles = artifact.get("verified_singles") or []
-    lines.extend(["", f"### Verified Fun Singles ({len(singles)})"])
-    if not singles:
-        lines.append("_None tonight._")
-    else:
-        lines.append("| Market ID | Fun Group | Title | Reason |")
-        lines.append("|---:|---|---|---|")
-        for item in singles:
-            lines.append(
-                f"| `{item.get('market_id')}` | `{item.get('fun_group') or ''}` | "
-                f"{item.get('title') or ''} | {item.get('reason') or ''} |"
-            )
+        sets_lines.append("<details><summary>Rule definition JSON</summary>\n")
+        rule_json = json.dumps(s.get("rule_definition") or {}, indent=2)
+        sets_lines.extend(_md_code_fence(rule_json, "json"))
+        sets_lines.append("</details>")
+        sets_lines.append("")
 
     rejected = artifact.get("rejected_sets") or []
-    if rejected:
-        lines.extend(["", f"### Rejected Proposals ({len(rejected)})"])
-        for rej in rejected:
-            lines.append(f"- `{json.dumps(rej, sort_keys=True)}`")
+    rejected_prefix: list[str] = ["", f"### Rejected Proposals ({len(rejected)})"] if rejected else []
+    rejected_rows: list[str] = [
+        f"- {_md_code_span(json.dumps(rej, sort_keys=True))}" for rej in rejected
+    ]
 
-    return "\n".join(lines).strip() + "\n"
+    singles = artifact.get("verified_singles") or []
+    singles_header: list[str] = ["", f"### Verified Fun Singles ({len(singles)})"]
+    if not singles:
+        singles_header.append("_None tonight._")
+        singles_rows: list[str] = []
+    else:
+        singles_header.extend(
+            [
+                "| Market ID | Fun Group | Title | Reason |",
+                "|---:|---|---|---|",
+            ]
+        )
+        singles_rows = [
+            f"| {_md_code_span(item.get('market_id'), table=True)} "
+            f"| {_md_code_span(item.get('fun_group') or '', table=True)} "
+            f"| {_md_code_span(item.get('title') or '', table=True)} "
+            f"| {_md_code_span(item.get('reason') or '', table=True)} |"
+            for item in singles
+        ]
+
+    # Header + staged sets always stay whole unless they alone exceed max_chars.
+    base_lines = header_lines + sets_lines
+    base_text = "\n".join(base_lines)
+
+    # Reserve a small slice for rejected proposals (kept compact if large).
+    rejected_lines: list[str] = []
+    if rejected_rows:
+        rejected_budget = min(4_000, max(0, max_chars - len(base_text) - 512))
+        acc: list[str] = list(rejected_prefix)
+        used = sum(len(line) + 1 for line in acc)
+        shown_rej = 0
+        for row in rejected_rows:
+            note_reserve = 120
+            if used + len(row) + 1 + note_reserve > rejected_budget:
+                break
+            acc.append(row)
+            used += len(row) + 1
+            shown_rej += 1
+        if shown_rej < len(rejected_rows):
+            acc.append(
+                f"_Showing first {shown_rej} of {len(rejected_rows)} rejected proposals "
+                f"(full list in Redis {_md_code_span(day_key)})._"
+            )
+        if shown_rej > 0 or len(rejected_rows) > 0:
+            rejected_lines = acc
+
+    rejected_text = ("\n" + "\n".join(rejected_lines)) if rejected_lines else ""
+
+    # Fit as many verified singles rows as possible inside the remaining budget.
+    singles_section_lines: list[str] = list(singles_header)
+    if singles_rows:
+        # Leave space for trailing newline + possible truncation note.
+        trunc_template = (
+            f"\n_Showing first {len(singles_rows)} of {len(singles_rows)} verified singles "
+            f"(capped under GitHub's 65,536-char limit; full list in Redis {_md_code_span(day_key)})._"
+        )
+        prefix_len = len(base_text) + 1 + len("\n".join(singles_section_lines)) + len(rejected_text) + 2
+        available_for_rows = max_chars - prefix_len
+        all_rows_len = sum(len(r) + 1 for r in singles_rows)
+        if all_rows_len <= available_for_rows:
+            singles_section_lines.extend(singles_rows)
+        else:
+            row_budget = max(0, available_for_rows - len(trunc_template) - 1)
+            used_rows = 0
+            shown_singles = 0
+            for row in singles_rows:
+                if used_rows + len(row) + 1 > row_budget:
+                    break
+                singles_section_lines.append(row)
+                used_rows += len(row) + 1
+                shown_singles += 1
+            singles_section_lines.append(
+                f"_Showing first {shown_singles} of {len(singles_rows)} verified singles "
+                f"(capped under GitHub's 65,536-char limit; full list in Redis {_md_code_span(day_key)})._"
+            )
+
+    body = "\n".join(base_lines + singles_section_lines + rejected_lines).strip() + "\n"
+    if len(body) > max_chars:
+        suffix = f"\n\n_Report truncated to fit GitHub's comment limit; full artifact in Redis {_md_code_span(day_key)}._\n"
+        keep = max(0, max_chars - len(suffix))
+        body = body[:keep].rstrip() + suffix
+    return body
 
 
 def _post_scout_report_to_github(

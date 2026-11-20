@@ -673,3 +673,141 @@ class TestScoutDurabilityPreFlip13124:
         month_key = FROZEN_NOW.strftime("%Y-%m")
         scout_task._UNRECORDED_SPEND_MONTHS.clear()
         assert scout_task._read_monthly_spend_usd(month_key) == float("inf")
+
+    def test_scout_comment_escapes_mentions_issue_refs_pipes_and_backticks(self):
+        import importlib
+        import re
+
+        scout_task = importlib.import_module("app.tasks.discover_fun_scout")
+
+        tricky_title = "Will @octocat | #12345 win `Best` \nShow?"
+        artifact = {
+            "run_date": "2025-05-01",
+            "run_at": "2025-05-01T09:30:00+00:00",
+            "spend_line": "fun-scout pre-run: 3424 titles est=$0.09",
+            "actual_total_cost_usd": 0.11,
+            "set_model": CLAUDE_SONNET_MODEL,
+            "licence_state": {"status": "awaiting_look", "clean_days": 0},
+            "monthly_ledger_recorded": True,
+            "staged_sets": [
+                {
+                    "slug": "tricky-set",
+                    "name": "Who beats @octocat on #12345?",
+                    "kicker": "Watch @octocat | #12345",
+                    "category": "entertainment",
+                    "why_better_together": "Links @octocat & #12345 in `one` place",
+                    "look": "bars",
+                    "members": [
+                        {
+                            "market_id": 501,
+                            "source": "polymarket",
+                            "title": tricky_title,
+                            "volume": 25000,
+                            "category": "entertainment",
+                        }
+                    ],
+                    "rule_definition": {
+                        "slug": "tricky-set",
+                        "note": "contains ```triple``` fence and @octocat #12345",
+                    },
+                }
+            ],
+            "verified_singles": [
+                {
+                    "market_id": 502,
+                    "fun_group": "pop-culture",
+                    "title": tricky_title,
+                    "reason": "Mentions @octocat | refs #12345 and `ticks`",
+                }
+            ],
+            "rejected_sets": [{"slug": "bad", "reason": "@octocat #12345"}],
+        }
+
+        body = scout_task.format_scout_nightly_comment_markdown(artifact)
+
+        # Every singles table row keeps exactly 4 columns (5 unescaped pipes)
+        table_rows = [
+            line for line in body.splitlines() if line.startswith("| `502`")
+        ]
+        assert len(table_rows) == 1
+        row = table_rows[0]
+        assert r"\|" in row
+        assert len(re.findall(r"(?<!\\)\|", row)) == 5
+
+        # Fenced JSON block upgrades to 4+ backticks when JSON contains ```
+        assert "````json" in body
+
+        # Strip fenced code blocks and inline code spans: zero raw @mentions or #12345 remain
+        stripped = re.sub(r"(`{3,})[^\n]*\n.*?\n\1", "", body, flags=re.DOTALL)
+        # Strip inline multi- and single-backtick code spans
+        stripped = re.sub(r"(`+)(?:(?!\1).)*\1", "", stripped)
+        assert "@octocat" not in stripped
+        assert "#12345" not in stripped
+
+    def test_scout_comment_caps_body_under_github_limit_at_1000_singles(self):
+        import importlib
+        import re
+
+        scout_task = importlib.import_module("app.tasks.discover_fun_scout")
+
+        staged_sets = [
+            {
+                "slug": f"staged-set-{i}",
+                "name": f"Staged Set Number {i}",
+                "kicker": "Curated fun set",
+                "category": "culture",
+                "why_better_together": "Three related markets with clear contrast.",
+                "look": "bars",
+                "members": [
+                    {
+                        "market_id": 1000 + i * 10 + j,
+                        "source": "polymarket",
+                        "title": f"Staged set {i} member {j} market title",
+                        "volume": 50000,
+                        "category": "culture",
+                    }
+                    for j in range(3)
+                ],
+                "rule_definition": {
+                    "slug": f"staged-set-{i}",
+                    "name": f"Staged Set Number {i}",
+                    "members": [1000 + i * 10 + j for j in range(3)],
+                },
+            }
+            for i in range(1, 3)
+        ]
+        singles = [
+            {
+                "market_id": 10_000 + i,
+                "fun_group": "pop-culture",
+                "title": f"Will quirky event number {i:04d} happen before the end of 2027?",
+                "reason": f"High-interest non-sports market candidate #{i:04d} with strong volume.",
+            }
+            for i in range(1000)
+        ]
+        artifact = {
+            "run_date": "2025-05-01",
+            "run_at": "2025-05-01T09:30:00+00:00",
+            "spend_line": "fun-scout pre-run: 3424 titles est=$0.09",
+            "actual_total_cost_usd": 0.14,
+            "set_model": CLAUDE_SONNET_MODEL,
+            "licence_state": {"status": "awaiting_look", "clean_days": 2},
+            "monthly_ledger_recorded": True,
+            "staged_sets": staged_sets,
+            "verified_singles": singles,
+            "rejected_sets": [{"slug": "rejected-1", "reason": "too_few_members"}],
+        }
+
+        body = scout_task.format_scout_nightly_comment_markdown(artifact)
+
+        assert len(body) <= 65_536
+        assert len(body) <= scout_task.SCOUT_GITHUB_COMMENT_MAX_CHARS
+        # Header, spend line, and both staged sets (with rule JSON) stay whole
+        assert "fun-scout pre-run: 3424 titles est=$0.09" in body
+        assert "staged-set-1" in body and "staged-set-2" in body
+        assert '"members": [' in body
+        # Singles table is truncated cleanly with an explicit "first N of 1000" line
+        m = re.search(r"Showing first (\d+) of 1000 verified singles", body)
+        assert m is not None
+        shown = int(m.group(1))
+        assert 0 < shown < 1000
