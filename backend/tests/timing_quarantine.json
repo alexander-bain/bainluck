@@ -5,5 +5,12 @@
     "added": "2026-11-19",
     "expires": "2026-11-26",
     "reason": "Ruling 241: A — 50ms wall-clock SUBSCRIPTION_REFRESH_SECONDS race (assert 5 == 4) on master run 44651156056 (untouched iOS commit 3381251b1a), passed on subsequent master run 44653536284"
+  },
+  {
+    "nodeid": "tests/test_loop_cpu_sampler_10090.py::test_samples_are_not_pulled_onto_the_frame_that_makes_syscalls[prof]",
+    "issue": 13150,
+    "added": "2026-11-19",
+    "expires": "2026-11-26",
+    "reason": "Ruling 241: A — live 3ms ITIMER_PROF runner CPU-attribution variance (diff 0.217 vs 0.15) on master run 44667509557 attempt 1 (untouched commit ba04891f4e), passed on attempt 2"
   }
 ]
