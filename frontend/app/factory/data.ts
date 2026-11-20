@@ -77,6 +77,18 @@ function validateSnapshot(payload: FactoryData): FactoryData {
     !Array.isArray(payload.coverage) ||
     !payload.coverage.every((note: unknown) => typeof note === "string") ||
     !payload.signals ||
+    (payload.injury_clock !== undefined &&
+      (!payload.injury_clock ||
+        !Number.isFinite(Date.parse(payload.injury_clock.from)) ||
+        typeof payload.injury_clock.available !== "boolean" ||
+        !Array.isArray(payload.injury_clock.events) ||
+        !payload.injury_clock.events.every((event) =>
+          event &&
+          ["switched-off", "wrong-number"].includes(event.kind) &&
+          Number.isSafeInteger(event.number) &&
+          event.number > 0 &&
+          Number.isFinite(Date.parse(event.at)),
+        ))) ||
     !Array.isArray(payload.events ?? []) ||
     !(payload.events ?? []).every(isEvent) ||
     !Array.isArray(payload.transitions ?? []) ||
@@ -152,6 +164,7 @@ function validateSnapshot(payload: FactoryData): FactoryData {
           change.merge_announced_at,
           change.live_posted_at,
           change.live_post_observed_at,
+          change.bench_seen_at,
         ].every((at) => at === undefined || Number.isFinite(Date.parse(at))),
     ) ||
     !Number.isFinite(Date.parse(payload.generated_at)) ||
@@ -170,6 +183,7 @@ function validateSnapshot(payload: FactoryData): FactoryData {
       : {}),
     ...(payload.transitions ? { transitions: payload.transitions } : {}),
     ...(payload.events ? { events: payload.events } : {}),
+    ...(payload.injury_clock ? { injury_clock: payload.injury_clock } : {}),
     ...(payload.stops ? { stops: payload.stops } : {}),
     ...(notes ? { notes } : {}),
     changes: payload.changes,

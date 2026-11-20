@@ -28,6 +28,8 @@ import type { Builder, Change, FactoryData, Jam, Line, Station, Stop } from "./t
 import styles from "./factory.module.css";
 import Worker from "./Worker";
 import EventScene from "./EventScene";
+import InjurySign from "./InjurySign";
+import { clipboard, median } from "./signs";
 import { useDayReplay } from "./useDayReplay";
 import { useReplayJournal } from "./replayJournal";
 import { crossesSegment, eventText, useEventPlayer } from "./playback";
@@ -48,6 +50,7 @@ import {
   shownStops,
   knownOrigin,
   onActiveFloor,
+  recentlyActive,
 } from "./activity";
 
 const lines: Line[] = ["Server", "Website", "Apps"];
@@ -319,6 +322,18 @@ export default function FactoryFloor({
     (c) => c.station === "Live" && c.live_at && pacificDay(c.live_at) === today,
   );
   const onFloor = data.changes.filter(onActiveFloor);
+  const recordTime = behind ? data.generated_at : now;
+  const clockedIn = new Set(
+    data.changes
+      .filter((c) => c.builder !== "Other" && recentlyActive(c.last_activity, recordTime))
+      .map((c) => c.builder),
+  );
+  const engineeringRecords = clipboard(recordTime, shipped, onFloor);
+  const mergesToday = new Set(
+    data.changes
+      .filter((c) => c.merged_at && pacificDay(c.merged_at) === today)
+      .map((c) => c.number),
+  );
   const held = uniqueChanges(data.changes.filter((c) => c.held_for_108));
   const sideTrack = uniqueChanges(
     data.changes.filter(
@@ -442,6 +457,7 @@ export default function FactoryFloor({
             Every change, from its first lines to going live.
           </p>
         </div>
+        <InjurySign reading={data.injury_clock} through={data.generated_at} />
         <div className={styles.updated}>
           <span className={styles.statusDot} aria-hidden="true" />
           <div>
@@ -970,9 +986,9 @@ export default function FactoryFloor({
         <details className={styles.panel} aria-labelledby="builders-heading">
           <summary className={styles.summary}>
             <ChevronRight size={14} aria-hidden="true" />
-            <h2 id="builders-heading">Who is on the floor</h2>
+            <h2 id="builders-heading">Time clock</h2>
             <span className={styles.sectionNote}>
-              {uniqueChanges(data.changes.filter((c) => !c.merged_at)).length} open
+              {clockedIn.size} clocked in
             </span>
           </summary>
           <div className={styles.builders}>
@@ -996,8 +1012,9 @@ export default function FactoryFloor({
                   data-pose={crew.pose}
                 >
                   <Worker identity={builder.key} state={crew.pose} />
-                  <strong>{builder.name}</strong>
+                  <strong className={styles.nameTag}>{builder.name}</strong>
                   {builder.key === "W" && <small>Spare hand</small>}
+                  <span>{clockedIn.has(builder.key) ? "Clocked in" : "Quiet for 15 minutes"}</span>
                   <span>
                     {pose}
                     {crew.change && ` #${crew.change.number}`}
@@ -1011,8 +1028,25 @@ export default function FactoryFloor({
         <details className={styles.panel} aria-labelledby="last-step-heading">
           <summary className={styles.summary}>
             <ChevronRight size={14} aria-hidden="true" />
-            <h2 id="last-step-heading">How long the last step takes</h2>
+            <h2 id="last-step-heading">Engineer clipboard</h2>
           </summary>
+          <dl className={styles.clipboard}>
+            <div>
+              <dt>Median from Bench to Live</dt>
+              <dd>{engineeringRecords.benchMedian === null ? "No complete trips timed yet" : duration(engineeringRecords.benchMedian)}</dd>
+            </div>
+            <div>
+              <dt>Longest known wait</dt>
+              <dd>{engineeringRecords.longest
+                ? `#${engineeringRecords.longest.change.number} · ${duration(engineeringRecords.longest.seconds)}`
+                : "No wait time recorded"}</dd>
+            </div>
+            <div>
+              <dt>Merges today</dt>
+              <dd>{mergesToday.size}</dd>
+            </div>
+          </dl>
+          <p className={styles.timingNote}>Bench timing starts when the change is first seen there.</p>
           <div className={styles.delivery}>
             {lines.map((line) => {
               const delivered = shipped.filter(
@@ -1022,17 +1056,10 @@ export default function FactoryFloor({
                   c.live_at &&
                   Date.parse(c.merged_at) >= Date.parse(data.observed_since),
               );
-              const timings = delivered
-                .map(
-                  (c) =>
-                    (Date.parse(c.live_at!) - Date.parse(c.merged_at!)) / 1000,
-                )
-                .sort((a, b) => a - b);
-              const middle = Math.floor(timings.length / 2);
-              const median =
-                timings.length % 2
-                  ? timings[middle]
-                  : (timings[middle - 1] + timings[middle]) / 2;
+              const timings = delivered.map(
+                (c) => (Date.parse(c.live_at!) - Date.parse(c.merged_at!)) / 1000,
+              );
+              const elapsed = median(timings);
               const upperBound = delivered.some((c) => c.timing === "observed");
               const last = [...delivered].sort((a, b) =>
                 b.live_at!.localeCompare(a.live_at!),
@@ -1043,8 +1070,8 @@ export default function FactoryFloor({
                     {line} <ArrowRight size={15} /> Live
                   </span>
                   <strong>
-                    {timings.length
-                      ? `${upperBound ? "Within " : ""}${duration(median)}`
+                    {elapsed !== null
+                      ? `${upperBound ? "Within " : ""}${duration(elapsed)}`
                       : "Not timed yet"}
                   </strong>
                   <span>

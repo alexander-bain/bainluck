@@ -19,6 +19,7 @@ import urllib.parse
 from model import build, instant, iso, public_title, PACIFIC, TRUSTED
 from ci_queue import attach_machine_reason, machine_queue
 from events import add_events
+from signs import add_signs, switched_off, wrong_numbers
 from notes import make_notes
 from signals import commands_from, test_file
 
@@ -462,15 +463,20 @@ def deployment_start(context):
     return None
 
 
-def history_signals(api, midnight):
+def history_signals(api, midnight, injury_since):
     """Read actual status contexts on master ancestry, including batched merges."""
     first_parent = set(git("rev-list", "--first-parent", "origin/master").splitlines())
     receipts = []
     starts = []
     latest = {}
     cursor = None
+    reports = None
     while True:
-        query = """query($cursor:String) { repository(owner:"alexander-bain",name:"bainluck") {
+        query = """query($cursor:String,$reports:String!,$firstPage:Boolean!) {
+          reports: search(query:$reports,type:ISSUE,first:100) @include(if:$firstPage) {
+            issueCount pageInfo { hasNextPage } nodes { ... on Issue { number title createdAt } }
+          }
+          repository(owner:"alexander-bain",name:"bainluck") {
           defaultBranchRef { target { ... on Commit { history(first:100,after:$cursor) {
             pageInfo {hasNextPage endCursor} nodes { oid committedDate
               statusCheckRollup { contexts(first:100) { nodes {
@@ -482,9 +488,23 @@ def history_signals(api, midnight):
             }
           } } } }
         } }"""
-        data = api.request("graphql", {"query": query, "variables": {"cursor": cursor}})
-        if data.get("errors"):
+        search = f'repo:{REPO} is:issue in:title "Wrong number" created:>={injury_since[:10]}'
+        data = api.request(
+            "graphql",
+            {
+                "query": query,
+                "variables": {
+                    "cursor": cursor,
+                    "reports": search,
+                    "firstPage": cursor is None,
+                },
+            },
+        )
+        errors = data.get("errors") or []
+        if any(error.get("path", [])[:1] != ["reports"] for error in errors):
             raise RuntimeError("GitHub could not return deployment status history")
+        if cursor is None and not errors:
+            reports = data["data"].get("reports")
         history = data["data"]["repository"]["defaultBranchRef"]["target"]["history"]
         nodes = history["nodes"]
         for node in nodes:
@@ -525,7 +545,7 @@ def history_signals(api, midnight):
         if not history["pageInfo"]["hasNextPage"] or (older and found_success):
             break
         cursor = history["pageInfo"]["endCursor"]
-    return receipts, latest, starts
+    return receipts, latest, starts, reports
 
 
 def collect(api, previous=None, cache=None, open_summaries=None):
@@ -535,7 +555,10 @@ def collect(api, previous=None, cache=None, open_summaries=None):
         hour=0, minute=0, second=0, microsecond=0
     )
     coverage = []
-    receipts, latest, starts = history_signals(api, midnight)
+    injury_since = previous.get("observed_since") or iso(now)
+    receipts, latest, starts, injury_reports = history_signals(
+        api, midnight, injury_since
+    )
     try:
         health = api.public_json("https://api.bainluck.com/api/health")
         deployed = git("rev-parse", "--verify", f"{health['commit']}^{{commit}}")
@@ -600,8 +623,14 @@ def collect(api, previous=None, cache=None, open_summaries=None):
     annotate_test_commits(api, pulls, cache)
     # A reported live time refines the server observation only after ancestry
     # independently proves this exact merged change was deployed.
-    comments = api.pages(f"issues/12779/comments?since={iso(floor)}")
-    commands = commands_from(comments)
+    last_read = (
+        previous.get("generated_at") if previous.get("injury_clock") else injury_since
+    )
+    comments_since = min(floor, instant(last_read))
+    comments = api.pages(f"issues/12779/comments?since={iso(comments_since)}")
+    commands = commands_from(
+        c for c in comments if instant(c.get("updated_at", c["created_at"])) >= floor
+    )
     positions = {
         sha: i
         for i, sha in enumerate(
@@ -683,6 +712,11 @@ def collect(api, previous=None, cache=None, open_summaries=None):
         "pulls": pulls,
         "deployments": receipts,
         "deploy_starts": starts,
+        "injury_source": {
+            "from": injury_since,
+            "wrong_numbers": wrong_numbers(injury_reports, injury_since),
+            "switches": switched_off(comments, injury_since),
+        },
         "master": master,
         "coverage": coverage,
         "master_ci_active": any(
@@ -851,6 +885,7 @@ def main():
         snapshot = collect(api, previous, cache, summaries)
         result = build(snapshot, previous)
         add_events(result, snapshot, previous, cache)
+        add_signs(result, snapshot, previous)
         if snapshot.get("master_ci_active") and any(
             s["kind"] == "line-stalled" for s in result["stops"]
         ):

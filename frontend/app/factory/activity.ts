@@ -121,7 +121,7 @@ export function machineText(queue: Stop["machines"]) {
   );
 }
 
-function recentlyActive(at: string, now: string) {
+export function recentlyActive(at: string, now: string) {
   const age = Date.parse(now) - Date.parse(at);
   return age >= 0 && age <= 15 * 60_000;
 }

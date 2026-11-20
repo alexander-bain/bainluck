@@ -35,6 +35,7 @@ export interface Change {
   testflight_build?: number;
   check_progress?: { done: number; total: number };
   approvals?: { bot?: string; fable?: string };
+  bench_seen_at?: string;
 }
 
 export const factoryEventKinds = [
@@ -60,6 +61,18 @@ export interface DayReplay {
   date: string;
   through: string;
   events: FloorEvent[];
+}
+
+export interface Injury {
+  kind: "switched-off" | "wrong-number";
+  number: number;
+  at: string;
+}
+
+export interface InjuryClock {
+  from: string;
+  available: boolean;
+  events: Injury[];
 }
 
 export interface Transfer {
@@ -112,6 +125,7 @@ export interface FactoryData {
   read_expires_at?: string;
   transitions?: Transfer[];
   events?: FloorEvent[];
+  injury_clock?: InjuryClock;
   stops?: Stop[];
   notes?: {
     snapshot_at: string;
