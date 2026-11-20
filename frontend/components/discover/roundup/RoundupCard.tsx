@@ -8,7 +8,7 @@ import {
   MachineryDiscoverCard,
   isMachinerySlice1Enabled,
 } from "@/components/collections/MachinerySectionRenderer";
-import { buildRoundupCardModel } from "@/lib/discover/roundupCard";
+import { buildRoundupCardModel, compactStripDateLabel } from "@/lib/discover/roundupCard";
 import type { FeedItem, FeedRoundupContract, FeedThemeCollectionRef } from "@/lib/types";
 import { BundleActionBar } from "../BundleActionBar";
 import { admitCollectionRef, rememberThemeCollectionReturn } from "../shared";
@@ -128,26 +128,26 @@ export function RoundupCard({
         longHeadline={model.longHeadline}
       />
       {model.presentation === "strip" ? (
-        <div className="grid grid-cols-3 gap-2.5" data-testid="roundup-rows" data-presentation="strip">
+        <div className="-mx-1 grid grid-cols-3 gap-1" data-testid="roundup-rows" data-presentation="strip">
           {model.rows.map((row) => (
             <div
               key={row.marketId}
-              className="flex min-w-0 flex-col justify-between rounded-xl border border-surface-border bg-surface-elevated/40 p-2.5"
+              className="flex min-w-0 flex-col justify-between rounded-xl border border-surface-border bg-surface-elevated/40 px-1 py-2"
               data-testid="roundup-row"
               data-market-id={row.marketId}
             >
               <div className="min-w-0" data-testid="roundup-row-label">
-                <div className="truncate text-[13px] font-medium leading-[1.25] text-text-primary">
+                <div className="whitespace-normal break-words text-[10.5px] font-medium leading-[1.2] tracking-[-0.02em] text-text-primary">
                   {row.opponentLabel ?? row.label}
                 </div>
                 {row.dateLabel ? (
-                  <div className="mt-0.5 truncate text-[11.5px] leading-[1.2] text-text-secondary">
-                    {row.dateLabel}
+                  <div className="mt-0.5 whitespace-nowrap text-[11px] leading-[1.2] text-text-secondary">
+                    {compactStripDateLabel(row.dateLabel)}
                   </div>
                 ) : null}
               </div>
               <div className="mt-2.5">
-                <div className="flex items-baseline justify-between gap-1">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-1 gap-y-0.5">
                   <span className="font-mono text-[18px] font-bold leading-[1.15] tracking-[-0.03em] text-text-primary tabular-nums">
                     {row.marker}
                     {row.digits}
