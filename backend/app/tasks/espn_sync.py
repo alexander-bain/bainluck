@@ -3746,11 +3746,127 @@ def espn_abbreviation_may_be_written(
     return bool(match_was_exact or repointed_from or fuzzy_identical)
 
 
-async def _backfill_team_logos():
+_ESPN_ID_NAME_STOP_TOKENS = frozenset({
+    "fc", "sc", "cf", "ac", "afc", "bc", "club", "the", "of", "at",
+    "de", "la", "cd", "ud", "sv", "bk", "fk", "if", "sk", "as", "ss", "us",
+})
+_ESPN_ID_NAME_GENERIC_TOKENS = frozenset({
+    "state", "university", "college", "united", "city", "real", "athletic",
+    "sporting", "inter", "san", "santa", "saint", "new", "north", "south",
+    "east", "west", "central", "southern", "northern", "eastern", "western",
+})
+_ESPN_ID_NAME_DIRECTION_TOKENS = frozenset({
+    "north", "south", "east", "west", "central",
+    "northern", "southern", "eastern", "western",
+})
+
+
+def _espn_id_norm_basic(value: str) -> str:
+    if not value:
+        return ""
+    import unicodedata
+
+    ascii_val = (
+        unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    )
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", ascii_val.lower().strip())
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _espn_id_norm_expanded(value: str) -> str:
+    s = _espn_id_norm_basic(value)
+    s = re.sub(r"\bst\b", "state", s)
+    s = re.sub(r"\bmt\b", "mount", s)
+    s = re.sub(r"\bft\b", "fort", s)
+    s = re.sub(r"\bn\b", "north", s)
+    s = re.sub(r"\bs\b", "south", s)
+    s = re.sub(r"\be\b", "east", s)
+    s = re.sub(r"\bw\b", "west", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _espn_id_tokens(value: str) -> set[str]:
+    return {
+        tok
+        for tok in _espn_id_norm_expanded(value).split()
+        if tok and tok not in _ESPN_ID_NAME_STOP_TOKENS
+    }
+
+
+def espn_id_name_agrees(team_name: str, espn_team) -> bool:
+    """Whether ``team_name`` agrees with the ESPN team resolved by ``espn_id`` (#13144).
+
+    Guards the ``team.espn_id in espn_by_id`` branch of ``_backfill_team_logos``
+    against #12762-class crossed anchors (e.g. Stanford carrying Arkansas's
+    ESPN id, or Qarabağ FK carrying Viking FK's id) once ``get_teams`` returns
+    the full 1,000-team roster. Reads only ``team_name`` — never
+    ``alternate_names``, which may carry borrowed names (#8353) — and prefers
+    school/club-bearing ESPN fields (``display_name``, ``short_name``,
+    ``location``) over bare mascot ``name`` so two schools sharing a mascot
+    cannot falsely agree.
+    """
+    if not team_name or espn_team is None:
+        return False
+    db_basic = _espn_id_norm_basic(team_name)
+    db_exp = _espn_id_norm_expanded(team_name)
+    if not db_basic:
+        return False
+
+    primary_forms = [
+        f
+        for f in (
+            getattr(espn_team, "display_name", None) or "",
+            getattr(espn_team, "short_name", None) or "",
+            getattr(espn_team, "location", None) or "",
+        )
+        if f.strip()
+    ]
+    if not primary_forms:
+        primary_forms = [
+            f
+            for f in (
+                getattr(espn_team, "nickname", None) or "",
+                getattr(espn_team, "name", None) or "",
+            )
+            if f.strip()
+        ]
+    if not primary_forms:
+        return False
+
+    if db_basic in {_espn_id_norm_basic(f) for f in primary_forms}:
+        return True
+    if db_exp in {_espn_id_norm_expanded(f) for f in primary_forms}:
+        return True
+
+    mascot_toks = _espn_id_tokens(getattr(espn_team, "name", None) or "")
+    loc_short_toks: set[str] = set()
+    for field in (
+        getattr(espn_team, "location", None) or "",
+        getattr(espn_team, "short_name", None) or "",
+    ):
+        loc_short_toks |= _espn_id_tokens(field)
+    disp_toks = _espn_id_tokens(getattr(espn_team, "display_name", None) or "")
+    espn_id_toks = loc_short_toks or (disp_toks - mascot_toks) or disp_toks
+    db_toks = _espn_id_tokens(team_name)
+    if not db_toks or not espn_id_toks:
+        return False
+
+    db_dirs = db_toks & _ESPN_ID_NAME_DIRECTION_TOKENS
+    espn_dirs = espn_id_toks & _ESPN_ID_NAME_DIRECTION_TOKENS
+    if db_dirs != espn_dirs and (db_dirs or espn_dirs):
+        return False
+
+    overlap = db_toks & espn_id_toks
+    if not (overlap - _ESPN_ID_NAME_GENERIC_TOKENS):
+        return False
+    return (len(overlap) / min(len(db_toks), len(espn_id_toks))) >= 0.5
+
+
+async def _backfill_team_logos(*, dry_run: bool = False):
     """Async implementation of backfill_team_logos."""
     from app.services.espn_api import ESPNAPIService, SPORT_LEAGUE_MAP
     from app.models.models import Team, Sport
-    from sqlalchemy import or_, select
+    from sqlalchemy import or_, select, text
 
     stats = {
         "sports_checked": 0,
@@ -3759,12 +3875,17 @@ async def _backfill_team_logos():
         "espn_anchors_repointed": 0,
         "espn_name_collisions_resolved": 0,
         "espn_name_collisions_refused": 0,
+        "espn_id_name_disagreement": 0,
         "fuzzy_media_refused": 0,
         "errors": [],
     }
+    if dry_run:
+        stats["planned_writes"] = []
 
     try:
         async with get_task_session() as session:
+            if dry_run:
+                await session.execute(text("SET TRANSACTION READ ONLY"))
             # Find under-enriched teams, grouped by sport. A missing
             # abbreviation admits the #6432 rows: a team anchored to ESPN's
             # corrupt duplicate keeps the wrong crest AND never gets a badge,
@@ -3842,9 +3963,27 @@ async def _backfill_team_logos():
                         repointed_from = None
                         had_media = bool(team.logo_url_small)
 
-                        # Match by ESPN ID first (most reliable)
+                        # Match by ESPN ID first (most reliable), but verify the
+                        # resolved ESPN club agrees with the row's own name so a
+                        # #12762 crossed anchor cannot stamp another school's
+                        # short name or media once limit=1000 reaches every team
+                        # (#13144).
                         if team.espn_id and team.espn_id in espn_by_id:
-                            matched_espn = espn_by_id[team.espn_id]
+                            candidate_espn = espn_by_id[team.espn_id]
+                            if not espn_id_name_agrees(team.name, candidate_espn):
+                                logger.warning(
+                                    "Skipping team %s (%r): stored espn_id=%s "
+                                    "resolves to %r (%r) which disagrees with "
+                                    "team name",
+                                    team.id,
+                                    team.name,
+                                    team.espn_id,
+                                    candidate_espn.display_name,
+                                    candidate_espn.abbreviation,
+                                )
+                                stats["espn_id_name_disagreement"] += 1
+                                continue
+                            matched_espn = candidate_espn
                             match_was_exact = True
                             sibling = consistent_same_name_sibling(
                                 matched_espn, espn_name_candidates
@@ -3903,13 +4042,32 @@ async def _backfill_team_logos():
                                     fuzzy_identical=fuzzy_identical,
                                 )
                             ):
+                                before_abbr = team.abbreviation
                                 team.abbreviation = matched_espn.abbreviation
+                                if dry_run:
+                                    stats["planned_writes"].append({
+                                        "team_id": team.id,
+                                        "sport_key": sport_key,
+                                        "name": team.name,
+                                        "current_abbr": before_abbr,
+                                        "new_abbr": team.abbreviation,
+                                        "crest_changed": False,
+                                        "color_changed": False,
+                                        "espn_id_changed": False,
+                                        "new_espn_id": team.espn_id,
+                                        "match_kind": "fuzzy_identical_abbr_only",
+                                    })
                                 stats["teams_updated"] += 1
                                 continue
                             stats["fuzzy_media_refused"] += 1
                             continue
 
                         if matched_espn and matched_espn.logo_url:
+                            before_abbr = team.abbreviation
+                            before_logo = team.logo_url_small
+                            before_primary = team.primary_color
+                            before_secondary = team.secondary_color
+                            before_espn_id = team.espn_id
                             if repointed_from or not had_media:
                                 team.logo_url_small = matched_espn.logo_url
                                 team.logo_url_large = matched_espn.logo_url
@@ -3969,9 +4127,34 @@ async def _backfill_team_logos():
                             )
                             if alt_names is not None:
                                 team.alternate_names = alt_names
+                            if dry_run:
+                                stats["planned_writes"].append({
+                                    "team_id": team.id,
+                                    "sport_key": sport_key,
+                                    "name": team.name,
+                                    "current_abbr": before_abbr,
+                                    "new_abbr": team.abbreviation,
+                                    "crest_changed": team.logo_url_small != before_logo,
+                                    "color_changed": (
+                                        team.primary_color != before_primary
+                                        or team.secondary_color != before_secondary
+                                    ),
+                                    "espn_id_changed": team.espn_id != before_espn_id,
+                                    "new_espn_id": team.espn_id,
+                                    "match_kind": (
+                                        "repoint"
+                                        if repointed_from
+                                        else ("exact" if match_was_exact else "fuzzy_identical")
+                                    ),
+                                })
                             stats["teams_updated"] += 1
             finally:
                 await espn.close()
+            if dry_run:
+                if hasattr(session, "expunge_all"):
+                    session.expunge_all()
+                if hasattr(session, "rollback"):
+                    await session.rollback()
 
     except Exception as e:
         stats["errors"].append(f"Task error: {str(e)}")
