@@ -1004,9 +1004,9 @@ struct NativeEventDiscoverCard: View {
                 homeScore: event.homeScore,
                 awayScore: event.awayScore,
                 commenceTime: event.commenceTime?.asDate,
-                authorityPeriod: event.espn?.period,
                 pregameReading: pregame,
-                sportKey: event.sport
+                sportKey: event.sport,
+                authorityPeriod: event.espn?.period
             )
         }
         // #5363 — the same pair rule the card's own strip draws, so the image a
@@ -1039,9 +1039,7 @@ struct NativeEventDiscoverCard: View {
             // #4044 — the same reading this card's own `isSuspended` uses above.
             commenceTime: event.commenceTime?.asDate,
             // #9208 — the stoppage word the card's own summary reads.
-            authorityPeriod: event.espn?.period,
-            pregameReading: nil,
-            sportKey: event.sport
+            authorityPeriod: event.espn?.period
         )
     }
 

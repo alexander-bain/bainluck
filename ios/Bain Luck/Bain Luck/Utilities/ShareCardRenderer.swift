@@ -689,10 +689,10 @@ enum ShareCardRenderer {
         // #4044 — no default. A caller that forgets it would silently restore the
         // clockless behaviour on the one surface whose output leaves the app.
         commenceTime: Date?,
-        // #9208 — no default, same reason.
-        authorityPeriod: String?,
         pregameReading: PrematchReading? = nil,
-        sportKey: String? = nil
+        sportKey: String? = nil,
+        // #9208 — no default, same reason.
+        authorityPeriod: String?
     ) -> PlatformImage? {
         let view = ShareableEventCardView(
             homeTeam: homeTeam,

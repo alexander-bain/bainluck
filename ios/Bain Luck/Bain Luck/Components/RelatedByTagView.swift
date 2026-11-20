@@ -155,24 +155,24 @@ struct RelatedByTagView: View {
         // <home>" title that attributes it, so keeping the position keeps
         // the attribution, and the dash says the true thing — we hold no
         // price for that side.
-        guard admitsTrailingProbability(data),
-              let odds = data.currentOdds,
-              let printable = DrawPricedWinner.printablePair(
-                  away: odds.awayProbability,
-                  home: odds.homeProbability,
-                  sport: data.sport) else {
-            return nil
+        if admitsTrailingProbability(data),
+           let odds = data.currentOdds,
+           let printable = DrawPricedWinner.printablePair(
+               away: odds.awayProbability,
+               home: odds.homeProbability,
+               sport: data.sport) {
+                let homeProbability = printable.home
+                let duel = duelPercents(
+                    away: printable.away ?? (1 - homeProbability),
+                    home: homeProbability,
+                    servedAway: odds.awayRenderedPercent,
+                    servedHome: odds.homeRenderedPercent
+                )
+                let awayPct = duel[0]
+                let homePct = duel[1]
+                return "\(formatProbabilityOrDash(printable.away, renderedPercent: awayPct)) / \(formatProbability(homeProbability, renderedPercent: homePct))"
         }
-        let homeProbability = printable.home
-        let duel = duelPercents(
-            away: printable.away ?? (1 - homeProbability),
-            home: homeProbability,
-            servedAway: odds.awayRenderedPercent,
-            servedHome: odds.homeRenderedPercent
-        )
-        let awayPct = duel[0]
-        let homePct = duel[1]
-        return "\(formatProbabilityOrDash(printable.away, renderedPercent: awayPct)) / \(formatProbability(homeProbability, renderedPercent: homePct))"
+        return nil
     }
 
     static func admitsTrailingProbability(_ data: FeedEventData) -> Bool {

@@ -296,9 +296,9 @@ final class FinishedChanceAndMoreSport13168Tests: XCTestCase {
             homeScore: 5,
             awayScore: 6,
             commenceTime: Date().addingTimeInterval(-10800),
-            authorityPeriod: nil,
             pregameReading: pregame,
-            sportKey: finishedDetail.sport
+            sportKey: finishedDetail.sport,
+            authorityPeriod: nil
         ))
         let joined = try ocrStrings(in: shareImage).joined(separator: " | ")
         XCTAssertFalse(joined.contains("47%"), "Finished share card printed stale 47%: \(joined)")
