@@ -1356,23 +1356,29 @@ export default function DiscoverPage() {
         rect.bottom >= -SENTINEL_BAND_PX;
       setSentinelVisible(inBand);
     };
-    const scheduleSync = () =>
-      typeof requestAnimationFrame === "function"
-        ? requestAnimationFrame(syncSentinelInBand)
-        : window.setTimeout(syncSentinelInBand, 0);
-    const cancelSync = (id: number) =>
-      typeof cancelAnimationFrame === "function"
-        ? cancelAnimationFrame(id)
-        : window.clearTimeout(id);
-    let syncFrame = scheduleSync();
+    let syncFrame: number | null = null;
+    const scheduleSync = () => {
+      if (typeof requestAnimationFrame === "function") {
+        syncFrame = requestAnimationFrame(syncSentinelInBand);
+      } else {
+        syncSentinelInBand();
+      }
+    };
+    const cancelSync = () => {
+      if (syncFrame !== null && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(syncFrame);
+        syncFrame = null;
+      }
+    };
+    scheduleSync();
     const onScrollOrResize = () => {
-      cancelSync(syncFrame);
-      syncFrame = scheduleSync();
+      cancelSync();
+      scheduleSync();
     };
     window.addEventListener("scroll", onScrollOrResize, { passive: true });
     window.addEventListener("resize", onScrollOrResize, { passive: true });
     return () => {
-      cancelSync(syncFrame);
+      cancelSync();
       window.removeEventListener("scroll", onScrollOrResize);
       window.removeEventListener("resize", onScrollOrResize);
       observer.disconnect();
