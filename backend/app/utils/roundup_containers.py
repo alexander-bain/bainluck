@@ -1431,13 +1431,19 @@ def _first_present_iso(*values: Any) -> Optional[str]:
     return None
 
 
+def _valid_rendered_percent(value: Any) -> Optional[int]:
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 100:
+        return value
+    return None
+
+
 def _extract_more_set_lead(
     payload: Mapping[str, Any],
-) -> tuple[Optional[str], Optional[float], Optional[str]]:
-    """Extract the lead (label, probability, as_of) strictly from the set's own first row."""
+) -> tuple[Optional[str], Optional[float], Optional[int], Optional[str]]:
+    """Extract the lead (label, probability, rendered_percent, as_of) strictly from the set's own first row."""
     sections = payload.get("sections")
     if not isinstance(sections, Sequence) or isinstance(sections, (str, bytes)):
-        return None, None, None
+        return None, None, None, None
     first_member: Optional[Mapping[str, Any]] = None
     for section in sections:
         if not isinstance(section, Mapping):
@@ -1449,17 +1455,17 @@ def _extract_more_set_lead(
                 first_member = candidate
             break
     if first_member is None:
-        return None, None, None
+        return None, None, None, None
 
     card = first_member.get("card")
     if not isinstance(card, Mapping):
-        return None, None, None
+        return None, None, None, None
     mtype = first_member.get("type")
 
     if mtype == MEMBER_MARKET:
         outcomes = card.get("top_outcomes")
         if not isinstance(outcomes, Sequence) or isinstance(outcomes, (str, bytes)):
-            return None, None, None
+            return None, None, None, None
         valid_outcomes: list[tuple[Mapping[str, Any], str, float]] = []
         for outcome in outcomes:
             if not isinstance(outcome, Mapping):
@@ -1472,7 +1478,7 @@ def _extract_more_set_lead(
             ):
                 valid_outcomes.append((outcome, str(outcome.get("name") or "").strip(), float(prob)))
         if not valid_outcomes:
-            return None, None, None
+            return None, None, None, None
 
         card_name = str(card.get("name") or "").strip()
         outcome_names_lower = {nm.lower() for _, nm, _ in valid_outcomes}
@@ -1486,7 +1492,9 @@ def _extract_more_set_lead(
             chosen_outcome, raw_name, prob = max(valid_outcomes, key=lambda item: item[2])
             label = raw_name or card_name
         if not label:
-            return None, None, None
+            return None, None, None, None
+
+        rendered_pct = _valid_rendered_percent(chosen_outcome.get("rendered_percent"))
 
         source_obs: Optional[str] = None
         smark = chosen_outcome.get("source_mark")
@@ -1500,12 +1508,13 @@ def _extract_more_set_lead(
         as_of = _first_present_iso(
             card.get("price_observed_at"),
             card.get("prices_updated_at"),
+            card.get("newest_outcome_updated_at"),
             source_obs,
             card.get("updated_at"),
             card.get("last_updated"),
             card.get("odds_updated_at"),
         )
-        return label, round(prob, 4), as_of
+        return label, round(prob, 4), rendered_pct, as_of
 
     if mtype == "event":
         home = str(card.get("home_team") or "").strip()
@@ -1517,15 +1526,15 @@ def _extract_more_set_lead(
             hp = odds.get("home_win_probability")
         if not (isinstance(ap, (int, float)) and not isinstance(ap, bool)):
             ap = odds.get("away_win_probability")
-        pairs: list[tuple[str, float]] = []
+        pairs: list[tuple[str, float, Optional[int]]] = []
         if home and isinstance(hp, (int, float)) and not isinstance(hp, bool) and 0.0 <= float(hp) <= 1.0:
-            pairs.append((home, float(hp)))
+            pairs.append((home, float(hp), _valid_rendered_percent(odds.get("home_rendered_percent"))))
         if away and isinstance(ap, (int, float)) and not isinstance(ap, bool) and 0.0 <= float(ap) <= 1.0:
-            pairs.append((away, float(ap)))
+            pairs.append((away, float(ap), _valid_rendered_percent(odds.get("away_rendered_percent"))))
         if not pairs:
-            return None, None, None
+            return None, None, None, None
         pairs.sort(key=lambda item: item[1], reverse=True)
-        label, prob = pairs[0]
+        label, prob, rendered_pct = pairs[0]
         src_updated: Optional[str] = None
         wps = card.get("win_probability_sources")
         if isinstance(wps, Mapping):
@@ -1537,14 +1546,15 @@ def _extract_more_set_lead(
                         break
         as_of = _first_present_iso(
             card.get("hero_probability_observed_at"),
+            card.get("newest_outcome_updated_at"),
             odds.get("updated_at"),
             src_updated,
             card.get("updated_at"),
             card.get("last_updated"),
         )
-        return label, round(prob, 4), as_of
+        return label, round(prob, 4), rendered_pct, as_of
 
-    return None, None, None
+    return None, None, None, None
 
 
 def summarize_more_set_card(
@@ -1586,7 +1596,7 @@ def summarize_more_set_card(
     if member_count <= 0:
         return None
 
-    lead_label, lead_probability, as_of = _extract_more_set_lead(payload)
+    lead_label, lead_probability, lead_rendered_percent, as_of = _extract_more_set_lead(payload)
     if not lead_label or lead_probability is None or not as_of:
         return None
     observed_dt = _parse_iso_timestamp(as_of)
@@ -1601,7 +1611,7 @@ def summarize_more_set_card(
     dek = raw_dek.strip() if isinstance(raw_dek, str) and raw_dek.strip() else None
     raw_cat = container.get("category")
     category = raw_cat.strip().lower() if isinstance(raw_cat, str) and raw_cat.strip() else None
-    return {
+    out: dict[str, Any] = {
         "slug": slug,
         "name": name,
         "href": f"/collections/{slug}",
@@ -1613,6 +1623,9 @@ def summarize_more_set_card(
         "lead_probability": lead_probability,
         "as_of": as_of,
     }
+    if lead_rendered_percent is not None:
+        out["lead_rendered_percent"] = lead_rendered_percent
+    return out
 
 
 def _pick_diverse_more_sets(
