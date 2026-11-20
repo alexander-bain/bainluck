@@ -1448,6 +1448,49 @@ def _hydrate_market_visual_item(
     }
 
 
+def _event_has_sportsbook(event: Any, *, hero_source: Optional[str] = None) -> bool:
+    """True when a game event is priced by at least one sportsbook (not thin venue/ESPN-only).
+
+    Used so sports slates (e.g. NBA) prefer sportsbook-backed games over games
+    priced only by two prediction-market venues or ESPN when sportsbook games
+    exist on the slate (#12288).
+    """
+    if isinstance(event, Mapping):
+        if event.get("has_sportsbook") is True:
+            return True
+        if event.get("has_sportsbook") is False:
+            return False
+        bk = event.get("bookmaker_count")
+        if isinstance(bk, (int, float)) and not isinstance(bk, bool) and bk > 0:
+            return True
+        odds = event.get("current_odds")
+        if isinstance(odds, Mapping):
+            obk = odds.get("bookmaker_count")
+            if isinstance(obk, (int, float)) and not isinstance(obk, bool) and obk > 0:
+                return True
+        wps = event.get("win_probability_sources")
+        h_src = hero_source or event.get("hero_source")
+    else:
+        wps = getattr(event, "win_probability_sources", None)
+        h_src = hero_source
+    if str(h_src or "").strip().lower() == "betting":
+        return True
+    if isinstance(wps, Mapping):
+        b_cnt = wps.get("betting_book_count")
+        if isinstance(b_cnt, (int, float)) and not isinstance(b_cnt, bool) and b_cnt > 0:
+            return True
+        betting_entry = wps.get("betting")
+        if isinstance(betting_entry, Mapping):
+            if any(
+                isinstance(betting_entry.get(k), (int, float))
+                for k in ("home", "away", "home_probability", "away_probability", "probability")
+            ):
+                return True
+        elif isinstance(betting_entry, (int, float)) and not isinstance(betting_entry, bool):
+            return True
+    return False
+
+
 def _hydrate_event_visual_item(
     event: Mapping[str, Any],
     *,
@@ -1542,6 +1585,7 @@ def _hydrate_event_visual_item(
 
     fav_prob = max(hp, ap)
     is_toss_up = max(away_pct, home_pct) <= int(round(TOSS_UP_MAX_SIDE_PROB * 100))
+    has_sportsbook = _event_has_sportsbook(event)
     return {
         "event_id": eid,
         "href": f"/events/{eid}",
@@ -1563,6 +1607,7 @@ def _hydrate_event_visual_item(
         "fav_prob": fav_prob,
         "is_toss_up": is_toss_up,
         "show_toss_up_tag": is_toss_up,
+        "has_sportsbook": has_sportsbook,
         "closeness_to_50": abs(hp - 0.5),
         "member_page_numbers": ev_mpn,
         "card": card_ev,
@@ -1951,6 +1996,7 @@ async def _load_snapshot_from_db(
                 "hero_probability": hp,
                 "hero_probability_away": ap,
                 "hero_source": hero.source,
+                "has_sportsbook": _event_has_sportsbook(ev, hero_source=hero.source),
                 "current_odds": {
                     "home_probability": hp,
                     "away_probability": ap,
@@ -3170,7 +3216,18 @@ async def produce_container_machinery(
                 ]
                 if len(unstarted_items) >= min_items:
                     ev_items = unstarted_items
-                ev_items.sort(key=lambda x: (x["closeness_to_50"], x["commence_time"]))
+                # Goal Step 7 (#12288): do not lead with thin venue/ESPN-only games
+                # when games priced by sportsbooks exist on the slate.
+                sb_items = [it for it in ev_items if it.get("has_sportsbook")]
+                if len(sb_items) >= min_items:
+                    ev_items = sb_items
+                ev_items.sort(
+                    key=lambda x: (
+                        not bool(x.get("has_sportsbook")),
+                        x["closeness_to_50"],
+                        x["commence_time"],
+                    )
+                )
                 # Ruling 253: A — "Toss-up" means neither side above 55%.
                 # When >= 2 games are inside the band, feature ONLY those true toss-ups.
                 # With fewer than 2, rename the section to "Closest games", strip all
