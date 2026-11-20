@@ -798,7 +798,9 @@ struct MyStuffView: View {
     // MARK: - Context Menu Pin (iPad)
 
     static func eventCopyProbabilityText(_ event: FeedEventData) -> String? {
-        guard let probability = CompactGameCard12616.currentOddsForCard(event)?.homeProbability else {
+        guard !EventState.isFinished(event.status),
+              event.heroProbabilitySource != "settled",
+              let probability = CompactGameCard12616.currentOddsForCard(event)?.homeProbability else {
             return nil
         }
         return "\(event.homeTeam): \(Int(probability * 100))%"

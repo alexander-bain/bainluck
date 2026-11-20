@@ -8,6 +8,7 @@ struct RelatedByTagView: View {
 
     @State private var items: [FeedItem] = []
     @State private var loaded = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     init(tags: [String], excludeEventId: Int? = nil, title: String = "More Like This", limit: Int = 4) {
         self.tags = tags
@@ -72,54 +73,32 @@ struct RelatedByTagView: View {
     }
 
     private func eventRow(_ data: FeedEventData) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    if data.status == "live" {
-                        Circle()
-                            .fill(.red)
-                            .frame(width: 5, height: 5)
+        let trailing = Self.trailingSummary(for: data)
+        return Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    matchupBlock(data)
+                    if let trailing {
+                        Text(trailing)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
                     }
-                    Text("\(data.awayTeam) @ \(data.homeTeam)")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
                 }
-                if data.status == "live", let homeScore = data.homeScore, let awayScore = data.awayScore {
-                    Text("\(awayScore) - \(homeScore)")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    matchupBlock(data)
+                    Spacer(minLength: 4)
+                    if let trailing {
+                        Text(trailing)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
                 }
-            }
-            Spacer()
-            //
-            // #5363 — on a draw-priced sport the away half is `1 − P(home)`,
-            // i.e. *away win or draw*, and it is withheld. The SLOT survives as
-            // the app's absent marker ("— / 55%") rather than collapsing to a
-            // lone number: this pair sits on the same line as the "<away> @
-            // <home>" title that attributes it, so keeping the position keeps
-            // the attribution, and the dash says the true thing — we hold no
-            // price for that side. The surfaces that NAME their survivor
-            // instead are the ones where the pair collapses out of a layout the
-            // reader was reading positionally.
-            if Self.admitsTrailingProbability(data),
-               let odds = data.currentOdds,
-               let printable = DrawPricedWinner.printablePair(
-                   away: odds.awayProbability,
-                   home: odds.homeProbability,
-                   sport: data.sport) {
-                let homeProbability = printable.home
-                let duel = duelPercents(
-                    away: printable.away ?? (1 - homeProbability),
-                    home: homeProbability,
-                    servedAway: odds.awayRenderedPercent,
-                    servedHome: odds.homeRenderedPercent
-                )
-                let awayPct = duel[0]
-                let homePct = duel[1]
-                Text("\(formatProbabilityOrDash(printable.away, renderedPercent: awayPct)) / \(formatProbability(homeProbability, renderedPercent: homePct))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 12)
@@ -128,7 +107,76 @@ struct RelatedByTagView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
+    private func matchupBlock(_ data: FeedEventData) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                if data.status == "live" {
+                    Circle()
+                        .fill(.red)
+                        .frame(width: 5, height: 5)
+                }
+                Text("\(data.awayTeam) @ \(data.homeTeam)")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if data.status == "live",
+               data.scoreSourceUnavailable != true,
+               let homeScore = data.homeScore,
+               let awayScore = data.awayScore {
+                Text("\(awayScore) - \(homeScore)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+    }
+
+    static func isFinishedEvent(_ data: FeedEventData) -> Bool {
+        EventState.isFinished(data.status) || data.heroProbabilitySource == "settled"
+    }
+
+    static func trailingSummary(for data: FeedEventData) -> String? {
+        if isFinishedEvent(data) {
+            if data.scoreSourceUnavailable != true,
+               let awayScore = data.awayScore,
+               let homeScore = data.homeScore {
+                return "Final · \(awayScore)–\(homeScore)"
+            }
+            return "Final"
+        }
+        // #5363 — on a draw-priced sport the away half is `1 − P(home)`,
+        // i.e. *away win or draw*, and it is withheld. The SLOT survives as
+        // the app's absent marker ("— / 55%") rather than collapsing to a
+        // lone number: this pair sits on the same line as the "<away> @
+        // <home>" title that attributes it, so keeping the position keeps
+        // the attribution, and the dash says the true thing — we hold no
+        // price for that side.
+        guard admitsTrailingProbability(data),
+              let odds = data.currentOdds,
+              let printable = DrawPricedWinner.printablePair(
+                  away: odds.awayProbability,
+                  home: odds.homeProbability,
+                  sport: data.sport) else {
+            return nil
+        }
+        let homeProbability = printable.home
+        let duel = duelPercents(
+            away: printable.away ?? (1 - homeProbability),
+            home: homeProbability,
+            servedAway: odds.awayRenderedPercent,
+            servedHome: odds.homeRenderedPercent
+        )
+        let awayPct = duel[0]
+        let homePct = duel[1]
+        return "\(formatProbabilityOrDash(printable.away, renderedPercent: awayPct)) / \(formatProbability(homeProbability, renderedPercent: homePct))"
+    }
+
     static func admitsTrailingProbability(_ data: FeedEventData) -> Bool {
-        data.heroProbabilitySource != OpeningLineHero.openingSource
+        !isFinishedEvent(data)
+            && data.heroProbabilitySource != OpeningLineHero.openingSource
     }
 }

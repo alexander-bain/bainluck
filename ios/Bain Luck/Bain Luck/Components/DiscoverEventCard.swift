@@ -984,12 +984,38 @@ struct NativeEventDiscoverCard: View {
     }
 
     private func renderedShareImage() -> PlatformImage? {
+        if EventState.isFinished(event.status) || event.heroProbabilitySource == "settled" {
+            let pregame = PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds)
+            guard event.awayScore != nil || event.homeScore != nil || pregame != nil else {
+                return nil
+            }
+            let awayWithheld = pregame?.awayIsComplement == true && DrawPricedWinner.sportPricesADraw(event.sport)
+            return ShareCardRenderer.renderEventCard(
+                homeTeam: event.homeTeam,
+                awayTeam: event.awayTeam,
+                homeProbability: pregame?.homeProbability ?? 0.5,
+                awayProbability: awayWithheld ? nil : pregame?.awayProbability,
+                awayRenderedPercent: pregame?.percents.first ?? nil,
+                homeRenderedPercent: (pregame?.percents.count ?? 0) > 1 ? pregame?.percents[1] : nil,
+                sportName: event.sportName ?? event.sport ?? "Sports",
+                homeColor: homeColor,
+                awayColor: awayColor,
+                status: "completed",
+                homeScore: event.homeScore,
+                awayScore: event.awayScore,
+                commenceTime: event.commenceTime?.asDate,
+                authorityPeriod: event.espn?.period,
+                pregameReading: pregame,
+                sportKey: event.sport
+            )
+        }
         // #5363 — the same pair rule the card's own strip draws, so the image a
         // reader shares carries the reading they were looking at.
-        guard let printable = DrawPricedWinner.printablePair(
-            away: event.currentOdds?.awayProbability,
-            home: event.currentOdds?.homeProbability,
-            sport: event.sport) else {
+        guard event.heroProbabilitySource != OpeningLineHero.openingSource,
+              let printable = DrawPricedWinner.printablePair(
+                  away: event.currentOdds?.awayProbability,
+                  home: event.currentOdds?.homeProbability,
+                  sport: event.sport) else {
             return nil
         }
         return ShareCardRenderer.renderEventCard(
@@ -1013,7 +1039,9 @@ struct NativeEventDiscoverCard: View {
             // #4044 — the same reading this card's own `isSuspended` uses above.
             commenceTime: event.commenceTime?.asDate,
             // #9208 — the stoppage word the card's own summary reads.
-            authorityPeriod: event.espn?.period
+            authorityPeriod: event.espn?.period,
+            pregameReading: nil,
+            sportKey: event.sport
         )
     }
 
