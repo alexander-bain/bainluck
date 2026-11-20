@@ -59,10 +59,11 @@ class _FakeExecuteResult:
 class _FakeRegistrySession:
     """Small async session double for event registry query shapes."""
 
-    def __init__(self, *, source_matches=None, structured_candidates=None, sport_id=1):
+    def __init__(self, *, source_matches=None, structured_candidates=None, sport_id=1, teams=None):
         self.source_matches = source_matches or {}
         self.structured_candidates = structured_candidates or []
         self.sport_id = sport_id
+        self.teams = list(teams or [])
         self.added = []
         self.flushed = 0
         self.statements = []
@@ -99,6 +100,14 @@ class _FakeRegistrySession:
 
         if "FROM sports" in statement_text:
             return _FakeExecuteResult(first_row=SimpleNamespace(id=self.sport_id))
+
+        if "FROM teams" in statement_text:
+            team_sport_id = compiled_params.get("sport_id_1")
+            rows = [
+                t for t in self.teams
+                if team_sport_id is None or getattr(t, "sport_id", None) == team_sport_id
+            ]
+            return _FakeExecuteResult(rows=rows)
 
         if "FROM events" in statement_text and (
             "WHERE events.external_id =" in statement_text

@@ -618,68 +618,30 @@ async def _discover_events():
                                 f"records for {sport_key}"
                             )
 
-                    # Link team_ids on events that don't have them yet.
-                    # This covers events created by both Odds API (this run)
-                    # and StatPal (earlier). Without this, My Stuff SQL team
-                    # ID filter misses events that only have team names.
+                    # Link team_ids on upcoming unlinked events in start-time
+                    # order using exact same-sport canonical equivalence (#13144).
+                    # Covers events created by both Odds API and StatPal without
+                    # being starved by old historical unlinked rows behind a cap.
                     if all_team_names:
-                        team_map_result = await session.execute(
-                            select(Team.name, Team.id).where(
-                                Team.sport_id == sport_id,
-                                Team.name.in_(all_team_names),
-                            )
+                        from app.utils.event_team_linking import (
+                            link_unlinked_events_for_sport,
                         )
-                        team_name_to_id = {
-                            name: tid for name, tid in team_map_result.all()
-                        }
 
-                        if team_name_to_id:
-                            from sqlalchemy import or_ as sql_or
-                            unlinked_result = await session.execute(
-                                select(Event).where(
-                                    Event.sport_id == sport_id,
-                                    sql_or(
-                                        Event.home_team_id.is_(None),
-                                        Event.away_team_id.is_(None),
-                                    ),
-                                    sql_or(
-                                        Event.home_team_name.in_(
-                                            team_name_to_id.keys()
-                                        ),
-                                        Event.away_team_name.in_(
-                                            team_name_to_id.keys()
-                                        ),
-                                    ),
-                                ).limit(200)
-                                # #10090: this sport's games were committed one
-                                # by one above, so a row in the identity map may
-                                # be older than the row in the table. Read the
-                                # table's team ids, not the cached ones.
-                                .execution_options(populate_existing=True)
+                        link_stats = await link_unlinked_events_for_sport(
+                            session,
+                            sport_id=sport_id,
+                            now=datetime.now(timezone.utc),
+                            lookback_days=1,
+                            limit=500,
+                            source="sports_poll",
+                            dry_run=False,
+                        )
+                        if link_stats["sides_linked"]:
+                            logger.info(
+                                "Linked %d team IDs on upcoming events for %s",
+                                link_stats["sides_linked"],
+                                sport_key,
                             )
-                            linked_count = 0
-                            for evt in unlinked_result.scalars().all():
-                                if (
-                                    evt.home_team_id is None
-                                    and evt.home_team_name in team_name_to_id
-                                ):
-                                    evt.home_team_id = team_name_to_id[
-                                        evt.home_team_name
-                                    ]
-                                    linked_count += 1
-                                if (
-                                    evt.away_team_id is None
-                                    and evt.away_team_name in team_name_to_id
-                                ):
-                                    evt.away_team_id = team_name_to_id[
-                                        evt.away_team_name
-                                    ]
-                                    linked_count += 1
-                            if linked_count:
-                                logger.info(
-                                    f"Linked {linked_count} team IDs on "
-                                    f"events for {sport_key}"
-                                )
 
                     # ── Post-creation audit: check for duplicates ──
                     if espn_events_by_date:
