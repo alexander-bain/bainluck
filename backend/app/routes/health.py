@@ -160,6 +160,11 @@ async def api_health_check():
 
         roundup_reads_10m = get_roundup_read_failure_stats_10m()
     except Exception:
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "api_health_check: roundup_reads_10m unavailable", exc_info=True
+        )
         roundup_reads_10m = None
 
     from fastapi.responses import JSONResponse
