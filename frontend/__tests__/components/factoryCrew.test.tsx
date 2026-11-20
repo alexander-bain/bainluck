@@ -14,6 +14,7 @@ import type { Change, FactoryData, FloorEvent } from "@/app/factory/types";
 import { useEventPlayer } from "@/app/factory/playback";
 import { useDayReplay } from "@/app/factory/useDayReplay";
 import { replayReading, useReplayJournal } from "@/app/factory/replayJournal";
+import { clipboard, hours, injuryHours } from "@/app/factory/signs";
 import { factoryTabTitle, floorVerdict } from "@/app/factory/verdict";
 
 jest.mock("next/navigation", () => {
@@ -478,6 +479,32 @@ it("marks a crowded bay after its recorded jam reaches 30 minutes", () => {
   expect(floorVerdict(clear, false, now).bays).toEqual([
     { line: "Server", station: "Test", level: "amber", text: "Checks, Server: 10 changes are backed up here.", crowded: true },
   ]);
+});
+
+it("counts injury-free hours only over a complete reading", () => {
+  const reading = {
+    from: "2026-11-19T17:00:00Z",
+    available: true,
+    events: [
+      { kind: "wrong-number" as const, number: 13112, at: "2026-11-19T19:00:00Z" },
+      { kind: "switched-off" as const, number: 7024584672, at: "2026-11-19T22:00:00Z" },
+    ],
+  };
+  expect(injuryHours(reading, "2026-11-19T23:30:00Z")).toEqual({
+    current: 1, record: 3, last: reading.events[1],
+  });
+  expect(hours(1)).toBe("1 hour");
+  expect(injuryHours({ ...reading, available: false }, now)).toBeNull();
+});
+
+it("times only complete Bench to Live trips and names the longest known wait", () => {
+  const live: Change = { ...base, station: "Live", live_at: now };
+  const complete = { ...live, bench_seen_at: "2026-11-18T17:45:00Z" };
+  const waiting: Change = { ...base, station: "Review", station_since: "2026-11-18T17:50:00Z" };
+  expect(clipboard(now, [live, complete], [waiting])).toEqual({
+    benchMedian: 900, longest: { change: waiting, seconds: 600 },
+  });
+  expect(clipboard(now, [live], []).benchMedian).toBeNull();
 });
 
 it("leaves the previous snapshot's notes off the current floor", async () => {
