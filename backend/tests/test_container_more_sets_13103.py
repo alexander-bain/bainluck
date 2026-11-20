@@ -370,3 +370,71 @@ async def test_serve_roundup_attaches_more_sets_excluding_self() -> None:
         ROUNDUP_PRODUCERS.clear()
         ROUNDUP_PRODUCERS.update(saved)
         reset_roundup_cache_for_tests()
+
+
+def test_summarize_more_set_card_emits_rendered_percent_and_reads_newest_outcome_updated_at() -> None:
+    """#13128 follow-ups: preserve lead row rendered_percent and read grouping newest_outcome_updated_at."""
+    payload = {
+        "state": "published",
+        "slug": "machinery-fed-rate",
+        "container": {"slug": "machinery-fed-rate", "name": "Year-end Fed rate", "category": "economics"},
+        "member_count": 3,
+        "sections": [
+            {
+                "title": "Markets",
+                "members": [
+                    {
+                        "type": "market",
+                        "card": {
+                            "name": "Fed rate at year-end",
+                            "newest_outcome_updated_at": "2026-11-19T19:45:00+00:00",
+                            "top_outcomes": [
+                                {"name": "3.50-3.75%", "probability": 0.874, "rendered_percent": 88},
+                                {"name": "3.75-4.00%", "probability": 0.126, "rendered_percent": 12},
+                            ],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    card = summarize_more_set_card(payload, now=FIXED_NOW)
+    assert card is not None
+    assert card["lead_label"] == "3.50-3.75%"
+    assert card["lead_probability"] == 0.874
+    assert card["lead_rendered_percent"] == 88
+    assert card["as_of"] == "2026-11-19T19:45:00+00:00"
+
+    ev_payload = {
+        "state": "published",
+        "slug": "machinery-nba-night",
+        "container": {"slug": "machinery-nba-night", "name": "NBA tonight", "category": "sports"},
+        "member_count": 5,
+        "sections": [
+            {
+                "title": "Games",
+                "members": [
+                    {
+                        "type": "event",
+                        "card": {
+                            "home_team": "Boston Celtics",
+                            "away_team": "New York Knicks",
+                            "hero_probability": 0.614,
+                            "hero_probability_away": 0.386,
+                            "current_odds": {
+                                "home_win_probability": 0.614,
+                                "away_win_probability": 0.386,
+                                "home_rendered_percent": 62,
+                                "away_rendered_percent": 38,
+                                "updated_at": "2026-11-19T19:50:00+00:00",
+                            },
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    ev_card = summarize_more_set_card(ev_payload, now=FIXED_NOW)
+    assert ev_card is not None
+    assert ev_card["lead_label"] == "Boston Celtics"
+    assert ev_card["lead_rendered_percent"] == 62
