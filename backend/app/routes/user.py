@@ -2029,10 +2029,10 @@ async def _query_team_futures(
             # identical but whose ticker leg is a player code, not a team code.
             # A short name is visibly short; a wrong one is not.
             "outcome_name": reader_outcome_name(
-                outcome.external_id,
+                getattr(outcome, "external_id", None),
                 outcome.name,
                 market_threshold_label(market),
-                market_name=market.name,
+                market_name=getattr(market, "name", None),
             )
             or outcome.name,
             "market_id": market.id,

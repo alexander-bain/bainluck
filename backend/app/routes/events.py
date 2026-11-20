@@ -39937,11 +39937,15 @@ def _build_search_top_outcomes(
     # recur. Completed from each rung's own ticker; see
     # `game_market_club_names.repair_field_outcome_name`.
     threshold_label = market_threshold_label(market)  # #9383
+    market_name = getattr(market, "name", None)
     named = [
         (
             o,
             reader_outcome_name(
-                o.external_id, o.name, threshold_label, market_name=market.name
+                getattr(o, "external_id", None),
+                o.name,
+                threshold_label,
+                market_name=market_name,
             )
             or o.name,
         )

@@ -208,10 +208,10 @@ async def get_market_was_wrong(
 
             display_outcome_name = (
                 reader_outcome_name(
-                    outcome.external_id,
+                    getattr(outcome, "external_id", None),
                     outcome.name,
                     market_threshold_label(market),
-                    market_name=market.name,
+                    market_name=getattr(market, "name", None),
                 )
                 or outcome.name
             )
