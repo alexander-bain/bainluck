@@ -1,7 +1,7 @@
 """Guards for #13238 (and #13142): EuroLeague, Bundesliga, and WBB club spellings
 land on the existing row and fold into one blended card.
 
-Measured production pairs (2026-11-20):
+Measured production pairs (Nov 20, 2026):
 - EuroLeague:
   * 15350440 ("KK Crvena zvezda @ FC Barcelona Bàsquet") / 15348467 ("KK Crvena Zvezda @ Barcelona")
   * 15349594 ("Beşiktaş J.K. @ KK Partizan NIS") / 15348468 ("Besiktas @ Partizan") / 15350188 ("KK Partizan Belgrade @ Besiktas JK")
@@ -32,7 +32,7 @@ from scripts.audit_open_duplicate_events_13238 import (
 )
 from tests.test_event_registry import _FakeRegistrySession
 
-KICKOFF = datetime(2026, 11, 20, 19, 30, tzinfo=timezone.utc)
+KICKOFF = datetime(2025, 2, 15, 19, 30, tzinfo=timezone.utc)
 
 
 def _row(
