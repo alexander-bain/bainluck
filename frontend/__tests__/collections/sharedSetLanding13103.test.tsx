@@ -118,4 +118,89 @@ describe("#13103 — Shared set SSR landing and stranger-first header", () => {
       Object.defineProperty(navigator, "userAgent", { value: origUA, configurable: true });
     }
   });
+
+  it("parses and renders up to two server-picked more_sets with real numbers and dates, filtering invalid entries", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { renderToStaticMarkup } = require("react-dom/server") as typeof import("react-dom/server");
+    const slug = "nfl-2026-week-4";
+    const { body } = makePublishedHub(slug);
+    const bodyWithMoreSets = {
+      ...body,
+      more_sets: [
+        // Self link must be dropped
+        {
+          slug,
+          name: "Self link should drop",
+          member_count: 5,
+          lead_label: "Bills",
+          lead_probability: 0.65,
+          as_of: "2026-11-19T18:00:00+00:00",
+        },
+        // Valid card 1
+        {
+          slug: "roundup-this-weeks-economic-data",
+          name: "This week's economic data",
+          dek: "Key inflation and jobs prints this week.",
+          category: "economics",
+          member_count: 4,
+          lead_label: "Fed cuts rates in December",
+          lead_probability: 0.72,
+          as_of: "2026-11-19T15:30:00+00:00",
+          destination: {
+            kind: "container",
+            slug: "roundup-this-weeks-economic-data",
+            web: "/collections/roundup-this-weeks-economic-data",
+            api: "/api/containers/roundup-this-weeks-economic-data",
+          },
+        },
+        // Invalid zero-member card must be dropped
+        {
+          slug: "empty-set",
+          name: "Empty Set",
+          member_count: 0,
+        },
+        // Valid card 2
+        {
+          slug: "roundup-oscars-best-picture",
+          name: "Oscars Best Picture",
+          dek: "Frontrunners across nomination and win odds.",
+          category: "entertainment",
+          member_count: 6,
+          lead_label: "Anora",
+          lead_probability: 0.41,
+          as_of: "2026-11-18T12:00:00+00:00",
+        },
+        // 3rd valid card must be capped at 2
+        {
+          slug: "roundup-third-set",
+          name: "Third Set",
+          member_count: 3,
+        },
+      ],
+    };
+
+    const parsed = parseCollection(bodyWithMoreSets, slug);
+    expect(parsed.moreSets).toHaveLength(2);
+    expect(parsed.moreSets?.map((s) => s.slug)).toEqual([
+      "roundup-this-weeks-economic-data",
+      "roundup-oscars-best-picture",
+    ]);
+
+    const html = renderToStaticMarkup(<CollectionHub slug={slug} initialHub={parsed} />);
+    expect(html).toContain("More sets worth a look");
+    expect(html).toContain("This week&#x27;s economic data");
+    expect(html).toContain("Fed cuts rates in December");
+    expect(html).toContain("72%");
+    expect(html).toContain("As of");
+    expect(html).toContain("4 markets");
+    expect(html).toContain("Oscars Best Picture");
+    expect(html).toContain("Anora");
+    expect(html).toContain("41%");
+    expect(html).toContain("6 markets");
+    expect(html).not.toContain("Self link should drop");
+    expect(html).not.toContain("Third Set");
+    expect(html.indexOf("data-collection-more-sets")).toBeLessThan(
+      html.indexOf("data-collection-landing-footer"),
+    );
+  });
 });

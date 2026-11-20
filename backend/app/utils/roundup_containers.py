@@ -36,6 +36,8 @@ __all__ = [
     "CLOSED_PERMISSION_LEVELS",
     "CONTAINERS_DATA_DIR",
     "HAND_LIST_ID_RULE_KEYS",
+    "MORE_SETS_BUDGET_SECONDS",
+    "MORE_SETS_LIMIT",
     "OCCASION_ID_RULE_KEYS",
     "ROUNDUP_CACHE_TTL_S",
     "ROUNDUP_NOVELTY_SEAT_CAP",
@@ -64,7 +66,9 @@ __all__ = [
     "roundup_feed_enabled",
     "roundup_feed_items",
     "roundup_revision",
+    "select_more_sets",
     "serve_roundup",
+    "summarize_more_set_card",
     "validate_roundup_definition",
 ]
 
@@ -139,6 +143,9 @@ ROUNDUP_CACHE_TTL_S = 60.0
 ROUNDUP_PRODUCER_TIMEOUT_SECONDS = 0.5
 ROUNDUP_READ_BUDGET_SECONDS = 2.5
 ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS = 10.0
+#: #13103 Part 3 item 3 — server-picked follow-on sets attached to GET /api/containers/{slug}.
+MORE_SETS_LIMIT = 2
+MORE_SETS_BUDGET_SECONDS = 0.35
 #: Oct 7–8 Discover opening ruling (#4080 / #5100 / #5105): seats 1–10 (indices
 #: 0–9) are the dated why-now opening ten. Standing round-ups sit in page one's
 #: back half starting at index 10 (seat 11), with no ranking change.
@@ -1349,6 +1356,278 @@ def ensure_optional_roundup_candidates() -> None:
         mod.register_machinery_slice1_candidates()
 
 
+def _extract_more_set_lead(
+    payload: Mapping[str, Any],
+) -> tuple[Optional[str], Optional[float], Optional[str]]:
+    """Extract the first real priced lead (label, probability, as_of) from a published hub."""
+    sections = payload.get("sections")
+    if not isinstance(sections, Sequence) or isinstance(sections, (str, bytes)):
+        return None, None, None
+    for section in sections:
+        if not isinstance(section, Mapping):
+            continue
+        members = section.get("members")
+        if not isinstance(members, Sequence) or isinstance(members, (str, bytes)):
+            continue
+        for member in members:
+            if not isinstance(member, Mapping):
+                continue
+            card = member.get("card")
+            if not isinstance(card, Mapping):
+                continue
+            mtype = member.get("type")
+            if mtype == MEMBER_MARKET:
+                outcomes = card.get("top_outcomes")
+                if not isinstance(outcomes, Sequence) or isinstance(outcomes, (str, bytes)):
+                    continue
+                for outcome in outcomes:
+                    if not isinstance(outcome, Mapping):
+                        continue
+                    prob = outcome.get("probability")
+                    if (
+                        isinstance(prob, (int, float))
+                        and not isinstance(prob, bool)
+                        and 0.0 <= float(prob) <= 1.0
+                    ):
+                        raw_name = str(outcome.get("name") or "").strip()
+                        card_name = str(card.get("name") or "").strip()
+                        if raw_name.lower() in {"yes", "no"} and card_name:
+                            label = card_name
+                        else:
+                            label = raw_name or card_name
+                        if not label:
+                            continue
+                        as_of = (
+                            card.get("updated_at")
+                            or card.get("last_updated")
+                            or card.get("odds_updated_at")
+                        )
+                        if not isinstance(as_of, str) or not as_of.strip():
+                            smark = outcome.get("source_mark")
+                            sources = smark.get("sources") if isinstance(smark, Mapping) else None
+                            if isinstance(sources, Sequence) and not isinstance(sources, (str, bytes)):
+                                for src in sources:
+                                    obs = src.get("observed_at") if isinstance(src, Mapping) else None
+                                    if isinstance(obs, str) and obs.strip():
+                                        as_of = obs.strip()
+                                        break
+                        return (
+                            label,
+                            round(float(prob), 4),
+                            as_of.strip() if isinstance(as_of, str) and as_of.strip() else None,
+                        )
+            elif mtype == "event":
+                odds = card.get("current_odds")
+                if not isinstance(odds, Mapping):
+                    continue
+                hp = odds.get("home_win_probability")
+                ap = odds.get("away_win_probability")
+                home = str(card.get("home_team") or "").strip()
+                away = str(card.get("away_team") or "").strip()
+                pairs: list[tuple[str, float]] = []
+                if home and isinstance(hp, (int, float)) and not isinstance(hp, bool) and 0.0 <= float(hp) <= 1.0:
+                    pairs.append((home, float(hp)))
+                if away and isinstance(ap, (int, float)) and not isinstance(ap, bool) and 0.0 <= float(ap) <= 1.0:
+                    pairs.append((away, float(ap)))
+                if pairs:
+                    pairs.sort(key=lambda item: item[1], reverse=True)
+                    label, prob = pairs[0]
+                    as_of = (
+                        odds.get("updated_at")
+                        or card.get("updated_at")
+                        or card.get("last_updated")
+                    )
+                    return (
+                        label,
+                        round(prob, 4),
+                        as_of.strip() if isinstance(as_of, str) and as_of.strip() else None,
+                    )
+    return None, None, None
+
+
+def summarize_more_set_card(payload: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+    """Project a verified published container payload into a below-the-set link card (#13103)."""
+    if not isinstance(payload, Mapping) or payload.get("state") != "published":
+        return None
+    container = payload.get("container")
+    if not isinstance(container, Mapping):
+        return None
+    slug = str(payload.get("slug") or container.get("slug") or "").strip()
+    name = str(container.get("name") or "").strip()
+    if not slug or not name:
+        return None
+    raw_count = payload.get("member_count")
+    member_count = (
+        int(raw_count)
+        if isinstance(raw_count, int) and not isinstance(raw_count, bool) and raw_count > 0
+        else 0
+    )
+    if member_count <= 0:
+        sections = payload.get("sections")
+        if isinstance(sections, Sequence) and not isinstance(sections, (str, bytes)):
+            member_count = sum(
+                len(sec.get("members") or ())
+                for sec in sections
+                if isinstance(sec, Mapping)
+                and isinstance(sec.get("members"), Sequence)
+                and not isinstance(sec.get("members"), (str, bytes))
+            )
+    if member_count <= 0:
+        return None
+
+    raw_dek = payload.get("dek") or payload.get("subtitle")
+    dek = raw_dek.strip() if isinstance(raw_dek, str) and raw_dek.strip() else None
+    raw_cat = container.get("category")
+    category = raw_cat.strip().lower() if isinstance(raw_cat, str) and raw_cat.strip() else None
+    lead_label, lead_probability, as_of = _extract_more_set_lead(payload)
+    return {
+        "slug": slug,
+        "name": name,
+        "href": f"/collections/{slug}",
+        "destination": container_destination(slug),
+        "category": category,
+        "dek": dek,
+        "member_count": member_count,
+        "lead_label": lead_label,
+        "lead_probability": lead_probability,
+        "as_of": as_of,
+    }
+
+
+def _pick_diverse_more_sets(
+    cards: Sequence[dict[str, Any]],
+    *,
+    current_category: Optional[str],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Choose up to ``limit`` cards preferring distinct categories from current & each other."""
+    chosen: list[dict[str, Any]] = []
+    remaining = list(cards)
+    used_categories: set[str] = set()
+    cur_cat = current_category.strip().lower() if isinstance(current_category, str) and current_category.strip() else None
+
+    while remaining and len(chosen) < limit:
+        best_idx = 0
+        best_score = -1
+        for idx, card in enumerate(remaining):
+            cat = card.get("category")
+            score = 0
+            if cat and cat not in used_categories:
+                score += 2
+            if cur_cat is None or (cat and cat != cur_cat):
+                score += 1
+            if card.get("lead_probability") is not None:
+                score += 1
+            if score > best_score:
+                best_score = score
+                best_idx = idx
+        picked = remaining.pop(best_idx)
+        chosen.append(picked)
+        if picked.get("category"):
+            used_categories.add(str(picked["category"]))
+    return chosen
+
+
+async def select_more_sets(
+    db: Any,
+    *,
+    exclude_slugs: Sequence[str] | set[str] | frozenset[str],
+    current_category: Optional[str] = None,
+    limit: int = MORE_SETS_LIMIT,
+    budget_seconds: float = MORE_SETS_BUDGET_SECONDS,
+    now: Optional[float | datetime] = None,
+    evaluate_uncached: Optional[bool] = None,
+) -> list[dict[str, Any]]:
+    """Pick up to ``limit`` live published sets below a container page (#13103).
+
+    Prefers warm process-local roundup cache entries (0 ms, zero extra DB
+    queries). When fewer than ``limit`` warm cards are present on a live
+    ``AsyncSession``, evaluates additional eligible producers within a strict
+    wall-clock ``budget_seconds`` ceiling, failing open to whatever valid cards
+    were gathered so the main container payload is never delayed or broken.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    if limit <= 0:
+        return []
+
+    ensure_optional_roundup_candidates()
+    excluded = {str(s).strip() for s in exclude_slugs if str(s).strip()}
+    ts, _now_dt = _normalize_roundup_now(now)
+    cur_cat = current_category.strip().lower() if isinstance(current_category, str) and current_category.strip() else None
+    cache_db_key: Any = "live" if isinstance(db, AsyncSession) else id(db)
+
+    eligible: list[RoundupProducer] = []
+    for producer in ROUNDUP_PRODUCERS.values():
+        slug = producer.slug
+        if (
+            slug in excluded
+            or _is_machinery_producer_slug(slug)
+            or slug.startswith("for-scale-")
+        ):
+            continue
+        if producer.enabled is not None and not producer.enabled():
+            continue
+        if (producer.valid_from is not None and ts < producer.valid_from) or (
+            producer.valid_until is not None and ts >= producer.valid_until
+        ):
+            continue
+        eligible.append(producer)
+
+    warm_cards: list[dict[str, Any]] = []
+    warm_slugs: set[str] = set()
+    cold_candidates: list[RoundupProducer] = []
+
+    for producer in sorted(
+        eligible,
+        key=lambda p: (
+            0 if (cur_cat and (p.category or "").strip().lower() != cur_cat) else 1,
+            p.slug,
+        ),
+    ):
+        cached = _roundup_local_cache.get((producer.slug, cache_db_key))
+        if cached is not None:
+            local_ttl = _roundup_cache_ttl_seconds(producer.slug, cached[2])
+            if (ts - cached[0]) < local_ttl:
+                card = summarize_more_set_card(cached[2]) if isinstance(cached[2], Mapping) else None
+                if card is not None:
+                    warm_cards.append(card)
+                    warm_slugs.add(producer.slug)
+                continue
+        cold_candidates.append(producer)
+
+    collected = list(warm_cards)
+    seen_slugs = set(warm_slugs)
+
+    should_eval_cold = (
+        bool(evaluate_uncached)
+        if evaluate_uncached is not None
+        else isinstance(db, AsyncSession)
+    )
+    if should_eval_cold and len(collected) < limit and cold_candidates and budget_seconds > 0:
+        deadline = time.monotonic() + budget_seconds
+        for producer in cold_candidates:
+            if len(collected) >= limit + 2:
+                break
+            remaining_s = deadline - time.monotonic()
+            if remaining_s <= 0.02:
+                break
+            try:
+                _fi, payload = await asyncio.wait_for(
+                    evaluate_roundup_producer(producer, db, now=now),
+                    timeout=min(remaining_s, ROUNDUP_PRODUCER_TIMEOUT_SECONDS),
+                )
+            except Exception:  # noqa: BLE001 — fail open, never break container read
+                logger.debug("select_more_sets: candidate %s skipped", producer.slug, exc_info=True)
+                continue
+            card = summarize_more_set_card(payload) if isinstance(payload, Mapping) else None
+            if card is not None and card["slug"] not in seen_slugs:
+                collected.append(card)
+                seen_slugs.add(card["slug"])
+
+    return _pick_diverse_more_sets(collected, current_category=cur_cat, limit=limit)
+
+
 async def serve_roundup(
     slug: str,
     db: Any,
@@ -1426,6 +1705,26 @@ async def serve_roundup(
                 _strip_parent_from_payload(out)
         else:
             _strip_parent_from_payload(out)
+
+    excluded = {slug}
+    if isinstance(out.get("parent"), Mapping) and out["parent"].get("slug"):
+        excluded.add(str(out["parent"]["slug"]))
+    for ch in out.get("children") or ():
+        if isinstance(ch, Mapping) and ch.get("slug"):
+            excluded.add(str(ch["slug"]))
+    cur_cat = (
+        out.get("container", {}).get("category")
+        if isinstance(out.get("container"), Mapping)
+        else None
+    )
+    more_sets = await select_more_sets(
+        db,
+        exclude_slugs=excluded,
+        current_category=cur_cat,
+        now=now,
+    )
+    if more_sets:
+        out["more_sets"] = more_sets
     return out
 
 
