@@ -46,7 +46,7 @@ export interface FloorEvent {
   kind: (typeof factoryEventKinds)[number];
   number: number;
   line: Line;
-  builder: Builder;
+  builder?: Builder;
   station: Station;
   from?: Station;
   at: string;
@@ -54,6 +54,12 @@ export interface FloorEvent {
   done?: number;
   total?: number;
   outcome?: "passed" | "failed" | "finished";
+}
+
+export interface DayReplay {
+  date: string;
+  through: string;
+  events: FloorEvent[];
 }
 
 export interface Transfer {

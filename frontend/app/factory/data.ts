@@ -30,6 +30,7 @@ function isEvent(event: FloorEvent) {
     factoryEventKinds.includes(event.kind) &&
     Number.isSafeInteger(event.number) && event.number > 0 &&
     ["Server", "Website", "Apps"].includes(event.line) &&
+    typeof event.builder === "string" &&
     ["S", "B", "C", "D", "E", "F", "W", "Other"].includes(event.builder) &&
     stations.includes(event.station) &&
     (event.from === undefined

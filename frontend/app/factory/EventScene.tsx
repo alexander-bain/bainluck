@@ -14,6 +14,7 @@ export default function EventScene({
 }) {
   const start = stations.indexOf(event.from ?? event.station);
   const end = stations.indexOf(event.station);
+  const color = event.builder ? styles[`builder${event.builder}`] : undefined;
   return (
     <div
       aria-hidden="true"
@@ -28,7 +29,7 @@ export default function EventScene({
       } as CSSProperties}
     >
       <div className={styles.eventAction}>
-        {event.kind === "commit" && event.builder !== "Other" && (
+        {event.kind === "commit" && event.builder && event.builder !== "Other" && (
           <Worker state="working" station="Write" identity={event.builder} />
         )}
         {(event.kind === "live" || event.kind === "deploy" || event.kind === "merge") && (
@@ -41,7 +42,7 @@ export default function EventScene({
         {(event.kind === "bot" || event.kind === "fable") && (
           <Check size={15} />
         )}
-        <span className={`${styles.eventCrate} ${styles[`builder${event.builder}`]}`}>
+        <span className={`${styles.eventCrate} ${color ?? ""}`}>
           #{event.number}
         </span>
         {event.kind === "check" && <span>{event.done} of {event.total}</span>}

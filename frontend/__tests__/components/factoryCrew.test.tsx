@@ -12,6 +12,8 @@ import {
 } from "@/app/factory/activity";
 import type { Change, FactoryData, FloorEvent } from "@/app/factory/types";
 import { useEventPlayer } from "@/app/factory/playback";
+import { useDayReplay } from "@/app/factory/useDayReplay";
+import { replayReading, useReplayJournal } from "@/app/factory/replayJournal";
 import { factoryTabTitle, floorVerdict } from "@/app/factory/verdict";
 
 jest.mock("next/navigation", () => {
@@ -198,6 +200,11 @@ it("counts deliveries in each Live bay and keeps held changes and quiet drafts o
   watchMotion();
   const container = document.createElement("div");
   const root = createRoot(container);
+  const showModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) { this.open = true; },
+  });
   const waiting: Change = { ...base, station: "Merge line" };
   const shipped = snapshot.changes[3];
   const changes: Change[] = [
@@ -231,8 +238,14 @@ it("counts deliveries in each Live bay and keeps held changes and quiet drafts o
     expect(container.querySelector('[data-factory-row] [data-crate="13070"]')).toBeNull();
     expect(container.querySelector('[data-factory-row] [data-crate="12621"]')).toBeNull();
     expect(beltFlowing({ ...snapshot, changes, transitions: [] }, "Server", 1, now)).toBe(false);
+    const crate = container.querySelector<HTMLButtonElement>(`[data-crate="${shipped.number}"]`)!;
+    await act(async () => { crate.click(); });
+    expect(container.querySelector("dialog")?.textContent)
+      .toContain("This change appears on the Website and Apps lines.");
   } finally {
     await act(async () => root.unmount());
+    if (showModal) Object.defineProperty(HTMLDialogElement.prototype, "showModal", showModal);
+    else Reflect.deleteProperty(HTMLDialogElement.prototype, "showModal");
   }
 });
 
@@ -320,6 +333,88 @@ it("plays one event at a time in order, pauses and preserves the remaining delay
     expect(container.textContent).toBe("quiet");
   } finally {
     await act(async () => root.unmount());
+  }
+});
+
+it("plays the recording for 60 visible seconds and leaves the clock at the final read", async () => {
+  const first = "2026-11-18T17:50:00Z";
+  const archive = {
+    date: "2026-11-18",
+    through: now,
+    events: [{
+      id: "one", kind: "move", number: 12998, line: "Server", builder: "B",
+      station: "Test", from: "Write", at: first, observed_at: now,
+    }] satisfies FloorEvent[],
+  };
+  function Sample({ visible }: { visible: boolean }) {
+    const history = useDayReplay(visible);
+    return <button onClick={() => history.open(archive)}>{history.clock ?? "Replay"}</button>;
+  }
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const render = (visible: boolean) => act(async () => root.render(<Sample visible={visible} />));
+  const advance = (ms: number) => act(async () => { jest.advanceTimersByTime(ms); });
+  try {
+    await render(true);
+    await act(async () => { container.querySelector("button")!.click(); });
+    await advance(10_000);
+    await render(false);
+    await advance(75_000);
+    expect(container.textContent).toBe(first);
+    await render(true);
+    await advance(49_999);
+    expect(container.textContent).toBe(first);
+    await advance(1);
+    expect(container.textContent).toBe(now);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("uses only published station transfers within the current Pacific day", () => {
+  const transfer = { number: 12998, line: "Server", from: "Write", to: "Test" } as const;
+  const reading = replayReading({
+    ...snapshot,
+    generated_at: "2026-11-20T08:10:00Z",
+    changes: [],
+    transitions: [
+      { ...transfer, number: 12997, at: "2026-11-20T07:59:00Z" },
+      { ...transfer, at: "2026-11-20T08:01:00Z" },
+      { ...transfer, number: 12999, at: "2026-11-20T08:12:00Z" },
+    ],
+  }, "2026-11-20");
+  expect(reading?.events).toEqual([
+    expect.objectContaining({ number: 12998, builder: undefined, from: "Write", station: "Test" }),
+  ]);
+});
+
+it("keeps earlier reads across a reload, deduplicates overlaps, and resets at Pacific midnight", async () => {
+  const first = { number: 12998, line: "Server", from: "Write", to: "Test", at: now } as const;
+  const later = { ...first, number: 12999, at: "2026-11-18T18:01:00Z" };
+  function Browser({ current, day }: { current: FactoryData; day: string }) {
+    const journal = useReplayJournal(current, day);
+    return <output>{journal?.events.map((event) => event.number).join(",")}</output>;
+  }
+  const container = document.createElement("div");
+  let root = createRoot(container);
+  const paint = (current: FactoryData, day = "2026-11-18") =>
+    act(async () => root.render(<Browser current={current} day={day} />));
+  const storageKey = "factory-today-transfers-v1";
+  localStorage.removeItem(storageKey);
+  try {
+    await paint({ ...snapshot, transitions: [first] });
+    expect(container.textContent).toBe("12998");
+    await paint({ ...snapshot, generated_at: later.at, transitions: [later, first] });
+    expect(container.textContent).toBe("12998,12999");
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await paint({ ...snapshot, generated_at: "2026-11-18T18:30:00Z", transitions: [] });
+    expect(container.textContent).toBe("12998,12999");
+    await paint({ ...snapshot, generated_at: "2026-11-19T08:01:00Z", transitions: [] }, "2026-11-19");
+    expect(container.textContent).toBe("");
+  } finally {
+    await act(async () => root.unmount());
+    localStorage.removeItem(storageKey);
   }
 });
 
