@@ -1058,9 +1058,9 @@ def store_roundup_cache_sync(
 ) -> bool:
     """Publish a roundup cache entry + live-slug registration via sync Redis.
 
-    Used by Celery prewarm workers (where `asyncio.run()` closes the event loop
-    between tasks and breaks process-global async Redis pools) and as the
-    fallback when `bounded_redis_call` returns `ERROR`/`TIMEOUT` (#12288).
+    Used by Celery prewarm workers only (where `asyncio.run()` closes the event
+    loop between tasks and breaks process-global async Redis pools). Never
+    called from the web event loop (#969, #12288).
     """
     if rc is None or not hasattr(rc, "set"):
         return False
@@ -1162,19 +1162,6 @@ async def _store_roundup_cache_entry(
                 slug,
                 exc_info=True,
             )
-        if not wrote_async and _is_machinery_producer_slug(slug):
-            try:
-                from app.tasks.redis_state import get_redis_client
-
-                store_roundup_cache_sync(
-                    get_redis_client(), slug, ts, feed_item, container_payload
-                )
-            except Exception:  # noqa: BLE001 — sync fallback is best-effort
-                logger.warning(
-                    "roundup_containers: sync Redis fallback failed for %s",
-                    slug,
-                    exc_info=True,
-                )
 
 
 async def _cache_roundup_timeout_refusal(

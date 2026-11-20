@@ -1657,23 +1657,22 @@ async def test_machinery_stale_while_revalidate_prevents_feed_drop_and_proactive
 
 
 @pytest.mark.asyncio
-async def test_celery_prewarm_publishes_machinery_via_sync_redis_and_survives_closed_async_loop(
+async def test_celery_prewarm_publishes_machinery_via_sync_redis_and_web_path_never_calls_sync_redis(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#12288 12-minute hold catch:
+    """#12288 12-minute hold catch + Fable 7:46 PM review (#969 NEVER-AGAIN):
     In Celery ForkPoolWorker, `asyncio.run()` closes the event loop between tasks so
     process-global `get_shared_async_redis()` returns `RedisResult(ERROR)` and silently
-    drops Redis writes (leaving `MACHINERY_LIVE_SLUGS_KEY` empty and keys unrefreshed).
-    Verify:
-    1. `_store_roundup_cache_entry` falls back to `store_roundup_cache_sync` when
-       `bounded_redis_call` returns `ERROR`, publishing both the cache key and
-       `MACHINERY_LIVE_SLUGS_KEY`.
+    drops Redis writes. Verify:
+    1. On the web path (`_store_roundup_cache_entry`), when `bounded_redis_call`
+       returns `ERROR` or `TIMEOUT`, ZERO sync Redis (`get_redis_client`) calls are
+       made so a slow Redis never freezes the web dyno event loop.
     2. `_prewarm_machinery_roundups(..., rc=...)` explicitly publishes both live and
        non-live groupings through sync Redis and reports `redis_written == warmed`.
     """
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.utils.request_cache import ERROR, RedisResult
+    from app.utils.request_cache import ERROR, TIMEOUT, RedisResult
     from app.utils.roundup_containers import (
         MACHINERY_LIVE_SLUGS_KEY,
         ROUNDUP_MACHINERY_LIVE_STALE_TTL_S,
@@ -1704,7 +1703,6 @@ async def test_celery_prewarm_publishes_machinery_via_sync_redis_and_survives_cl
             self.expires[name] = ttl
             return True
 
-    fake_rc = _FakeSyncRedis()
     live_cp = {
         "sections": [
             {"members": [{"type": "event", "id": 10, "card": {"id": 10, "status": "live"}}]}
@@ -1716,30 +1714,35 @@ async def test_celery_prewarm_publishes_machinery_via_sync_redis_and_survives_cl
         ]
     }
 
-    async def _broken_async_call(*args, **kwargs):
-        return RedisResult(ERROR)
+    sync_client_calls = 0
+
+    def _forbidden_sync_client():
+        nonlocal sync_client_calls
+        sync_client_calls += 1
+        raise AssertionError("web path must never call sync get_redis_client()")
 
     async def _fake_async_client():
         return object()
 
-    monkeypatch.setattr("app.utils.request_cache.bounded_redis_call", _broken_async_call)
     monkeypatch.setattr("app.utils.request_cache.get_shared_async_redis", _fake_async_client)
-    monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: fake_rc)
+    monkeypatch.setattr("app.tasks.redis_state.get_redis_client", _forbidden_sync_client)
 
-    # 1. `_store_roundup_cache_entry` falls back to sync Redis on AsyncSession when async fails
+    # 1. On the web path, async ERROR and TIMEOUT must NEVER invoke sync Redis
     fake_session = AsyncSession.__new__(AsyncSession)
-    await _store_roundup_cache_entry(
-        ("machinery-nba-night", "live"),
-        "machinery-nba-night",
-        1_800_000_000.0,
-        {"type": "bundle", "data": {"status": "live"}},
-        live_cp,
-        fake_session,
-    )
-    nba_key = _redis_cache_key("machinery-nba-night")
-    assert nba_key in fake_rc.kv
-    assert fake_rc.kv[nba_key][1] == int(ROUNDUP_MACHINERY_LIVE_STALE_TTL_S)
-    assert "machinery-nba-night" in fake_rc.hashes.get(MACHINERY_LIVE_SLUGS_KEY, {})
+    for fail_status in (ERROR, TIMEOUT):
+        async def _broken_async_call(*args, _st=fail_status, **kwargs):
+            return RedisResult(_st)
+
+        monkeypatch.setattr("app.utils.request_cache.bounded_redis_call", _broken_async_call)
+        await _store_roundup_cache_entry(
+            ("machinery-nba-night", "live"),
+            "machinery-nba-night",
+            1_800_000_000.0,
+            {"type": "bundle", "data": {"status": "live"}},
+            live_cp,
+            fake_session,
+        )
+    assert sync_client_calls == 0
 
     # 2. `_prewarm_machinery_roundups` publishes live + non-live directly via sync `rc`
     fake_rc2 = _FakeSyncRedis()
