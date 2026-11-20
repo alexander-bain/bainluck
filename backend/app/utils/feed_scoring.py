@@ -530,17 +530,17 @@ def format_event_data(
                 "draw_rendered_percent": None,
             }
         else:
+            away_pct, home_pct = rendered_duel_percents(current_away_prob, current_home_prob)
             _served_away = (
                 printable_away(current_away_prob, current_home_prob, sport_key)
                 if (_draw_priced and not _is_settled_hero)
                 else current_away_prob
             )
-            away_pct, home_pct = rendered_duel_percents(_served_away, current_home_prob)
             odds_data = {
                 "home_probability": current_home_prob,
                 "away_probability": _served_away,
                 "home_rendered_percent": home_pct,
-                "away_rendered_percent": away_pct,
+                "away_rendered_percent": away_pct if _served_away is not None else None,
             }
             if _draw_priced and not _is_settled_hero:
                 odds_data["draw_probability"] = None

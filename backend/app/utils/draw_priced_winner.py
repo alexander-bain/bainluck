@@ -305,6 +305,7 @@ async def read_live_three_way_books(
     to ``live`` by ``served_event_status`` (#13131).
     """
     from collections import defaultdict
+    from datetime import datetime
     from sqlalchemy import select
     from app.models.models import OddsSnapshot
     from app.utils.lifecycle import served_event_status
@@ -320,7 +321,11 @@ async def read_live_three_way_books(
             continue
         status = getattr(e, "status", None)
         commence = getattr(e, "commence_time", None)
-        if status == "live" or served_event_status(status, commence, now) == "live":
+        is_live = status == "live" or (
+            isinstance(commence, datetime)
+            and served_event_status(status, commence, now) == "live"
+        )
+        if is_live:
             live_events[int(e.id)] = e
     if not live_events:
         return {}
@@ -359,29 +364,32 @@ async def read_live_three_way_books(
         ev = live_events.get(eid)
         if ev is None or not ev_snaps:
             continue
-        filtered = filter_stale_bookmaker_snapshots(
-            ev_snaps,
-            event_status="live",
-            commence_time=getattr(ev, "commence_time", None),
-        )
-        reversed_bks = detect_reversed_bookmakers(filtered)
-        snap_dicts = [
-            {
-                "home_win_probability": float(s.home_win_probability)
-                if s.home_win_probability is not None
-                else None,
-                "away_win_probability": float(s.away_win_probability)
-                if s.away_win_probability is not None
-                else None,
-            }
-            for s in filtered
-            if getattr(s, "bookmaker", None) not in reversed_bks
-        ]
-        if not snap_dicts:
+        try:
+            filtered = filter_stale_bookmaker_snapshots(
+                ev_snaps,
+                event_status="live",
+                commence_time=getattr(ev, "commence_time", None),
+            )
+            reversed_bks = detect_reversed_bookmakers(filtered)
+            snap_dicts = [
+                {
+                    "home_win_probability": float(s.home_win_probability)
+                    if s.home_win_probability is not None
+                    else None,
+                    "away_win_probability": float(s.away_win_probability)
+                    if s.away_win_probability is not None
+                    else None,
+                }
+                for s in filtered
+                if getattr(s, "bookmaker", None) not in reversed_bks
+            ]
+            if not snap_dicts:
+                continue
+            agg = aggregate_bookmaker_odds(snap_dicts)
+            bh = agg.get("home_probability")
+            ba = agg.get("away_probability")
+            if bh is not None and ba is not None:
+                out[eid] = (float(bh), float(ba))
+        except Exception:
             continue
-        agg = aggregate_bookmaker_odds(snap_dicts)
-        bh = agg.get("home_probability")
-        ba = agg.get("away_probability")
-        if bh is not None and ba is not None:
-            out[eid] = (float(bh), float(ba))
     return out
