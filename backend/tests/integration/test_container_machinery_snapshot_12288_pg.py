@@ -616,6 +616,31 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
         category="politics",
         outcomes=[("Yes", 0.06, 0.06)],
     )
+
+    # 9. #13097 Batch 2 fun preview groupings (Taylor Swift, Long Shots, Long-Awaited, Space & Mars)
+    for mid, ext, name, cat, outs in (
+        (109309, "KXTS-DEBUTTV", "Will Taylor Swift (Taylor's Version) be announced this year?", "entertainment", [("Yes", 0.42, 0.42)]),
+        (109310, "KXTS-REPTV", "Will Reputation (Taylor's Version) be announced this year?", "entertainment", [("Yes", 0.08, 0.08)]),
+        (109295, "KXTS-POPE", "Will Taylor Swift meet with Pope Leo XIV before 2027?", "entertainment", [("Yes", 0.04, 0.04)]),
+        (109291, "KXTS-BLAKE", "Blake Lively and Taylor Swift seen together in public this year?", "politics", [("Yes", 0.035, 0.035)]),
+        (109435, "KXLS-ALIENS", "Will the U.S. confirm that aliens exist?", "tech", [("Before Jan 20, 2029", 0.155, 0.155), ("Before Jan 1, 2028", 0.115, 0.115)]),
+        (108218, "KXLS-MARS", "Will Elon Musk visit Mars in his lifetime?", "culture", [("Yes", 0.115, 0.115)]),
+        (113504, "KXLS-RETURN", "Will Jesus Christ return before 2027?", "entertainment", [("Yes", 0.015, 0.015)]),
+        (113343, "KXLA-HL3", "Will Half-Life 3 be announced before 2027?", "entertainment", [("Yes", 0.075, 0.075)]),
+        (109247, "KXLA-WINDS", "The Winds of Winter: Release date announced this year?", "entertainment", [("Yes", 0.055, 0.055)]),
+        (108494, "KXLA-TES6", "When will Elder Scrolls VI be released?", "entertainment", [("Before 2028", 0.12, 0.12), ("Before 2027", 0.025, 0.025)]),
+        (109540, "KXLA-PS6", "PS6 announced this year?", "entertainment", [("Yes", 0.025, 0.025)]),
+        (108300, "KXSP-BLUE", "Will Blue Origin land on the moon before SpaceX?", "tech", [("Yes", 0.68, 0.68)]),
+        (108236, "KXSP-ROBOT", "Will a humanoid robot walk on Mars before a human does?", "tech", [("Yes", 0.514, 0.514)]),
+        (108273, "KXSP-SPX", "Will SpaceX land anything successfully on Mars before 2030?", "tech", [("Yes", 0.24, 0.24)]),
+    ):
+        await _add_market(
+            market_id=mid,
+            external_id=ext,
+            name=name,
+            category=cat,
+            outcomes=outs,
+        )
     await session.commit()
 
 
