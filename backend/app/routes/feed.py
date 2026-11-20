@@ -191,6 +191,7 @@ from app.utils.feed_market_quality import (
     balance_discover_event_category_mix,
     cap_low_quality_families,
     classify_market_quality,
+    COLD_START_WINDOW_FIRST_CARDS,
     confidence_signal,
     cross_source_agreement,
     classify_fabricated_book,
@@ -2648,14 +2649,24 @@ def apply_discover_display_chain(
     )
 
     if discover_mode:
+        from functools import partial as _functools_partial
+
         _is_cold_start = (
             (not ctx.discover_category_affinities) if cold_start is None else cold_start
         )
-        items = diversify_discover_first_page(
-            items,
-            first_page_size=DISCOVER_COMPOSITION_WINDOW,
-            cold_start=_is_cold_start,
-        )
+        _diversify_kwargs: dict[str, Any] = {
+            "first_page_size": DISCOVER_COMPOSITION_WINDOW,
+            "cold_start": _is_cold_start,
+        }
+        # #13097 / #10356: bound cold-start cap of 2 to the first 8 cards so new
+        # readers don't stay locked at cap=2 across all 20 seats; skip if an
+        # offline replay stage_policy already pinned cold_start_window via partial.
+        if not (
+            isinstance(diversify_discover_first_page, _functools_partial)
+            and "cold_start_window" in (diversify_discover_first_page.keywords or {})
+        ):
+            _diversify_kwargs["cold_start_window"] = COLD_START_WINDOW_FIRST_CARDS
+        items = diversify_discover_first_page(items, **_diversify_kwargs)
         items = backfill_discover_editorial_tail(
             items,
             window_size=min(50, len(items)),
@@ -10897,10 +10908,18 @@ async def _discover_rank_phase_trace(
 
     post_diversity_rank = post_event_mix_rank
     if (event_pct is not None and event_pct < 0.3) or not include_events:
-        feed_items = diversify_discover_first_page(
-            feed_items, first_page_size=DISCOVER_COMPOSITION_WINDOW,
-            cold_start=not ctx.discover_category_affinities,
-        )
+        from functools import partial as _functools_partial
+
+        _trace_diversify_kwargs: dict[str, Any] = {
+            "first_page_size": DISCOVER_COMPOSITION_WINDOW,
+            "cold_start": not ctx.discover_category_affinities,
+        }
+        if not (
+            isinstance(diversify_discover_first_page, _functools_partial)
+            and "cold_start_window" in (diversify_discover_first_page.keywords or {})
+        ):
+            _trace_diversify_kwargs["cold_start_window"] = COLD_START_WINDOW_FIRST_CARDS
+        feed_items = diversify_discover_first_page(feed_items, **_trace_diversify_kwargs)
         feed_items = backfill_discover_editorial_tail(
             feed_items,
             window_size=min(50, len(feed_items)),

@@ -3690,7 +3690,7 @@ _DISCOVER_FIRST_PAGE_CATEGORY_CAPS = {
     "geopolitics": 3,
     "economics": 4,
     "tech": 3,
-    "entertainment": 3,
+    "entertainment": 4,
     "weather_health": 2,
     "sports_culture": 3,
     "other": 3,
@@ -3701,7 +3701,7 @@ _DISCOVER_FIRST_PAGE_ARCHETYPE_CAPS = {
     "breaking_news": 3,
     "political_power": 3,
     "macro_signal": 4,
-    "culture_moment": 3,
+    "culture_moment": 4,
     "health_weather_risk": 2,
     "sports_story": 3,
     "sports_drama": 2,
@@ -3797,6 +3797,16 @@ COLD_START_WINDOW_SERVED = "served"
 COLD_START_WINDOW_FIRST_CARDS = "first_cards"
 COLD_START_WINDOWS = frozenset({COLD_START_WINDOW_SERVED, COLD_START_WINDOW_FIRST_CARDS})
 _COLD_START_CARDS = 8
+_WEEKLY_STREAMING_CHART_RE = re.compile(
+    r"\btop\s+(?:global|us|u\.s\.)\s+netflix\s+(?:movie|show|film|series)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_weekly_streaming_chart(item: dict) -> bool:
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+    title = str(data.get("name") or data.get("title") or "")
+    return bool(_WEEKLY_STREAMING_CHART_RE.search(title))
 
 
 def diversify_discover_first_page(
@@ -3828,6 +3838,7 @@ def diversify_discover_first_page(
     category_counts: dict[str, int] = {}
     archetype_counts: dict[str, int] = {}
     story_counts: dict[str, int] = {}
+    weekly_chart_count = 0
 
     cold_start_cap = 2 if cold_start else None
     first_cards = cold_start_window == COLD_START_WINDOW_FIRST_CARDS
@@ -3848,6 +3859,9 @@ def diversify_discover_first_page(
             cap = min(cap, cold_start_cap)
         if category_counts.get(group, 0) >= cap:
             return "cold_start_category_cap" if cold else "category_cap"
+
+        if _is_weekly_streaming_chart(item) and weekly_chart_count >= 1:
+            return "weekly_chart_cap"
 
         if enforce_archetype:
             archetype = _discover_archetype_group(item)
@@ -3907,6 +3921,7 @@ def diversify_discover_first_page(
         return allowed
 
     def record(item: dict) -> None:
+        nonlocal weekly_chart_count
         group = _discover_category_group(item)
         archetype = _discover_archetype_group(item)
         story_key = item.get("_quality_story_key")
@@ -3914,6 +3929,8 @@ def diversify_discover_first_page(
         archetype_counts[archetype] = archetype_counts.get(archetype, 0) + 1
         if story_key:
             story_counts[story_key] = story_counts.get(story_key, 0) + 1
+        if _is_weekly_streaming_chart(item):
+            weekly_chart_count += 1
 
     selected: list[dict] = []
     selected_keys: set[tuple] = set()
@@ -4371,6 +4388,7 @@ def enforce_first_page_quality_floor(
     new_window = list(window)
     new_tail = list(tail)
     used: set[int] = set()
+    stepped_fun_slots: set[int] = set()
     demoted = 0
 
     # A vacancy is filled FROM THE PAGE FIRST (#8797). The card beneath it that
@@ -4440,7 +4458,39 @@ def enforce_first_page_quality_floor(
         for to_idx, from_idx in moves:
             new_window[to_idx] = new_window[from_idx]
         new_window[vacancy] = new_tail[pick]
-        new_tail[pick] = offender
+
+        # #13097 (TIME Person of the Year seating fix): a curated fun-admitted
+        # card that is clean page-wide (not boring/ladder, not silent) and only
+        # lacks a why-now phrase for the opening ten is legal at slots
+        # [why_now_window, window_size). Step it cleanly into the top of that
+        # range rather than banishing it deep into `new_tail[pick]` (seats 38-45)
+        # behind lower-scored cards and spliced roundups.
+        is_fun_why_now_only = (
+            w_idx < effective_why_now_window
+            and bool(offender.get("_fun_tags"))
+            and not is_first_page_quality_offender(offender)
+            and not is_wholly_silent_card(offender)
+        )
+        landing_slots = (
+            [
+                idx
+                for idx in range(effective_why_now_window, window_size)
+                if not _spacing_is_anchor(new_window[idx])
+                and idx not in stepped_fun_slots
+            ]
+            if is_fun_why_now_only and effective_why_now_window < window_size
+            else []
+        )
+        if landing_slots:
+            displaced = new_window[landing_slots[-1]]
+            for k in range(len(landing_slots) - 1, 0, -1):
+                new_window[landing_slots[k]] = new_window[landing_slots[k - 1]]
+            new_window[landing_slots[0]] = offender
+            new_tail[pick] = displaced
+            stepped_fun_slots.add(landing_slots[0])
+        else:
+            new_tail[pick] = offender
+
         used.add(pick)
         demoted += 1
 
