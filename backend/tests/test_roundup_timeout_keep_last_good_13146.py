@@ -880,3 +880,123 @@ async def test_withdrawn_roundup_in_shared_store_does_not_resurrect_from_old_loc
     clock[0] = t13_5.timestamp()
     placed_13_5 = await add_roundup_feed_items(fake_session, _ordinary_deck(), now=t13_5)
     assert _roundup_slugs_in(placed_13_5) == []
+
+
+@pytest.mark.asyncio
+async def test_budget_exhausted_reads_shared_store_for_newer_copy_and_withdrawal_and_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#13184 review (out-of-time branch): budget exhaustion checks Redis for newer copy, withdrawal, and fails closed on Redis error."""
+    from app.utils.roundup_containers import RoundupRefusal, _roundup_local_cache
+
+    reset_roundup_cache_for_tests()
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+    monkeypatch.setattr(
+        "app.utils.roundup_containers.ROUNDUP_PRODUCER_TIMEOUT_SECONDS", 0.2
+    )
+
+    t0 = datetime(2026, 11, 20, 10, 0, 0, tzinfo=timezone.utc)
+    clock = [t0.timestamp()]
+    fake_redis = _ExpiringFakeRedis(clock)
+    _wire_fake_redis(monkeypatch, fake_redis)
+
+    slow_first = False
+    target_mode = "20min-old"
+
+    async def _p1_prod(_db: Any) -> Any:
+        if slow_first:
+            await asyncio.sleep(0.06)
+        return _make_standing_members("p1")
+
+    async def _p2_prod(_db: Any) -> Any:
+        if target_mode == "refuse":
+            return RoundupRefusal(["below_threshold"])
+        return _make_standing_members(target_mode)
+
+    p1 = RoundupProducer(
+        slug="roundup-slow-first",
+        name="Slow first",
+        kind="roundup",
+        category="economics",
+        section_title="First",
+        footer="First",
+        produce=_p1_prod,
+    )
+    p2 = RoundupProducer(
+        slug="roundup-budget-target",
+        name="Budget target",
+        kind="roundup",
+        category="politics",
+        section_title="Second",
+        footer="Second",
+        produce=_p2_prod,
+    )
+    monkeypatch.setattr(
+        "app.utils.roundup_containers.ROUNDUP_PRODUCERS", {p1.slug: p1, p2.slug: p2}
+    )
+
+    fake_session = MagicMock(spec=AsyncSession)
+    fake_session.rollback = AsyncMock()
+
+    # Process A warms both at t0 -> holds 20-min-old copy of p2 locally.
+    await evaluate_roundup_producer(p1, fake_session, now=t0)
+    await evaluate_roundup_producer(p2, fake_session, now=t0)
+    p2_local_old = _roundup_local_cache[(p2.slug, "live")]
+
+    # Case A: Elsewhere at +18 min, Process B writes a 2-min-old copy of p2 to shared Redis.
+    reset_roundup_cache_for_tests()
+    target_mode = "2min-new"
+    t18 = t0 + timedelta(minutes=18)
+    clock[0] = t18.timestamp()
+    await evaluate_roundup_producer(p2, fake_session, now=t18)
+
+    # Restore Process A's 20-min-old local copy; at +20 min, p1 exhausts stage_budget_seconds.
+    _roundup_local_cache[(p2.slug, "live")] = p2_local_old
+    slow_first = True
+    t20 = t0 + timedelta(minutes=20)
+    clock[0] = t20.timestamp()
+    placed_newer = await add_roundup_feed_items(
+        fake_session,
+        _ordinary_deck(),
+        budget_seconds=0.03,
+        stage_budget_seconds=0.03,
+        now=t20,
+    )
+    assert p2.slug in _roundup_slugs_in(placed_newer)
+    assert "2min-new" in (_roundup_title_for(placed_newer, p2.slug) or "")
+
+    # Case B: Elsewhere at +18 min, p2 is properly withdrawn (refused).
+    reset_roundup_cache_for_tests()
+    target_mode = "refuse"
+    clock[0] = t18.timestamp()
+    await evaluate_roundup_producer(p2, fake_session, now=t18)
+
+    _roundup_local_cache[(p2.slug, "live")] = p2_local_old
+    clock[0] = t20.timestamp()
+    placed_withdrawn = await add_roundup_feed_items(
+        fake_session,
+        _ordinary_deck(),
+        budget_seconds=0.03,
+        stage_budget_seconds=0.03,
+        now=t20,
+    )
+    assert p2.slug not in _roundup_slugs_in(placed_withdrawn)
+
+    # Case C: Shared store read fails/times out on the budget-exhausted branch -> keep nothing.
+    class _ErrRes:
+        is_ok = False
+        value = None
+
+    async def _bounded_err(_fn: Any, **_kwargs: Any) -> _ErrRes:
+        return _ErrRes()
+
+    monkeypatch.setattr("app.utils.request_cache.bounded_redis_call", _bounded_err)
+    _roundup_local_cache[(p2.slug, "live")] = p2_local_old
+    placed_err = await add_roundup_feed_items(
+        fake_session,
+        _ordinary_deck(),
+        budget_seconds=0.03,
+        stage_budget_seconds=0.03,
+        now=t20,
+    )
+    assert p2.slug not in _roundup_slugs_in(placed_err)

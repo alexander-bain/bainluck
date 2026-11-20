@@ -1442,6 +1442,7 @@ async def _load_last_good_roundup_copy(
     *,
     now: Optional[float | datetime] = None,
     local_only: bool = False,
+    fail_closed_on_shared_error: bool = False,
 ) -> Optional[tuple[dict[str, Any], dict[str, Any], float, float]]:
     """Return ``(feed_item, container_payload, age_s, keep_s)`` for the last good cached copy.
 
@@ -1504,9 +1505,13 @@ async def _load_last_good_roundup_copy(
 
             client = await get_shared_async_redis()
             res = await bounded_redis_call(
-                lambda: client.get(_redis_cache_key(producer.slug))
+                lambda: client.get(_redis_cache_key(producer.slug)),
+                treat_none_as_miss=False,
             )
-            if res.is_ok and res.value:
+            if not res.is_ok:
+                if fail_closed_on_shared_error:
+                    return None
+            elif res.value:
                 raw = json.loads(
                     res.value.decode("utf-8")
                     if isinstance(res.value, (bytes, bytearray))
@@ -1523,12 +1528,14 @@ async def _load_last_good_roundup_copy(
                         else None,
                         True,
                     )
-        except Exception:  # noqa: BLE001 — stale fallback read fails open
+        except Exception:  # noqa: BLE001 — stale fallback read fails open unless fail-closed
             logger.debug(
                 "roundup_containers: last-good shared cache read failed for %s",
                 producer.slug,
                 exc_info=True,
             )
+            if fail_closed_on_shared_error:
+                return None
 
     if shared_candidate is not None and local_candidate is not None:
         chosen = (
@@ -3529,7 +3536,11 @@ async def add_roundup_feed_items(
             dropped_after_budget = 0
             for rem_producer in producers[idx:]:
                 last_good = await _load_last_good_roundup_copy(
-                    rem_producer, db, now=now, local_only=True
+                    rem_producer,
+                    db,
+                    now=now,
+                    local_only=False,
+                    fail_closed_on_shared_error=True,
                 )
                 if last_good is not None:
                     fi_lg, _cp_lg, _age_lg, _keep_lg = last_good
