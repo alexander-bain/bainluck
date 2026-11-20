@@ -12554,10 +12554,16 @@ async def _score_events(
         # reversed-book pipeline as `/api/events/{id}` so live soccer feed cards
         # (including just-kicked-off games promoted to `live`) serve Home, Draw,
         # and Away summing to 100%.
+        from app.routes.events import latest_odds_per_bookmaker_query
         from app.utils.draw_priced_winner import read_live_three_way_books
 
         live_three_way_books: dict[int, tuple[float, float]] = (
-            await read_live_three_way_books(db, events, now)
+            await read_live_three_way_books(
+                db,
+                events,
+                now,
+                latest_odds_query=latest_odds_per_bookmaker_query,
+            )
         )
 
     for event in events:

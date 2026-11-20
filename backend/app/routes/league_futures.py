@@ -3813,6 +3813,7 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         # that works) and before the formatter, which is the only reader.
         _tag_folded = await _tag_folded_rows(db, [*_g_events, *_r_events, *_u_events])
 
+        from app.routes.events import latest_odds_per_bookmaker_query
         from app.utils.draw_priced_winner import read_live_three_way_books
 
         _live_three_way = await read_live_three_way_books(
@@ -3820,6 +3821,7 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             [*_g_events, *_r_events, *_u_events],
             datetime.now(timezone.utc),
             sport_key_override=sport_key,
+            latest_odds_query=latest_odds_per_bookmaker_query,
         )
 
         # Per-item, not per-rail (gotcha #42: "one bad item must never wipe a

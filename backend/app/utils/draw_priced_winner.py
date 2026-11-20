@@ -292,6 +292,7 @@ async def read_live_three_way_books(
     now: Any,
     *,
     sport_key_override: Optional[str] = None,
+    latest_odds_query: Any = None,
 ) -> dict[int, tuple[float, float]]:
     """Read filtered latest per-book (home, away) consensus for live draw-priced events.
 
@@ -304,10 +305,11 @@ async def read_live_three_way_books(
     to ``live`` by ``served_event_status`` (#13131).
     """
     from collections import defaultdict
+    from sqlalchemy import select
+    from app.models.models import OddsSnapshot
     from app.utils.lifecycle import served_event_status
     from app.utils.odds_filtering import filter_stale_bookmaker_snapshots
     from app.utils.odds_math import aggregate_bookmaker_odds, detect_reversed_bookmakers
-    from app.routes.events import latest_odds_per_bookmaker_query
 
     live_events: dict[int, Any] = {}
     for e in events:
@@ -324,7 +326,26 @@ async def read_live_three_way_books(
         return {}
 
     try:
-        res = await db.execute(latest_odds_per_bookmaker_query(sorted(live_events)))
+        ids = sorted(live_events)
+        stmt = (
+            latest_odds_query(ids)
+            if latest_odds_query is not None
+            else (
+                select(OddsSnapshot)
+                .where(
+                    OddsSnapshot.event_id.in_(ids),
+                    OddsSnapshot.home_win_probability.isnot(None),
+                    OddsSnapshot.away_win_probability.isnot(None),
+                )
+                .distinct(OddsSnapshot.event_id, OddsSnapshot.bookmaker)
+                .order_by(
+                    OddsSnapshot.event_id,
+                    OddsSnapshot.bookmaker,
+                    OddsSnapshot.captured_at.desc(),
+                )
+            )
+        )
+        res = await db.execute(stmt)
         snaps = res.scalars().all()
     except Exception:
         return {}
