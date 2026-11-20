@@ -1744,6 +1744,8 @@ def _format_game_brief(
     event: Event,
     sport_key: str | None = None,
     team_lookup: dict | None = None,
+    *,
+    three_way_books: tuple[float, float] | None = None,
 ) -> dict:
     """League-rail shape for one game — the SHARED event card's contract.
 
@@ -1829,16 +1831,55 @@ def _format_game_brief(
     # call, not a second derivation — because the shared card reads `current_odds`
     # and the census reads the flat key, and the two must never be able to differ.
     if home_prob is not None:
-        brief["current_odds"] = {
-            "home_probability": home_prob,
-            "away_probability": away_prob,
-        }
-        brief["source_mark"], brief["away_source_mark"] = blended_source_marks(
-            event,
-            source_inputs,
-            method=source_method[0] if source_method else None,
-            away_available=not sport_prices_a_draw(sport_key),
+        from app.utils.draw_priced_winner import (
+            rendered_three_way_percents,
+            resolve_three_way_probabilities,
         )
+
+        _draw_priced = sport_prices_a_draw(sport_key)
+        _brief_3 = None
+        if _draw_priced and _served_status in ("live", "scheduled"):
+            if _served_status == "live":
+                _bh, _ba = three_way_books if three_way_books is not None else (None, None)
+            else:
+                _oh = getattr(event, "opening_home_probability", None)
+                _oa = getattr(event, "opening_away_probability", None)
+                _bh = float(_oh) if _oh is not None else None
+                _ba = float(_oa) if _oa is not None else None
+            _brief_3 = resolve_three_way_probabilities(
+                home_prob,
+                books_home=_bh,
+                books_away=_ba,
+                sport_key=sport_key,
+            )
+        if _brief_3 is not None:
+            _h3, _a3, _d3 = _brief_3
+            _hp, _dp, _ap = rendered_three_way_percents(_h3, _d3, _a3)
+            brief["current_odds"] = {
+                "home_probability": _h3,
+                "away_probability": _a3,
+                "draw_probability": _d3,
+                "home_rendered_percent": _hp,
+                "away_rendered_percent": _ap,
+                "draw_rendered_percent": _dp,
+            }
+            brief["source_mark"], brief["away_source_mark"] = blended_source_marks(
+                event,
+                source_inputs,
+                method=source_method[0] if source_method else None,
+                away_available=True,
+            )
+        else:
+            brief["current_odds"] = {
+                "home_probability": home_prob,
+                "away_probability": away_prob,
+            }
+            brief["source_mark"], brief["away_source_mark"] = blended_source_marks(
+                event,
+                source_inputs,
+                method=source_method[0] if source_method else None,
+                away_available=not _draw_priced,
+            )
 
     # Opening line — the card's live footer says "Opened 62/38" from this, and a
     # settled card falls back to it. Both columns are on the row already.
@@ -3772,6 +3813,15 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         # that works) and before the formatter, which is the only reader.
         _tag_folded = await _tag_folded_rows(db, [*_g_events, *_r_events, *_u_events])
 
+        from app.utils.draw_priced_winner import read_live_three_way_books
+
+        _live_three_way = await read_live_three_way_books(
+            db,
+            [*_g_events, *_r_events, *_u_events],
+            datetime.now(timezone.utc),
+            sport_key_override=sport_key,
+        )
+
         # Per-item, not per-rail (gotcha #42: "one bad item must never wipe a
         # whole scoring pass"). This formatter reads twice as many columns since
         # UX-P074, and the whole rails block sits under ONE except — so a single
@@ -3799,6 +3849,7 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
                             ),
                             sport_key,
                             _teams,
+                            three_way_books=_live_three_way.get(int(_e.id)),
                         )
                     )
                 except Exception:

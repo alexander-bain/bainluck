@@ -12550,45 +12550,15 @@ async def _score_events(
         )
 
         # #13131: live draw-priced events (typically 0-5 rows) read their latest
-        # per-book (home, away) consensus in one small batch so live soccer feed
-        # cards carry the same three-way (home, draw, away) triple as detail.
-        live_three_way_books: dict[int, tuple[float, float]] = {}
-        _live_draw_ids = [
-            e.id
-            for e in events
-            if e.status == "live"
-            and _sport_prices_a_draw(e.sport.key if e.sport else None)
-        ]
-        if _live_draw_ids:
-            try:
-                from sqlalchemy import text as _sa_text
+        # filtered per-book (home, away) consensus using the same stale-book and
+        # reversed-book pipeline as `/api/events/{id}` so live soccer feed cards
+        # (including just-kicked-off games promoted to `live`) serve Home, Draw,
+        # and Away summing to 100%.
+        from app.utils.draw_priced_winner import read_live_three_way_books
 
-                _lw_res = await db.execute(
-                    _sa_text("""
-                        SELECT event_id,
-                               AVG(home_win_probability) AS books_home,
-                               AVG(away_win_probability) AS books_away
-                        FROM (
-                            SELECT DISTINCT ON (event_id, bookmaker)
-                                   event_id, home_win_probability, away_win_probability
-                            FROM odds_snapshots
-                            WHERE event_id = ANY(:ids)
-                              AND home_win_probability IS NOT NULL
-                              AND away_win_probability IS NOT NULL
-                            ORDER BY event_id, bookmaker, captured_at DESC
-                        ) latest
-                        GROUP BY event_id
-                    """),
-                    {"ids": _live_draw_ids},
-                )
-                for _row in _lw_res.all():
-                    if _row.books_home is not None and _row.books_away is not None:
-                        live_three_way_books[int(_row.event_id)] = (
-                            float(_row.books_home),
-                            float(_row.books_away),
-                        )
-            except Exception:
-                live_three_way_books = {}
+        live_three_way_books: dict[int, tuple[float, float]] = (
+            await read_live_three_way_books(db, events, now)
+        )
 
     for event in events:
         try:

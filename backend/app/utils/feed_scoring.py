@@ -11,6 +11,7 @@ from typing import Any
 from app.utils.aggregation import parse_source_entry
 from app.utils.game_state import authority_stoppage_label, normalize_live_game_state
 from app.utils.draw_priced_winner import (
+    printable_away,
     rendered_three_way_percents,
     sport_prices_a_draw,
 )
@@ -529,13 +530,21 @@ def format_event_data(
                 "draw_rendered_percent": None,
             }
         else:
-            away_pct, home_pct = rendered_duel_percents(current_away_prob, current_home_prob)
+            _served_away = (
+                printable_away(current_away_prob, current_home_prob, sport_key)
+                if (_draw_priced and not _is_settled_hero)
+                else current_away_prob
+            )
+            away_pct, home_pct = rendered_duel_percents(_served_away, current_home_prob)
             odds_data = {
                 "home_probability": current_home_prob,
-                "away_probability": current_away_prob,
+                "away_probability": _served_away,
                 "home_rendered_percent": home_pct,
                 "away_rendered_percent": away_pct,
             }
+            if _draw_priced and not _is_settled_hero:
+                odds_data["draw_probability"] = None
+                odds_data["draw_rendered_percent"] = None
         if prob_source:
             odds_data["source"] = prob_source
         data["current_odds"] = odds_data
@@ -569,7 +578,9 @@ def format_event_data(
                 data["hero_probability_draw"] = None
             else:
                 data["hero_probability"] = hero.home_probability
-                data["hero_probability_away"] = hero.away_probability
+                data["hero_probability_away"] = printable_away(
+                    hero.away_probability, hero.home_probability, sport_key
+                )
         else:
             data["hero_probability"] = hero.home_probability
             data["hero_probability_away"] = hero.away_probability
