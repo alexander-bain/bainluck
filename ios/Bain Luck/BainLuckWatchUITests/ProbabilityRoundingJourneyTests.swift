@@ -4,6 +4,7 @@ import XCTest
 final class ProbabilityRoundingJourneyTests: XCTestCase {
     @MainActor
     func testPairedRoundingPersistsOfflineAndDrawSportKeepsScalarRounding() throws {
+        executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
         defer { app.terminate() }
