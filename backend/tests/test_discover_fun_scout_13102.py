@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -25,7 +26,6 @@ from app.services.llm_models import (
 from app.services.llm_request import MemoryBudgetLedger
 from app.utils.discover_fun_scout import (
     LICENCE_AUTO,
-    LICENCE_AWAITING_LOOK,
     LICENCE_SUSPENDED,
     SCOUT_ANTHROPIC_API_KEY_ENV,
     SCOUT_MONTHLY_CAP_USD,
@@ -403,6 +403,9 @@ class TestRuleFilesLicenceAndEndToEnd:
         assert len(openai_calls) == 1 and openai_calls[0]["model"] == LEGACY_MODEL
         assert len(anthropic_calls) == 1 and anthropic_calls[0]["model"] == CLAUDE_SONNET_MODEL
         assert "system" in anthropic_calls[0]
+        assert "temperature" not in anthropic_calls[0]
+        assert "top_p" not in anthropic_calls[0]
+        assert "top_k" not in anthropic_calls[0]
         assert result["actual_total_cost_usd"] > 0
         assert len(result["validated_sets"]) == 1
         assert len(result["verified_singles"]) == 1
@@ -842,3 +845,204 @@ class TestFrozenBenchmarkInput:
         # Calling main with --dry-run OR without --execute stays zero-cost.
         assert bench.main(["--dry-run"]) == 0
         assert bench.main([]) == 0
+
+    def test_anthropic_payload_omits_sampling_kwargs_and_binds_real_sdk_signature(
+        self, monkeypatch
+    ):
+        """Regression guard for #13102: Anthropic SDK v2.x removed temperature/top_p/top_k."""
+        import inspect
+
+        import anthropic.resources.messages as anthropic_messages
+
+        payload = llm_request._anthropic_payload(
+            request={
+                "model": CLAUDE_SONNET_MODEL,
+                "max_tokens": 8000,
+                "temperature": 0.3,
+            },
+            messages=[
+                {"role": "system", "content": "You are the Fun Scout."},
+                {"role": "user", "content": "Build sets."},
+            ],
+            extra={
+                "response_format": {"type": "json_object"},
+                "temperature": 0.2,
+                "top_p": 0.9,
+                "top_k": 40,
+            },
+        )
+        assert payload["model"] == CLAUDE_SONNET_MODEL
+        assert payload["max_tokens"] == 8000
+        assert payload["system"] == "You are the Fun Scout."
+        assert payload["messages"] == [{"role": "user", "content": "Build sets."}]
+        for forbidden in ("temperature", "top_p", "top_k", "response_format"):
+            assert forbidden not in payload
+
+        # Validate against the real installed anthropic SDK signature (v2.x on CI & Heroku).
+        sig = inspect.signature(anthropic_messages.Messages.create)
+        bound = sig.bind(object(), **payload)
+        assert bound.kwargs["model"] == CLAUDE_SONNET_MODEL
+
+        # Also prove complete_chat_detailed succeeds against a strict SDK v2-shaped client
+        # that rejects unexpected kwargs like temperature (unlike **kwargs fakes).
+        monkeypatch.setattr(llm_request, "_get_ledger", lambda: MemoryBudgetLedger())
+        received = []
+
+        class _StrictAnthropicV2Client:
+            class _Messages:
+                def create(self, *, max_tokens, messages, model, system=None):
+                    received.append(
+                        {
+                            "max_tokens": max_tokens,
+                            "messages": messages,
+                            "model": model,
+                            "system": system,
+                        }
+                    )
+                    return SimpleNamespace(
+                        content=[SimpleNamespace(text='{"sets": []}')],
+                        usage=SimpleNamespace(input_tokens=100, output_tokens=10),
+                        stop_reason="end_turn",
+                    )
+
+            messages = _Messages()
+
+        res = llm_request.complete_chat_detailed(
+            "fun_scout_sets",
+            _StrictAnthropicV2Client(),
+            messages=[
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "hi"},
+            ],
+            max_output_tokens=100,
+            temperature=0.3,
+        )
+        assert len(received) == 1
+        assert res.model == CLAUDE_SONNET_MODEL
+
+    def test_execute_refuses_when_estimate_exceeds_max_estimate_usd(self, monkeypatch):
+        from scripts import run_fun_scout_benchmark_13102 as bench
+
+        def _forbid(*_a, **_k):
+            raise AssertionError("Paid model client must not be built when estimate exceeds limit")
+
+        monkeypatch.setattr(bench, "build_scout_openai_client", _forbid)
+        monkeypatch.setattr(bench, "build_scout_anthropic_client", _forbid)
+        rc = bench.main(["--execute", "--max-estimate-usd", "0.01"])
+        assert rc == 2
+
+    def test_execute_shares_single_tagging_pass_across_models_and_prints_report(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        from scripts import run_fun_scout_benchmark_13102 as bench
+
+        monkeypatch.setattr(llm_request, "_get_ledger", lambda: MemoryBudgetLedger())
+        fixture_path = tmp_path / "mini-benchmark.json"
+        fixture_path.write_text(
+            json.dumps(
+                {
+                    "captured_at": FROZEN_NOW.isoformat(),
+                    "markets": [
+                        {
+                            "market_id": 101,
+                            "source": "polymarket",
+                            "title": "Will GTA VI release before 2027?",
+                            "status": "open",
+                            "category": "entertainment",
+                            "volume": 50000,
+                            "resolution_date": (FROZEN_NOW + timedelta(days=90)).isoformat(),
+                        },
+                        {
+                            "market_id": 102,
+                            "source": "kalshi",
+                            "title": "Will Winds of Winter be published before 2027?",
+                            "status": "open",
+                            "category": "culture",
+                            "volume": 35000,
+                            "resolution_date": (FROZEN_NOW + timedelta(days=90)).isoformat(),
+                        },
+                        {
+                            "market_id": 103,
+                            "source": "polymarket",
+                            "title": "Will Silksong release before 2027?",
+                            "status": "open",
+                            "category": "entertainment",
+                            "volume": 45000,
+                            "resolution_date": (FROZEN_NOW + timedelta(days=90)).isoformat(),
+                        },
+                    ],
+                    "uncovered_families": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        openai_calls = []
+
+        class _FakeOpenAI:
+            class _Chat:
+                class _Completions:
+                    def create(self, **kwargs):
+                        openai_calls.append(kwargs)
+                        body = json.dumps(
+                            {
+                                "tagged": [
+                                    {"market_id": 101, "fun_group": "vaporware", "is_fun_single": False, "set_hint": "wait", "reason": "delayed"},
+                                    {"market_id": 102, "fun_group": "vaporware", "is_fun_single": False, "set_hint": "wait", "reason": "delayed"},
+                                    {"market_id": 103, "fun_group": "vaporware", "is_fun_single": False, "set_hint": "wait", "reason": "delayed"},
+                                ]
+                            }
+                        )
+                        return SimpleNamespace(
+                            choices=[SimpleNamespace(message=SimpleNamespace(content=body))],
+                            usage=SimpleNamespace(prompt_tokens=200, completion_tokens=80),
+                        )
+
+                completions = _Completions()
+
+            chat = _Chat()
+
+        anthropic_models_called = []
+
+        class _StrictAnthropicV2:
+            class _Messages:
+                def create(self, *, max_tokens, messages, model, system=None):
+                    anthropic_models_called.append(model)
+                    body = json.dumps(
+                        {
+                            "sets": [
+                                {
+                                    "slug": "will-it-ever-come-out",
+                                    "name": "Will it ever come out?",
+                                    "kicker": "LONG WAIT",
+                                    "category": "culture",
+                                    "why_better_together": "Three famous delayed releases side by side.",
+                                    "look": "bars",
+                                    "selector_kind": "fun_tag",
+                                    "member_ids": [101, 102, 103],
+                                }
+                            ]
+                        }
+                    )
+                    return SimpleNamespace(
+                        content=[SimpleNamespace(text=body)],
+                        usage=SimpleNamespace(input_tokens=500, output_tokens=150),
+                        stop_reason="end_turn",
+                    )
+
+            messages = _Messages()
+
+        monkeypatch.setattr(bench, "build_scout_openai_client", lambda: _FakeOpenAI())
+        monkeypatch.setattr(bench, "build_scout_anthropic_client", lambda: _StrictAnthropicV2())
+
+        rc = bench.main(["--execute", "--fixture", str(fixture_path)])
+        assert rc == 0
+        # Tagging ran ONCE even though two Claude models were benchmarked.
+        assert len(openai_calls) == 1
+        assert anthropic_models_called == [CLAUDE_SONNET_MODEL, CLAUDE_OPUS_MODEL]
+
+        out = capsys.readouterr().out
+        assert "Shared tagging pass complete" in out
+        assert "Will it ever come out?" in out
+        assert "Will GTA VI release before 2027?" in out
+        assert "Benchmark total actual spend:" in out
