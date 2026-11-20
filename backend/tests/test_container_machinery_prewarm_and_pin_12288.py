@@ -1502,6 +1502,8 @@ async def test_machinery_stale_while_revalidate_prevents_feed_drop_and_proactive
     from app.utils.roundup_containers import (
         ROUNDUP_MACHINERY_LIVE_STALE_TTL_S,
         ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S,
+        ROUNDUP_STANDING_LIVE_STALE_TTL_S,
+        ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S,
         _redis_cache_key,
         _roundup_cache_stale_ttl_seconds,
         evaluate_roundup_producer,
@@ -1524,7 +1526,15 @@ async def test_machinery_stale_while_revalidate_prevents_feed_drop_and_proactive
         _roundup_cache_stale_ttl_seconds("machinery-nba-night", live_cp)
         == ROUNDUP_MACHINERY_LIVE_STALE_TTL_S
     )
-    assert _roundup_cache_stale_ttl_seconds("roundup-cfp-picture", non_live_cp) == ROUNDUP_CACHE_TTL_S
+    assert (
+        _roundup_cache_stale_ttl_seconds("roundup-cfp-picture", non_live_cp)
+        == ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S
+    )
+    assert (
+        _roundup_cache_stale_ttl_seconds("roundup-closest-games-tonight", live_cp)
+        == ROUNDUP_STANDING_LIVE_STALE_TTL_S
+    )
+    assert _roundup_cache_stale_ttl_seconds("roundup-cfp-picture", None) == ROUNDUP_CACHE_TTL_S
     assert _roundup_cache_stale_ttl_seconds("machinery-fed-and-macro", None) == ROUNDUP_CACHE_TTL_S
 
     calls = 0

@@ -154,6 +154,14 @@ async def api_health_check():
     status = "ok" if (db_ok and redis_ok) else "degraded"
     code = 200 if (db_ok or redis_ok) else 503
 
+    roundup_reads_10m = None
+    try:
+        from app.utils.roundup_containers import get_roundup_read_failure_stats_10m
+
+        roundup_reads_10m = get_roundup_read_failure_stats_10m()
+    except Exception:
+        roundup_reads_10m = None
+
     from fastapi.responses import JSONResponse
     return JSONResponse(
         status_code=code,
@@ -169,6 +177,10 @@ async def api_health_check():
                 "error": redis_error,
                 "elapsed_ms": redis_elapsed_ms,
             },
+            # #13146: rolling 10-minute count of failed Discover round-up reads
+            # on this web process (pure in-memory, 0 I/O), split into kept vs
+            # last-resort drops so any lane can watch one number on /api/health.
+            "roundup_reads_10m": roundup_reads_10m,
             "commit": GIT_COMMIT,
             "uptime_seconds": int(time.time() - _PROCESS_START),
             "dyno": DYNO,

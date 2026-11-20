@@ -20,6 +20,7 @@ import logging
 import re
 import time
 import zlib
+from collections import deque
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -48,7 +49,10 @@ __all__ = [
     "ROUNDUP_PRODUCERS",
     "ROUNDUP_PRODUCER_TIMEOUT_SECONDS",
     "ROUNDUP_READ_BUDGET_SECONDS",
+    "ROUNDUP_READ_FAILURE_WINDOW_S",
     "ROUNDUP_SEAT_FLOOR",
+    "ROUNDUP_STANDING_LIVE_STALE_TTL_S",
+    "ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S",
     "SELECTOR_RULE_KEYS",
     "RoundupMembers",
     "RoundupProducer",
@@ -59,6 +63,7 @@ __all__ = [
     "compose_roundup_container",
     "compose_roundup_feed_item",
     "evaluate_roundup_producer",
+    "get_roundup_read_failure_stats_10m",
     "insert_roundup_feed_items",
     "load_roundup_definition",
     "load_roundup_definitions_from_dir",
@@ -901,8 +906,64 @@ def _redis_cache_key(slug: str) -> str:
     return f"container_read:v1:{slug}"
 
 
+ROUNDUP_READ_FAILURE_WINDOW_S = 600.0
+#: Rolling 10-minute ledger of Discover round-up read failures on this process:
+#: ``(ts, slug, kept_last_good, reason)`` (#13146). Bounded so memory is O(1).
+_roundup_read_failures: deque[tuple[float, str, bool, str]] = deque(maxlen=5000)
+
+
+def _prune_roundup_read_failures(now_ts: float) -> None:
+    cutoff = float(now_ts) - ROUNDUP_READ_FAILURE_WINDOW_S
+    while _roundup_read_failures and _roundup_read_failures[0][0] < cutoff:
+        _roundup_read_failures.popleft()
+
+
+def _record_roundup_read_failure(
+    slug: str,
+    *,
+    kept_last_good: bool,
+    reason: str,
+    now: Optional[float | datetime] = None,
+) -> dict[str, int]:
+    """Record a failed Discover round-up read and return the rolling 10-minute counts."""
+    ts, _ = _normalize_roundup_now(now)
+    _prune_roundup_read_failures(ts)
+    _roundup_read_failures.append((ts, str(slug), bool(kept_last_good), str(reason)))
+    return get_roundup_read_failure_stats_10m(now=ts)
+
+
+def get_roundup_read_failure_stats_10m(
+    now: Optional[float | datetime] = None,
+) -> dict[str, int]:
+    """Return failed Discover round-up read counts over the last 10 minutes (#13146).
+
+    - ``failed``: total round-up reads that timed out or errored on this process
+      in the last 10 minutes.
+    - ``kept_last_good``: failed reads where a valid last good copy under its
+      keep-time was kept in the list instead of dropping the card.
+    - ``dropped_no_copy``: failed reads where no good copy under keep-time
+      existed, so the round-up was left out as a last resort.
+    """
+    ts, _ = _normalize_roundup_now(now)
+    _prune_roundup_read_failures(ts)
+    kept = 0
+    dropped = 0
+    for _ev_ts, _slug, was_kept, _reason in _roundup_read_failures:
+        if was_kept:
+            kept += 1
+        else:
+            dropped += 1
+    return {
+        "window_seconds": int(ROUNDUP_READ_FAILURE_WINDOW_S),
+        "failed": kept + dropped,
+        "kept_last_good": kept,
+        "dropped_no_copy": dropped,
+    }
+
+
 def reset_roundup_cache_for_tests() -> None:
     _roundup_local_cache.clear()
+    _roundup_read_failures.clear()
 
 
 _TRANSIENT_REFUSAL_TOKENS = (
@@ -930,12 +991,13 @@ def _is_cacheable_refusal(reasons: Sequence[Any]) -> bool:
 
 
 ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S = 300.0
-#: Hard Redis retention for machinery snapshots so Discover feed splices
-#: (`ROUNDUP_PRODUCER_TIMEOUT_SECONDS = 0.5`) can serve last-known-good snapshots
-#: while background prewarm refreshes them, instead of hitting a 0.5 s cold DB
-#: timeout and dropping groupings from Discover (#12288).
+#: Hard Redis retention (keep-time) for round-up and machinery snapshots so
+#: Discover feed builds (`ROUNDUP_PRODUCER_TIMEOUT_SECONDS = 0.5`) keep the
+#: last good copy when a read times out instead of dropping the card (#12288, #13146).
 ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S = 1800.0
 ROUNDUP_MACHINERY_LIVE_STALE_TTL_S = 300.0
+ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S = 1800.0
+ROUNDUP_STANDING_LIVE_STALE_TTL_S = 300.0
 #: Redis hash tracking `machinery-*` slugs that currently hold a live game (or one
 #: starting within `MACHINERY_IMMINENT_START_WINDOW_S`), read by the 30s realtime
 #: republisher (`_prewarm_live_feed_shapes`) so live slates never expire between
@@ -1008,16 +1070,13 @@ def _roundup_payload_needs_live_rail(
     return False
 
 
-def _record_machinery_live_origin(
+def _record_roundup_live_origin(
     built_at: float,
     slug: str,
     container_payload: Optional[Mapping[str, Any]],
 ) -> None:
-    """Feed a cached live machinery grouping's origin into the LAT-P230 age sink."""
-    if not (
-        _is_machinery_producer_slug(slug)
-        and _roundup_payload_has_live_event(container_payload)
-    ):
+    """Feed any cached live round-up or grouping's origin into the LAT-P230 age sink."""
+    if not _roundup_payload_has_live_event(container_payload):
         return
     try:
         from app.utils.principal_independent_cache import _age_sink_var
@@ -1026,7 +1085,18 @@ def _record_machinery_live_origin(
         if sink is not None:
             sink.append(float(built_at))
     except Exception:  # noqa: BLE001 — telemetry sink is best-effort
-        pass
+        logger.debug("roundup_containers: live origin sink update skipped for %s", slug)
+
+
+def _record_machinery_live_origin(
+    built_at: float,
+    slug: str,
+    container_payload: Optional[Mapping[str, Any]],
+) -> None:
+    """Feed a cached live machinery grouping's origin into the LAT-P230 age sink."""
+    if not _is_machinery_producer_slug(slug):
+        return
+    _record_roundup_live_origin(built_at, slug, container_payload)
 
 
 def _roundup_cache_ttl_seconds(
@@ -1053,11 +1123,26 @@ def _roundup_cache_stale_ttl_seconds(
     slug: str,
     container_payload: Optional[Mapping[str, Any]],
 ) -> float:
-    """Hard Redis retention TTL (stale-while-revalidate window) for a roundup entry."""
-    if _is_machinery_producer_slug(slug) and container_payload is not None:
-        if _roundup_payload_has_live_event(container_payload):
-            return ROUNDUP_MACHINERY_LIVE_STALE_TTL_S
-        return ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+    """Hard Redis retention TTL (keep-time / stale-while-revalidate window) for a roundup entry.
+
+    Applies to both standing round-ups and machinery groupings when a good copy
+    exists (``container_payload is not None``) so a timed-out refresh can keep
+    the last good copy instead of dropping the card (#13146). Negative refusals
+    (``container_payload is None``) stay on the short 60s TTL.
+    """
+    if container_payload is not None:
+        is_live = _roundup_payload_has_live_event(container_payload)
+        if _is_machinery_producer_slug(slug):
+            return (
+                ROUNDUP_MACHINERY_LIVE_STALE_TTL_S
+                if is_live
+                else ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+            )
+        return (
+            ROUNDUP_STANDING_LIVE_STALE_TTL_S
+            if is_live
+            else ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S
+        )
     return _roundup_cache_ttl_seconds(slug, container_payload)
 
 
@@ -1296,6 +1381,96 @@ def _normalize_roundup_now(
         return dt.timestamp(), dt.astimezone(timezone.utc)
     ts = float(now)
     return ts, datetime.fromtimestamp(ts, tz=timezone.utc)
+
+
+async def _load_last_good_roundup_copy(
+    producer: RoundupProducer,
+    db: Any,
+    *,
+    now: Optional[float | datetime] = None,
+    local_only: bool = False,
+) -> Optional[tuple[dict[str, Any], dict[str, Any], float, float]]:
+    """Return ``(feed_item, container_payload, age_s, keep_s)`` for the last good cached copy.
+
+    Used when a Discover round-up refresh times out or errors so both standing
+    round-ups and machinery groupings keep their last good copy while it is
+    within its keep-time instead of disappearing from Discover (#13146).
+    Respects ``producer.enabled`` and ``valid_from`` / ``valid_until`` (65-A).
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.container_read_cache import container_read_cache_enabled
+
+    if producer.enabled is not None and not producer.enabled():
+        return None
+    ts, _now_dt = _normalize_roundup_now(now)
+    if (producer.valid_from is not None and ts < producer.valid_from) or (
+        producer.valid_until is not None and ts >= producer.valid_until
+    ):
+        return None
+    is_fixture_seq = isinstance(db, (list, tuple))
+    rule_cfg = producer.rule if isinstance(producer.rule, Mapping) else {}
+    no_cache = (
+        rule_cfg.get("cache") == "none" or rule_cfg.get("producer") == "yardstick_pair"
+    )
+    if is_fixture_seq or no_cache or not container_read_cache_enabled():
+        return None
+
+    cache_key = (
+        producer.slug,
+        "live" if isinstance(db, AsyncSession) else id(db),
+    )
+    cached = _roundup_local_cache.get(cache_key)
+    if cached is not None and cached[1] is not None and cached[2] is not None:
+        built_at = float(cached[0])
+        keep_s = _roundup_cache_stale_ttl_seconds(producer.slug, cached[2])
+        age_s = max(0.0, ts - built_at)
+        if age_s < keep_s:
+            _record_roundup_live_origin(built_at, producer.slug, cached[2])
+            return (
+                copy.deepcopy(cached[1]),
+                copy.deepcopy(cached[2]),
+                age_s,
+                keep_s,
+            )
+
+    if local_only or not isinstance(db, AsyncSession):
+        return None
+
+    try:
+        from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+        client = await get_shared_async_redis()
+        res = await bounded_redis_call(
+            lambda: client.get(_redis_cache_key(producer.slug))
+        )
+        if res.is_ok and res.value:
+            raw = json.loads(
+                res.value.decode("utf-8")
+                if isinstance(res.value, (bytes, bytearray))
+                else res.value
+            )
+            if isinstance(raw, dict) and isinstance(raw.get("built_at"), (int, float)):
+                built_at = float(raw["built_at"])
+                fi = raw.get("feed_item")
+                cp = raw.get("container_payload")
+                if fi is not None and cp is not None:
+                    keep_s = float(
+                        raw.get("stale_ttl_s")
+                        or _roundup_cache_stale_ttl_seconds(producer.slug, cp)
+                    )
+                    age_s = max(0.0, ts - built_at)
+                    if age_s < keep_s:
+                        _roundup_local_cache[cache_key] = (built_at, fi, cp)
+                        _record_roundup_live_origin(built_at, producer.slug, cp)
+                        return copy.deepcopy(fi), copy.deepcopy(cp), age_s, keep_s
+    except Exception:  # noqa: BLE001 — stale fallback read fails open
+        logger.debug(
+            "roundup_containers: last-good shared cache read failed for %s",
+            producer.slug,
+            exc_info=True,
+        )
+    return None
 
 
 async def evaluate_roundup_producer(
@@ -3171,18 +3346,49 @@ async def add_roundup_feed_items(
     if not producers:
         return items
     produced: list[dict[str, Any]] = []
+    now_ts, _ = _normalize_roundup_now(now)
     for idx, producer in enumerate(producers):
         elapsed = time.perf_counter() - started
         remaining = stage_budget - elapsed
         if remaining <= 0:
+            kept_after_budget = 0
+            dropped_after_budget = 0
+            for rem_producer in producers[idx:]:
+                last_good = await _load_last_good_roundup_copy(
+                    rem_producer, db, now=now, local_only=True
+                )
+                if last_good is not None:
+                    fi_lg, _cp_lg, _age_lg, _keep_lg = last_good
+                    produced.append(fi_lg)
+                    kept_after_budget += 1
+                    _record_roundup_read_failure(
+                        rem_producer.slug,
+                        kept_last_good=True,
+                        reason="budget_exhausted",
+                        now=now_ts,
+                    )
+                else:
+                    dropped_after_budget += 1
+                    _record_roundup_read_failure(
+                        rem_producer.slug,
+                        kept_last_good=False,
+                        reason="budget_exhausted",
+                        now=now_ts,
+                    )
+            stats_10m = get_roundup_read_failure_stats_10m(now=now_ts)
             logger.warning(
                 "Discover round-up stage budget exhausted after %d/%d producers "
-                "(budget_seconds=%.3f, stage_budget=%.3f, produced=%d)",
+                "(budget_seconds=%.3f, stage_budget=%.3f, produced=%d, "
+                "kept_last_good=%d, dropped_no_copy=%d, failed_10m=%d, dropped_10m=%d)",
                 idx,
                 len(producers),
                 budget_seconds,
                 stage_budget,
                 len(produced),
+                kept_after_budget,
+                dropped_after_budget,
+                stats_10m["failed"],
+                stats_10m["dropped_no_copy"],
             )
             break
         per_timeout = min(remaining, ROUNDUP_PRODUCER_TIMEOUT_SECONDS)
@@ -3201,15 +3407,49 @@ async def add_roundup_feed_items(
                 try:
                     await db.rollback()
                 except Exception:  # noqa: BLE001
-                    pass
+                    logger.debug(
+                        "roundup_containers: rollback after timeout failed for %s",
+                        producer.slug,
+                    )
+            last_good = await _load_last_good_roundup_copy(producer, db, now=now)
+            if last_good is not None:
+                fi_lg, _cp_lg, age_lg, keep_lg = last_good
+                produced.append(fi_lg)
+                stats_10m = _record_roundup_read_failure(
+                    producer.slug,
+                    kept_last_good=True,
+                    reason="timeout",
+                    now=now_ts,
+                )
+                logger.warning(
+                    "Discover round-up read timed out for %s; kept last good copy "
+                    "(age=%.1fs, keep_s=%.0f, failed_10m=%d, kept_10m=%d, dropped_10m=%d)",
+                    producer.slug,
+                    age_lg,
+                    keep_lg,
+                    stats_10m["failed"],
+                    stats_10m["kept_last_good"],
+                    stats_10m["dropped_no_copy"],
+                )
+                continue
             if (
                 per_timeout >= ROUNDUP_PRODUCER_TIMEOUT_SECONDS
                 and not _is_machinery_producer_slug(producer.slug)
             ):
-                await _cache_roundup_timeout_refusal(producer, db)
-            logger.warning(
-                "Discover round-up read failed for %s; keeping ordinary cards",
+                await _cache_roundup_timeout_refusal(producer, db, ts=now_ts)
+            stats_10m = _record_roundup_read_failure(
                 producer.slug,
+                kept_last_good=False,
+                reason="timeout",
+                now=now_ts,
+            )
+            logger.warning(
+                "Discover round-up read failed for %s; keeping ordinary cards "
+                "(no last good copy under keep-time, failed_10m=%d, kept_10m=%d, dropped_10m=%d)",
+                producer.slug,
+                stats_10m["failed"],
+                stats_10m["kept_last_good"],
+                stats_10m["dropped_no_copy"],
                 exc_info=True,
             )
             continue
@@ -3218,10 +3458,45 @@ async def add_roundup_feed_items(
                 try:
                     await db.rollback()
                 except Exception:  # noqa: BLE001
-                    pass
-            logger.warning(
-                "Discover round-up read failed for %s; keeping ordinary cards",
+                    logger.debug(
+                        "roundup_containers: rollback after error failed for %s",
+                        producer.slug,
+                    )
+            last_good = await _load_last_good_roundup_copy(producer, db, now=now)
+            if last_good is not None:
+                fi_lg, _cp_lg, age_lg, keep_lg = last_good
+                produced.append(fi_lg)
+                stats_10m = _record_roundup_read_failure(
+                    producer.slug,
+                    kept_last_good=True,
+                    reason="error",
+                    now=now_ts,
+                )
+                logger.warning(
+                    "Discover round-up read errored for %s; kept last good copy "
+                    "(age=%.1fs, keep_s=%.0f, failed_10m=%d, kept_10m=%d, dropped_10m=%d)",
+                    producer.slug,
+                    age_lg,
+                    keep_lg,
+                    stats_10m["failed"],
+                    stats_10m["kept_last_good"],
+                    stats_10m["dropped_no_copy"],
+                    exc_info=True,
+                )
+                continue
+            stats_10m = _record_roundup_read_failure(
                 producer.slug,
+                kept_last_good=False,
+                reason="error",
+                now=now_ts,
+            )
+            logger.warning(
+                "Discover round-up read failed for %s; keeping ordinary cards "
+                "(no last good copy under keep-time, failed_10m=%d, kept_10m=%d, dropped_10m=%d)",
+                producer.slug,
+                stats_10m["failed"],
+                stats_10m["kept_last_good"],
+                stats_10m["dropped_no_copy"],
                 exc_info=True,
             )
             continue
