@@ -2036,7 +2036,6 @@ def _publish_machinery_feed_from_prewarm_base(
     import time as _time
 
     from app.routes.containers import containers_read_enabled
-    from app.routes.feed import render_machinery_prewarm_bundle
     from app.utils.container_machinery import container_machinery_enabled
     from app.utils.roundup_containers import (
         ROUNDUP_PRODUCERS,
@@ -2044,6 +2043,7 @@ def _publish_machinery_feed_from_prewarm_base(
         _redis_cache_key,
         _roundup_payload_has_live_event,
         ensure_optional_roundup_candidates,
+        render_machinery_prewarm_bundle,
     )
 
     if not container_machinery_enabled() or not containers_read_enabled():
