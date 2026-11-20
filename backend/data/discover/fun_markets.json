@@ -1,0 +1,1093 @@
+{
+  "schema_version": 1,
+  "seeded_at": "2026-11-19",
+  "source_issue": 13097,
+  "default_min_lifetime_volume": 10000,
+  "sub_tags": {
+    "long-shot": "Long shots people talk about — memorable standalone conversation starters.",
+    "taylor-swift": "Taylor Swift music and pop-culture markets (no wedding markets; Ruling 273: B).",
+    "pope-leo-xiv": "Pope Leo XIV travels and honours.",
+    "elon-musk": "Elon Musk milestones, companies, and public bets.",
+    "long-awaited": "Will it ever come out? Long-awaited games, books, albums, shows, and films.",
+    "year-end": "How 2026 gets summed up — annual lists, awards, and year-end milestones.",
+    "white-christmas": "White Christmas city-by-city snow markets.",
+    "christmas": "Seasonal Christmas music and entertainment markets.",
+    "james-bond": "The next James Bond film castings and theme artist.",
+    "space": "Moon, Mars, and deep-space exploration milestones.",
+    "super-bowl-culture": "The Super Bowl without the football — halftime show and commercials.",
+    "tv-finales": "Reality and competition TV finales this month.",
+    "movies": "Box office, Rotten Tomatoes scores, casting, and festival headliners.",
+    "unsolved-problems": "Big unsolved problems in science, math, and AI.",
+    "who-shows-up": "Hosts, guests, magazine covers, and Michelin stars.",
+    "everyday-prices": "Everyday consumer prices people recognise immediately.",
+    "engagements": "Celebrity engagement markets (allowed as a set under Ruling 273: B)."
+  },
+  "concluded_events": [
+    {
+      "id": "taylor-swift-wedding",
+      "event_date": "2026-06-13",
+      "title_all_terms": [
+        "taylor swift",
+        "wedding"
+      ],
+      "reason": "Taylor Swift and Travis Kelce's wedding already happened; venues still list markets as open (Ruling 273: B)."
+    }
+  ],
+  "markets": {
+    "109435": {
+      "market_id": 109435,
+      "title": "Will the U.S. confirm that aliens exist?",
+      "sub_tags": [
+        "long-shot"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false,
+      "unblended_twin_ids": [
+        113503,
+        13792362
+      ]
+    },
+    "113504": {
+      "market_id": 113504,
+      "title": "Will Jesus Christ return before 2027?",
+      "sub_tags": [
+        "long-shot"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "109295": {
+      "market_id": 109295,
+      "title": "Will Taylor Swift meet with Pope Leo XIV before 2027?",
+      "sub_tags": [
+        "long-shot",
+        "taylor-swift",
+        "pope-leo-xiv"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "34191685": {
+      "market_id": 34191685,
+      "title": "Is Earth flat?",
+      "sub_tags": [
+        "long-shot"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "108218": {
+      "market_id": 108218,
+      "title": "Will Elon Musk visit Mars in his lifetime?",
+      "sub_tags": [
+        "long-shot",
+        "elon-musk",
+        "space"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "9997262": {
+      "market_id": 9997262,
+      "title": "Satoshi's identity proven?",
+      "sub_tags": [
+        "long-shot"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "112828": {
+      "market_id": 112828,
+      "title": "Major meteor strike before 2030?",
+      "sub_tags": [
+        "long-shot"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "109398": {
+      "market_id": 109398,
+      "title": "Magnitude 8 earthquake in California before 2027?",
+      "sub_tags": [
+        "long-shot"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "weather",
+      "set_only": false
+    },
+    "108339": {
+      "market_id": 108339,
+      "title": "Will Trump go on SNL?",
+      "sub_tags": [
+        "long-shot",
+        "who-shows-up"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "66925975": {
+      "market_id": 66925975,
+      "title": "Will Bryan Johnson dunk before 2027?",
+      "sub_tags": [
+        "long-shot"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "109633": {
+      "market_id": 109633,
+      "title": "Next Superman film: will Elon Musk be cast?",
+      "sub_tags": [
+        "long-shot",
+        "elon-musk",
+        "movies"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "112833": {
+      "market_id": 112833,
+      "title": "Costco raises its hot dog combo price?",
+      "sub_tags": [
+        "long-shot"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "109343": {
+      "market_id": 109343,
+      "title": "Kim Kardashian passes the bar exam before 2027?",
+      "sub_tags": [
+        "long-shot"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false,
+      "unblended_twin_ids": [
+        57418931
+      ]
+    },
+    "52755889": {
+      "market_id": 52755889,
+      "title": "MrBeast reaches 1 billion subscribers?",
+      "sub_tags": [
+        "long-shot"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "109316": {
+      "market_id": 109316,
+      "title": "Will Elon Musk buy a major sports team before 2027?",
+      "sub_tags": [
+        "long-shot",
+        "elon-musk"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "56762760": {
+      "market_id": 56762760,
+      "title": "Will the LA28 Olympics run as scheduled?",
+      "sub_tags": [
+        "long-shot"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "67734839": {
+      "market_id": 67734839,
+      "title": "Trump declassifies new UFO files?",
+      "sub_tags": [
+        "long-shot"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false,
+      "unblended_twin_ids": [
+        70465175
+      ]
+    },
+    "33282766": {
+      "market_id": 33282766,
+      "title": "Joe Rogan joins 60 Minutes as a correspondent?",
+      "sub_tags": [
+        "long-shot"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "63336261": {
+      "market_id": 63336261,
+      "title": "Will Jeff Bezos go to space before 2028?",
+      "sub_tags": [
+        "long-shot",
+        "space"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "30587891": {
+      "market_id": 30587891,
+      "title": "Will Banksy create a new mural or street artwork by December 31?",
+      "sub_tags": [
+        "long-shot"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "109309": {
+      "market_id": 109309,
+      "title": "Taylor Swift (Taylor's Version) announced this year?",
+      "sub_tags": [
+        "taylor-swift"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "109310": {
+      "market_id": 109310,
+      "title": "Reputation (Taylor's Version) announced this year?",
+      "sub_tags": [
+        "taylor-swift"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "109291": {
+      "market_id": 109291,
+      "title": "Blake Lively and Taylor Swift seen together this year?",
+      "sub_tags": [
+        "taylor-swift"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "109294": {
+      "market_id": 109294,
+      "title": "What countries will Pope Leo visit in 2026?",
+      "sub_tags": [
+        "pope-leo-xiv"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "65544835": {
+      "market_id": 65544835,
+      "title": "Nobel Peace Prize 2027",
+      "sub_tags": [
+        "pope-leo-xiv"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "69863846": {
+      "market_id": 69863846,
+      "title": "Elon Musk: number of posts this week",
+      "sub_tags": [
+        "elon-musk"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "109315": {
+      "market_id": 109315,
+      "title": "How rich will Elon Musk get before 2027?",
+      "sub_tags": [
+        "elon-musk"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "52755535": {
+      "market_id": 52755535,
+      "title": "Who will be the world's second trillionaire?",
+      "sub_tags": [
+        "elon-musk"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "109412": {
+      "market_id": 109412,
+      "title": "Will Elon purchase Ryanair?",
+      "sub_tags": [
+        "elon-musk"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "109490": {
+      "market_id": 109490,
+      "title": "Elon Musk out as Tesla CEO before 2027?",
+      "sub_tags": [
+        "elon-musk"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "109489": {
+      "market_id": 109489,
+      "title": "Tesla Optimus released this year?",
+      "sub_tags": [
+        "elon-musk"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false,
+      "unblended_twin_ids": [
+        113017
+      ]
+    },
+    "113343": {
+      "market_id": 113343,
+      "title": "Half-Life 3 announced before 2027?",
+      "sub_tags": [
+        "long-awaited"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "109247": {
+      "market_id": 109247,
+      "title": "The Winds of Winter: release date announced this year?",
+      "sub_tags": [
+        "long-awaited"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false,
+      "unblended_twin_ids": [
+        113426
+      ]
+    },
+    "114237": {
+      "market_id": 114237,
+      "title": "Stranger Things: a new episode?",
+      "sub_tags": [
+        "long-awaited"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "108494": {
+      "market_id": 108494,
+      "title": "When will Elder Scrolls VI be released?",
+      "sub_tags": [
+        "long-awaited"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false,
+      "unblended_twin_ids": [
+        5769697
+      ]
+    },
+    "109540": {
+      "market_id": 109540,
+      "title": "PS6 announced this year?",
+      "sub_tags": [
+        "long-awaited"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "112760": {
+      "market_id": 112760,
+      "title": "When will Frank Ocean release a new album?",
+      "sub_tags": [
+        "long-awaited"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false,
+      "unblended_twin_ids": [
+        13792922
+      ]
+    },
+    "59693617": {
+      "market_id": 59693617,
+      "title": "Will Drake release a new album?",
+      "sub_tags": [
+        "long-awaited"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false,
+      "unblended_twin_ids": [
+        60207712
+      ]
+    },
+    "109347": {
+      "market_id": 109347,
+      "title": "Robert Downey Jr. back as Iron Man this year?",
+      "sub_tags": [
+        "long-awaited"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "108239": {
+      "market_id": 108239,
+      "title": "Next Pirates of the Caribbean: will Johnny Depp be cast?",
+      "sub_tags": [
+        "long-awaited"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "108275": {
+      "market_id": 108275,
+      "title": "Will The Simpsons announce it is ending?",
+      "sub_tags": [
+        "long-awaited"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "109380": {
+      "market_id": 109380,
+      "title": "New Fast & Furious film announced in 2026?",
+      "sub_tags": [
+        "long-awaited"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "67717832": {
+      "market_id": 67717832,
+      "title": "GTA VI on PC: when?",
+      "sub_tags": [
+        "long-awaited"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "108306": {
+      "market_id": 108306,
+      "title": "What genre will Beyonce’s next album be?",
+      "sub_tags": [
+        "long-awaited"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "27467306": {
+      "market_id": 27467306,
+      "title": "TIME Person of the Year 2026",
+      "sub_tags": [
+        "year-end",
+        "pope-leo-xiv"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false,
+      "unblended_twin_ids": [
+        109264
+      ]
+    },
+    "108254": {
+      "market_id": 108254,
+      "title": "Time's Person of the Decade",
+      "sub_tags": [
+        "year-end"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "109517": {
+      "market_id": 109517,
+      "title": "Top artist on Spotify in 2026",
+      "sub_tags": [
+        "year-end"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "70733200": {
+      "market_id": 70733200,
+      "title": "Top song on Spotify in 2026",
+      "sub_tags": [
+        "year-end"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false,
+      "unblended_twin_ids": [
+        109508
+      ]
+    },
+    "8431009": {
+      "market_id": 8431009,
+      "title": "Merriam-Webster Word of the Year 2026",
+      "sub_tags": [
+        "year-end"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "109614": {
+      "market_id": 109614,
+      "title": "The Game Awards: Game of the Year",
+      "sub_tags": [
+        "year-end"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "113355": {
+      "market_id": 113355,
+      "title": "Highest grossing movie in 2026",
+      "sub_tags": [
+        "year-end"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "113334": {
+      "market_id": 113334,
+      "title": "Richest person on December 31, 2026",
+      "sub_tags": [
+        "year-end"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "113358": {
+      "market_id": 113358,
+      "title": "Where will 2026 rank among the hottest years?",
+      "sub_tags": [
+        "year-end"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "weather",
+      "set_only": false,
+      "unblended_twin_ids": [
+        109358
+      ]
+    },
+    "68858738": {
+      "market_id": 68858738,
+      "title": "Miss Universe 2026",
+      "sub_tags": [
+        "year-end"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "26513138": {
+      "market_id": 26513138,
+      "title": "Most expensive artwork sold at auction in 2026",
+      "sub_tags": [
+        "year-end"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "70400892": {
+      "market_id": 70400892,
+      "title": "World Happiness Report 2027: 1st place",
+      "sub_tags": [
+        "year-end"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "70170349": {
+      "market_id": 70170349,
+      "title": "Will it snow in Denver on Christmas?",
+      "sub_tags": [
+        "white-christmas"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "weather",
+      "set_only": true,
+      "event_date": "2026-12-25"
+    },
+    "70170353": {
+      "market_id": 70170353,
+      "title": "Will it snow in NYC on Christmas?",
+      "sub_tags": [
+        "white-christmas"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "weather",
+      "set_only": true,
+      "event_date": "2026-12-25"
+    },
+    "70170345": {
+      "market_id": 70170345,
+      "title": "Will it snow in Philadelphia on Christmas?",
+      "sub_tags": [
+        "white-christmas"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "weather",
+      "set_only": true,
+      "event_date": "2026-12-25"
+    },
+    "70170343": {
+      "market_id": 70170343,
+      "title": "Will it snow in Seattle on Christmas?",
+      "sub_tags": [
+        "white-christmas"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "weather",
+      "set_only": true,
+      "event_date": "2026-12-25"
+    },
+    "67804457": {
+      "market_id": 67804457,
+      "title": "\"All I Want for Christmas Is You\": Hot 100 rank",
+      "sub_tags": [
+        "christmas"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "70239521": {
+      "market_id": 70239521,
+      "title": "Who will be in the NFL Christmas Day halftime show?",
+      "sub_tags": [
+        "christmas"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false,
+      "event_date": "2026-12-25"
+    },
+    "108237": {
+      "market_id": 108237,
+      "title": "Next James Bond film: Artist performing the James Bond Theme",
+      "sub_tags": [
+        "james-bond"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "108263": {
+      "market_id": 108263,
+      "title": "Next James Bond film: Actress cast as Bond girl",
+      "sub_tags": [
+        "james-bond"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "108258": {
+      "market_id": 108258,
+      "title": "Next James Bond film: Actor cast as the villain",
+      "sub_tags": [
+        "james-bond"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "108260": {
+      "market_id": 108260,
+      "title": "Next James Bond film: Actress cast as Moneypenny",
+      "sub_tags": [
+        "james-bond"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "109473": {
+      "market_id": 109473,
+      "title": "NASA lands on the moon?",
+      "sub_tags": [
+        "space"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "108247": {
+      "market_id": 108247,
+      "title": "Which country sends humans to the Moon next?",
+      "sub_tags": [
+        "space"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "108300": {
+      "market_id": 108300,
+      "title": "Will Blue Origin land on the moon before SpaceX?",
+      "sub_tags": [
+        "space"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "108273": {
+      "market_id": 108273,
+      "title": "Will SpaceX land anything on Mars before 2030?",
+      "sub_tags": [
+        "space"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "108309": {
+      "market_id": 108309,
+      "title": "Starship launches humans to Mars before 2030?",
+      "sub_tags": [
+        "space"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "108236": {
+      "market_id": 108236,
+      "title": "A humanoid robot walks on Mars before a human does?",
+      "sub_tags": [
+        "space"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "109599": {
+      "market_id": 109599,
+      "title": "A new interstellar visitor confirmed before 2027?",
+      "sub_tags": [
+        "space"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "68313448": {
+      "market_id": 68313448,
+      "title": "Halftime show: performers",
+      "sub_tags": [
+        "super-bowl-culture"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false,
+      "unblended_twin_ids": [
+        56775565
+      ]
+    },
+    "67792474": {
+      "market_id": 67792474,
+      "title": "Jay-Z's halftime opener",
+      "sub_tags": [
+        "super-bowl-culture"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "52755798": {
+      "market_id": 52755798,
+      "title": "Which brands will advertise during the Big Game?",
+      "sub_tags": [
+        "super-bowl-culture"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "70239540": {
+      "market_id": 70239540,
+      "title": "Who will appear in a Big Game commercial?",
+      "sub_tags": [
+        "super-bowl-culture"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "60481087": {
+      "market_id": 60481087,
+      "title": "Dancing with the Stars Season 35: winner",
+      "sub_tags": [
+        "tv-finales"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "70160350": {
+      "market_id": 70160350,
+      "title": "The Voice Season 30: winner",
+      "sub_tags": [
+        "tv-finales"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "113356": {
+      "market_id": 113356,
+      "title": "Which movie has the biggest opening weekend in 2026?",
+      "sub_tags": [
+        "movies"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "5398277": {
+      "market_id": 5398277,
+      "title": "Rotten Tomatoes scores for new releases",
+      "sub_tags": [
+        "movies"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "109214": {
+      "market_id": 109214,
+      "title": "Avengers: Doomsday: cast",
+      "sub_tags": [
+        "movies"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "59172754": {
+      "market_id": 59172754,
+      "title": "Dune vs Avengers: higher Rotten Tomatoes score",
+      "sub_tags": [
+        "movies"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "108505": {
+      "market_id": 108505,
+      "title": "Who will headline Coachella 2027?",
+      "sub_tags": [
+        "movies"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false,
+      "unblended_twin_ids": [
+        20566631
+      ]
+    },
+    "112792": {
+      "market_id": 112792,
+      "title": "When will the next Millennium Prize be awarded?",
+      "sub_tags": [
+        "unsolved-problems"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "53049401": {
+      "market_id": 53049401,
+      "title": "When will the Riemann hypothesis be solved?",
+      "sub_tags": [
+        "unsolved-problems"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "108232": {
+      "market_id": 108232,
+      "title": "When will nuclear fusion be achieved?",
+      "sub_tags": [
+        "unsolved-problems"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "112826": {
+      "market_id": 112826,
+      "title": "When will the first useful quantum computer be built?",
+      "sub_tags": [
+        "unsolved-problems"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "112835": {
+      "market_id": 112835,
+      "title": "When will OpenAI achieve AGI?",
+      "sub_tags": [
+        "unsolved-problems"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "tech",
+      "set_only": false
+    },
+    "62368061": {
+      "market_id": 62368061,
+      "title": "Who will host Saturday Night Live Season 52?",
+      "sub_tags": [
+        "who-shows-up"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "109287": {
+      "market_id": 109287,
+      "title": "The Joe Rogan Experience: guests in 2026",
+      "sub_tags": [
+        "who-shows-up"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "56775621": {
+      "market_id": 56775621,
+      "title": "Vogue (US) 2026: cover models",
+      "sub_tags": [
+        "who-shows-up"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "67804475": {
+      "market_id": 67804475,
+      "title": "Which New York City restaurants earn a Michelin star in 2026?",
+      "sub_tags": [
+        "who-shows-up"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": false
+    },
+    "65521937": {
+      "market_id": 65521937,
+      "title": "Disneyland ticket price at year-end 2026",
+      "sub_tags": [
+        "everyday-prices"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "70170648": {
+      "market_id": 70170648,
+      "title": "McDonald's Big Mac price",
+      "sub_tags": [
+        "everyday-prices"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "70170650": {
+      "market_id": 70170650,
+      "title": "Chipotle chicken burrito price",
+      "sub_tags": [
+        "everyday-prices"
+      ],
+      "fun_bucket": "odd",
+      "discover_category": "culture",
+      "set_only": false
+    },
+    "109385": {
+      "market_id": 109385,
+      "title": "Timothée Chalamet and Kylie Jenner: engaged in 2026?",
+      "sub_tags": [
+        "engagements"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": true
+    },
+    "113658": {
+      "market_id": 113658,
+      "title": "Katy Perry and Justin Trudeau: engaged in 2026?",
+      "sub_tags": [
+        "engagements"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": true
+    },
+    "186640": {
+      "market_id": 186640,
+      "title": "Tom Brady and Alix Earle: engaged in 2026?",
+      "sub_tags": [
+        "engagements"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": true
+    },
+    "109388": {
+      "market_id": 109388,
+      "title": "Kim Kardashian and Lewis Hamilton: engaged in 2026?",
+      "sub_tags": [
+        "engagements"
+      ],
+      "fun_bucket": "entertainment",
+      "discover_category": "entertainment",
+      "set_only": true
+    }
+  }
+}

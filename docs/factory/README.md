@@ -28,7 +28,7 @@ The page shows “Not updating,” keeps the last verified floor and pauses moti
 | Amber pulse | At least ten visible changes in the bay, or a qualified recorded jam |
 | Live truck and counter tick | A newly observed transfer into Live |
 
-Reduced motion disables animations. A hidden tab pauses them. Original SVG workers keep their state readable in a still frame. Live bays show eight crates and the earlier-today count. Bot approval and Fable acceptance survive verified test-only commits and merges of master. Unverified commit evidence keeps the earlier review station.
+Reduced motion disables animations. A hidden tab pauses them. Original SVG workers keep their state readable in a still frame. A bay shows up to two crates. The “+N more” button opens the rest of the bay, and the side shelf buttons open each shelf. Bot approval and Fable acceptance survive verified test-only commits and merges of master. Unverified commit evidence keeps the earlier review station.
 
 ## Public assets
 
@@ -48,14 +48,14 @@ Each GitHub read has a four-second limit and one retry. On November 18, 15 direc
 
 Next's 60-second Data Cache stores verified copies. A failed refresh leaves the previous entry available. An open page also keeps its displayed floor when the next render has no copy. The browser saves the last good timestamp between visits.
 
-Bays size to their contents. Only a bay holding at least ten waiting changes gets the amber outline. System jams can pulse their own lamp. Earlier branch families are labelled “Earlier work.” Reduced motion disables the belts, lamps and moving crates.
+The floor fits at 960 × 950 with the history, crew and delivery timing disclosures closed. Phones scroll the floor horizontally inside its card. Only a bay holding at least ten waiting changes gets the amber outline. System jams can pulse their own lamp. Earlier branch families are labelled “Earlier work.” Reduced motion disables the belts, lamps and moving crates.
 
 ## Verification
 
 ```sh
 python3 -m unittest discover -s scripts/factory/tests -v
 cd frontend
-npx jest --runInBand --testPathPatterns='factoryData|factoryUnavailable|factoryActivity'
+npx jest --runInBand --testPathPatterns='factoryData|factoryUnavailable|factoryActivity|factoryCrew'
 npm run build
 npm run typecheck
 ```

@@ -700,7 +700,8 @@ struct EventDetailView: View {
                 // chart instead of standing in front of it.
                 // #9067 — the stored line score needs no history, so a
                 // failed history fetch no longer hides the card with it.
-                if isLive || isFinished,
+                if (isLive || isFinished),
+                   event.scoreSourceUnavailable != true,
                    vm.history != nil || event.boxScoreData != nil {
                     GameSegmentsView(
                         history: vm.history,
@@ -731,7 +732,7 @@ struct EventDetailView: View {
                 // (never two answers to one question); every refusal keeps
                 // the differential.
                 // Score Differential Chart
-                if let history = vm.history, (isLive || isFinished), !projectionReplacesDifferential {
+                if let history = vm.history, (isLive || isFinished), event.scoreSourceUnavailable != true, !projectionReplacesDifferential {
                     ScoreDifferentialChartView(
                         history: history,
                         homeTeam: event.homeTeam,
@@ -1332,8 +1333,13 @@ struct EventDetailView: View {
     /// one line above the hero read "Yankees 3 - Padres 4" while the hero
     /// itself printed nothing under either crest. A suspended game is the state
     /// where the score matters MOST: it is the only thing anybody got.
-    static func showsScore(status: String?, away: Int?, home: Int?) -> Bool {
-        guard away != nil, home != nil else { return false }
+    static func showsScore(
+        status: String?,
+        away: Int?,
+        home: Int?,
+        scoreSourceUnavailable: Bool? = nil
+    ) -> Bool {
+        guard scoreSourceUnavailable != true, away != nil, home != nil else { return false }
         return status == "live" || EventState.isFinished(status) || EventState.isSuspended(status)
     }
 
@@ -1661,7 +1667,7 @@ struct EventDetailView: View {
     private func heroSection(_ event: EventDetail) -> some View {
         let colors = teamColors(event)
         let hasScore = EventDetailView.showsScore(
-            status: event.status, away: event.awayScore, home: event.homeScore)
+            status: event.status, away: event.awayScore, home: event.homeScore) && event.scoreSourceUnavailable != true
         let sportHeadline12472 = EventSportHeadlines12472.resolve(
             event: event,
             awayFullName: event.awayTeam,
@@ -1764,7 +1770,7 @@ struct EventDetailView: View {
     private func liveCardBaseline11296(_ served: EventDetail) -> (away: Double, home: Double)? {
         let event = vm.headline(served)
         let hasScore = EventDetailView.showsScore(
-            status: event.status, away: event.awayScore, home: event.homeScore)
+            status: event.status, away: event.awayScore, home: event.homeScore) && event.scoreSourceUnavailable != true
         return LivePregameComparison11296.servedHalves(
             liveForecast11296(event, hasScore: hasScore), projection: event.pregameProjection)
     }
@@ -1822,7 +1828,7 @@ struct EventDetailView: View {
     /// headline prints the whole-number pair.
     func pageProjectedPointsPair(_ event: EventDetail) -> (away: Int, home: Int)? {
         let hasScore = EventDetailView.showsScore(
-            status: event.status, away: event.awayScore, home: event.homeScore)
+            status: event.status, away: event.awayScore, home: event.homeScore) && event.scoreSourceUnavailable != true
         return EventDetailView.projectionText(
             event,
             ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
@@ -1909,7 +1915,7 @@ struct EventDetailView: View {
             return (nil, [], [])
         }
         let hasScore = EventDetailView.showsScore(
-            status: event.status, away: event.awayScore, home: event.homeScore)
+            status: event.status, away: event.awayScore, home: event.homeScore) && event.scoreSourceUnavailable != true
         let names = nflNames(event)
         return EventAtlasFootballCards11666.buildStories(
             sportKey: event.sport,
@@ -1932,7 +1938,7 @@ struct EventDetailView: View {
     /// THIS event inside the builder, and the score the page prints.
     private func mlbFinalCards(_ event: EventDetail) -> [MLBFinalCard11284] {
         let hasScore = EventDetailView.showsScore(
-            status: event.status, away: event.awayScore, home: event.homeScore)
+            status: event.status, away: event.awayScore, home: event.homeScore) && event.scoreSourceUnavailable != true
         return MLBFinalDeck11284.cards(MLBFinalDeckInput11284(
             eventID: event.id, sportKey: event.sport, status: event.status,
             homeTeam: event.homeTeam, awayTeam: event.awayTeam,
@@ -1989,7 +1995,7 @@ struct EventDetailView: View {
     private func nhlAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
         guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
         let hasScore = EventDetailView.showsScore(
-            status: event.status, away: event.awayScore, home: event.homeScore)
+            status: event.status, away: event.awayScore, home: event.homeScore) && event.scoreSourceUnavailable != true
         let names = nflNames(event)
         return EventAtlasNhlCards11666.cards(
             sportKey: event.sport,
@@ -2012,7 +2018,7 @@ struct EventDetailView: View {
     private func soccerAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
         guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
         let hasScore = EventDetailView.showsScore(
-            status: event.status, away: event.awayScore, home: event.homeScore)
+            status: event.status, away: event.awayScore, home: event.homeScore) && event.scoreSourceUnavailable != true
         let names = nflNames(event)
         let now = displayNow()
         let cards = EventAtlasSoccerCards11666.cards(
@@ -2042,7 +2048,7 @@ struct EventDetailView: View {
     private func tennisAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
         guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
         let hasScore = EventDetailView.showsScore(
-            status: event.status, away: event.awayScore, home: event.homeScore)
+            status: event.status, away: event.awayScore, home: event.homeScore) && event.scoreSourceUnavailable != true
         let names = nflNames(event)
         return EventAtlasTennisCards11666.cards(
             sportKey: event.sport,
@@ -2078,7 +2084,7 @@ struct EventDetailView: View {
         guard NBAEventCards9483.applies(sportKey: event.sport),
               let gameMarkets = vm.gameMarkets, gameMarkets.eventId == event.id else { return [] }
         let hasScore = EventDetailView.showsScore(
-            status: event.status, away: event.awayScore, home: event.homeScore)
+            status: event.status, away: event.awayScore, home: event.homeScore) && event.scoreSourceUnavailable != true
         let names = nflNames(event)
         let input = NBALadderCard9483.Input(
             matrix: gameMarkets.gameQuestionMatrix, status: event.status,
@@ -2139,7 +2145,7 @@ struct EventDetailView: View {
     private func nflReaderHeader(_ event: EventDetail) -> NFLReaderHeader9483 {
         let names = nflNames(event)
         let hasScore = EventDetailView.showsScore(
-            status: event.status, away: event.awayScore, home: event.homeScore)
+            status: event.status, away: event.awayScore, home: event.homeScore) && event.scoreSourceUnavailable != true
         let liveState = PeriodLabel.liveStatusText(period: event.espn?.period, gameClock: event.espn?.gameClock)
         let state = isFinished ? "Final" : isLive ? (liveState.flatMap { $0.isEmpty ? nil : $0 } ?? "Live") : "Pregame"
         let match = hasScore

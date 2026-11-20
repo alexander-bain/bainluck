@@ -46,6 +46,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 from app.services.llm_models import (
+    MODELS,
     chat_request_kwargs,
     cost_upper_bound_usd,
     estimate_cost_usd,
@@ -310,12 +311,52 @@ def _get_slots() -> threading.BoundedSemaphore:
 _sleep = time.sleep
 
 
-def _openai_errors():
+def _provider_errors():
+    status_errors: list[type[BaseException]] = []
+    transport_errors: list[type[BaseException]] = []
     try:
         import openai
+
+        status_errors.append(openai.APIStatusError)
+        transport_errors.append(openai.APIConnectionError)
     except ImportError:  # pragma: no cover - the package is a requirement
-        return (), ()
-    return (openai.APIStatusError,), (openai.APIConnectionError,)
+        pass
+    try:
+        import anthropic
+
+        status_errors.append(anthropic.APIStatusError)
+        transport_errors.append(anthropic.APIConnectionError)
+    except ImportError:  # pragma: no cover - optional in slim test envs
+        pass
+    return tuple(status_errors), tuple(transport_errors)
+
+
+def _anthropic_payload(
+    request: dict[str, Any], messages: list, extra: dict[str, Any]
+) -> dict[str, Any]:
+    """Adapt chat-style messages + request kwargs into Anthropic Messages API shape."""
+    system_parts: list[str] = []
+    non_system: list[dict[str, Any]] = []
+    for msg in messages:
+        if msg.get("role") == "system":
+            content = msg.get("content")
+            if isinstance(content, str) and content.strip():
+                system_parts.append(content)
+        else:
+            non_system.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
+    payload: dict[str, Any] = {
+        "model": request["model"],
+        "max_tokens": request.get("max_tokens") or request.get("max_completion_tokens"),
+        "messages": non_system,
+    }
+    if "temperature" in request:
+        payload["temperature"] = request["temperature"]
+    if system_parts:
+        payload["system"] = "\n\n".join(system_parts)
+    for key, val in extra.items():
+        if key != "response_format":
+            payload[key] = val
+    return payload
 
 
 def _retry_delay(attempt: int, exc: Any) -> float:
@@ -366,7 +407,7 @@ def complete_chat_detailed(
     )
     cap = daily_budget_micros()
     retries = max(0, min(int(max_retries), MAX_RETRIES_CEILING))
-    status_errors, transport_errors = _openai_errors()
+    status_errors, transport_errors = _provider_errors()
 
     slots = _get_slots()
     if not slots.acquire(timeout=CONCURRENCY_WAIT_S):
@@ -382,10 +423,15 @@ def complete_chat_detailed(
                 task, max_output_tokens=max_output_tokens, temperature=temperature, today=day
             )
             model = request["model"]
+            provider = MODELS[model].provider
             reservation = _to_micros(cost_upper_bound_usd(model, messages, max_output_tokens))
             hold = _reserve(task, reservation, cap, job_budget, day.isoformat())
             try:
-                response = client.chat.completions.create(**request, messages=messages, **extra)
+                if provider == "anthropic":
+                    anth_payload = _anthropic_payload(request, messages, extra)
+                    response = client.messages.create(**anth_payload)
+                else:
+                    response = client.chat.completions.create(**request, messages=messages, **extra)
             except status_errors as exc:
                 hold.settle(0)  # the provider answered with an error: nothing was generated
                 status = getattr(exc, "status_code", None)

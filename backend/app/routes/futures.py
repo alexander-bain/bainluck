@@ -1406,6 +1406,7 @@ async def browse_futures(
     # search drop AFTER normalization, and browse has no basis step to sit either
     # side of.
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
+    from app.utils.futures_source_mark import mark_futures_card_rows
     from app.utils.outcome_display import (
         drop_dominant_field_outcomes,
         drop_incoherent_ladder_outcomes,
@@ -1555,6 +1556,7 @@ async def browse_futures(
                 o["movement"] = None
         leader_pick_order(display_outcomes)
         top3 = display_outcomes[:3]
+        mark_futures_card_rows(market, top3)
         items.append({
             "id": market.id,
             "name": market.name,
@@ -1856,6 +1858,7 @@ async def faceted_futures_search(
     import json as _json
     from sqlalchemy import literal_column, text as sql_text
     from app.utils.event_taxonomy import validate_tag
+    from app.utils.futures_source_mark import mark_futures_card_rows
 
     # Build tag filter from both sources
     tag_filter: list[str] = []
@@ -2005,6 +2008,7 @@ async def faceted_futures_search(
                     if field in od:
                         od[field] = None
             top3.append(od)
+        mark_futures_card_rows(market, top3)
         formatted.append({
             "id": market.id,
             "name": market.name,
@@ -4724,8 +4728,9 @@ def _unsupported_price_verdicts(
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
             _as_float(latest_trade.get(o.id)),
-            has_trade_evidence=o.id in latest_trade
-            and latest_trade[o.id] is not None,
+            # A stored snapshot with a null trade can inform the award
+            # guard. A missing snapshot still provides no evidence.
+            has_trade_evidence=o.id in latest_trade,
             in_exclusive_field=in_exclusive_field,
             multi_selection_award=multi_selection_award,
             volume_24h=getattr(o, "volume_24h", None),
@@ -5492,11 +5497,43 @@ async def withheld_price_outcome_ids_for_markets(
             venue = (market.source or "").strip().lower()
             venue_ids.setdefault(venue, []).extend(o.id for o in midpoint)
 
-    latest_kalshi_trade = await _newest_kalshi_trades(db, kalshi_ids)
-    venue_rows = {
-        venue: await _newest_venue_trade_rows(db, venue, ids)
-        for venue, ids in venue_ids.items()
-    }
+    kalshi_id_set = set(kalshi_ids)
+    kalshi_midpoint_ids = venue_ids.get(KALSHI_BOOKMAKER)
+    venue_rows: dict[str, list] = {}
+    if kalshi_id_set and kalshi_midpoint_ids:
+        # #11931: both arms read `(outcome_id, last_price)` at each leg's newest
+        # Kalshi capture from the 51 GB `futures_odds_snapshots` table. Query
+        # the union ONCE and fold `max(last_price)` in Python identically to
+        # `_newest_kalshi_trades` while reusing the raw rows for the midpoint
+        # arm (`_closest_trade_by_outcome` filters by each board's candidates).
+        kalshi_union = sorted(kalshi_id_set | set(kalshi_midpoint_ids))
+        kalshi_rows = await _newest_venue_trade_rows(
+            db, KALSHI_BOOKMAKER, kalshi_union
+        )
+        venue_rows[KALSHI_BOOKMAKER] = kalshi_rows
+        latest_kalshi_trade: dict = {}
+        for oid, price in kalshi_rows:
+            if oid not in kalshi_id_set:
+                continue
+            if oid not in latest_kalshi_trade:
+                latest_kalshi_trade[oid] = price
+            elif price is not None and (
+                latest_kalshi_trade[oid] is None or price > latest_kalshi_trade[oid]
+            ):
+                latest_kalshi_trade[oid] = price
+    else:
+        latest_kalshi_trade = (
+            await _newest_kalshi_trades(db, sorted(kalshi_id_set))
+            if kalshi_id_set
+            else {}
+        )
+
+    for venue, ids in venue_ids.items():
+        if venue in venue_rows:
+            continue
+        venue_rows[venue] = await _newest_venue_trade_rows(
+            db, venue, sorted(set(ids))
+        )
 
     withheld: dict[int, set[int]] = {}
     for market in markets:
@@ -10278,6 +10315,9 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
             getattr(market, "name", "") or "",
         )
     top_outcomes = outcome_dicts[:5]
+    from app.utils.futures_source_mark import mark_futures_card_rows
+
+    mark_futures_card_rows(market, top_outcomes)
 
     # Cross-source info from canonical key
     source_info = None

@@ -22,6 +22,10 @@
     "refusal": "all-or-nothing",
     "materialize": "read-time",
     "card_rows": 3,
+    "replaces": [
+      "roundup-oscars-best-picture"
+    ],
+    "replaces_themes": [],
     "sections": [
       {
         "key": "best_picture_paired",

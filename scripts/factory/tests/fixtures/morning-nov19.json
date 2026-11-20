@@ -1,0 +1,358 @@
+{
+  "captured_at": "2026-11-19T17:41:00Z",
+  "notes": [
+    "Targeted replay, assembled from the public collector cache at 10:02 AM PT, NOW and commit statuses.",
+    "Selected PRs only. The check and file lists are reduced to the latest completed check and one path per root.",
+    "The prior Website time is reconstructed from the screenshot's 22 hr 51 min. The Server and Apps baselines use same-day merges."
+  ],
+  "prior_merges": {
+    "Server": "2026-11-19T17:08:27Z",
+    "Website": "2026-11-18T18:50:00Z",
+    "Apps": "2026-11-19T13:34:38Z"
+  },
+  "posts": [
+    {
+      "author_association": "OWNER",
+      "body": "merging #13069 (website, apps) \u2014 Builder C (Fable ACCEPT at `751279c5fd`; Xcode Cloud `5810` complete, `0` running builds)",
+      "created_at": "2026-11-19T15:28:02Z",
+      "id": 7013601049
+    },
+    {
+      "author_association": "OWNER",
+      "body": "live #13069 (website, apps) \u2014 Builder C: Vercel `5c06d270f4` + **TestFlight `1.0.7 (5811) VALID`** (`uploaded 2026-11-19T07:40:28-08:00`, Xcode Cloud `run #5811` `COMPLETE / SUCCEEDED`).",
+      "created_at": "2026-11-19T15:46:49Z",
+      "id": 7014124903
+    },
+    {
+      "author_association": "OWNER",
+      "body": "merging #12873 (server) \u2014 Builder B, guarded attempt at `889a4a274c` in Alex\u2019s order. The previous batch is healthy on `d0617423`. All 18 required checks passed and the bot and Fable approved this head. GitHub still reports BLOCKED, so I\u2019ll retain its response. [CI](https://github.com/alexander-bain/bainluck/actions/runs/44507172003) \u00b7 [Bot](https://github.com/alexander-bain/bainluck/pull/12873#pullrequestreview-5973745492) \u00b7 [Fable](https://github.com/alexander-bain/bainluck/pull/12873#issuecomment-7007734668).",
+      "created_at": "2026-11-19T17:00:08Z",
+      "id": 7016057616
+    },
+    {
+      "author_association": "OWNER",
+      "body": "stuck \u2014 Builder B. GitHub refused both guarded merges, #12873 at `889a4a274c` and #12957 at `12c64eed4b`, with `Required status check \"Tier-B approval\" is expected.` Both PRs are open with all 18 required checks shown green. I requested the one #12957 policy-job rerun Alex authorized.",
+      "created_at": "2026-11-19T17:04:34Z",
+      "id": 7016170288
+    },
+    {
+      "author_association": "OWNER",
+      "body": "stuck \u2014 Builder B. #12957\u2019s authorized Tier-B policy rerun passed. GitHub still refused the expected-head squash with `Required status check \"Tier-B approval\" is expected.` The PR remains open at `12c64eed4b` for Builder E\u2019s branch-protection investigation. [Rerun](https://github.com/alexander-bain/bainluck/actions/runs/44509122673/attempts/3) \u00b7",
+      "created_at": "2026-11-19T17:05:41Z",
+      "id": 7016198534
+    }
+  ],
+  "held_description": "Implements [#13013](https://github.com/alexander-bain/bainluck/issues/13013) Item 1 (**Ruling `246: A` + `264: A`**, `1.0.8` \u2014 hold merge until `1.0.7` App Store upload):",
+  "pulls": [
+    {
+      "number": 13069,
+      "title": "feat(#13000): 250:A live match with no score source on website and iPhone",
+      "branch": "ios/13000-scoreless-live-250a",
+      "head_sha": "751279c5fd620b8876c292ff233e738f568855ee",
+      "state": "closed",
+      "draft": false,
+      "created_at": "2026-11-19T13:58:00Z",
+      "updated_at": "2026-11-19T15:30:38Z",
+      "merged_at": "2026-11-19T15:30:38Z",
+      "merge_commit_sha": "5c06d270f48b478a576865cb49cb885cc59d1a1f",
+      "files": [
+        "frontend/__tests__/lib/scorelessLiveMatch250A.test.tsx",
+        "ios/Bain Luck/Bain Luck/Components/EventCardView.swift"
+      ],
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "commits_complete": true,
+      "comments_complete": true,
+      "fable_needed": true,
+      "fable_not_needed": false,
+      "review_resumed_at": null,
+      "checks": [
+        {
+          "name": "evaluate",
+          "app": "github-actions",
+          "ci": false,
+          "started_at": "2026-11-19T15:00:20Z",
+          "finished_at": "2026-11-19T15:00:37Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "reviews": [
+        {
+          "login": "claude[bot]",
+          "commit_id": "751279c5fd620b8876c292ff233e738f568855ee",
+          "state": "APPROVED",
+          "submitted_at": "2026-11-19T14:40:02Z"
+        }
+      ],
+      "comments": [
+        {
+          "created_at": "2026-11-19T14:54:39Z",
+          "updated_at": "2026-11-19T14:54:39Z",
+          "association": "OWNER",
+          "fable_changes": false,
+          "fable_accept": true
+        }
+      ],
+      "commits": [
+        {
+          "sha": "47e7ade91ff7cdb3d3e62885d418182dc28dd648",
+          "parents": 1,
+          "merge_from_master": false,
+          "at": "2026-11-19T13:55:53Z"
+        }
+      ]
+    },
+    {
+      "number": 12873,
+      "title": "Carry source marks on futures cards and search",
+      "branch": "codex/12581-futures-card-marks",
+      "head_sha": "96d29f470a9780d7741daef43528893b0eb306f4",
+      "state": "open",
+      "draft": false,
+      "created_at": "2026-11-17T17:30:50Z",
+      "updated_at": "2026-11-19T17:10:48Z",
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "files": [
+        "backend/app/routes/events.py"
+      ],
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "commits_complete": true,
+      "comments_complete": true,
+      "fable_needed": true,
+      "fable_not_needed": false,
+      "review_resumed_at": null,
+      "checks": [
+        {
+          "name": "deploy",
+          "app": "github-actions",
+          "ci": true,
+          "started_at": "2026-11-19T17:29:04Z",
+          "finished_at": "2026-11-19T17:29:04Z",
+          "state": "completed",
+          "conclusion": "skipped"
+        }
+      ],
+      "reviews": [
+        {
+          "login": "claude[bot]",
+          "commit_id": "96d29f470a9780d7741daef43528893b0eb306f4",
+          "state": "APPROVED",
+          "submitted_at": "2026-11-19T11:00:28Z"
+        }
+      ],
+      "comments": [
+        {
+          "created_at": "2026-11-19T11:25:50Z",
+          "updated_at": "2026-11-19T11:25:50Z",
+          "association": "OWNER",
+          "fable_changes": false,
+          "fable_accept": true
+        }
+      ],
+      "commits": [
+        {
+          "sha": "7ab94a7f01b986a8e81d11fe83326958c55603b1",
+          "parents": 2,
+          "merge_from_master": false,
+          "at": "2026-11-19T10:16:00Z"
+        }
+      ]
+    },
+    {
+      "number": 13070,
+      "title": "feat(#13013): 246:A order Sports tab pills by today's games with out-of-season sports last",
+      "branch": "ios/13013-sports-pill-order",
+      "head_sha": "85ea44ee50f0288ab49687801521f19194423f22",
+      "state": "open",
+      "draft": false,
+      "created_at": "2026-11-19T14:22:33Z",
+      "updated_at": "2026-11-19T16:34:34Z",
+      "merged_at": null,
+      "merge_commit_sha": "693d3c00899662f532c5382c5f8ac106cadf0d45",
+      "files": [
+        "ios/Bain Luck/Bain Luck/Components/SportFilterChips.swift"
+      ],
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "commits_complete": true,
+      "comments_complete": true,
+      "fable_needed": true,
+      "fable_not_needed": false,
+      "review_resumed_at": null,
+      "checks": [
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "ci": false,
+          "started_at": "2026-11-19T16:00:52Z",
+          "finished_at": "2026-11-19T16:00:51Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "reviews": [
+        {
+          "login": "claude[bot]",
+          "commit_id": "85ea44ee50f0288ab49687801521f19194423f22",
+          "state": "APPROVED",
+          "submitted_at": "2026-11-19T16:00:44Z"
+        }
+      ],
+      "comments": [
+        {
+          "created_at": "2026-11-19T16:34:33Z",
+          "updated_at": "2026-11-19T16:34:33Z",
+          "association": "OWNER",
+          "fable_changes": false,
+          "fable_accept": true
+        }
+      ],
+      "commits": [
+        {
+          "sha": "85ea44ee50f0288ab49687801521f19194423f22",
+          "parents": 1,
+          "merge_from_master": false,
+          "at": "2026-11-19T15:52:03Z"
+        }
+      ]
+    },
+    {
+      "number": 12621,
+      "title": "Look: compact game card (#12616)",
+      "branch": "weebey/look-compact-game-card-12616",
+      "head_sha": "139af61352c710d9d0aaf022338209d2e5d74ad8",
+      "state": "open",
+      "draft": true,
+      "created_at": "2026-11-11T21:45:54Z",
+      "updated_at": "2026-11-11T22:10:32Z",
+      "merged_at": null,
+      "merge_commit_sha": "274947f40aaffd92b55947eae291842a0bcb4bbd",
+      "files": [
+        "docs/design/looks/compact-game-card-12616/README.md"
+      ],
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "commits_complete": true,
+      "comments_complete": true,
+      "fable_needed": true,
+      "fable_not_needed": false,
+      "review_resumed_at": null,
+      "checks": [
+        {
+          "name": "search-recall",
+          "app": "github-actions",
+          "ci": true,
+          "started_at": "2026-11-11T22:31:10Z",
+          "finished_at": "2026-11-11T22:31:12Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "reviews": [],
+      "comments": [],
+      "commits": [
+        {
+          "sha": "139af61352c710d9d0aaf022338209d2e5d74ad8",
+          "parents": 1,
+          "at": "2026-11-11T22:10:28Z"
+        }
+      ]
+    },
+    {
+      "number": 13058,
+      "title": "Label pregame readings on live game share images (#12824)",
+      "branch": "codex/12824-share-pregame",
+      "head_sha": "bcda1221087b446faaf64d78d32ffcb5f48991ac",
+      "state": "open",
+      "draft": false,
+      "created_at": "2026-11-19T12:06:46Z",
+      "updated_at": "2026-11-19T13:30:05Z",
+      "merged_at": null,
+      "merge_commit_sha": "c7b1be4c13880a1f95f1531b8cd14bf5bd831a9d",
+      "files": [
+        "frontend/__tests__/openingChance12824.test.tsx"
+      ],
+      "files_complete": true,
+      "checks_complete": true,
+      "reviews_complete": true,
+      "commits_complete": true,
+      "comments_complete": true,
+      "fable_needed": true,
+      "fable_not_needed": false,
+      "review_resumed_at": "2026-11-19T12:18:32Z",
+      "checks": [
+        {
+          "name": "Tier-B approval",
+          "app": "github-actions",
+          "ci": false,
+          "started_at": "2026-11-19T12:21:52Z",
+          "finished_at": "2026-11-19T12:21:52Z",
+          "state": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "reviews": [
+        {
+          "login": "claude[bot]",
+          "commit_id": "bcda1221087b446faaf64d78d32ffcb5f48991ac",
+          "state": "APPROVED",
+          "submitted_at": "2026-11-19T12:21:46Z"
+        }
+      ],
+      "comments": [
+        {
+          "created_at": "2026-11-19T13:30:05Z",
+          "updated_at": "2026-11-19T13:30:05Z",
+          "association": "OWNER",
+          "fable_changes": false,
+          "fable_accept": true
+        }
+      ],
+      "commits": [
+        {
+          "sha": "bcda1221087b446faaf64d78d32ffcb5f48991ac",
+          "parents": 1,
+          "merge_from_master": false,
+          "at": "2026-11-19T12:06:02Z"
+        }
+      ]
+    }
+  ],
+  "deployments": [
+    {
+      "line": "Server",
+      "at": "2026-11-19T15:54:08.902374Z",
+      "kind": "observed",
+      "contains": [
+        "5c06d270f48b478a576865cb49cb885cc59d1a1f"
+      ]
+    },
+    {
+      "line": "Website",
+      "at": "2026-11-19T15:33:15Z",
+      "kind": "reported",
+      "contains": [
+        "5c06d270f48b478a576865cb49cb885cc59d1a1f"
+      ]
+    },
+    {
+      "line": "Apps",
+      "at": "2026-11-19T15:45:44Z",
+      "kind": "reported",
+      "contains": [
+        "5c06d270f48b478a576865cb49cb885cc59d1a1f"
+      ]
+    }
+  ],
+  "master": {
+    "tests": "passing",
+    "testflight": "success"
+  }
+}

@@ -1455,6 +1455,7 @@ struct MachineryDiscoverEntryCardView: View {
                     allowsRouteLinks: onOpenMarket == nil,
                     isOscarsCollectionSurface: true,
                     preloadedImages: preloadedImages,
+                    containerDestination: (card.slug, card.title),
                     onOpenMarket: onOpenMarket,
                     onOpenCollection: onOpenContainer
                 )

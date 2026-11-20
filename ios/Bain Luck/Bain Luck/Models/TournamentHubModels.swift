@@ -261,6 +261,7 @@ nonisolated struct TournamentHubResultPlayer: Decodable, Sendable, Identifiable 
     let isWinner: Bool?
     let image: TournamentHubImage?
     let prematchProbability: Double?
+    let prematchSourceMark: SourceMark?
 
     var id: String { entityKey }
 
@@ -272,10 +273,11 @@ nonisolated struct TournamentHubResultPlayer: Decodable, Sendable, Identifiable 
         isWinner = try c.decodeIfPresent(Bool.self, forKey: .isWinner)
         image = try? c.decodeIfPresent(TournamentHubImage.self, forKey: .image)
         prematchProbability = try c.decodeIfPresent(Double.self, forKey: .prematchProbability)
+        prematchSourceMark = try? c.decodeIfPresent(SourceMark.self, forKey: .prematchSourceMark)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case entityKey, displayName, seed, isWinner, image, prematchProbability
+        case entityKey, displayName, seed, isWinner, image, prematchProbability, prematchSourceMark
     }
 }
 

@@ -23,6 +23,13 @@ from signals import commands_from, test_file
 
 REPO = "alexander-bain/bainluck"
 RELEASE = "factory-data"
+RELEASE_HOLD = re.compile(
+    r"(?<!\bnot )(?<!\bno longer )(?<!\bwas )(?<!\bno need to )"
+    r"\b(?:holds?(?:\s+(?:the\s+)?merge)?|held|do not merge)\s+(?:"
+    r"for\s+(?:the\s+)?1\.0\.8\b"
+    r"|until\b[^\n]{0,80}?\b1\.0\.7\b[^\n]{0,40}?\b(?:app store|upload|freeze))",
+    re.I,
+)
 
 
 class GitHub:
@@ -156,6 +163,11 @@ def safe_comment(comment):
     }
 
 
+def hold_for_108(body):
+    # Current release instructions sometimes wrap the version in Markdown.
+    return bool(RELEASE_HOLD.search(re.sub(r"[`*_]", "", body or "")))
+
+
 def collect_pull(api, summary, cached=None):
     number = summary["number"]
     core = {
@@ -177,15 +189,13 @@ def collect_pull(api, summary, cached=None):
         login
         and re.search(rf"(?<![\w-]){re.escape(login)}(?![\w-])", core["title"], re.I)
     )
+    body = summary.get("body") or ""
     core.update(
         branch=summary["head"]["ref"],
         head_sha=summary["head"]["sha"],
-        fable_needed=bool(
-            re.search(r"Fable\s*:\s*needed", summary.get("body") or "", re.I)
-        ),
-        fable_not_needed=bool(
-            re.search(r"Fable\s*:\s*not needed", summary.get("body") or "", re.I)
-        ),
+        fable_needed=bool(re.search(r"Fable\s*:\s*needed", body, re.I)),
+        fable_not_needed=bool(re.search(r"Fable\s*:\s*not needed", body, re.I)),
+        hold_for_108=hold_for_108(body),
     )
     # Files and commit topology are immutable at one head. Mutable evidence
     # for EVERY open change is refreshed together below, even if GitHub drops
@@ -537,6 +547,7 @@ def collect(api, previous=None, cache=None, open_summaries=None):
             and old["number"] not in numbers
         ):
             summaries.append(api.request(f"repos/{REPO}/pulls/{old['number']}"))
+            numbers.add(old["number"])
     with ThreadPoolExecutor(max_workers=4) as workers:
         pulls = list(
             workers.map(
@@ -647,16 +658,40 @@ def collect(api, previous=None, cache=None, open_summaries=None):
 def reconcile_commands(commands, pulls, previous):
     commands = previous.get("signals", {}).get("commands", []) + commands
     latest = {}
+    routes = {}
     merged = {p["number"]: p.get("merged_at") for p in pulls}
     for command in sorted(commands, key=lambda c: c["at"]):
         command = dict(command)
-        if command["kind"] == "merging":
+        kind, line = command["kind"], command["line"]
+        if kind == "stuck":
+            for number in command["numbers"]:
+                if number in merged and not merged[number]:
+                    latest[(kind, number)] = command
+            continue
+        if kind == "merging":
             command["resolved"] = command.get("resolved", False) or any(
                 merged.get(number) and merged[number] >= command["at"]
                 for number in command["numbers"]
             )
-        latest[(command["kind"], command["line"])] = command
-    return list(latest.values())
+            # Keep route evidence for each collected change even when another
+            # announcement becomes the latest on that line.
+            for number in command["numbers"]:
+                if number in merged and (
+                    not merged[number] or command["at"] <= merged[number]
+                ):
+                    routes[(number, line)] = command
+        latest[(kind, line)] = command
+
+    def command_key(command):
+        return (
+            command["at"],
+            command["kind"],
+            command["line"] or "",
+            tuple(command.get("numbers", [])),
+        )
+
+    retained = {command_key(c): c for c in (*latest.values(), *routes.values())}
+    return [retained[key] for key in sorted(retained)]
 
 
 def floor_changed(previous, current):
@@ -667,7 +702,8 @@ def floor_changed(previous, current):
             if key not in {"generated_at", "read_expires_at", "_collector"}
         }
         visible["changes"] = sorted(
-            visible.get("changes", []), key=lambda change: change["number"]
+            visible.get("changes", []),
+            key=lambda change: (change["number"], change.get("line")),
         )
         visible["jams"] = sorted(
             visible.get("jams", []), key=lambda jam: (jam["key"], jam["started_at"])

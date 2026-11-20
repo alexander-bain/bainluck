@@ -139,6 +139,11 @@ APPROVED_TIMEOUT_OVERRIDES = sorted(
             300,
         ),
         (
+            "ProbabilityRoundingJourneyTests.swift",
+            "testPairedRoundingPersistsOfflineAndDrawSportKeepsScalarRounding",
+            540,
+        ),
+        (
             "RectangularWidgetHostJourneyTests.swift",
             "testActualRectangularLauncherAndTap",
             540,
@@ -189,6 +194,6 @@ def test_retained_watch_cases_have_no_timeout_override():
         for match in re.finditer(r"executionTimeAllowance\s*=\s*(\d+)", source):
             methods = re.findall(r"func\s+(\w+)\s*\(", source[: match.start()])
             overrides.append((path.name, methods[-1], int(match[1])))
-    # #12513: only the twelve slow hosted picker journeys (300s) and the six
-    # Carousel face-gallery / clockface-idle journeys (540s) override 180s.
+    # #12513: approved per-case overrides only (300s picker journeys; 540s Carousel
+    # face-gallery / clockface-idle journeys plus the 4-launch probability-rounding journey).
     assert sorted(overrides) == APPROVED_TIMEOUT_OVERRIDES

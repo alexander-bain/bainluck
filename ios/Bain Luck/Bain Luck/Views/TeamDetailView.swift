@@ -456,7 +456,7 @@ struct TeamDetailView: View {
                 Text(row.caption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -464,31 +464,46 @@ struct TeamDetailView: View {
 
             VStack(alignment: .trailing, spacing: 2) {
                 if row.settledWon {
-                    Text(TeamFutureRowPresentation.wonBadge)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.green)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.green.opacity(0.12), in: Capsule())
-                        .fixedSize()
+                    HStack(spacing: 4) {
+                        Text(TeamFutureRowPresentation.wonBadge)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.green)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.green.opacity(0.12), in: Capsule())
+                            .fixedSize()
+                        if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.title, subtitle: row.caption, numberSize: 14, compactRow: true) {
+                            mark.buttonStyle(.borderless)
+                        }
+                    }
                     if let percent = row.percent {
                         Text(percent)
                             .font(.caption.weight(.bold).monospacedDigit())
                             .foregroundStyle(.green)
                     }
                 } else if row.out {
-                    Text(TeamFutureRowPresentation.outBadge)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.12), in: Capsule())
-                        .fixedSize()
+                    HStack(spacing: 4) {
+                        Text(TeamFutureRowPresentation.outBadge)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.12), in: Capsule())
+                            .fixedSize()
+                        if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.title, subtitle: row.caption, numberSize: 14, compactRow: true) {
+                            mark.buttonStyle(.borderless)
+                        }
+                    }
                 } else if let percent = row.percent {
-                    Text(percent)
-                        .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(.primary)
-                        .fixedSize()
+                    HStack(spacing: 4) {
+                        Text(percent)
+                            .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
+                            .foregroundStyle(.primary)
+                            .fixedSize()
+                        if let mark = SourceMarkButton(row.sourceMark, number: row.probability, subject: row.title, subtitle: row.caption, numberSize: 16, compactRow: true) {
+                            mark.buttonStyle(.borderless)
+                        }
+                    }
                 }
 
                 if let rankLine = row.rankLine {

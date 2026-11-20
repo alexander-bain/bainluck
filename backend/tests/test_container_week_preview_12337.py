@@ -247,6 +247,21 @@ def test_compact_render_rejects_the_same_nonfinite_values(value):
     assert str(compact.value) == str(baseline.value)
 
 
+async def test_only_compact_http_reads_defer_pregame_cache_writes(monkeypatch):
+    attach = AsyncMock(wraps=route._attach_settled_prematch)
+    monkeypatch.setattr(route, "_attach_settled_prematch", attach)
+    session = WeekSession(count=18)
+
+    await get(session)
+    await get(session, compact=False)
+    published = await route.read_published(session, session.hub.slug, include_headers=True)
+    await route._build_entry(session, published, include_children=True, compact=True)
+
+    assert [
+        call.kwargs["defer_missing_cache_writes"] for call in attach.await_args_list
+    ] == [True, False, False]
+
+
 class AuxiliaryWeekSession(WeekSession):
     def __init__(self, count=4984):
         super().__init__(count)

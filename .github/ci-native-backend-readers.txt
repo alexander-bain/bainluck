@@ -34,3 +34,4 @@ tests/test_watch_rectangular_face_activation.py
 tests/test_watch_widget_arrival.py
 tests/test_entertainment_lead_outcomes_web_only_7382.py
 tests/test_ci_native_scope_10708.py
+tests/test_watch_mvp_scope_13027.py

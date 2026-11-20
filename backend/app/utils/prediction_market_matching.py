@@ -3792,8 +3792,19 @@ def _expand_team_search_terms(team: str) -> list[str]:
     # name, whose last word is "St." (under its 5-char floor), so the bare
     # "%State%" — which would drag in every state school — is never emitted.
     state_expanded = _expand_trailing_state_abbrev(team)
-    if state_expanded != team:
+    if state_expanded != team and state_expanded not in terms:
         terms.append(state_expanded)
+
+    # #13142: The Odds API writes US college "State" as "St" ("New Mexico St Aggies",
+    # "Oklahoma St Cowgirls") and "North Carolina State" as "NC State", while
+    # Polymarket writes the full spelling ("New Mexico State Aggies",
+    # "North Carolina State Wolfpack"). Emit the symmetric SQL retrieval variant
+    # in both directions so `_find_matching_event` retrieves the anchored Odds API
+    # row before falling through to minting an id-less duplicate.
+    _college_state_variants = _college_state_search_variants(team)
+    for variant in _college_state_variants:
+        if variant not in terms:
+            terms.append(variant)
 
     # A doubles pair in the other venue's spelling (#8722). Polymarket writes
     # "Alcaraz/Mensik", Kalshi "Alcaraz / Mensik", and "%Alcaraz/Mensik%" never
@@ -3809,6 +3820,36 @@ def _expand_team_search_terms(team: str) -> list[str]:
                 terms.append(spelling)
 
     return terms
+
+
+_COLLEGE_STATE_WORD_RE = re.compile(r"(?<=\S)\s+State(?=\s|$)", re.IGNORECASE)
+_COLLEGE_ST_MID_RE = re.compile(r"(?<=\S)\s+St\.?(?=\s+\S)", re.IGNORECASE)
+_COLLEGE_NC_STATE_RE = re.compile(r"^NC\s+St(?:ate|\.)?(?=\s|$)", re.IGNORECASE)
+_COLLEGE_NORTH_CAROLINA_STATE_RE = re.compile(
+    r"^North\s+Carolina\s+St(?:ate|\.)?(?=\s|$)", re.IGNORECASE
+)
+_COLLEGE_SAINT_PREFIX_RE = re.compile(
+    r"(?:^|\b(?:Mount|Mt\.?|of|the|College|University))\s+St\.?\b",
+    re.IGNORECASE,
+)
+
+
+def _college_state_search_variants(team: str) -> list[str]:
+    """Return symmetric college ``State``/``St`` and ``NC State`` retrieval variants (#13142)."""
+    variants: list[str] = []
+    if _COLLEGE_NORTH_CAROLINA_STATE_RE.search(team):
+        variants.append(_COLLEGE_NORTH_CAROLINA_STATE_RE.sub("NC State", team, count=1))
+    elif _COLLEGE_NC_STATE_RE.search(team):
+        variants.append(
+            _COLLEGE_NC_STATE_RE.sub("North Carolina State", team, count=1)
+        )
+
+    if _COLLEGE_STATE_WORD_RE.search(team):
+        variants.append(_COLLEGE_STATE_WORD_RE.sub(" St", team))
+    elif _COLLEGE_ST_MID_RE.search(team) and not _COLLEGE_SAINT_PREFIX_RE.search(team):
+        variants.append(_COLLEGE_ST_MID_RE.sub(" State", team))
+
+    return [v for v in variants if v and v != team]
 
 
 _PAIR_SLASH_SPELLING_RE = re.compile(r"\s*/\s*")

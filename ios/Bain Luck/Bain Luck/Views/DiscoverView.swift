@@ -1133,6 +1133,7 @@ struct DiscoverView: View {
                         DiscoverPairedMetricCardView(
                             set: pairedSet,
                             form: PairedMetricPresentation.resolvedForm(for: pairedSet, preferred: pairedBundle.visualForm, cardIndex: idx),
+                            containerDestination: collectionRef.map { ($0.slug, $0.name) },
                             onOpenMarket: { marketId in
                                 if let primary = items.first {
                                     recordInteraction(for: primary, action: .detailOpen, source: "card")
@@ -1203,6 +1204,14 @@ struct DiscoverView: View {
                         )
                         NativeGroupCard(title: title, items: items, kind: kind, theme: theme, sharedQuestion: sharedQuestion, collectionRef: collectionRef, navigationPath: $navigationPath)
                             .environment(
+                                \.discoverGroupOnOpenCollection13094,
+                                {
+                                    if let primary = items.first {
+                                        recordInteraction(for: primary, action: .detailOpen, source: "card")
+                                    }
+                                }
+                            )
+                            .environment(
                                 \.discoverGroupBundleArt12840,
                                 DiscoverBundleArtContext12840(
                                     imageUrl: sourceBundle?.imageUrl,
@@ -1228,6 +1237,7 @@ struct DiscoverView: View {
                         DiscoverPairedMetricCardView(
                             set: pairedSet,
                             form: PairedMetricPresentation.resolvedForm(for: pairedSet, preferred: item.visualForm, cardIndex: idx),
+                            containerDestination: (item.bundle?.themeCollectionRef ?? item.bundle?.roundupCollectionRef).map { ($0.slug, $0.name) },
                             onOpenMarket: { marketId in
                                 recordInteraction(for: item, action: .detailOpen, source: "card")
                                 navigationPath.append(Route.futuresDetail(id: marketId))
@@ -3423,6 +3433,7 @@ struct NativeGroupCard: View {
     let items: [FeedItem]
     var kind: String? = nil
     var theme: String? = nil
+    var onOpenCollection: (() -> Void)? = nil
     var sharedQuestion: String? = nil
     /// #9925: present only when the server proved this theme's preview sits on a
     /// published, complete collection (`FeedBundle.themeCollectionRef`).
@@ -3437,13 +3448,30 @@ struct NativeGroupCard: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.discoverGroupBundleArt12840) private var envBundleArt
+    @Environment(\.discoverGroupOnOpenCollection13094) private var envOnOpenCollection
 
     private var category: String {
         items.first?.futures?.llmSportCategory?.lowercased() ?? ""
     }
 
     private var canExpand: Bool {
-        DiscoverGroupRows.canExpand(itemCount: items.count, kind: kind)
+        guard collectionRef == nil else { return false }
+        return DiscoverGroupRows.canExpand(itemCount: items.count, kind: kind)
+    }
+
+    static func tapDestinationRoute(collectionRef: FeedThemeCollectionRef?, marketId: Int? = nil) -> Route? {
+        if let collectionRef {
+            return DiscoverGroupRows.collectionRoute(for: collectionRef)
+        }
+        if let marketId {
+            return .futuresDetail(id: marketId)
+        }
+        return nil
+    }
+
+    private func openContainer(_ ref: FeedThemeCollectionRef) {
+        (onOpenCollection ?? envOnOpenCollection)?()
+        navigationPath.append(DiscoverGroupRows.collectionRoute(for: ref))
     }
 
     private var isDark: Bool {
@@ -3496,13 +3524,29 @@ struct NativeGroupCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            DiscoverGroupBannerView12840(
-                resolved: resolvedBanner,
-                category: category,
-                preloadedImages: preloadedBannerImages
-            )
+            if let collectionRef {
+                DiscoverGroupBannerView12840(
+                    resolved: resolvedBanner,
+                    category: category,
+                    preloadedImages: preloadedBannerImages
+                )
+                .contentShape(Rectangle())
+                .onTapGesture { openContainer(collectionRef) }
+                .accessibilityIdentifier("discover.group.banner")
+            } else {
+                DiscoverGroupBannerView12840(
+                    resolved: resolvedBanner,
+                    category: category,
+                    preloadedImages: preloadedBannerImages
+                )
+            }
 
-            if canExpand {
+            if let collectionRef {
+                groupHeaderContent
+                    .onTapGesture { openContainer(collectionRef) }
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier("discover.group.header")
+            } else if canExpand {
                 Button { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } } label: {
                     groupHeaderContent
                 }
@@ -3513,7 +3557,7 @@ struct NativeGroupCard: View {
             }
 
             Divider()
-            if expanded && kind != "comparison" {
+            if expanded && kind != "comparison" && collectionRef == nil {
                 // The already-hydrated members reuse their ordinary full cards,
                 // including their existing destination, imagery and live prices.
                 VStack(spacing: 12) {
@@ -3534,7 +3578,8 @@ struct NativeGroupCard: View {
                 }
             }
 
-            if let footer = DiscoverGroupRows.footerTitle(memberTypes: items.map(\.type), kind: kind, expanded: expanded) {
+            if collectionRef == nil,
+               let footer = DiscoverGroupRows.footerTitle(memberTypes: items.map(\.type), kind: kind, expanded: expanded) {
                 Divider()
                 Button { withAnimation { expanded = true } } label: {
                     // #12364 — readable blue, and the whole 44 pt row is the button.
@@ -3558,6 +3603,14 @@ struct NativeGroupCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(borderInk, lineWidth: 0.5))
         .shadow(color: .black.opacity(isDark ? 0.22 : 0.05), radius: 8, x: 0, y: 3)
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .onTapGesture {
+            if let collectionRef {
+                openContainer(collectionRef)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(collectionRef.map { "discover.group.card.\($0.slug)" } ?? "discover.group.card")
     }
 
     private var groupHeaderContent: some View {
@@ -3631,6 +3684,7 @@ struct NativeGroupCard: View {
         .accessibilityLabel(DiscoverGroupRows.collectionTitle(for: ref))
         .accessibilityValue(DiscoverGroupRows.collectionCountLabel(for: ref))
         .accessibilityIdentifier("discover.group.collection")
+        .simultaneousGesture(TapGesture().onEnded { (onOpenCollection ?? envOnOpenCollection)?() })
     }
 
     private func compactRow(_ data: FeedFuturesData) -> some View {
@@ -3676,8 +3730,15 @@ struct NativeGroupCard: View {
         }
         .contentShape(Rectangle())
         // Keep the existing tap gesture: a NavigationLink here turns a swipe
-        // into navigation on touch-up (#7074).
-        .onTapGesture { navigationPath.append(Route.futuresDetail(id: data.id)) }
+        // into navigation on touch-up (#7074). Ruling 31: A (#13094): when the
+        // grouped card has a container, tapping anywhere on the card opens it.
+        .onTapGesture {
+            if let collectionRef {
+                openContainer(collectionRef)
+            } else if let route = Self.tapDestinationRoute(collectionRef: nil, marketId: data.id) {
+                navigationPath.append(route)
+            }
+        }
         .accessibilityElement(children: hasMark ? .contain : .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier(NativeCompactFuturesRow.rowIdentifier)

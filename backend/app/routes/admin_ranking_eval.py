@@ -1383,6 +1383,17 @@ PAIRS_PATH = Path(__file__).resolve().parents[1] / "data" / "ranking_pairs.json"
 PAIR_CHOICES = ("left", "right", "none")
 PAIR_SIZE = 10
 DEFAULT_MORNING_PAIR = "p1"
+MORNING_PAIR_PAUSED_ENV = "RANKING_MORNING_PAIR_PAUSED"
+MORNING_PAIR_PAUSED_DETAIL = (
+    "Nothing to grade right now. Candidate 2 ended under Ruling 277: A; "
+    "grading resumes when Candidate 3 is declared."
+)
+
+
+def is_morning_pair_paused() -> bool:
+    """True while no morning ranking candidate is open for grading (#13100 / 277: A)."""
+    raw = os.getenv(MORNING_PAIR_PAUSED_ENV, "true")
+    return raw.strip().lower() not in ("0", "false", "no", "off")
 # Stored through ranking_grades' grade check (shareable/interesting/neither), as
 # the grouping grades are: what a pick MEANS, never which side it was on.
 _PAIR_TO_DB_GRADE: dict[str, str] = {"candidate": "shareable", "none": "interesting", "served": "neither"}
@@ -1457,6 +1468,14 @@ async def get_pair(
 ) -> dict:
     """#11937 (171-A): two first tens for one slate, unlabelled, sides random."""
     _check_admin_secret(secret, request=request)
+    # #13100 (Ruling 277: A): Candidate 2 ended after one morning; the default
+    # morning link says nothing is open to grade until Candidate 3 is declared.
+    if (
+        slate in ("latest", "today")
+        and pair == DEFAULT_MORNING_PAIR
+        and is_morning_pair_paused()
+    ):
+        raise HTTPException(status_code=409, detail=MORNING_PAIR_PAUSED_DETAIL)
     lookup_ref = "latest" if slate in ("latest", "today") else slate
     row = slate_row_dict(await _slate_row(db, lookup_ref, surface))
     # Default morning link ("latest"/"today") must never serve yesterday's slate
