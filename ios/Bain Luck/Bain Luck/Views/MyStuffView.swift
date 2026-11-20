@@ -724,6 +724,7 @@ struct MyStuffView: View {
             } else {
                 ForEach(items) { item in
                     feedRow(item)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             pinSwipeButton(item)
                         }
