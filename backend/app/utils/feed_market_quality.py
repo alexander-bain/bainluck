@@ -12,9 +12,11 @@ especially repetitive range/bucket ladders.
 
 from __future__ import annotations
 
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Callable, Iterable, Literal, Optional, Sequence
 
 from app.utils.card_integrity import is_anonymized_market
@@ -5449,6 +5451,60 @@ def oscars_award_priority(market_name: str | None) -> int:
     return slot[0] if slot is not None else 100
 
 
+def _oscars_market_has_priced_outcomes(data: dict | None) -> bool:
+    """True when a market payload carries at least one priced (non-withheld) outcome."""
+    if not isinstance(data, dict):
+        return False
+    outcomes = data.get("top_outcomes") or data.get("outcomes") or ()
+    for out in outcomes:
+        if not isinstance(out, dict):
+            continue
+        p = out.get("probability")
+        if isinstance(p, bool) or not isinstance(p, (int, float)):
+            continue
+        if math.isfinite(p) and 0.0 <= float(p) <= 1.0:
+            return True
+    return False
+
+
+def _oscars_market_resolution_ts(data: dict | None) -> float:
+    """Parse resolution_date / event_date to epoch seconds; missing returns -inf."""
+    if not isinstance(data, dict):
+        return float("-inf")
+    raw = data.get("resolution_date") or data.get("event_date")
+    if isinstance(raw, datetime):
+        dt = raw if raw.tzinfo is not None else raw.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    if isinstance(raw, str) and raw.strip():
+        try:
+            dt = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except ValueError:
+            return float("-inf")
+    return float("-inf")
+
+
+def oscars_market_rank_key(item: dict) -> tuple[int, int, float, float]:
+    """Deterministic Oscars ranking & slot-dedup key (#13100, Fable 10:26 PM look).
+
+    Order:
+    1. Major award priority (Best Picture, Director, Actor, Actress, Supporting, craft).
+    2. Priced outcomes first — never fold a priced market (e.g. 5869749) for an
+       unpriced/withheld market (e.g. 109566) claiming the same slot.
+    3. Later resolution date first (current ceremony over prior ceremony).
+    4. Higher feed score.
+    """
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+    return (
+        oscars_award_priority(data.get("name")),
+        0 if _oscars_market_has_priced_outcomes(data) else 1,
+        -_oscars_market_resolution_ts(data),
+        -float(item.get("score") or 0),
+    )
+
+
 def diversify_quality_families(
     items: list[dict],
     *,
@@ -5716,7 +5772,7 @@ def diversify_quality_families(
         if story == "story:oscars" and overflow:
             overflow = sorted(
                 overflow,
-                key=lambda it: oscars_award_priority((it.get("data") or {}).get("name")),
+                key=oscars_market_rank_key,
             )[:_OSCARS_OVERFLOW_RESERVE]
         for idx in story_kept_idx.get(story, ()):
             kept[idx] = {**kept[idx], "_story_overflow_members": overflow}

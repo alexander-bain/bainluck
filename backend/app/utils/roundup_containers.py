@@ -3111,6 +3111,16 @@ def insert_roundup_feed_items(
     # Prune overlapping rows from surviving theme bundles ONLY when an accepted
     # round-up covering those markets ended up seated strictly ABOVE the bundle.
     accepted_ids = {r["data"].get("id") for r in accepted_roundups}
+    return _prune_bundles_below_roundups(result, accepted_ids)
+
+
+def _prune_bundles_below_roundups(
+    result: list[dict[str, Any]],
+    accepted_ids: set[Any],
+) -> list[dict[str, Any]]:
+    """Prune overlapping rows from theme bundles seated strictly BELOW accepted round-ups (Ruling 275)."""
+    if not accepted_ids:
+        return result
     covered_above: set[int] = set()
     pruned_result: list[dict[str, Any]] = []
     for card in result:
@@ -3599,28 +3609,20 @@ def _splice_machinery_in_place(
                         and ch["data"].get("id") in covered_ids
                     )
                 ]
-                if len(kept_children) != len(orig_children):
+                if len(kept_children) != len(orig_children) and len(kept_children) < 2:
+                    # Ruling 275 (#13100): only full dissolution runs before seating;
+                    # partial overlap is pruned after final seats are settled via
+                    # `_prune_bundles_below_roundups` so a card never loses a row to
+                    # a machinery grouping seated below it.
                     changed = True
-                    if len(kept_children) < 2:
-                        if r_id not in placed_rids:
-                            card = _hydrate_at(r_item, idx)
-                            if idx < initial_floor_idx:
-                                card["data"]["inherited_opening_seat"] = True
-                            result[idx] = card
-                            placed_rids.add(r_id)
-                        else:
-                            remove_indices.add(idx)
+                    if r_id not in placed_rids:
+                        card = _hydrate_at(r_item, idx)
+                        if idx < initial_floor_idx:
+                            card["data"]["inherited_opening_seat"] = True
+                        result[idx] = card
+                        placed_rids.add(r_id)
                     else:
-                        updated_existing = copy.deepcopy(dict(existing))
-                        updated_existing["data"]["items"] = kept_children
-                        updated_existing["data"]["item_count"] = len(kept_children)
-                        if isinstance(updated_existing["data"].get("member_ids"), list):
-                            updated_existing["data"]["member_ids"] = [
-                                mid
-                                for mid in updated_existing["data"]["member_ids"]
-                                if mid not in covered_ids
-                            ]
-                        result[idx] = updated_existing
+                        remove_indices.add(idx)
 
     if remove_indices:
         for idx in sorted(remove_indices, reverse=True):
@@ -3666,7 +3668,8 @@ def _splice_machinery_in_place(
             now=now,
         )
 
-    return result
+    accepted_ids = {r["data"].get("id") for r in ordered_roundups}
+    return _prune_bundles_below_roundups(result, accepted_ids)
 
 
 ROUNDUP_PRODUCERS: dict[str, RoundupProducer] = {}

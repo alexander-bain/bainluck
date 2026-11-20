@@ -263,3 +263,157 @@ def test_card_seated_below_roundup_still_prunes_overlapping_row():
     assert bp_idx < oscar_idx
     assert 6173044 not in out[oscar_idx]["data"]["member_ids"]
     assert out[oscar_idx]["data"]["member_ids"] == [58519933, 57368169]
+
+
+def test_best_actor_slot_keeps_priced_5869749_over_unpriced_109566_and_prefers_later_resolution_date():
+    """Fable 10:26 PM look on #13115: never fold a priced market for an unpriced one,
+    and break ties between two priced markets in favor of the later resolution date."""
+    unpriced_109566 = {
+        "type": "futures",
+        "score": 99.0,  # artificially higher score & first in input order
+        "reason": "test",
+        "headline": "Oscar for Best Actor?",
+        "data": {
+            "id": 109566,
+            "name": "Oscar for Best Actor?",
+            "source": "polymarket",
+            "status": "open",
+            "resolution_date": "2026-12-31T15:00:00+00:00",
+            "llm_sport_category": "entertainment",
+            "top_outcomes": [
+                {"id": 1598463, "name": "Jesse Plemons", "probability": None},
+                {"id": 1598464, "name": "Dwayne Johnson", "probability": None},
+            ],
+        },
+    }
+    priced_5869749 = {
+        "type": "futures",
+        "score": 60.0,
+        "reason": "test",
+        "headline": "Oscar Winner: Best Actor",
+        "data": {
+            "id": 5869749,
+            "name": "Oscar Winner: Best Actor",
+            "source": "kalshi",
+            "status": "open",
+            "resolution_date": "2027-12-31T15:00:00+00:00",
+            "llm_sport_category": "entertainment",
+            "top_outcomes": [
+                {"id": 29659681, "name": "John Malkovich", "probability": 0.49},
+                {"id": 29920022, "name": "Andrew Scott", "probability": 0.23},
+            ],
+        },
+    }
+    priced_picture = {
+        "type": "futures",
+        "score": 60.0,
+        "reason": "test",
+        "headline": "Oscar Winner: Best Picture",
+        "data": {
+            "id": 6173044,
+            "name": "Oscar Winner: Best Picture",
+            "source": "kalshi",
+            "status": "open",
+            "resolution_date": "2027-12-31T15:00:00+00:00",
+            "llm_sport_category": "entertainment",
+            "top_outcomes": [{"id": 1, "name": "The Odyssey", "probability": 0.54}],
+        },
+    }
+    priced_director = {
+        "type": "futures",
+        "score": 60.0,
+        "reason": "test",
+        "headline": "Oscar Winner: Best Director",
+        "data": {
+            "id": 58519933,
+            "name": "Oscar Winner: Best Director",
+            "source": "kalshi",
+            "status": "open",
+            "resolution_date": "2027-12-31T15:00:00+00:00",
+            "llm_sport_category": "entertainment",
+            "top_outcomes": [{"id": 2, "name": "Christopher Nolan", "probability": 0.61}],
+        },
+    }
+
+    bundles = assemble_story_theme_bundles(
+        [unpriced_109566, priced_picture, priced_director, priced_5869749]
+    )
+    assert len(bundles) == 1
+    ids = [c["data"]["id"] for c in bundles[0]["data"]["items"]]
+    assert ids == [6173044, 58519933, 5869749]
+    assert 109566 not in ids
+
+    # Both priced -> later resolution_date wins even when earlier ceremony has higher score.
+    earlier_priced_actor = {
+        **priced_5869749,
+        "score": 95.0,
+        "data": {
+            **priced_5869749["data"],
+            "id": 990001,
+            "name": "Oscars 2026: Best Actor Winner",
+            "resolution_date": "2026-03-15T23:00:00+00:00",
+        },
+    }
+    bundles2 = assemble_story_theme_bundles(
+        [earlier_priced_actor, priced_picture, priced_director, priced_5869749]
+    )
+    ids2 = [c["data"]["id"] for c in bundles2[0]["data"]["items"]]
+    assert ids2 == [6173044, 58519933, 5869749]
+    assert 990001 not in ids2
+
+
+def test_machinery_in_place_splice_preserve_existing_roundups_respects_ruling_275():
+    """Both prune passes (`insert_roundup_feed_items` and `_splice_machinery_in_place`)
+    keep Best Picture on the Oscars card when the grouping sits below, and prune only
+    when it sits strictly above."""
+    oscar_pool = [
+        _oscar_item(6173044, "Oscar Winner: Best Picture", source="kalshi", score=60.0),
+        _oscar_item(58519933, "Oscars 2027: Best Director Winner", score=60.0),
+        _oscar_item(5869749, "Oscar Winner: Best Actor", source="kalshi", score=60.0),
+    ]
+    oscar_card = assemble_story_theme_bundles(oscar_pool)[0]
+    standing_bp = _roundup_card("roundup-oscars-best-picture", [6173044], is_machinery=False)
+    machinery_bp = _roundup_card("machinery-oscars-best-picture", [6173044], is_machinery=True)
+    machinery_bp["data"]["replaces_roundups"] = ["roundup-oscars-best-picture"]
+
+    # Case A: Oscars card ABOVE standing Best Picture -> machinery replaces standing in place below Oscars.
+    feed_above = (
+        [_filler_item(i) for i in range(4)]
+        + [oscar_card]
+        + [_filler_item(4 + i) for i in range(10)]
+        + [standing_bp]
+        + [_filler_item(20 + i) for i in range(10)]
+    )
+    out_above = insert_roundup_feed_items(
+        feed_above,
+        [machinery_bp],
+        seat_floor=10,
+        page_window=20,
+        now=NOW,
+        preserve_existing_roundups=True,
+    )
+    o_idx = next(i for i, it in enumerate(out_above) if (it.get("data") or {}).get("story_key") == "story:oscars")
+    m_idx = next(i for i, it in enumerate(out_above) if (it.get("data") or {}).get("id") == "machinery-oscars-best-picture")
+    assert o_idx < m_idx
+    assert [c["data"]["id"] for c in out_above[o_idx]["data"]["items"]] == [6173044, 58519933, 5869749]
+
+    # Case B: standing Best Picture ABOVE Oscars card -> machinery replaces standing in place above Oscars -> prunes Best Picture.
+    feed_below = (
+        [_filler_item(i) for i in range(12)]
+        + [standing_bp]
+        + [_filler_item(12 + i) for i in range(10)]
+        + [oscar_card]
+        + [_filler_item(30 + i) for i in range(5)]
+    )
+    out_below = insert_roundup_feed_items(
+        feed_below,
+        [machinery_bp],
+        seat_floor=10,
+        page_window=20,
+        now=NOW,
+        preserve_existing_roundups=True,
+    )
+    o_idx_b = next(i for i, it in enumerate(out_below) if (it.get("data") or {}).get("story_key") == "story:oscars")
+    m_idx_b = next(i for i, it in enumerate(out_below) if (it.get("data") or {}).get("id") == "machinery-oscars-best-picture")
+    assert m_idx_b < o_idx_b
+    assert [c["data"]["id"] for c in out_below[o_idx_b]["data"]["items"]] == [58519933, 5869749]
