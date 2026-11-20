@@ -10,6 +10,7 @@ import {
   stopText,
 } from "@/app/factory/activity";
 import type { Change, FactoryData } from "@/app/factory/types";
+import { factoryTabTitle, floorVerdict } from "@/app/factory/verdict";
 
 jest.mock("next/navigation", () => {
   const router = { refresh: jest.fn() };
@@ -262,6 +263,68 @@ it("names the change waiting for inspection and uses a singular day", () => {
   ).toBe("#12998 has waited 40 minutes for inspection.");
 });
 
+it("puts the same sourced hold on the stack light, bay, note and tab", async () => {
+  watchMotion();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  try {
+    await act(async () =>
+      root.render(
+        <FactoryFloor data={snapshot} lastGoodAt={now} renderedAt={now} />,
+      ),
+    );
+    const text = "Loading dock, Server: on hold since 9:20 AM PT after test_floor failed.";
+    expect(container.querySelector('[data-verdict="red"] strong')?.textContent).toBe(text);
+    expect(container.querySelector('[aria-label="Foreman’s note"] p')?.textContent).toMatch(new RegExp(`^${text}`));
+    expect(container.querySelector('[data-line="Server"][data-bay="Merge line"]')?.getAttribute("data-alert")).toBe("red");
+    expect(container.querySelectorAll('[data-alert="red"]')).toHaveLength(1);
+    expect(document.title).toBe(`${text} | The Factory`);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("uses amber for a missing reading or a stopped refresh and green only for a verified clear floor", () => {
+  const clear = {
+    ...snapshot,
+    stops: [],
+    signals: { tests: "passing", testflight: "success" },
+  };
+  expect(floorVerdict(clear, false, now)).toMatchObject({ level: "green", text: "All clear." });
+  expect(floorVerdict(clear, true, now)).toMatchObject({ level: "amber", text: "Not updating." });
+  expect(floorVerdict({ ...clear, stops: undefined }, false, now).level).toBe("amber");
+  expect(floorVerdict({ ...clear, signals: { ...clear.signals, tests: "unknown" } }, false, now).level).toBe("amber");
+  expect(floorVerdict(null, true, now).level).toBe("amber");
+  expect(factoryTabTitle(floorVerdict(clear, false, now))).toBe("All clear. | The Factory");
+});
+
+it("marks a crowded bay after its recorded jam reaches 30 minutes", () => {
+  const jam = {
+    key: "crowd:Test",
+    kind: "crowd",
+    line: null,
+    station: "Test",
+    started_at: "2026-11-18T17:29:59Z",
+    qualifies_at: "2026-11-18T17:59:59Z",
+    ended_at: null,
+    count: 11,
+  } as const;
+  const clear: FactoryData = {
+    ...snapshot,
+    changes: [
+      ...Array.from({ length: 10 }, (_, index) => ({ ...base, number: base.number + index })),
+      { ...base, line: "Website", number: base.number + 10 },
+    ],
+    stops: [],
+    jams: [jam],
+    signals: { tests: "passing", testflight: "success" },
+  };
+  expect(floorVerdict(clear, false, "2026-11-18T17:59:58Z").level).toBe("green");
+  expect(floorVerdict(clear, false, now).bays).toEqual([
+    { line: "Server", station: "Test", level: "amber", text: "Checks, Server: 10 changes are backed up here.", crowded: true },
+  ]);
+});
+
 it("leaves the previous snapshot's notes off the current floor", async () => {
   watchMotion();
   const container = document.createElement("div");
@@ -276,7 +339,7 @@ it("leaves the previous snapshot's notes off the current floor", async () => {
         <FactoryFloor data={mismatched} lastGoodAt={now} renderedAt={now} />,
       ),
     );
-    expect(container.textContent).not.toContain("Foreman’s note");
+    expect(container.textContent).not.toContain(snapshot.notes!.floor);
     expect(container.querySelector('[data-crate="12998"]')).not.toBeNull();
     await act(async () =>
       root.render(
