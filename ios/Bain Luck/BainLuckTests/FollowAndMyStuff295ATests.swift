@@ -114,6 +114,71 @@ final class FollowAndMyStuff295ATests: XCTestCase {
         XCTAssertNil(FollowedSubject295A.teamFromEventSide(event: tennisMatch, isHome: false))
     }
 
+    func testFollowingTeamFromGameCardLandsOnMyStuffShowingTeamsNextGame() async throws {
+        let defaults = makeIsolatedDefaults()
+        let manager = FollowManager295A(defaults: defaults)
+
+        let gameCardEvent = try decodeEvent("""
+        {
+          "id": 9003,
+          "sport": "basketball_nba",
+          "sport_name": "NBA",
+          "away_team": "Boston Celtics",
+          "home_team": "Miami Heat",
+          "status": "scheduled",
+          "commence_time": "2026-11-21T00:30:00Z",
+          "away_team_data": {"team_id": 2, "slug": "boston-celtics", "primary_color": "#007A33", "abbreviation": "BOS"},
+          "home_team_data": {"team_id": 14, "slug": "miami-heat", "primary_color": "#98002E", "abbreviation": "MIA"}
+        }
+        """)
+
+        let cardTeams = FollowedSubject295A.eventCardTeams(for: gameCardEvent)
+        let awayEntry = try XCTUnwrap(cardTeams.away)
+        XCTAssertEqual(awayEntry.subject.slug, "boston-celtics")
+        XCTAssertTrue(manager.toggle(awayEntry.subject))
+
+        let nav = NavigationCoordinator()
+        nav.applyLaunchLanding295A(followedCount: manager.subjects.count, pinnedCount: 0)
+        XCTAssertEqual(nav.selectedTab, .myStuff)
+
+        let emptyDiscoverDecoder = JSONDecoder()
+        emptyDiscoverDecoder.keyDecodingStrategy = .convertFromSnakeCase
+        let emptyDiscover = try emptyDiscoverDecoder.decode(
+            FeedResponse.self,
+            from: Data(#"{"items":[],"total":0,"limit":20,"offset":0,"has_more":false}"#.utf8)
+        )
+
+        let teamPage = try makeSampleTeamPage()
+        let vm = MyStuffLandingViewModel295A(
+            defaults: defaults,
+            subjectHydrator: { subjects in
+                XCTAssertEqual(subjects.map(\.slug), ["boston-celtics"])
+                var pack = MyStuffLandingViewModel295A.HydratedSubjectPack()
+                for ev in teamPage.upcomingEvents {
+                    let converted = SearchEventCardAdapter183A.fromTeamScheduleBrief(ev, team: teamPage.team)
+                    pack.events.append((converted.feedEvent, converted.awayReadingIsServerVerified))
+                }
+                return [pack]
+            },
+            discoverFetcher: {
+                emptyDiscover
+            }
+        )
+
+        await vm.refresh(
+            followedSubjects: manager.subjects,
+            savedPins: [],
+            pinContent: [:],
+            signedInItems: [],
+            signedInTeamFutures: nil
+        )
+
+        XCTAssertFalse(vm.loadFailed)
+        XCTAssertEqual(vm.nextEvents.map { $0.event.id }, [15400201, 15400202])
+        XCTAssertEqual(vm.nextEvents.first?.event.awayTeam, "Boston Celtics")
+        XCTAssertEqual(vm.nextEvents.first?.event.homeTeam, "Washington Wizards")
+    }
+
     func testGameAlertsPromptOffersOnceAndShares13083Keys() {
         let defaults = makeIsolatedDefaults()
         var permissionRequestedCount = 0
@@ -777,7 +842,7 @@ final class FollowAndMyStuff295ATests: XCTestCase {
             "llm_sport_category": "economics",
             "source_count": 2,
             "top_outcomes": [
-              {"id": 3, "name": "Cut 25 bps", "probability": 0.68, "rank": 1},
+              {"id": 3, "name": "Cut a quarter point", "probability": 0.68, "rank": 1},
               {"id": 4, "name": "Hold steady", "probability": 0.29, "rank": 2}
             ]
           }
