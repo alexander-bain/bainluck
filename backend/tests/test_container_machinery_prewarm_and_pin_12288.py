@@ -1471,7 +1471,13 @@ def test_standing_roundup_seats_unchanged_and_machinery_never_moves_later_on_dee
             ids = [str((it.get("data") or {}).get("id") or "") for it in out]
             rid = card["data"]["id"]
             assert ids.index(rid) + 1 == expected_seat
-            assert not any(i.startswith("theme:story:x") for i in ids)
+            # Ruling 275 (#13100): a card never loses a row to a card seated below it.
+            # At seat 4 (theme_idx=3), the theme sits above the seat-11 standing round-up
+            # and stays intact; at seats 15 and 41 the round-up seats at/above it.
+            if theme_idx < expected_seat - 1:
+                assert any(i.startswith("theme:story:x") for i in ids)
+            else:
+                assert not any(i.startswith("theme:story:x") for i in ids)
             assert out[ids.index(rid)]["data"].get("inherited_opening_seat") is None
 
         for theme_idx, expected_seat, expected_flag in ((3, 4, True), (14, 15, None), (40, 11, None)):
