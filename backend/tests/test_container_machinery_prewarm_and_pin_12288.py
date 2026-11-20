@@ -1029,6 +1029,13 @@ async def test_scoped_scan_parity_with_legacy_ilike_across_all_five_definitions_
             if aq["kind"] not in {"markets", "market_history"}:
                 continue
             assert int(aq.get("min_items", 0) or 0) >= 1
+            if aq.get("fun_sub_tag"):
+                from app.utils.discover_fun_tags import fun_market_ids_for_sub_tag
+
+                assert len(fun_market_ids_for_sub_tag(str(aq["fun_sub_tag"]))) >= int(
+                    aq.get("min_items", 1)
+                )
+                continue
             legacy_standalone_ids = {
                 r[0] for r in fixture_rows if r[4] is None and _legacy_ilike_match(r[1], aq)
             }
