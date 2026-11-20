@@ -514,4 +514,68 @@ final class CollectionCardSourceMark11920Tests: XCTestCase {
         XCTAssertTrue(lines.contains("Missing: Sportsbooks"))
         XCTAssertTrue(lines.contains("Weights: Kalshi 50% · Polymarket 50%"))
     }
+
+    func testMachineryEventMarksNeverBorrowOneSidesMarkForTheOtherSide() throws {
+        let dec = JSONDecoder()
+        dec.keyDecodingStrategy = .convertFromSnakeCase
+
+        // 1. Direct item with ONLY `source_mark` (home) and no `away_source_mark` -> away stays nil!
+        let directHomeOnly = try dec.decode(MachineryEventVisualItem.self, from: Data(#"""
+        {
+          "event_id": 77001,
+          "sport_key": "soccer_epl",
+          "home_team": "Arsenal",
+          "away_team": "Chelsea",
+          "home_probability": 0.56,
+          "away_probability": 0.22,
+          "source_mark": {
+            "state": "blend",
+            "method": "Bain Luck blend",
+            "sources": [
+              {"key": "kalshi", "name": "Kalshi", "probability": 0.56, "observed_at": "2026-11-20T16:40:00Z"},
+              {"key": "polymarket", "name": "Polymarket", "probability": 0.56, "observed_at": "2026-11-20T16:41:00Z"}
+            ]
+          }
+        }
+        """#.utf8))
+        let resolvedDirect = MachinerySourceMarkResolver11920.eventMarks(for: directHomeOnly)
+        XCTAssertNotNil(resolvedDirect.home)
+        XCTAssertNil(resolvedDirect.away, "Away side without its own mark must stay nil rather than borrowing home's mark")
+
+        // 2. Member fallback with ONLY `source_mark` (home) and no `away_source_mark` -> away stays nil!
+        let bareVisual = try dec.decode(MachineryEventVisualItem.self, from: Data(#"""
+        {
+          "event_id": 77002,
+          "sport_key": "soccer_epl",
+          "home_team": "Liverpool",
+          "away_team": "Everton",
+          "home_probability": 0.68,
+          "away_probability": 0.14
+        }
+        """#.utf8))
+        let homeOnlyMember = try dec.decode(ContainerHubMember.self, from: Data(#"""
+        {
+          "type": "event",
+          "id": 77002,
+          "card": {
+            "id": 77002,
+            "sport": "soccer_epl",
+            "away_team": "Everton",
+            "home_team": "Liverpool",
+            "status": "scheduled",
+            "source_mark": {
+              "state": "blend",
+              "method": "Bain Luck blend",
+              "sources": [
+                {"key": "kalshi", "name": "Kalshi", "probability": 0.68, "observed_at": "2026-11-20T16:40:00Z"},
+                {"key": "polymarket", "name": "Polymarket", "probability": 0.68, "observed_at": "2026-11-20T16:41:00Z"}
+              ]
+            }
+          }
+        }
+        """#.utf8))
+        let resolvedFallback = MachinerySourceMarkResolver11920.eventMarks(for: bareVisual, members: [homeOnlyMember])
+        XCTAssertNotNil(resolvedFallback.home)
+        XCTAssertNil(resolvedFallback.away, "Member fallback must never attach home's mark to the away side")
+    }
 }

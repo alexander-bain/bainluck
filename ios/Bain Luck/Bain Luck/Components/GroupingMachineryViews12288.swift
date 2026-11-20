@@ -420,14 +420,14 @@ enum MachinerySourceMarkResolver11920 {
         let directHome = (item.sourceMark?.draws == true) ? item.sourceMark : nil
         let directAway = (item.awaySourceMark?.draws == true) ? item.awaySourceMark : nil
         if directHome != nil || directAway != nil {
-            return (away: directAway ?? directHome, home: directHome ?? directAway)
+            return (away: directAway, home: directHome)
         }
         for member in members where member.memberId == item.eventId {
             if case .event(let event) = member.card {
                 let home = (event.sourceMark?.draws == true) ? event.sourceMark : nil
-                let away = (event.awaySourceMark?.draws == true) ? event.awaySourceMark : home
+                let away = (event.awaySourceMark?.draws == true) ? event.awaySourceMark : nil
                 if home != nil || away != nil {
-                    return (away: away, home: home ?? away)
+                    return (away: away, home: home)
                 }
             }
         }
