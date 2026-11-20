@@ -60,27 +60,38 @@ export function RoundupCard({
   // Checked before legacy `buildRoundupCardModel` because machinery groupings (#12288)
   // carry their own card contract and intentionally omit the legacy roundup `footer`.
   if (contract?.paired_metric_set) {
+    const paired = contract.paired_metric_set;
+    if (
+      !paired.title?.trim() ||
+      !Array.isArray(paired.entries) ||
+      paired.entries.length === 0
+    ) {
+      return null;
+    }
     return (
       <div data-testid="roundup-card-slot">
         <AwardCategoryPairedCard
-          set={contract.paired_metric_set}
+          set={paired}
           surface="discover"
         />
         {isMachinerySlice1Enabled() && destination && contract?.machinery_card && (
           <Link
             href={destination.href}
-            className="mt-2 flex items-center justify-between rounded-card border border-surface-border bg-surface-card px-3.5 py-2 text-xs font-semibold text-accent-brand transition-colors hover:bg-surface-elevated"
+            data-testid="paired-card-machinery-link"
+            className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-card border border-surface-border bg-surface-card px-3.5 py-2 text-xs font-semibold text-accent-brand transition-colors hover:bg-surface-elevated"
           >
-            <span className="text-text-secondary">{destination.name}</span>
-            <span>Open all {contract.machinery_card.section_count} sections ›</span>
+            <span className="min-w-0 text-text-secondary">{destination.name}</span>
+            <span className="ml-auto shrink-0 whitespace-nowrap">
+              Open all {contract.machinery_card.section_count} sections ›
+            </span>
           </Link>
         )}
         {!previewOnly && (
           <div className="mt-[10px]">
             <BundleActionBar
               items={items}
-              title={contract.paired_metric_set.title || title}
-              sharedQuestion={contract.paired_metric_set.title || title}
+              title={paired.title || title}
+              sharedQuestion={paired.title || title}
               storyKey={storyKey ?? bundleId}
               positionIndex={positionIndex}
             />
