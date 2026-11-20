@@ -361,4 +361,33 @@ final class SavedWidgetArt12466Tests: XCTestCase {
         XCTAssertTrue(looks.contains(".opacity(row.emphasized ? 1 : 0.85)"))
         XCTAssertFalse(looks.contains(".opacity(row.emphasized ? 1 : 0.6)"))
     }
+
+    /// #13160, #13161, #13162 — Lock Screen saved market, Home small saved market,
+    /// and Home Medium/Large dashboard widgets must wrap market headlines/outcomes
+    /// without "…" and keep two-digit live scores on a single horizontal line.
+    func testWidgetMarketHeadlinesWrapAndLiveScoresNeverSplitDigits13160() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let looks = try String(
+            contentsOf: root.appendingPathComponent("BainLuckWidget/SavedWidgetLooks12466.swift"),
+            encoding: .utf8
+        )
+        let dashboard = try String(
+            contentsOf: root.appendingPathComponent("BainLuckWidget/LiveGamesWidget.swift"),
+            encoding: .utf8
+        )
+
+        // #13160 & #13161: SavedMarketLook12466 and SavedLockRectangle12466 wrap vertically instead of truncating.
+        XCTAssertTrue(looks.contains("private var marketBody: some View"))
+        XCTAssertTrue(looks.contains("ViewThatFits(in: .vertical)"))
+        XCTAssertTrue(looks.contains(".lineLimit(singleLine ? 1 : nil)"))
+
+        // #13162: LiveGamesWidget never constrains scores to narrow fixed widths (16/20pt) that stack digits vertically.
+        XCTAssertFalse(dashboard.contains(".frame(width: 20, alignment: .trailing)"))
+        XCTAssertFalse(dashboard.contains(".frame(width: 20, alignment: .leading)"))
+        XCTAssertFalse(dashboard.contains(".frame(width: 16, alignment: .trailing)"))
+        XCTAssertFalse(dashboard.contains(".frame(width: 16, alignment: .leading)"))
+        XCTAssertTrue(dashboard.contains("compactDiscoverList(count: 3"))
+        XCTAssertTrue(dashboard.contains("largeDiscoverList(count: 5)"))
+        XCTAssertTrue(dashboard.contains(".multilineTextAlignment(.leading)"))
+    }
 }
