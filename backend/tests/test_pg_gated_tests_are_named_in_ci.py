@@ -115,14 +115,7 @@ SKIP_CALL_RE = re.compile(r"pytest\.mark\.skipif\(|pytest\.skip\(")
 #: ``CALIBRATION_TEST_DATABASE_URL``, is set by no CI job at all (the four
 #: start-placeholder files were wired with their own step, #12612). Nothing in
 #: these files is evidence while listed.
-KNOWN_UNWIRED_ROOT = {
-    "test_calibration_canonical_pg.py",
-    "test_calibration_examples_canonical_262.py",
-    "test_calibration_horizon_honest_263.py",
-    "test_calibration_horizon_population_262.py",
-    "test_polymarket_container_sibling_5821.py",
-    "test_repair_10520_keeper_current_anchor.py",
-}
+KNOWN_UNWIRED_ROOT: set[str] = set()
 
 
 def _root_pg_gated_files() -> set[str]:

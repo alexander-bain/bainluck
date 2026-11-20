@@ -135,6 +135,12 @@ STEP_ENV_KEYS = {
         "database-integration",
         "#8841 start-placeholder tag rewrites (real Postgres)",
     ): {"START_PLACEHOLDER_DATABASE_URL"},
+    # #12612: the four calibration CTE contracts create/drop Base.metadata on
+    # their own disposable localhost database bl_calibration_12612; no secret.
+    (
+        "database-integration",
+        "#12612 calibration canonical and horizon CTE contracts (real Postgres)",
+    ): {"CALIBRATION_TEST_DATABASE_URL"},
     ("search-recall", "Every database integration group passed"): {
         "SCOPE_RESULT",
         "INTEGRATION_RESULT",
