@@ -21,9 +21,11 @@ import re
 import time
 import zlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
+from uuid import UUID
 
 from app.utils.container_presentation import (
     MEMBER_MARKET,
@@ -1059,6 +1061,38 @@ def _roundup_cache_stale_ttl_seconds(
     return _roundup_cache_ttl_seconds(slug, container_payload)
 
 
+def _roundup_cache_json_default(obj: Any) -> Any:
+    """JSON fallback for roundup cache payloads containing non-primitive scalars."""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, UUID):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _encode_roundup_cache_entry(
+    *,
+    ts: float,
+    ttl_s: float,
+    stale_ttl_s: float,
+    feed_item: Optional[dict[str, Any]],
+    container_payload: Optional[dict[str, Any]],
+) -> str:
+    return json.dumps(
+        {
+            "built_at": ts,
+            "ttl_s": ttl_s,
+            "stale_ttl_s": stale_ttl_s,
+            "feed_item": feed_item,
+            "container_payload": container_payload,
+        },
+        separators=(",", ":"),
+        default=_roundup_cache_json_default,
+    )
+
+
 def store_roundup_cache_sync(
     rc: Any,
     slug: str,
@@ -1076,17 +1110,14 @@ def store_roundup_cache_sync(
         return False
     ttl_s = _roundup_cache_ttl_seconds(slug, container_payload)
     stale_ttl_s = _roundup_cache_stale_ttl_seconds(slug, container_payload)
-    encoded = json.dumps(
-        {
-            "built_at": ts,
-            "ttl_s": ttl_s,
-            "stale_ttl_s": stale_ttl_s,
-            "feed_item": feed_item,
-            "container_payload": container_payload,
-        },
-        separators=(",", ":"),
-    )
     try:
+        encoded = _encode_roundup_cache_entry(
+            ts=ts,
+            ttl_s=ttl_s,
+            stale_ttl_s=stale_ttl_s,
+            feed_item=feed_item,
+            container_payload=container_payload,
+        )
         rc.set(_redis_cache_key(slug), encoded, ex=int(stale_ttl_s))
         if _is_machinery_producer_slug(slug) and container_payload is not None:
             if _roundup_payload_needs_live_rail(container_payload, now_ts=ts):
@@ -1125,20 +1156,25 @@ async def _store_roundup_cache_entry(
         copy.deepcopy(container_payload),
     )
     if isinstance(db, AsyncSession):
+        try:
+            encoded = _encode_roundup_cache_entry(
+                ts=ts,
+                ttl_s=ttl_s,
+                stale_ttl_s=stale_ttl_s,
+                feed_item=feed_item,
+                container_payload=container_payload,
+            )
+        except (TypeError, ValueError):
+            logger.warning(
+                "roundup_containers: shared cache encode failed for %s",
+                slug,
+                exc_info=True,
+            )
+            return
         wrote_async = False
         try:
             from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
-            encoded = json.dumps(
-                {
-                    "built_at": ts,
-                    "ttl_s": ttl_s,
-                    "stale_ttl_s": stale_ttl_s,
-                    "feed_item": feed_item,
-                    "container_payload": container_payload,
-                },
-                separators=(",", ":"),
-            )
             client = await get_shared_async_redis()
             set_res = await bounded_redis_call(
                 lambda: client.set(

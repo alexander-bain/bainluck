@@ -1803,3 +1803,162 @@ async def test_celery_prewarm_publishes_machinery_via_sync_redis_and_web_path_ne
     finally:
         ROUNDUP_PRODUCERS.clear()
         ROUNDUP_PRODUCERS.update(saved)
+
+
+@pytest.mark.asyncio
+async def test_roundup_cache_serializes_datetime_date_decimal_uuid_in_sync_and_async_writers(
+    monkeypatch, caplog
+):
+    """Regression (#12288 Flip 4): ORM `datetime` fields (e.g. `resolution_date` / `event_date`)
+    must serialize cleanly in BOTH `store_roundup_cache_sync` (Celery) and
+    `_store_roundup_cache_entry` (web async), and truly unserializable objects must log WARNING
+    instead of silently disappearing at DEBUG or raising out of `store_roundup_cache_sync`.
+    """
+    from datetime import date, datetime, timezone
+    from decimal import Decimal
+    import json
+    import logging
+    from unittest.mock import AsyncMock
+    from uuid import UUID
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.request_cache import OK, RedisResult
+    from app.utils.roundup_containers import (
+        _redis_cache_key,
+        _store_roundup_cache_entry,
+        reset_roundup_cache_for_tests,
+        store_roundup_cache_sync,
+    )
+
+    reset_roundup_cache_for_tests()
+    sample_dt = datetime(2026, 12, 18, 19, 0, tzinfo=timezone.utc)
+    sample_date = date(2026, 12, 18)
+    sample_dec = Decimal("0.875")
+    sample_uuid = UUID("12345678-1234-5678-1234-567812345678")
+
+    feed_item = {
+        "type": "bundle",
+        "data": {
+            "items": [
+                {
+                    "type": "futures",
+                    "data": {
+                        "id": 114367,
+                        "resolution_date": sample_dt,
+                        "event_date": sample_date,
+                        "price": sample_dec,
+                        "trace_id": sample_uuid,
+                    },
+                }
+            ]
+        },
+    }
+    container_payload = {
+        "slug": "machinery-fed-and-macro",
+        "sections": [
+            {
+                "members": [
+                    {
+                        "type": "market",
+                        "id": 114367,
+                        "card": {
+                            "resolution_date": sample_dt,
+                            "event_date": sample_date,
+                        },
+                    }
+                ]
+            }
+        ],
+    }
+
+    class _SyncFake:
+        def __init__(self):
+            self.kv = {}
+
+        def set(self, k, v, ex=None):
+            self.kv[k] = (v, ex)
+            return True
+
+        def hdel(self, *args):
+            return 0
+
+    sync_rc = _SyncFake()
+    ok = store_roundup_cache_sync(
+        sync_rc,
+        "machinery-fed-and-macro",
+        1700000000.0,
+        feed_item,
+        container_payload,
+    )
+    assert ok is True
+    raw_sync, _ex = sync_rc.kv[_redis_cache_key("machinery-fed-and-macro")]
+    parsed_sync = json.loads(raw_sync)
+    card_sync = parsed_sync["feed_item"]["data"]["items"][0]["data"]
+    assert card_sync["resolution_date"] == sample_dt.isoformat()
+    assert card_sync["event_date"] == sample_date.isoformat()
+    assert card_sync["price"] == pytest.approx(0.875)
+    assert card_sync["trace_id"] == str(sample_uuid)
+
+    # Async web writer must also serialize datetime payloads cleanly without calling sync Redis.
+    async_kv = {}
+
+    class _AsyncFake:
+        async def set(self, k, v, ex=None):
+            async_kv[k] = (v, ex)
+            return True
+
+        async def hdel(self, *args):
+            return 0
+
+    async def _fake_bounded(fn, *, treat_none_as_miss=True):
+        val = await fn()
+        return RedisResult(status=OK, value=val)
+
+    monkeypatch.setattr(
+        "app.utils.request_cache.get_shared_async_redis",
+        AsyncMock(return_value=_AsyncFake()),
+    )
+    monkeypatch.setattr("app.utils.request_cache.bounded_redis_call", _fake_bounded)
+
+    fake_db = AsyncSession.__new__(AsyncSession)
+    await _store_roundup_cache_entry(
+        ("machinery-fed-and-macro", "live"),
+        "machinery-fed-and-macro",
+        1700000000.0,
+        feed_item,
+        container_payload,
+        fake_db,
+    )
+    assert _redis_cache_key("machinery-fed-and-macro") in async_kv
+    parsed_async = json.loads(async_kv[_redis_cache_key("machinery-fed-and-macro")][0])
+    assert (
+        parsed_async["container_payload"]["sections"][0]["members"][0]["card"][
+            "resolution_date"
+        ]
+        == sample_dt.isoformat()
+    )
+
+    # Truly unserializable objects must return False (sync) and log WARNING (both sync and async).
+    bad_payload = {"bad": object()}
+    with caplog.at_level(logging.WARNING, logger="app.utils.roundup_containers"):
+        assert (
+            store_roundup_cache_sync(
+                sync_rc,
+                "machinery-fed-and-macro",
+                1700000000.0,
+                bad_payload,
+                None,
+            )
+            is False
+        )
+        await _store_roundup_cache_entry(
+            ("machinery-fed-and-macro", "live"),
+            "machinery-fed-and-macro",
+            1700000000.0,
+            bad_payload,
+            None,
+            fake_db,
+        )
+    warnings = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("sync Redis cache write failed" in m for m in warnings)
+    assert any("shared cache encode failed" in m for m in warnings)
