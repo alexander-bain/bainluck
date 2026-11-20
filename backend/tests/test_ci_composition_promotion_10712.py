@@ -135,6 +135,10 @@ STEP_ENV_KEYS = {
         "database-integration",
         "#8841 start-placeholder tag rewrites (real Postgres)",
     ): {"START_PLACEHOLDER_DATABASE_URL"},
+    (
+        "database-integration",
+        "#12612 calibration real-Postgres contracts",
+    ): {"CALIBRATION_TEST_DATABASE_URL"},
     ("search-recall", "Every database integration group passed"): {
         "SCOPE_RESULT",
         "INTEGRATION_RESULT",
