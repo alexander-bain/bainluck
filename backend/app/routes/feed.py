@@ -12442,6 +12442,13 @@ async def _score_events(
             # events in a historical fallback they never used before. Their
             # current chance stays absent until an admitted source returns.
             and getattr(e, "opening_home_probability", None) is None
+            # #11931: settled events already receive `final_hero.home_probability`
+            # before `snapshot_fallbacks` is ever consulted (see loop below), so
+            # querying full-history `win_prob_snapshots` for them is dead work.
+            and not (
+                (settled_hero := resolve_hero(e)) is not None
+                and settled_hero.source == "settled"
+            )
         ]
         # #1480: both id sets below come from the candidates alone — after the twin
         # fold, before any per-reader suppression — so every reader of one candidate
@@ -13730,6 +13737,54 @@ async def _score_sports_mode_futures(
         if not markets:
             return []
 
+        user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
+
+        # #11931: drop markets guaranteed to be skipped in the loop below by
+        # withheld-independent checks BEFORE running `withheld_price_outcome_ids_for_markets`
+        # (which queries the 51 GB `futures_odds_snapshots` table), canonical
+        # counts, and team-name lookups. Every predicate here is strictly a
+        # superset of the identical check below (never touches probabilities):
+        # 1. `resolution_date < now`
+        # 2. `_prices_have_stopped(_price_poll_stamp(market), now)`
+        # 3. `days_stale > 2` when NO outcome on the market moved > 0.001
+        # 4. golf markets with `commence_time < now - 6 days`
+        # 5. `my_teams_only` markets outside allowed sports/categories
+        _live_markets = []
+        for _m in markets:
+            _res_dt = _utc(getattr(_m, "resolution_date", None))
+            if _res_dt and _res_dt < now:
+                continue
+            if _prices_have_stopped(_price_poll_stamp(_m), now):
+                continue
+            _upd = getattr(_m, "updated_at", None)
+            if _upd is not None:
+                _upd_utc = _upd.replace(
+                    tzinfo=timezone.utc if _upd.tzinfo is None else _upd.tzinfo
+                )
+                if (now - _upd_utc).total_seconds() / 86400 > 2:
+                    _has_any_move = any(
+                        getattr(_o, "probability_change_24h", None) is not None
+                        and abs(float(_o.probability_change_24h)) > 0.001
+                        for _o in (getattr(_m, "outcomes", None) or ())
+                    )
+                    if not _has_any_move:
+                        continue
+            if (getattr(_m, "llm_sport_category", None) or "").lower() == "golf":
+                _comm = _utc(getattr(_m, "commence_time", None))
+                if _comm and _comm < now - timedelta(days=6):
+                    continue
+            if my_teams_only:
+                _m_sport_key = _m.sport.key if getattr(_m, "sport", None) else None
+                if _m_sport_key and _m_sport_key not in MY_STUFF_ALLOWED_SPORT_KEYS:
+                    continue
+                if not _m_sport_key and getattr(_m, "llm_sport_category", None):
+                    if _m.llm_sport_category not in MY_STUFF_ALLOWED_CATEGORIES:
+                        continue
+            _live_markets.append(_m)
+        markets = _live_markets
+        if not markets:
+            return []
+
         # Build canonical source counts for the candidate set
         candidate_canonical_keys = {
             m.canonical_market_key for m in markets if m.canonical_market_key
@@ -13779,8 +13834,6 @@ async def _score_sports_mode_futures(
         # #11493: and the open-field legs the venue has graded out — the twin read.
         graded_out_legs = await graded_out_leg_ids_by_market(db, markets)
         _mark_sf_stage("out_legs")
-
-        user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
         scored_items: list[dict] = []
     for market in markets:
