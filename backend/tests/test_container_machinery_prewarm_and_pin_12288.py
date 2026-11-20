@@ -2681,3 +2681,147 @@ async def test_inline_reader_rebuild_screens_not_trading_before_writing_redis(
     assert screen_spy.await_count == 0
     assert 2222 not in fi2["data"]["member_ids"]
     assert 1111 in fi2["data"]["member_ids"]
+
+
+def test_built_on_request_full_build_matches_warm_writer_and_never_sinks_groupings_to_seat_95() -> None:
+    """Fable 4:37 AM PT (#12288): absorbing a far-down theme card (seat 95) never drags
+    machinery groupings down to seats 95-101, and full build seats match the warm writer."""
+    import copy
+    from datetime import datetime, timezone
+
+    from app.utils.roundup_containers import (
+        insert_roundup_feed_items,
+        render_machinery_prewarm_bundle,
+    )
+
+    now = datetime(2026, 11, 20, 12, 30, 0, tzinfo=timezone.utc)
+
+    # Build a 140-item plain deck whose standing round-ups end at seat 23, with an
+    # Oscars theme bundle sitting far down at seat 95 (index 94) and no standing
+    # `roundup-oscars-2027` (mirroring a budget-cut web full build).
+    plain_items: list[dict] = []
+    for i in range(140):
+        plain_items.append(
+            {
+                "type": "futures",
+                "score": float(98 - i * 0.4),
+                "data": {
+                    "id": 90000 + i,
+                    "name": f"Ordinary market {i}",
+                    "llm_sport_category": "politics" if i % 2 == 0 else "economics",
+                    "status": "open",
+                },
+            }
+        )
+    # Seat 6 standing round-ups at seats 11..23 (indices 10, 14, 16, 18, 20, 22).
+    for idx, slug in (
+        (10, "roundup-cfp-picture"),
+        (14, "by-november-30"),
+        (16, "liga-profesional-relegation-2026"),
+        (18, "by-december-31"),
+        (20, "nhl-playoffs-2026-27"),
+        (22, "golf-this-week"),
+    ):
+        plain_items[idx] = {
+            "type": "bundle",
+            "score": 85.0,
+            "data": {
+                "id": f"roundup:{slug}",
+                "kind": "roundup",
+                "title": slug,
+                "collection_ref": {"slug": slug, "href": f"/collections/{slug}", "name": slug},
+                "items": [],
+            },
+        }
+    # Far-down Oscars theme bundle at seat 95 (index 94) whose markets are covered by
+    # `machinery-oscars-best-picture`.
+    plain_items[94] = {
+        "type": "bundle",
+        "score": 59.0,
+        "data": {
+            "id": "theme:story:oscars:57313556",
+            "kind": "theme",
+            "title": "Oscars",
+            "items": [
+                {"type": "futures", "data": {"id": 57313556, "name": "Best Picture"}},
+                {"type": "futures", "data": {"id": 58519933, "name": "Best Director"}},
+            ],
+        },
+    }
+
+    def _mach(slug: str, member_ids: list[int]) -> dict:
+        return {
+            "type": "bundle",
+            "score": 0.0,
+            "data": {
+                "id": f"roundup:{slug}",
+                "kind": "roundup",
+                "title": slug,
+                "member_ids": list(member_ids),
+                "collection_ref": {"slug": slug, "href": f"/collections/{slug}", "name": slug},
+                "items": [{"type": "futures", "data": {"id": mid}} for mid in member_ids],
+                "roundup": {"kicker": "GROUPING", "footer": "", "rows": []},
+            },
+        }
+
+    mach_cards = [
+        _mach("machinery-2028-presidential", [112897]),
+        _mach("machinery-oscars-best-picture", [57313556, 58519933]),
+        _mach("machinery-fed-and-macro", [57574250]),
+        _mach("machinery-nba-night", []),
+        _mach("machinery-nfl-week", []),
+    ]
+
+    full_build = insert_roundup_feed_items(
+        copy.deepcopy(plain_items),
+        copy.deepcopy(mach_cards),
+        page_window=20,
+        now=now,
+    )
+    warm_bundle = render_machinery_prewarm_bundle(
+        mach_base={
+            "page_base_body": {"items": copy.deepcopy(plain_items), "total": len(plain_items)},
+            "page_base_key": "feed:pagebase:v1:test",
+            "age_origin": now.timestamp(),
+            "opening_seating": False,
+            "limit": 200,
+            "offset": 0,
+            "cache_shape": {"limit": 200, "offset": 0, "event_pct": 0.15, "mode": "discover"},
+        },
+        produced=copy.deepcopy(mach_cards),
+        oldest_live_built_at=None,
+        now_ts=now.timestamp(),
+    )
+    assert warm_bundle is not None
+    warm_items = json.loads(warm_bundle["page_base_json"])["items"]
+
+    def _mach_seats(deck: list[dict]) -> list[tuple[int, str]]:
+        return [
+            (i + 1, str(((it.get("data") or {}).get("collection_ref") or {}).get("slug") or ""))
+            for i, it in enumerate(deck)
+            if str(((it.get("data") or {}).get("collection_ref") or {}).get("slug") or "").startswith(
+                "machinery-"
+            )
+        ]
+
+    full_seats = _mach_seats(full_build)
+    warm_seats = _mach_seats(warm_items)
+    # 1. Full build and warm writer seat the five groupings at the exact same seats.
+    assert full_seats == warm_seats
+    assert len(full_seats) == 5
+    # 2. All five sit cleanly after the last standing round-up (seat 23), NEVER near seat 95.
+    assert all(24 <= seat <= 45 for seat, _ in full_seats), f"unexpected seats: {full_seats}"
+    # 3. The far-down covered Oscars theme bundle is pruned (no duplicate).
+    assert not any(
+        (it.get("data") or {}).get("id") == "theme:story:oscars:57313556" for it in full_build
+    )
+    # 4. Every standing round-up keeps its exact original seat.
+    for idx, slug in (
+        (10, "roundup-cfp-picture"),
+        (14, "by-november-30"),
+        (16, "liga-profesional-relegation-2026"),
+        (18, "by-december-31"),
+        (20, "nhl-playoffs-2026-27"),
+        (22, "golf-this-week"),
+    ):
+        assert ((full_build[idx].get("data") or {}).get("collection_ref") or {}).get("slug") == slug
