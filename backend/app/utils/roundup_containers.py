@@ -1233,6 +1233,7 @@ def _encode_roundup_cache_entry(
     feed_item: Optional[dict[str, Any]],
     container_payload: Optional[dict[str, Any]],
     clean_empty: bool = False,
+    clean_empty_reason: Optional[str] = None,
 ) -> str:
     payload: dict[str, Any] = {
         "built_at": ts,
@@ -1243,6 +1244,8 @@ def _encode_roundup_cache_entry(
     }
     if clean_empty:
         payload["clean_empty"] = True
+        if clean_empty_reason:
+            payload["clean_empty_reason"] = str(clean_empty_reason)
     return json.dumps(
         payload,
         separators=(",", ":"),
@@ -1300,14 +1303,17 @@ def store_roundup_clean_empty_sync(
     slug: str,
     ts: float,
     *,
+    reason: Optional[str] = None,
     ttl_s: float = ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S,
     lifetime_s: float = ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S,
 ) -> bool:
     """Record a clean-empty marker in Redis when a grouping producer ran cleanly with nothing to show (#13183).
 
     Used by Celery prewarm workers only (never on the web event loop — #969).
-    Lets `_publish_machinery_feed_from_prewarm_base` distinguish an intentionally
-    quiet/out-of-season grouping from a failed or expired one.
+    Lets `_publish_machinery_feed_from_prewarm_base` and `add_roundup_feed_items`
+    distinguish an intentionally quiet/out-of-season grouping from a failed or
+    expired one, carrying ``clean_empty_reason`` so data faults are visible in
+    logs instead of misread as a quiet night.
     """
     if rc is None or not hasattr(rc, "set"):
         return False
@@ -1319,6 +1325,7 @@ def store_roundup_clean_empty_sync(
             feed_item=None,
             container_payload=None,
             clean_empty=True,
+            clean_empty_reason=reason,
         )
         rc.set(_redis_cache_key(slug), encoded, ex=int(lifetime_s))
         if _is_machinery_producer_slug(slug) and hasattr(rc, "hdel"):
@@ -1518,6 +1525,67 @@ def _normalize_roundup_now(
     return ts, datetime.fromtimestamp(ts, tz=timezone.utc)
 
 
+_PREFETCH_UNSET = object()
+
+
+async def _prefetch_shared_roundup_entries(
+    producers: Sequence[RoundupProducer],
+    db: Any,
+) -> tuple[dict[str, Any], bool]:
+    """Fetch shared Redis entries for multiple round-up producers together (#13184 follow-up).
+
+    Uses one ``MGET`` when supported by the async Redis client (falling back to a
+    single ``asyncio.gather`` of ``get`` calls for minimal test doubles), wrapped
+    in one ``bounded_redis_call`` so the out-of-time branch never issues N serial
+    Redis round-trips.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.container_read_cache import container_read_cache_enabled
+
+    if not producers or isinstance(db, (list, tuple)) or not isinstance(db, AsyncSession):
+        return {}, True
+    if not container_read_cache_enabled():
+        return {}, True
+
+    eligible_slugs: list[str] = []
+    for p in producers:
+        rule_cfg = p.rule if isinstance(p.rule, Mapping) else {}
+        no_cache = (
+            rule_cfg.get("cache") == "none" or rule_cfg.get("producer") == "yardstick_pair"
+        )
+        if not no_cache:
+            eligible_slugs.append(p.slug)
+    if not eligible_slugs:
+        return {}, True
+
+    keys = [_redis_cache_key(slug) for slug in eligible_slugs]
+    try:
+        from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+        client = await get_shared_async_redis()
+        if hasattr(client, "mget") and callable(client.mget):
+            res = await bounded_redis_call(
+                lambda: client.mget(keys),
+                treat_none_as_miss=False,
+            )
+        else:
+            res = await bounded_redis_call(
+                lambda: asyncio.gather(*(client.get(k) for k in keys)),
+                treat_none_as_miss=False,
+            )
+        if not res.is_ok or not isinstance(res.value, (list, tuple)):
+            return {}, False
+        return dict(zip(eligible_slugs, res.value)), True
+    except Exception:  # noqa: BLE001 — fail-closed signal returned to caller
+        logger.debug(
+            "roundup_containers: batch shared cache prefetch failed for %d slugs",
+            len(eligible_slugs),
+            exc_info=True,
+        )
+        return {}, False
+
+
 async def _load_last_good_roundup_copy(
     producer: RoundupProducer,
     db: Any,
@@ -1525,6 +1593,9 @@ async def _load_last_good_roundup_copy(
     now: Optional[float | datetime] = None,
     local_only: bool = False,
     fail_closed_on_shared_error: bool = False,
+    prefetched_shared: Any = _PREFETCH_UNSET,
+    shared_read_ok: bool = True,
+    quiet_out: Optional[dict[str, Any]] = None,
 ) -> Optional[tuple[dict[str, Any], dict[str, Any], float, float]]:
     """Return ``(feed_item, container_payload, age_s, keep_s)`` for the last good cached copy.
 
@@ -1534,10 +1605,17 @@ async def _load_last_good_roundup_copy(
     Respects ``producer.enabled`` and ``valid_from`` / ``valid_until`` (65-A),
     compares local vs shared Redis freshness so the newer entry always decides
     (including newer proper withdrawals), and judges live keep-time by ``now``.
+    When ``quiet_out`` is provided and the winning shared entry is an unexpired
+    ``clean_empty`` marker (#13183/#13186), populates ``quiet_out["clean_empty"] = True``
+    and ``quiet_out["reason"]``.
     """
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.utils.container_read_cache import container_read_cache_enabled
+
+    if quiet_out is not None:
+        quiet_out["clean_empty"] = False
+        quiet_out["reason"] = None
 
     if producer.enabled is not None and not producer.enabled():
         return None
@@ -1558,7 +1636,7 @@ async def _load_last_good_roundup_copy(
         producer.slug,
         "live" if isinstance(db, AsyncSession) else id(db),
     )
-    # Candidate tuple: (built_at, feed_item, container_payload, stored_stale_ttl, from_shared)
+    # Candidate tuple: (built_at, feed_item, container_payload, stored_stale_ttl, from_shared, clean_empty, clean_empty_reason)
     local_candidate: Optional[
         tuple[
             float,
@@ -1566,11 +1644,13 @@ async def _load_last_good_roundup_copy(
             Optional[dict[str, Any]],
             Optional[float],
             bool,
+            bool,
+            Optional[str],
         ]
     ] = None
     cached = _roundup_local_cache.get(cache_key)
     if cached is not None:
-        local_candidate = (float(cached[0]), cached[1], cached[2], None, False)
+        local_candidate = (float(cached[0]), cached[1], cached[2], None, False, False, None)
 
     shared_candidate: Optional[
         tuple[
@@ -1579,25 +1659,46 @@ async def _load_last_good_roundup_copy(
             Optional[dict[str, Any]],
             Optional[float],
             bool,
+            bool,
+            Optional[str],
         ]
     ] = None
     if not local_only and isinstance(db, AsyncSession):
-        try:
-            from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
-
-            client = await get_shared_async_redis()
-            res = await bounded_redis_call(
-                lambda: client.get(_redis_cache_key(producer.slug)),
-                treat_none_as_miss=False,
-            )
-            if not res.is_ok:
+        raw_val: Any = None
+        if prefetched_shared is not _PREFETCH_UNSET:
+            if not shared_read_ok:
                 if fail_closed_on_shared_error:
                     return None
-            elif res.value:
+            else:
+                raw_val = prefetched_shared
+        else:
+            try:
+                from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+                client = await get_shared_async_redis()
+                res = await bounded_redis_call(
+                    lambda: client.get(_redis_cache_key(producer.slug)),
+                    treat_none_as_miss=False,
+                )
+                if not res.is_ok:
+                    if fail_closed_on_shared_error:
+                        return None
+                else:
+                    raw_val = res.value
+            except Exception:  # noqa: BLE001 — stale fallback read fails open unless fail-closed
+                logger.debug(
+                    "roundup_containers: last-good shared cache read failed for %s",
+                    producer.slug,
+                    exc_info=True,
+                )
+                if fail_closed_on_shared_error:
+                    return None
+        if raw_val:
+            try:
                 raw = json.loads(
-                    res.value.decode("utf-8")
-                    if isinstance(res.value, (bytes, bytearray))
-                    else res.value
+                    raw_val.decode("utf-8")
+                    if isinstance(raw_val, (bytes, bytearray))
+                    else raw_val
                 )
                 if isinstance(raw, dict) and isinstance(raw.get("built_at"), (int, float)):
                     raw_stale_ttl = raw.get("stale_ttl_s")
@@ -1609,15 +1710,19 @@ async def _load_last_good_roundup_copy(
                         if isinstance(raw_stale_ttl, (int, float))
                         else None,
                         True,
+                        raw.get("clean_empty") is True,
+                        str(raw.get("clean_empty_reason"))
+                        if raw.get("clean_empty_reason")
+                        else None,
                     )
-        except Exception:  # noqa: BLE001 — stale fallback read fails open unless fail-closed
-            logger.debug(
-                "roundup_containers: last-good shared cache read failed for %s",
-                producer.slug,
-                exc_info=True,
-            )
-            if fail_closed_on_shared_error:
-                return None
+            except Exception:  # noqa: BLE001 — malformed shared entry fails open/closed per flag
+                logger.debug(
+                    "roundup_containers: last-good shared cache decode failed for %s",
+                    producer.slug,
+                    exc_info=True,
+                )
+                if fail_closed_on_shared_error:
+                    return None
 
     if shared_candidate is not None and local_candidate is not None:
         chosen = (
@@ -1631,10 +1736,19 @@ async def _load_last_good_roundup_copy(
     if chosen is None:
         return None
 
-    built_at, fi, cp, stored_stale_ttl, from_shared = chosen
+    built_at, fi, cp, stored_stale_ttl, from_shared, is_clean_empty, ce_reason = chosen
     if fi is None or cp is None:
         if from_shared:
             _roundup_local_cache[cache_key] = (built_at, None, None)
+        if is_clean_empty and quiet_out is not None:
+            quiet_keep_s = (
+                float(stored_stale_ttl)
+                if isinstance(stored_stale_ttl, (int, float)) and stored_stale_ttl > 0
+                else ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+            )
+            if max(0.0, ts - built_at) < quiet_keep_s:
+                quiet_out["clean_empty"] = True
+                quiet_out["reason"] = ce_reason
         return None
 
     keep_s = _roundup_effective_keep_seconds(
@@ -1737,10 +1851,12 @@ async def evaluate_roundup_producer(
                 and cached[1] is not None
                 and cached[2] is not None
             ):
-                local_stale_ttl = _roundup_cache_stale_ttl_seconds(
-                    producer.slug, cached[2]
+                local_stale_ttl = _roundup_effective_keep_seconds(
+                    producer.slug,
+                    cached[2],
+                    now_ts=ts,
                 )
-                if (ts - cached[0]) < local_stale_ttl:
+                if max(0.0, ts - cached[0]) < local_stale_ttl:
                     local_stale_fallback = (cached[0], cached[1], cached[2])
         if isinstance(db, AsyncSession):
             try:
@@ -1767,7 +1883,7 @@ async def evaluate_roundup_producer(
                         built_at = float(raw["built_at"])
                         fi = raw.get("feed_item")
                         cp = raw.get("container_payload")
-                        age_s = ts - built_at
+                        age_s = max(0.0, ts - built_at)
                         if age_s < raw_ttl:
                             _roundup_local_cache[cache_key] = (built_at, fi, cp)
                             _record_machinery_live_origin(built_at, producer.slug, cp)
@@ -1781,11 +1897,22 @@ async def evaluate_roundup_producer(
                                     local_stale_fallback = None
                                     _roundup_local_cache[cache_key] = (built_at, None, None)
                             else:
-                                stale_max_s = float(
-                                    raw.get("stale_ttl_s")
-                                    or _roundup_cache_stale_ttl_seconds(producer.slug, cp)
+                                raw_stale_ttl = raw.get("stale_ttl_s")
+                                stale_max_s = _roundup_effective_keep_seconds(
+                                    producer.slug,
+                                    cp,
+                                    now_ts=ts,
+                                    stored_stale_ttl=(
+                                        float(raw_stale_ttl)
+                                        if isinstance(raw_stale_ttl, (int, float))
+                                        else None
+                                    ),
                                 )
-                                if age_s < stale_max_s:
+                                if age_s < stale_max_s and (
+                                    local_stale_fallback is None
+                                    or built_at >= local_stale_fallback[0]
+                                ):
+                                    _roundup_local_cache[cache_key] = (built_at, fi, cp)
                                     _record_machinery_live_origin(
                                         built_at, producer.slug, cp
                                     )
@@ -1814,9 +1941,12 @@ async def evaluate_roundup_producer(
     if outcome is None or isinstance(outcome, RoundupRefusal):
         reasons = list(outcome.reasons) if isinstance(outcome, RoundupRefusal) else []
         cacheable = _is_cacheable_refusal(reasons)
+        reason_text = ",".join(str(r) for r in reasons if r) or (
+            "clean_empty_refusal" if cacheable else "transient_refusal"
+        )
         if outcome_meta is not None:
             outcome_meta["clean_empty"] = bool(cacheable)
-            outcome_meta["reason"] = "clean_empty_refusal" if cacheable else "transient_refusal"
+            outcome_meta["reason"] = reason_text
         logger.warning(
             "flow_sentinel matching_defect: roundup %s refused reasons=%s",
             producer.slug,
@@ -3656,14 +3786,23 @@ async def add_roundup_feed_items(
         remaining = stage_budget - elapsed
         if remaining <= 0:
             kept_after_budget = 0
+            quiet_after_budget = 0
             dropped_after_budget = 0
-            for rem_producer in producers[idx:]:
+            rem_producers = producers[idx:]
+            prefetched_shared, shared_read_ok = await _prefetch_shared_roundup_entries(
+                rem_producers, db
+            )
+            for rem_producer in rem_producers:
+                quiet_meta: dict[str, Any] = {}
                 last_good = await _load_last_good_roundup_copy(
                     rem_producer,
                     db,
                     now=now,
                     local_only=False,
                     fail_closed_on_shared_error=True,
+                    prefetched_shared=prefetched_shared.get(rem_producer.slug),
+                    shared_read_ok=shared_read_ok,
+                    quiet_out=quiet_meta,
                 )
                 if last_good is not None:
                     fi_lg, _cp_lg, _age_lg, _keep_lg = last_good
@@ -3675,6 +3814,10 @@ async def add_roundup_feed_items(
                         reason="budget_exhausted",
                         now=now_ts,
                     )
+                elif quiet_meta.get("clean_empty") is True:
+                    # #13184/#13186 follow-up: an unexpired quiet mark means the
+                    # grouping is properly empty, not missing/incomplete.
+                    quiet_after_budget += 1
                 else:
                     if _is_machinery_producer_slug(rem_producer.slug) and (
                         rem_producer.enabled is None or rem_producer.enabled()
@@ -3691,13 +3834,14 @@ async def add_roundup_feed_items(
             logger.warning(
                 "Discover round-up stage budget exhausted after %d/%d producers "
                 "(budget_seconds=%.3f, stage_budget=%.3f, produced=%d, "
-                "kept_last_good=%d, dropped_no_copy=%d, failed_10m=%d, dropped_10m=%d)",
+                "kept_last_good=%d, quiet=%d, dropped_no_copy=%d, failed_10m=%d, dropped_10m=%d)",
                 idx,
                 len(producers),
                 budget_seconds,
                 stage_budget,
                 len(produced),
                 kept_after_budget,
+                quiet_after_budget,
                 dropped_after_budget,
                 stats_10m["failed"],
                 stats_10m["dropped_no_copy"],

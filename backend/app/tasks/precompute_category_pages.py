@@ -1933,7 +1933,10 @@ async def _prewarm_machinery_roundups(
                     outcome_label = "clean_empty"
                     if sync_rc is not None:
                         redis_written = store_roundup_clean_empty_sync(
-                            sync_rc, prod.slug, _time.time()
+                            sync_rc,
+                            prod.slug,
+                            _time.time(),
+                            reason=eval_meta.get("reason"),
                         )
                         if redis_written:
                             redis_read_back, redis_ttl_s = verify_roundup_cache_sync(
@@ -1941,6 +1944,7 @@ async def _prewarm_machinery_roundups(
                             )
                 return prod.slug, {
                     "outcome": outcome_label,
+                    "reason": eval_meta.get("reason"),
                     "elapsed_ms": elapsed_ms,
                     "live": bool(_roundup_payload_has_live_event(cp)) if ok else False,
                     "redis_written": redis_written,
@@ -2045,6 +2049,7 @@ def _publish_machinery_feed_from_prewarm_base(
         ROUNDUP_PRODUCERS,
         _is_machinery_producer_slug,
         _redis_cache_key,
+        _roundup_effective_keep_seconds,
         _roundup_payload_has_live_event,
         ensure_optional_roundup_candidates,
         render_machinery_prewarm_bundle,
@@ -2066,6 +2071,7 @@ def _publish_machinery_feed_from_prewarm_base(
 
     produced: list[dict] = []
     clean_empty_slugs: list[str] = []
+    clean_empty_reasons: dict[str, str] = {}
     absent_slugs: list[str] = []
     oldest_live_built_at: float | None = None
     now_ts = _time.time()
@@ -2091,20 +2097,37 @@ def _publish_machinery_feed_from_prewarm_base(
         if not isinstance(built_at, (int, float)):
             absent_slugs.append(prod.slug)
             continue
-        lifetime_s = float(
-            parsed.get("stale_ttl_s") or ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+        raw_stale_ttl = parsed.get("stale_ttl_s")
+        stored_stale_ttl = (
+            float(raw_stale_ttl) if isinstance(raw_stale_ttl, (int, float)) else None
         )
-        age_s = now_ts - float(built_at)
-        if age_s >= lifetime_s:
-            # #13183: an entry or clean-empty marker older than its lifetime is treated as absent.
-            absent_slugs.append(prod.slug)
-            continue
+        age_s = max(0.0, now_ts - float(built_at))
         if parsed.get("clean_empty") is True:
+            lifetime_s = float(
+                stored_stale_ttl or ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+            )
+            if age_s >= lifetime_s:
+                # #13183: a clean-empty marker older than its lifetime is treated as absent.
+                absent_slugs.append(prod.slug)
+                continue
             clean_empty_slugs.append(prod.slug)
+            clean_empty_reasons[prod.slug] = str(
+                parsed.get("clean_empty_reason") or "unspecified"
+            )
             continue
         fi = parsed.get("feed_item")
         cp = parsed.get("container_payload")
         if not isinstance(fi, dict) or not isinstance(cp, dict):
+            absent_slugs.append(prod.slug)
+            continue
+        # #13184 follow-up: apply the serve-time clock rule to groupings' own kept copies.
+        keep_s = _roundup_effective_keep_seconds(
+            prod.slug,
+            cp,
+            now_ts=now_ts,
+            stored_stale_ttl=stored_stale_ttl,
+        )
+        if age_s >= keep_s:
             absent_slugs.append(prod.slug)
             continue
         if _roundup_payload_has_live_event(cp):
@@ -2155,13 +2178,17 @@ def _publish_machinery_feed_from_prewarm_base(
         )
 
     if clean_empty_slugs:
+        clean_empty_desc = ", ".join(
+            f"{slug}({clean_empty_reasons.get(slug, 'unspecified')})"
+            for slug in clean_empty_slugs
+        )
         logger.info(
             "Pre-warmed machinery Discover %s (%d/%d groupings active, %d cleanly empty: %s, live=%s, ttl=%ds/%ds)",
             label,
             len(produced),
             len(producers),
             len(clean_empty_slugs),
-            ", ".join(clean_empty_slugs),
+            clean_empty_desc,
             bundle["live"],
             m_ttl,
             m_stale_ttl,
@@ -2180,6 +2207,7 @@ def _publish_machinery_feed_from_prewarm_base(
         "outcome": "ok",
         "groupings": len(produced),
         "clean_empty": clean_empty_slugs,
+        "clean_empty_reasons": clean_empty_reasons,
         "live": bundle["live"],
         "cache_key": bundle["cache_key"],
         "page_base_key": bundle["page_base_key"],
