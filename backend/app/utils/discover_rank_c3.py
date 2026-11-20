@@ -14,12 +14,15 @@ What Candidate 3 changes over Candidate 2 (Ruling 277: A, #13100, #13106, #13097
 3. **Far-horizon discount (>60 days), with fun-tagged markets EXEMPT:** quiet
    non-fun markets settling >60d out (-0.18) or >180d out (-0.24) step back;
    markets in ``backend/data/discover/fun_markets.json`` are exempt.
-4. **Mix alignment toward Alex's target (3 odd, 2.5 entertainment, 0.5 politics):**
+4. **Mix alignment toward Alex's target (3 odd, 2.5 entertainment, 2 sports,
+   1.5 tech/business, 0.5 politics/world, 0.5 money):**
    reorders across ``served[:60]`` (so fun and entertainment cards below seat 20
-   can reach the opening ten), caps opening-ten politics/world at <=1 and only
-   when major/moving (keeping quiet/minor foreign elections out), caps fun at
-   <=3 (<=1 long-shot single), caps entertainment at <=3 (<=1 weekly Netflix
-   chart card), and caps sports at <=2 across distinct sports (<=1 per sport).
+   can reach the opening ten). Each card belongs to one opening-ten bucket (a
+   fun-listed card counts as odd only, not also entertainment). Caps opening-ten
+   odd/fun at <=3 (<=1 long-shot single), non-fun entertainment at <=3 (<=1
+   weekly Netflix chart card), sports at <=2 across distinct sports (<=1 per
+   sport), politics/world at <=1 (major/moving only — keeps quiet/minor foreign
+   elections out), and money at <=1.
 
 The harness reaches it with
 ``scorecard.py --replay app.utils.discover_rank_c3:rank_c3_mix``. Discover itself
@@ -53,6 +56,7 @@ MAX_ENTERTAINMENT_OPENING = 3
 MAX_WEEKLY_CHART_OPENING = 1
 MAX_POLITICS_OPENING = 1
 POLITICS_OPENING_MIN_SCORE = 85.0
+MAX_MONEY_OPENING = 1
 MAX_SPORTS_OPENING = 2
 MAX_PER_SPORT_OPENING = 1
 
@@ -84,6 +88,7 @@ GROUPED_TYPES = frozenset({"bundle", "concept", "tournament"})
 GATE_FLAGS = ("settled_without_result", "stale", "blend_missing")
 
 POLITICS_CATEGORIES = frozenset({"politics", "geopolitics", "world"})
+MONEY_CATEGORIES = frozenset({"economics", "finance", "economy", "crypto", "money"})
 ENTERTAINMENT_CATEGORIES = frozenset(
     {"entertainment", "culture", "media", "movies", "music", "tv"}
 )
@@ -231,8 +236,12 @@ def is_politics(card: dict, *, fun_ids: Optional[frozenset[int]] = None) -> bool
     return (not is_fun_tagged(card, fun_ids=fun_ids)) and (_category(card) in POLITICS_CATEGORIES)
 
 
-def is_entertainment(card: dict) -> bool:
-    return _category(card) in ENTERTAINMENT_CATEGORIES
+def is_money(card: dict, *, fun_ids: Optional[frozenset[int]] = None) -> bool:
+    return (not is_fun_tagged(card, fun_ids=fun_ids)) and (_category(card) in MONEY_CATEGORIES)
+
+
+def is_entertainment(card: dict, *, fun_ids: Optional[frozenset[int]] = None) -> bool:
+    return (not is_fun_tagged(card, fun_ids=fun_ids)) and (_category(card) in ENTERTAINMENT_CATEGORIES)
 
 
 def _is_sports_category(cat: str) -> bool:
@@ -412,7 +421,7 @@ def worth_c3(
     mix_adj = 0.0
     if fun:
         mix_adj += FUN_LIFT
-    if is_entertainment(card):
+    elif is_entertainment(card, fun_ids=fun_ids):
         mix_adj += ENTERTAINMENT_LIFT
     if is_politics(card, fun_ids=fun_ids):
         mix_adj += POLITICS_PENALTY
@@ -466,23 +475,26 @@ def rank_c3_mix(
     entertainment_count = 0
     weekly_chart_count = 0
     politics_count = 0
+    money_count = 0
     sports_count = 0
 
     def _record_opening(chosen: dict) -> None:
         nonlocal fun_count, long_shot_count, entertainment_count, weekly_chart_count
-        nonlocal politics_count, sports_count
+        nonlocal politics_count, money_count, sports_count
         for name in _entities(chosen):
             entity_counts[name] = entity_counts.get(name, 0) + 1
         if is_fun_tagged(chosen, fun_ids=resolved_fun):
             fun_count += 1
         if is_long_shot_single(chosen, long_shot_ids=resolved_ls):
             long_shot_count += 1
-        if is_entertainment(chosen):
+        if is_entertainment(chosen, fun_ids=resolved_fun):
             entertainment_count += 1
         if is_weekly_chart(chosen):
             weekly_chart_count += 1
         if is_politics(chosen, fun_ids=resolved_fun):
             politics_count += 1
+        if is_money(chosen, fun_ids=resolved_fun):
+            money_count += 1
         if is_sports(chosen):
             sports_count += 1
             sb = _sport_bucket(chosen)
@@ -504,7 +516,7 @@ def rank_c3_mix(
             and long_shot_count >= MAX_LONG_SHOT_SINGLES_OPENING
         ):
             return True
-        if is_entertainment(card) and entertainment_count >= MAX_ENTERTAINMENT_OPENING:
+        if is_entertainment(card, fun_ids=resolved_fun) and entertainment_count >= MAX_ENTERTAINMENT_OPENING:
             return True
         if is_weekly_chart(card) and weekly_chart_count >= MAX_WEEKLY_CHART_OPENING:
             return True
@@ -514,6 +526,8 @@ def rank_c3_mix(
             score = _num(card.get("score")) or 0.0
             if score < POLITICS_OPENING_MIN_SCORE and max_dated_move_24h(card) < MOVEMENT_MIN_ABS:
                 return True
+        if is_money(card, fun_ids=resolved_fun) and money_count >= MAX_MONEY_OPENING:
+            return True
         if is_sports(card):
             if sports_count >= MAX_SPORTS_OPENING:
                 return True

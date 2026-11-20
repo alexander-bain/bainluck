@@ -197,11 +197,16 @@ def test_opening_ten_enforces_mix_caps_adjacency_and_blocks_minor_foreign_politi
     assert len(fun_cards) == 3
     assert len(ls_cards) <= 1
 
-    # Golf does not triple up (<= 1 per sport) and total sports capped at <= 2
+    # Golf does not triple up (<= 1 per sport), total sports capped at <= 2,
+    # non-fun entertainment is not starved by fun-tagged entertainment, and money <= 1
     golf_cards = [c for c in top10 if c3._sport_bucket(c) == "golf"]
     assert len(golf_cards) == 1
     sports_cards = [c for c in top10 if c3.is_sports(c)]
     assert len(sports_cards) <= 2
+    money_cards = [c for c in top10 if c3.is_money(c, fun_ids=FUN_IDS)]
+    assert len(money_cards) <= 1
+    non_fun_ent_cards = [c for c in top10 if c3.is_entertainment(c, fun_ids=FUN_IDS)]
+    assert len(non_fun_ent_cards) >= 1
 
     # Never two grouped cards adjacent
     for a, b in zip(top10, top10[1:]):
@@ -227,7 +232,8 @@ def test_fixed_finished_game_and_blank_category_sports_bundle_count_toward_sport
         _card("ent_1", served_position=9, score=84.0, category="entertainment", title="Box office lead"),
         _card("ent_2", served_position=10, score=83.0, category="entertainment", title="Album debut"),
         _card("tech_3", served_position=11, score=79.0, category="tech", title="Cloud spend"),
-        _card("econ_3", served_position=12, score=78.0, category="economics", title="Housing starts"),
+        _card("tech_4", served_position=12, score=78.0, category="tech", title="Robotics rollout"),
+        _card("ent_3", served_position=13, score=77.0, category="entertainment", title="Festival premiere"),
     ]
     ordered = c3.rank_c3_mix(slate, now=FROZEN_NOW, fun_ids=FUN_IDS, long_shot_ids=LONG_SHOT_IDS)
     top10 = ordered[:10]
@@ -252,4 +258,4 @@ def test_truth_gate_failures_leave_page_and_finished_games_keep_seat():
 def test_frozen_discover_rank_c3_sha256_matches_recorded_freeze():
     rank_path = Path(c3.__file__).resolve()
     digest = hashlib.sha256(rank_path.read_bytes()).hexdigest()
-    assert digest == "e1becccb02926053fca4e261484032b42d7751ecdc7588e35220682d0baf0bf6"
+    assert digest == "87d87057221acda6de19d45e3073473a07193bd8e67fc1619ee8717e8e4ad9a6"
