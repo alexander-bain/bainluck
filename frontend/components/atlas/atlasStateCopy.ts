@@ -133,12 +133,13 @@ export function formatAtlasTimestampLocal(
   if (!iso || typeof iso !== 'string') return null;
   const trimmed = iso.trim();
   if (!trimmed) return null;
-  const tzOpt = options?.timeZone ? { timeZone: options.timeZone } : {};
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
     const dateOnly = parseIsoForPT(trimmed);
     if (!dateOnly) return null;
+    // Bare YYYY-MM-DD dates carry no clock and are anchored at noon UTC;
+    // format in UTC so UTC+13 (e.g. Pacific/Auckland) never shifts the day.
     return new Intl.DateTimeFormat('en-US', {
-      ...tzOpt,
+      timeZone: 'UTC',
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -147,6 +148,21 @@ export function formatAtlasTimestampLocal(
   const date = parseIsoForPT(trimmed);
   if (!date) return null;
   const includeSeconds = options?.includeSeconds ?? false;
+  const resolvedTz =
+    options?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const tzOpt = options?.timeZone ? { timeZone: options.timeZone } : {};
+  if (resolvedTz === 'America/Los_Angeles') {
+    const formatted = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      ...(includeSeconds ? { second: '2-digit' } : {}),
+    }).format(date);
+    return `${formatted} PT`;
+  }
   return new Intl.DateTimeFormat('en-US', {
     ...tzOpt,
     month: 'short',

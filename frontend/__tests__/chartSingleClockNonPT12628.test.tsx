@@ -97,4 +97,29 @@ describe("#12628 — single chart clock outside Pacific Time", () => {
     expect(readoutHtml).not.toContain("5:45");
     expect(readoutHtml).not.toMatch(/\b(PT|PST|PDT)\b/);
   });
+
+  it("keeps PT (never PST or PDT) for America/Los_Angeles readers in winter and summer", () => {
+    const winterLabel = formatAtlasTimestampLocal(ISO, {
+      includeSeconds: true,
+      timeZone: "America/Los_Angeles",
+    });
+    expect(winterLabel).toContain("Nov 6, 2026");
+    expect(winterLabel).toContain("5:45:00 PM PT");
+    expect(winterLabel).not.toMatch(/\b(PST|PDT)\b/);
+
+    // 2026-07-15T01:45:00Z = Jul 14, 2026 6:45:00 PM PDT -> still prints "PT"
+    const summerLabel = formatAtlasTimestampLocal("2026-07-15T01:45:00Z", {
+      includeSeconds: true,
+      timeZone: "America/Los_Angeles",
+    });
+    expect(summerLabel).toContain("Jul 14, 2026");
+    expect(summerLabel).toContain("6:45:00 PM PT");
+    expect(summerLabel).not.toMatch(/\b(PST|PDT)\b/);
+  });
+
+  it("does not shift a bare YYYY-MM-DD date in Pacific/Auckland (UTC+13)", () => {
+    expect(
+      formatAtlasTimestampLocal("2026-11-20", { timeZone: "Pacific/Auckland" }),
+    ).toBe("Nov 20, 2026");
+  });
 });
