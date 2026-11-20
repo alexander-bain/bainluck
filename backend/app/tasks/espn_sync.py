@@ -3695,6 +3695,43 @@ def _name_number_tokens(name: str) -> tuple[str, ...]:
     return tuple(re.findall(r"\d+", name or ""))
 
 
+# #13202: trailing/standalone squad markers that distinguish a reserve, B, or
+# women's side from the first team even when the scorer drops them.
+_RESERVE_OR_WOMENS_SUFFIXES = frozenset({
+    "ii",
+    "iii",
+    "b",
+    "c",
+    "women",
+    "womens",
+    "reserves",
+    "reserve",
+})
+
+
+def _name_squad_suffix_tokens(name: str) -> tuple[str, ...]:
+    """Ordered trailing squad/gender qualifiers in ``name`` (#13202).
+
+    Captures trailing tokens such as ``II``, ``III``, lone ``B``/``C``,
+    ``Women``/``Womens``, and ``Reserves``/``Reserve`` (e.g. ``"LA Galaxy II"``
+    -> ``("ii",)``, ``"Real Sociedad B"`` -> ``("b",)``, ``"Chelsea FC Women"``
+    -> ``("women",)``). Only trailing qualifiers are extracted so a club name
+    with a mid-name initial is unaffected while any reserve/women's suffix
+    must match on both sides.
+    """
+    tokens = re.findall(r"[a-z0-9]+", (name or "").lower())
+    qualifiers: list[str] = []
+    while tokens and tokens[-1] in _RESERVE_OR_WOMENS_SUFFIXES:
+        qualifiers.append(tokens.pop())
+    qualifiers.reverse()
+    return tuple(qualifiers)
+
+
+def _name_distinguishing_tokens(name: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Numeric and reserve/women's suffix tokens that must agree across a fuzzy hit."""
+    return (_name_number_tokens(name), _name_squad_suffix_tokens(name))
+
+
 def fuzzy_hit_is_identical(
     checked_name,
     team_name,
@@ -3709,13 +3746,15 @@ def fuzzy_hit_is_identical(
     not enough: "C Arkansas" drops its one-letter token and scores 1.0 against
     ESPN's "Arkansas" (#9127, Central Arkansas re-wearing the Razorbacks crest).
     A name that differs from the matched ESPN name by a number ("Columbus Crew 2"
-    vs "Columbus Crew") is also refused: ``normalize_name`` strips trailing
-    reserve numbers and single-digit tokens before scoring (#13144).
+    vs "Columbus Crew", 286: B) or by a reserve/women's suffix ("LA Galaxy II",
+    "Real Sociedad B", "Chelsea FC Women", "Arsenal Reserves", #13202) is also
+    refused.
     """
     if checked_name != team_name or best_score < 1.0 or len(best_ids) != 1:
         return False
     if matched_espn_name is not None and (
-        _name_number_tokens(team_name) != _name_number_tokens(matched_espn_name)
+        _name_distinguishing_tokens(team_name)
+        != _name_distinguishing_tokens(matched_espn_name)
     ):
         return False
     return len(_normalize_name_canonical(team_name).split()) >= 2
@@ -3991,7 +4030,7 @@ async def _backfill_team_logos(*, dry_run: bool = False):
                                 best_et = None
                                 best_espn_name = None
                                 best_ids = set()
-                                checked_nums = _name_number_tokens(name)
+                                checked_tokens = _name_distinguishing_tokens(name)
                                 for espn_name, et in espn_by_name.items():
                                     score = _team_name_match_score(name, espn_name)
                                     if score > best_score:
@@ -4004,8 +4043,12 @@ async def _backfill_team_logos(*, dry_run: bool = False):
                                         if (
                                             best_et is not None
                                             and et.espn_id == best_et.espn_id
-                                            and _name_number_tokens(espn_name) == checked_nums
-                                            and _name_number_tokens(best_espn_name or "") != checked_nums
+                                            and _name_distinguishing_tokens(espn_name)
+                                            == checked_tokens
+                                            and _name_distinguishing_tokens(
+                                                best_espn_name or ""
+                                            )
+                                            != checked_tokens
                                         ):
                                             best_espn_name = espn_name
                                 if best_score > 0.5:
