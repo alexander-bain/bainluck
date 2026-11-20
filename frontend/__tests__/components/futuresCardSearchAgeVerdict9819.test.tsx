@@ -1,3 +1,4 @@
+/** @jest-environment jsdom */
 /**
  * #9819 — A SEARCH CARD'S AGE DESCRIBES THE PRICES IT ACTUALLY PRINTS.
  *
@@ -16,10 +17,15 @@
  * The clock is frozen at 2026-10-02 12:00Z, so every relative string is fixed.
  */
 
-import { renderToStaticMarkup } from "react-dom/server";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
 import FuturesCard from "../../components/FuturesCard";
 import type { FuturesMarket } from "../../lib/types";
 import wire from "../fixtures/searchAge9819.json";
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NOW = new Date("2026-10-02T12:00:00.000Z");
 
@@ -51,7 +57,18 @@ function card(board: Board): FuturesMarket {
 }
 
 function html(board: Board): string {
-  return renderToStaticMarkup(<FuturesCard market={card(board)} />);
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  act(() => {
+    root.render(<FuturesCard market={card(board)} />);
+  });
+  const markup = host.innerHTML;
+  act(() => {
+    root.unmount();
+  });
+  host.remove();
+  return markup;
 }
 
 /** The card's footer pip, or null when it renders nothing. */

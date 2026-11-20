@@ -1,3 +1,7 @@
+/** @jest-environment jsdom */
+import { TextDecoder, TextEncoder } from "util";
+Object.assign(globalThis, { TextEncoder, TextDecoder });
+
 /**
  * #10298 — POLYMARKET'S GAME LISTING, BESIDE ITS OWN GAME, PRINTS NO FAVOURITE.
  *
@@ -14,13 +18,36 @@
  * exactly what it printed before.
  */
 
-import { renderToStaticMarkup } from "react-dom/server";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
 import FuturesCard from "../../components/FuturesCard";
 import SearchFamilyCard from "../../components/SearchFamilyCard";
 import type { FuturesFamily, FuturesMarket, FuturesOutcome } from "../../lib/types";
 import type { TypeaheadSuggestion } from "../../lib/api";
 import { countAnswersShown, futuresAnswer, suggestionSubtitle } from "../../lib/searchSuggestionDisplay";
 import { relatedGameListingText } from "../../lib/relatedGameListing";
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { renderToStaticMarkup } = require("react-dom/server") as typeof import("react-dom/server");
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
+
+function renderClientHtml(el: React.ReactElement): string {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  act(() => {
+    root.render(el);
+  });
+  const markup = host.innerHTML;
+  act(() => {
+    root.unmount();
+  });
+  host.remove();
+  return markup;
+}
 
 const GAME_ID = 14780566;
 const LISTING_ID = 61040985;
@@ -72,7 +99,7 @@ describe("flat Futures & Markets card", () => {
   beforeEach(() => { jest.useFakeTimers({ now: new Date("2026-10-03T07:40:00Z") }); });
   afterEach(() => { jest.useRealTimers(); });
   test("beside its game: the link replaces the rows, the price age and the corner count", () => {
-    const html = renderToStaticMarkup(<FuturesCard market={listing({ related_game_listing: KEY })} />);
+    const html = renderClientHtml(<FuturesCard market={listing({ related_game_listing: KEY })} />);
     expect(html).toContain("4 markets on this game");
     expect(html).not.toMatch(/\d%/);
     expect(html).not.toContain("Spread -5.5");
@@ -80,7 +107,7 @@ describe("flat Futures & Markets card", () => {
     expect(html).not.toContain("As of");
   });
   test("control: the same card without the key draws its rows and count as before", () => {
-    const html = renderToStaticMarkup(<FuturesCard market={listing()} />);
+    const html = renderClientHtml(<FuturesCard market={listing()} />);
     expect(html).toContain("53%");
     expect(html).toContain("Spread -5.5");
     expect(html).toMatch(/>4<\/span>/);

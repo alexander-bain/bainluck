@@ -13,7 +13,7 @@ import MachinerySectionRenderer, {
 } from "./MachinerySectionRenderer";
 import { fetchPairedMetricsByCeremony } from "@/lib/api";
 import { APP_STORE_URL } from "@/lib/brandCopy";
-import { formatAsOfStamp } from "@/lib/asOfStamp";
+import { AsOfStamp } from "@/components/AsOfStamp";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { PairedMetricSet } from "@/lib/discover/visualForms";
 import type { FeedFuturesData, FeedItem } from "@/lib/types";
@@ -479,9 +479,7 @@ export default function CollectionHub({ slug, initialHub = null }: { slug: strin
           More sets worth a look
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {shown.moreSets.map((set) => {
-            const asOfLabel = formatAsOfStamp(set.asOf);
-            return (
+          {shown.moreSets.map((set) => (
               <Link
                 key={set.slug}
                 href={set.href}
@@ -501,14 +499,11 @@ export default function CollectionHub({ slug, initialHub = null }: { slug: strin
                       <span className="font-mono font-semibold text-accent-brand">
                         {formatProbabilityPercent(set.leadProbability, { rendered: set.leadRenderedPercent })}
                       </span>
-                      {asOfLabel && (
-                        <>
-                          {" "}
-                          <span className="text-text-muted whitespace-nowrap" suppressHydrationWarning>
-                            · {asOfLabel}
-                          </span>
-                        </>
-                      )}
+                      <AsOfStamp
+                        iso={set.asOf}
+                        prefix=" · "
+                        className="text-text-muted whitespace-nowrap"
+                      />
                     </span>
                   ) : (
                     <span className="text-text-muted">Live probabilities</span>
@@ -519,8 +514,7 @@ export default function CollectionHub({ slug, initialHub = null }: { slug: strin
                   </span>
                 </div>
               </Link>
-            );
-          })}
+          ))}
         </div>
       </section>
     )}
