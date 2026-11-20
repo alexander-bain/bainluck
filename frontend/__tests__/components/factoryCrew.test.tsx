@@ -191,7 +191,7 @@ it("shows carrying, standing in line, working and sleeping from snapshot evidenc
   ).toBe("working");
 });
 
-it("counts each delivery line and keeps held changes and quiet drafts off the floor total", async () => {
+it("counts deliveries in each Live bay and keeps held changes and quiet drafts off the floor", async () => {
   watchMotion();
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -215,14 +215,12 @@ it("counts each delivery line and keeps held changes and quiet drafts off the fl
         />,
       ),
     );
-    const stats = container.querySelector('[aria-label="The factory at a glance"]')!;
-    expect(Array.from(stats.querySelectorAll("strong"), (n) => n.textContent)).toEqual([
-      "1", "1", "1",
-    ]);
+    expect(container.textContent).not.toMatch(/Shipped today|On the floor now|Busiest station/);
     for (const line of ["Website", "Apps"]) {
       const row = container.querySelector(`[data-factory-row="${line}"]`)!;
-      expect(row.textContent).toContain("1 shipped");
-      expect(row.querySelector(`[data-bay="Live"] [data-crate="${shipped.number}"]`)).not.toBeNull();
+      const live = row.querySelector('[data-bay="Live"]')!;
+      expect(live.textContent).toContain("1 shipped");
+      expect(live.querySelector(`[data-crate="${shipped.number}"]`)).not.toBeNull();
     }
     const shelf = container.querySelector('[aria-label="Side shelves"]')!;
     expect(shelf.textContent).toContain("Held for 1.0.8 1");

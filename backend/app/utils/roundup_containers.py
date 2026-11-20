@@ -933,7 +933,7 @@ ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S = 300.0
 #: while background prewarm refreshes them, instead of hitting a 0.5 s cold DB
 #: timeout and dropping groupings from Discover (#12288).
 ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S = 1800.0
-ROUNDUP_MACHINERY_LIVE_STALE_TTL_S = 120.0
+ROUNDUP_MACHINERY_LIVE_STALE_TTL_S = 300.0
 #: Redis hash tracking `machinery-*` slugs that currently hold a live game (or one
 #: starting within `MACHINERY_IMMINENT_START_WINDOW_S`), read by the 30s realtime
 #: republisher (`_prewarm_live_feed_shapes`) so live slates never expire between
@@ -1059,6 +1059,54 @@ def _roundup_cache_stale_ttl_seconds(
     return _roundup_cache_ttl_seconds(slug, container_payload)
 
 
+def store_roundup_cache_sync(
+    rc: Any,
+    slug: str,
+    ts: float,
+    feed_item: Optional[dict[str, Any]],
+    container_payload: Optional[dict[str, Any]],
+) -> bool:
+    """Publish a roundup cache entry + live-slug registration via sync Redis.
+
+    Used by Celery prewarm workers only (where `asyncio.run()` closes the event
+    loop between tasks and breaks process-global async Redis pools). Never
+    called from the web event loop (#969, #12288).
+    """
+    if rc is None or not hasattr(rc, "set"):
+        return False
+    ttl_s = _roundup_cache_ttl_seconds(slug, container_payload)
+    stale_ttl_s = _roundup_cache_stale_ttl_seconds(slug, container_payload)
+    encoded = json.dumps(
+        {
+            "built_at": ts,
+            "ttl_s": ttl_s,
+            "stale_ttl_s": stale_ttl_s,
+            "feed_item": feed_item,
+            "container_payload": container_payload,
+        },
+        separators=(",", ":"),
+    )
+    try:
+        rc.set(_redis_cache_key(slug), encoded, ex=int(stale_ttl_s))
+        if _is_machinery_producer_slug(slug) and container_payload is not None:
+            if _roundup_payload_needs_live_rail(container_payload, now_ts=ts):
+                if hasattr(rc, "hset"):
+                    rc.hset(MACHINERY_LIVE_SLUGS_KEY, slug, str(ts))
+                if hasattr(rc, "expire"):
+                    rc.expire(MACHINERY_LIVE_SLUGS_KEY, MACHINERY_LIVE_SLUGS_TTL_S)
+            else:
+                if hasattr(rc, "hdel"):
+                    rc.hdel(MACHINERY_LIVE_SLUGS_KEY, slug)
+        return True
+    except Exception:  # noqa: BLE001 — cache write is best-effort
+        logger.warning(
+            "roundup_containers: sync Redis cache write failed for %s",
+            slug,
+            exc_info=True,
+        )
+        return False
+
+
 async def _store_roundup_cache_entry(
     cache_key: tuple[str, Any],
     slug: str,
@@ -1077,6 +1125,7 @@ async def _store_roundup_cache_entry(
         copy.deepcopy(container_payload),
     )
     if isinstance(db, AsyncSession):
+        wrote_async = False
         try:
             from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
@@ -1091,7 +1140,7 @@ async def _store_roundup_cache_entry(
                 separators=(",", ":"),
             )
             client = await get_shared_async_redis()
-            await bounded_redis_call(
+            set_res = await bounded_redis_call(
                 lambda: client.set(
                     _redis_cache_key(slug),
                     encoded,
@@ -1099,7 +1148,8 @@ async def _store_roundup_cache_entry(
                 ),
                 treat_none_as_miss=False,
             )
-            if _is_machinery_producer_slug(slug) and container_payload is not None:
+            wrote_async = bool(set_res.is_ok)
+            if wrote_async and _is_machinery_producer_slug(slug) and container_payload is not None:
                 if _roundup_payload_needs_live_rail(container_payload, now_ts=ts):
                     await bounded_redis_call(
                         lambda: client.hset(MACHINERY_LIVE_SLUGS_KEY, slug, str(ts)),
@@ -1431,13 +1481,19 @@ def _first_present_iso(*values: Any) -> Optional[str]:
     return None
 
 
+def _valid_rendered_percent(value: Any) -> Optional[int]:
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 100:
+        return value
+    return None
+
+
 def _extract_more_set_lead(
     payload: Mapping[str, Any],
-) -> tuple[Optional[str], Optional[float], Optional[str]]:
-    """Extract the lead (label, probability, as_of) strictly from the set's own first row."""
+) -> tuple[Optional[str], Optional[float], Optional[int], Optional[str]]:
+    """Extract the lead (label, probability, rendered_percent, as_of) strictly from the set's own first row."""
     sections = payload.get("sections")
     if not isinstance(sections, Sequence) or isinstance(sections, (str, bytes)):
-        return None, None, None
+        return None, None, None, None
     first_member: Optional[Mapping[str, Any]] = None
     for section in sections:
         if not isinstance(section, Mapping):
@@ -1449,17 +1505,17 @@ def _extract_more_set_lead(
                 first_member = candidate
             break
     if first_member is None:
-        return None, None, None
+        return None, None, None, None
 
     card = first_member.get("card")
     if not isinstance(card, Mapping):
-        return None, None, None
+        return None, None, None, None
     mtype = first_member.get("type")
 
     if mtype == MEMBER_MARKET:
         outcomes = card.get("top_outcomes")
         if not isinstance(outcomes, Sequence) or isinstance(outcomes, (str, bytes)):
-            return None, None, None
+            return None, None, None, None
         valid_outcomes: list[tuple[Mapping[str, Any], str, float]] = []
         for outcome in outcomes:
             if not isinstance(outcome, Mapping):
@@ -1472,7 +1528,7 @@ def _extract_more_set_lead(
             ):
                 valid_outcomes.append((outcome, str(outcome.get("name") or "").strip(), float(prob)))
         if not valid_outcomes:
-            return None, None, None
+            return None, None, None, None
 
         card_name = str(card.get("name") or "").strip()
         outcome_names_lower = {nm.lower() for _, nm, _ in valid_outcomes}
@@ -1486,7 +1542,9 @@ def _extract_more_set_lead(
             chosen_outcome, raw_name, prob = max(valid_outcomes, key=lambda item: item[2])
             label = raw_name or card_name
         if not label:
-            return None, None, None
+            return None, None, None, None
+
+        rendered_pct = _valid_rendered_percent(chosen_outcome.get("rendered_percent"))
 
         source_obs: Optional[str] = None
         smark = chosen_outcome.get("source_mark")
@@ -1500,12 +1558,13 @@ def _extract_more_set_lead(
         as_of = _first_present_iso(
             card.get("price_observed_at"),
             card.get("prices_updated_at"),
+            card.get("newest_outcome_updated_at"),
             source_obs,
             card.get("updated_at"),
             card.get("last_updated"),
             card.get("odds_updated_at"),
         )
-        return label, round(prob, 4), as_of
+        return label, round(prob, 4), rendered_pct, as_of
 
     if mtype == "event":
         home = str(card.get("home_team") or "").strip()
@@ -1517,15 +1576,15 @@ def _extract_more_set_lead(
             hp = odds.get("home_win_probability")
         if not (isinstance(ap, (int, float)) and not isinstance(ap, bool)):
             ap = odds.get("away_win_probability")
-        pairs: list[tuple[str, float]] = []
+        pairs: list[tuple[str, float, Optional[int]]] = []
         if home and isinstance(hp, (int, float)) and not isinstance(hp, bool) and 0.0 <= float(hp) <= 1.0:
-            pairs.append((home, float(hp)))
+            pairs.append((home, float(hp), _valid_rendered_percent(odds.get("home_rendered_percent"))))
         if away and isinstance(ap, (int, float)) and not isinstance(ap, bool) and 0.0 <= float(ap) <= 1.0:
-            pairs.append((away, float(ap)))
+            pairs.append((away, float(ap), _valid_rendered_percent(odds.get("away_rendered_percent"))))
         if not pairs:
-            return None, None, None
+            return None, None, None, None
         pairs.sort(key=lambda item: item[1], reverse=True)
-        label, prob = pairs[0]
+        label, prob, rendered_pct = pairs[0]
         src_updated: Optional[str] = None
         wps = card.get("win_probability_sources")
         if isinstance(wps, Mapping):
@@ -1537,14 +1596,15 @@ def _extract_more_set_lead(
                         break
         as_of = _first_present_iso(
             card.get("hero_probability_observed_at"),
+            card.get("newest_outcome_updated_at"),
             odds.get("updated_at"),
             src_updated,
             card.get("updated_at"),
             card.get("last_updated"),
         )
-        return label, round(prob, 4), as_of
+        return label, round(prob, 4), rendered_pct, as_of
 
-    return None, None, None
+    return None, None, None, None
 
 
 def summarize_more_set_card(
@@ -1586,7 +1646,7 @@ def summarize_more_set_card(
     if member_count <= 0:
         return None
 
-    lead_label, lead_probability, as_of = _extract_more_set_lead(payload)
+    lead_label, lead_probability, lead_rendered_percent, as_of = _extract_more_set_lead(payload)
     if not lead_label or lead_probability is None or not as_of:
         return None
     observed_dt = _parse_iso_timestamp(as_of)
@@ -1601,7 +1661,7 @@ def summarize_more_set_card(
     dek = raw_dek.strip() if isinstance(raw_dek, str) and raw_dek.strip() else None
     raw_cat = container.get("category")
     category = raw_cat.strip().lower() if isinstance(raw_cat, str) and raw_cat.strip() else None
-    return {
+    out: dict[str, Any] = {
         "slug": slug,
         "name": name,
         "href": f"/collections/{slug}",
@@ -1613,6 +1673,9 @@ def summarize_more_set_card(
         "lead_probability": lead_probability,
         "as_of": as_of,
     }
+    if lead_rendered_percent is not None:
+        out["lead_rendered_percent"] = lead_rendered_percent
+    return out
 
 
 def _pick_diverse_more_sets(

@@ -499,10 +499,15 @@ export default function CollectionHub({ slug, initialHub = null }: { slug: strin
                     <span className="text-text-secondary">
                       <span className="font-medium text-text-primary">{set.leadLabel}</span>{" "}
                       <span className="font-mono font-semibold text-accent-brand">
-                        {formatProbabilityPercent(set.leadProbability)}
+                        {formatProbabilityPercent(set.leadProbability, { rendered: set.leadRenderedPercent })}
                       </span>
                       {asOfLabel && (
-                        <span className="text-text-muted" suppressHydrationWarning> · {asOfLabel}</span>
+                        <>
+                          {" "}
+                          <span className="text-text-muted whitespace-nowrap" suppressHydrationWarning>
+                            · {asOfLabel}
+                          </span>
+                        </>
                       )}
                     </span>
                   ) : (

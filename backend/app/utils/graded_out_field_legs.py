@@ -37,7 +37,7 @@ import hashlib
 import logging
 from collections.abc import Iterable
 
-from sqlalchemy import select
+from sqlalchemy import inspect as sa_inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import FuturesOutcome
@@ -78,15 +78,58 @@ def candidate_leg_ids(markets: Iterable) -> dict[int, int]:
     }
 
 
+def _loaded_grade(outcome) -> tuple[bool, bool]:
+    """Return ``(has_loaded_grade, is_graded_out)`` for a DB-loaded ORM row.
+
+    Direct ORM reads (``_score_sports_mode_futures``, ``load_sports_markets``)
+    already load ``is_winner`` and ``resolution_source`` via
+    ``OUTCOME_LOAD_ONLY_EXTRA``; reading them directly from ``__dict__`` on a
+    non-transient ``FuturesOutcome`` whose SQLAlchemy state confirms both
+    columns are loaded avoids a second ``futures_outcomes`` round trip (up to
+    ~2 s on a busy Sports cold build, #11931) without risking a lazy load or
+    reading defaults off snapshot/stub objects.
+    """
+    if not isinstance(outcome, FuturesOutcome):
+        return (False, False)
+    state = sa_inspect(outcome, raiseerr=False)
+    if state is None or state.transient:
+        return (False, False)
+    if "is_winner" in state.unloaded or "resolution_source" in state.unloaded:
+        return (False, False)
+    values = outcome.__dict__
+    if "is_winner" not in values or "resolution_source" not in values:
+        return (False, False)
+    return (
+        True,
+        values["is_winner"] is False
+        and values["resolution_source"] in AUTHORITATIVE_SOURCES,
+    )
+
+
 async def graded_out_leg_ids_by_market(
     db, markets: Iterable
 ) -> dict[int, frozenset[int]]:
     """``{market id: outcome ids graded out}`` for this pool. Never raises."""
     try:
-        candidates = candidate_leg_ids(markets)
-        if not candidates:
-            return {}
-        ids = sorted(candidates)
+        out: dict[int, set[int]] = {}
+        db_candidates: dict[int, int] = {}
+        for market in markets:
+            if not _is_open_field(market):
+                continue
+            for outcome in market.outcomes:
+                if not _price_admits_loss(outcome):
+                    continue
+                has_loaded, is_out = _loaded_grade(outcome)
+                if has_loaded:
+                    if is_out:
+                        out.setdefault(market.id, set()).add(int(outcome.id))
+                else:
+                    db_candidates[outcome.id] = market.id
+
+        if not db_candidates:
+            return {market_id: frozenset(m_ids) for market_id, m_ids in out.items()}
+
+        ids = sorted(db_candidates)
 
         async def _query_graded_out() -> list[int]:
             found: list[int] = []
@@ -114,9 +157,8 @@ async def graded_out_leg_ids_by_market(
         else:
             graded_ids = await _query_graded_out()
 
-        out: dict[int, set[int]] = {}
         for outcome_id in graded_ids:
-            market_id = candidates.get(outcome_id)
+            market_id = db_candidates.get(outcome_id)
             if market_id is not None:
                 out.setdefault(market_id, set()).add(outcome_id)
         return {market_id: frozenset(m_ids) for market_id, m_ids in out.items()}
