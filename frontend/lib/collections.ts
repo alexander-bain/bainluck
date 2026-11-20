@@ -41,6 +41,7 @@ export interface MachineryVisualBlock {
     | "benchmark_strip"
     | "probability_history_chart";
   initial_visible_limit?: number;
+  item_noun?: string | null;
   paired_metric_set?: import("@/lib/discover/visualForms").PairedMetricSet;
   items?: Record<string, unknown>[];
 }

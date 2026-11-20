@@ -51,6 +51,9 @@ def _sample_markets() -> list[dict]:
         # Must be excluded:
         {"id": 57774265, "name": "Roblox hours engaged in fiscal 2026", "status": "open", "source": "kalshi", "category": "economics", "outcomes": [{"id": 46, "name": "Yes", "probability": 0.55}]},
         {"id": 9990001, "name": "Taylor Swift wedding engaged before 2027?", "status": "open", "source": "kalshi", "category": "entertainment", "outcomes": [{"id": 47, "name": "Yes", "probability": 0.90}]},
+        # Single-person engagement markets (must be excluded so every row is a couple):
+        {"id": 109394, "name": "Will Bobbi Althoff be engaged before 2027?", "status": "open", "source": "kalshi", "category": "entertainment", "outcomes": [{"id": 48, "name": "Yes", "probability": 0.14}]},
+        {"id": 109389, "name": "IShowSpeed: Engaged before 2027?", "status": "open", "source": "kalshi", "category": "entertainment", "outcomes": [{"id": 49, "name": "Yes", "probability": 0.12}]},
     ]
 
 
@@ -67,6 +70,7 @@ async def test_batch1_three_fun_groupings_build_cleanly_with_full_parity_and_twi
     assert wc_prod.stage == "preview" and wc_prod.look == "map"
     wc_res = await produce_container_machinery(db, wc_def, now=NOW)
     assert wc_res.machinery_card["form_id"] == "benchmark_strip"
+    assert wc_res.sections[0]["visual_block"]["item_noun"] == "cities"
     assert wc_res.machinery_card["stage"] == "preview"
     assert wc_res.machinery_card["look"] == "map"
     assert [r["name"] for r in wc_res.machinery_card["rows"]] == ["Pittsburgh", "Milwaukee", "Detroit"]
@@ -114,11 +118,14 @@ async def test_batch1_three_fun_groupings_build_cleanly_with_full_parity_and_twi
     shown_ids = [m["id"] for m in eg_res.members]
     assert 57774265 not in shown_ids, "Roblox hours engaged must be excluded"
     assert 9990001 not in shown_ids, "Taylor Swift wedding must be excluded (273: B)"
+    assert 109394 not in shown_ids, "Single-person Bobbi Althoff market must be excluded"
+    assert 109389 not in shown_ids, "Single-person IShowSpeed market must be excluded"
     assert 8212355 in shown_ids, "Politics-filed couple must be included"
     # Reversed-order Sweeney/Braun twin (109618) deduped into covered_market_ids
     assert 61085868 in shown_ids and 109618 not in shown_ids
     assert 109618 in eg_res.covered_market_ids
-    assert eg_res.title.startswith("Scooter Braun & Sydney Sweeney lead Who Gets Engaged at 36%")
+    assert eg_res.sections[0]["visual_block"]["item_noun"] == "couples"
+    assert eg_res.title == "Scooter Braun & Sydney Sweeney are the likeliest to get engaged at 36%, with Timothée Chalamet & Kylie Jenner at 13%"
     eg_fi = compose_roundup_feed_item(eg_prod, eg_res)
     assert 109618 in eg_fi["data"]["member_ids"]
     eg_cp = compose_roundup_container(eg_prod, eg_res)
