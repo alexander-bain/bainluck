@@ -55,6 +55,10 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
     /// opening line). Two-way only, both or neither; shown once the game is final.
     let pregameAwayPercent: Int?
     let pregameHomePercent: Int?
+    /// #13000 (Decision 250-A) — `true` only when a live match has no score feed
+    /// carrying it (ATP Challenger / ITF tennis, etc.), so the Live Activity omits
+    /// the Score column rather than showing dashes. Absent on older servers or covered games.
+    let scoreSourceUnavailable: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case eventID, homeTeam, awayTeam, homeScore, awayScore, lifecycle
@@ -65,6 +69,7 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         case result
         case homeHeadlineTenths, awaySecondaryColorHex
         case sport, pregameAwayPercent, pregameHomePercent
+        case scoreSourceUnavailable
     }
 
     init(from decoder: Decoder) throws {
@@ -110,6 +115,8 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
                                         home: (try? c.decodeIfPresent(Int.self, forKey: .pregameHomePercent)) ?? nil)
         pregameAwayPercent = pregame?.away
         pregameHomePercent = pregame?.home
+        let decodedUnavailable = (try? c.decodeIfPresent(Bool.self, forKey: .scoreSourceUnavailable)) ?? nil
+        scoreSourceUnavailable = (lifecycle == .live && homeScore == nil && awayScore == nil && decodedUnavailable == true) ? true : nil
         guard eventID > 0,
               !homeTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !awayTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -136,7 +143,8 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
           projectedHomeScore: Int? = nil, projectedAwayScore: Int? = nil,
           projectionLabel: String? = nil, servedResult: String? = nil,
           awaySecondaryColorHex: String? = nil,
-          pregameAwayPercent: Int? = nil, pregameHomePercent: Int? = nil) {
+          pregameAwayPercent: Int? = nil, pregameHomePercent: Int? = nil,
+          scoreSourceUnavailable: Bool? = nil) {
         let home = homeTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         let away = awayTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         guard eventID > 0, !home.isEmpty, !away.isEmpty else { return nil }
@@ -184,6 +192,7 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         let pregame = Self.cleanPregame(away: pregameAwayPercent, home: pregameHomePercent)
         self.pregameAwayPercent = pregame?.away
         self.pregameHomePercent = pregame?.home
+        self.scoreSourceUnavailable = (lifecycle == .live && self.homeScore == nil && self.awayScore == nil && scoreSourceUnavailable == true) ? true : nil
     }
 
     /// A short plain sport key ("americanfootball_nfl"), else none.

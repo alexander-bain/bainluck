@@ -13,6 +13,8 @@ struct SourceMarkButton: View {
     let number: Double?
     /// Optional team or competitor name when the card shows two sides (#12989 follow-up).
     let subject: String?
+    /// Optional row caption / market label under `subject` when multiple rows share the same subject (#13113 follow-up).
+    let subtitle: String?
     /// True when the tapped number is a finished game's pregame reading (#12989 follow-up).
     let isPregame: Bool
     /// The font size of the number the ring follows; the ring is 0.7 of it.
@@ -31,6 +33,7 @@ struct SourceMarkButton: View {
         _ mark: SourceMark?,
         number: Double? = nil,
         subject: String? = nil,
+        subtitle: String? = nil,
         isPregame: Bool = false,
         numberSize: CGFloat,
         compactRow: Bool = false,
@@ -40,6 +43,7 @@ struct SourceMarkButton: View {
         self.mark = mark
         self.number = number
         self.subject = subject
+        self.subtitle = subtitle
         self.isPregame = isPregame
         self.numberSize = numberSize
         self.compactRow = compactRow
@@ -64,6 +68,7 @@ struct SourceMarkButton: View {
                 mark: mark,
                 number: number,
                 subject: subject,
+                subtitle: subtitle,
                 isPregame: isPregame,
                 showsTenths: showsTenths
             )
@@ -81,6 +86,7 @@ struct SourceMarkSheet: View {
     let mark: SourceMark
     var number: Double? = nil
     var subject: String? = nil
+    var subtitle: String? = nil
     var isPregame: Bool = false
     var showsTenths: Bool = false
     var now: Date = Date()
@@ -104,6 +110,11 @@ struct SourceMarkSheet: View {
         if !trimmed.isEmpty { return trimmed }
         if isPregame { return "Pregame" }
         return nil
+    }
+
+    static func subtitleLine(_ subtitle: String?) -> String? {
+        let trimmed = subtitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// When one unscaled venue stands behind the tapped number and its rounded
@@ -184,11 +195,12 @@ struct SourceMarkSheet: View {
     var body: some View {
         let headlineText = Self.headline(number, showsTenths: showsTenths)
         let contextText = Self.contextLine(subject: subject, isPregame: isPregame)
+        let subtitleText = Self.subtitleLine(subtitle)
         let singleAttribution = Self.singleUnscaledAttribution(mark, headline: headlineText, showsTenths: showsTenths, now: now)
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if contextText != nil || headlineText != nil {
+                    if contextText != nil || subtitleText != nil || headlineText != nil {
                         VStack(alignment: .leading, spacing: 2) {
                             if let contextText {
                                 Text(contextText)
@@ -196,10 +208,18 @@ struct SourceMarkSheet: View {
                                     .foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
+                            if let subtitleText {
+                                Text(subtitleText)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                             if let headlineText {
                                 Text(headlineText)
                                     .font(.system(size: 44, weight: .bold))
                                     .monospacedDigit()
+                                    .padding(.top, subtitleText != nil ? 2 : 0)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }

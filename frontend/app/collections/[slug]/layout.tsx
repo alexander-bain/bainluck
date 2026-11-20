@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { collectionPath, fetchCollection } from "@/lib/collections";
+import { collectionPath } from "@/lib/collections";
+import { loadServerCollection } from "./serverCollection";
 
 type CollectionPageProps = { params: { slug: string } };
 
@@ -10,16 +11,16 @@ export async function generateMetadata({ params }: CollectionPageProps): Promise
   let description = "This collection is temporarily unavailable. Please try again.";
   let unavailable = false;
   if (path) {
-    try {
-      // A shared link names only a fresh public collection. A transient read
-      // failure keeps a neutral identity without claiming it does not exist.
-      const hub = await fetchCollection(params.slug, AbortSignal.timeout(2500));
+    // A shared link names only a fresh public collection. A transient read
+    // failure keeps a neutral identity without claiming it does not exist.
+    const hub = await loadServerCollection(params.slug);
+    if (hub) {
       if (hub.title) title = hub.title;
       description = hub.state === "published"
         ? hub.subtitle ?? `${hub.edition}. ${hub.note ? `${hub.note} ` : ""}Explore games, results and related markets.`
         : hub.note ?? description;
       unavailable = hub.state !== "published";
-    } catch { /* metadata must not prevent the client from retrying its fresh read */ }
+    }
   } else unavailable = true;
   const socialTitle = `${title} | Bain Luck`;
   const images = path ? [{ url: `${path}/opengraph-image`, width: 1200, height: 630, alt: title }] : [];

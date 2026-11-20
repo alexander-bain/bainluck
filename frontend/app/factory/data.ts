@@ -1,5 +1,5 @@
-import type { FactoryData } from "./types";
-import { stationNames } from "./activity";
+import { factoryEventKinds, type FactoryData, type FloorEvent } from "./types";
+import { stationNames, stations } from "./activity";
 
 export const FACTORY_DATA_URL =
   "https://github.com/alexander-bain/bainluck/releases/download/factory-data/factory.json";
@@ -8,6 +8,7 @@ const MAX_CACHE_AGE_MS = 2 * 60_000;
 export interface FactoryRead {
   data: FactoryData | null;
   lastGoodAt: string | null;
+  readAt?: string;
   readFailed: boolean;
 }
 
@@ -17,6 +18,29 @@ interface VerifiedRead {
 }
 
 type LoadVerifiedRead = () => Promise<VerifiedRead>;
+
+function isProgress(done?: number, total?: number) {
+  return typeof done === "number" && typeof total === "number" &&
+    Number.isSafeInteger(done) && Number.isSafeInteger(total) &&
+    done >= 0 && total > 0 && done <= total;
+}
+
+function isEvent(event: FloorEvent) {
+  return event && /^[a-f0-9]{20}$/.test(event.id) &&
+    factoryEventKinds.includes(event.kind) &&
+    Number.isSafeInteger(event.number) && event.number > 0 &&
+    ["Server", "Website", "Apps"].includes(event.line) &&
+    ["S", "B", "C", "D", "E", "F", "W", "Other"].includes(event.builder) &&
+    stations.includes(event.station) &&
+    (event.from === undefined
+      ? event.kind !== "move" && event.kind !== "returned"
+      : stations.includes(event.from)) &&
+    Number.isFinite(Date.parse(event.at)) &&
+    Number.isFinite(Date.parse(event.observed_at)) &&
+    (event.kind !== "check" ||
+      (isProgress(event.done, event.total) &&
+        ["passed", "failed", "finished"].includes(event.outcome ?? "")));
+}
 
 function notesForSnapshot(payload: FactoryData) {
   const note = payload.notes;
@@ -52,6 +76,8 @@ function validateSnapshot(payload: FactoryData): FactoryData {
     !Array.isArray(payload.coverage) ||
     !payload.coverage.every((note: unknown) => typeof note === "string") ||
     !payload.signals ||
+    !Array.isArray(payload.events ?? []) ||
+    !(payload.events ?? []).every(isEvent) ||
     !Array.isArray(payload.transitions ?? []) ||
     !(payload.transitions ?? []).every(
       (transfer: NonNullable<FactoryData["transitions"]>[number]) =>
@@ -101,6 +127,14 @@ function validateSnapshot(payload: FactoryData): FactoryData {
         Number.isSafeInteger(change.number) &&
         change.number > 0 &&
         typeof change.title === "string" &&
+        (change.check_progress === undefined ||
+          (change.check_progress !== null &&
+            isProgress(change.check_progress.done, change.check_progress.total))) &&
+        (change.approvals === undefined ||
+          (change.approvals !== null &&
+            [change.approvals.bot, change.approvals.fable].every(
+              (at) => at === undefined || Number.isFinite(Date.parse(at)),
+            ))) &&
         (change.held_for_108 === undefined ||
           typeof change.held_for_108 === "boolean") &&
         ["Server", "Website", "Apps"].includes(change.line) &&
@@ -134,6 +168,7 @@ function validateSnapshot(payload: FactoryData): FactoryData {
       ? { read_expires_at: payload.read_expires_at }
       : {}),
     ...(payload.transitions ? { transitions: payload.transitions } : {}),
+    ...(payload.events ? { events: payload.events } : {}),
     ...(payload.stops ? { stops: payload.stops } : {}),
     ...(notes ? { notes } : {}),
     changes: payload.changes,
@@ -234,6 +269,7 @@ export function createFactoryReader(
     return {
       data: lastGood?.data ?? null,
       lastGoodAt: lastGood?.data.generated_at ?? null,
+      ...(lastGood ? { readAt: new Date(lastGood.checkedAt).toISOString() } : {}),
       readFailed,
     };
   };

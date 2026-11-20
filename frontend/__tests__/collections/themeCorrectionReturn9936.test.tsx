@@ -267,11 +267,8 @@ test("multi-page withdrawal + Back return replaces stale page 2, clears withdraw
   expect(renderedMembers()).not.toContain("market:104");
   expect(element.textContent).toContain("4 of 5 markets");
 
-  const refreshBtn = Array.from(element.querySelectorAll("button")).find(
-    (b) => b.textContent === "Refresh",
-  )!;
   await act(async () => {
-    refreshBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    window.dispatchEvent(new Event("focus"));
   });
   expect(renderedMembers()).toEqual(["market:101", "market:102", "market:103", "market:105"]);
   expect(renderedMembers()).not.toContain("market:104");
@@ -366,8 +363,9 @@ const loadMoreButton = () =>
   Array.from(element.querySelectorAll("button")).find(
     (b) => b.textContent === "Load more" || b.textContent === "Loading…",
   )!;
-const refreshButton = () =>
-  Array.from(element.querySelectorAll("button")).find((b) => b.textContent === "Refresh")!;
+const triggerRefresh = () => {
+  window.dispatchEvent(new Event("focus"));
+};
 
 test("settling revision 7 clears a revision-5 pagination error", async () => {
   let refreshed = false;
@@ -387,7 +385,7 @@ test("settling revision 7 clears a revision-5 pagination error", async () => {
   // Refresh settles revision 7 with no Load more in between: the revision-5 error goes with it.
   refreshed = true;
   await act(async () => {
-    refreshButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    triggerRefresh();
   });
   expect(element.querySelector('[data-collection-pager="7"]')).not.toBeNull();
   expect(element.textContent).not.toContain("Couldn't load more markets. Please try again.");
@@ -417,7 +415,7 @@ test("settling revision 7 aborts an in-flight revision-5 page read", async () =>
 
   refreshed = true;
   await act(async () => {
-    refreshButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    triggerRefresh();
   });
   expect(element.querySelector('[data-collection-pager="7"]')).not.toBeNull();
   expect(pageSignal?.aborted).toBe(true);
@@ -447,7 +445,7 @@ test("a refresh at the same revision leaves an in-flight page read running", asy
     loadMoreButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
   await act(async () => {
-    refreshButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    triggerRefresh();
   });
   expect(pageSignal?.aborted).toBe(false);
   expect(loadMoreButton().textContent).toBe("Loading…");

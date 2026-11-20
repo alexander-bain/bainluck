@@ -18,6 +18,7 @@ import urllib.parse
 
 from model import build, instant, iso, public_title, PACIFIC, TRUSTED
 from ci_queue import attach_machine_reason, machine_queue
+from events import add_events
 from notes import make_notes
 from signals import commands_from, test_file
 
@@ -434,10 +435,38 @@ def contains(commit, ancestor):
     return result.returncode == 0
 
 
+def deployment_start(context):
+    """Use a provider's explicit start message or the master deploy job."""
+    description = (context.get("description") or "").strip().lower()
+    if context.get("state") == "PENDING":
+        if (
+            context.get("context") == "Vercel"
+            and description == "vercel is deploying your app"
+        ):
+            return "Website", context["createdAt"]
+        if (
+            context.get("context") == "Bain Luck | TestFlight from master"
+            and description == "in progress"
+        ):
+            return "Apps", context["createdAt"]
+    suite = context.get("checkSuite") or {}
+    workflow = ((suite.get("workflowRun") or {}).get("workflow") or {}).get("name")
+    if (
+        context.get("name") == "deploy"
+        and workflow == "CI"
+        and context.get("status") in {"IN_PROGRESS", "COMPLETED"}
+        and context.get("conclusion") != "SKIPPED"
+        and context.get("startedAt")
+    ):
+        return "Server", context["startedAt"]
+    return None
+
+
 def history_signals(api, midnight):
     """Read actual status contexts on master ancestry, including batched merges."""
     first_parent = set(git("rev-list", "--first-parent", "origin/master").splitlines())
     receipts = []
+    starts = []
     latest = {}
     cursor = None
     while True:
@@ -445,7 +474,10 @@ def history_signals(api, midnight):
           defaultBranchRef { target { ... on Commit { history(first:100,after:$cursor) {
             pageInfo {hasNextPage endCursor} nodes { oid committedDate
               statusCheckRollup { contexts(first:100) { nodes {
-                ... on StatusContext { context state createdAt }
+                ... on StatusContext { context state createdAt description }
+                ... on CheckRun { name status startedAt conclusion checkSuite {
+                  workflowRun { workflow { name } }
+                } }
               } } }
             }
           } } } }
@@ -464,6 +496,11 @@ def history_signals(api, midnight):
                 .get("nodes", [])
             )
             for context in contexts:
+                start = deployment_start(context)
+                if start:
+                    starts.append(
+                        {"line": start[0], "at": start[1], "commit": node["oid"]}
+                    )
                 line = {
                     "Vercel": "Website",
                     "Bain Luck | TestFlight from master": "Apps",
@@ -488,7 +525,7 @@ def history_signals(api, midnight):
         if not history["pageInfo"]["hasNextPage"] or (older and found_success):
             break
         cursor = history["pageInfo"]["endCursor"]
-    return receipts, latest
+    return receipts, latest, starts
 
 
 def collect(api, previous=None, cache=None, open_summaries=None):
@@ -498,7 +535,7 @@ def collect(api, previous=None, cache=None, open_summaries=None):
         hour=0, minute=0, second=0, microsecond=0
     )
     coverage = []
-    receipts, latest = history_signals(api, midnight)
+    receipts, latest, starts = history_signals(api, midnight)
     try:
         health = api.public_json("https://api.bainluck.com/api/health")
         deployed = git("rev-parse", "--verify", f"{health['commit']}^{{commit}}")
@@ -571,7 +608,7 @@ def collect(api, previous=None, cache=None, open_summaries=None):
             git("rev-list", "--first-parent", "origin/master").splitlines()
         )
     }
-    for receipt in receipts:
+    for receipt in [*receipts, *starts]:
         receipt["contains"] = []
         for pull in pulls:
             if not pull.get("merged_at"):
@@ -645,6 +682,7 @@ def collect(api, previous=None, cache=None, open_summaries=None):
         "captured_at": iso(datetime.now(timezone.utc)),
         "pulls": pulls,
         "deployments": receipts,
+        "deploy_starts": starts,
         "master": master,
         "coverage": coverage,
         "master_ci_active": any(
@@ -812,6 +850,7 @@ def main():
             summaries = api.pages("pulls?state=open&sort=updated&direction=desc")
         snapshot = collect(api, previous, cache, summaries)
         result = build(snapshot, previous)
+        add_events(result, snapshot, previous, cache)
         if snapshot.get("master_ci_active") and any(
             s["kind"] == "line-stalled" for s in result["stops"]
         ):

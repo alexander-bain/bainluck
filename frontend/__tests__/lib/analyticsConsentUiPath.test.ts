@@ -23,6 +23,7 @@ export {}; // ensure module scope
 
 import {
   startConsentBannerScheduler,
+  isSharedSetLandingPath,
   CONSENT_BANNER_DELAY_MS,
 } from '@/lib/analytics/consentBanner';
 import { telemetryStatusText } from '@/components/Analytics/TelemetryPreferences';
@@ -152,6 +153,70 @@ describe('the delayed banner never outlives the question', () => {
     jest.advanceTimersByTime(5000);
     expect(visible).toEqual([]);
     expect(store.listenerCount()).toBe(0);
+  });
+
+  it('Ruling 279: A — shared set arrival holds the banner past 1.5s and raises it on scroll or second page', () => {
+    expect(isSharedSetLandingPath('/collections/roundup-cfp-picture')).toBe(true);
+    expect(isSharedSetLandingPath('/collections/by-november-30')).toBe(true);
+    expect(isSharedSetLandingPath('/')).toBe(false);
+    expect(isSharedSetLandingPath('/discover')).toBe(false);
+    expect(isSharedSetLandingPath('/collections')).toBe(false);
+    expect(isSharedSetLandingPath(null)).toBe(false);
+
+    const store = fakeStore(null);
+    const visible: boolean[] = [];
+    const triggers: Array<() => void> = [];
+    let unsubscribedEngagement = false;
+
+    const stop = startConsentBannerScheduler({
+      getConsent: store.get,
+      subscribe: store.subscribe,
+      setVisible: (v) => visible.push(v),
+      deferUntilEngaged: true,
+      subscribeEngagement: (cb) => {
+        triggers.push(cb);
+        return () => {
+          unsubscribedEngagement = true;
+        };
+      },
+    });
+
+    // Even after 10 seconds on arrival, banner stays hidden while visitor reads.
+    jest.advanceTimersByTime(10000);
+    expect(visible).toEqual([false]);
+    expect(store.get()).toBeNull();
+
+    // Visitor scrolls (or navigates to a second page): banner raises immediately.
+    expect(triggers).toHaveLength(1);
+    triggers[0]();
+    expect(visible).toEqual([false, true]);
+    expect(unsubscribedEngagement).toBe(true);
+    stop();
+  });
+
+  it('Ruling 279: A — a consent choice made before engagement cancels the deferred banner', () => {
+    const store = fakeStore(null);
+    const visible: boolean[] = [];
+    const triggers: Array<() => void> = [];
+    let unsubscribedEngagement = false;
+
+    startConsentBannerScheduler({
+      getConsent: store.get,
+      subscribe: store.subscribe,
+      setVisible: (v) => visible.push(v),
+      deferUntilEngaged: true,
+      subscribeEngagement: (cb) => {
+        triggers.push(cb);
+        return () => {
+          unsubscribedEngagement = true;
+        };
+      },
+    });
+
+    store.set('none');
+    expect(unsubscribedEngagement).toBe(true);
+    triggers[0]?.();
+    expect(visible).not.toContain(true);
   });
 });
 

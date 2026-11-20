@@ -195,6 +195,7 @@ def test_the_shipped_pairs_file_is_valid():
 async def test_default_morning_pair_computes_frozen_candidate_without_pairs_file(wired, monkeypatch):
     """#11937: one link (/grade/pair with no query params) computes today's blind pair
     from the frozen candidate on the server when ranking_pairs.json has no entry."""
+    monkeypatch.setenv(admin.MORNING_PAIR_PAUSED_ENV, "0")
     monkeypatch.setattr(admin, "load_pairs", lambda path=None: {})
     # Pretend SLATE was captured today (PT).
     monkeypatch.setattr(admin, "_captured_today_pt", lambda captured_at, now=None: True)
@@ -216,9 +217,51 @@ async def test_default_morning_pair_computes_frozen_candidate_without_pairs_file
     assert exc.value.status_code == 404
 
 
+async def test_morning_pair_is_paused_until_env_opened_for_candidate_3(wired, monkeypatch):
+    """#11937 (Ruling 277: A): bare /grade/pair stays paused by default until
+    RANKING_MORNING_PAIR_PAUSED=0 is flipped attended after deploy verification;
+    explicit ?slate=<id>&pair=p3 works for pre-flip verification."""
+    monkeypatch.delenv(admin.MORNING_PAIR_PAUSED_ENV, raising=False)
+    monkeypatch.setattr(admin, "load_pairs", lambda path=None: {})
+    monkeypatch.setattr(admin, "_captured_today_pt", lambda captured_at, now=None: True)
+    assert admin.DEFAULT_MORNING_PAIR == "p3"
+
+    # Default (env unset): bare morning link stays paused until attended flip.
+    with pytest.raises(HTTPException) as exc:
+        await admin.get_pair(
+            _request(), slate="latest", pair=admin.DEFAULT_MORNING_PAIR, surface="discover", secret=None, db=FakeDB()
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail == admin.MORNING_PAIR_PAUSED_DETAIL
+
+    # Explicit slate + pair="p3" is readable for pre-flip verification while paused.
+    verify_out = await admin.get_pair(
+        _request(), slate=SLATE_ID, pair="p3", surface="discover", secret=None, db=FakeDB()
+    )
+    assert verify_out["slate_id"] == SLATE_ID and verify_out["pair"] == "p3"
+    assert len(verify_out["left"]) == len(verify_out["right"]) == 10
+
+    # Attended flip (RANKING_MORNING_PAIR_PAUSED=0) opens bare /grade/pair to Candidate 3.
+    monkeypatch.setenv(admin.MORNING_PAIR_PAUSED_ENV, "0")
+    out = await admin.get_pair(
+        _request(), slate="latest", pair=admin.DEFAULT_MORNING_PAIR, surface="discover", secret=None, db=FakeDB()
+    )
+    assert out["slate_id"] == SLATE_ID and out["pair"] == "p3"
+    assert len(out["left"]) == len(out["right"]) == 10
+
+    # Step 2 (/grade-deck?slate=<id>&set=p3) resolves frozen Candidate 3's top-10
+    # cards dynamically so promoted cards from beyond seat 20 are graded unlabeled.
+    deck = await admin.get_grade_deck(
+        _request(), surface="discover", slate=SLATE_ID, card_set="p3", secret=None, db=FakeDB()
+    )
+    assert deck["slate_id"] == SLATE_ID and deck["mode"] == "spread"
+    assert len(deck["items"]) >= 10
+
+
 async def test_morning_pair_and_deck_refuse_yesterdays_slate_before_715am(wired, monkeypatch):
     """Fable look on #13022: before today's 7:15 AM PT capture, default morning
     Step 1 (/pair) and Step 2 (/grade-deck?slate=today) must refuse yesterday's slate."""
+    monkeypatch.setenv(admin.MORNING_PAIR_PAUSED_ENV, "0")
     monkeypatch.setattr(admin, "load_pairs", lambda path=None: {})
     # 6:50 AM PT on 2026-11-13 vs SLATE captured 2026-11-12 7:15 AM PT -> yesterday!
     early_morning = datetime(2026, 11, 13, 14, 50, tzinfo=timezone.utc)
