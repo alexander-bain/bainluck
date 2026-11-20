@@ -282,14 +282,69 @@ async def _precompute_golf_schedule():
     return {"tours": len(tours), "tournaments": tournaments, "written": True}
 
 
+CHAMP_PROBS_PREWARM_DEADLINE_S = 15.0
+
+
+async def _prewarm_championship_probabilities(
+    deadline_s: float = CHAMP_PROBS_PREWARM_DEADLINE_S,
+    *,
+    rc: object | None = None,
+) -> dict:
+    """Keep the shared championship-odds slot warm before its 300 s TTL expires (#11931).
+
+    Runs inside the every-2-minute Discover beat. When the Redis slot is still
+    younger than ``PREWARM_REFRESH_AFTER_S`` (150 s), this is a single Redis GET
+    with zero Postgres work. Otherwise it runs the exact query the feed uses and
+    republishes under the same 300 s TTL, keeping ``events.champ_probs`` (<2 ms)
+    off the user-facing request path.
+    """
+    import asyncio
+    import time as _time
+
+    from app.routes.feed import _query_championship_probabilities
+    from app.tasks.base import get_task_session
+    from app.utils import championship_probs_cache as champ_cache
+
+    client = rc if rc is not None else champ_cache._client()
+    if client is None:
+        return {"outcome": "skipped"}
+
+    if not champ_cache.needs_prewarm(rc=client):
+        return {"outcome": "fresh"}
+
+    started = _time.monotonic()
+    async with get_task_session() as db:
+        probs = await asyncio.wait_for(
+            _query_championship_probabilities(db),
+            timeout=deadline_s,
+        )
+    computed_at = _time.time()
+    written = champ_cache.write(probs, computed_at, rc=client)
+    elapsed_ms = round((_time.monotonic() - started) * 1000.0, 1)
+    logger.info(
+        "Warmed championship probs cache (%d teams, written=%s, %.1f ms)",
+        len(probs),
+        written,
+        elapsed_ms,
+    )
+    return {
+        "outcome": "ok" if written else "write_failed",
+        "teams": len(probs),
+        "elapsed_ms": elapsed_ms,
+    }
+
+
 async def _precompute_discover_candidate_base():
     """Every-2-minute Discover warm pass: candidate-ID base, then cold responses.
 
-    Two independent units of work share this beat (LAT-P001 adds the second
-    rather than a new beat entry, which the queue forbids):
+    Three independent units of work share this beat (LAT-P001 adds the second
+    rather than a new beat entry, which the queue forbids; #11931 adds proactive
+    championship-odds slot refresh):
 
     1. ``_publish_discover_candidate_base`` — the Queue 285 candidate-ID base.
-    2. ``_prewarm_discover_feed_responses`` — the anonymous Discover + Sports
+    2. ``_prewarm_championship_probabilities`` — keeps ``bainluck:feed:champ_probs:v1``
+       fresh before its 300 s TTL expires so web requests never pay the ~2.5 s scan.
+    3. ``_prewarm_discover_feed_responses`` — the anonymous Discover + Sports
        first-paint response cache.
 
     They are deliberately decoupled: the base build has three early-return paths
@@ -306,12 +361,22 @@ async def _precompute_discover_candidate_base():
         base_result = "error"
 
     try:
+        champ_result = await _prewarm_championship_probabilities()
+    except Exception:
+        logger.exception("Championship probabilities pre-warm failed")
+        champ_result = "error"
+
+    try:
         prewarm_result = await _prewarm_discover_feed_responses()
     except Exception:
         logger.exception("Discover feed response pre-warm failed")
         prewarm_result = "error"
 
-    return {"candidate_base": base_result, "feed_prewarm": prewarm_result}
+    return {
+        "candidate_base": base_result,
+        "champ_probs": champ_result,
+        "feed_prewarm": prewarm_result,
+    }
 
 
 async def _publish_discover_candidate_base():
