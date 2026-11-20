@@ -339,20 +339,26 @@ class TestFableLookGuards:
         ("period", "commence_offset_min", "expected"),
         [
             ("1st Quarter", -5, True),
-            ("Q1", -25, True),
+            ("Q1", -15, True),
             ("1st Period", -10, True),
             ("1st Half", -8, True),
             ("Top 1st", -12, True),
             ("1st Set", -10, True),
+            # Long first periods past 15 min must NEVER fire "Starting now"
+            # (e.g., soccer 40th minute, tennis 45 min into 1st set, Q1 at 16 min)
+            ("Q1", -16, False),
+            ("1st Half", -40, False),
+            ("1st Set", -45, False),
             # Mid-game / later periods must NEVER send "Starting now"
+            ("2nd Quarter", -10, False),
             ("2nd Quarter", -35, False),
             ("3rd Quarter", -90, False),
             ("4th Quarter", -120, False),
             ("Halftime", -60, False),
-            ("End of 1st Quarter", -20, False),
+            ("End of 1st Quarter", -12, False),
             ("2nd Half", -50, False),
             ("OT", -160, False),
-            # Missing period label falls back to <= 15 minutes from commence_time
+            # Missing period label still requires <= 15 minutes from commence_time
             (None, -5, True),
             (None, -15, True),
             (None, -16, False),
@@ -374,6 +380,21 @@ class TestFableLookGuards:
         )
         assert (push is not None) is expected
 
+    def test_start_alert_requires_commence_time_and_respects_soccer_clock(self):
+        # Missing commence_time -> conservative no-buzz even in 1st Quarter
+        no_ct = _event_detail(event_id=705, status="live", period="1st Quarter")
+        assert is_just_started(no_ct, now=NOW) is False
+
+        # Soccer 1st half at 40' -> no "Starting now" even if commence_time is close
+        soccer_late_1h = _soccer_detail(period="1st Half", clock="40'")
+        soccer_late_1h["commence_time"] = (NOW - timedelta(minutes=5)).isoformat()
+        assert is_just_started(soccer_late_1h, now=NOW) is False
+
+        # Soccer 1st half at 10' within 15 min of kickoff -> fires
+        soccer_early_1h = _soccer_detail(period="1st Half", clock="10'")
+        soccer_early_1h["commence_time"] = (NOW - timedelta(minutes=10)).isoformat()
+        assert is_just_started(soccer_early_1h, now=NOW) is True
+
     def test_stale_probability_blocks_close_late_and_drops_number_on_start(self):
         stale_ts = NOW - OBSERVATION_MAX_AGE - timedelta(seconds=1)
         fresh_ts = NOW - OBSERVATION_MAX_AGE + timedelta(seconds=1)
@@ -394,10 +415,20 @@ class TestFableLookGuards:
         assert is_close_late(fresh_late, now=NOW) is True
 
         stale_start = _event_detail(
-            event_id=703, period="1st Quarter", home_prob=0.52, away_prob=0.48, prob_observed_at=stale_ts
+            event_id=703,
+            period="1st Quarter",
+            home_prob=0.52,
+            away_prob=0.48,
+            commence_time=NOW - timedelta(minutes=5),
+            prob_observed_at=stale_ts,
         )
         fresh_start = _event_detail(
-            event_id=703, period="1st Quarter", home_prob=0.52, away_prob=0.48, prob_observed_at=fresh_ts
+            event_id=703,
+            period="1st Quarter",
+            home_prob=0.52,
+            away_prob=0.48,
+            commence_time=NOW - timedelta(minutes=5),
+            prob_observed_at=fresh_ts,
         )
         push_stale = build_game_alert_payload(
             stale_start, trigger_kind="start", device_id=uuid4(), now=NOW
@@ -409,7 +440,13 @@ class TestFableLookGuards:
         assert push_fresh is not None and push_fresh.body == "Starting now · Lakers 52%"
 
     def test_start_wording_matches_activitykit_start_alert_builder(self):
-        detail = _event_detail(event_id=704, period="1st Quarter", home_prob=0.52, away_prob=0.48)
+        detail = _event_detail(
+            event_id=704,
+            period="1st Quarter",
+            home_prob=0.52,
+            away_prob=0.48,
+            commence_time=NOW - timedelta(minutes=5),
+        )
         expected = build_activitykit_start_alert(
             project_activitykit_snapshot(detail), sent_at=NOW
         )
@@ -822,7 +859,7 @@ class TestSoccerCloseLate271A:
         ) is False
 
     def test_soccer_draw_in_play_wording_never_prints_lower_side_as_leader(self):
-        # Draw is likeliest (52%) -> prints "Close late (78') — draw 52%"
+        # Draw is likeliest (52%) -> prints "Close late (78') · draw 52%"
         push_draw = build_game_alert_payload(
             _soccer_detail(clock="78'", home_prob=0.28, away_prob=0.20, draw_prob=0.52),
             trigger_kind="close_late",
@@ -831,9 +868,9 @@ class TestSoccerCloseLate271A:
         )
         assert push_draw is not None
         assert push_draw.title == "Chelsea 1–1 Arsenal"
-        assert push_draw.body == "Close late (78') — draw 52%"
+        assert push_draw.body == "Close late (78') · draw 52%"
 
-        # Home leads (54%) -> prints "Close late (78') — Arsenal 54%"
+        # Home leads (54%) -> prints "Close late (78') · Arsenal 54%"
         push_home = build_game_alert_payload(
             _soccer_detail(clock="78'", home_prob=0.54, away_prob=0.18, draw_prob=0.28),
             trigger_kind="close_late",
@@ -841,9 +878,9 @@ class TestSoccerCloseLate271A:
             now=NOW,
         )
         assert push_home is not None
-        assert push_home.body == "Close late (78') — Arsenal 54%"
+        assert push_home.body == "Close late (78') · Arsenal 54%"
 
-        # Away leads (58%) in stoppage time -> prints "Close late (90+2') — Chelsea 58%"
+        # Away leads (58%) in stoppage time -> prints "Close late (90+2') · Chelsea 58%"
         push_away = build_game_alert_payload(
             _soccer_detail(clock="90'+2'", home_prob=0.18, away_prob=0.58, draw_prob=0.24),
             trigger_kind="close_late",
@@ -851,7 +888,7 @@ class TestSoccerCloseLate271A:
             now=NOW,
         )
         assert push_away is not None
-        assert push_away.body == "Close late (90+2') — Chelsea 58%"
+        assert push_away.body == "Close late (90+2') · Chelsea 58%"
 
     def test_mens_college_basketball_2nd_half_unchanged_without_clock(self):
         # Ruling 271: A — men's college half is 20 minutes (same as a hockey period),

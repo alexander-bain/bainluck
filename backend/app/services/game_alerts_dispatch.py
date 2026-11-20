@@ -67,9 +67,11 @@ _REG = ActivityKitRegistration.__table__
 #: Bounded live close-late lookback and lead windows.
 LIVE_ALERT_LOOKBACK = timedelta(hours=6)
 LIVE_ALERT_LEAD = timedelta(minutes=15)
-#: "Starting now" only fires when a game has just gone live (first period, or
-#: within 15 minutes of commence_time when no period label is present yet).
+#: "Starting now" only fires within 15 minutes of commence_time (and only in
+#: the first period when a period label is present; <= 15' when soccer has a clock).
 START_JUST_LIVE_WINDOW = timedelta(minutes=15)
+#: Max live soccer clock minute that still qualifies as "just started".
+SOCCER_JUST_STARTED_MAX_MINUTE = 15
 #: Bounded final-alert lookback so historic finished rows never fire phantom buzzes.
 FINAL_ALERT_LOOKBACK = timedelta(hours=12)
 #: Once-per-(device, event, trigger) dedup TTL in Redis.
@@ -326,27 +328,55 @@ def is_first_period(period: str | None) -> bool:
     return bool(_FIRST_PERIOD_RE.search(text))
 
 
+def _parse_soccer_minute_any_period(raw_clock: str | None) -> int | None:
+    """Extract the match minute from a live soccer clock regardless of period."""
+    if not isinstance(raw_clock, str):
+        return None
+    text = raw_clock.strip()
+    if not text or _TERMINAL_PERIOD_RE.search(text):
+        return None
+    for pattern in (
+        _SOCCER_STOPPAGE_CLOCK_RE,
+        _SOCCER_MMSS_CLOCK_RE,
+        _SOCCER_MINUTE_CLOCK_RE,
+    ):
+        m = pattern.match(text)
+        if m:
+            minute = int(m.group(1))
+            return minute if 0 <= minute <= 150 else None
+    return None
+
+
 def is_just_started(detail: Mapping[str, object], *, now: datetime) -> bool:
     """True only when a live game has just begun (Fable look #13088 item 1).
 
-    Prevents a phone that pins a game in Q3 (or every live game when the switch
-    flips on) from receiving a stale ``"Starting now"`` alert hours after tipoff:
-    - If a period label is present, it must be the first period (Q1 / 1st
+    Prevents a phone that pins a game mid-period (e.g., 40' in soccer or late
+    in a tennis first set) — or every pinned live game on the day the switch
+    turns on — from receiving a late ``"Starting now"`` alert:
+    - ``commence_time`` must ALWAYS be within ``START_JUST_LIVE_WINDOW``
+      (15 minutes) of ``now``.
+    - If a period label is present, it must also be the first period (Q1 / 1st
       Period / 1st Half / Top/Mid/Bot 1st / 1st Set / Round 1).
-    - If no period label is present yet, ``commence_time`` must be within
-      ``START_JUST_LIVE_WINDOW`` (15 minutes) of ``now``.
+    - For soccer, if a live clock is present on the feed, its match minute must
+      also be ``<= 15``.
     """
     snapshot = project_activitykit_snapshot(detail)
     if snapshot.lifecycle != "live":
         return False
-    period = _raw_period(detail)
-    if period is not None:
-        return is_first_period(period)
     ct = _parse_commence_time(detail.get("commence_time"))
     if ct is None:
         return False
     elapsed = now.astimezone(timezone.utc) - ct
-    return -START_JUST_LIVE_WINDOW <= elapsed <= START_JUST_LIVE_WINDOW
+    if not (-START_JUST_LIVE_WINDOW <= elapsed <= START_JUST_LIVE_WINDOW):
+        return False
+    period = _raw_period(detail)
+    if period is not None and not is_first_period(period):
+        return False
+    if _is_soccer_sport(snapshot.sport):
+        soccer_min = _parse_soccer_minute_any_period(_raw_game_clock(detail))
+        if soccer_min is not None and soccer_min > SOCCER_JUST_STARTED_MAX_MINUTE:
+            return False
+    return True
 
 
 def is_close_late(
@@ -467,7 +497,7 @@ def build_game_alert_payload(
             )
             clock_label = parsed_clock[1] if parsed_clock is not None else None
             if clock_label and leader:
-                body = f"Close late ({clock_label}) — {leader}"
+                body = f"Close late ({clock_label}) · {leader}"
             elif clock_label:
                 body = f"Close late ({clock_label})"
             else:
