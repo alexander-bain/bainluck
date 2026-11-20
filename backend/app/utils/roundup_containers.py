@@ -540,15 +540,13 @@ class RoundupProducer:
         start, end = _definition_window(rule or {})
         object.__setattr__(self, "valid_from", start)
         object.__setattr__(self, "valid_until", end)
-        raw_stage = (
-            stage
-            if stage is not None
-            else (rule.get("stage") if isinstance(rule, Mapping) else None)
-        )
-        stage_clean = str(raw_stage or "public").strip().lower()
+        # Publication stage (`public` / `preview`) lives at the top level of the
+        # definition, never in `rule["stage"]` (which ceremony producers use for
+        # award stages such as `"winner"` / `"nomination"`).
+        stage_clean = str(stage or "public").strip().lower()
         if stage_clean not in CLOSED_GROUPING_STAGES:
             raise ValueError(
-                f"RoundupProducer {slug!r} has invalid stage {raw_stage!r}; "
+                f"RoundupProducer {slug!r} has invalid stage {stage!r}; "
                 f"allowed: {sorted(CLOSED_GROUPING_STAGES)}"
             )
         raw_look = (
@@ -3783,7 +3781,7 @@ def validate_roundup_definition(
     out["slug"] = slug
     out["relations"] = list(relations_list)
     out["level"] = level_clean
-    raw_stage = data.get("stage") if "stage" in data else rule_raw.get("stage")
+    raw_stage = data.get("stage") if "stage" in data else None
     stage_clean = str(raw_stage or "public").strip().lower()
     if stage_clean not in CLOSED_GROUPING_STAGES:
         raise ValueError(
@@ -3802,7 +3800,6 @@ def validate_roundup_definition(
     rule_copy = dict(rule_raw)
     rule_copy["relations"] = list(relations_list)
     rule_copy["level"] = level_clean
-    rule_copy["stage"] = stage_clean
     rule_copy["look"] = look_clean
     parent_slug = str(
         data.get("parent_slug") or rule_raw.get("parent_slug") or ""
