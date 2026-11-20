@@ -145,6 +145,7 @@
 				Utilities/TeamTextContrast.swift,
 				Utilities/WatchTelemetryProtocol.swift,
 				Utilities/WatchWristTile12616.swift,
+				Utilities/WidgetRelevanceRule254A.swift,
 			);
 			target = A70F40102FA6C20000170BF2 /* BainLuckWatch Watch App */;
 		};
@@ -170,6 +171,7 @@
 				WatchPinsModels12640.swift,
 				WatchSelectedGameModels.swift,
 				WatchMatchupReading217.swift,
+				WatchComplicationRelevance254A.swift,
 			);
 			target = A7C0000000000000000000E1 /* BainLuckTests */;
 		};
@@ -196,6 +198,7 @@
 				WatchLaunchRoute.swift,
 				WatchMatchupComplication217.swift,
 				WatchMatchupReading217.swift,
+				WatchComplicationRelevance254A.swift,
 			);
 			target = A7C0000000000000000000D1 /* BainLuckComplication */;
 		};
@@ -203,6 +206,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Utilities/HeadlineStyleTable199.swift,
+				Utilities/WidgetRelevanceRule254A.swift,
 			);
 			target = A7C0000000000000000000D1 /* BainLuckComplication */;
 		};
@@ -235,6 +239,7 @@
 				Widgets10875/SavedWidgetDetail10875.swift,
 				Widgets10875/SavedWidgetReading10875.swift,
 				Widgets10875/SavedWidgetTimeline10875.swift,
+				Utilities/WidgetRelevanceRule254A.swift,
 			);
 			target = A7C0000000000000000000F1 /* BainLuckWidget */;
 		};

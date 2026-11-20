@@ -5,6 +5,13 @@ import SwiftUI
 nonisolated struct BainLuckEntry: TimelineEntry {
     let date: Date
     let snapshot: WatchComplicationSnapshot?
+
+    /// #12316 / 254: A — promote the followed game in the Apple Watch Smart Stack
+    /// starting 30 minutes before kickoff and while live, then drop back after final.
+    var relevance: TimelineEntryRelevance? {
+        let spec = snapshot?.relevanceSpec254A(now: date) ?? .zero
+        return TimelineEntryRelevance(score: spec.score, duration: spec.duration)
+    }
 }
 
 nonisolated struct BainLuckProvider: TimelineProvider {
@@ -20,8 +27,14 @@ nonisolated struct BainLuckProvider: TimelineProvider {
         // Direction 217: a Matchup final gives way to the launcher 3 hours on.
         if let step = WatchMatchupReading217.finalStepAside(for: current.snapshot, now: current.date),
            step > current.date, !dates.contains(step) {
-            dates = (dates + [step]).sorted()
+            dates.append(step)
         }
+        // #12316 / 254: A: step Smart Stack relevance up before kickoff, at kickoff, and down after final.
+        if let relevanceSteps = current.snapshot?.relevanceBoundaryDates254A(now: current.date),
+           !relevanceSteps.isEmpty {
+            dates.append(contentsOf: relevanceSteps)
+        }
+        dates = Array(Set(dates)).sorted()
         let entries = dates.map { BainLuckEntry(date: $0, snapshot: current.snapshot) }
         completion(Timeline(entries: entries, policy: dates.count > 1 ? .atEnd : .never))
     }
