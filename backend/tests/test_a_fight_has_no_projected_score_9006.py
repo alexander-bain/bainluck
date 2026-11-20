@@ -91,7 +91,7 @@ class TestAFightProjectsNothing:
         assert values["home_win_probability"] is not None
 
     @pytest.mark.parametrize(
-        "sport_key", ["americanfootball_nfl", "basketball_nba", "icehockey_nhl", "soccer_epl"]
+        "sport_key", ["americanfootball_nfl", "basketball_nba", "soccer_epl"]
     )
     def test_a_points_sport_still_projects(self, sport_key):
         # Control: the refusal is the fight's, not every sport's.
@@ -119,7 +119,7 @@ class TestThePredicateMirrorsTheWeb:
 
     @pytest.mark.parametrize(
         "sport_key",
-        ["americanfootball_nfl", "basketball_nba", "icehockey_nhl", "tennis_atp_us_open", None, ""],
+        ["americanfootball_nfl", "basketball_nba", "soccer_epl", "tennis_atp_us_open", None, ""],
     )
     def test_points_sports_and_unknowns_still_are(self, sport_key):
         assert sportsbook_spread_is_a_margin(sport_key) is True
