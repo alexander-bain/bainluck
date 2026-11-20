@@ -1539,6 +1539,7 @@ private struct TeamFuturesSection: View {
 struct MyTeamFuturesCard: View {
     private let futures: FeedFuturesData
     private let matchedOutcomes: [MatchedOutcome]
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     init(futures: FeedFuturesData, matchedOutcomes: [MatchedOutcome]) {
         self.futures = futures
@@ -1546,7 +1547,8 @@ struct MyTeamFuturesCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        return VStack(alignment: .leading, spacing: 8) {
             // Header
             HStack {
                 // #5723: the shared rule, not `.capitalized` — same form as
@@ -1572,39 +1574,54 @@ struct MyTeamFuturesCard: View {
             Text(futures.name)
                 .font(.subheadline)
                 .fontWeight(.medium)
-                .lineLimit(4)
+                .lineLimit(isAX ? nil : 4)
                 .fixedSize(horizontal: false, vertical: true)
 
             // User's matched team outcomes — shown prominently
             ForEach(matchedOutcomes) { outcome in
-                HStack(spacing: 8) {
-                    if let rank = outcome.rank {
-                        Text("#\(rank)")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.blue)
-                            .frame(width: 24, alignment: .trailing)
-                    }
-                    Text(outcome.name)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
-                    Spacer()
-                    if let m = outcome.movement, abs(m) >= 0.005 {
-                        HStack(spacing: 1) {
-                            Image(systemName: m > 0 ? "arrow.up" : "arrow.down")
-                                .font(.system(size: 8))
-                            Text(formatProbability(abs(m)))
-                                .font(.system(size: 9))
+                let rowLayout = isAX
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                    : AnyLayout(HStackLayout(spacing: 8))
+                rowLayout {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        if let rank = outcome.rank {
+                            Text("#\(rank)")
+                                .font(isAX ? .caption.weight(.semibold) : .system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.blue)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
                         }
-                        .foregroundStyle(m > 0 ? .green : .red)
-                    }
-                    if let prob = outcome.probability {
-                        Text(formatProbability(prob))
+                        Text(outcome.name)
                             .font(.subheadline)
-                            .fontWeight(.bold)
-                            .monospacedDigit()
+                            .fontWeight(.medium)
+                            .lineLimit(isAX ? nil : 1)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !isAX {
+                        Spacer()
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        if let m = outcome.movement, abs(m) >= 0.005 {
+                            HStack(spacing: 1) {
+                                Image(systemName: m > 0 ? "arrow.up" : "arrow.down")
+                                    .font(.system(size: 8))
+                                Text(formatProbability(abs(m)))
+                                    .font(isAX ? .caption2 : .system(size: 9))
+                            }
+                            .foregroundStyle(m > 0 ? .green : .red)
+                            .fixedSize(horizontal: true, vertical: false)
+                        }
+                        if let prob = outcome.probability {
+                            Text(formatProbability(prob))
+                                .font(.subheadline)
+                                .fontWeight(.bold)
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
                 .padding(.horizontal, 8)
                 .background(Color.blue.opacity(0.06))
@@ -1614,20 +1631,39 @@ struct MyTeamFuturesCard: View {
             // Show the market leader for context (if different from matched)
             if let leader = futures.topOutcomes?.first,
                !matchedOutcomes.contains(where: { $0.name == leader.name }) {
-                HStack(spacing: 8) {
-                    Text("Leader:")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    Text(leader.name)
-                        .font(.caption)
-                        .lineLimit(1)
-                    Spacer()
-                    if let prob = leader.probability {
-                        Text(formatProbability(prob))
+                if isAX {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Leader: \(leader.name)")
                             .font(.caption)
-                            .fontWeight(.semibold)
-                            .monospacedDigit()
                             .foregroundStyle(.secondary)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let prob = leader.probability {
+                            Text(formatProbability(prob))
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        Text("Leader:")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        Text(leader.name)
+                            .font(.caption)
+                            .lineLimit(1)
+                        Spacer()
+                        if let prob = leader.probability {
+                            Text(formatProbability(prob))
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
