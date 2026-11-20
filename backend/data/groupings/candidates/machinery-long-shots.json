@@ -1,0 +1,53 @@
+{
+  "slug": "machinery-long-shots",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_measure",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ODD · LONG SHOTS",
+  "name": "Long Shots People Talk About",
+  "category": "entertainment",
+  "tag": "ODD",
+  "section_title": "Long Shots on the Board",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": ["culture", "tech", "politics", "economics", "weather", "basketball"],
+    "card_rows": 3,
+    "card_section_key": "long_shots_board",
+    "headline_predicate": "leads the long shots people talk about",
+    "sections": [
+      {
+        "key": "long_shots_board",
+        "title": "Long Shots on the Board",
+        "item_noun": "long shots",
+        "note": "Aliens, Mars, Taylor Swift and the Pope, and the biggest long shots markets actually price.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "long-shot",
+          "exclude_tokens": [
+            "divorce",
+            "pregnant",
+            "pregnancy",
+            "arrested",
+            "affair",
+            "death"
+          ],
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 20,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3
+        }
+      }
+    ]
+  }
+}

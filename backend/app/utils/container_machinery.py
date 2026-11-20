@@ -1190,6 +1190,21 @@ def _market_matches_query(
             if title_years and max(title_years) > max_year:
                 return False
 
+    fun_sub_tag = str(query.get("fun_sub_tag") or "").strip()
+    if fun_sub_tag:
+        from app.utils.discover_fun_tags import check_fun_taste_guard, fun_market_ids_for_sub_tag
+
+        allowed_fun_ids = fun_market_ids_for_sub_tag(fun_sub_tag)
+        mid_val = market.get("id")
+        if not isinstance(mid_val, int) or mid_val not in allowed_fun_ids:
+            return False
+        taste_ok, _ = check_fun_taste_guard(
+            str(market.get("name") or market.get("title") or ""),
+            market.get("description"),
+        )
+        if not taste_ok:
+            return False
+
     req_tokens = [str(t).lower() for t in (query.get("title_all_tokens") or ()) if str(t).strip()]
     if any(tok not in title_low for tok in req_tokens):
         return False
@@ -2169,7 +2184,25 @@ async def _load_snapshot_from_db(
         title_matched_mids: set[int] = set()
         title_volume_by_mid: dict[int, float] = {}
         if needs_markets and market_sections:
-            cat_pool = _category_llm_pool_for_definition(definition)
+            fun_tag_sections: list[Mapping[str, Any]] = []
+            non_fun_sections: list[Mapping[str, Any]] = []
+            for aq in market_sections:
+                if str(aq.get("fun_sub_tag") or "").strip():
+                    fun_tag_sections.append(aq)
+                else:
+                    non_fun_sections.append(aq)
+            if fun_tag_sections:
+                from app.utils.discover_fun_tags import fun_market_ids_for_sub_tag
+
+                for aq in fun_tag_sections:
+                    tag_ids = fun_market_ids_for_sub_tag(str(aq["fun_sub_tag"]).strip())
+                    title_matched_mids.update(int(mid_i) for mid_i in tag_ids)
+
+            cat_pool = (
+                _category_llm_pool_for_definition(definition)
+                if non_fun_sections
+                else None
+            )
             lightweight_rows: list[tuple[int, str, float]] = []
             if cat_pool is not None:
                 scan_rows = (
@@ -2186,7 +2219,7 @@ async def _load_snapshot_from_db(
                     )
 
             unmatched_sections: list[Mapping[str, Any]] = []
-            for aq in market_sections:
+            for aq in non_fun_sections:
                 has_tokens = bool(
                     (aq.get("title_all_tokens") or ())
                     or (aq.get("any_tokens") or ())
