@@ -1585,14 +1585,9 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 .beltSegment { border-color: var(--workshop-enamel); }
 .crate[data-arriving="true"] { visibility: hidden; }
 
-.speechFigure {
-  position: relative;
-  flex: none;
-  display: inline-flex;
-}
-
 .voiceButton {
   display: inline-flex;
+  flex: none;
   padding: 0;
   color: inherit;
   background: transparent;
@@ -1602,32 +1597,51 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 }
 
 .voiceButton:focus-visible { outline: 2px solid var(--workshop-rim); }
+.voiceButton[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--workshop-rim); }
 .voiceButton > .worker { width: 34px; height: 27px; margin-left: -3px; }
 .dockCrew .voiceButton > .worker { width: 24px; height: 23px; margin-left: 0; }
+.floorSpeech {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.floorSpeech > .worker { width: 36px; height: 28px; }
 .speechBubble {
+  position: relative;
   font-size: 11px;
   line-height: 1.35;
-  padding: 5px 7px;
+  padding: 4px 7px;
   border: 1px solid var(--workshop-copper);
   border-radius: 9px;
   background: var(--paper);
   color: var(--ink);
-  overflow-wrap: anywhere;
-  margin: 3px 0 0;
+  overflow-wrap: break-word;
+  margin: 0;
 }
 
-.workerBubble {
+.speechBubble::before {
+  content: "";
   position: absolute;
-  z-index: 4;
-  inset-block-end: calc(100% - 2px);
-  inset-inline-start: 1px;
-  width: 132px;
-  box-shadow: 0 2px 4px rgb(26 17 6 / 22%);
-  pointer-events: none;
+  inset-inline-start: -4px;
+  inset-block-start: calc(50% - 3px);
+  width: 6px;
+  height: 6px;
+  border: solid var(--workshop-copper);
+  border-width: 0 0 1px 1px;
+  background: var(--paper);
+  transform: rotate(45deg);
 }
-.machine[data-bay="Live"] .workerBubble {
-  inset-inline-start: auto;
-  inset-inline-end: 0;
+
+.speechBubble strong { margin-inline-end: 4px; white-space: nowrap; }
+.crewSpeech { font-size: 11px; line-height: 1.4; margin: 3px 0 0; }
+
+@media (max-width: 720px) {
+  .sectionHeading { flex-wrap: wrap; }
+  .floorSpeech { order: 1; flex: 1 0 100%; justify-content: flex-start; }
 }
 
 @media (max-width: 640px) {

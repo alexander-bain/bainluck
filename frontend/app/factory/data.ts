@@ -75,7 +75,7 @@ function speechForSnapshot(payload: FactoryData): FactoryData["speech"] {
     const line = payload.speech?.[lane];
     if (
       line && typeof line.text === "string" && line.text.length <= 140 &&
-      /^[A-Za-z0-9 #_,.'’!?-]+$/.test(line.text) && factoryMoods.includes(line.mood) &&
+      /^[A-Za-z0-9 #%_,.'’!?-]+$/.test(line.text) && factoryMoods.includes(line.mood) &&
       (line.source === "model" || line.source === "facts")
     ) speech[lane] = { text: line.text, mood: line.mood, source: line.source };
   }
