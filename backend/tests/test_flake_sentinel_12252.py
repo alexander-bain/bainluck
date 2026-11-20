@@ -191,9 +191,13 @@ def test_a_quarantined_failure_is_forgiven_in_a_required_job_only():
     assert not quarantine_forgives(_rep(failed=False), q, mode="")
 
 
-def test_an_unreadable_quarantine_is_empty_so_every_test_still_blocks(monkeypatch):
+def test_an_unreadable_quarantine_is_empty_so_every_test_still_blocks(monkeypatch, tmp_path):
+    from tests import conftest
     from tests.conftest import quarantined_tests
 
+    # Isolate from the repo's live Ruling 241:A timing_quarantine.json so this
+    # test exercises CI_QUARANTINE env parsing alone.
+    monkeypatch.setattr(conftest, "TIMING_QUARANTINE_FILE", tmp_path / "missing.json")
     for bad in ("nope", '{"a": 1}', ""):
         monkeypatch.setenv("CI_QUARANTINE", bad)
         assert quarantined_tests() == frozenset()
