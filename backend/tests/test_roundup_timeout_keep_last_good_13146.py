@@ -969,7 +969,8 @@ async def test_budget_exhausted_reads_shared_store_for_newer_copy_and_withdrawal
     reset_roundup_cache_for_tests()
     target_mode = "refuse"
     clock[0] = t18.timestamp()
-    await evaluate_roundup_producer(p2, fake_session, now=t18)
+    fi_w, cp_w = await evaluate_roundup_producer(p2, fake_session, now=t18, force_refresh=True)
+    assert fi_w is None and cp_w is None
 
     _roundup_local_cache[(p2.slug, "live")] = p2_local_old
     clock[0] = t20.timestamp()
