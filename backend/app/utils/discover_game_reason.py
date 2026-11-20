@@ -346,6 +346,7 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
             # Postgres probes `ix_fo_market_movement (market_id, probability_change_24h)`
             # via its leading `market_id` column instead of scanning unindexed
             # `team_id IS NOT NULL` rows under contention.
+            max_mv = FuturesMarket.max_movement_24h
             stmt = (
                 select(
                     FuturesOutcome.team_id,
@@ -359,8 +360,8 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
                 .where(
                     team_predicate,
                     FuturesMarket.status == open_status,
-                    FuturesMarket.max_movement_24h.isnot(None),
-                    FuturesMarket.max_movement_24h >= TEAM_MOVE_POINTS,
+                    max_mv.isnot(None),
+                    max_mv >= TEAM_MOVE_POINTS,
                     FuturesOutcome.probability_change_24h.isnot(None),
                     or_(
                         FuturesOutcome.probability_change_24h >= TEAM_MOVE_POINTS,
