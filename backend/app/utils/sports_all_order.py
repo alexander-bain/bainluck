@@ -36,6 +36,12 @@ IMMINENT_UPCOMING_WINDOW = timedelta(hours=6)
 IMMINENT_PAST_GRACE = timedelta(minutes=15)
 #: Live games with favorite probability at or above this threshold are "decided" (256: B).
 DECIDED_FAVORITE_THRESHOLD = 0.95
+#: Quiet-clock shelf lead cap (#13095): bounds the non-game lead so page 1 (20
+#: cards on web, 50 on iPhone) still carries at least 12 games.
+QUIET_SHELF_LEAD_CAP = 8
+#: Quiet-clock recent-finals lead cap when upcoming games exist (#13095): leaves
+#: at least 4 seats inside the first 20 for the next upcoming games by start time.
+QUIET_RECENT_FINALS_LEAD_CAP = 8
 
 _LIVE_STATUSES = frozenset({"live", "in_progress"})
 _UPCOMING_STATUSES = frozenset({"scheduled", "upcoming", "pregame"})
@@ -230,6 +236,16 @@ def _interest_sort_key(entry: tuple[int, dict]) -> tuple[float, int]:
     return (-_item_score(item), idx)
 
 
+def _start_time_sort_key(entry: tuple[int, dict]) -> tuple[int, float, float, int]:
+    """Order upcoming games by start time ascending, then interest descending."""
+    idx, item = entry
+    data = item.get("data")
+    ct = _parse_commence_time(data.get("commence_time")) if isinstance(data, Mapping) else None
+    if ct is None:
+        return (1, float("inf"), -_item_score(item), idx)
+    return (0, ct.timestamp(), -_item_score(item), idx)
+
+
 def _with_tucked_marker(item: dict, *, tucked: bool) -> dict:
     """Copy item + data and stamp present-only ``sports_all_tucked: True`` when minor."""
     data = item.get("data")
@@ -346,10 +362,25 @@ def order_sports_all_feed(
 
     quiet_day = not live_block and not imminent_block
     if quiet_day:
+        quiet_upcoming_major = sorted(later_upcoming_major, key=_start_time_sort_key)
+        quiet_upcoming_minor = sorted(later_upcoming_minor, key=_start_time_sort_key)
+        quiet_upcoming = [item for _, item in quiet_upcoming_major] + [
+            item for _, item in quiet_upcoming_minor
+        ]
+        shelf_lead = shelf_block[:QUIET_SHELF_LEAD_CAP]
+        shelf_tail = shelf_block[QUIET_SHELF_LEAD_CAP:]
+        if quiet_upcoming and len(recent_finals_block) > QUIET_RECENT_FINALS_LEAD_CAP:
+            finals_lead = recent_finals_block[:QUIET_RECENT_FINALS_LEAD_CAP]
+            finals_tail = recent_finals_block[QUIET_RECENT_FINALS_LEAD_CAP:]
+        else:
+            finals_lead = recent_finals_block
+            finals_tail = []
         return (
-            shelf_block
-            + recent_finals_block
-            + later_upcoming_block
+            shelf_lead
+            + finals_lead
+            + quiet_upcoming
+            + finals_tail
+            + shelf_tail
             + older_finals_block
         )
 

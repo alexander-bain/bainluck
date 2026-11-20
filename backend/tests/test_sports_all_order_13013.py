@@ -236,3 +236,74 @@ class TestSportsAllFourBlockOrder256B:
         ]
         ordered = order_sports_all_feed(items, now=NOW)
         assert [i["data"]["id"] for i in ordered] == [5, 2, 3, 4, 1]
+
+    @pytest.mark.parametrize("recent_finals_count", [0, 4, 17])
+    def test_quiet_clock_caps_shelf_lead_and_puts_games_and_upcoming_in_first_20(
+        self, recent_finals_count
+    ):
+        """Fable look #13095: quiet clock with 49 non-game cards in the pool —
+        first 20 seats hold at least 12 games and the first upcoming game sits
+        inside the first 20 when one exists; zero items dropped."""
+        shelf = [_futures_card(1000 + i, score=99.0 - i * 0.1) for i in range(49)]
+        finals = [
+            _event_card(
+                2000 + i,
+                sport="basketball_nba",
+                status="completed",
+                score=85.0 - i,
+                commence_offset=timedelta(hours=-3),
+            )
+            for i in range(recent_finals_count)
+        ]
+        # Tomorrow's upcoming games in reverse start-time order to prove start-time sort.
+        upcoming = [
+            _event_card(
+                3000 + i,
+                sport="basketball_nba",
+                status="scheduled",
+                score=70.0 + i,
+                commence_offset=timedelta(hours=20 - i),
+            )
+            for i in range(12)
+        ]
+        older = [
+            _event_card(
+                4000 + i,
+                sport="basketball_nba",
+                status="completed",
+                score=60.0,
+                commence_offset=timedelta(hours=-48),
+            )
+            for i in range(3)
+        ]
+        pool = shelf + finals + upcoming + older
+        ordered = order_sports_all_feed(pool, now=NOW)
+        assert len(ordered) == len(pool), "must never drop any item"
+
+        first_20 = ordered[:20]
+        games_in_20 = [c for c in first_20 if c["type"] == "event"]
+        assert len(games_in_20) >= 12, f"expected >= 12 games in first 20, got {len(games_in_20)}"
+
+        # First 8 seats are the capped shelf lead.
+        assert all(c["type"] != "event" for c in ordered[:8])
+        assert ordered[8]["type"] == "event"
+
+        # First upcoming game is inside the first 20, ordered by start time ascending.
+        upcoming_positions = [
+            idx
+            for idx, c in enumerate(ordered)
+            if c["type"] == "event" and c["data"]["status"] == "scheduled"
+        ]
+        assert upcoming_positions[0] < 20, (
+            f"first upcoming game landed at seat {upcoming_positions[0] + 1}, outside first 20"
+        )
+        ordered_upcoming_ids = [ordered[idx]["data"]["id"] for idx in upcoming_positions]
+        # 3011 starts in +9h, 3010 in +10h, ..., 3000 in +20h
+        assert ordered_upcoming_ids == [3000 + i for i in range(11, -1, -1)]
+
+        # Remaining shelf cards appear after the games and before older finals.
+        last_shelf_pos = max(idx for idx, c in enumerate(ordered) if c["type"] != "event")
+        first_older_pos = min(
+            idx for idx, c in enumerate(ordered) if c["data"]["id"] in {4000, 4001, 4002}
+        )
+        assert last_shelf_pos < first_older_pos
