@@ -38450,26 +38450,24 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         _hero_away_out = _hero.away_probability
         if _hero.source != "settled":
             if sport_prices_a_draw(_event_sport_key):
-                _lh3 = _list_three_way
-                if _lh3 is None and three_way_books is not None:
-                    _lh3 = resolve_three_way_probabilities(
-                        _hero.home_probability,
-                        books_home=three_way_books[0],
-                        books_away=three_way_books[1],
-                        sport_key=_event_sport_key,
-                    )
+                _agg_hero = (odds_data or {}).get("aggregated") or {}
+                _bh_hero = _agg_hero.get("home_probability")
+                _ba_hero = _agg_hero.get("away_probability")
+                if (_bh_hero is None or _ba_hero is None) and three_way_books is not None:
+                    _bh_hero, _ba_hero = three_way_books
                 if (
-                    _lh3 is None
+                    (_bh_hero is None or _ba_hero is None)
                     and _hero.source == "opening"
                     and _open_home is not None
                     and _open_away is not None
                 ):
-                    _lh3 = resolve_three_way_probabilities(
-                        _hero.home_probability,
-                        books_home=_open_home,
-                        books_away=_open_away,
-                        sport_key=_event_sport_key,
-                    )
+                    _bh_hero, _ba_hero = _open_home, _open_away
+                _lh3 = resolve_three_way_probabilities(
+                    _hero.home_probability,
+                    books_home=_bh_hero,
+                    books_away=_ba_hero,
+                    sport_key=_event_sport_key,
+                )
                 if _lh3 is not None:
                     response["hero_probability"] = _lh3[0]
                     _hero_away_out = _lh3[1]
