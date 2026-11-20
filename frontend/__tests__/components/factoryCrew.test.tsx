@@ -9,7 +9,8 @@ import {
   duration,
   stopText,
 } from "@/app/factory/activity";
-import type { Change, FactoryData } from "@/app/factory/types";
+import type { Change, FactoryData, FloorEvent } from "@/app/factory/types";
+import { useEventPlayer } from "@/app/factory/playback";
 import { factoryTabTitle, floorVerdict } from "@/app/factory/verdict";
 
 jest.mock("next/navigation", () => {
@@ -261,6 +262,45 @@ it("names the change waiting for inspection and uses a singular day", () => {
       now,
     ),
   ).toBe("#12998 has waited 40 minutes for inspection.");
+});
+
+it("plays one event at a time in order, pauses and preserves the remaining delay", async () => {
+  const events: FloorEvent[] = ["commit", "bot"].map((kind, index) => ({
+    id: String(index),
+    kind: kind === "commit" ? "commit" : "bot",
+    number: 12998,
+    line: "Server",
+    builder: "B",
+    station: kind === "commit" ? "Write" : "Review",
+    at: now,
+    observed_at: now,
+  }));
+  function Sample({ running }: { running: boolean }) {
+    const current = useEventPlayer(now, events, running);
+    return <span>{current?.event.kind ?? "quiet"}</span>;
+  }
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const draw = (running: boolean) => act(async () => root.render(<Sample running={running} />));
+  const advance = (ms: number) => act(async () => { jest.advanceTimersByTime(ms); });
+  try {
+    await draw(true);
+    await advance(0);
+    expect(container.textContent).toBe("commit");
+    await advance(10_000);
+    await draw(false);
+    await advance(180_000);
+    expect(container.textContent).toBe("commit");
+    await draw(true);
+    await advance(139_999);
+    expect(container.textContent).toBe("commit");
+    await advance(1);
+    expect(container.textContent).toBe("bot");
+    await advance(1200);
+    expect(container.textContent).toBe("quiet");
+  } finally {
+    await act(async () => root.unmount());
+  }
 });
 
 it("puts the same sourced hold on the stack light, bay, note and tab", async () => {

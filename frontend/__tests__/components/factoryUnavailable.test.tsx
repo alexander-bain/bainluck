@@ -98,7 +98,7 @@ it("draws the fresh floor on the first visit after the cache ages out", async ()
       <FactoryFloor {...await firstVisit} renderedAt={visitAt} />,
     );
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(html).toContain("Read from GitHub");
+    expect(html).toContain("Read at ");
     expect(html).toContain("1:37 PM");
     expect(html).not.toContain("1:03 PM");
     expect(html).not.toContain("Not updating");
