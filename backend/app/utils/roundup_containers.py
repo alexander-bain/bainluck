@@ -21,9 +21,11 @@ import re
 import time
 import zlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
+from uuid import UUID
 
 from app.utils.container_presentation import (
     MEMBER_MARKET,
@@ -1059,6 +1061,38 @@ def _roundup_cache_stale_ttl_seconds(
     return _roundup_cache_ttl_seconds(slug, container_payload)
 
 
+def _roundup_cache_json_default(obj: Any) -> Any:
+    """JSON fallback for roundup cache payloads containing non-primitive scalars."""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, UUID):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _encode_roundup_cache_entry(
+    *,
+    ts: float,
+    ttl_s: float,
+    stale_ttl_s: float,
+    feed_item: Optional[dict[str, Any]],
+    container_payload: Optional[dict[str, Any]],
+) -> str:
+    return json.dumps(
+        {
+            "built_at": ts,
+            "ttl_s": ttl_s,
+            "stale_ttl_s": stale_ttl_s,
+            "feed_item": feed_item,
+            "container_payload": container_payload,
+        },
+        separators=(",", ":"),
+        default=_roundup_cache_json_default,
+    )
+
+
 def store_roundup_cache_sync(
     rc: Any,
     slug: str,
@@ -1076,17 +1110,14 @@ def store_roundup_cache_sync(
         return False
     ttl_s = _roundup_cache_ttl_seconds(slug, container_payload)
     stale_ttl_s = _roundup_cache_stale_ttl_seconds(slug, container_payload)
-    encoded = json.dumps(
-        {
-            "built_at": ts,
-            "ttl_s": ttl_s,
-            "stale_ttl_s": stale_ttl_s,
-            "feed_item": feed_item,
-            "container_payload": container_payload,
-        },
-        separators=(",", ":"),
-    )
     try:
+        encoded = _encode_roundup_cache_entry(
+            ts=ts,
+            ttl_s=ttl_s,
+            stale_ttl_s=stale_ttl_s,
+            feed_item=feed_item,
+            container_payload=container_payload,
+        )
         rc.set(_redis_cache_key(slug), encoded, ex=int(stale_ttl_s))
         if _is_machinery_producer_slug(slug) and container_payload is not None:
             if _roundup_payload_needs_live_rail(container_payload, now_ts=ts):
@@ -1107,6 +1138,53 @@ def store_roundup_cache_sync(
         return False
 
 
+def verify_roundup_cache_sync(
+    rc: Any,
+    slug: str,
+) -> tuple[bool, Optional[int]]:
+    """Read back a just-written roundup cache key via sync Redis and verify TTL + decode.
+
+    Used by Celery prewarm workers only (never on the web event loop — #969, #12288).
+    Returns ``(ok, ttl_seconds)`` where ``ok`` is True only when the key exists,
+    decodes through the same JSON reader path as ``evaluate_roundup_producer``,
+    carries both ``feed_item`` and ``container_payload``, and (when ``rc.ttl`` is
+    available) has a positive TTL remaining.
+    """
+    if rc is None or not hasattr(rc, "get"):
+        return False, None
+    key = _redis_cache_key(slug)
+    try:
+        raw_val = rc.get(key)
+        if not raw_val:
+            return False, None
+        ttl_remaining: Optional[int] = None
+        if hasattr(rc, "ttl"):
+            raw_ttl = rc.ttl(key)
+            if isinstance(raw_ttl, (int, float)):
+                ttl_remaining = int(raw_ttl)
+                if ttl_remaining <= 0:
+                    return False, ttl_remaining
+        decoded = json.loads(
+            raw_val.decode("utf-8")
+            if isinstance(raw_val, (bytes, bytearray))
+            else raw_val
+        )
+        if not isinstance(decoded, dict):
+            return False, ttl_remaining
+        if not isinstance(decoded.get("built_at"), (int, float)):
+            return False, ttl_remaining
+        if decoded.get("feed_item") is None or decoded.get("container_payload") is None:
+            return False, ttl_remaining
+        return True, ttl_remaining
+    except Exception:  # noqa: BLE001 — verification is best-effort
+        logger.warning(
+            "roundup_containers: sync Redis read-back failed for %s",
+            slug,
+            exc_info=True,
+        )
+        return False, None
+
+
 async def _store_roundup_cache_entry(
     cache_key: tuple[str, Any],
     slug: str,
@@ -1125,20 +1203,25 @@ async def _store_roundup_cache_entry(
         copy.deepcopy(container_payload),
     )
     if isinstance(db, AsyncSession):
+        try:
+            encoded = _encode_roundup_cache_entry(
+                ts=ts,
+                ttl_s=ttl_s,
+                stale_ttl_s=stale_ttl_s,
+                feed_item=feed_item,
+                container_payload=container_payload,
+            )
+        except (TypeError, ValueError):
+            logger.warning(
+                "roundup_containers: shared cache encode failed for %s",
+                slug,
+                exc_info=True,
+            )
+            return
         wrote_async = False
         try:
             from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
-            encoded = json.dumps(
-                {
-                    "built_at": ts,
-                    "ttl_s": ttl_s,
-                    "stale_ttl_s": stale_ttl_s,
-                    "feed_item": feed_item,
-                    "container_payload": container_payload,
-                },
-                separators=(",", ":"),
-            )
             client = await get_shared_async_redis()
             set_res = await bounded_redis_call(
                 lambda: client.set(

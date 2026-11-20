@@ -1819,6 +1819,7 @@ async def _prewarm_machinery_roundups(
         ensure_optional_roundup_candidates,
         evaluate_roundup_producer,
         store_roundup_cache_sync,
+        verify_roundup_cache_sync,
     )
 
     if not container_machinery_enabled() or not containers_read_enabled():
@@ -1860,15 +1861,23 @@ async def _prewarm_machinery_roundups(
                 elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
                 ok = fi is not None and cp is not None
                 redis_written = False
+                redis_read_back = False
+                redis_ttl_s = None
                 if ok and sync_rc is not None:
                     redis_written = store_roundup_cache_sync(
                         sync_rc, prod.slug, _time.time(), fi, cp
                     )
+                    if redis_written:
+                        redis_read_back, redis_ttl_s = verify_roundup_cache_sync(
+                            sync_rc, prod.slug
+                        )
                 return prod.slug, {
                     "outcome": "ok" if ok else "refused",
                     "elapsed_ms": elapsed_ms,
                     "live": bool(_roundup_payload_has_live_event(cp)) if ok else False,
                     "redis_written": redis_written,
+                    "redis_read_back": redis_read_back,
+                    "redis_ttl_s": redis_ttl_s,
                 }
         except asyncio.TimeoutError:
             elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
@@ -1882,6 +1891,8 @@ async def _prewarm_machinery_roundups(
                 "elapsed_ms": elapsed_ms,
                 "live": False,
                 "redis_written": False,
+                "redis_read_back": False,
+                "redis_ttl_s": None,
             }
         except Exception as exc:  # noqa: BLE001
             elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
@@ -1891,6 +1902,8 @@ async def _prewarm_machinery_roundups(
                 "elapsed_ms": elapsed_ms,
                 "live": False,
                 "redis_written": False,
+                "redis_read_back": False,
+                "redis_ttl_s": None,
             }
 
     results = dict(await asyncio.gather(*(_warm_one(p) for p in producers)))
@@ -1898,12 +1911,15 @@ async def _prewarm_machinery_roundups(
     total_db_ms = round(sum(float(v.get("elapsed_ms") or 0.0) for v in results.values()), 1)
     warmed = sum(1 for v in results.values() if v.get("outcome") == "ok")
     redis_written_n = sum(1 for v in results.values() if v.get("redis_written"))
+    redis_read_back_n = sum(1 for v in results.values() if v.get("redis_read_back"))
     logger.info(
-        "Machinery roundup pre-warm finished: %d/%d ok redis_written=%d/%d wall_ms=%.1f total_db_ms=%.1f (%s)",
+        "Machinery roundup pre-warm finished: %d/%d ok redis_written=%d/%d redis_read_back=%d/%d wall_ms=%.1f total_db_ms=%.1f (%s)",
         warmed,
         len(producers),
         redis_written_n,
-        warmed,
+        len(producers),
+        redis_read_back_n,
+        len(producers),
         wall_ms,
         total_db_ms,
         {k: f"{v['outcome']}:{v['elapsed_ms']}ms" for k, v in results.items()},
@@ -1912,6 +1928,7 @@ async def _prewarm_machinery_roundups(
         "outcome": "ok" if warmed else "empty",
         "warmed": warmed,
         "redis_written": redis_written_n,
+        "redis_read_back": redis_read_back_n,
         "wall_ms": wall_ms,
         "total_db_ms": total_db_ms,
         "slugs": results,
