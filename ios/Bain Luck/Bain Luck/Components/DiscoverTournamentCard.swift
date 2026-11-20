@@ -223,10 +223,11 @@ struct NativeTournamentDiscoverCard: View {
                                        let move = FeedProbabilityScale.movementPoints(fromFraction: leader.movement24h) {
                                         // Live movement only — a settled tournament
                                         // never reaches this branch.
-                                        Text(move > 0 ? "+\(String(format: "%.1f", move))pp today" : "\(String(format: "%.1f", move))pp today")
+                                        Text(Self.movementTodayText(move))
                                             .font(.caption2)
                                             .foregroundStyle(move > 0 ? .green : .red)
                                             .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                                            .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.85)
                                             .fixedSize(horizontal: false, vertical: true)
                                     }
                                 }
@@ -311,6 +312,11 @@ struct NativeTournamentDiscoverCard: View {
     /// Without one there is no tournament to open and the category is the
     /// honest destination: better the generic page than a screen that can only
     /// say it failed.
+    nonisolated static func movementTodayText(_ move: Double) -> String {
+        let formatted = String(format: "%.1f", move)
+        return move > 0 ? "+\(formatted) points today" : "\(formatted) points today"
+    }
+
     nonisolated static func destination(for data: FeedTournamentData) -> Route {
         guard let slug = data.slug, !slug.isEmpty else {
             return .sportCategory(key: "golf", name: "Golf")
