@@ -40,7 +40,7 @@ it("draws the floor when a timed-out read succeeds on retry", async () => {
   expect(fetcher.mock.calls[0][1].signal).not.toBe(
     fetcher.mock.calls[1][1].signal,
   );
-  expect(html).toContain("Shipped today");
+  expect(html).toContain('data-factory-row="Server"');
   expect(html).toContain('data-reader="current"');
   expect(html).not.toContain("The floor can&#x27;t be read right now");
 });
@@ -63,7 +63,7 @@ it("keeps the earlier floor and shows its age after a timeout", async () => {
   );
   expect(fetcher).toHaveBeenCalledTimes(3);
   expect(cacheWrite).toHaveBeenCalledTimes(1);
-  expect(html).toContain("Shipped today");
+  expect(html).toContain('data-factory-row="Server"');
   expect(html).toContain('data-motion="paused"');
   expect(html).toContain("Not updating");
   expect(html).toContain(
