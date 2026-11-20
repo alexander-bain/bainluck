@@ -835,7 +835,7 @@ async def _get_container(
             str(ch.get("slug")) for ch in children if isinstance(ch, dict) and ch.get("slug")
         }
         more_sets = await select_more_sets(
-            db, exclude_slugs=midterms_excluded, current_category="politics"
+            db, exclude_slugs=midterms_excluded, current_slug=slug, current_category="politics"
         )
         if more_sets:
             result["more_sets"] = more_sets
@@ -1101,6 +1101,7 @@ async def _build_published_payload(
         more_sets = await select_more_sets(
             db,
             exclude_slugs=hub_excluded,
+            current_slug=published.slug,
             current_category=(header or {}).get("category") if isinstance(header, dict) else None,
         )
         if more_sets:
@@ -1732,6 +1733,7 @@ async def _serve_theme_page(
         more_sets = await select_more_sets(
             db,
             exclude_slugs={published.slug},
+            current_slug=published.slug,
             current_category=(theme_header or {}).get("category") if isinstance(theme_header, dict) else None,
         )
         if more_sets:

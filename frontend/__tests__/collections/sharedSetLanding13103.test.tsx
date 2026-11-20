@@ -171,11 +171,22 @@ describe("#13103 — Shared set SSR landing and stranger-first header", () => {
           lead_probability: 0.41,
           as_of: "2026-11-18T12:00:00+00:00",
         },
+        // Undated card must be dropped (fail-closed)
+        {
+          slug: "undated-set",
+          name: "Undated Set",
+          member_count: 3,
+          lead_label: "Someone",
+          lead_probability: 0.55,
+        },
         // 3rd valid card must be capped at 2
         {
           slug: "roundup-third-set",
           name: "Third Set",
           member_count: 3,
+          lead_label: "Leader",
+          lead_probability: 0.62,
+          as_of: "2026-11-19T19:00:00+00:00",
         },
       ],
     };

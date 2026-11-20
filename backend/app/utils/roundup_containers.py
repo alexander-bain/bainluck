@@ -38,6 +38,7 @@ __all__ = [
     "HAND_LIST_ID_RULE_KEYS",
     "MORE_SETS_BUDGET_SECONDS",
     "MORE_SETS_LIMIT",
+    "MORE_SETS_MAX_LEAD_AGE_SECONDS",
     "OCCASION_ID_RULE_KEYS",
     "ROUNDUP_CACHE_TTL_S",
     "ROUNDUP_NOVELTY_SEAT_CAP",
@@ -146,6 +147,8 @@ ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS = 10.0
 #: #13103 Part 3 item 3 — server-picked follow-on sets attached to GET /api/containers/{slug}.
 MORE_SETS_LIMIT = 2
 MORE_SETS_BUDGET_SECONDS = 0.35
+#: Maximum age of a follow-on set's first-row price observation (24 hours).
+MORE_SETS_MAX_LEAD_AGE_SECONDS = 86400.0
 #: Oct 7–8 Discover opening ruling (#4080 / #5100 / #5105): seats 1–10 (indices
 #: 0–9) are the dated why-now opening ten. Standing round-ups sit in page one's
 #: back half starting at index 10 (seat 11), with no ranking change.
@@ -1406,97 +1409,155 @@ def ensure_optional_roundup_candidates() -> None:
         mod.register_machinery_slice1_candidates()
 
 
+def _parse_iso_timestamp(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _first_present_iso(*values: Any) -> Optional[str]:
+    for val in values:
+        if isinstance(val, str) and val.strip() and _parse_iso_timestamp(val) is not None:
+            return val.strip()
+    return None
+
+
 def _extract_more_set_lead(
     payload: Mapping[str, Any],
 ) -> tuple[Optional[str], Optional[float], Optional[str]]:
-    """Extract the first real priced lead (label, probability, as_of) from a published hub."""
+    """Extract the lead (label, probability, as_of) strictly from the set's own first row."""
     sections = payload.get("sections")
     if not isinstance(sections, Sequence) or isinstance(sections, (str, bytes)):
         return None, None, None
+    first_member: Optional[Mapping[str, Any]] = None
     for section in sections:
         if not isinstance(section, Mapping):
             continue
         members = section.get("members")
-        if not isinstance(members, Sequence) or isinstance(members, (str, bytes)):
-            continue
-        for member in members:
-            if not isinstance(member, Mapping):
+        if isinstance(members, Sequence) and not isinstance(members, (str, bytes)) and len(members) > 0:
+            candidate = members[0]
+            if isinstance(candidate, Mapping):
+                first_member = candidate
+            break
+    if first_member is None:
+        return None, None, None
+
+    card = first_member.get("card")
+    if not isinstance(card, Mapping):
+        return None, None, None
+    mtype = first_member.get("type")
+
+    if mtype == MEMBER_MARKET:
+        outcomes = card.get("top_outcomes")
+        if not isinstance(outcomes, Sequence) or isinstance(outcomes, (str, bytes)):
+            return None, None, None
+        valid_outcomes: list[tuple[Mapping[str, Any], str, float]] = []
+        for outcome in outcomes:
+            if not isinstance(outcome, Mapping):
                 continue
-            card = member.get("card")
-            if not isinstance(card, Mapping):
-                continue
-            mtype = member.get("type")
-            if mtype == MEMBER_MARKET:
-                outcomes = card.get("top_outcomes")
-                if not isinstance(outcomes, Sequence) or isinstance(outcomes, (str, bytes)):
-                    continue
-                for outcome in outcomes:
-                    if not isinstance(outcome, Mapping):
-                        continue
-                    prob = outcome.get("probability")
-                    if (
-                        isinstance(prob, (int, float))
-                        and not isinstance(prob, bool)
-                        and 0.0 <= float(prob) <= 1.0
-                    ):
-                        raw_name = str(outcome.get("name") or "").strip()
-                        card_name = str(card.get("name") or "").strip()
-                        if raw_name.lower() in {"yes", "no"} and card_name:
-                            label = card_name
-                        else:
-                            label = raw_name or card_name
-                        if not label:
-                            continue
-                        as_of = (
-                            card.get("updated_at")
-                            or card.get("last_updated")
-                            or card.get("odds_updated_at")
-                        )
-                        if not isinstance(as_of, str) or not as_of.strip():
-                            smark = outcome.get("source_mark")
-                            sources = smark.get("sources") if isinstance(smark, Mapping) else None
-                            if isinstance(sources, Sequence) and not isinstance(sources, (str, bytes)):
-                                for src in sources:
-                                    obs = src.get("observed_at") if isinstance(src, Mapping) else None
-                                    if isinstance(obs, str) and obs.strip():
-                                        as_of = obs.strip()
-                                        break
-                        return (
-                            label,
-                            round(float(prob), 4),
-                            as_of.strip() if isinstance(as_of, str) and as_of.strip() else None,
-                        )
-            elif mtype == "event":
-                odds = card.get("current_odds")
-                if not isinstance(odds, Mapping):
-                    continue
-                hp = odds.get("home_win_probability")
-                ap = odds.get("away_win_probability")
-                home = str(card.get("home_team") or "").strip()
-                away = str(card.get("away_team") or "").strip()
-                pairs: list[tuple[str, float]] = []
-                if home and isinstance(hp, (int, float)) and not isinstance(hp, bool) and 0.0 <= float(hp) <= 1.0:
-                    pairs.append((home, float(hp)))
-                if away and isinstance(ap, (int, float)) and not isinstance(ap, bool) and 0.0 <= float(ap) <= 1.0:
-                    pairs.append((away, float(ap)))
-                if pairs:
-                    pairs.sort(key=lambda item: item[1], reverse=True)
-                    label, prob = pairs[0]
-                    as_of = (
-                        odds.get("updated_at")
-                        or card.get("updated_at")
-                        or card.get("last_updated")
-                    )
-                    return (
-                        label,
-                        round(prob, 4),
-                        as_of.strip() if isinstance(as_of, str) and as_of.strip() else None,
-                    )
+            prob = outcome.get("probability")
+            if (
+                isinstance(prob, (int, float))
+                and not isinstance(prob, bool)
+                and 0.0 <= float(prob) <= 1.0
+            ):
+                valid_outcomes.append((outcome, str(outcome.get("name") or "").strip(), float(prob)))
+        if not valid_outcomes:
+            return None, None, None
+
+        card_name = str(card.get("name") or "").strip()
+        outcome_names_lower = {nm.lower() for _, nm, _ in valid_outcomes}
+        if outcome_names_lower.issubset({"yes", "no"}):
+            chosen_outcome, raw_name, prob = next(
+                (item for item in valid_outcomes if item[1].lower() == "yes"),
+                valid_outcomes[0],
+            )
+            label = card_name or raw_name
+        else:
+            chosen_outcome, raw_name, prob = max(valid_outcomes, key=lambda item: item[2])
+            label = raw_name or card_name
+        if not label:
+            return None, None, None
+
+        source_obs: Optional[str] = None
+        smark = chosen_outcome.get("source_mark")
+        sources = smark.get("sources") if isinstance(smark, Mapping) else None
+        if isinstance(sources, Sequence) and not isinstance(sources, (str, bytes)):
+            for src in sources:
+                obs = src.get("observed_at") if isinstance(src, Mapping) else None
+                if isinstance(obs, str) and obs.strip():
+                    source_obs = obs.strip()
+                    break
+        as_of = _first_present_iso(
+            card.get("price_observed_at"),
+            card.get("prices_updated_at"),
+            source_obs,
+            card.get("updated_at"),
+            card.get("last_updated"),
+            card.get("odds_updated_at"),
+        )
+        return label, round(prob, 4), as_of
+
+    if mtype == "event":
+        home = str(card.get("home_team") or "").strip()
+        away = str(card.get("away_team") or "").strip()
+        hp = card.get("hero_probability")
+        ap = card.get("hero_probability_away")
+        odds = card.get("current_odds") if isinstance(card.get("current_odds"), Mapping) else {}
+        if not (isinstance(hp, (int, float)) and not isinstance(hp, bool)):
+            hp = odds.get("home_win_probability")
+        if not (isinstance(ap, (int, float)) and not isinstance(ap, bool)):
+            ap = odds.get("away_win_probability")
+        pairs: list[tuple[str, float]] = []
+        if home and isinstance(hp, (int, float)) and not isinstance(hp, bool) and 0.0 <= float(hp) <= 1.0:
+            pairs.append((home, float(hp)))
+        if away and isinstance(ap, (int, float)) and not isinstance(ap, bool) and 0.0 <= float(ap) <= 1.0:
+            pairs.append((away, float(ap)))
+        if not pairs:
+            return None, None, None
+        pairs.sort(key=lambda item: item[1], reverse=True)
+        label, prob = pairs[0]
+        src_updated: Optional[str] = None
+        wps = card.get("win_probability_sources")
+        if isinstance(wps, Mapping):
+            for src in wps.values():
+                if isinstance(src, Mapping):
+                    u = src.get("updated_at")
+                    if isinstance(u, str) and u.strip():
+                        src_updated = u.strip()
+                        break
+        as_of = _first_present_iso(
+            card.get("hero_probability_observed_at"),
+            odds.get("updated_at"),
+            src_updated,
+            card.get("updated_at"),
+            card.get("last_updated"),
+        )
+        return label, round(prob, 4), as_of
+
     return None, None, None
 
 
-def summarize_more_set_card(payload: Mapping[str, Any]) -> Optional[dict[str, Any]]:
-    """Project a verified published container payload into a below-the-set link card (#13103)."""
+def summarize_more_set_card(
+    payload: Mapping[str, Any],
+    *,
+    now: Optional[float | datetime] = None,
+    max_age_seconds: float = MORE_SETS_MAX_LEAD_AGE_SECONDS,
+) -> Optional[dict[str, Any]]:
+    """Project a verified published container payload into a below-the-set link card (#13103).
+
+    Requires a real priced first row observed within ``max_age_seconds`` (24h).
+    Sets without a fresh first-row observation are never offered.
+    """
     if not isinstance(payload, Mapping) or payload.get("state") != "published":
         return None
     container = payload.get("container")
@@ -1525,11 +1586,21 @@ def summarize_more_set_card(payload: Mapping[str, Any]) -> Optional[dict[str, An
     if member_count <= 0:
         return None
 
+    lead_label, lead_probability, as_of = _extract_more_set_lead(payload)
+    if not lead_label or lead_probability is None or not as_of:
+        return None
+    observed_dt = _parse_iso_timestamp(as_of)
+    if observed_dt is None:
+        return None
+    ts, _now_dt = _normalize_roundup_now(now)
+    age_s = ts - observed_dt.timestamp()
+    if age_s > max_age_seconds or age_s < -300.0:
+        return None
+
     raw_dek = payload.get("dek") or payload.get("subtitle")
     dek = raw_dek.strip() if isinstance(raw_dek, str) and raw_dek.strip() else None
     raw_cat = container.get("category")
     category = raw_cat.strip().lower() if isinstance(raw_cat, str) and raw_cat.strip() else None
-    lead_label, lead_probability, as_of = _extract_more_set_lead(payload)
     return {
         "slug": slug,
         "name": name,
@@ -1547,29 +1618,35 @@ def summarize_more_set_card(payload: Mapping[str, Any]) -> Optional[dict[str, An
 def _pick_diverse_more_sets(
     cards: Sequence[dict[str, Any]],
     *,
+    current_slug: str,
     current_category: Optional[str],
     limit: int,
 ) -> list[dict[str, Any]]:
-    """Choose up to ``limit`` cards preferring distinct categories from current & each other."""
+    """Choose up to ``limit`` cards preferring distinct categories, live odds, and spread."""
     chosen: list[dict[str, Any]] = []
     remaining = list(cards)
     used_categories: set[str] = set()
     cur_cat = current_category.strip().lower() if isinstance(current_category, str) and current_category.strip() else None
 
+    def _tie(slug: str) -> int:
+        return zlib.crc32(f"{current_slug}:{slug}".encode("utf-8"))
+
     while remaining and len(chosen) < limit:
         best_idx = 0
-        best_score = -1
+        best_key: tuple[int, int, int, int] = (-1, -1, -1, 0)
         for idx, card in enumerate(remaining):
             cat = card.get("category")
-            score = 0
-            if cat and cat not in used_categories:
-                score += 2
-            if cur_cat is None or (cat and cat != cur_cat):
-                score += 1
-            if card.get("lead_probability") is not None:
-                score += 1
-            if score > best_score:
-                best_score = score
+            distinct_from_picked = 1 if (cat and cat not in used_categories) else 0
+            distinct_from_current = 1 if (cur_cat is None or (cat and cat != cur_cat)) else 0
+            prob = card.get("lead_probability")
+            competitive = (
+                1
+                if isinstance(prob, (int, float)) and 0.05 <= float(prob) <= 0.95
+                else 0
+            )
+            key = (distinct_from_picked, distinct_from_current, competitive, _tie(str(card.get("slug") or "")))
+            if key > best_key:
+                best_key = key
                 best_idx = idx
         picked = remaining.pop(best_idx)
         chosen.append(picked)
@@ -1582,26 +1659,31 @@ async def select_more_sets(
     db: Any,
     *,
     exclude_slugs: Sequence[str] | set[str] | frozenset[str],
+    current_slug: str = "",
     current_category: Optional[str] = None,
     limit: int = MORE_SETS_LIMIT,
     budget_seconds: float = MORE_SETS_BUDGET_SECONDS,
     now: Optional[float | datetime] = None,
     evaluate_uncached: Optional[bool] = None,
 ) -> list[dict[str, Any]]:
-    """Pick up to ``limit`` live published sets below a container page (#13103).
+    """Pick up to ``limit`` fresh published sets below a container page (#13103).
 
-    Prefers warm process-local roundup cache entries (0 ms, zero extra DB
-    queries). When fewer than ``limit`` warm cards are present on a live
-    ``AsyncSession``, evaluates additional eligible producers within a strict
-    wall-clock ``budget_seconds`` ceiling, failing open to whatever valid cards
-    were gathered so the main container payload is never delayed or broken.
+    - Each offered set's own first row must be priced within the last 24 hours.
+    - Machinery sets are included whenever ``container_machinery_enabled()`` is on
+      (the exact gate the set's own page reads) and excluded only while off.
+    - Prefers warm process-local roundup cache entries (0 ms, zero extra DB
+      queries), then evaluates additional eligible producers within
+      ``budget_seconds`` on a live ``AsyncSession``, failing open.
     """
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.container_machinery import container_machinery_enabled
 
     if limit <= 0:
         return []
 
     ensure_optional_roundup_candidates()
+    machinery_public = container_machinery_enabled()
     excluded = {str(s).strip() for s in exclude_slugs if str(s).strip()}
     ts, _now_dt = _normalize_roundup_now(now)
     cur_cat = current_category.strip().lower() if isinstance(current_category, str) and current_category.strip() else None
@@ -1612,8 +1694,8 @@ async def select_more_sets(
         slug = producer.slug
         if (
             slug in excluded
-            or _is_machinery_producer_slug(slug)
             or slug.startswith("for-scale-")
+            or (_is_machinery_producer_slug(slug) and not machinery_public)
         ):
             continue
         if producer.enabled is not None and not producer.enabled():
@@ -1632,14 +1714,18 @@ async def select_more_sets(
         eligible,
         key=lambda p: (
             0 if (cur_cat and (p.category or "").strip().lower() != cur_cat) else 1,
-            p.slug,
+            -zlib.crc32(f"{current_slug}:{p.slug}".encode("utf-8")),
         ),
     ):
         cached = _roundup_local_cache.get((producer.slug, cache_db_key))
         if cached is not None:
             local_ttl = _roundup_cache_ttl_seconds(producer.slug, cached[2])
             if (ts - cached[0]) < local_ttl:
-                card = summarize_more_set_card(cached[2]) if isinstance(cached[2], Mapping) else None
+                card = (
+                    summarize_more_set_card(cached[2], now=ts)
+                    if isinstance(cached[2], Mapping)
+                    else None
+                )
                 if card is not None:
                     warm_cards.append(card)
                     warm_slugs.add(producer.slug)
@@ -1670,12 +1756,17 @@ async def select_more_sets(
             except Exception:  # noqa: BLE001 — fail open, never break container read
                 logger.debug("select_more_sets: candidate %s skipped", producer.slug, exc_info=True)
                 continue
-            card = summarize_more_set_card(payload) if isinstance(payload, Mapping) else None
+            card = summarize_more_set_card(payload, now=ts) if isinstance(payload, Mapping) else None
             if card is not None and card["slug"] not in seen_slugs:
                 collected.append(card)
                 seen_slugs.add(card["slug"])
 
-    return _pick_diverse_more_sets(collected, current_category=cur_cat, limit=limit)
+    return _pick_diverse_more_sets(
+        collected,
+        current_slug=current_slug,
+        current_category=cur_cat,
+        limit=limit,
+    )
 
 
 async def serve_roundup(
@@ -1770,6 +1861,7 @@ async def serve_roundup(
     more_sets = await select_more_sets(
         db,
         exclude_slugs=excluded,
+        current_slug=slug,
         current_category=cur_cat,
         now=now,
     )

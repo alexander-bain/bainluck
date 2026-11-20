@@ -382,6 +382,7 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
           : null;
       const leadLabel = prob !== null && text(item.lead_label) ? item.lead_label.trim() : null;
       const asOf = prob !== null && text(item.as_of) ? item.as_of.trim() : null;
+      if (prob === null || leadLabel === null || asOf === null) continue;
       seenMore.add(item.slug);
       admittedMoreSets.push({
         slug: item.slug,
@@ -391,8 +392,8 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
         category: text(item.category) ? item.category.trim() : null,
         memberCount: item.member_count,
         leadLabel,
-        leadProbability: leadLabel !== null ? prob : null,
-        asOf: leadLabel !== null ? asOf : null,
+        leadProbability: prob,
+        asOf,
       });
     }
   }
