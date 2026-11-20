@@ -5296,6 +5296,7 @@ async def get_feed(
             ):
                 from app.utils.roundup_containers import (
                     ROUNDUP_READ_BUDGET_SECONDS,
+                    _is_machinery_roundup_item,
                     add_roundup_feed_items,
                     roundup_feed_enabled,
                 )
@@ -5324,40 +5325,41 @@ async def get_feed(
                         "items": _spliced_items,
                         "total": len(_spliced_items),
                     }
-                    try:
-                        _mach_pb_key = feed_machinery_page_base_key(_page_base_key)
-                        _pb_origin = feed_page_base_built_at(_base_body)
-                        _pb_age_s = (
-                            max(0.0, time.time() - _pb_origin)
-                            if isinstance(_pb_origin, (int, float))
-                            else 0.0
-                        )
-                        _mpb_fresh, _mpb_stale = _live_ttls(
-                            _base_body,
-                            oldest_artifact_age_s=_pb_age_s,
-                        )
-                        _mpb_json = dumps_feed_cache(_base_body)
-
-                        async def _publish_spliced_mach_page_base(
-                            _client=_shared_redis,
-                            _json=_mpb_json,
-                            _key=_mach_pb_key,
-                            _fresh_ttl=_mpb_fresh,
-                            _stale_ttl=_mpb_stale,
-                        ):
-                            await _rc.bounded_redis_call(
-                                lambda: _client.setex(_key, _fresh_ttl, _json)
+                    if any(_is_machinery_roundup_item(it) for it in _spliced_items):
+                        try:
+                            _mach_pb_key = feed_machinery_page_base_key(_page_base_key)
+                            _pb_origin = feed_page_base_built_at(_base_body)
+                            _pb_age_s = (
+                                max(0.0, time.time() - _pb_origin)
+                                if isinstance(_pb_origin, (int, float))
+                                else 0.0
                             )
-                            await _rc.bounded_redis_call(
-                                lambda: _client.setex(f"{_key}:stale", _stale_ttl, _json)
+                            _mpb_fresh, _mpb_stale = _live_ttls(
+                                _base_body,
+                                oldest_artifact_age_s=_pb_age_s,
                             )
+                            _mpb_json = dumps_feed_cache(_base_body)
 
-                        _rc.schedule_background(_publish_spliced_mach_page_base())
-                    except Exception:
-                        logger.debug(
-                            "machinery page-base background publish failed",
-                            exc_info=True,
-                        )
+                            async def _publish_spliced_mach_page_base(
+                                _client=_shared_redis,
+                                _json=_mpb_json,
+                                _key=_mach_pb_key,
+                                _fresh_ttl=_mpb_fresh,
+                                _stale_ttl=_mpb_stale,
+                            ):
+                                await _rc.bounded_redis_call(
+                                    lambda: _client.setex(_key, _fresh_ttl, _json)
+                                )
+                                await _rc.bounded_redis_call(
+                                    lambda: _client.setex(f"{_key}:stale", _stale_ttl, _json)
+                                )
+
+                            _rc.schedule_background(_publish_spliced_mach_page_base())
+                        except Exception:
+                            logger.debug(
+                                "machinery page-base background publish failed",
+                                exc_info=True,
+                            )
             # T4-B2 / #5102. The base is the WHOLE current list, which is
             # precisely what a pin needs: reorder it into the requested
             # edition's order and slice that, so the reader keeps their place
@@ -7418,7 +7420,19 @@ async def get_feed(
                             "edition_policy": _edition_policy,
                             "age_origin": _age_origin,
                         }
-                    if _include_machinery_feed and _base_feed_items_without_machinery is not None:
+                    if (
+                        _include_machinery_feed
+                        and _base_feed_items_without_machinery is not None
+                    ):
+                        from app.utils.roundup_containers import (
+                            _is_machinery_roundup_item as _is_mach_card,
+                        )
+                    else:
+                        _is_mach_card = None
+                    if (
+                        _is_mach_card is not None
+                        and any(_is_mach_card(it) for it in feed_items)
+                    ):
                         _mach_base_body = dict(_page_base_body)
                         _mach_base_body["items"] = feed_items
                         _mach_base_body["total"] = len(feed_items)
