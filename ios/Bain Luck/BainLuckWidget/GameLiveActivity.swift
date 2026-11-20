@@ -141,13 +141,15 @@ private struct GameActivityReading {
     }
     func scoreText(_ side: Side) -> String { score(side).map(String.init) ?? "–" }
 
-    /// #13000 (Decision 250-A) — omit the Score column completely when a live match
-    /// has no score feed carrying it (`scoreSourceUnavailable == true` and no scores).
+    /// #13000 (Decision 250-A) — omit the Score / Final score column completely when
+    /// a live match has no score feed carrying it (`scoreSourceUnavailable == true`
+    /// and no scores) or when a finished match has no recorded scores at all (never
+    /// print two "–" dashes under "Final").
     var showsScore: Bool {
         guard phase != .before else { return false }
-        if phase == .during && snapshot.scoreSourceUnavailable == true
-            && snapshot.homeScore == nil && snapshot.awayScore == nil {
-            return false
+        if snapshot.homeScore == nil && snapshot.awayScore == nil {
+            if phase == .during && snapshot.scoreSourceUnavailable == true { return false }
+            if phase == .after { return false }
         }
         return true
     }
@@ -420,7 +422,7 @@ private struct GameActivityLockScreenView: View {
             }
             if reading.matches {
                 VStack(spacing: 3) {
-                    if reading.showsScore || reading.pair != nil {
+                    if reading.showsScore || reading.pair != nil || (reading.phase == .after && reading.hasPregame) {
                         GameActivityColumnLabels(reading: reading, metrics: m)
                     }
                     GameActivityTeamRow(reading: reading, side: .away, metrics: m)
@@ -553,10 +555,12 @@ private struct GameActivityColumnLabels: View {
                         .fixedSize(horizontal: true, vertical: false)
                         .frame(minWidth: metrics.pregameWidth, alignment: .trailing)
                 }
-                Text("Final")
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(minWidth: metrics.scoreWidth, alignment: .trailing)
+                if reading.showsScore {
+                    Text("Final")
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(minWidth: metrics.scoreWidth, alignment: .trailing)
+                }
                 Color.clear.frame(width: metrics.tickWidth, height: 1)
             }
         }
@@ -687,6 +691,12 @@ private struct GameActivityExpandedSide: View {
                     .foregroundStyle(reading.phase == .after && reading.losingSide == side ? .secondary : .primary)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
+            } else if reading.phase == .after, let verdict = reading.verdict(side) {
+                Text(verdict)
+                    .font(.caption.weight(reading.ticked(side) ? .bold : .medium))
+                    .foregroundStyle(reading.ticked(side) ? Color.green : .secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         }
         .frame(maxWidth: .infinity, alignment: side == .away ? .leading : .trailing)
@@ -772,6 +782,18 @@ private struct GameActivityCompactLeading: View {
                 // Direction 209 — the winner and the score, winner's first; its
                 // pregame chance follows on the trailing side.
                 Text("\(reading.badge(winner)) \(won)–\(lost)")
+            } else if reading.snapshot.isTerminal && !reading.showsScore {
+                // #13000 (250-A) — scoreless final: never print "BOY –". Show winner + tick or "Final".
+                if let winner = reading.winner {
+                    HStack(spacing: 3) {
+                        GameActivityCrestOrBadge(reading: reading, side: winner)
+                        Image(systemName: "checkmark")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.green)
+                    }
+                } else {
+                    Text("Final")
+                }
             } else if reading.snapshot.isTerminal {
                 Text("\(reading.badge(.away)) \(reading.scoreText(.away))")
                     .foregroundStyle(reading.lowerScoredSide == .away ? .secondary : .primary)
@@ -813,6 +835,16 @@ private struct GameActivityCompactTrailing: View {
                       let pregame = reading.pregameText(winner) {
                 Text("Pregame \(pregame)")
                     .foregroundStyle(.secondary)
+            } else if reading.snapshot.isTerminal && !reading.showsScore {
+                // #13000 (250-A) — scoreless final: never print "– OLI". Show pregame chance or "Final".
+                if let winner = reading.winner, reading.hasPregame,
+                   let pregame = reading.pregameText(winner) {
+                    Text("Pregame \(pregame)")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Final")
+                        .foregroundStyle(.secondary)
+                }
             } else if reading.snapshot.isTerminal {
                 Text("\(reading.scoreText(.home)) \(reading.badge(.home))")
                     .foregroundStyle(reading.lowerScoredSide == .home ? .secondary : .primary)

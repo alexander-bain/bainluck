@@ -26,6 +26,31 @@ enum GameActivityDemo10864 {
     /// Built through the snapshot's own initializer, which applies every rule a
     /// real reading meets (a final carries no chance).
     static func snapshot(_ mode: String, now: Date = Date()) -> GameActivitySnapshot? {
+        if mode == "tennis250afinal" {
+            // #13000 (Decision 250-A) — finished ATP Challenger tennis match with no score feed:
+            // Final score column omitted (no "–" dashes), FINAL pill + winner tick + Pregame kept.
+            return GameActivitySnapshot(
+                eventID: eventID + 5,
+                homeTeam: "Tristan Boyer",
+                awayTeam: "Genaro Alberto Olivieri",
+                lifecycle: .final,
+                homeScore: nil,
+                awayScore: nil,
+                homeProbability: nil,
+                awayProbability: nil,
+                sport: "tennis_atp",
+                scoreObservedAt: nil,
+                probabilityObservedAt: nil,
+                homeAbbreviation: "BOY",
+                awayAbbreviation: "OLI",
+                homeColorHex: "#1D4ED8",
+                awayColorHex: "#B45309",
+                periodLabel: nil,
+                servedResult: "home",
+                pregameAwayPercent: 44,
+                pregameHomePercent: 56,
+                scoreSourceUnavailable: true)
+        }
         if mode == "tennis250a" {
             // #13000 (Decision 250-A) — live ATP Challenger tennis match with no score feed
             // carrying it: Score column omitted completely, LIVE + Now + Chance time kept.
@@ -148,7 +173,7 @@ enum GameActivityDemo10864 {
             : (mode == "nfl199pre" || mode == "nfl199final"
                || mode == "ncaab12999live" || mode == "ncaab12999ht"
                || mode == "ncaab12999final" || mode == "ncaab12999pushed"
-               || mode == "tennis250a") ? mode : "live"
+               || mode == "tennis250a" || mode == "tennis250afinal") ? mode : "live"
         if mode == "pair", let other = snapshot("live") {
             _ = try? Activity<GameActivityAttributes>.request(
                 attributes: GameActivityAttributes(eventID: eventID),
