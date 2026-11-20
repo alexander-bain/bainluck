@@ -3873,11 +3873,12 @@ async def get_feed(
         None,
         description="Optional ranking_judgments surface filter for reviewed exclusion.",
     ),
-    machinery: Optional[int] = Query(
+    machinery: Optional[str] = Query(
         None,
         description=(
             "Ruling 252: A (#12288) — opt in (`machinery=1`) for website and iOS 1.0.7+ "
-            "machinery groupings. Omitted by iOS 1.0.6 and older app versions."
+            "public machinery groupings, or `machinery=preview` (#13097) to include "
+            "stage='preview' groupings before public promotion. Omitted by iOS 1.0.6."
         ),
     ),
     secret: Optional[str] = Query(
@@ -4561,8 +4562,17 @@ async def get_feed(
             max_age_seconds=0.0 if _prewarm_rebuild else 5.0,
             budget_seconds=_feed_budget_remaining_s(),
         )
+    _machinery_raw = (
+        str(machinery).strip().lower()
+        if isinstance(machinery, (str, int))
+        else ""
+    )
+    _include_machinery_preview = _machinery_raw == "preview" and not _prewarm_rebuild
     _include_machinery_feed = (
-        isinstance(machinery, int) and bool(machinery) and not _prewarm_rebuild
+        _include_machinery_preview or _machinery_raw in {"1", "true", "yes"}
+    ) and not _prewarm_rebuild
+    _machinery_cache_mode: bool | str = (
+        "preview" if _include_machinery_preview else _include_machinery_feed
     )
     if (
         not debug
@@ -4602,7 +4612,7 @@ async def get_feed(
             edition=_edition_request,
             collections=_collections_key,
             opening_seating=_opening_seating,
-            machinery=_include_machinery_feed,
+            machinery=_machinery_cache_mode,
             fun_admission=_fun_admission_enabled,
         )
         # LAT-P001: shared key builder — the pre-warm beat writes through the
@@ -5267,7 +5277,7 @@ async def get_feed(
             else:
                 _base_raw, _base_status, _base_body = None, None, None
                 _used_machinery_page_base = False
-                if _include_machinery_feed:
+                if _include_machinery_feed and not _include_machinery_preview:
                     _mach_pb_key = feed_machinery_page_base_key(_page_base_key)
                     _base_raw, _base_status = await _read_shared_feed_cache(
                         _shared_redis, _mach_pb_key
@@ -5319,13 +5329,16 @@ async def get_feed(
                         now=_request_now,
                         include_machinery=True,
                         machinery_only=True,
+                        include_preview=_include_machinery_preview,
                     )
                     _base_body = {
                         **_base_body,
                         "items": _spliced_items,
                         "total": len(_spliced_items),
                     }
-                    if any(_is_machinery_roundup_item(it) for it in _spliced_items):
+                    if not _include_machinery_preview and any(
+                        _is_machinery_roundup_item(it) for it in _spliced_items
+                    ):
                         try:
                             _mach_pb_key = feed_machinery_page_base_key(_page_base_key)
                             _pb_origin = feed_page_base_built_at(_base_body)
@@ -6654,6 +6667,7 @@ async def get_feed(
                     ),
                     include_machinery=True,
                     machinery_only=True,
+                    include_preview=_include_machinery_preview,
                 )
             if _capture is not None and feed_items is not _before_roundups:
                 _capture.abandon("roundup_containers")
@@ -7422,6 +7436,7 @@ async def get_feed(
                         }
                     if (
                         _include_machinery_feed
+                        and not _include_machinery_preview
                         and _base_feed_items_without_machinery is not None
                     ):
                         from app.utils.roundup_containers import (

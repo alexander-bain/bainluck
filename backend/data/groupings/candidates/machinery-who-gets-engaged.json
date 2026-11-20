@@ -1,0 +1,65 @@
+{
+  "slug": "machinery-who-gets-engaged",
+  "stage": "preview",
+  "look": "faces",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "same_measure",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ENTERTAINMENT · COUPLES",
+  "name": "Who Gets Engaged?",
+  "category": "entertainment",
+  "tag": "ENTERTAINMENT",
+  "section_title": "Couples to Watch",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": ["politics"],
+    "card_rows": 3,
+    "card_section_key": "engaged_couples",
+    "sections": [
+      {
+        "key": "engaged_couples",
+        "title": "Couples to Watch",
+        "note": "Engagement odds across celebrity and public-figure couples, one row per couple.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["engaged"],
+          "exclude_tokens": [
+            "roblox",
+            "hours",
+            "fiscal",
+            "quarter",
+            "q1",
+            "q2",
+            "q3",
+            "q4",
+            "military",
+            "combat",
+            "war",
+            "wedding",
+            "married",
+            "taylor swift",
+            "divorce",
+            "pregnant",
+            "pregnancy",
+            "arrested",
+            "affair"
+          ],
+          "shape": "binary",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 20,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3
+        }
+      }
+    ]
+  }
+}

@@ -1056,6 +1056,34 @@ def _clean_section_market_label(name: str) -> str:
     if m:
         return f"{m.group(1).strip()} {m.group(2).capitalize()} Race"
 
+    # ── Seasonal / Entertainment / General binary & casting titles ───────
+    m = re.match(
+        r"^will\s+it\s+snow\s+in\s+(.+?)\s+on\s+christmas\??$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if m:
+        return m.group(1).strip()
+
+    m = re.match(r"^next\s+james\s+bond\s+film:\s*(.+)$", cleaned, re.IGNORECASE)
+    if m:
+        role = m.group(1).strip()
+        role = re.sub(r"^artist\s+performing\s+the\s+", "", role, flags=re.IGNORECASE)
+        role = re.sub(r"^(?:actor|actress)\s+cast\s+as\s+(?:the\s+)?", "", role, flags=re.IGNORECASE)
+        role = role.strip()
+        if role:
+            return role[0].upper() + role[1:]
+
+    m = re.match(
+        r"^(?:will\s+)?(.+?)(?:\s*:\s*|\s+(?:get\s+|be\s+)?)engaged(?:\s+(?:in\s+\d{4}|this\s+year|before\s+\d{4}|by\s+end\s+of\s+\d{4}))?\??$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if m and "hours" not in cleaned.lower():
+        couple = re.sub(r"\s+and\s+", " & ", m.group(1).strip(), flags=re.IGNORECASE)
+        if couple:
+            return couple
+
     # ── Sports / Awards / General cleanup ────────────────────────────────
     is_oscar_nom = bool(re.match(r"^oscar\s+nominees?:", cleaned, re.IGNORECASE))
     cleaned = re.sub(
@@ -1774,6 +1802,7 @@ _CATEGORY_LLM_POOL: dict[str, tuple[str, ...]] = {
         "pop_culture",
         "other",
     ),
+    "weather": ("weather", "climate", "science", "other"),
     "football": ("football", "nfl", "americanfootball_nfl", "other"),
     "basketball": ("basketball", "nba", "basketball_nba", "other"),
 }
@@ -1784,9 +1813,16 @@ def _category_llm_pool_for_definition(
 ) -> Optional[tuple[str, ...]]:
     """Return the scoped ``llm_sport_category`` pool for ``ix_fm_feed_open_sports``."""
     cat = str(definition.get("category") or "").strip().lower()
+    rule = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
+    extras = tuple(
+        str(c).strip().lower()
+        for c in (rule.get("extra_llm_categories") or ())
+        if str(c).strip()
+    )
     if cat in _CATEGORY_LLM_POOL:
-        return _CATEGORY_LLM_POOL[cat]
-    sections_cfg = (definition.get("rule") or {}).get("sections") or ()
+        base = _CATEGORY_LLM_POOL[cat]
+        return tuple(dict.fromkeys([*base, *extras])) if extras else base
+    sections_cfg = rule.get("sections") or ()
     sport_keys = {
         str(sec["atom_query"].get("sport_key") or "").strip().lower()
         for sec in sections_cfg
@@ -1795,10 +1831,10 @@ def _category_llm_pool_for_definition(
         and sec["atom_query"].get("kind") == "events"
     }
     if any(sk.startswith("americanfootball_") for sk in sport_keys):
-        return _CATEGORY_LLM_POOL["football"]
+        return tuple(dict.fromkeys([*_CATEGORY_LLM_POOL["football"], *extras]))
     if any(sk.startswith("basketball_") for sk in sport_keys):
-        return _CATEGORY_LLM_POOL["basketball"]
-    return None
+        return tuple(dict.fromkeys([*_CATEGORY_LLM_POOL["basketball"], *extras]))
+    return extras or None
 
 
 def _market_title_matches_query(title: str, query: Mapping[str, Any]) -> bool:
@@ -2508,8 +2544,9 @@ def _match_paired_set(
     return None
 
 
-def _twin_market_key(title: str) -> str:
-    """Canonicalize cross-venue twin titles (e.g. 'Fed Decision in December?' vs 'Fed decision in Dec 2026?')."""
+def _twin_market_key(title: str, *, raw_title: str = "") -> str:
+    """Canonicalize cross-venue twin titles (e.g. 'Fed Decision in December?' vs 'Fed decision in Dec 2026?',
+    or reversed couple names on engagement markets across Kalshi and Polymarket)."""
     low = re.sub(r"[?!.,]+$", "", title.strip().lower()).strip()
     m_fomc = re.match(r"^([a-z]+)(?:\s+\d{4})?\s+fed\s+decision$", low)
     if m_fomc:
@@ -2520,6 +2557,15 @@ def _twin_market_key(title: str) -> str:
     m_unemp = re.match(r"^([a-z]+)(?:\s+\d{4})?\s+u\.s\.\s+unemployment(?:\s+rate)?$", low)
     if m_unemp:
         return f"us_unemp:{_expand_month_token(m_unemp.group(1)).lower()}"
+    raw_low = (raw_title or title).strip().lower()
+    if "engaged" in raw_low and "hours" not in raw_low:
+        parts = [
+            _ascii_fold_key(p)
+            for p in re.split(r"\s+(?:&|and)\s+", title.strip(), flags=re.IGNORECASE)
+            if _ascii_fold_key(p)
+        ]
+        if parts:
+            return "engaged:" + "&".join(sorted(parts))
     m_gdp = re.match(r"^u\.?s\.?\s+(?:real\s+)?gdp\s+growth\s+in\s+(.+)$", low)
     if m_gdp:
         return f"us_gdp:{_norm_key(m_gdp.group(1))}"
@@ -2546,7 +2592,7 @@ def _dedupe_twin_markets(markets: Sequence[dict[str, Any]]) -> list[dict[str, An
     by_key: dict[str, dict[str, Any]] = {}
     out: list[dict[str, Any]] = []
     for m in markets:
-        norm_t = _twin_market_key(str(m["title"]))
+        norm_t = _twin_market_key(str(m["title"]), raw_title=str(m.get("raw_title") or ""))
         existing = by_key.get(norm_t)
         if existing is not None:
             twins = existing.setdefault("_twin_market_ids", [])
@@ -2886,10 +2932,12 @@ def _build_dynamic_title_from_set(
             return f"{matchup} headlines{span_clause}, with {tossup_count} toss-up games"
         return f"{matchup} headlines{span_clause}"
 
-    # 3. Market-led sets (duel + contender field, or numerical-scale rate set)
+    # 3. Market-led sets (duel + contender field, numerical-scale rate set,
+    # benchmark strip, or sibling field grid)
     duel_item: Optional[Mapping[str, Any]] = None
     spotlight_item: Optional[Mapping[str, Any]] = None
     sibling_items: list[Mapping[str, Any]] = []
+    benchmark_items: list[Mapping[str, Any]] = []
     for sec in built_sections:
         vb = sec.get("visual_block") or {}
         fid = vb.get("form_id")
@@ -2900,6 +2948,8 @@ def _build_dynamic_title_from_set(
             spotlight_item = its[0]
         elif fid == "sibling_fields_grid" and its:
             sibling_items.extend(its)
+        elif fid == "benchmark_strip" and its:
+            benchmark_items.extend(its)
 
     def _fav_outcome(m_item: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
         outs = [o for o in (m_item.get("outcomes") or ()) if isinstance(o, Mapping)]
@@ -2934,6 +2984,61 @@ def _build_dynamic_title_from_set(
         if sp_fav:
             sp_phrase = _prose_market_phrase(str(spotlight_item["title"]))
             return f"{_prose_rate_outcome(str(sp_fav['name']), capitalize_first=True)} leads {sp_phrase} at {sp_fav['rendered_percent']}%"
+
+    if benchmark_items:
+        lead_bm = benchmark_items[0]
+        lead_o = _fav_outcome(lead_bm)
+        group_name = str(definition.get("name") or "").strip().rstrip("?")
+        rule_pred = str((definition.get("rule") or {}).get("headline_predicate") or "").strip()
+        if lead_o is not None:
+            lead_t = str(lead_bm.get("title") or "").strip()
+            lead_p = int(lead_o["rendered_percent"])
+            verb = "lead" if " & " in lead_t else "leads"
+            if rule_pred:
+                lead_clause = f"{lead_t} {rule_pred} at {lead_p}%"
+            elif group_name:
+                lead_clause = f"{lead_t} {verb} {group_name} at {lead_p}%"
+            else:
+                lead_clause = f"{lead_t} {verb} at {lead_p}%"
+            if len(benchmark_items) >= 2:
+                sec_bm = benchmark_items[1]
+                sec_o = _fav_outcome(sec_bm)
+                if sec_o is not None:
+                    sec_t = str(sec_bm.get("title") or "").strip()
+                    sec_p = int(sec_o["rendered_percent"])
+                    return f"{lead_clause}, with {sec_t} at {sec_p}%"
+            return lead_clause
+
+    if sibling_items:
+        lead_sib = sibling_items[0]
+        lead_o = _fav_outcome(lead_sib)
+        if lead_o is not None:
+            lead_name = _prose_outcome_name(str(lead_o["name"]))
+            lead_title = str(lead_sib.get("title") or "").strip()
+            lead_p = int(lead_o["rendered_percent"])
+            _CASTING_ROLES = {
+                "james bond",
+                "m",
+                "q",
+                "moneypenny",
+                "bond girl",
+                "villain",
+                "main villain",
+            }
+            if len(sibling_items) >= 2:
+                sec_sib = sibling_items[1]
+                sec_o = _fav_outcome(sec_sib)
+                if sec_o is not None:
+                    sec_name = _prose_outcome_name(str(sec_o["name"]))
+                    sec_title = str(sec_sib.get("title") or "").strip()
+                    sec_p = int(sec_o["rendered_percent"])
+                    sec_verb = (
+                        "to play"
+                        if sec_title.lower() in _CASTING_ROLES
+                        else "leading"
+                    )
+                    return f"{lead_name} leads {lead_title} at {lead_p}%, with {sec_name} {sec_verb} {sec_title} at {sec_p}%"
+            return f"{lead_name} leads {lead_title} at {lead_p}%"
 
     return str(definition.get("name") or definition.get("slug") or "Round-Up")
 
@@ -3545,6 +3650,56 @@ async def produce_container_machinery(
                 }
             )
             card_visual_rows.append(it)
+    elif vb_form == "benchmark_strip" and len(vb.get("items") or ()) >= 2:
+        for bm in (vb.get("items") or ())[:card_rows_limit]:
+            mid = int(bm.get("market_id") or 1)
+            outs = list(bm.get("outcomes") or ())
+            if not outs:
+                continue
+            yes = outs[0]
+            bm_title = str(bm.get("title") or yes.get("name") or "")
+            rows_out.append(
+                {
+                    "market_id": mid,
+                    "outcome_id": int(yes["outcome_id"]),
+                    "label": bm_title,
+                    "probability": float(yes["probability"]),
+                    "rendered_percent": int(yes["rendered_percent"]),
+                }
+            )
+            card_visual_rows.append(
+                {
+                    "market_id": mid,
+                    "href": bm.get("href") or f"/futures/{mid}",
+                    **yes,
+                    "name": bm_title,
+                }
+            )
+    elif vb_form == "sibling_fields_grid" and len(vb.get("items") or ()) >= 2:
+        for sib in (vb.get("items") or ())[:card_rows_limit]:
+            mid = int(sib.get("market_id") or 1)
+            outs = list(sib.get("outcomes") or ())
+            if not outs:
+                continue
+            lead = max(outs, key=lambda o: float(o.get("probability") or 0.0))
+            sib_label = f"{sib.get('title') or ''} · {lead.get('name') or ''}".strip(" ·")
+            rows_out.append(
+                {
+                    "market_id": mid,
+                    "outcome_id": int(lead["outcome_id"]),
+                    "label": sib_label,
+                    "probability": float(lead["probability"]),
+                    "rendered_percent": int(lead["rendered_percent"]),
+                }
+            )
+            card_visual_rows.append(
+                {
+                    "market_id": mid,
+                    "href": sib.get("href") or f"/futures/{mid}",
+                    **lead,
+                    "name": sib_label,
+                }
+            )
     else:
         lead_market = (vb.get("items") or [{}])[0]
         mid = int(lead_market.get("market_id") or 1)
@@ -3623,6 +3778,8 @@ async def produce_container_machinery(
     machinery_card: dict[str, Any] = {
         "slug": slug,
         "form_id": vb_form,
+        "stage": str(definition.get("stage") or "public"),
+        "look": str(definition.get("look") or "bars"),
         "kicker": str(definition.get("kicker") or "ROUND-UP"),
         "title": dynamic_title,
         "subtitle": str(card_sec.get("note") or ""),
@@ -3717,6 +3874,8 @@ def build_container_machinery_producer(
         parent_slug=validated.get("parent_slug"),
         parent_name=validated.get("parent_name"),
         enabled=enabled if enabled is not None else container_machinery_enabled,
+        stage=validated.get("stage", "public"),
+        look=validated.get("look", "bars"),
     )
 
 

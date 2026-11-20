@@ -1887,6 +1887,7 @@ async def _prewarm_machinery_roundups(
         for p in ROUNDUP_PRODUCERS.values()
         if _is_machinery_producer_slug(p.slug)
         and (p.enabled is None or p.enabled())
+        and (slug_filter is not None or getattr(p, "stage", "public") == "public")
         and (slug_filter is None or p.slug in slug_filter)
     ]
     if not producers:
@@ -2056,7 +2057,9 @@ def _publish_machinery_feed_from_prewarm_base(
     producers = [
         p
         for p in ROUNDUP_PRODUCERS.values()
-        if _is_machinery_producer_slug(p.slug) and (p.enabled is None or p.enabled())
+        if _is_machinery_producer_slug(p.slug)
+        and (p.enabled is None or p.enabled())
+        and getattr(p, "stage", "public") == "public"
     ]
     if not producers:
         return {"outcome": "empty"}
@@ -2243,7 +2246,9 @@ async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 20.0) -> d
     registered = sorted(
         p.slug
         for p in ROUNDUP_PRODUCERS.values()
-        if _is_machinery_producer_slug(p.slug) and (p.enabled is None or p.enabled())
+        if _is_machinery_producer_slug(p.slug)
+        and (p.enabled is None or p.enabled())
+        and getattr(p, "stage", "public") == "public"
     )
     registered_set = set(registered)
     live_slugs = sorted(s for s in _live_machinery_slugs(rc) if s in registered_set)
