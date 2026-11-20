@@ -1449,46 +1449,57 @@ def _hydrate_market_visual_item(
 
 
 def _event_has_sportsbook(event: Any, *, hero_source: Optional[str] = None) -> bool:
-    """True when a game event is priced by at least one sportsbook (not thin venue/ESPN-only).
+    """True when sportsbooks actually stand behind the event's hero chance (#9081, #12288).
 
-    Used so sports slates (e.g. NBA) prefer sportsbook-backed games over games
-    priced only by two prediction-market venues or ESPN when sportsbook games
-    exist on the slate (#12288).
+    Uses ``hero_sportsbook_count(event) > 0`` so games with 1–2 books below
+    ``BETTING_BOOK_FLOOR`` (whose ``betting`` reading is omitted from the blend)
+    are NOT counted as sportsbook-backed and cannot outrank true multi-book
+    games on sports slates (e.g. NBA).
     """
+    from types import SimpleNamespace
+
+    from app.utils.hero_probability import hero_sportsbook_count
+
     if isinstance(event, Mapping):
         if event.get("has_sportsbook") is True:
             return True
         if event.get("has_sportsbook") is False:
             return False
+        wps = event.get("win_probability_sources")
+        h_src = hero_source or event.get("hero_source")
+        if str(h_src or "").strip().lower() == "betting":
+            return True
+        if isinstance(wps, Mapping):
+            ev_ns = SimpleNamespace(
+                win_probability_sources=dict(wps),
+                status=event.get("status"),
+                sport=event.get("sport"),
+                commence_time=event.get("commence_time"),
+            )
+            sb_cnt = hero_sportsbook_count(ev_ns)
+            if sb_cnt is not None:
+                return sb_cnt > 0
+            # `hero_sportsbook_count` returns None only when `"betting"` IS in
+            # `effective_source_weights` without an explicit integer count.
+            betting_entry = wps.get("betting")
+            if isinstance(betting_entry, Mapping):
+                return any(
+                    isinstance(betting_entry.get(k), (int, float))
+                    for k in ("home", "away", "home_probability", "away_probability", "probability")
+                )
+            return isinstance(betting_entry, (int, float)) and not isinstance(betting_entry, bool)
         bk = event.get("bookmaker_count")
-        if isinstance(bk, (int, float)) and not isinstance(bk, bool) and bk > 0:
+        if isinstance(bk, (int, float)) and not isinstance(bk, bool) and bk >= 3:
             return True
         odds = event.get("current_odds")
         if isinstance(odds, Mapping):
             obk = odds.get("bookmaker_count")
-            if isinstance(obk, (int, float)) and not isinstance(obk, bool) and obk > 0:
+            if isinstance(obk, (int, float)) and not isinstance(obk, bool) and obk >= 3:
                 return True
-        wps = event.get("win_probability_sources")
-        h_src = hero_source or event.get("hero_source")
-    else:
-        wps = getattr(event, "win_probability_sources", None)
-        h_src = hero_source
-    if str(h_src or "").strip().lower() == "betting":
-        return True
-    if isinstance(wps, Mapping):
-        b_cnt = wps.get("betting_book_count")
-        if isinstance(b_cnt, (int, float)) and not isinstance(b_cnt, bool) and b_cnt > 0:
-            return True
-        betting_entry = wps.get("betting")
-        if isinstance(betting_entry, Mapping):
-            if any(
-                isinstance(betting_entry.get(k), (int, float))
-                for k in ("home", "away", "home_probability", "away_probability", "probability")
-            ):
-                return True
-        elif isinstance(betting_entry, (int, float)) and not isinstance(betting_entry, bool):
-            return True
-    return False
+        return False
+
+    sb_cnt = hero_sportsbook_count(event)
+    return bool(sb_cnt is not None and sb_cnt > 0)
 
 
 def _hydrate_event_visual_item(

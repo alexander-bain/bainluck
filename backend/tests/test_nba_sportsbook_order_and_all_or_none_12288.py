@@ -106,7 +106,7 @@ async def test_nba_grouping_prefers_sportsbook_games_over_thin_venue_only_games(
         "Utah Jazz",
         home_prob=0.5075,
         hours_ahead=60,
-        wps={"kalshi": {"home": 0.51}, "polymarket": {"home": 0.505}},
+        wps={"kalshi": {"value": 0.51}, "polymarket": {"value": 0.505}},
         bookmaker_count=0,
     )
     thin_espn = _nba_event(
@@ -115,7 +115,7 @@ async def test_nba_grouping_prefers_sportsbook_games_over_thin_venue_only_games(
         "Charlotte Hornets",
         home_prob=0.5088,
         hours_ahead=72,
-        wps={"espn": {"home": 0.5088}},
+        wps={"espn": {"value": 0.5088}},
         bookmaker_count=0,
     )
     sb_rockets = _nba_event(
@@ -124,7 +124,7 @@ async def test_nba_grouping_prefers_sportsbook_games_over_thin_venue_only_games(
         "Denver Nuggets",
         home_prob=0.54,
         hours_ahead=15,
-        wps={"betting": {"home": 0.54}, "betting_book_count": 18, "kalshi": {"home": 0.53}},
+        wps={"betting": {"value": 0.54}, "betting_book_count": 18, "kalshi": {"value": 0.53}},
         bookmaker_count=18,
     )
     sb_hawks = _nba_event(
@@ -133,7 +133,7 @@ async def test_nba_grouping_prefers_sportsbook_games_over_thin_venue_only_games(
         "Atlanta Hawks",
         home_prob=0.57,
         hours_ahead=12,
-        wps={"betting": {"home": 0.57}, "betting_book_count": 19, "kalshi": {"home": 0.56}},
+        wps={"betting": {"value": 0.57}, "betting_book_count": 19, "kalshi": {"value": 0.56}},
         bookmaker_count=19,
     )
     sb_pistons = _nba_event(
@@ -142,7 +142,7 @@ async def test_nba_grouping_prefers_sportsbook_games_over_thin_venue_only_games(
         "Detroit Pistons",
         home_prob=0.61,
         hours_ahead=12.5,
-        wps={"betting": {"home": 0.61}, "betting_book_count": 19},
+        wps={"betting": {"value": 0.61}, "betting_book_count": 19},
         bookmaker_count=19,
     )
 
@@ -170,12 +170,12 @@ async def test_nba_grouping_prefers_sportsbook_games_over_thin_venue_only_games(
     blowout_1 = _nba_event(
         15399001, "Washington Wizards", "Boston Celtics",
         home_prob=0.82, hours_ahead=14,
-        wps={"betting": {"home": 0.82}, "betting_book_count": 18}, bookmaker_count=18,
+        wps={"betting": {"value": 0.82}, "betting_book_count": 18}, bookmaker_count=18,
     )
     blowout_2 = _nba_event(
         15399002, "Portland Trail Blazers", "Oklahoma City Thunder",
         home_prob=0.84, hours_ahead=16,
-        wps={"betting": {"home": 0.84}, "betting_book_count": 18}, bookmaker_count=18,
+        wps={"betting": {"value": 0.84}, "betting_book_count": 18}, bookmaker_count=18,
     )
     outcome_one_sb = await produce_container_machinery(
         {"events": [thin_kalshi_poly, thin_espn, sb_rockets, blowout_1, blowout_2], "markets": _nba_support_markets()},
@@ -185,6 +185,98 @@ async def test_nba_grouping_prefers_sportsbook_games_over_thin_venue_only_games(
     assert isinstance(outcome_one_sb, RoundupMembers)
     lead_ids_one = [int(m["event_id"]) for m in outcome_one_sb.sections[0]["members"]]
     assert lead_ids_one[0] == 15197756
+
+
+@pytest.mark.asyncio
+async def test_single_book_without_betting_reading_is_not_sportsbook_backed() -> None:
+    """#13187 review: 1 book below BETTING_BOOK_FLOOR (no `betting` reading) cannot outrank a 12-book game."""
+    from types import SimpleNamespace
+
+    definition = json.loads(NBA_DEF_PATH.read_text(encoding="utf-8"))
+
+    # DB-model path: `betting_book_count=1`, Polymarket only (no `betting` reading in blend).
+    orm_one_book = SimpleNamespace(
+        id=15390001,
+        sport="basketball_nba",
+        status="scheduled",
+        commence_time=NOW + timedelta(days=5),
+        win_probability_sources={"polymarket": {"value": 0.59}, "betting_book_count": 1},
+    )
+    orm_twelve_books = SimpleNamespace(
+        id=15390002,
+        sport="basketball_nba",
+        status="scheduled",
+        commence_time=NOW + timedelta(hours=12),
+        win_probability_sources={
+            "betting": {"value": 0.62},
+            "betting_book_count": 12,
+            "polymarket": {"value": 0.61},
+        },
+    )
+    assert _event_has_sportsbook(orm_one_book) is False
+    assert _event_has_sportsbook(orm_twelve_books) is True
+
+    # Dict / slate ordering path: 1-book Heat @ 76ers (41/59, closer to 50) must NOT outrank 12-book Suns @ Jazz (62/38).
+    one_book_heat = _nba_event(
+        15390011,
+        "Miami Heat",
+        "Philadelphia 76ers",
+        home_prob=0.59,
+        hours_ahead=120,
+        wps={"polymarket": {"value": 0.59}, "betting_book_count": 1},
+        bookmaker_count=1,
+    )
+    sb_rockets = _nba_event(
+        15390012,
+        "Houston Rockets",
+        "Denver Nuggets",
+        home_prob=0.52,
+        hours_ahead=12,
+        wps={"betting": {"value": 0.52}, "betting_book_count": 12},
+        bookmaker_count=12,
+    )
+    sb_wizards = _nba_event(
+        15390013,
+        "Washington Wizards",
+        "Chicago Bulls",
+        home_prob=0.56,
+        hours_ahead=12,
+        wps={"betting": {"value": 0.56}, "betting_book_count": 12},
+        bookmaker_count=12,
+    )
+    sb_suns = _nba_event(
+        15390014,
+        "Phoenix Suns",
+        "Utah Jazz",
+        home_prob=0.62,
+        hours_ahead=12,
+        wps={"betting": {"value": 0.62}, "betting_book_count": 12},
+        bookmaker_count=12,
+    )
+    sb_lakers = _nba_event(
+        15390015,
+        "Los Angeles Lakers",
+        "Golden State Warriors",
+        home_prob=0.72,
+        hours_ahead=14,
+        wps={"betting": {"value": 0.72}, "betting_book_count": 12},
+        bookmaker_count=12,
+    )
+    assert _event_has_sportsbook(one_book_heat) is False
+    assert _event_has_sportsbook(sb_suns) is True
+
+    outcome = await produce_container_machinery(
+        {
+            "events": [one_book_heat, sb_rockets, sb_wizards, sb_suns, sb_lakers],
+            "markets": _nba_support_markets(),
+        },
+        definition,
+        now=NOW,
+    )
+    assert isinstance(outcome, RoundupMembers)
+    lead_ids = [int(m["event_id"]) for m in outcome.sections[0]["members"]]
+    assert lead_ids == [15390012, 15390013, 15390014]
+    assert 15390011 not in lead_ids
 
 
 def _ordinary_deck(n: int = 35) -> list[dict[str, Any]]:
