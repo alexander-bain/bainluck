@@ -217,14 +217,32 @@ async def test_default_morning_pair_computes_frozen_candidate_without_pairs_file
     assert exc.value.status_code == 404
 
 
-async def test_morning_pair_is_open_for_candidate_3_and_pausable_by_env(wired, monkeypatch):
-    """#11937 (Ruling 277: A): Candidate 3 (pair="p3") is the default morning
-    pair; setting RANKING_MORNING_PAIR_PAUSED=true still pauses bare /grade/pair."""
+async def test_morning_pair_is_paused_until_env_opened_for_candidate_3(wired, monkeypatch):
+    """#11937 (Ruling 277: A): bare /grade/pair stays paused by default until
+    RANKING_MORNING_PAIR_PAUSED=0 is flipped attended after deploy verification;
+    explicit ?slate=<id>&pair=p3 works for pre-flip verification."""
     monkeypatch.delenv(admin.MORNING_PAIR_PAUSED_ENV, raising=False)
     monkeypatch.setattr(admin, "load_pairs", lambda path=None: {})
     monkeypatch.setattr(admin, "_captured_today_pt", lambda captured_at, now=None: True)
     assert admin.DEFAULT_MORNING_PAIR == "p3"
 
+    # Default (env unset): bare morning link stays paused until attended flip.
+    with pytest.raises(HTTPException) as exc:
+        await admin.get_pair(
+            _request(), slate="latest", pair=admin.DEFAULT_MORNING_PAIR, surface="discover", secret=None, db=FakeDB()
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail == admin.MORNING_PAIR_PAUSED_DETAIL
+
+    # Explicit slate + pair="p3" is readable for pre-flip verification while paused.
+    verify_out = await admin.get_pair(
+        _request(), slate=SLATE_ID, pair="p3", surface="discover", secret=None, db=FakeDB()
+    )
+    assert verify_out["slate_id"] == SLATE_ID and verify_out["pair"] == "p3"
+    assert len(verify_out["left"]) == len(verify_out["right"]) == 10
+
+    # Attended flip (RANKING_MORNING_PAIR_PAUSED=0) opens bare /grade/pair to Candidate 3.
+    monkeypatch.setenv(admin.MORNING_PAIR_PAUSED_ENV, "0")
     out = await admin.get_pair(
         _request(), slate="latest", pair=admin.DEFAULT_MORNING_PAIR, surface="discover", secret=None, db=FakeDB()
     )
@@ -238,15 +256,6 @@ async def test_morning_pair_is_open_for_candidate_3_and_pausable_by_env(wired, m
     )
     assert deck["slate_id"] == SLATE_ID and deck["mode"] == "spread"
     assert len(deck["items"]) >= 10
-
-    # Explicit env pause still refuses bare morning link cleanly.
-    monkeypatch.setenv(admin.MORNING_PAIR_PAUSED_ENV, "true")
-    with pytest.raises(HTTPException) as exc:
-        await admin.get_pair(
-            _request(), slate="latest", pair=admin.DEFAULT_MORNING_PAIR, surface="discover", secret=None, db=FakeDB()
-        )
-    assert exc.value.status_code == 409
-    assert exc.value.detail == admin.MORNING_PAIR_PAUSED_DETAIL
 
 
 async def test_morning_pair_and_deck_refuse_yesterdays_slate_before_715am(wired, monkeypatch):

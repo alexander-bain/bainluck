@@ -1392,9 +1392,9 @@ MORNING_PAIR_PAUSED_DETAIL = (
 
 
 def is_morning_pair_paused() -> bool:
-    """True when morning pair grading is explicitly paused via env var (#11937 / 277: A)."""
-    raw = os.getenv(MORNING_PAIR_PAUSED_ENV, "false")
-    return raw.strip().lower() not in ("0", "false", "no", "off", "")
+    """True by default until explicitly opened via RANKING_MORNING_PAIR_PAUSED=0 (#11937 / 277: A)."""
+    raw = os.getenv(MORNING_PAIR_PAUSED_ENV, "true")
+    return raw.strip().lower() not in ("0", "false", "no", "off")
 # Stored through ranking_grades' grade check (shareable/interesting/neither), as
 # the grouping grades are: what a pick MEANS, never which side it was on.
 _PAIR_TO_DB_GRADE: dict[str, str] = {"candidate": "shareable", "none": "interesting", "served": "neither"}
