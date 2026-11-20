@@ -8,6 +8,16 @@ export type Station =
   | "Live";
 export type Builder = "S" | "B" | "C" | "D" | "E" | "F" | "W" | "Other";
 
+export const factoryMoods = [
+  "working", "carrying", "waiting", "celebrating", "stuck", "asleep",
+] as const;
+export type FactoryMood = (typeof factoryMoods)[number];
+export interface LaneSpeech {
+  text: string;
+  mood: FactoryMood;
+  source: "model" | "facts";
+}
+
 export interface Change {
   number: number;
   title: string;
@@ -124,6 +134,8 @@ export interface FactoryData {
   observed_since: string;
   read_expires_at?: string;
   transitions?: Transfer[];
+  speech?: Partial<Record<Exclude<Builder, "Other">, LaneSpeech>>;
+  model_usage?: { day: string; calls: number };
   events?: FloorEvent[];
   injury_clock?: InjuryClock;
   stops?: Stop[];

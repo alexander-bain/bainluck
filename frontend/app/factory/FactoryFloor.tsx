@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowDown,
@@ -11,6 +11,7 @@ import {
   ChevronRight,
   CircleCheck,
   ClipboardCheck,
+  Cog,
   Hammer,
   ListChecks,
   PackageOpen,
@@ -18,6 +19,7 @@ import {
   Server,
   Smartphone,
   Truck,
+  Wind,
   X,
   Monitor,
 } from "lucide-react";
@@ -26,12 +28,13 @@ import { useScrollDepth } from "@/hooks/useScrollDepth";
 import { useEngagementTime } from "@/hooks/useEngagementTime";
 import type { Builder, Change, FactoryData, Jam, Line, Station, Stop } from "./types";
 import styles from "./factory.module.css";
-import Worker from "./Worker";
+import Worker, { type WorkerState } from "./Worker";
 import EventScene from "./EventScene";
 import InjurySign from "./InjurySign";
 import { clipboard, median } from "./signs";
 import { useDayReplay } from "./useDayReplay";
 import { useReplayJournal } from "./replayJournal";
+import { LIVE_TRANSITION_MS, remainingEvents, transfersSince } from "./liveTransfers";
 import { crossesSegment, eventText, useEventPlayer } from "./playback";
 import { factoryTabTitle, floorVerdict, type FloorVerdict } from "./verdict";
 import {
@@ -212,6 +215,7 @@ export default function FactoryFloor({
   const [now, setNow] = useState(renderedAt);
   const [selectedCrate, selectCrate] = useState<string | null>(null);
   const [selectedGroup, selectGroup] = useState<CrateGroup | null>(null);
+  const [speaker, setSpeaker] = useState<string | null>();
   const [knownGoodAt, setKnownGoodAt] = useState(lastGoodAt);
   const [lastShown, setLastShown] = useState(snapshot);
   // Keep the open page intact if a refresh lands on a server with an empty cache.
@@ -232,8 +236,19 @@ export default function FactoryFloor({
   const today = pacificDay(now);
   const journal = useReplayJournal(data, today);
   const replay = useDayReplay(motion);
-  const livePlaying = useEventPlayer(data?.generated_at, data?.events, motion && !replay.session);
-  const playing = replay.session ? replay.playing : livePlaying;
+  const firstTransferRead = useRef(data?.generated_at);
+  firstTransferRead.current ??= data?.generated_at;
+  const firstRead = firstTransferRead.current;
+  const moves = useMemo(() => transfersSince(data, firstRead), [data, firstRead]);
+  const tape = useMemo(() => remainingEvents(data?.events, moves), [data?.events, moves]);
+  const transfer = useEventPlayer(
+    data?.generated_at, moves, motion && !replay.session,
+    LIVE_TRANSITION_MS * Math.max(1, moves.length),
+  );
+  const livePlaying = useEventPlayer(
+    data?.generated_at, tape, motion && !replay.session && !transfer,
+  );
+  const playing = replay.session ? replay.playing : transfer ?? livePlaying;
 
   useEffect(() => {
     document.title = tabTitle;
@@ -412,11 +427,44 @@ export default function FactoryFloor({
     selectGroup(null);
   }
 
+  function workerFigure(id: NamedBuilder, line: Line, station: Station, fallback: WorkerState) {
+    const voice = data?.speech?.[id];
+    const figure = <Worker identity={id} station={station} state={voice?.mood ?? fallback} />;
+    if (!voice) return figure;
+    const identifier = `voice-${line}-${stations.indexOf(station)}-${id}`;
+    const shown = speaker === identifier || (
+      speaker === undefined && line === "Server" && station === "Test" && voice.text.length <= 76
+    );
+    return (
+      <span className={styles.speechFigure}>
+        <button
+          type="button"
+          className={styles.voiceButton}
+          aria-label={`Read ${names[id]}’s speech`}
+          aria-expanded={shown}
+          aria-controls={shown ? identifier : undefined}
+          onClick={() => setSpeaker(shown ? null : identifier)}
+        >
+          {figure}
+        </button>
+        {shown && (
+          <span id={identifier} className={`${styles.speechBubble} ${styles.workerBubble}`} data-source={voice.source}>
+            {voice.text}
+          </span>
+        )}
+      </span>
+    );
+  }
+
   function crate(change: Change) {
     const key = crateKey(change.line, change.number);
+    const arriving = motion && !replay.session && !selectedCrate && !selectedGroup &&
+      transfer?.event.line === change.line && transfer.event.number === change.number &&
+      transfer.event.station === change.station;
     return (
       <button
         key={key}
+        data-arriving={arriving || undefined}
         type="button"
         className={`${styles.crate} ${styles[`builder${change.builder}`]}`}
         data-crate={change.number}
@@ -451,7 +499,11 @@ export default function FactoryFloor({
       data-motion={motion ? "running" : "paused"}
     >
       <header className={styles.heading}>
-        <div>
+        <div className={styles.workshopIdle} aria-hidden="true">
+          <Cog className={styles.idleGear} size={27} />
+          <Wind className={styles.idleSteam} size={22} />
+        </div>
+        <div className={styles.titlePlate}>
           <h1>The Factory</h1>
           <p className={styles.intro}>
             Every change, from its first lines to going live.
@@ -537,7 +589,7 @@ export default function FactoryFloor({
           <h2 id="floor-heading">The floor</h2>
           <div className={styles.floorActions}>
             <span className={styles.tapHint}>
-              Tap a crate to see the change <ArrowDown size={14} />
+              Tap a crate or worker <ArrowDown size={14} />
             </span>
             {!replay.session && (
               journal?.events.length ? (
@@ -584,23 +636,27 @@ export default function FactoryFloor({
           <div className={styles.floorGrid}>
             <div className={styles.stationHeadings}>
               <span />
-              {stations.map((station) => (
-                <div key={station}>
-                  <strong>{stationNames[station]}</strong>
-                  <span>{engineering[station]}</span>
-                  {station === "Review" && (
-                    <div className={styles.inspectionDesk}>
-                      <Worker station="Review" identity="Fable" state="idle" />
-                      <span>Foreman</span>
-                    </div>
-                  )}
-                  {notes?.stations[stationNames[station]] && (
-                    <div className={styles.stationNote}>
-                      <p>{notes.stations[stationNames[station]]}</p>
-                    </div>
-                  )}
-                </div>
-              ))}
+              {stations.map((station) => {
+                const Icon = stationIcons[station];
+                return (
+                  <div key={station}>
+                    <Icon className={styles.stationIcon} size={14} aria-hidden="true" />
+                    <strong>{stationNames[station]}</strong>
+                    <span>{engineering[station]}</span>
+                    {station === "Review" && (
+                      <div className={styles.inspectionDesk}>
+                        <Worker station="Review" identity="Fable" state="idle" />
+                        <span>Foreman</span>
+                      </div>
+                    )}
+                    {notes?.stations[stationNames[station]] && (
+                      <div className={styles.stationNote}>
+                        <p>{notes.stations[stationNames[station]]}</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             {lines.map((line) => {
               const LineIcon = lineIcons[line];
@@ -648,9 +704,8 @@ export default function FactoryFloor({
                       const crew = crewActivity(data, now, changes);
                       const worker = crew.change ?? changes[0];
                       const workerId = worker?.builder === "Other" ? undefined : worker?.builder;
-                      const workerState = changes.length
-                        ? crew.pose
-                        : activity.worker;
+                      const workerState = (workerId && data.speech?.[workerId]?.mood) ||
+                        (changes.length ? crew.pose : activity.worker);
                       const dockBuilders =
                         station === "Merge line"
                           ? [
@@ -711,7 +766,7 @@ export default function FactoryFloor({
                               >
                                 {dockBuilders.slice(0, 3).map((builder) => (
                                   <li key={builder} title={names[builder]}>
-                                    <Worker identity={builder} state="waiting" />
+                                    {workerFigure(builder, line, station, "waiting")}
                                   </li>
                                 ))}
                                 {dockBuilders.length > 3 && (
@@ -719,11 +774,7 @@ export default function FactoryFloor({
                                 )}
                               </ul>
                             ) : workerId ? (
-                              <Worker
-                                station={station}
-                                identity={workerId}
-                                state={workerState}
-                              />
+                              workerFigure(workerId, line, station, workerState)
                             ) : (
                               <Icon
                                 className={styles.stationObject}
@@ -998,27 +1049,31 @@ export default function FactoryFloor({
                 now,
                 visible.filter((c) => c.builder === builder.key),
               );
+              const voice = data.speech?.[builder.key];
+              const mood = voice?.mood ?? crew.pose;
               const pose = {
                 carrying: "Carrying",
-                waiting: "Waiting with",
-                working: "Working on",
+                waiting: "Waiting",
+                working: "Working",
+                celebrating: "Celebrating",
+                stuck: "Stuck",
                 asleep: "Asleep",
-              }[crew.pose];
+              }[mood];
               return (
                 <div
                   key={builder.key}
                   className={styles.builderCard}
                   data-crew={builder.key}
-                  data-pose={crew.pose}
+                  data-pose={mood}
                 >
-                  <Worker identity={builder.key} state={crew.pose} />
+                  <Worker identity={builder.key} state={mood} />
                   <strong className={styles.nameTag}>{builder.name}</strong>
                   {builder.key === "W" && <small>Spare hand</small>}
                   <span>{clockedIn.has(builder.key) ? "Clocked in" : "Quiet for 15 minutes"}</span>
-                  <span>
-                    {pose}
-                    {crew.change && ` #${crew.change.number}`}
-                  </span>
+                  <span>{pose}{!voice && crew.change && ` #${crew.change.number}`}</span>
+                  <p className={styles.speechBubble} data-source={voice?.source}>
+                    {voice?.text ?? "This lane’s speech is missing from this read."}
+                  </p>
                 </div>
               );
             })}
@@ -1119,6 +1174,11 @@ export default function FactoryFloor({
         ))}
         <details>
           <summary>About this floor</summary>
+          <p>
+            {data.model_usage?.day === today
+              ? `${data.model_usage.calls} of 200 model calls made today.`
+              : "Today’s model call count is missing."}
+          </p>
           <p>
             Open changes include drafts. A change stays at the earlier station
             whenever the evidence is incomplete.

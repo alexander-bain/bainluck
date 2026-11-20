@@ -1,6 +1,6 @@
 """Grounded Factory captions and the publisher's persistent per-day meter."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 import http.client
 import json
@@ -31,6 +31,8 @@ PLACES = (
     "live",
 )
 DAILY_CALLS = 120
+COLLECTOR_DAILY_CALLS = 200
+MONTHLY_COST_MICROS = 5_000_000
 INTERVAL = timedelta(minutes=10)
 TIMEOUT = 8
 MAX_TOKENS = 360
@@ -192,28 +194,50 @@ def valid_answer(answer, facts):
 
 
 def read_meter(body, now):
-    day = now.astimezone(PACIFIC).date().isoformat()
-    meter = {"day": day, "calls": 0, "micros": 0, "last_at": None, "last_facts": None}
+    today = now.astimezone(PACIFIC).date()
+    day = today.isoformat()
+    meter = {
+        "day": day, "calls": 0, "notes_calls": 0, "micros": 0,
+        "month": day[:7], "month_micros": 0,
+        "last_at": None, "last_facts": None,
+    }
     if METER not in body:
         return meter
     match = METER_LINE.search(body)
     if not match or body.count(METER) != 1:
-        raise ValueError("Invalid Factory note meter")
+        raise ValueError("Invalid Factory model meter")
     saved = json.loads(match[1])
+    saved_day = date.fromisoformat(saved["day"])
+    calls, micros = saved["calls"], saved["micros"]
+    # Before speech, the only requests in the release meter were notes.
+    notes_calls = saved.get("notes_calls", calls)
+    month = saved.get("month", saved["day"][:7])
+    month_micros = saved.get("month_micros", micros)
+    last, facts = saved["last_at"], saved["last_facts"]
     if (
-        type(saved["calls"]) is not int
-        or not 1 <= saved["calls"] <= DAILY_CALLS
-        or type(saved["micros"]) is not int
-        or saved["micros"] < 0
-        or not re.fullmatch(r"[a-f0-9]{64}", saved["last_facts"])
-        or instant(saved["last_at"]) > now
-        or instant(saved["last_at"]).astimezone(PACIFIC).date().isoformat()
-        != saved["day"]
+        saved_day > today
+        or type(calls) is not int or not 1 <= calls <= COLLECTOR_DAILY_CALLS
+        or type(notes_calls) is not int or not 0 <= notes_calls <= min(calls, DAILY_CALLS)
+        or type(micros) is not int or micros < 0
+        or month != saved["day"][:7]
+        or type(month_micros) is not int or month_micros < micros
+        or (last is None) != (facts is None)
     ):
-        raise ValueError("Invalid Factory note meter")
-    meter.update(last_at=saved["last_at"], last_facts=saved["last_facts"])
-    if saved["day"] == day:
-        meter.update(calls=saved["calls"], micros=saved["micros"])
+        raise ValueError("Invalid Factory model meter")
+    if last is not None:
+        if not isinstance(last, str) or not re.fullmatch(r"[a-f0-9]{64}", facts):
+            raise ValueError("Invalid Factory model meter")
+        last_at = instant(last)
+        last_day = last_at.astimezone(PACIFIC).date()
+        if last_at > now or last_day > saved_day or (notes_calls and last_day != saved_day):
+            raise ValueError("Invalid Factory model meter")
+    elif notes_calls:
+        raise ValueError("Invalid Factory model meter")
+    meter.update(last_at=last, last_facts=facts)
+    if month == meter["month"]:
+        meter["month_micros"] = month_micros
+    if saved_day == today:
+        meter.update(calls=calls, notes_calls=notes_calls, micros=micros)
     return meter
 
 
@@ -241,10 +265,99 @@ def model_request(payload, key):
     return json.loads(response.stdout)
 
 
-def make_notes(
-    snapshot, pulls, previous, body, save, key, *, now=None, request=model_request
-):
-    now = now or datetime.now(timezone.utc)
+class ModelBudget:
+    """Serialize both consumers against the meter in the release description."""
+
+    def __init__(self, body, save, *, now=None):
+        self.body = body
+        self.save = save
+        self.fixed_now = now
+
+    @property
+    def now(self):
+        return self.fixed_now or datetime.now(timezone.utc)
+
+    def state(self):
+        try:
+            return read_meter(self.body, self.now)
+        except (AttributeError, KeyError, ValueError, TypeError):
+            return None
+
+    def stats(self):
+        meter = self.state()
+        return {
+            "tokens_in": 0, "tokens_out": 0,
+            "day_calls": meter["calls"] if meter else None,
+            "day_cost_usd": meter["micros"] / 1_000_000 if meter else None,
+            "month_cost_usd": meter["month_micros"] / 1_000_000 if meter else None,
+        }
+
+    def persist(self, meter):
+        body = meter_body(self.body, meter)
+        self.save(body)
+        self.body = body
+
+    def call(self, payload, key, request, *, notes_hash=None):
+        meter = self.state()
+        if (
+            not key or not self.save or not meter
+            or meter["calls"] >= COLLECTOR_DAILY_CALLS
+            or (notes_hash is not None and meter["notes_calls"] >= DAILY_CALLS)
+        ):
+            return None, self.stats()
+        now = self.now
+        if now.astimezone(PACIFIC).date().isoformat() != meter["day"]:
+            return None, self.stats()
+        limit = payload.get("max_completion_tokens") or payload["max_tokens"]
+        estimate = cost_upper_bound_usd(payload["model"], payload["messages"], limit)
+        cost = math.ceil(estimate * 1_000_000)
+        if meter["month_micros"] + cost > MONTHLY_COST_MICROS:
+            return None, self.stats()
+        reserved = {
+            **meter,
+            "calls": meter["calls"] + 1,
+            "micros": meter["micros"] + cost,
+            "month_micros": meter["month_micros"] + cost,
+        }
+        if notes_hash is not None:
+            reserved.update(
+                notes_calls=meter["notes_calls"] + 1, last_at=iso(now), last_facts=notes_hash,
+            )
+        try:
+            # Record the reservation before sending the request. The master
+            # publisher is serialized even when the visible floor is unchanged.
+            self.persist(reserved)
+        except Exception:
+            return None, self.stats()
+        if self.now.astimezone(PACIFIC).date().isoformat() != reserved["day"]:
+            return None, self.stats()
+        stats = {**self.stats(), "tokens_in": None, "tokens_out": None}
+        try:
+            response = request(payload, key)
+            usage = SimpleNamespace(**(response.get("usage") or {}))
+            measured = estimate_cost_usd(payload["model"], usage)
+            if measured is not None:
+                stats.update(tokens_in=usage.prompt_tokens, tokens_out=usage.completion_tokens)
+                spent = math.ceil(measured * 1_000_000)
+                try:
+                    self.persist({
+                        **reserved,
+                        "micros": meter["micros"] + spent,
+                        "month_micros": meter["month_micros"] + spent,
+                    })
+                    stats.update(
+                        day_cost_usd=(meter["micros"] + spent) / 1_000_000,
+                        month_cost_usd=(meter["month_micros"] + spent) / 1_000_000,
+                    )
+                except Exception:
+                    pass  # The saved upper bound still covers this attempt.
+            return json.loads(response["choices"][0]["message"]["content"]), stats
+        except Exception:
+            # Provider exceptions may contain request details. Publish a fallback.
+            return None, stats
+
+
+def make_notes(snapshot, pulls, previous, budget, key, *, request=model_request):
     facts = caption_facts(snapshot, pulls)
     digest = sha256(
         json.dumps(facts, sort_keys=True, separators=(",", ":")).encode()
@@ -255,78 +368,33 @@ def make_notes(
         "source": "counts",
         **fallback(facts),
     }
-    stats = {"tokens_in": 0, "tokens_out": 0, "day_calls": None, "day_cost_usd": None}
-    try:
-        meter = read_meter(body, now)
-    except (KeyError, ValueError, TypeError):
-        return note, stats
-    stats.update(day_calls=meter["calls"], day_cost_usd=meter["micros"] / 1_000_000)
-    if not key or not save or meter["calls"] >= DAILY_CALLS:
+    stats = budget.stats()
+    meter = budget.state()
+    if not key or not budget.save or not meter or meter["notes_calls"] >= DAILY_CALLS:
         return note, stats
     if previous.get("source") == "model" and previous.get("facts_hash") == digest:
         answer = {field: previous.get(field) for field in ("floor", "stations")}
         if valid_answer(answer, facts):
             return {**note, **answer, "source": "model"}, stats
     last = meter["last_at"]
-    if digest == meter["last_facts"] or (last and now - instant(last) < INTERVAL):
+    if digest == meter["last_facts"] or (last and budget.now - instant(last) < INTERVAL):
         return note, stats
-
     try:
         kwargs = chat_request_kwargs(
             "factory_notes", max_output_tokens=MAX_TOKENS, temperature=0.4
         )
-        messages = [
+    except (ValueError, RuntimeError):
+        return note, stats
+    answer, stats = budget.call({
+        **kwargs,
+        "messages": [
             {"role": "system", "content": PROMPT},
             {"role": "user", "content": json.dumps(facts, separators=(",", ":"))},
-        ]
-        cost = cost_upper_bound_usd(kwargs["model"], messages, MAX_TOKENS)
-        reserved = {
-            **meter,
-            "calls": meter["calls"] + 1,
-            "micros": meter["micros"] + math.ceil(cost * 1_000_000),
-            "last_at": iso(now),
-            "last_facts": digest,
-        }
-        # The existing publisher is serialized. Record the reservation before
-        # the outbound call, even when the floor itself will not be uploaded.
-        save(meter_body(body, reserved))
-    except Exception:
-        return note, stats
-    stats.update(
-        tokens_in=None,
-        tokens_out=None,
-        day_calls=reserved["calls"],
-        day_cost_usd=reserved["micros"] / 1_000_000,
-    )
-    try:
-        response = request(
-            {
-                **kwargs,
-                "messages": messages,
-                "response_format": {"type": "json_object"},
-            },
-            key,
-        )
-        usage = SimpleNamespace(**(response.get("usage") or {}))
-        cost = estimate_cost_usd(kwargs["model"], usage)
-        if cost is not None:
-            stats.update(
-                tokens_in=usage.prompt_tokens, tokens_out=usage.completion_tokens
-            )
-            settled = {
-                **reserved,
-                "micros": meter["micros"] + math.ceil(cost * 1_000_000),
-            }
-            try:
-                save(meter_body(body, settled))
-                stats["day_cost_usd"] = settled["micros"] / 1_000_000
-            except Exception:
-                pass  # The saved upper bound still covers this call.
-        answer = json.loads(response["choices"][0]["message"]["content"])
-        if valid_answer(answer, facts):
-            note.update(answer, source="model")
-    except Exception:
-        pass  # Provider errors may include request text. Keep them out of logs.
+        ],
+        "response_format": {"type": "json_object"},
+    }, key, request, notes_hash=digest)
+    if valid_answer(answer, facts):
+        note.update(answer, source="model")
     return note, stats
 
 
