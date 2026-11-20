@@ -333,3 +333,108 @@ async def test_prewarm_worker_writes_clean_empty_marker_only_for_clean_empty_not
     assert res["slugs"]["machinery-fed-and-macro"]["outcome"] == "error"
     assert res["slugs"]["machinery-fed-and-macro"]["redis_written"] is False
     assert _redis_cache_key("machinery-fed-and-macro") not in rc.store
+
+
+@pytest.mark.asyncio
+async def test_suspended_kind_and_licence_violation_never_write_clean_empty_and_block_publish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guard for claude[bot] review on #13186: SUSPENDED kinds and served-card licence
+    violations are failures, never clean-empty, and must block warm Discover publishing."""
+    from app.utils.roundup_containers import RoundupMembers
+
+    reset_roundup_cache_for_tests()
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+
+    class _DummySessionCtx:
+        async def __aenter__(self) -> Any:
+            return MagicMock()
+
+        async def __aexit__(self, *args: Any) -> bool:
+            return False
+
+    monkeypatch.setattr("app.tasks.base.get_task_session", lambda **_kw: _DummySessionCtx())
+
+    # 1. Kind is SUSPENDED
+    p_suspended = RoundupProducer(
+        slug="machinery-suspended-kind",
+        name="Suspended Kind",
+        kind="roundup",
+        category="sports",
+        section_title="Slate",
+        footer="",
+        rule={"producer": "suspended_test_kind"},
+        produce=lambda _db: RoundupMembers(
+            members=[{"id": 1, "name": "M1", "top_outcome": "Yes", "probability": 0.5, "status": "open"}]
+        ),
+    )
+    # 2. Served-card licence violation suspends kind at runtime
+    p_violating = RoundupProducer(
+        slug="machinery-violating-kind",
+        name="Violating Kind",
+        kind="roundup",
+        category="sports",
+        section_title="Slate",
+        footer="",
+        rule={"producer": "violating_test_kind"},
+        produce=lambda _db: RoundupMembers(
+            members=[
+                {"id": 2, "name": "M2", "top_outcome": "Yes", "probability": 0.6, "status": "open"},
+                {"id": 3, "name": "M3", "top_outcome": "No", "probability": 0.55, "status": "open"},
+            ],
+            title="Violating Card",
+            footer="Footer",
+        ),
+    )
+
+    fake_licences = {
+        "kinds": {
+            "suspended_test_kind": {"status": "SUSPENDED"},
+            "violating_test_kind": {"status": "LICENSED"},
+        }
+    }
+    monkeypatch.setattr(
+        "app.utils.grouping_licences.load_grouping_licences",
+        lambda *_a, **_kw: fake_licences,
+    )
+    monkeypatch.setattr(
+        "app.utils.grouping_licences.get_kind_licence_status",
+        lambda reg, kind: (reg.get("kinds") or {}).get(kind, {}).get("status", "LICENSED"),
+    )
+    monkeypatch.setattr(
+        "app.utils.grouping_licences.detect_served_card_violation",
+        lambda payload, **_kw: ("machinery-violating-kind", "settled_member_leaked"),
+    )
+    monkeypatch.setattr(
+        "app.utils.grouping_licences.record_runtime_kind_suspension",
+        lambda *_a, **_kw: None,
+    )
+    monkeypatch.setattr(
+        "app.utils.roundup_containers.ROUNDUP_PRODUCERS",
+        {p_suspended.slug: p_suspended, p_violating.slug: p_violating},
+    )
+    monkeypatch.setattr(
+        "app.utils.roundup_containers.ensure_optional_roundup_candidates", lambda: None
+    )
+
+    rc = _FakeSyncRedis()
+    res = await _prewarm_machinery_roundups(deadline_s=5.0, rc=rc)
+
+    assert res["slugs"]["machinery-suspended-kind"]["outcome"] == "refused"
+    assert res["slugs"]["machinery-suspended-kind"]["redis_written"] is False
+    assert _redis_cache_key("machinery-suspended-kind") not in rc.store
+
+    assert res["slugs"]["machinery-violating-kind"]["outcome"] == "refused"
+    assert res["slugs"]["machinery-violating-kind"]["redis_written"] is False
+    assert _redis_cache_key("machinery-violating-kind") not in rc.store
+
+    # Warm Discover publish MUST refuse with `incomplete` when either failed/suspended.
+    counts = _patch_bundle_renderer(monkeypatch)
+    pub = _publish_machinery_feed_from_prewarm_base(
+        rc, mach_base=_fake_mach_base(time.time()), label="discover"
+    )
+    assert pub["outcome"] == "incomplete"
+    assert set(pub["absent"]) == {"machinery-suspended-kind", "machinery-violating-kind"}
+    assert counts == []

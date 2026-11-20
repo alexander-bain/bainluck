@@ -901,12 +901,8 @@ def _redis_cache_key(slug: str) -> str:
     return f"container_read:v1:{slug}"
 
 
-_roundup_last_refusal_transient: dict[str, bool] = {}
-
-
 def reset_roundup_cache_for_tests() -> None:
     _roundup_local_cache.clear()
-    _roundup_last_refusal_transient.clear()
 
 
 _TRANSIENT_REFUSAL_TOKENS = (
@@ -1358,13 +1354,20 @@ async def evaluate_roundup_producer(
     licences_path: Optional[Path | str] = None,
     force_refresh: bool = False,
     allow_stale: bool = False,
+    outcome_meta: Optional[dict[str, Any]] = None,
 ) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
     """Run ``producer`` once and return ``(feed_item, container_payload)``, cached 60s per slug."""
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.utils.container_read_cache import container_read_cache_enabled
 
+    if outcome_meta is not None:
+        outcome_meta["clean_empty"] = False
+        outcome_meta["reason"] = None
+
     if producer.enabled is not None and not producer.enabled():
+        if outcome_meta is not None:
+            outcome_meta["reason"] = "disabled"
         return None, None
 
     is_fixture_seq = isinstance(db, (list, tuple))
@@ -1374,6 +1377,9 @@ async def evaluate_roundup_producer(
     if (producer.valid_from is not None and ts < producer.valid_from) or (
         producer.valid_until is not None and ts >= producer.valid_until
     ):
+        if outcome_meta is not None:
+            outcome_meta["clean_empty"] = True
+            outcome_meta["reason"] = "outside_window"
         return None, None
     rule_cfg = producer.rule if isinstance(producer.rule, Mapping) else {}
     producer_kind = str(rule_cfg.get("producer") or "").strip()
@@ -1392,6 +1398,8 @@ async def evaluate_roundup_producer(
             producer_kind in (active_licences.get("kinds") or {})
             and get_kind_licence_status(active_licences, producer_kind) == "SUSPENDED"
         ):
+            if outcome_meta is not None:
+                outcome_meta["reason"] = "suspended"
             logger.warning(
                 "flow_sentinel matching_defect: roundup %s skipped because kind %s is SUSPENDED",
                 producer.slug,
@@ -1488,11 +1496,12 @@ async def evaluate_roundup_producer(
     if inspect.isawaitable(outcome):
         outcome = await outcome
 
-    _roundup_last_refusal_transient.pop(producer.slug, None)
     if outcome is None or isinstance(outcome, RoundupRefusal):
         reasons = list(outcome.reasons) if isinstance(outcome, RoundupRefusal) else []
         cacheable = _is_cacheable_refusal(reasons)
-        _roundup_last_refusal_transient[producer.slug] = not cacheable
+        if outcome_meta is not None:
+            outcome_meta["clean_empty"] = bool(cacheable)
+            outcome_meta["reason"] = "clean_empty_refusal" if cacheable else "transient_refusal"
         logger.warning(
             "flow_sentinel matching_defect: roundup %s refused reasons=%s",
             producer.slug,
@@ -1523,6 +1532,9 @@ async def evaluate_roundup_producer(
     if container_payload is None or (
         feed_item is None and not getattr(outcome, "suppress_feed_item", False)
     ):
+        if outcome_meta is not None:
+            outcome_meta["clean_empty"] = True
+            outcome_meta["reason"] = "empty_payload"
         if use_cache:
             await _store_roundup_cache_entry(
                 cache_key, producer.slug, ts, None, None, db
@@ -1561,6 +1573,9 @@ async def evaluate_roundup_producer(
                     registry=licences_registry,
                     licences_path=licences_path,
                 )
+                if outcome_meta is not None:
+                    outcome_meta["clean_empty"] = False
+                    outcome_meta["reason"] = "licence_violation"
                 logger.warning(
                     "flow_sentinel matching_defect: roundup %s suspended kind %s (%s)",
                     producer.slug,
@@ -1595,6 +1610,9 @@ async def evaluate_roundup_producer(
                 exc_info=True,
             )
         if feed_item is None:
+            if outcome_meta is not None:
+                outcome_meta["clean_empty"] = True
+                outcome_meta["reason"] = "not_trading_screen_empty"
             if use_cache:
                 await _store_roundup_cache_entry(
                     cache_key, producer.slug, ts, None, None, db

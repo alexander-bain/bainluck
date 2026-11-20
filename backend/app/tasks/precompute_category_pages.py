@@ -1863,7 +1863,6 @@ async def _prewarm_machinery_roundups(
         _roundup_payload_has_live_event,
         ensure_optional_roundup_candidates,
         evaluate_roundup_producer,
-        _roundup_last_refusal_transient,
         store_roundup_cache_sync,
         store_roundup_clean_empty_sync,
         verify_roundup_cache_sync,
@@ -1901,8 +1900,14 @@ async def _prewarm_machinery_roundups(
             async with get_task_session(
                 statement_timeout_ms=max(1000, int(deadline_s * 1000))
             ) as db:
+                import inspect as _inspect
+
+                eval_meta: dict[str, Any] = {}
+                eval_kwargs: dict[str, Any] = {"force_refresh": True}
+                if "outcome_meta" in _inspect.signature(evaluate_roundup_producer).parameters:
+                    eval_kwargs["outcome_meta"] = eval_meta
                 fi, cp = await asyncio.wait_for(
-                    evaluate_roundup_producer(prod, db, force_refresh=True),
+                    evaluate_roundup_producer(prod, db, **eval_kwargs),
                     timeout=deadline_s,
                 )
                 elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
@@ -1919,12 +1924,11 @@ async def _prewarm_machinery_roundups(
                         redis_read_back, redis_ttl_s = verify_roundup_cache_sync(
                             sync_rc, prod.slug
                         )
-                elif not ok and not _roundup_last_refusal_transient.get(prod.slug, False):
-                    # #13183: producer ran cleanly and has nothing to show (e.g.
-                    # out-of-season slate or all markets filtered). Record a
-                    # clean-empty marker in Redis so warm Discover publishing
-                    # stays active for the remaining groupings instead of
-                    # treating this as a failed/missing grouping.
+                elif not ok and eval_meta.get("clean_empty") is True:
+                    # #13183: strictly opt-in clean-empty marker. Only recorded
+                    # when `evaluate_roundup_producer` positively confirms a clean
+                    # empty result (never on SUSPENDED kinds, served-card licence
+                    # violations, transient refusals, timeouts, or errors).
                     outcome_label = "clean_empty"
                     if sync_rc is not None:
                         redis_written = store_roundup_clean_empty_sync(
