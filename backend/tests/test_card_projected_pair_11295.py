@@ -173,9 +173,12 @@ def test_the_card_admits_less_than_the_writers_margin_gate():
         "basketball_",
         "soccer_",
     )
-    for sport in ("icehockey_nhl", "tennis_atp_shanghai", "cricket_ipl"):
+    for sport in ("tennis_atp_shanghai", "cricket_ipl"):
         assert sportsbook_spread_is_a_margin(sport)  # the control
         assert not cpp.card_projection_wanted("scheduled", sport)
+    # #13112: hockey is now also excluded from sportsbook_spread_is_a_margin.
+    assert not sportsbook_spread_is_a_margin("icehockey_nhl")
+    assert not cpp.card_projection_wanted("scheduled", "icehockey_nhl")
 
 
 def test_no_book_with_a_spread_and_total_means_no_pair_never_zero_zero():

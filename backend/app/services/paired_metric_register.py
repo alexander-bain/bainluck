@@ -78,6 +78,17 @@ def fold_outcome_key(text: str | None) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
+def clean_card_face_title(title: str | None) -> str:
+    """Strip internal merge notes, venue server notes, and market ID annotations (#5165726) from row titles (#12288)."""
+    raw = str(title or "").strip()
+    if not raw:
+        return ""
+    cleaned = re.sub(r"\s*\([^)]*(?:#\d+|averaged\s+across\s+venues|on\s+server)[^)]*\)", "", raw, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*\(#\d+(?:\s*\+\s*#\d+)*\)", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ·")
+    return cleaned
+
+
 def clean_card_face_subtitle(subtitle: str | None) -> str:
     """Strip internal market ID annotations (#5165726) and venue implementation notes."""
     raw = str(subtitle or "").strip()
@@ -506,6 +517,10 @@ def hydrate_paired_metric_set_from_markets(
         cleaned_sub
         or f"{raw_set.get('stage_1_label', 'Nominated')} % and {raw_set.get('stage_2_label', 'Wins')} % side by side"
     )
+    for mkey in ("stage_1_market", "stage_2_market"):
+        m_obj = hydrated.get(mkey)
+        if isinstance(m_obj, dict) and m_obj.get("name"):
+            m_obj["name"] = clean_card_face_title(str(m_obj["name"]))
     if observed_stamps:
         # #7785 floor rule: oldest observed timestamp across rendered contenders
         hydrated["as_of"] = min(observed_stamps)

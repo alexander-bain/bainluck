@@ -91,6 +91,8 @@ enum TeamFutureRowPresentation {
         let percent: String?
         let rankLine: String?
         let avatar: Avatar
+        var probability: Double? = nil
+        var sourceMark: SourceMark? = nil
     }
 
     /// Strips redundant sport/fantasy/league + season-year prefixes (`"Pro Football: 2026-27 "`,
@@ -209,7 +211,9 @@ enum TeamFutureRowPresentation {
             out: base.out,
             percent: base.percent,
             rankLine: base.rankLine,
-            avatar: resolveAvatar(forSubjectTitle: finalTitle, item: item, team: team)
+            avatar: resolveAvatar(forSubjectTitle: finalTitle, item: item, team: team),
+            probability: item.probability,
+            sourceMark: item.sourceMark
         )
     }
 

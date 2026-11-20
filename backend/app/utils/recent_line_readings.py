@@ -68,6 +68,9 @@ PROJECTION_LINES_BOUND = timedelta(minutes=90)
 
 NO_RECENT_LINES = "no_recent_lines"
 READ_FAILED = "read_failed"
+#: #13112: sportsbook spread is a fixed ±1.5 handicap (puck line / run line),
+#: never a margin-based projected final score.
+PINNED_HANDICAP = "pinned_handicap"
 
 #: The recent-lines read's own statement bound, inside its savepoint.
 PROJECTION_READ_CAP_MS = 1500
@@ -209,17 +212,64 @@ def unavailable(reason: str) -> dict:
     }
 
 
-def projection_from_rows(latest_rows: Iterable[Any], recent_rows: Iterable[Any], *, now: datetime) -> dict:
-    """The pair fields and their stamps from one event's line readings. Pure."""
-    from app.utils.odds_math import aggregate_bookmaker_odds, detect_reversed_bookmakers
+def withhold_pinned_handicap_projection(
+    aggregated: dict, sport_key: Optional[str]
+) -> dict:
+    """Withhold projected final scores on pinned-handicap sports (#13112).
 
+    Hockey (puck line) and baseball (run line) hang a fixed ±1.5 spread
+    regardless of win probability. Preserves ``home_spread`` and ``over_under``
+    (real bookmaker lines) while nulling ``projected_home_score`` /
+    ``projected_away_score`` and stamping ``projection_unavailable:
+    "pinned_handicap"``. Returns ``aggregated`` unchanged for all other sports.
+    """
+    from app.utils.odds_math import sportsbook_handicap_is_pinned
+
+    if not sportsbook_handicap_is_pinned(sport_key):
+        return aggregated
+    out = dict(aggregated)
+    out["projected_home_score"] = None
+    out["projected_away_score"] = None
+    out["_projection"] = {
+        "projection_captured_at": None,
+        "projection_bookmaker_count": 0,
+        "projection_unavailable": PINNED_HANDICAP,
+    }
+    return out
+
+
+def projection_from_rows(
+    latest_rows: Iterable[Any],
+    recent_rows: Iterable[Any],
+    *,
+    now: datetime,
+    sport_key: Optional[str] = None,
+) -> dict:
+    """The pair fields and their stamps from one event's line readings. Pure."""
+    from app.utils.odds_math import (
+        aggregate_bookmaker_odds,
+        detect_reversed_bookmakers,
+        sportsbook_handicap_is_pinned,
+    )
+
+    pinned = sportsbook_handicap_is_pinned(sport_key)
     readings = pair_readings(latest_rows, recent_rows, now=now)
     if not readings:
-        return unavailable(NO_RECENT_LINES)
+        return unavailable(PINNED_HANDICAP if pinned else NO_RECENT_LINES)
     rows = [r for r, _ in readings]
     reversed_books = detect_reversed_bookmakers(rows)
     kept = [(r, t) for r, t in readings if r.bookmaker not in reversed_books] or readings
     aggregated = aggregate_bookmaker_odds([r for r, _ in kept])
+    if pinned:
+        return {
+            "home_spread": aggregated.get("home_spread"),
+            "over_under": aggregated.get("over_under"),
+            "projected_home_score": None,
+            "projected_away_score": None,
+            "projection_captured_at": None,
+            "projection_bookmaker_count": 0,
+            "projection_unavailable": PINNED_HANDICAP,
+        }
     return {
         **{field: aggregated.get(field) for field in _PAIR_FIELDS},
         "projection_captured_at": max(t for _, t in kept).isoformat(),
@@ -274,8 +324,17 @@ async def recent_line_projections(
 
     A failed read withholds every in-scope pair with ``read_failed``.
     """
+    from app.utils.odds_math import sportsbook_handicap_is_pinned
+
     now = now or _utcnow()
-    ids = sorted({int(e.id) for e in events if in_scope(e)})
+    sport_by_id: dict[int, Optional[str]] = {}
+    ids_set: set[int] = set()
+    for e in events:
+        if in_scope(e):
+            eid = int(e.id)
+            ids_set.add(eid)
+            sport_by_id[eid] = _loaded_sport_key(e)
+    ids = sorted(ids_set)
     if not ids:
         return {}
     pairs = books_needing_lines({eid: latest_by_event.get(eid) or [] for eid in ids})
@@ -283,9 +342,21 @@ async def recent_line_projections(
         recent = await read_recent_lines(db, pairs, now=now)
     except Exception:  # noqa: BLE001 — one stage, not the page; withhold, don't guess
         logger.exception("recent line readings failed for %d events; withholding", len(ids))
-        return {eid: unavailable(READ_FAILED) for eid in ids}
+        return {
+            eid: unavailable(
+                PINNED_HANDICAP
+                if sportsbook_handicap_is_pinned(sport_by_id.get(eid))
+                else READ_FAILED
+            )
+            for eid in ids
+        }
     return {
-        eid: projection_from_rows(latest_by_event.get(eid) or [], recent.get(eid) or [], now=now)
+        eid: projection_from_rows(
+            latest_by_event.get(eid) or [],
+            recent.get(eid) or [],
+            now=now,
+            sport_key=sport_by_id.get(eid),
+        )
         for eid in ids
     }
 
@@ -313,6 +384,8 @@ async def apply_recent_line_projections(db: Any, events: Iterable[Any], odds_map
 
     ``all_snapshots`` is the latest row per book (unfiltered), which the clock rule
     needs. Never raises: a failed read withholds the pairs (`read_failed`).
+    Also withholds sportsbook projected final scores on pinned-handicap sports
+    (hockey/baseball, #13112) regardless of event status.
     """
     events = [e for e in events if int(e.id) in odds_map]
     latest_by_event = {
@@ -324,3 +397,11 @@ async def apply_recent_line_projections(db: Any, events: Iterable[Any], odds_map
         entry = odds_map.get(event_id)
         if isinstance(entry, dict) and "aggregated" in entry:
             entry["aggregated"] = apply_projection(entry["aggregated"], projection)
+    for e in events:
+        eid = int(e.id)
+        if eid not in projections:
+            entry = odds_map.get(eid)
+            if isinstance(entry, dict) and "aggregated" in entry:
+                entry["aggregated"] = withhold_pinned_handicap_projection(
+                    entry["aggregated"], _loaded_sport_key(e)
+                )

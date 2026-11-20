@@ -683,24 +683,29 @@ def rank_claim_is_evidence(outcome: dict) -> bool:
 
 
 def _outcomes_have_awards_movement(outcomes: Optional[list[dict]]) -> bool:
-    """Return True when an awards market has genuine recent movement.
+    """Return True when an awards market has genuine recent price movement.
 
-    Mirrors ``compute_futures_highlight``'s own movement evidence: a >=2% 24h
-    probability shift on a live outcome above ``MOVER_MIN_PROBABILITY``, or a
-    rank-change / leader-change claim backed by ``rank_claim_is_evidence``.
+    Requires a >=2% 24h probability shift on a live outcome above
+    ``MOVER_MIN_PROBABILITY``. When ``dated_movement_24h`` is supplied on the
+    outcome dict (computed by ``routes/feed.py`` from the dated 24h basis so
+    stale never-cleared Polymarket per-write deltas cannot spoof fresh news),
+    read that dated value rather than raw ``probability_change_24h``. Bare rank
+    swaps with <2% price change (e.g., two nominees trading places on a 0.1%
+    tick) do not open the awards gravity gate.
     """
     if not outcomes:
         return False
     for o in outcomes:
         current_prob = float(o.get("probability") or 0)
-        change_24h = abs(float(o.get("probability_change_24h") or 0))
-        if (
-            current_prob >= MOVER_MIN_PROBABILITY
-            and change_24h >= MODERATE_MOVEMENT_THRESHOLD
-        ):
-            return True
-        rank = o.get("rank")
-        if rank is not None and rank <= 5 and rank_claim_is_evidence(o):
+        if current_prob < MOVER_MIN_PROBABILITY:
+            continue
+        raw_move = (
+            o.get("dated_movement_24h")
+            if "dated_movement_24h" in o
+            else o.get("probability_change_24h")
+        )
+        change_24h = abs(float(raw_move or 0))
+        if change_24h >= MODERATE_MOVEMENT_THRESHOLD:
             return True
     return False
 
@@ -905,16 +910,18 @@ def compute_futures_highlight(
         and _v.awards_gravity_t1
         and not _v.non_awards_cultural_gravity_t1
     )
+    _awards_gravity_deferred = False
     if "boring_pattern" not in result.reasons and _market_name:
         if _awards_only_t1:
             _awards_near = (
                 days_until is not None
-                and days_until <= AWARDS_GRAVITY_HORIZON_DAYS
+                and 0 <= days_until <= AWARDS_GRAVITY_HORIZON_DAYS
             )
             if _awards_near or _outcomes_have_awards_movement(outcomes):
                 result.score += CULTURAL_GRAVITY_T1_BOOST
                 result.reasons.append("cultural_gravity_t1")
             else:
+                _awards_gravity_deferred = True
                 result.reasons.append("awards_gravity_deferred")
         elif _v.cultural_gravity_t1:
             result.score += CULTURAL_GRAVITY_T1_BOOST
@@ -1070,16 +1077,20 @@ def compute_futures_highlight(
         # 24h-movement signal now owned by the blend, so it is removed here to
         # avoid double-counting: low movement yields a low blend contribution.)
 
-        # Leader change scoring
+        # Leader change scoring (#13100: when a far-out awards market has no
+        # genuine >=2% 24h price shift, tiny rank-order flips do not lift it
+        # back into the opening seats).
         if leader_was_different:
             flags.leader_changed = True
-            result.score += FUTURES_WEIGHTS["leader_change"]
+            if not _awards_gravity_deferred:
+                result.score += FUTURES_WEIGHTS["leader_change"]
             result.reasons.append("leader_change")
 
         # Rank shakeup (multiple top-5 rank changes)
         if rank_changes_in_top5 >= 2:
             flags.has_rank_shakeup = True
-            result.score += FUTURES_WEIGHTS["rank_shakeup"]
+            if not _awards_gravity_deferred:
+                result.score += FUTURES_WEIGHTS["rank_shakeup"]
             result.reasons.append("rank_shakeup")
 
     # === Resolution proximity ===
@@ -1261,10 +1272,12 @@ def compute_futures_highlight(
             if opening is not None and current is not None:
                 max_surprise = max(max_surprise, abs(current - opening))
         if max_surprise >= MAJOR_SURPRISE_THRESHOLD:
-            result.score += 10
+            if not _awards_gravity_deferred:
+                result.score += 10
             result.reasons.append("major_surprise")
         elif max_surprise >= MODERATE_SURPRISE_THRESHOLD:
-            result.score += 5
+            if not _awards_gravity_deferred:
+                result.score += 5
             result.reasons.append("moderate_surprise")
 
     # === Curation adjustment (applied BEFORE the cap) ===
@@ -1272,9 +1285,15 @@ def compute_futures_highlight(
     # in the score rather than escape the cap post-hoc. Applying it here means it
     # counts toward both the uncapped ranking score and the capped display score.
     # #141/Item 1.
+    # #13100 (Ruling 277: A): a positive legacy curation boost on a far-out quiet
+    # awards market (e.g., Best Picture 400 days out) is deferred until the
+    # ceremony is within 45 days or moves; negative downranks still apply.
     if curation_score_adj:
-        result.score += curation_score_adj
-        result.reasons.append(f"curation_adj:{curation_score_adj:+d}")
+        if _awards_gravity_deferred and curation_score_adj > 0:
+            result.reasons.append("curation_adj_deferred_awards")
+        else:
+            result.score += curation_score_adj
+            result.reasons.append(f"curation_adj:{curation_score_adj:+d}")
 
     # Preserve the uncapped total for the feed's de-saturated ORDERING score,
     # THEN cap the display score at 98. #141/Item 1.

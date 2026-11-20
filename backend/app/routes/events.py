@@ -192,7 +192,15 @@ from app.utils import (
     should_highlight,
 )
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
-from app.utils.odds_math import refuse_incoherent_projections
+from app.utils.odds_math import (
+    refuse_incoherent_projections,
+    sportsbook_handicap_is_pinned,
+)
+from app.utils.recent_line_readings import (
+    PINNED_HANDICAP as _PINNED_HANDICAP_REASON,
+    _loaded_sport_key as _loaded_event_sport_key,
+    withhold_pinned_handicap_projection as _withhold_pinned_handicap_projection,
+)
 from app.utils.projected_final_points import bookmaker_history_provenance
 from app.utils import period_markers as pm_source
 from app.utils.winprob_evidence import (
@@ -20827,6 +20835,9 @@ async def get_event(
         # point so the favourite's own number survives (`rendered_duel_percents`).
         _away_pct, _home_pct = rendered_duel_percents(hero_away_prob, hero_home_prob)
 
+        aggregated = _withhold_pinned_handicap_projection(
+            aggregated, event_sport_key
+        )
         response["current_odds"] = {
             "captured_at": latest_time.isoformat(),
             "home_probability": hero_home_prob,
@@ -20914,8 +20925,11 @@ async def get_event(
                     "projected_away_score": float(s.projected_away_score)
                         if s.projected_away_score else None,
                 })
-        # #8231: a book's projected score that crowns its own moneyline underdog is refused.
-        response["bookmaker_odds"] = refuse_incoherent_projections(bookmaker_odds_list)
+        # #8231 / #13112: a book's projected score that crowns its own moneyline
+        # underdog or comes from a pinned handicap (puck/run line) is refused.
+        response["bookmaker_odds"] = refuse_incoherent_projections(
+            bookmaker_odds_list, sport_key=event_sport_key
+        )
 
     # Fallback: if no odds snapshots, use aggregate from alternative sources
     if "current_odds" not in response and agg_prob is not None:
@@ -34036,12 +34050,16 @@ async def get_event_odds_history(
     # #6771 route half — one vote per sportsbook before anything reads the bucket,
     # so the reversal detector and the average see the same set and neither counts
     # a book twice. See `one_row_per_bookmaker_in_bucket`.
+    _hist_sport_key = _loaded_event_sport_key(event)
     history = []
     for timestamp in sorted(snapshots_by_time.keys()):
         snaps = one_row_per_bookmaker_in_bucket(snapshots_by_time[timestamp])
         reversed_bks = detect_reversed_bookmakers(snaps)
         agg_snaps = [s for s in snaps if s.bookmaker not in reversed_bks] if reversed_bks else snaps
-        aggregated = aggregate_bookmaker_odds(agg_snaps if agg_snaps else snaps)
+        aggregated = _withhold_pinned_handicap_projection(
+            aggregate_bookmaker_odds(agg_snaps if agg_snaps else snaps),
+            _hist_sport_key,
+        )
 
         history.append({
             "timestamp": timestamp.isoformat(),
@@ -34082,8 +34100,8 @@ async def get_event_odds_history(
                 "projected_home_score": float(snap.projected_home_score) if snap.projected_home_score is not None else None,
                 "projected_away_score": float(snap.projected_away_score) if snap.projected_away_score is not None else None,
             }
-            # #8231: the per-book line gets the consensus's refusal.
-            refuse_incoherent_projections([point_data])
+            # #8231 / #13112: the per-book line gets the consensus's refusal.
+            refuse_incoherent_projections([point_data], sport_key=_hist_sport_key)
             # #10461: additive `kind` ("recorded" / "synthetic") + `observed_at`
             # (the snapshot's original capture, never a venue trade clock), so a
             # client can tell a cutoff re-stamp from a new reading. Appended
@@ -35054,7 +35072,9 @@ async def get_event_odds_history(
                     else _live_snaps
                 )
                 _live_counted = _agg_live_snaps if _agg_live_snaps else _live_snaps
-                _live_agg = aggregate_bookmaker_odds(_live_counted)
+                _live_agg = _withhold_pinned_handicap_projection(
+                    aggregate_bookmaker_odds(_live_counted), _hist_sport_key
+                )
                 _live_sb_home = _live_agg.get("projected_home_score")
                 _live_sb_away = _live_agg.get("projected_away_score")
                 _live_sb_ou = _live_agg.get("over_under")
@@ -37856,6 +37876,7 @@ def _format_event_with_odds(event: Event) -> dict:
             event.odds_snapshots,
             key=lambda x: x.captured_at
         )
+        _pinned_hcap = sportsbook_handicap_is_pinned(_loaded_event_sport_key(event))
         response["current_odds"] = {
             "bookmaker": latest_odds.bookmaker,
             "captured_at": latest_odds.captured_at.isoformat(),
@@ -37869,10 +37890,23 @@ def _format_event_with_odds(event: Event) -> dict:
                 if latest_odds.home_spread else None,
             "over_under": float(latest_odds.over_under)
                 if latest_odds.over_under else None,
-            "projected_home_score": float(latest_odds.projected_home_score)
-                if latest_odds.projected_home_score else None,
-            "projected_away_score": float(latest_odds.projected_away_score)
-                if latest_odds.projected_away_score else None,
+            "projected_home_score": None if _pinned_hcap else (
+                float(latest_odds.projected_home_score)
+                if latest_odds.projected_home_score else None
+            ),
+            "projected_away_score": None if _pinned_hcap else (
+                float(latest_odds.projected_away_score)
+                if latest_odds.projected_away_score else None
+            ),
+            **(
+                {
+                    "projection_captured_at": None,
+                    "projection_bookmaker_count": 0,
+                    "projection_unavailable": _PINNED_HANDICAP_REASON,
+                }
+                if _pinned_hcap
+                else {}
+            ),
         }
 
     return response
@@ -37883,6 +37917,7 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
     response = _format_event(event)
 
     if latest_odds:
+        _pinned_hcap = sportsbook_handicap_is_pinned(_loaded_event_sport_key(event))
         response["current_odds"] = {
             "bookmaker": latest_odds.bookmaker,
             "captured_at": latest_odds.captured_at.isoformat(),
@@ -37896,10 +37931,23 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
                 if latest_odds.home_spread else None,
             "over_under": float(latest_odds.over_under)
                 if latest_odds.over_under else None,
-            "projected_home_score": float(latest_odds.projected_home_score)
-                if latest_odds.projected_home_score else None,
-            "projected_away_score": float(latest_odds.projected_away_score)
-                if latest_odds.projected_away_score else None,
+            "projected_home_score": None if _pinned_hcap else (
+                float(latest_odds.projected_home_score)
+                if latest_odds.projected_home_score else None
+            ),
+            "projected_away_score": None if _pinned_hcap else (
+                float(latest_odds.projected_away_score)
+                if latest_odds.projected_away_score else None
+            ),
+            **(
+                {
+                    "projection_captured_at": None,
+                    "projection_bookmaker_count": 0,
+                    "projection_unavailable": _PINNED_HANDICAP_REASON,
+                }
+                if _pinned_hcap
+                else {}
+            ),
         }
 
     return response
@@ -38030,6 +38078,9 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             else None
         )
 
+        aggregated = _withhold_pinned_handicap_projection(
+            aggregated, _event_sport_key
+        )
         response["current_odds"] = {
             "captured_at": captured_at.isoformat() if captured_at else None,
             "home_probability": _served_home,
@@ -38090,8 +38141,11 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
                         "projected_away_score": float(s.projected_away_score)
                             if s.projected_away_score else None,
                     })
-            # #8231: a book's projected score that crowns its own moneyline underdog is refused.
-            response["bookmaker_odds"] = refuse_incoherent_projections(bookmaker_odds_list)
+            # #8231 / #13112: a book's projected score that crowns its own moneyline
+            # underdog or comes from a pinned handicap (puck/run line) is refused.
+            response["bookmaker_odds"] = refuse_incoherent_projections(
+                bookmaker_odds_list, sport_key=_event_sport_key
+            )
 
     # #240 Item 1: emit a single, unambiguous hero probability (the blend) so
     # clients bind to ONE number per question instead of a divergent field.

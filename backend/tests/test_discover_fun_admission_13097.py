@@ -20,6 +20,7 @@ from app.utils.discover_fun_tags import (
     check_fun_taste_guard,
     discover_fun_admission_market_ids,
     evaluate_fun_market_guards,
+    fun_entry_allows_extreme_odds,
     fun_market_ids_for_sub_tag,
     fun_tags_for_market,
     get_fun_market_entry,
@@ -36,10 +37,11 @@ FROZEN_NOW = datetime(2026, 7, 15, 18, 0, tzinfo=timezone.utc)
 
 
 class TestFunMarketsRegistry:
-    def test_seed_file_loads_101_markets_and_declares_all_sub_tags(self):
+    def test_seed_file_loads_100_markets_and_declares_all_sub_tags(self):
         registry = load_fun_markets_registry()
-        assert len(registry.markets) == 101
-        assert len(registry.ordered_market_ids) == 101
+        assert len(registry.markets) == 100
+        assert len(registry.ordered_market_ids) == 100
+        assert get_fun_market_entry(109536) is None  # Removed per Fable pre-flip item 1
         assert registry.default_min_lifetime_volume == FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME
         # Required Batch 2 & Batch 3 selector sub-tags from #13097
         for required_tag in (
@@ -438,4 +440,15 @@ class TestFunAdmissionAndSwitch:
         assert "taylor-swift" in fun_tags_for_market(109295)
         assert "pope-leo-xiv" in fun_tags_for_market(109295)
         assert fun_tags_for_market(999999999) == ()
-        assert len(all_fun_market_ids()) == 101
+        assert len(all_fun_market_ids()) == 100
+
+    def test_extreme_odds_lift_applies_only_to_long_shot_tag(self):
+        # Fable non-blocking look on #13105: only long-shot markets bypass extreme-odds
+        # suppression; a 99% nearly-over release/award stays subject to normal filters.
+        assert fun_entry_allows_extreme_odds(get_fun_market_entry(34191685)) is True
+        assert fun_entry_allows_extreme_odds(get_fun_market_entry(113504)) is True
+        assert fun_entry_allows_extreme_odds(get_fun_market_entry(109435)) is True
+        assert fun_entry_allows_extreme_odds(get_fun_market_entry(109540)) is False
+        assert fun_entry_allows_extreme_odds(get_fun_market_entry(109315)) is False
+        assert fun_entry_allows_extreme_odds(get_fun_market_entry(108505)) is False
+        assert fun_entry_allows_extreme_odds(None) is False
