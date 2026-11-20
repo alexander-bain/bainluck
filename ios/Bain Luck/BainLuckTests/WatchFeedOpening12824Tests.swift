@@ -2,11 +2,11 @@
 import XCTest
 
 final class WatchFeedOpening12824Tests: XCTestCase {
-    private func event(source: String?, status: String = "live") throws -> WatchFeedItem {
+    private func event(source: String?, status: String = "live", id: Int = 51) throws -> WatchFeedItem {
         let sourceField = source.map { "\"hero_probability_source\": \"\($0)\"," } ?? ""
         let json = """
         {"type":"event","score":80,"headline":"Packers rise to 60%",
-         "data":{"id":51,"home_team":"Green Bay Packers","away_team":"Detroit Lions",
+         "data":{"id":\(id),"home_team":"Green Bay Packers","away_team":"Detroit Lions",
          "status":"\(status)","home_score":7,"away_score":6,"sport":"americanfootball_nfl",
          "espn":{"period":"Q3","game_clock":"2:14"},\(sourceField)
          "current_odds":{"home_probability":0.5996}}}
@@ -22,15 +22,6 @@ final class WatchFeedOpening12824Tests: XCTestCase {
         XCTAssertEqual(game.currentOdds?.homeProbability, 0.5996)
         XCTAssertNil(game.currentHomeProbability)
 
-        let story = try XCTUnwrap(WatchMarquee.marquee(from: [item]))
-        XCTAssertEqual(story.id, "event-51")
-        XCTAssertEqual(story.badge, .live)
-        XCTAssertEqual(story.clock, "Q3 2:14")
-        XCTAssertEqual(story.scoreline, "6–7")
-        XCTAssertNil(story.bigNumber)
-        XCTAssertNil(story.split)
-        XCTAssertNil(story.headline)
-
         let team = try XCTUnwrap(WatchMarquee.teamGames(from: [item]).first)
         XCTAssertEqual(team.id, 51)
         XCTAssertEqual(team.clock, "Q3 2:14")
@@ -38,14 +29,18 @@ final class WatchFeedOpening12824Tests: XCTestCase {
         XCTAssertNil(team.split)
     }
 
-    func testScheduledOpeningKeepsTheMatchupWithoutAChanceOrScore() throws {
+    func testOpeningOnlyLiveGameYieldsTheMarqueeToTheBlendedGame() throws {
+        let opening = try event(source: "opening")
+        let blend = try event(source: "blend", id: 52)
+        let story = try XCTUnwrap(WatchMarquee.marquee(from: [opening, blend]))
+        XCTAssertEqual(story.id, "event-52")
+        XCTAssertEqual(story.bigNumber, 60)
+        XCTAssertNil(WatchMarquee.marquee(from: [opening]))
+    }
+
+    func testOpeningOnlyScheduledGameDoesNotHeadline() throws {
         let item = try event(source: "opening", status: "scheduled")
-        let story = try XCTUnwrap(WatchMarquee.marquee(from: [item]))
-        XCTAssertEqual(story.id, "event-51")
-        XCTAssertEqual(story.badge, .soon)
-        XCTAssertNil(story.bigNumber)
-        XCTAssertNil(story.scoreline)
-        XCTAssertNil(story.split)
+        XCTAssertNil(WatchMarquee.marquee(from: [item]))
     }
 
     func testSettledSourceKeepsMyTeamsFinalAndStaysOffTheMarquee() throws {

@@ -130,6 +130,12 @@ struct WatchLiveView: View {
                     }
                 }
                 .frame(height: 4)
+            } else {
+                Text("Win chance unavailable")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
         }
         .padding(8)

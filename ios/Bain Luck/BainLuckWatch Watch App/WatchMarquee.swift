@@ -30,9 +30,8 @@ struct WatchTopStory: Identifiable {
     let clock: String?
     let categoryLabel: String?
     let title: String
-    let bigLabel: String?
-    let bigNumber: Int?
-    let scoreline: String?
+    let bigLabel: String
+    let bigNumber: Int
     let headline: String?
     let split: WatchProbSplit?
 
@@ -90,9 +89,8 @@ enum WatchMarquee {
     /// missing its probability). Pure so `marquee(from:)` can scan for the first
     /// item that qualifies.
     static func story(from item: WatchFeedItem, now: Date = Date()) -> WatchTopStory? {
-        // A cached opening quote keeps the matchup eligible without supplying a chance.
-        if let e = item.event, !e.isSettled, e.currentOdds?.homeProbability != nil {
-            return eventStory(item, e)
+        if let e = item.event, !e.isSettled, let home = e.currentHomeProbability {
+            return eventStory(item, e, homeProb: home)
         }
         // L2-225: a settled market carries a normal-looking price and no badge, so
         // without this it could become the wrist's TOP STORY — the single biggest
@@ -110,7 +108,6 @@ enum WatchMarquee {
                 title: f.name,
                 bigLabel: shortName(leader.name),
                 bigNumber: pct,
-                scoreline: nil,
                 headline: item.headline,
                 split: nil
             )
@@ -118,10 +115,12 @@ enum WatchMarquee {
         return nil
     }
 
-    private static func eventStory(_ item: WatchFeedItem, _ e: WatchFeedEvent) -> WatchTopStory {
+    private static func eventStory(_ item: WatchFeedItem, _ e: WatchFeedEvent, homeProb: Double) -> WatchTopStory {
+        let homePct = pct(homeProb)
+        let awayPct = 100 - homePct
         let homeAbbr = e.homeAbbrev()
         let awayAbbr = e.awayAbbrev()
-        let split = eventSplit(e, awayAbbr: awayAbbr, homeAbbr: homeAbbr)
+        let homeLeads = homePct >= awayPct
         let badge: WatchStoryBadge = e.isLive ? .live : (e.isSettled ? .final : .soon)
 
         return WatchTopStory(
@@ -130,20 +129,19 @@ enum WatchMarquee {
             clock: e.clockText,
             categoryLabel: e.sportName ?? e.sport,
             title: "\(awayAbbr) @ \(homeAbbr)",
-            bigLabel: split.map { $0.rightPct >= $0.leftPct ? homeAbbr : awayAbbr },
-            bigNumber: split.map { max($0.rightPct, $0.leftPct) },
-            scoreline: split == nil ? e.scoreline : nil,
-            headline: split == nil ? nil : item.headline,
-            split: split
+            bigLabel: homeLeads ? homeAbbr : awayAbbr,
+            bigNumber: max(homePct, awayPct),
+            headline: item.headline,
+            split: eventSplit(e, homePct: homePct, awayAbbr: awayAbbr, homeAbbr: homeAbbr)
         )
     }
 
-    private static func eventSplit(_ e: WatchFeedEvent, awayAbbr: String, homeAbbr: String) -> WatchProbSplit? {
-        guard let home = e.currentHomeProbability else { return nil }
-        let homePct = pct(home)
-        return WatchProbSplit(
-            leftAbbr: awayAbbr, leftPct: 100 - homePct, leftColor: e.awayTeamData?.primaryColor,
-            rightAbbr: homeAbbr, rightPct: homePct, rightColor: e.homeTeamData?.primaryColor
+    private static func eventSplit(
+        _ event: WatchFeedEvent, homePct: Int, awayAbbr: String, homeAbbr: String
+    ) -> WatchProbSplit {
+        WatchProbSplit(
+            leftAbbr: awayAbbr, leftPct: 100 - homePct, leftColor: event.awayTeamData?.primaryColor,
+            rightAbbr: homeAbbr, rightPct: homePct, rightColor: event.homeTeamData?.primaryColor
         )
     }
 
@@ -167,7 +165,9 @@ enum WatchMarquee {
                 )
             }
             guard e.currentOdds?.homeProbability != nil else { return nil }
-            let split = eventSplit(e, awayAbbr: awayAbbr, homeAbbr: homeAbbr)
+            let split = e.currentHomeProbability.map {
+                eventSplit(e, homePct: pct($0), awayAbbr: awayAbbr, homeAbbr: homeAbbr)
+            }
             return WatchTeamGame(
                 id: e.id,
                 matchup: "\(awayAbbr) @ \(homeAbbr)",
