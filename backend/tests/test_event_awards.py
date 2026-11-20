@@ -230,6 +230,10 @@ def _category(id_, name, ticker, *, status="open", outcomes=None, deadline=None)
                 name=name,
                 current_probability=probability,
                 is_winner=won,
+                # #5349: a winner in these specimens is the venue's own settlement,
+                # as on the 2026 Emmys (`api_settlement`). A grade from any other
+                # source is covered in test_awards_result_authority_5349.py.
+                resolution_source="api_settlement" if won else None,
                 last_updated=None,
             )
             for name, probability, won in (
