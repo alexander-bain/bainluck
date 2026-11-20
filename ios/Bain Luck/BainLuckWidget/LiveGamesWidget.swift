@@ -147,6 +147,7 @@ struct MediumLiveGamesView: View {
                 if !entry.liveGames.isEmpty && !entry.discoverItems.isEmpty {
                     Divider()
                         .padding(.vertical, 8)
+                        .padding(.horizontal, 6)
                 }
 
                 // Right side: discover items (only show if we have space)
@@ -187,53 +188,68 @@ struct MediumLiveGamesView: View {
     private func compactGameRow(_ game: WidgetGame) -> some View {
         Link(destination: URL(string: "bainluck://events/\(game.id)")!) {
             VStack(alignment: .leading, spacing: 2) {
-                HStack {
+                HStack(spacing: 4) {
                     Text(game.sport.uppercased())
                         .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(.secondary)
-                    Spacer()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                     if !game.period.isEmpty {
                         Text(game.period)
                             .font(.system(size: 8, weight: .semibold))
                             .foregroundStyle(.green)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
-                }
-
-                HStack(spacing: 4) {
-                    // Team color dot
-                    Circle()
-                        .fill(Color(hex: game.resolvedAwayColor(for: colorScheme) ?? "#666666"))
-                        .frame(width: 6, height: 6)
-                    Text(game.awayAbbrev)
-                        .font(.system(size: 11, weight: .medium))
-                        .frame(width: 28, alignment: .leading)
-                    Text("\(game.awayScore ?? 0)")
-                        .font(.system(size: 11, weight: .heavy, design: .rounded).monospacedDigit())
-                        .frame(width: 16, alignment: .trailing)
-
-                    Text("-")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.tertiary)
-
-                    Text("\(game.homeScore ?? 0)")
-                        .font(.system(size: 11, weight: .heavy, design: .rounded).monospacedDigit())
-                        .frame(width: 16, alignment: .leading)
-                    Text(game.homeAbbrev)
-                        .font(.system(size: 11, weight: .medium))
-                        .frame(width: 28, alignment: .trailing)
-                    Circle()
-                        .fill(Color(hex: game.resolvedHomeColor(for: colorScheme) ?? "#0A84FF"))
-                        .frame(width: 6, height: 6)
-
-                    Spacer()
-
-                    // #5363 — names the survivor rather than holding an empty
-                    // slot: at 9pt in a compact accessory there is no room for
-                    // an absence a reader could interpret.
+                    Spacer(minLength: 2)
+                    // #5363 + #13162: keep probability pair on one uncut line ("93-7"), never wrapping onto "-7".
                     Text(game.awayProb.map { "\($0)-\(game.homeProb)" }
                          ?? "\(game.homeAbbrev) \(game.homeProb)")
                         .font(.system(size: 9, weight: .medium, design: .rounded).monospacedDigit())
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+
+                HStack(spacing: 2) {
+                    // Fixed columns wide enough for 4-char short names (TA&M, M-OH)
+                    // and 3-digit scores (101-98) so scores align vertically across rows
+                    // without crossing the center divider or splitting digits (#13162).
+                    Circle()
+                        .fill(Color(hex: game.resolvedAwayColor(for: colorScheme) ?? "#666666"))
+                        .frame(width: 6, height: 6)
+                    Text(game.awayAbbrev)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(width: 33, alignment: .leading)
+                    Text("\(game.awayScore ?? 0)")
+                        .font(.system(size: 11, weight: .heavy, design: .rounded).monospacedDigit())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .frame(width: 24, alignment: .trailing)
+
+                    Text("-")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .frame(width: 5, alignment: .center)
+
+                    Text("\(game.homeScore ?? 0)")
+                        .font(.system(size: 11, weight: .heavy, design: .rounded).monospacedDigit())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .frame(width: 24, alignment: .leading)
+                    Text(game.homeAbbrev)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(width: 33, alignment: .trailing)
+                    Circle()
+                        .fill(Color(hex: game.resolvedHomeColor(for: colorScheme) ?? "#0A84FF"))
+                        .frame(width: 6, height: 6)
+
+                    Spacer(minLength: 0)
                 }
             }
         }
@@ -248,38 +264,57 @@ struct MediumLiveGamesView: View {
                 Text("DISCOVER")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Spacer()
             }
             .padding(.bottom, 6)
 
-            ForEach(Array(entry.discoverItems.prefix(3).enumerated()), id: \.element.id) { index, item in
-                if index > 0 {
-                    Divider()
-                        .padding(.vertical, 3)
-                }
-                compactDiscoverRow(item)
+            // #13162: show as many Discover rows as fit whole with wrapped headlines (never "…").
+            ViewThatFits(in: .vertical) {
+                compactDiscoverList(count: 3, leaderSize: 10.5, nameSize: 9)
+                compactDiscoverList(count: 2, leaderSize: 10.5, nameSize: 9)
+                compactDiscoverList(count: 1, leaderSize: 10.5, nameSize: 9)
+                compactDiscoverList(count: 1, leaderSize: 9.5, nameSize: 8.5)
             }
 
             Spacer(minLength: 0)
         }
     }
 
-    private func compactDiscoverRow(_ item: WidgetDiscoverItem) -> some View {
+    private func compactDiscoverList(count: Int, leaderSize: CGFloat, nameSize: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(entry.discoverItems.prefix(count).enumerated()), id: \.element.id) { index, item in
+                if index > 0 {
+                    Divider()
+                        .padding(.vertical, 3)
+                }
+                compactDiscoverRow(item, leaderSize: leaderSize, nameSize: nameSize)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func compactDiscoverRow(_ item: WidgetDiscoverItem, leaderSize: CGFloat, nameSize: CGFloat) -> some View {
         Link(destination: URL(string: "bainluck://futures/\(item.id)")!) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.category.uppercased())
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
 
-                HStack {
+                HStack(alignment: .top, spacing: 4) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(item.leader)
-                            .font(.system(size: 11, weight: .semibold))
-                            .lineLimit(1)
+                            .font(.system(size: leaderSize, weight: .semibold))
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
                         Text(item.name)
-                            .font(.system(size: 9))
+                            .font(.system(size: nameSize))
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     Spacer(minLength: 4)
@@ -287,11 +322,15 @@ struct MediumLiveGamesView: View {
                     VStack(alignment: .trailing, spacing: 1) {
                         Text("\(item.probability)%")
                             .font(.system(size: 13, weight: .heavy, design: .rounded).monospacedDigit())
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
 
                         if let movement = item.movement, movement != 0 {
                             Text("\(movement > 0 ? "+" : "")\(movement)")
                                 .font(.system(size: 8, weight: .semibold, design: .rounded))
                                 .foregroundStyle(movement > 0 ? .green : .red)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
                         }
                     }
                 }
@@ -388,25 +427,34 @@ struct LargeDashboardView: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(game.awayAbbrev)
                             .font(.system(size: 13, weight: game.awayIsLeading ? .bold : .medium))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                         // #5363 — withheld on a draw-priced sport.
                         Text(game.awayProb.map { "\($0)%" } ?? "")
                             .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
-                    .frame(width: 40, alignment: .leading)
+                    .frame(width: 46, alignment: .leading)
                 }
 
-                // Score
+                // Score (#13162: fixed column widths wide enough for 3-digit scores so rows align vertically)
                 HStack(spacing: 4) {
                     Text("\(game.awayScore ?? 0)")
                         .font(.system(size: 15, weight: .heavy, design: .rounded).monospacedDigit())
-                        .frame(width: 20, alignment: .trailing)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .frame(width: 32, alignment: .trailing)
                     Text("-")
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .frame(width: 6, alignment: .center)
                     Text("\(game.homeScore ?? 0)")
                         .font(.system(size: 15, weight: .heavy, design: .rounded).monospacedDigit())
-                        .frame(width: 20, alignment: .leading)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .frame(width: 32, alignment: .leading)
                 }
 
                 // Home team
@@ -414,28 +462,35 @@ struct LargeDashboardView: View {
                     VStack(alignment: .trailing, spacing: 1) {
                         Text(game.homeAbbrev)
                             .font(.system(size: 13, weight: game.homeIsLeading ? .bold : .medium))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                         Text("\(game.homeProb)%")
                             .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
-                    .frame(width: 40, alignment: .trailing)
+                    .frame(width: 46, alignment: .trailing)
 
                     RoundedRectangle(cornerRadius: 2)
                         .fill(Color(hex: game.resolvedHomeColor(for: colorScheme) ?? "#0A84FF"))
                         .frame(width: 4, height: 24)
                 }
 
-                Spacer()
+                Spacer(minLength: 4)
 
                 // Sport + period
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(game.sport.uppercased())
                         .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                     if !game.period.isEmpty {
                         Text(game.period)
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(.green)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                 }
             }
@@ -451,11 +506,25 @@ struct LargeDashboardView: View {
                 Text("TRENDING")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Spacer()
             }
             .padding(.bottom, 8)
 
-            ForEach(Array(entry.discoverItems.prefix(5).enumerated()), id: \.element.id) { index, item in
+            // #13162: show as many Trending rows as fit whole with wrapped market headlines (never "…").
+            ViewThatFits(in: .vertical) {
+                largeDiscoverList(count: 5)
+                largeDiscoverList(count: 4)
+                largeDiscoverList(count: 3)
+                largeDiscoverList(count: 2)
+                largeDiscoverList(count: 1)
+            }
+        }
+    }
+
+    private func largeDiscoverList(count: Int) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(entry.discoverItems.prefix(count).enumerated()), id: \.element.id) { index, item in
                 if index > 0 {
                     Divider()
                         .padding(.vertical, 4)
@@ -463,15 +532,18 @@ struct LargeDashboardView: View {
                 largeDiscoverRow(item)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func largeDiscoverRow(_ item: WidgetDiscoverItem) -> some View {
         Link(destination: URL(string: "bainluck://futures/\(item.id)")!) {
-            HStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
                 // Category pill
                 Text(item.category.uppercased())
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Color.secondary.opacity(0.6), in: Capsule())
@@ -479,11 +551,15 @@ struct LargeDashboardView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.leader)
                         .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(1)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(item.name)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 4)
@@ -491,11 +567,15 @@ struct LargeDashboardView: View {
                 VStack(alignment: .trailing, spacing: 1) {
                     Text("\(item.probability)%")
                         .font(.system(size: 14, weight: .heavy, design: .rounded).monospacedDigit())
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
 
                     if let movement = item.movement, movement != 0 {
                         Text("\(movement > 0 ? "+" : "")\(movement)")
                             .font(.system(size: 9, weight: .semibold, design: .rounded))
                             .foregroundStyle(movement > 0 ? .green : .red)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                 }
             }

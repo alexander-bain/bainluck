@@ -485,16 +485,15 @@ struct SavedMessage10875: View {
                     .accessibilityLabel(message.title)
             }
         case .accessoryRectangular:
-            VStack(alignment: .leading, spacing: 1) {
-                Text(message.title)
-                    .font(.headline)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.75)
-                Text(message.lockScreenDetail)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+            // #13080 + #13194 (284: B): keep both title and lockScreenDetail whole without "…"
+            // at both default and .xxxLarge Dynamic Type on the Lock Screen rectangle.
+            ViewThatFits(in: .vertical) {
+                accessoryMessageTier(titleSize: nil, detailSize: nil, spacing: 1)
+                accessoryMessageTier(titleSize: 17, detailSize: 12, spacing: 1)
+                accessoryMessageTier(titleSize: 15, detailSize: 11, spacing: 1)
+                accessoryMessageTier(titleSize: 12.5, detailSize: 10.5, spacing: 1)
+                accessoryMessageTier(titleSize: 11, detailSize: 9.5, spacing: 0.5)
+                accessoryMessageTier(titleSize: 9.5, detailSize: 8.5, spacing: 0.5)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         #endif
@@ -507,4 +506,36 @@ struct SavedMessage10875: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
+
+    #if os(iOS)
+    private func accessoryMessageTier(titleSize: CGFloat?, detailSize: CGFloat?, spacing: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: spacing) {
+            Group {
+                if let titleSize {
+                    Text(message.title)
+                        .font(HeadlineStyleTable199.names(.widget, scaledSize: titleSize))
+                } else {
+                    Text(message.title)
+                        .font(.headline)
+                }
+            }
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Group {
+                if let detailSize {
+                    Text(message.lockScreenDetail)
+                        .font(HeadlineStyleTable199.quietText(.widget, scaledSize: detailSize))
+                } else {
+                    Text(message.lockScreenDetail)
+                        .font(.caption2)
+                }
+            }
+            .foregroundStyle(.secondary)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    #endif
 }
