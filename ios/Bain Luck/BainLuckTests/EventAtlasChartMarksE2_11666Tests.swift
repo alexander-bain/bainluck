@@ -113,11 +113,13 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
             includesOpening: true,
             selectedDate: t0
         )
+        let ptZone = TimeZone(identifier: "America/Los_Angeles")!
         let openingReadout = EventAtlasChartMarks11666.selectedReading(
             rows: rowsAll,
             selectedDate: t0,
             outcomeName: "Celtics",
-            includesOpening: true
+            includesOpening: true,
+            timeZone: ptZone
         )
         XCTAssertEqual(openingReadout?.outcomeName, "Celtics")
         XCTAssertEqual(openingReadout?.badgeText, "Pregame")
