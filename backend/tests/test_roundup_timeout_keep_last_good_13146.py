@@ -30,6 +30,7 @@ from app.utils.roundup_containers import (
     ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S,
     RoundupMembers,
     RoundupProducer,
+    RoundupRefusal,
     _redis_cache_key,
     add_roundup_feed_items,
     evaluate_roundup_producer,
@@ -470,6 +471,7 @@ async def test_transient_error_keeps_last_good_and_10m_window_prunes_and_surface
         "failed": 1,
         "kept_last_good": 1,
         "dropped_no_copy": 0,
+        "had_nothing_to_show": 0,
     }
 
     # Older than 10 minutes -> pruned to 0.
@@ -479,6 +481,7 @@ async def test_transient_error_keeps_last_good_and_10m_window_prunes_and_surface
         "failed": 0,
         "kept_last_good": 0,
         "dropped_no_copy": 0,
+        "had_nothing_to_show": 0,
     }
 
     # /api/health surfaces `roundup_reads_10m` cleanly without extra I/O.
@@ -511,6 +514,7 @@ async def test_transient_error_keeps_last_good_and_10m_window_prunes_and_surface
         "failed",
         "kept_last_good",
         "dropped_no_copy",
+        "had_nothing_to_show",
     }
 
 
@@ -1078,3 +1082,109 @@ async def test_machinery_grouping_with_kept_last_good_copy_is_not_incomplete(
         db, _ordinary_deck(), now=t1, include_machinery=True, machinery_only=True
     )
     assert len(_roundup_slugs_in(placed)) == 5
+
+
+@pytest.mark.asyncio
+async def test_nothing_to_show_splits_from_dropped_no_copy_across_timeout_error_and_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Item 8: a round-up that cleanly had nothing to show must NOT inflate dropped_no_copy."""
+    reset_roundup_cache_for_tests()
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+    monkeypatch.setattr(
+        "app.utils.roundup_containers.ROUNDUP_PRODUCER_TIMEOUT_SECONDS", 0.05
+    )
+
+    t0 = datetime(2026, 11, 20, 10, 0, 0, tzinfo=timezone.utc)
+    clock = [t0.timestamp()]
+    fake_redis = _ExpiringFakeRedis(clock)
+    _wire_fake_redis(monkeypatch, fake_redis)
+
+    mode = "empty"
+
+    async def _produce_empty_then_fail(_db: Any) -> Any:
+        if mode == "empty":
+            return RoundupRefusal((("standing", "no_qualifying_events"),))
+        if mode == "timeout":
+            await asyncio.sleep(0.25)
+            return None
+        raise RuntimeError("transient db error")
+
+    p_quiet = RoundupProducer(
+        slug="roundup-quiet-offseason",
+        name="Offseason round-up",
+        kind="roundup",
+        category="sports",
+        section_title="Games",
+        footer="",
+        produce=_produce_empty_then_fail,
+    )
+
+    async def _produce_cold_timeout(_db: Any) -> Any:
+        await asyncio.sleep(0.25)
+        return None
+
+    p_lost = RoundupProducer(
+        slug="roundup-actually-lost",
+        name="Cold lost round-up",
+        kind="roundup",
+        category="economics",
+        section_title="Markets",
+        footer="",
+        produce=_produce_cold_timeout,
+    )
+
+    fake_session = MagicMock(spec=AsyncSession)
+    fake_session.rollback = AsyncMock()
+
+    # 1. Warm p_quiet as cleanly empty at t0 -> stores nothing_to_show=True in local & Redis.
+    monkeypatch.setattr(
+        "app.utils.roundup_containers.ROUNDUP_PRODUCERS", {p_quiet.slug: p_quiet}
+    )
+    fi0, cp0 = await evaluate_roundup_producer(p_quiet, fake_session, now=t0)
+    assert fi0 is None and cp0 is None
+    stored = json.loads(fake_redis._store[_redis_cache_key(p_quiet.slug)][0])
+    assert stored.get("nothing_to_show") is True
+    assert stored.get("clean_empty") is not True  # distinct from worker-only machinery clean_empty
+
+    # 2. Timeout past 60s fresh TTL (local cache hit) -> had_nothing_to_show=1, dropped_no_copy=0, failed=0!
+    mode = "timeout"
+    t1 = t0 + timedelta(seconds=120)
+    clock[0] = t1.timestamp()
+    await add_roundup_feed_items(fake_session, _ordinary_deck(), now=t1)
+    stats1 = get_roundup_read_failure_stats_10m(now=t1)
+    assert stats1["had_nothing_to_show"] == 1
+    assert stats1["dropped_no_copy"] == 0
+    assert stats1["failed"] == 0
+
+    # 3. Cold web dyno (local cache cleared) sees nothing_to_show from Redis on error -> still dropped_no_copy=0!
+    reset_roundup_cache_for_tests()
+    mode = "error"
+    t2 = t0 + timedelta(seconds=180)
+    clock[0] = t2.timestamp()
+    await add_roundup_feed_items(fake_session, _ordinary_deck(), now=t2)
+    stats2 = get_roundup_read_failure_stats_10m(now=t2)
+    assert stats2["had_nothing_to_show"] == 1
+    assert stats2["dropped_no_copy"] == 0
+    assert stats2["failed"] == 0
+
+    # 4. Budget exhausted on p_quiet (with p_lost burning budget first) ->
+    #    p_lost actually lost a card (dropped_no_copy=1, failed=1) while p_quiet records had_nothing_to_show=1!
+    reset_roundup_cache_for_tests()
+    monkeypatch.setattr(
+        "app.utils.roundup_containers.ROUNDUP_PRODUCERS",
+        {p_lost.slug: p_lost, p_quiet.slug: p_quiet},
+    )
+    t3 = t0 + timedelta(seconds=240)
+    clock[0] = t3.timestamp()
+    await add_roundup_feed_items(
+        fake_session,
+        _ordinary_deck(),
+        budget_seconds=0.04,
+        stage_budget_seconds=0.04,
+        now=t3,
+    )
+    stats3 = get_roundup_read_failure_stats_10m(now=t3)
+    assert stats3["dropped_no_copy"] == 1
+    assert stats3["failed"] == 1
+    assert stats3["had_nothing_to_show"] == 1
