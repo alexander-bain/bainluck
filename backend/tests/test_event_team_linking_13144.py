@@ -444,3 +444,121 @@ class TestEventRegistryLinksOnCreate:
         assert created is True
         assert event.home_team_id == 1126
         assert event.away_team_id is None
+
+
+class TestAllLeaguesDiscoverPassAndReadById:
+    @pytest.mark.asyncio
+    async def test_discover_pass_links_zero_sportsbook_league_within_7d_horizon(self, caplog):
+        import logging
+        from app.tasks.sports import _link_upcoming_unlinked_events_pass
+
+        grambling = _team(3046, "Grambling St Tigers", WNCAAB_SPORT_ID)
+        alcorn = _team(6515, "Alcorn St Braves", WNCAAB_SPORT_ID)
+        # Upcoming WBB game within 7d (Polymarket-only: zero sportsbook events in pass)
+        ev_in_window = _event(
+            7001,
+            WNCAAB_SPORT_ID,
+            "Grambling State Tigers",
+            "Alcorn State Braves",
+            FIXED_NOW + timedelta(days=2),
+        )
+        # Future game past the 7-day horizon -> must NOT be linked by the 7-day pass
+        ev_past_horizon = _event(
+            7002,
+            WNCAAB_SPORT_ID,
+            "Grambling State Tigers",
+            "Alcorn State Braves",
+            FIXED_NOW + timedelta(days=10),
+        )
+        session = _InMemoryLinkingSession(
+            teams=[grambling, alcorn],
+            events=[ev_in_window, ev_past_horizon],
+        )
+
+        with caplog.at_level(logging.INFO, logger="app.tasks.sports"):
+            summary = await _link_upcoming_unlinked_events_pass(
+                session,
+                now=FIXED_NOW,
+                sport_key_by_id={WNCAAB_SPORT_ID: "basketball_wncaab"},
+            )
+
+        assert summary["dry_run"] is False
+        assert summary["sides_linked"] == 2
+        assert ev_in_window.home_team_id == 3046
+        assert ev_in_window.away_team_id == 6515
+        assert ev_past_horizon.home_team_id is None
+        assert ev_past_horizon.away_team_id is None
+        assert any(
+            "Linked 2 team IDs on upcoming events for basketball_wncaab" in rec.message
+            for rec in caplog.records
+        )
+
+    def test_discover_events_runs_all_leagues_pass_outside_odds_api_loop(self):
+        import inspect
+        from app.tasks.sports import _discover_events
+
+        src = inspect.getsource(_discover_events)
+        assert "_link_upcoming_unlinked_events_pass" in src
+        assert "link_unlinked_events_for_sport" not in src
+
+    def test_team_for_event_resolves_linked_team_id_before_exact_name(self):
+        from app.routes.events import TeamSnapshot, _dedupe_team_name_lookup, _team_for_event
+
+        grambling = TeamSnapshot(
+            id=3046,
+            sport_id=WNCAAB_SPORT_ID,
+            sport_key="basketball_wncaab",
+            name="Grambling St Tigers",
+            slug="grambling-st-tigers",
+            abbreviation="GRAM",
+            primary_color="#ee8601",
+            secondary_color="#000000",
+            logo_url_small="https://a.espncdn.com/i/teamlogos/ncaa/500/2755.png",
+            logo_url_large="https://a.espncdn.com/i/teamlogos/ncaa/500/2755.png",
+            current_record="10-12",
+            alternate_names=(),
+            standings_data=None,
+            standings_updated_at=None,
+            season_stats=None,
+            espn_id="2755",
+        )
+        other_league = TeamSnapshot(
+            id=9999,
+            sport_id=999,
+            sport_key="lacrosse_ncaa",
+            name="Grambling Lacrosse",
+            slug="grambling-lacrosse",
+            abbreviation="GLAX",
+            primary_color="#111111",
+            secondary_color="#ffffff",
+            logo_url_small="https://example.com/lax.png",
+            logo_url_large="https://example.com/lax.png",
+            current_record="5-2",
+            alternate_names=(),
+            standings_data=None,
+            standings_updated_at=None,
+            season_stats=None,
+            espn_id="9999",
+        )
+        full = _dedupe_team_name_lookup([grambling, other_league])
+        # Simulate _build_team_lookup returning a name-filtered subset for the
+        # event's raw spelling ("Grambling State Tigers", not in `full` by name!).
+        sub = full.subset({"Grambling State Tigers"})
+        assert _team_for_event(sub, "Grambling State Tigers", "basketball_wncaab") is None
+        resolved = _team_for_event(
+            sub,
+            "Grambling State Tigers",
+            "basketball_wncaab",
+            team_id=3046,
+        )
+        assert resolved is grambling
+        assert resolved.abbreviation == "GRAM"
+
+        # Nearest wrong neighbor: a team_id from another league must be refused.
+        cross_league = _team_for_event(
+            sub,
+            "Grambling State Tigers",
+            "basketball_wncaab",
+            team_id=9999,
+        )
+        assert cross_league is None

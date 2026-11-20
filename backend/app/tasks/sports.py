@@ -200,6 +200,53 @@ async def _external_id_in_use(session, external_id: str) -> Optional[int]:
     return result.scalar_one_or_none()
 
 
+async def _link_upcoming_unlinked_events_pass(
+    session,
+    *,
+    now: Optional[datetime] = None,
+    sport_key_by_id: Optional[dict[int, str]] = None,
+) -> dict:
+    """Link upcoming unlinked event team IDs across ALL sports in one pass (#13144).
+
+    Runs outside the per-sport Odds API loop so leagues with zero sportsbook
+    games in that pass (e.g. Polymarket-only women's college basketball, or
+    catch-all sports like ``soccer_other`` / ``basketball_other``) still link
+    every upcoming game within the 7-day horizon using the exact same strict
+    same-sport matcher.
+    """
+    from app.utils.event_team_linking import link_unlinked_upcoming_events
+
+    ref_now = now or datetime.now(timezone.utc)
+    summary = await link_unlinked_upcoming_events(
+        session,
+        now=ref_now,
+        lookback_days=1,
+        horizon_days=7,
+        limit_per_sport=500,
+        dry_run=False,
+    )
+    key_map = dict(sport_key_by_id or {})
+    missing_ids = [
+        sid
+        for sid, st in summary["by_sport"].items()
+        if st.get("sides_linked") and sid not in key_map
+    ]
+    if missing_ids:
+        res = await session.execute(
+            select(Sport.id, Sport.key).where(Sport.id.in_(missing_ids))
+        )
+        for sid, skey in res.all():
+            key_map[int(sid)] = str(skey)
+    for sid, st in summary["by_sport"].items():
+        if st.get("sides_linked"):
+            logger.info(
+                "Linked %d team IDs on upcoming events for %s",
+                st["sides_linked"],
+                key_map.get(sid, f"sport_{sid}"),
+            )
+    return summary
+
+
 async def _discover_events():
     """
     Async implementation of discover_events.
@@ -618,31 +665,6 @@ async def _discover_events():
                                 f"records for {sport_key}"
                             )
 
-                    # Link team_ids on upcoming unlinked events in start-time
-                    # order using exact same-sport canonical equivalence (#13144).
-                    # Covers events created by both Odds API and StatPal without
-                    # being starved by old historical unlinked rows behind a cap.
-                    if all_team_names:
-                        from app.utils.event_team_linking import (
-                            link_unlinked_events_for_sport,
-                        )
-
-                        link_stats = await link_unlinked_events_for_sport(
-                            session,
-                            sport_id=sport_id,
-                            now=datetime.now(timezone.utc),
-                            lookback_days=1,
-                            limit=500,
-                            source="sports_poll",
-                            dry_run=False,
-                        )
-                        if link_stats["sides_linked"]:
-                            logger.info(
-                                "Linked %d team IDs on upcoming events for %s",
-                                link_stats["sides_linked"],
-                                sport_key,
-                            )
-
                     # ── Post-creation audit: check for duplicates ──
                     if espn_events_by_date:
                         from app.services.event_registry import audit_event_counts
@@ -679,6 +701,22 @@ async def _discover_events():
                     continue
 
             await session.commit()
+
+            # #13144 follow-up: link upcoming unlinked events across EVERY
+            # sport with unlinked rows (not only sports where The Odds API
+            # returned events in this pass), bounded to the 7-day horizon.
+            try:
+                await _link_upcoming_unlinked_events_pass(
+                    session,
+                    now=datetime.now(timezone.utc),
+                    sport_key_by_id={s.id: s.key for s in active_sports},
+                )
+                await session.commit()
+            except Exception as link_err:
+                await _rollback_quietly(session)
+                logger.warning(
+                    "Upcoming event team-ID linking pass failed: %s", link_err
+                )
 
         return {
             "sports_polled": sports_polled,

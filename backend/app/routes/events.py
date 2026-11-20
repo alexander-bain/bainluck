@@ -20694,8 +20694,18 @@ async def get_event(
         # below — that name is BOUND further down this function, so reading it
         # here is an UnboundLocalError, not a stale value (gotcha #7). The
         # helper is a lazy-safe attribute read and emits no IO.
-        _team_for_event(team_lookup, event.home_team_name, loaded_sport_key(event)),
-        _team_for_event(team_lookup, event.away_team_name, loaded_sport_key(event)),
+        _team_for_event(
+            team_lookup,
+            event.home_team_name,
+            loaded_sport_key(event),
+            team_id=getattr(event, "home_team_id", None),
+        ),
+        _team_for_event(
+            team_lookup,
+            event.away_team_name,
+            loaded_sport_key(event),
+            team_id=getattr(event, "away_team_id", None),
+        ),
         event.home_team_name,
         event.away_team_name,
         importance=getattr(event, "llm_importance", None),
@@ -36862,11 +36872,12 @@ class TeamNameLookup(dict):
     sport in hand cannot be made worse off by a map it never reads.
     """
 
-    __slots__ = ("by_league",)
+    __slots__ = ("by_league", "by_id")
 
-    def __init__(self, mapping=None, by_league=None):
+    def __init__(self, mapping=None, by_league=None, by_id=None):
         super().__init__(mapping or {})
         self.by_league = by_league or {}
+        self.by_id = by_id or {}
 
     def subset(self, names) -> "TeamNameLookup":
         """The rows for `names`, keeping the per-league map with them.
@@ -36880,6 +36891,7 @@ class TeamNameLookup(dict):
         return TeamNameLookup(
             {k: v for k, v in self.items() if k in names},
             {k: v for k, v in self.by_league.items() if k in names},
+            self.by_id,
         )
 
     def __eq__(self, other):
@@ -36896,7 +36908,10 @@ class TeamNameLookup(dict):
         base = dict.__eq__(self, other)
         if base is NotImplemented or base is False:
             return base
-        return self.by_league == getattr(other, "by_league", {})
+        return (
+            self.by_league == getattr(other, "by_league", {})
+            and self.by_id == getattr(other, "by_id", {})
+        )
 
     def __ne__(self, other):
         result = self.__eq__(other)
@@ -36915,29 +36930,48 @@ def _as_lookup(mapping) -> TeamNameLookup:
     return TeamNameLookup(mapping)
 
 
-def _team_for_event(team_lookup, name: str | None, sport_key: str | None):
-    """The row for `name` that belongs to THIS event's league, else today's answer.
+def _team_for_event(
+    team_lookup,
+    name: str | None,
+    sport_key: str | None,
+    *,
+    team_id: int | None = None,
+):
+    """The row for `name` (or linked `team_id`) that belongs to THIS event's league, else today's answer.
 
     The whole cross-league ambiguity problem is a question the caller can often
     answer: "Panthers" is ambiguous on its own and is not ambiguous on an NFL
-    fixture. Where the event's league has a corroborated row under this key, that
-    row is the answer; everywhere else this returns exactly what `.get(name)`
-    returns, including `None`.
+    fixture. Where the event already carries a verified same-league `team_id`
+    (#13144), resolve that row first so spelling variants like
+    "Grambling State Tigers" -> "Grambling St Tigers" render their linked crest
+    and short name. Otherwise fall back to the per-league name map, then
+    `.get(name)`, including `None`.
 
-    Accepts a plain `dict` (no `by_league`) and degrades to `.get` — but note
-    that every production caller passes a `TeamNameLookup`, so a test that
-    exercises only the dict path is testing the branch nothing takes.
+    Accepts a plain `dict` (no `by_league` / `by_id`) and degrades to `.get` —
+    but note that every production caller passes a `TeamNameLookup`, so a test
+    that exercises only the dict path is testing the branch nothing takes.
     """
     # 🔴 `is None`, NOT falsiness. A `TeamNameLookup` whose every key the
     # cross-league guard dropped is an EMPTY dict carrying a full `by_league` —
     # i.e. precisely the population this function exists to answer — and
     # `if not team_lookup` discards it.
-    if team_lookup is None or not name:
+    if team_lookup is None:
+        return None
+    identity = league_identity(sport_key)
+    if team_id is not None:
+        by_id = getattr(team_lookup, "by_id", None) or {}
+        row_by_id = by_id.get(team_id)
+        if row_by_id is not None:
+            if (
+                identity is None
+                or league_identity(getattr(row_by_id, "sport_key", None)) == identity
+            ):
+                return row_by_id
+    if not name:
         return None
     default = team_lookup.get(name)
     by_league = getattr(team_lookup, "by_league", None) or {}
     rows = by_league.get(name) or {}
-    identity = league_identity(sport_key)
     if identity is None:
         # No key travelled with the event, so nothing can be matched against a
         # league — never against `_team_league_identity`'s `sport_id` fallback,
@@ -37173,7 +37207,11 @@ def _dedupe_team_name_lookup(teams) -> dict:
             # branch used to settle by arrival order are the #7132 defect.
             lookup[key] = team
 
+    by_id: dict = {}
     for team in teams:
+        tid = getattr(team, "id", None)
+        if tid is not None:
+            by_id[tid] = team
         identity = _team_league_identity(team)
         _register(team.name, team, identity)
         for alt_name in (team.alternate_names or []):
@@ -37185,7 +37223,7 @@ def _dedupe_team_name_lookup(teams) -> dict:
         if per_league:
             by_league[key] = per_league
 
-    return TeamNameLookup(lookup, by_league)
+    return TeamNameLookup(lookup, by_league, by_id)
 
 
 async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
@@ -37769,8 +37807,18 @@ def _format_event(
     # `is not None`: a lookup whose keys were all dropped is falsy and still
     # carries the per-league map.
     if team_lookup is not None:
-        home_team = _team_for_event(team_lookup, event.home_team_name, event_sport_key)
-        away_team = _team_for_event(team_lookup, event.away_team_name, event_sport_key)
+        home_team = _team_for_event(
+            team_lookup,
+            event.home_team_name,
+            event_sport_key,
+            team_id=getattr(event, "home_team_id", None),
+        )
+        away_team = _team_for_event(
+            team_lookup,
+            event.away_team_name,
+            event_sport_key,
+            team_id=getattr(event, "away_team_id", None),
+        )
         if home_team and (home_team.primary_color or home_team.logo_url_small):
             response["home_team_data"] = _format_team_data(home_team)
         if away_team and (away_team.primary_color or away_team.logo_url_small):
