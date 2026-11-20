@@ -1056,18 +1056,51 @@ def _roundup_payload_needs_live_rail(
             if st in _TERMINAL_EVENT_STATUSES:
                 continue
             raw_ct = card.get("commence_time")
-            if not isinstance(raw_ct, str) or not raw_ct.strip():
-                continue
-            try:
-                ct_dt = datetime.fromisoformat(raw_ct.replace("Z", "+00:00"))
-                if ct_dt.tzinfo is None:
-                    ct_dt = ct_dt.replace(tzinfo=timezone.utc)
+            if isinstance(raw_ct, datetime):
+                ct_dt = (
+                    raw_ct
+                    if raw_ct.tzinfo is not None
+                    else raw_ct.replace(tzinfo=timezone.utc)
+                )
                 ct_ts = ct_dt.timestamp()
-            except ValueError:
+            elif isinstance(raw_ct, str) and raw_ct.strip():
+                try:
+                    ct_dt = datetime.fromisoformat(raw_ct.replace("Z", "+00:00"))
+                    if ct_dt.tzinfo is None:
+                        ct_dt = ct_dt.replace(tzinfo=timezone.utc)
+                    ct_ts = ct_dt.timestamp()
+                except ValueError:
+                    continue
+            else:
                 continue
             if (ref_ts - 21600.0) <= ct_ts <= (ref_ts + MACHINERY_IMMINENT_START_WINDOW_S):
                 return True
     return False
+
+
+def _roundup_effective_keep_seconds(
+    slug: str,
+    container_payload: Optional[Mapping[str, Any]],
+    *,
+    now_ts: float,
+    stored_stale_ttl: Optional[float] = None,
+) -> float:
+    """Judge a cached copy's keep-time by the clock at serve time (#13146).
+
+    If any non-final game in the cached copy has already started or starts
+    within ``MACHINERY_IMMINENT_START_WINDOW_S`` (3 min), cap keep-time to the
+    5-minute live window even when the copy was built before tip-off.
+    """
+    live_cap = (
+        ROUNDUP_MACHINERY_LIVE_STALE_TTL_S
+        if _is_machinery_producer_slug(slug)
+        else ROUNDUP_STANDING_LIVE_STALE_TTL_S
+    )
+    if _roundup_payload_needs_live_rail(container_payload, now_ts=now_ts):
+        return live_cap
+    if isinstance(stored_stale_ttl, (int, float)) and stored_stale_ttl > 0:
+        return float(stored_stale_ttl)
+    return _roundup_cache_stale_ttl_seconds(slug, container_payload)
 
 
 def _record_roundup_live_origin(
@@ -1277,11 +1310,23 @@ async def _store_roundup_cache_entry(
     feed_item: Optional[dict[str, Any]],
     container_payload: Optional[dict[str, Any]],
     db: Any,
+    *,
+    keep_tombstone: bool = False,
 ) -> None:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     ttl_s = _roundup_cache_ttl_seconds(slug, container_payload)
     stale_ttl_s = _roundup_cache_stale_ttl_seconds(slug, container_payload)
+    redis_ex_s = stale_ttl_s
+    if container_payload is None and keep_tombstone:
+        # Keep a proper withdrawal note in Redis as long as copies are kept so
+        # another web dyno cannot resurrect an older local copy after the 60s
+        # retry window passes (#13146). Retry time (`ttl_s`) stays 60s.
+        redis_ex_s = max(
+            stale_ttl_s,
+            ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S,
+            ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S,
+        )
     _roundup_local_cache[cache_key] = (
         ts,
         copy.deepcopy(feed_item),
@@ -1292,7 +1337,7 @@ async def _store_roundup_cache_entry(
             encoded = _encode_roundup_cache_entry(
                 ts=ts,
                 ttl_s=ttl_s,
-                stale_ttl_s=stale_ttl_s,
+                stale_ttl_s=redis_ex_s,
                 feed_item=feed_item,
                 container_payload=container_payload,
             )
@@ -1312,7 +1357,7 @@ async def _store_roundup_cache_entry(
                 lambda: client.set(
                     _redis_cache_key(slug),
                     encoded,
-                    ex=int(stale_ttl_s),
+                    ex=int(redis_ex_s),
                 ),
                 treat_none_as_miss=False,
             )
@@ -1366,8 +1411,16 @@ async def _cache_roundup_timeout_refusal(
         "live" if isinstance(db, AsyncSession) else id(db),
     )
     effective_ts = time.time() if ts is None else float(ts)
+    prev = _roundup_local_cache.get(cache_key)
+    preserve_tombstone = prev is not None and prev[1] is None and prev[2] is None
     await _store_roundup_cache_entry(
-        cache_key, producer.slug, effective_ts, None, None, db
+        cache_key,
+        producer.slug,
+        effective_ts,
+        None,
+        None,
+        db,
+        keep_tombstone=preserve_tombstone,
     )
 
 
@@ -1395,7 +1448,9 @@ async def _load_last_good_roundup_copy(
     Used when a Discover round-up refresh times out or errors so both standing
     round-ups and machinery groupings keep their last good copy while it is
     within its keep-time instead of disappearing from Discover (#13146).
-    Respects ``producer.enabled`` and ``valid_from`` / ``valid_until`` (65-A).
+    Respects ``producer.enabled`` and ``valid_from`` / ``valid_until`` (65-A),
+    compares local vs shared Redis freshness so the newer entry always decides
+    (including newer proper withdrawals), and judges live keep-time by ``now``.
     """
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1420,56 +1475,91 @@ async def _load_last_good_roundup_copy(
         producer.slug,
         "live" if isinstance(db, AsyncSession) else id(db),
     )
+    # Candidate tuple: (built_at, feed_item, container_payload, stored_stale_ttl, from_shared)
+    local_candidate: Optional[
+        tuple[
+            float,
+            Optional[dict[str, Any]],
+            Optional[dict[str, Any]],
+            Optional[float],
+            bool,
+        ]
+    ] = None
     cached = _roundup_local_cache.get(cache_key)
-    if cached is not None and cached[1] is not None and cached[2] is not None:
-        built_at = float(cached[0])
-        keep_s = _roundup_cache_stale_ttl_seconds(producer.slug, cached[2])
-        age_s = max(0.0, ts - built_at)
-        if age_s < keep_s:
-            _record_roundup_live_origin(built_at, producer.slug, cached[2])
-            return (
-                copy.deepcopy(cached[1]),
-                copy.deepcopy(cached[2]),
-                age_s,
-                keep_s,
+    if cached is not None:
+        local_candidate = (float(cached[0]), cached[1], cached[2], None, False)
+
+    shared_candidate: Optional[
+        tuple[
+            float,
+            Optional[dict[str, Any]],
+            Optional[dict[str, Any]],
+            Optional[float],
+            bool,
+        ]
+    ] = None
+    if not local_only and isinstance(db, AsyncSession):
+        try:
+            from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+            client = await get_shared_async_redis()
+            res = await bounded_redis_call(
+                lambda: client.get(_redis_cache_key(producer.slug))
+            )
+            if res.is_ok and res.value:
+                raw = json.loads(
+                    res.value.decode("utf-8")
+                    if isinstance(res.value, (bytes, bytearray))
+                    else res.value
+                )
+                if isinstance(raw, dict) and isinstance(raw.get("built_at"), (int, float)):
+                    raw_stale_ttl = raw.get("stale_ttl_s")
+                    shared_candidate = (
+                        float(raw["built_at"]),
+                        raw.get("feed_item"),
+                        raw.get("container_payload"),
+                        float(raw_stale_ttl)
+                        if isinstance(raw_stale_ttl, (int, float))
+                        else None,
+                        True,
+                    )
+        except Exception:  # noqa: BLE001 — stale fallback read fails open
+            logger.debug(
+                "roundup_containers: last-good shared cache read failed for %s",
+                producer.slug,
+                exc_info=True,
             )
 
-    if local_only or not isinstance(db, AsyncSession):
+    if shared_candidate is not None and local_candidate is not None:
+        chosen = (
+            shared_candidate
+            if shared_candidate[0] >= local_candidate[0]
+            else local_candidate
+        )
+    else:
+        chosen = shared_candidate if shared_candidate is not None else local_candidate
+
+    if chosen is None:
         return None
 
-    try:
-        from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+    built_at, fi, cp, stored_stale_ttl, from_shared = chosen
+    if fi is None or cp is None:
+        if from_shared:
+            _roundup_local_cache[cache_key] = (built_at, None, None)
+        return None
 
-        client = await get_shared_async_redis()
-        res = await bounded_redis_call(
-            lambda: client.get(_redis_cache_key(producer.slug))
-        )
-        if res.is_ok and res.value:
-            raw = json.loads(
-                res.value.decode("utf-8")
-                if isinstance(res.value, (bytes, bytearray))
-                else res.value
-            )
-            if isinstance(raw, dict) and isinstance(raw.get("built_at"), (int, float)):
-                built_at = float(raw["built_at"])
-                fi = raw.get("feed_item")
-                cp = raw.get("container_payload")
-                if fi is not None and cp is not None:
-                    keep_s = float(
-                        raw.get("stale_ttl_s")
-                        or _roundup_cache_stale_ttl_seconds(producer.slug, cp)
-                    )
-                    age_s = max(0.0, ts - built_at)
-                    if age_s < keep_s:
-                        _roundup_local_cache[cache_key] = (built_at, fi, cp)
-                        _record_roundup_live_origin(built_at, producer.slug, cp)
-                        return copy.deepcopy(fi), copy.deepcopy(cp), age_s, keep_s
-    except Exception:  # noqa: BLE001 — stale fallback read fails open
-        logger.debug(
-            "roundup_containers: last-good shared cache read failed for %s",
-            producer.slug,
-            exc_info=True,
-        )
+    keep_s = _roundup_effective_keep_seconds(
+        producer.slug,
+        cp,
+        now_ts=ts,
+        stored_stale_ttl=stored_stale_ttl,
+    )
+    age_s = max(0.0, ts - built_at)
+    if age_s < keep_s:
+        if from_shared:
+            _roundup_local_cache[cache_key] = (built_at, fi, cp)
+        _record_roundup_live_origin(built_at, producer.slug, cp)
+        return copy.deepcopy(fi), copy.deepcopy(cp), age_s, keep_s
     return None
 
 
@@ -1581,16 +1671,24 @@ async def evaluate_roundup_producer(
                             _roundup_local_cache[cache_key] = (built_at, fi, cp)
                             _record_machinery_live_origin(built_at, producer.slug, cp)
                             return copy.deepcopy(fi), copy.deepcopy(cp)
-                        if allow_stale and is_machinery and fi is not None and cp is not None:
-                            stale_max_s = float(
-                                raw.get("stale_ttl_s")
-                                or _roundup_cache_stale_ttl_seconds(producer.slug, cp)
-                            )
-                            if age_s < stale_max_s:
-                                _record_machinery_live_origin(
-                                    built_at, producer.slug, cp
+                        if allow_stale and is_machinery:
+                            if fi is None or cp is None:
+                                if (
+                                    local_stale_fallback is not None
+                                    and built_at >= local_stale_fallback[0]
+                                ):
+                                    local_stale_fallback = None
+                                    _roundup_local_cache[cache_key] = (built_at, None, None)
+                            else:
+                                stale_max_s = float(
+                                    raw.get("stale_ttl_s")
+                                    or _roundup_cache_stale_ttl_seconds(producer.slug, cp)
                                 )
-                                return copy.deepcopy(fi), copy.deepcopy(cp)
+                                if age_s < stale_max_s:
+                                    _record_machinery_live_origin(
+                                        built_at, producer.slug, cp
+                                    )
+                                    return copy.deepcopy(fi), copy.deepcopy(cp)
             except Exception:  # noqa: BLE001 — cache read fails open
                 logger.debug(
                     "roundup_containers: shared cache read failed for %s",
@@ -1621,7 +1719,13 @@ async def evaluate_roundup_producer(
         )
         if use_cache and _is_cacheable_refusal(reasons):
             await _store_roundup_cache_entry(
-                cache_key, producer.slug, ts, None, None, db
+                cache_key,
+                producer.slug,
+                ts,
+                None,
+                None,
+                db,
+                keep_tombstone=True,
             )
         return None, None
 
@@ -1646,7 +1750,13 @@ async def evaluate_roundup_producer(
     ):
         if use_cache:
             await _store_roundup_cache_entry(
-                cache_key, producer.slug, ts, None, None, db
+                cache_key,
+                producer.slug,
+                ts,
+                None,
+                None,
+                db,
+                keep_tombstone=True,
             )
         return None, None
 
@@ -1718,7 +1828,13 @@ async def evaluate_roundup_producer(
         if feed_item is None:
             if use_cache:
                 await _store_roundup_cache_entry(
-                    cache_key, producer.slug, ts, None, None, db
+                    cache_key,
+                    producer.slug,
+                    ts,
+                    None,
+                    None,
+                    db,
+                    keep_tombstone=True,
                 )
             return None, None
 

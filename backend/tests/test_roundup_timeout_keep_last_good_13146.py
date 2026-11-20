@@ -577,3 +577,306 @@ async def test_stage_budget_exhausted_keeps_local_last_good_for_remaining_produc
     stats = get_roundup_read_failure_stats_10m(now=t1)
     assert stats["kept_last_good"] >= 1
     assert stats["dropped_no_copy"] == 0
+
+
+class _ExpiringFakeRedis:
+    """In-memory async Redis fake that enforces `ex` against a controllable clock."""
+
+    def __init__(self, clock: list[float]) -> None:
+        self._clock = clock
+        self._store: dict[str, tuple[str, float | None]] = {}
+        self.last_ex: dict[str, int | None] = {}
+
+    async def get(self, key: str) -> str | None:
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        val, expires_at = entry
+        if expires_at is not None and self._clock[0] >= expires_at:
+            del self._store[key]
+            return None
+        return val
+
+    async def set(self, key: str, value: str, ex: int | None = None) -> bool:
+        expires_at = self._clock[0] + float(ex) if ex is not None else None
+        self._store[key] = (value, expires_at)
+        self.last_ex[key] = ex
+        return True
+
+
+def _wire_fake_redis(monkeypatch: pytest.MonkeyPatch, fake_redis: Any) -> None:
+    async def _get_redis() -> Any:
+        return fake_redis
+
+    class _OkRes:
+        def __init__(self, value: Any) -> None:
+            self.is_ok = True
+            self.value = value
+
+    async def _bounded(fn: Any, **_kwargs: Any) -> _OkRes:
+        return _OkRes(await fn())
+
+    monkeypatch.setattr("app.utils.request_cache.get_shared_async_redis", _get_redis)
+    monkeypatch.setattr("app.utils.request_cache.bounded_redis_call", _bounded)
+    monkeypatch.setattr(
+        "app.utils.not_trading.drop_not_trading_roundup_members",
+        AsyncMock(side_effect=lambda _db, cards, *_args, **_kw: cards),
+    )
+
+
+@pytest.mark.asyncio
+async def test_pre_tipoff_copy_uses_live_keep_time_once_game_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Case 1 (#13184 review): a copy made 2 min before tip-off expires at 5 min, not 30 min."""
+    reset_roundup_cache_for_tests()
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+    monkeypatch.setattr(
+        "app.utils.roundup_containers.ROUNDUP_PRODUCER_TIMEOUT_SECONDS", 0.05
+    )
+
+    t0 = datetime(2026, 11, 20, 23, 58, 0, tzinfo=timezone.utc)
+    tipoff = t0 + timedelta(minutes=2)
+    clock = [t0.timestamp()]
+    fake_redis = _ExpiringFakeRedis(clock)
+    _wire_fake_redis(monkeypatch, fake_redis)
+
+    hang = False
+
+    async def _produce(_db: Any) -> Any:
+        if hang:
+            await asyncio.sleep(0.25)
+            return None
+        return RoundupMembers(
+            members=[
+                {
+                    "type": "event",
+                    "id": 9901,
+                    "destination": "/events/9901",
+                    "event_id": 9901,
+                    "card": {
+                        "id": 9901,
+                        "name": "Celtics at Knicks",
+                        "status": "scheduled",
+                        "commence_time": tipoff.isoformat(),
+                        "home_team": "Knicks",
+                        "away_team": "Celtics",
+                        "home_prob": 0.53,
+                    },
+                },
+                {
+                    "type": "event",
+                    "id": 9902,
+                    "destination": "/events/9902",
+                    "event_id": 9902,
+                    "card": {
+                        "id": 9902,
+                        "name": "Lakers at Heat",
+                        "status": "scheduled",
+                        "commence_time": (tipoff + timedelta(hours=1)).isoformat(),
+                        "home_team": "Heat",
+                        "away_team": "Lakers",
+                        "home_prob": 0.51,
+                    },
+                },
+            ],
+            title="Closest games tonight (pre-tipoff)",
+            footer="2 games tonight",
+        )
+
+    producer = RoundupProducer(
+        slug="roundup-pre-tipoff-games",
+        name="Closest games tonight",
+        kind="roundup",
+        category="sports",
+        section_title="Games",
+        footer="2 games",
+        produce=_produce,
+    )
+    monkeypatch.setattr(
+        "app.utils.roundup_containers.ROUNDUP_PRODUCERS", {producer.slug: producer}
+    )
+
+    fake_session = MagicMock(spec=AsyncSession)
+    fake_session.rollback = AsyncMock()
+
+    # Copy made 2 min before tip-off (status="scheduled" at build time -> stored stale_ttl_s=1800).
+    assert _roundup_slugs_in(
+        await add_roundup_feed_items(fake_session, _ordinary_deck(), now=t0)
+    ) == [producer.slug]
+
+    hang = True
+    # 4 min after copy (2 min into game, age=240s < 300s): KEPT.
+    t_4m = t0 + timedelta(minutes=4)
+    clock[0] = t_4m.timestamp()
+    assert _roundup_slugs_in(
+        await add_roundup_feed_items(fake_session, _ordinary_deck(), now=t_4m)
+    ) == [producer.slug]
+
+    # 10 min, 25 min, 29 min after copy (8–27 min into game, age >= 300s): LEFT OUT
+    # even though stored stale_ttl_s was 1800s (both local and cold-from-Redis paths).
+    for mins in (10, 25, 29):
+        t_later = t0 + timedelta(minutes=mins)
+        clock[0] = t_later.timestamp()
+        assert (
+            _roundup_slugs_in(
+                await add_roundup_feed_items(fake_session, _ordinary_deck(), now=t_later)
+            )
+            == []
+        ), f"pre-tipoff copy must not be kept at +{mins}m into live play"
+
+    # Also verify a cold process reading directly from Redis respects the 5-min live clock cap.
+    reset_roundup_cache_for_tests()
+    t_10m = t0 + timedelta(minutes=10)
+    clock[0] = t_10m.timestamp()
+    assert (
+        _roundup_slugs_in(
+            await add_roundup_feed_items(fake_session, _ordinary_deck(), now=t_10m)
+        )
+        == []
+    )
+
+
+@pytest.mark.asyncio
+async def test_newer_shared_copy_beats_older_local_copy_on_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Case 2 (#13184 review): a 2-min shared copy beats a 20-min local copy."""
+    from app.utils.roundup_containers import _roundup_local_cache
+
+    reset_roundup_cache_for_tests()
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+    monkeypatch.setattr(
+        "app.utils.roundup_containers.ROUNDUP_PRODUCER_TIMEOUT_SECONDS", 0.05
+    )
+
+    t0 = datetime(2026, 11, 20, 10, 0, 0, tzinfo=timezone.utc)
+    clock = [t0.timestamp()]
+    fake_redis = _ExpiringFakeRedis(clock)
+    _wire_fake_redis(monkeypatch, fake_redis)
+
+    mode = "20min-old"
+
+    async def _produce(_db: Any) -> Any:
+        if mode == "timeout":
+            await asyncio.sleep(0.25)
+            return None
+        return _make_standing_members(mode)
+
+    producer = RoundupProducer(
+        slug="roundup-shared-beats-local",
+        name="Shared beats local",
+        kind="roundup",
+        category="economics",
+        section_title="Items",
+        footer="Footer",
+        produce=_produce,
+    )
+    monkeypatch.setattr(
+        "app.utils.roundup_containers.ROUNDUP_PRODUCERS", {producer.slug: producer}
+    )
+
+    fake_session = MagicMock(spec=AsyncSession)
+    fake_session.rollback = AsyncMock()
+
+    # Process A warms at t0 -> holds 20-minute-old copy locally.
+    await evaluate_roundup_producer(producer, fake_session, now=t0)
+    process_a_local = _roundup_local_cache[(producer.slug, "live")]
+
+    # Process B warms at t0 + 18 min -> writes 2-minute-old copy to shared Redis.
+    reset_roundup_cache_for_tests()
+    mode = "2min-new"
+    t18 = t0 + timedelta(minutes=18)
+    clock[0] = t18.timestamp()
+    await evaluate_roundup_producer(producer, fake_session, now=t18)
+
+    # Restore Process A's stale 20-min-old local cache; at t0 + 20 min, read hangs.
+    _roundup_local_cache[(producer.slug, "live")] = process_a_local
+    mode = "timeout"
+    t20 = t0 + timedelta(minutes=20)
+    clock[0] = t20.timestamp()
+    placed = await add_roundup_feed_items(fake_session, _ordinary_deck(), now=t20)
+    assert _roundup_slugs_in(placed) == [producer.slug]
+    assert "2min-new" in (_roundup_title_for(placed, producer.slug) or "")
+
+
+@pytest.mark.asyncio
+async def test_withdrawn_roundup_in_shared_store_does_not_resurrect_from_old_local_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Case 3 (#13184 review): a proper withdrawal stays in Redis for keep-time so old local copies never return."""
+    from app.utils.roundup_containers import RoundupRefusal, _roundup_local_cache
+
+    reset_roundup_cache_for_tests()
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+    monkeypatch.setattr(
+        "app.utils.roundup_containers.ROUNDUP_PRODUCER_TIMEOUT_SECONDS", 0.05
+    )
+
+    t0 = datetime(2026, 11, 20, 10, 0, 0, tzinfo=timezone.utc)
+    clock = [t0.timestamp()]
+    fake_redis = _ExpiringFakeRedis(clock)
+    _wire_fake_redis(monkeypatch, fake_redis)
+
+    mode = "good-v1"
+    produce_calls = 0
+
+    async def _produce(_db: Any) -> Any:
+        nonlocal produce_calls
+        produce_calls += 1
+        if mode == "refuse":
+            return RoundupRefusal(["below_threshold"])
+        if mode == "timeout":
+            await asyncio.sleep(0.25)
+            return None
+        return _make_standing_members(mode)
+
+    producer = RoundupProducer(
+        slug="roundup-withdrawn-card",
+        name="Withdrawn card",
+        kind="roundup",
+        category="politics",
+        section_title="Items",
+        footer="Footer",
+        produce=_produce,
+    )
+    monkeypatch.setattr(
+        "app.utils.roundup_containers.ROUNDUP_PRODUCERS", {producer.slug: producer}
+    )
+
+    fake_session = MagicMock(spec=AsyncSession)
+    fake_session.rollback = AsyncMock()
+
+    # Process A warms at t0.
+    await evaluate_roundup_producer(producer, fake_session, now=t0)
+    process_a_local = _roundup_local_cache[(producer.slug, "live")]
+
+    # Elsewhere at +10 min, the round-up is properly refused (withdrawn).
+    reset_roundup_cache_for_tests()
+    mode = "refuse"
+    t10 = t0 + timedelta(minutes=10)
+    clock[0] = t10.timestamp()
+    fi_ref, cp_ref = await evaluate_roundup_producer(producer, fake_session, now=t10)
+    assert fi_ref is None and cp_ref is None
+    # Refusal stays in Redis as long as copies are kept (1800s), while retry TTL stays 60s.
+    rkey = _redis_cache_key(producer.slug)
+    assert fake_redis.last_ex[rkey] == int(ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S)
+    stored_ref = json.loads(await fake_redis.get(rkey) or "{}")
+    assert stored_ref["ttl_s"] == 60.0
+
+    # At +12 min (past the 60s retry window!), Process A holds its 12-min-old local copy and read hangs.
+    _roundup_local_cache[(producer.slug, "live")] = process_a_local
+    mode = "timeout"
+    t12 = t0 + timedelta(minutes=12)
+    clock[0] = t12.timestamp()
+    calls_before = produce_calls
+    placed_12 = await add_roundup_feed_items(fake_session, _ordinary_deck(), now=t12)
+    assert produce_calls == calls_before + 1  # retry window stayed 60s, so it DID retry
+    assert _roundup_slugs_in(placed_12) == []  # newer withdrawal beats old local copy!
+
+    # And a third process with an old local copy at +13m30s (>60s after the timeout) STILL sees the withdrawal.
+    _roundup_local_cache[(producer.slug, "live")] = process_a_local
+    t13_5 = t0 + timedelta(minutes=13, seconds=30)
+    clock[0] = t13_5.timestamp()
+    placed_13_5 = await add_roundup_feed_items(fake_session, _ordinary_deck(), now=t13_5)
+    assert _roundup_slugs_in(placed_13_5) == []
