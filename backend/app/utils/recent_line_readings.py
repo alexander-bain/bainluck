@@ -126,18 +126,38 @@ def has_lines(snapshot: Any) -> bool:
     )
 
 
-def books_needing_lines(latest_by_event: dict) -> list[tuple[int, str]]:
+def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    if not isinstance(dt, datetime):
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def books_needing_lines(
+    latest_by_event: dict,
+    *,
+    since: Optional[datetime] = None,
+) -> list[tuple[int, str]]:
     """``[(event_id, bookmaker)]`` whose LATEST row carries no lines: the only books read.
 
     A book whose latest row has lines is dated by that row (`pair_readings`), so
     it needs nothing more from the database.
+
+    #11931: when ``since`` (the 90-minute ``recent_lines_query`` lower bound) is
+    supplied, a book whose LATEST row already has ``captured_at < since`` cannot
+    have any row with ``captured_at >= since``, so skip probing it.
     """
-    return sorted(
-        (int(eid), row.bookmaker)
-        for eid, rows in latest_by_event.items()
-        for row in rows
-        if row is not None and not has_lines(row)
-    )
+    since_utc = _as_utc(since)
+    pairs: list[tuple[int, str]] = []
+    for eid, rows in latest_by_event.items():
+        for row in rows:
+            if row is None or has_lines(row):
+                continue
+            if since_utc is not None:
+                captured_utc = _as_utc(getattr(row, "captured_at", None))
+                if captured_utc is not None and captured_utc < since_utc:
+                    continue
+            pairs.append((int(eid), row.bookmaker))
+    return sorted(pairs)
 
 
 def recent_lines_query(pairs: list[tuple[int, str]], *, since: datetime):
@@ -337,7 +357,10 @@ async def recent_line_projections(
     ids = sorted(ids_set)
     if not ids:
         return {}
-    pairs = books_needing_lines({eid: latest_by_event.get(eid) or [] for eid in ids})
+    pairs = books_needing_lines(
+        {eid: latest_by_event.get(eid) or [] for eid in ids},
+        since=now - PROJECTION_LINES_BOUND,
+    )
     try:
         recent = await read_recent_lines(db, pairs, now=now)
     except Exception:  # noqa: BLE001 — one stage, not the page; withhold, don't guess
