@@ -26,6 +26,8 @@ from app.utils.feed_market_quality import UFC_EVENT_STORY_PREFIX
 from app.utils.feed_market_quality import _story_key as compute_story_key
 from app.utils.feed_market_quality import classify_market_quality
 from app.utils.feed_market_quality import golf_tournament_display_name
+from app.utils.feed_market_quality import oscars_award_slot
+from app.utils.feed_market_quality import oscars_market_rank_key
 from app.utils.feed_market_quality import ufc_event_display_name
 
 logger = logging.getLogger(__name__)
@@ -1178,7 +1180,12 @@ def _make_theme_bundle_item(
     """
     # Members ranked by feed score (most feed-worthy leads the mini-ranked-peek);
     # the bundle competes for ONE slot scored by its best member.
-    ranked = sorted(items, key=lambda it: float(it.get("score") or 0), reverse=True)
+    # Ruling 275 (#13100): the Oscars card leads with Best Picture, then Director,
+    # Actor and Actress where held, ahead of craft categories on tied scores.
+    if story_key == "story:oscars":
+        ranked = sorted(items, key=oscars_market_rank_key)
+    else:
+        ranked = sorted(items, key=lambda it: float(it.get("score") or 0), reverse=True)
     if is_congress_control_story_key(story_key):
         if congress_control_bundle_members(story_key, ranked) is None:
             return None
@@ -1976,10 +1983,31 @@ def assemble_story_theme_bundles(
         # one, which is what keeps the cap-1 and cap-2 dials (`drake_iceman`,
         # `russia_ukraine`, `ai`) meaning what they mean today.
         members = _with_story_overflow(members, story_key)
+        oscar_folded: list[dict[str, Any]] = []
+        if story_key == "story:oscars":
+            # Run Oscars major-slot dedup BEFORE `_dedupe_same_question_members`
+            # so a priced/newer market (e.g. 5869749) always beats an unpriced/older
+            # twin (e.g. 109566) claiming the same slot regardless of static score.
+            ordered_oscars = sorted(members, key=oscars_market_rank_key)
+            seen_oscar_slots: set[str] = set()
+            deduped_oscars: list[dict[str, Any]] = []
+            for oscar_item in ordered_oscars:
+                slot = oscars_award_slot(_futures_data(oscar_item).get("name"))
+                if slot is not None:
+                    if slot[1] in seen_oscar_slots:
+                        oscar_folded.append(oscar_item)
+                        continue
+                    seen_oscar_slots.add(slot[1])
+                deduped_oscars.append(oscar_item)
+            members = deduped_oscars
         # The same question from two venues is ONE row (#4446). Folded BEFORE the
         # cap so a duplicate does not spend a member slot the next distinct
         # question could have had.
         members, folded = _dedupe_same_question_members(members)
+        if oscar_folded:
+            folded = oscar_folded + folded
+        if story_key == "story:oscars":
+            members = sorted(members, key=oscars_market_rank_key)
         if is_congress_control_story_key(story_key):
             verified_members = congress_control_bundle_members(
                 story_key, members, folded
