@@ -342,6 +342,7 @@ export default function CollectionHub({ slug, initialHub = null }: { slug: strin
       {/* #11040 / #13103: the set's one-line reason sits directly under the title. */}
       {shown?.dek && <p data-collection-dek className="text-sm text-text-secondary">{shown.dek}</p>}
       {headerSubline && <p data-collection-subline className="text-xs text-text-muted">{headerSubline}</p>}
+      {fetching && shown && <p role="status" className="text-xs text-text-muted">Updating…</p>}
       {/* #12233: zero-number model commentary with set-read figures labelled with when true and linked to source */}
       {shown?.caption && (
         <div data-collection-caption className="rounded-card border border-surface-border bg-surface-card p-3.5 space-y-2">
@@ -475,35 +476,25 @@ export default function CollectionHub({ slug, initialHub = null }: { slug: strin
         <p className="text-sm font-semibold text-text-primary">Explore more live probabilities on Bain Luck</p>
         <p className="text-xs text-text-secondary">Follow games, sports, and world events — free, with no sign-in needed.</p>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2.5">
-          {!isAndroid && (
-            <a
-              href={APP_STORE_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-collection-app-cta
-              className="inline-flex items-center justify-center rounded-lg bg-accent-brand px-3.5 py-2 text-xs font-semibold text-white hover:opacity-90"
-            >
-              Get the iPhone App
-            </a>
-          )}
-          <Link
-            href="/discover"
-            data-collection-discover-cta
-            className="inline-flex items-center justify-center rounded-lg border border-surface-border bg-surface-elevated px-3.5 py-2 text-xs font-semibold text-text-primary hover:bg-surface-base"
+      <div className="flex flex-wrap items-center gap-2.5">
+        {!isAndroid && (
+          <a
+            href={APP_STORE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-collection-app-cta
+            className="inline-flex items-center justify-center rounded-lg bg-accent-brand px-3.5 py-2 text-xs font-semibold text-white hover:opacity-90"
           >
-            Explore Discover
-          </Link>
-        </div>
-        <button
-          type="button"
-          disabled={fetching}
-          onClick={() => void load()}
-          className="text-xs font-medium text-text-secondary hover:text-text-primary hover:underline disabled:text-text-muted"
+            Get the iPhone App
+          </a>
+        )}
+        <Link
+          href="/discover"
+          data-collection-discover-cta
+          className="inline-flex items-center justify-center rounded-lg border border-surface-border bg-surface-elevated px-3.5 py-2 text-xs font-semibold text-text-primary hover:bg-surface-base"
         >
-          {fetching && shown ? "Updating…" : "Refresh"}
-        </button>
+          Explore Discover
+        </Link>
       </div>
     </footer>
   </div>;

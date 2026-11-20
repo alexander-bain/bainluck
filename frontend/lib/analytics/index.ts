@@ -92,7 +92,9 @@ export {
 // The banner raise rule — pure and injectable so its timing matrix is testable.
 export {
   startConsentBannerScheduler,
+  isSharedSetLandingPath,
   CONSENT_BANNER_DELAY_MS,
+  CONSENT_BANNER_SCROLL_THRESHOLD_PX,
   type ConsentBannerSchedulerDeps,
 } from './consentBanner';
 

@@ -49,8 +49,7 @@ test("actual hub keeps ordinary members and saves reading context before week na
   expect(JSON.parse(sessionStorage.getItem(`collection-reading:${slug}`)!)).toMatchObject({ slug, memberKey: hub.members[0].key, offset: 12 });
   // Optional failure on the same mounted reader must leave the good cards.
   global.fetch = jest.fn(async (url) => String(url).endsWith("week-navigation") ? { ok: false } : { ok: true, status: 200, json: async () => body }) as unknown as typeof fetch;
-  const refresh = Array.from(element.querySelectorAll("button")).find((button) => button.textContent === "Refresh")!;
-  await act(async () => refresh.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await act(async () => { window.dispatchEvent(new Event("focus")); });
   expect(element.querySelectorAll("[data-collection-member]")).toHaveLength(5);
   expect(element.textContent).toContain("Week navigation isn't available right now.");
   expect(element.querySelector("nav")).toBeNull();
