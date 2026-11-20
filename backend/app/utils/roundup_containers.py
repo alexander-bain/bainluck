@@ -3600,6 +3600,12 @@ async def add_roundup_feed_items(
         return items
     produced: list[dict[str, Any]] = []
     now_ts, _ = _normalize_roundup_now(now)
+    machinery_producers = [
+        p
+        for p in producers
+        if _is_machinery_producer_slug(p.slug) and (p.enabled is None or p.enabled())
+    ]
+    machinery_incomplete = False
     for idx, producer in enumerate(producers):
         elapsed = time.perf_counter() - started
         remaining = stage_budget - elapsed
@@ -3625,6 +3631,10 @@ async def add_roundup_feed_items(
                         now=now_ts,
                     )
                 else:
+                    if _is_machinery_producer_slug(rem_producer.slug) and (
+                        rem_producer.enabled is None or rem_producer.enabled()
+                    ):
+                        machinery_incomplete = True
                     dropped_after_budget += 1
                     _record_roundup_read_failure(
                         rem_producer.slug,
@@ -3649,6 +3659,9 @@ async def add_roundup_feed_items(
             )
             break
         per_timeout = min(remaining, ROUNDUP_PRODUCER_TIMEOUT_SECONDS)
+        is_mach_prod = _is_machinery_producer_slug(producer.slug) and (
+            producer.enabled is None or producer.enabled()
+        )
         try:
             eval_coro = (
                 evaluate_roundup_producer(producer, db, now=now, allow_stale=True)
@@ -3689,6 +3702,8 @@ async def add_roundup_feed_items(
                     stats_10m["dropped_no_copy"],
                 )
                 continue
+            if is_mach_prod:
+                machinery_incomplete = True
             if (
                 per_timeout >= ROUNDUP_PRODUCER_TIMEOUT_SECONDS
                 and not _is_machinery_producer_slug(producer.slug)
@@ -3741,6 +3756,8 @@ async def add_roundup_feed_items(
                     exc_info=True,
                 )
                 continue
+            if is_mach_prod:
+                machinery_incomplete = True
             stats_10m = _record_roundup_read_failure(
                 producer.slug,
                 kept_last_good=False,
@@ -3759,6 +3776,20 @@ async def add_roundup_feed_items(
             continue
         if feed_item is not None and container_payload is not None:
             produced.append(feed_item)
+
+    # Goal Step 7 (#12288): five or none during cold-restart warm-up.
+    # If any registered machinery grouping timed out, errored, or was skipped
+    # by stage budget exhaustion, drop all partial machinery cards from this
+    # response (standing round-ups stay untouched) rather than serving 2/5 or 3/5.
+    if machinery_incomplete and machinery_producers:
+        ready_mach = sum(1 for it in produced if _is_machinery_roundup_item(it))
+        if ready_mach > 0:
+            produced = [it for it in produced if not _is_machinery_roundup_item(it)]
+            logger.warning(
+                "Discover machinery groupings incomplete (%d/%d ready); serving none until all ready",
+                ready_mach,
+                len(machinery_producers),
+            )
 
     if not produced:
         return items

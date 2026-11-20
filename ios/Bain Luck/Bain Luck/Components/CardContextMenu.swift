@@ -42,7 +42,11 @@ struct CardContextMenu: View {
     }
 
     static func copyableHomeProbability(for event: FeedEventData) -> Double? {
-        OpeningLineHero.currentOddsForCard(event.currentOdds, heroSource: event.heroProbabilitySource)?.homeProbability
+        guard !EventState.isFinished(event.status),
+              event.heroProbabilitySource != "settled" else {
+            return nil
+        }
+        return OpeningLineHero.currentOddsForCard(event.currentOdds, heroSource: event.heroProbabilitySource)?.homeProbability
     }
 
     @ViewBuilder

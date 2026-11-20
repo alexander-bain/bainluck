@@ -1001,3 +1001,80 @@ async def test_budget_exhausted_reads_shared_store_for_newer_copy_and_withdrawal
         now=t20,
     )
     assert p2.slug not in _roundup_slugs_in(placed_err)
+
+
+@pytest.mark.asyncio
+async def test_machinery_grouping_with_kept_last_good_copy_is_not_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#13184 rebase rule: a machinery grouping whose last good copy was kept does NOT trip five-or-none."""
+    reset_roundup_cache_for_tests()
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+    monkeypatch.setattr(
+        "app.utils.roundup_containers.ROUNDUP_PRODUCER_TIMEOUT_SECONDS", 0.05
+    )
+
+    fail_last = False
+
+    def _make_mach_prod(idx: int) -> RoundupProducer:
+        slug = f"machinery-test-{idx}"
+
+        async def _prod(_db: Any) -> Any:
+            if idx == 5 and fail_last:
+                await asyncio.sleep(0.25)
+                return None
+            return RoundupMembers(
+                members=[
+                    {"id": 91000 + idx * 10 + 1, "name": f"M{idx} A", "top_outcome": "Yes", "probability": 0.6, "status": "open"},
+                    {"id": 91000 + idx * 10 + 2, "name": f"M{idx} B", "top_outcome": "No", "probability": 0.4, "status": "open"},
+                ],
+                title=f"Grouping {idx}",
+                footer="",
+                machinery_card={
+                    "slug": slug,
+                    "form_id": "contender_spotlight",
+                    "kicker": "TEST",
+                    "title": f"Grouping {idx}",
+                    "subtitle": "",
+                    "footer": "",
+                    "destination_href": f"/collections/{slug}",
+                    "section_count": 2,
+                    "rows": [],
+                },
+            )
+
+        return RoundupProducer(
+            slug=slug,
+            name=f"Grouping {idx}",
+            kind="roundup",
+            category="politics",
+            section_title="Items",
+            footer="",
+            produce=_prod,
+            enabled=lambda: True,
+        )
+
+    prods = {f"machinery-test-{i}": _make_mach_prod(i) for i in range(1, 6)}
+    monkeypatch.setattr("app.utils.roundup_containers.ROUNDUP_PRODUCERS", prods)
+
+    db = _RollbackSession()
+    t0 = datetime(2026, 11, 20, 10, 0, 0, tzinfo=timezone.utc)
+    # Warm all 5 groupings.
+    warm = await add_roundup_feed_items(
+        db, _ordinary_deck(), now=t0, include_machinery=True, machinery_only=True
+    )
+    assert len(_roundup_slugs_in(warm)) == 5
+
+    # Past 300s fresh TTL (within 1800s keep-time), #5 times out -> kept copy means NOT incomplete -> all 5 served!
+    fail_last = True
+    t1 = t0 + timedelta(seconds=420)
+    # Force evaluate_roundup_producer to miss stale inside evaluate by testing exception on #5
+    # (note allow_stale=True returns stale inside evaluate; test the error path via RuntimeError when cache expired isn't hit,
+    # and test timeout when local cache is warm but evaluate times out).
+    monkeypatch.setattr(
+        "app.utils.roundup_containers.ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S", 60.0
+    )
+    placed = await add_roundup_feed_items(
+        db, _ordinary_deck(), now=t1, include_machinery=True, machinery_only=True
+    )
+    assert len(_roundup_slugs_in(placed)) == 5
