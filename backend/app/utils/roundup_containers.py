@@ -46,6 +46,8 @@ __all__ = [
     "ROUNDUP_CACHE_TTL_S",
     "ROUNDUP_NOVELTY_SEAT_CAP",
     "ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS",
+    "ROUNDUP_PREVIEW_PRODUCER_TIMEOUT_SECONDS",
+    "ROUNDUP_PREVIEW_STAGE_BUDGET_SECONDS",
     "ROUNDUP_PRODUCERS",
     "ROUNDUP_PRODUCER_TIMEOUT_SECONDS",
     "ROUNDUP_READ_BUDGET_SECONDS",
@@ -160,6 +162,10 @@ ROUNDUP_CACHE_TTL_S = 60.0
 ROUNDUP_PRODUCER_TIMEOUT_SECONDS = 0.5
 ROUNDUP_READ_BUDGET_SECONDS = 2.5
 ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS = 10.0
+#: Best-effort budget for cold `"stage": "preview"` groupings on `machinery=preview`
+#: requests; kept strictly outside the public stage budget and public all-or-nothing gate.
+ROUNDUP_PREVIEW_PRODUCER_TIMEOUT_SECONDS = 3.5
+ROUNDUP_PREVIEW_STAGE_BUDGET_SECONDS = 12.0
 #: #13103 Part 3 item 3 — server-picked follow-on sets attached to GET /api/containers/{slug}.
 MORE_SETS_LIMIT = 2
 MORE_SETS_BUDGET_SECONDS = 0.35
@@ -3191,6 +3197,32 @@ def _is_machinery_roundup_item(item: Mapping[str, Any]) -> bool:
     return slug.startswith("machinery-")
 
 
+def _is_preview_producer(producer: RoundupProducer) -> bool:
+    """Return True when a producer is staged as ``preview`` (never on public Discover)."""
+    return str(getattr(producer, "stage", "public") or "public").strip().lower() == "preview"
+
+
+def _is_preview_roundup_item(item: Mapping[str, Any]) -> bool:
+    """Return True when a composed feed item belongs to a ``stage="preview"`` grouping."""
+    slug = _roundup_item_slug(item)
+    if slug:
+        prod = ROUNDUP_PRODUCERS.get(slug)
+        if prod is not None and _is_preview_producer(prod):
+            return True
+    data = item.get("data") if isinstance(item.get("data"), Mapping) else None
+    roundup = (
+        data.get("roundup")
+        if isinstance(data, Mapping) and isinstance(data.get("roundup"), Mapping)
+        else None
+    )
+    card = (
+        roundup.get("machinery_card")
+        if isinstance(roundup, Mapping) and isinstance(roundup.get("machinery_card"), Mapping)
+        else None
+    )
+    return isinstance(card, Mapping) and str(card.get("stage") or "").strip().lower() == "preview"
+
+
 def _roundup_slug_variants(slug: str) -> set[str]:
     clean = str(slug or "").strip().lower()
     if not clean:
@@ -3768,27 +3800,34 @@ async def add_roundup_feed_items(
             p for p in ROUNDUP_PRODUCERS.values() if not _is_machinery_producer_slug(p.slug)
         ]
     if not include_preview:
-        producers = [
-            p for p in producers if getattr(p, "stage", "public") != "preview"
-        ]
+        producers = [p for p in producers if not _is_preview_producer(p)]
     if not producers:
         return items
+    # Keep public producers strictly ahead of preview producers so a slow or
+    # cold preview set can never consume the public stage budget or trigger
+    # the public all-or-nothing drop.
+    if include_preview:
+        public_producers = [p for p in producers if not _is_preview_producer(p)]
+        preview_producers = [p for p in producers if _is_preview_producer(p)]
+    else:
+        public_producers = producers
+        preview_producers = []
     produced: list[dict[str, Any]] = []
     now_ts, _ = _normalize_roundup_now(now)
     machinery_producers = [
         p
-        for p in producers
+        for p in public_producers
         if _is_machinery_producer_slug(p.slug) and (p.enabled is None or p.enabled())
     ]
     machinery_incomplete = False
-    for idx, producer in enumerate(producers):
+    for idx, producer in enumerate(public_producers):
         elapsed = time.perf_counter() - started
         remaining = stage_budget - elapsed
         if remaining <= 0:
             kept_after_budget = 0
             quiet_after_budget = 0
             dropped_after_budget = 0
-            rem_producers = producers[idx:]
+            rem_producers = public_producers[idx:]
             prefetched_shared, shared_read_ok = await _prefetch_shared_roundup_entries(
                 rem_producers, db
             )
@@ -3836,7 +3875,7 @@ async def add_roundup_feed_items(
                 "(budget_seconds=%.3f, stage_budget=%.3f, produced=%d, "
                 "kept_last_good=%d, quiet=%d, dropped_no_copy=%d, failed_10m=%d, dropped_10m=%d)",
                 idx,
-                len(producers),
+                len(public_producers),
                 budget_seconds,
                 stage_budget,
                 len(produced),
@@ -3966,19 +4005,119 @@ async def add_roundup_feed_items(
         if feed_item is not None and container_payload is not None:
             produced.append(feed_item)
 
-    # Goal Step 7 (#12288): five or none during cold-restart warm-up.
-    # If any registered machinery grouping timed out, errored, or was skipped
-    # by stage budget exhaustion, drop all partial machinery cards from this
-    # response (standing round-ups stay untouched) rather than serving 2/5 or 3/5.
+    # Goal Step 7 (#12288): all-or-nothing during cold-restart warm-up for PUBLIC
+    # machinery groupings. If any registered public machinery grouping timed out,
+    # errored, or was skipped by stage budget exhaustion, drop all partial public
+    # machinery cards (standing round-ups stay untouched). Preview groupings run
+    # separately below and never trigger this drop.
     if machinery_incomplete and machinery_producers:
-        ready_mach = sum(1 for it in produced if _is_machinery_roundup_item(it))
+        ready_mach = sum(
+            1
+            for it in produced
+            if _is_machinery_roundup_item(it) and not _is_preview_roundup_item(it)
+        )
         if ready_mach > 0:
-            produced = [it for it in produced if not _is_machinery_roundup_item(it)]
+            produced = [
+                it
+                for it in produced
+                if not (_is_machinery_roundup_item(it) and not _is_preview_roundup_item(it))
+            ]
             logger.warning(
                 "Discover machinery groupings incomplete (%d/%d ready); serving none until all ready",
                 ready_mach,
                 len(machinery_producers),
             )
+
+    # Best-effort preview pass (`machinery=preview`): serve every warm preview
+    # copy first via batched MGET, then build cold preview sets under a bounded
+    # preview budget. A slow or failing preview set is skipped without dropping
+    # the six public groupings or any other preview set that built.
+    if preview_producers:
+        prefetched_preview, preview_shared_ok = await _prefetch_shared_roundup_entries(
+            preview_producers, db
+        )
+        cold_preview_producers: list[RoundupProducer] = []
+        for prev_prod in preview_producers:
+            if prev_prod.enabled is not None and not prev_prod.enabled():
+                continue
+            prev_quiet: dict[str, Any] = {}
+            warm_copy = await _load_last_good_roundup_copy(
+                prev_prod,
+                db,
+                now=now,
+                local_only=False,
+                fail_closed_on_shared_error=True,
+                prefetched_shared=prefetched_preview.get(prev_prod.slug),
+                shared_read_ok=preview_shared_ok,
+                quiet_out=prev_quiet,
+            )
+            if warm_copy is not None:
+                fi_warm, _cp_warm, _age_warm, _keep_warm = warm_copy
+                produced.append(fi_warm)
+            elif prev_quiet.get("clean_empty") is True:
+                continue
+            else:
+                cold_preview_producers.append(prev_prod)
+
+        if cold_preview_producers:
+            preview_started = time.perf_counter()
+            preview_budget = min(
+                max(0.0, float(budget_seconds) - (preview_started - started)),
+                max(stage_cap, ROUNDUP_PREVIEW_STAGE_BUDGET_SECONDS),
+            )
+            for prev_prod in cold_preview_producers:
+                prev_remaining = preview_budget - (time.perf_counter() - preview_started)
+                if prev_remaining <= 0:
+                    logger.warning(
+                        "Discover preview grouping %s skipped (preview budget exhausted); "
+                        "keeping built groupings",
+                        prev_prod.slug,
+                    )
+                    break
+                prev_timeout = min(
+                    prev_remaining, ROUNDUP_PREVIEW_PRODUCER_TIMEOUT_SECONDS
+                )
+                try:
+                    prev_fi, prev_cp = await asyncio.wait_for(
+                        evaluate_roundup_producer(
+                            prev_prod, db, now=now, allow_stale=True
+                        ),
+                        timeout=prev_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    if hasattr(db, "rollback") and callable(db.rollback):
+                        try:
+                            await db.rollback()
+                        except Exception:  # noqa: BLE001
+                            logger.debug(
+                                "roundup_containers: rollback after preview timeout failed for %s",
+                                prev_prod.slug,
+                            )
+                    logger.warning(
+                        "Discover preview grouping %s timed out after %.2fs; "
+                        "keeping public and built preview groupings",
+                        prev_prod.slug,
+                        prev_timeout,
+                    )
+                    continue
+                except Exception:  # noqa: BLE001
+                    if hasattr(db, "rollback") and callable(db.rollback):
+                        try:
+                            await db.rollback()
+                        except Exception:  # noqa: BLE001
+                            logger.debug(
+                                "roundup_containers: rollback after preview error failed for %s",
+                                prev_prod.slug,
+                            )
+                    logger.warning(
+                        "Discover preview grouping %s failed on preview build; "
+                        "keeping public and built preview groupings",
+                        prev_prod.slug,
+                        exc_info=True,
+                    )
+                    continue
+                if prev_fi is not None and prev_cp is not None:
+                    produced.append(prev_fi)
 
     if not produced:
         return items

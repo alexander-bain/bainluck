@@ -3790,6 +3790,7 @@ async def produce_container_machinery(
             if _history_chart_moved(own_chart):
                 mini_chart = {k: v for k, v in own_chart.items() if k != "card"}
 
+    card_item_count, card_item_noun = _machinery_card_item_count_and_noun(vb)
     machinery_card: dict[str, Any] = {
         "slug": slug,
         "form_id": vb_form,
@@ -3801,6 +3802,8 @@ async def produce_container_machinery(
         "footer": clean_footer,
         "scale_ordered": card_scale_ordered,
         "section_count": len(built_sections),
+        "item_count": card_item_count,
+        "item_noun": card_item_noun,
         "destination_href": dest_href,
         "rows": card_visual_rows,
     }
@@ -3827,6 +3830,45 @@ async def produce_container_machinery(
         machinery_card=machinery_card,
         covered_market_ids=covered_twin_market_ids,
     )
+
+
+def _machinery_card_item_count_and_noun(vb: Mapping[str, Any]) -> tuple[int, str]:
+    """Return ``(item_count, item_noun)`` for a grouping Discover card CTA (#13234).
+
+    Matches the set page's ``ShowAllButton`` counts and item nouns so a single-section
+    grouping card can read ``See all 7 markets ›``, ``See all 11 cities ›``,
+    ``See all 16 couples ›``, etc.
+    """
+    form_id = str(vb.get("form_id") or "").strip()
+    explicit_noun = str(vb.get("item_noun") or "").strip()
+    if form_id == "paired_stage_bars":
+        paired = vb.get("paired_metric_set")
+        entries = paired.get("entries") if isinstance(paired, Mapping) else None
+        count = (
+            len(entries)
+            if isinstance(entries, Sequence) and not isinstance(entries, (str, bytes))
+            else 0
+        )
+        return count, explicit_noun or "contenders"
+    raw_items = vb.get("items")
+    item_list = (
+        list(raw_items)
+        if isinstance(raw_items, Sequence) and not isinstance(raw_items, (str, bytes))
+        else []
+    )
+    if form_id in {"coin_flip_matchups", "matchup_slate"}:
+        return len(item_list), explicit_noun or "games"
+    if form_id == "sibling_fields_grid":
+        return len(item_list), explicit_noun or "markets"
+    if form_id == "benchmark_strip":
+        return len(item_list), explicit_noun or "benchmarks"
+    if form_id == "probability_history_chart":
+        return len(item_list), explicit_noun or "charts"
+    if form_id == "stacked_bar_list" and len(item_list) == 1 and isinstance(item_list[0], Mapping):
+        outcomes = item_list[0].get("outcomes")
+        if isinstance(outcomes, Sequence) and not isinstance(outcomes, (str, bytes)):
+            return len(outcomes), explicit_noun or "outcomes"
+    return len(item_list), explicit_noun or "markets"
 
 
 def discover_machinery_candidate_paths() -> tuple[Path, ...]:
