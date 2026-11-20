@@ -1907,16 +1907,33 @@ def _live_machinery_slugs(rc) -> set[str]:
 
 
 def _absent_machinery_slugs(rc, *, registered_slugs: list[str], exclude: set[str]) -> list[str]:
-    """Return registered machinery slugs whose Redis cache entry is absent (LAT-P112 net)."""
-    from app.utils.roundup_containers import _redis_cache_key
+    """Return registered machinery slugs whose Redis cache entry is absent or due for proactive refresh (#12288)."""
+    import time as _time
+
+    from app.utils.roundup_containers import ROUNDUP_CACHE_TTL_S, _redis_cache_key
 
     absent: list[str] = []
+    now_ts = _time.time()
     for slug in registered_slugs:
         if slug in exclude:
             continue
+        key = _redis_cache_key(slug)
         try:
-            if not rc.exists(_redis_cache_key(slug)):
+            if not rc.exists(key):
                 absent.append(slug)
+                continue
+            if hasattr(rc, "get"):
+                raw = rc.get(key)
+                if isinstance(raw, (bytes, bytearray)):
+                    raw = raw.decode("utf-8", errors="ignore")
+                if isinstance(raw, str) and raw.startswith("{"):
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, dict) and isinstance(
+                        parsed.get("built_at"), (int, float)
+                    ):
+                        soft_ttl = float(parsed.get("ttl_s") or ROUNDUP_CACHE_TTL_S)
+                        if (now_ts - float(parsed["built_at"])) >= (0.70 * soft_ttl):
+                            absent.append(slug)
         except Exception:
             logger.debug("machinery cache exists check failed for %s", slug, exc_info=True)
     return absent
@@ -2213,17 +2230,21 @@ async def _prewarm_live_feed_shapes():
                 dict(shape), rc, deadline_s=remaining_s
             )
 
-    await asyncio.gather(*(_republish(label, shape) for label, shape in targets))
+    # #12288: run live/due machinery roundup prewarm CONCURRENTLY with the feed
+    # shapes inside the same bounded pass budget so slow discover builds (~19s
+    # out of 20s) never starve machinery refreshes to <1.5s. Zero Redis/DB work
+    # when machinery is switched off, and <2ms idle when all 5 keys are fresh.
+    machinery_live_result: dict = {"outcome": "disabled", "warmed": 0}
 
-    # #12288: keep live machinery groupings (60s TTL) and any absent machinery
-    # keys warm on the 30s realtime rail so live NFL/NBA slates never expire
-    # between 120s host beats. Zero Redis/DB work when machinery is switched off.
-    machinery_remaining_s = max(
-        0.0,
-        min(10.0, FEED_LIVE_REPUBLISH_BUDGET_S - (_time.monotonic() - pass_started)),
-    )
-    machinery_live_result = await _prewarm_live_machinery_roundups(
-        rc, deadline_s=machinery_remaining_s
+    async def _run_machinery_live() -> None:
+        nonlocal machinery_live_result
+        machinery_live_result = await _prewarm_live_machinery_roundups(
+            rc, deadline_s=min(10.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
+        )
+
+    await asyncio.gather(
+        *(_republish(label, shape) for label, shape in targets),
+        _run_machinery_live(),
     )
 
     # The idle pass reports too, and that is deliberate (gotcha #53). "Nothing was
