@@ -71,7 +71,7 @@ function visible(markup: string): string {
 describe("#5623 · the tournament card's movement is POINTS, not percent", () => {
   it("a ten-point rise reads '+10.0 pts today', never '+10.0%'", () => {
     const text = visible(render(0.1));
-    expect(text).toContain("+10.0 pts today");
+    expect(text).toContain("+10.0 points today");
     expect(text).not.toContain("+10.0% today");
   });
 
@@ -80,22 +80,22 @@ describe("#5623 · the tournament card's movement is POINTS, not percent", () =>
     // RISE — the colour would be the only thing saying otherwise, and colour is
     // not a unit.
     const text = visible(render(-0.111));
-    expect(text).toContain("-11.1 pts today");
-    expect(text).not.toContain("+11.1 pts today");
+    expect(text).toContain("-11.1 points today");
+    expect(text).not.toContain("+11.1 points today");
   });
 
   it("keeps ONE decimal including the trailing zero (the card's internal rule)", () => {
     // The backend formatter would say "10 points" here. This card says "10.0"
     // because of the five sibling one-decimal probabilities beside it. If someone
     // "harmonises" the two, this fails.
-    expect(visible(render(0.1))).toContain("10.0 pts");
-    expect(visible(render(0.1))).not.toContain(" 10 pts");
+    expect(visible(render(0.1))).toContain("10.0 points");
+    expect(visible(render(0.1))).not.toContain(" 10 points");
   });
 
   it("says 'pts', not the spelled-out 'points' (badge register, not prose)", () => {
     const text = visible(render(0.235));
-    expect(text).toContain("23.5 pts today");
-    expect(text).not.toContain("23.5 points");
+    expect(text).toContain("23.5 points today");
+    expect(text).not.toContain("23.5 pts");
   });
 
   it("prints no movement caption at all when the move would render as zero", () => {
@@ -104,7 +104,7 @@ describe("#5623 · the tournament card's movement is POINTS, not percent", () =>
     // was safe only by coincidence. A move too small to print must not produce a
     // coloured "+0.0 pts today".
     const text = visible(render(0.00004));
-    expect(text).not.toContain("pts today");
+    expect(text).not.toContain("points today");
     expect(text).not.toContain("0.0 pts");
   });
 
@@ -130,10 +130,10 @@ describe("#5623 · the tournament card's movement is POINTS, not percent", () =>
     // so changing `decimals` cannot desynchronise them) plus this small
     // widening. It does not repair a `+0.0 pts` a reader was seeing.
     const text = visible(render(0.0008));
-    expect(text).toContain("+0.1 pts today");
+    expect(text).toContain("+0.1 points today");
   });
 
   it("prints nothing for a null movement", () => {
-    expect(visible(render(null))).not.toContain("pts today");
+    expect(visible(render(null))).not.toContain("points today");
   });
 });

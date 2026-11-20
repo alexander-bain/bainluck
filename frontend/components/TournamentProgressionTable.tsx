@@ -447,10 +447,10 @@ function ChangeIndicator({
       className={`text-[10px] leading-none ${
         isGoodNews ? "text-emerald-400" : "text-red-400"
       }`}
-      title={`${isPositive ? "+" : "-"}${formatMovementPointsLikeSentence(change)} pts in 24h`}
+      title={`${isPositive ? "+" : "-"}${formatMovementPointsLikeSentence(change)} points in 24h`}
     >
       {isPositive ? "▲" : "▼"}
-      {formatMovementPointsLikeSentence(change)}<span className="text-[8px] opacity-60 ml-0.5">pts 24h</span>
+      {formatMovementPointsLikeSentence(change)}<span className="text-[8px] opacity-60 ml-0.5">points 24h</span>
     </span>
   );
 }

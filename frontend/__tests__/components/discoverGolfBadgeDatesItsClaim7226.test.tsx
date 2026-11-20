@@ -190,7 +190,7 @@ describe("#7226 — the Discover golf badge dates its 24h claim", () => {
     expect(dated).not.toBe(undated); // else the gate is inert and arm 1 is a lie
     // Remove exactly the badge's visible text from the dated render; what is
     // left must be byte-identical to the refusal.
-    expect(dated.replace(/\s*16\.6\s*pts\s*/, " ").replace(/\s+/g, " ")).toBe(undated);
+    expect(dated.replace(/\s*16\.6\s*points\s*/, " ").replace(/\s+/g, " ")).toBe(undated);
   });
 
   it("CONTROL: dated does not promote a sub-threshold move into a badge", () => {

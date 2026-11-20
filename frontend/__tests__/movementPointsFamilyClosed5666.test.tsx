@@ -78,13 +78,13 @@ function badges(markup: string): string[] {
 describe("#5666 part 1 — the strip prints POINTS and says so", () => {
   test("the production specimen: a +0.085 mover reads '▲ 8.5 pts', not '8.5%'", () => {
     const [badge] = badges(render([mover("Shane Lowry", 0.085)]));
-    expect(badge).toBe("▲ 8.5 pts");
+    expect(badge).toBe("▲ 8.5 points");
     expect(badge).not.toContain("%");
   });
 
   test("a faller keeps its arrow and its unit", () => {
     const [badge] = badges(render([mover("Joaquin Niemann", -0.079)]));
-    expect(badge).toBe("▼ 7.9 pts");
+    expect(badge).toBe("▼ 7.9 points");
     expect(badge).not.toContain("%");
   });
 
@@ -100,7 +100,7 @@ describe("#5666 part 1 — the strip prints POINTS and says so", () => {
     const all = badges(markup);
     expect(all).toHaveLength(4);
     for (const b of all) expect(b).not.toContain("%");
-    expect(all.every((b) => b.endsWith(" pts"))).toBe(true);
+    expect(all.every((b) => b.endsWith(" points") || b.endsWith(" point"))).toBe(true);
   });
 
   test("the strip still DRAWS badges — this guard cannot pass by rendering nothing", () => {
@@ -110,14 +110,14 @@ describe("#5666 part 1 — the strip prints POINTS and says so", () => {
   });
 
   test("WIDTH is unchanged by the unit: one decimal, trailing zero kept", () => {
-    expect(badges(render([mover("Even Mover", 0.09)]))[0]).toBe("▲ 9.0 pts");
-    expect(badges(render([mover("Ten Pointer", 0.1)]))[0]).toBe("▲ 10.0 pts");
+    expect(badges(render([mover("Even Mover", 0.09)]))[0]).toBe("▲ 9.0 points");
+    expect(badges(render([mover("Ten Pointer", 0.1)]))[0]).toBe("▲ 10.0 points");
   });
 
   test("the half-point floor the backend admits still prints, and prints its sign", () => {
     // `routes/golf.py` admits a mover at abs(movement_24h) >= 0.005. Under the
     // pre-UX-P274 `Math.round` that smallest DOWNWARD move printed "0%" in red.
-    expect(badges(render([mover("Marco Penge", -0.005)]))[0]).toBe("▼ 0.5 pts");
+    expect(badges(render([mover("Marco Penge", -0.005)]))[0]).toBe("▼ 0.5 points");
   });
 });
 
@@ -248,7 +248,7 @@ describe("#5666 part 2 — the family is closed: no seventh surface can spell it
     // passing on two of three. A shape assumed across call sites is the same
     // mistake the family itself is made of.
     const repaired: Array<[string, string]> = [
-      ["components/golf/MoversStrip.tsx", "{delta} pts"],
+      ["components/golf/MoversStrip.tsx", '{delta} {delta === "1" ? "point" : "points"}'],
       ["components/FeedCard.tsx", "{formatMovementPoints(leader.movement)} points"],
       ["components/CombinedFeedCard.tsx", "{formatMovementPoints(outcome.bestMovement)} pts"],
     ];
@@ -357,7 +357,7 @@ describe("#5666 part 2 — the family is closed: no seventh surface can spell it
     // builds, not on the binding — the binding was never the defect.
     const strip = fs.readFileSync(path.join(ROOT, "components/golf/MoversStrip.tsx"), "utf8");
     expect(strip).toContain("const delta = formatMovementPoints(mover.movement_24h);");
-    expect(strip).toContain("{delta} pts");
+    expect(strip).toContain('{delta} {delta === "1" ? "point" : "points"}');
 
     const card = fs.readFileSync(path.join(ROOT, "components/discover/FuturesCard.tsx"), "utf8");
     expect(card).toContain("const movementDisplay = formatMovementPointsLikeSentence(movementVal);");
@@ -365,7 +365,7 @@ describe("#5666 part 2 — the family is closed: no seventh surface can spell it
 
     const badge = fs.readFileSync(path.join(ROOT, "components/discover/shared.tsx"), "utf8");
     expect(badge).toContain("const pts = formatMovementPointsLikeSentence(m) as string;");
-    expect(badge).toContain("{pts} pts");
+    expect(badge).toContain('{pts} {unit === "points" ? (pts === "1" ? "point" : "points") : "pts"}');
   });
 
   test("MoversStrip's `delta` really is the points formatter, so its ' pts' is not a coincidence", () => {
