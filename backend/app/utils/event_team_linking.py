@@ -60,6 +60,7 @@ class SportTeamIndex:
     """Unique-only same-sport lookup from canonical name key to ``Team``."""
 
     sport_id: int
+    by_exact: dict[str, Any] = field(default_factory=dict)
     by_basic: dict[str, Any] = field(default_factory=dict)
     by_expanded: dict[str, Any] = field(default_factory=dict)
 
@@ -86,6 +87,7 @@ def build_sport_team_index(sport_id: int, teams: Iterable[Any]) -> SportTeamInde
         team_name = getattr(team, "name", None)
         if not team_name:
             continue
+        _register_unique(index.by_exact, team_name.strip(), team)
         _register_unique(index.by_basic, normalize_event_team_key(team_name), team)
         _register_unique(index.by_expanded, expand_event_team_key(team_name), team)
     return index
@@ -105,13 +107,19 @@ def resolve_event_team(
     if not team_name or index.sport_id != event_sport_id:
         return None
 
+    exact_key = team_name.strip()
     basic = normalize_event_team_key(team_name)
     if not basic:
         return None
 
     candidate = None
-    if basic in index.by_basic:
-        # Ambiguous basic key (None sentinel) fails closed immediately.
+    if exact_key in index.by_exact:
+        # Tier 0: exact raw spelling (matches master when sibling rows share a
+        # normalized key, e.g. "St. Louis Cardinals" vs "St Louis Cardinals",
+        # #7021). Byte-identical duplicates (None sentinel) still fail closed.
+        candidate = index.by_exact[exact_key]
+    elif basic in index.by_basic:
+        # Tier 1: unique normalized key. Ambiguous key (None sentinel) fails closed.
         candidate = index.by_basic[basic]
     else:
         expanded = expand_event_team_key(basic)

@@ -235,14 +235,50 @@ class TestSportTeamIndexSafety:
             )
             is dup_a
         )
-        # Two rows with the same basic key refuse
-        dup_basic_1 = _team(2003, "Oregon St. Beavers", WNCAAB_SPORT_ID)
-        dup_basic_2 = _team(2004, "Oregon St Beavers", WNCAAB_SPORT_ID)
-        basic_ambig = build_sport_team_index(WNCAAB_SPORT_ID, [dup_basic_1, dup_basic_2])
+        # Two rows sharing a basic key ("St. Louis Cardinals" vs "St Louis Cardinals",
+        # #7021 / Fable review): exact spelling links to the exact-spelled row,
+        # while a non-exact spelling against the ambiguous pair still refuses,
+        # and byte-identical duplicates refuse even on exact match.
+        cards_dot = _team(2003, "St. Louis Cardinals", WNCAAB_SPORT_ID)
+        cards_nodot = _team(2004, "St Louis Cardinals", WNCAAB_SPORT_ID)
+        basic_pair = build_sport_team_index(WNCAAB_SPORT_ID, [cards_dot, cards_nodot])
+        assert (
+            resolve_event_team(
+                "St. Louis Cardinals",
+                basic_pair,
+                side="home",
+                event_sport_id=WNCAAB_SPORT_ID,
+                source="test",
+            )
+            is cards_dot
+        )
+        assert (
+            resolve_event_team(
+                "St Louis Cardinals",
+                basic_pair,
+                side="home",
+                event_sport_id=WNCAAB_SPORT_ID,
+                source="test",
+            )
+            is cards_nodot
+        )
+        assert (
+            resolve_event_team(
+                "St.Louis Cardinals",
+                basic_pair,
+                side="home",
+                event_sport_id=WNCAAB_SPORT_ID,
+                source="test",
+            )
+            is None
+        )
+        byte_dup_1 = _team(2007, "Oregon St Beavers", WNCAAB_SPORT_ID)
+        byte_dup_2 = _team(2008, "Oregon St Beavers", WNCAAB_SPORT_ID)
+        byte_ambig = build_sport_team_index(WNCAAB_SPORT_ID, [byte_dup_1, byte_dup_2])
         assert (
             resolve_event_team(
                 "Oregon St Beavers",
-                basic_ambig,
+                byte_ambig,
                 side="home",
                 event_sport_id=WNCAAB_SPORT_ID,
                 source="test",
