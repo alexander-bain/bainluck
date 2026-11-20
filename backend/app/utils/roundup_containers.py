@@ -3200,14 +3200,18 @@ async def add_roundup_feed_items(
         return items
     # Ruling 188 (#11937): a market nobody is trading is not featured, and a
     # round-up is rated by its stalest member, so those members leave the card.
-    try:
-        from app.utils.not_trading import drop_not_trading_roundup_members
+    # For `machinery_only=True` splices, `_prewarm_machinery_roundups` already
+    # runs this screen once on the worker before saving each grouping to Redis,
+    # so reader requests do not pay a ~580 ms PostgreSQL query on every hit.
+    if not machinery_only:
+        try:
+            from app.utils.not_trading import drop_not_trading_roundup_members
 
-        produced = await drop_not_trading_roundup_members(
-            db, produced, now or datetime.now(timezone.utc), _roundup_covered_market_ids
-        )
-    except Exception:  # noqa: BLE001 — one failed read must not empty the page (gotcha #42)
-        logger.warning("Discover round-up not-trading check failed; keeping the cards", exc_info=True)
+            produced = await drop_not_trading_roundup_members(
+                db, produced, now or datetime.now(timezone.utc), _roundup_covered_market_ids
+            )
+        except Exception:  # noqa: BLE001 — one failed read must not empty the page (gotcha #42)
+            logger.warning("Discover round-up not-trading check failed; keeping the cards", exc_info=True)
     if not produced:
         return items
     return insert_roundup_feed_items(

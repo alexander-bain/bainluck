@@ -2310,3 +2310,249 @@ async def test_real_nba_grouping_payload_round_trips_from_sync_prewarm_to_cold_w
     finally:
         ROUNDUP_PRODUCERS.clear()
         ROUNDUP_PRODUCERS.update(saved)
+
+
+@pytest.mark.asyncio
+async def test_flip6_machinery_prewarm_publishes_response_and_page_base_and_skips_per_read_not_trading_db(
+    monkeypatch,
+):
+    """#12288 Flip 6:
+    1. `_publish_machinery_feed_from_prewarm_base` derives the `machinery=1` Discover
+       response key (`feed:v1:...`), `feed:machinery_pagebase:...`, and edition manifest
+       from the just-built plain Discover base in pure Python (0 DB queries), refuses
+       to publish a partial set if any grouping is missing from Redis, and backdates
+       `built_at` to the oldest live machinery grouping origin (`CERT-409`).
+    2. `add_roundup_feed_items(..., machinery_only=True)` does NOT call
+       `drop_not_trading_roundup_members` on the hot reader path (zero ~580 ms DB query),
+       while `_prewarm_machinery_roundups` runs `drop_not_trading_roundup_members` once
+       before writing to Redis.
+    """
+    import json
+    import time
+    from unittest.mock import AsyncMock
+
+    from app.tasks.precompute_category_pages import (
+        _publish_machinery_feed_from_prewarm_base,
+    )
+    from app.utils.feed_cache import (
+        FEED_EDITION_FIELD,
+        FEED_PAGE_BASE_BUILT_AT_FIELD,
+        feed_machinery_page_base_key,
+        feed_page_base_cache_key,
+        feed_response_cache_key,
+    )
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        RoundupProducer,
+        _redis_cache_key,
+        add_roundup_feed_items,
+        reset_roundup_cache_for_tests,
+        store_roundup_cache_sync,
+    )
+
+    reset_roundup_cache_for_tests()
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+
+    class _SyncRedis:
+        def __init__(self) -> None:
+            self.kv: dict[str, tuple[str, int | None]] = {}
+
+        def set(self, k: str, v: str, ex: int | None = None) -> bool:
+            self.kv[k] = (v, ex)
+            return True
+
+        def setex(self, k: str, ttl: int, v: str) -> bool:
+            self.kv[k] = (v, ttl)
+            return True
+
+        def get(self, k: str) -> str | None:
+            ent = self.kv.get(k)
+            return ent[0] if ent is not None else None
+
+        def hset(self, *args) -> int:
+            return 1
+
+        def hdel(self, *args) -> int:
+            return 0
+
+        def expire(self, *args) -> bool:
+            return True
+
+    def _make_item(idx: int) -> dict:
+        return {
+            "type": "futures",
+            "score": 80.0 - idx * 0.2,
+            "data": {"id": 50000 + idx, "name": f"Card {idx}", "category": "politics"},
+        }
+
+    plain_items = [_make_item(i) for i in range(40)]
+    now_ts = time.time()
+    base_built_at = now_ts - 2.0
+    older_live_built_at = now_ts - 18.0
+
+    cache_shape = dict(
+        sport=None,
+        limit=20,
+        offset=0,
+        include_events=True,
+        include_futures=True,
+        tags=None,
+        event_pct=0.15,
+        my_teams_only=False,
+        mode=None,
+        category=None,
+        edition=None,
+        collections=None,
+        opening_seating=False,
+        machinery=False,
+        fun_admission=False,
+    )
+    plain_pb_key = feed_page_base_cache_key(
+        **{k: v for k, v in cache_shape.items() if k not in ("offset", "edition", "machinery")}
+    )
+    mach_base_ctx = {
+        "page_base_key": plain_pb_key,
+        "page_base_body": {
+            "items": plain_items,
+            "total": len(plain_items),
+            FEED_PAGE_BASE_BUILT_AT_FIELD: base_built_at,
+        },
+        "cache_shape": cache_shape,
+        "limit": 20,
+        "offset": 0,
+        "opening_seating": False,
+        "edition_policy": "default",
+        "age_origin": base_built_at,
+    }
+
+    def _make_mach_prod(slug: str) -> RoundupProducer:
+        return RoundupProducer(
+            slug=slug,
+            name=slug,
+            kind="roundup",
+            category="basketball",
+            section_title="",
+            footer="",
+            produce=AsyncMock(),
+            membership="computed-produced",
+            relations=("same_subject",),
+            level="member",
+            rule={"producer": "container_machinery"},
+            enabled=lambda: True,
+        )
+
+    def _make_mach_fi(slug: str, *, live: bool = False) -> tuple[dict, dict]:
+        fi = {
+            "type": "bundle",
+            "score": 70.0,
+            "reason": slug,
+            "headline": slug,
+            "data": {
+                "id": f"roundup:{slug}",
+                "title": slug,
+                "kind": "roundup",
+                "story_key": f"roundup:{slug}",
+                "item_count": 1,
+                "member_ids": [999001 if live else 999002],
+                "items": [],
+                "collection_ref": {"slug": slug, "href": f"/collections/{slug}", "name": slug},
+                "roundup": {"kicker": "NBA", "rows": [], "machinery_card": {"slug": slug}},
+                **({"status": "live"} if live else {}),
+            },
+        }
+        cp = {
+            "slug": slug,
+            "sections": [
+                {
+                    "members": [
+                        {
+                            "type": "event" if live else "market",
+                            "id": 999001 if live else 999002,
+                            "card": {"id": 999001 if live else 999002, "status": "live" if live else "active"},
+                        }
+                    ]
+                }
+            ],
+        }
+        return fi, cp
+
+    saved = dict(ROUNDUP_PRODUCERS)
+    try:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS["machinery-nba-night"] = _make_mach_prod("machinery-nba-night")
+        ROUNDUP_PRODUCERS["machinery-fed-and-macro"] = _make_mach_prod("machinery-fed-and-macro")
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ensure_optional_roundup_candidates",
+            lambda: None,
+        )
+
+        rc = _SyncRedis()
+        nba_fi, nba_cp = _make_mach_fi("machinery-nba-night", live=True)
+        fed_fi, fed_cp = _make_mach_fi("machinery-fed-and-macro", live=False)
+
+        # 1. Incomplete Redis (1/2) must refuse to publish a half-populated page.
+        store_roundup_cache_sync(rc, "machinery-nba-night", older_live_built_at, nba_fi, nba_cp)
+        inc_res = _publish_machinery_feed_from_prewarm_base(
+            rc, mach_base=mach_base_ctx, label="discover"
+        )
+        assert inc_res["outcome"] == "incomplete"
+        mach_resp_key = feed_response_cache_key(
+            user_id=None, session_id=None, **{**cache_shape, "machinery": True}
+        )
+        mach_pb_key = feed_machinery_page_base_key(plain_pb_key)
+        assert mach_resp_key not in rc.kv
+        assert mach_pb_key not in rc.kv
+
+        # 2. All registered groupings present (2/2) -> publishes response + machinery page base + edition manifest.
+        store_roundup_cache_sync(rc, "machinery-fed-and-macro", now_ts - 1.0, fed_fi, fed_cp)
+        ok_res = _publish_machinery_feed_from_prewarm_base(
+            rc, mach_base=mach_base_ctx, label="discover"
+        )
+        assert ok_res["outcome"] == "ok"
+        assert ok_res["groupings"] == 2
+        assert ok_res["live"] is True
+        assert mach_resp_key in rc.kv
+        assert f"{mach_resp_key}:stale" in rc.kv
+        assert mach_pb_key in rc.kv
+        assert f"{mach_pb_key}:stale" in rc.kv
+
+        published_pb = json.loads(rc.kv[mach_pb_key][0])
+        slugs_in_pb = [
+            ((it.get("data") or {}).get("collection_ref") or {}).get("slug")
+            for it in published_pb["items"]
+        ]
+        assert "machinery-nba-night" in slugs_in_pb
+        assert "machinery-fed-and-macro" in slugs_in_pb
+        # Honest live age origin (CERT-409): backdated to the older live machinery grouping.
+        assert published_pb[FEED_PAGE_BASE_BUILT_AT_FIELD] == pytest.approx(
+            older_live_built_at, abs=0.01
+        )
+        assert published_pb.get(FEED_EDITION_FIELD)
+
+        # 3. `add_roundup_feed_items(..., machinery_only=True)` must NOT call drop_not_trading_roundup_members.
+        not_trading_spy = AsyncMock(side_effect=AssertionError("must not hit DB on hot machinery splice"))
+        monkeypatch.setattr(
+            "app.utils.not_trading.drop_not_trading_roundup_members",
+            not_trading_spy,
+        )
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.evaluate_roundup_producer",
+            AsyncMock(side_effect=[(nba_fi, nba_cp), (fed_fi, fed_cp)]),
+        )
+        spliced = await add_roundup_feed_items(
+            object(),
+            list(plain_items),
+            include_machinery=True,
+            machinery_only=True,
+        )
+        assert not_trading_spy.await_count == 0
+        spliced_slugs = [
+            ((it.get("data") or {}).get("collection_ref") or {}).get("slug")
+            for it in spliced
+        ]
+        assert "machinery-nba-night" in spliced_slugs
+        assert "machinery-fed-and-macro" in spliced_slugs
+    finally:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS.update(saved)
