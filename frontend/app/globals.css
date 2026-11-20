@@ -333,3 +333,27 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .animate-update-row-in { animation: fade-in 0.18s ease-out; }
 }
+
+/* #13189: keep 13px strip opponent text where the card is wide (phones, single-column),
+   and only tighten padding/type when the card itself is narrow (e.g. 288px desktop grid). */
+.roundup-strip-container {
+  container-type: inline-size;
+}
+@container (max-width: 280px) {
+  .roundup-strip-grid {
+    margin-left: -4px;
+    margin-right: -4px;
+    gap: 4px;
+  }
+  .roundup-strip-box {
+    padding: 8px 4px;
+  }
+  .roundup-strip-opponent {
+    font-size: 10.5px;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+  }
+  .roundup-strip-date {
+    font-size: 11px;
+  }
+}
