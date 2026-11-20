@@ -4369,8 +4369,21 @@ def enforce_first_page_quality_floor(
         return items, meta
 
     new_window = list(window)
-    new_tail = list(tail)
+    new_tail: list[Optional[dict]] = list(tail)
+    pushed_to_tail_front: list[dict] = []
     used: set[int] = set()
+    stepped_fun_cards: list[dict] = []
+    # Count non-anchor slots in [why_now_window, window_size) so we only defer
+    # clean fun cards into the post-loop step when a landing slot exists.
+    step_capacity = (
+        sum(
+            1
+            for idx in range(effective_why_now_window, window_size)
+            if not _spacing_is_anchor(window[idx])
+        )
+        if effective_why_now_window < window_size
+        else 0
+    )
     demoted = 0
 
     # A vacancy is filled FROM THE PAGE FIRST (#8797). The card beneath it that
@@ -4440,14 +4453,55 @@ def enforce_first_page_quality_floor(
         for to_idx, from_idx in moves:
             new_window[to_idx] = new_window[from_idx]
         new_window[vacancy] = new_tail[pick]
-        new_tail[pick] = offender
+
+        # #13097 (TIME Person of the Year seating fix): a curated fun-admitted
+        # card that is clean page-wide (not boring/ladder, not silent) and only
+        # lacks a why-now phrase for the opening ten is legal at slots
+        # [why_now_window, window_size). Queue it here and insert it AFTER the
+        # offender loop finishes so seats 11..20 hold still while every later
+        # offender (ladder/boring/silent) in `offender_positions` is evicted.
+        is_fun_why_now_only = (
+            w_idx < effective_why_now_window
+            and bool(offender.get("_fun_tags"))
+            and not is_first_page_quality_offender(offender)
+            and not is_wholly_silent_card(offender)
+        )
+        if is_fun_why_now_only and len(stepped_fun_cards) < step_capacity:
+            stepped_fun_cards.append(offender)
+            new_tail[pick] = None
+        else:
+            new_tail[pick] = offender
+
         used.add(pick)
         demoted += 1
+
+    # #13097: now that every offender in `offender_positions` has been evicted,
+    # step each clean fun card cleanly into the top non-anchor slot of
+    # [why_now_window, window_size), placing each card pushed off seat 20 at
+    # seat 21 (preserving rank order).
+    stepped_fun_slots: set[int] = set()
+    for fun_card in stepped_fun_cards:
+        landing_slots = [
+            idx
+            for idx in range(effective_why_now_window, window_size)
+            if not _spacing_is_anchor(new_window[idx])
+            and idx not in stepped_fun_slots
+        ]
+        if not landing_slots:
+            pushed_to_tail_front.append(fun_card)
+            continue
+        displaced = new_window[landing_slots[-1]]
+        for k in range(len(landing_slots) - 1, 0, -1):
+            new_window[landing_slots[k]] = new_window[landing_slots[k - 1]]
+        new_window[landing_slots[0]] = fun_card
+        pushed_to_tail_front.insert(0, displaced)
+        stepped_fun_slots.add(landing_slots[0])
 
     meta["demoted"] = demoted
     meta["unreplaced"] = len(offender_positions) - demoted
 
-    return new_window + new_tail, meta
+    final_tail = pushed_to_tail_front + [item for item in new_tail if item is not None]
+    return new_window + final_tail, meta
 
 
 _DISCOVER_TAIL_RECALL_RULES: tuple[tuple[str, re.Pattern[str], float], ...] = (
