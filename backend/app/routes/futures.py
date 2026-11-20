@@ -10747,6 +10747,7 @@ def _format_market_detail(
     from app.utils.event_awards import GRAMMY_GENERAL_FIELD_POLYMARKET_IDS
     from app.utils.field_opening_coherence import field_openings_publishable
     from app.utils.graded_out_field_legs import TERMINAL_LOSER_CEILING
+    from app.utils.settled_price import SETTLED_NO_PRICE
     from app.utils.odds_api_retirement import NOT_LIVE_STATUSES, WITHDRAWN_STATUS
     from app.utils.market_staleness import (
         expired_ladder_rungs,
@@ -11424,6 +11425,7 @@ def _format_market_detail(
                 row["is_out"] = True
                 for field in (
                     *WITHHELD_PRICE_FIELDS,
+                    "rank",
                     "rank_change_24h",
                     "opening_probability",
                     "opening_american_odds",
@@ -11705,8 +11707,8 @@ def _format_market_detail(
     #
     # Prices and eligibility are untouched by design — this only overwrites the one
     # field whose whole job is to say where the row sits, using the list it sits in.
-    outcomes.extend(eliminated)
     assign_display_ranks(outcomes)
+    outcomes.extend(eliminated)
 
     # The source price is the selected stored input, before field normalization.
     # Withheld values and unresolved results keep an explicit refusal.
@@ -11917,6 +11919,11 @@ def _format_market_detail(
         )
     except Exception:
         pass
+
+    # Installed clients still read probability for a graded No on an open
+    # field. Supply the terminal value only after ranking and price checks.
+    for row in eliminated:
+        row["probability"] = float(SETTLED_NO_PRICE)
 
     return {
         "id": market.id,

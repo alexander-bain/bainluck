@@ -448,6 +448,7 @@ export default function OutcomeRow({
   // it — never `isResolved && outcome.is_winner === X`, which counts a defaulted
   // `false` as a grader's verdict.
   const verdict = outcomeRowVerdict(outcome, isResolved);
+  const isOut = outcome.is_out === true;
   const noCurrentPrice = !isResolved && verdict === null && outcome.probability == null;
   // #698 — a settled row with NO result to state. Not the ungraded/live
   // fallback below: it says "Result unknown", labels a finite price as the LAST
@@ -455,7 +456,7 @@ export default function OutcomeRow({
   // stops wearing the leader's amber — on `/futures/62134744` the "leader" was
   // one side of a 50/50 tie on a finished match.
   const resultUnknown = isResultUnknown(outcome, isResolved);
-  const leads = isLeader && !resultUnknown;
+  const leads = isLeader && !resultUnknown && !isOut;
 
   // #6325 — A SETTLED BOARD DOES NOT NUMBER ITSELF.
   //
@@ -491,7 +492,7 @@ export default function OutcomeRow({
   // market (#6082) keeps its badges, because that board is still being priced. The
   // card's own row (`FuturesCard.tsx:291`) is a different component whose badge is
   // positional for every row, so it cannot collide and is not this defect.
-  const printsRank = !isResolved;
+  const printsRank = !isResolved && !isOut;
 
   // Entity image detection. #4483: the non-sports test alone was the bug — it
   // asks "could this name have a Wikipedia picture?" and a threshold answers yes.
@@ -740,12 +741,14 @@ export default function OutcomeRow({
               settlement is self-justifying), so `verdict` is no longer always
               null when `!isResolved` — keyed off `isResolved` this label would
               now print "Latest" directly above a `100% / Settled` cell. */}
-          {verdict === null && !noCurrentPrice && !(resultUnknown && outcome.probability == null) && (
+          {!isOut && verdict === null && !noCurrentPrice && !(resultUnknown && outcome.probability == null) && (
             <div className="text-[10px] uppercase tracking-wide text-text-muted">
               {resultUnknown ? "Last recorded" : "Latest"}
             </div>
           )}
-          {verdict === "won" ? (
+          {isOut ? (
+            <div className="text-xs text-text-secondary">Out</div>
+          ) : verdict === "won" ? (
             <>
               <div className="font-mono text-base tabular-nums font-bold text-emerald-600">
                 100%
@@ -768,7 +771,7 @@ export default function OutcomeRow({
               data-testid="outcome-current-unavailable"
               className="text-xs text-text-secondary"
             >
-              {outcome.is_out === true ? "Out" : "No current price"}
+              No current price
             </div>
           ) : (
             <>

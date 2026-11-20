@@ -1022,7 +1022,17 @@ export async function fetchFuturesMarket(
   const qs = params.toString();
   const detail = await apiFetch<FuturesMarketDetailResponse>(`/api/futures/${id}${qs ? `?${qs}` : ""}`,
     options?.fresh ? { cache: "no-store", maxRetries: 0, signal: options.signal } : undefined);
-  return verified ? sanitizeVerifiedTitleDetail(detail) : detail;
+  // Out rows carry a terminal value for installed apps. The web uses their
+  // grade for display and excludes that value from current-price calculations.
+  const visibleDetail = detail.outcomes?.some((outcome) => outcome.is_out === true)
+    ? {
+        ...detail,
+        outcomes: detail.outcomes.map((outcome) =>
+          outcome.is_out === true ? { ...outcome, probability: null } : outcome,
+        ),
+      }
+    : detail;
+  return verified ? sanitizeVerifiedTitleDetail(visibleDetail) : visibleDetail;
 }
 
 /**

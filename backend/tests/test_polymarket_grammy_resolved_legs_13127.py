@@ -137,11 +137,14 @@ def test_detail_puts_the_graded_grammy_loss_after_contenders(external_id):
     eliminated = rows[2]
     if external_id == "805158":
         assert response["outcomes"][-1]["id"] == 2
+        from app.utils.settled_price import SETTLED_NO_PRICE
+
         assert eliminated["is_out"] is True
+        assert eliminated["probability"] == float(SETTLED_NO_PRICE)
         assert eliminated["source_mark"]["settled"]["result"] == "Out"
         assert eliminated["source_mark"]["settled"]["at"] is None
         for field in (
-            "probability", "american_odds", "opening_probability",
+            "rank", "rank_change_24h", "american_odds", "opening_probability",
             "probability_change_24h", "last_updated", "price_changed_at",
         ):
             assert eliminated[field] is None

@@ -786,9 +786,10 @@ enum FuturesAtlasPresentation11666 {
         let selectedOutcome = market.outcomes.first(where: { $0.id == presentation.header.selectedOutcomeId })
             ?? futuresDetailHeroOutcome(market)
         let effectiveProbability: Double?
-        if case .noRecentProbability = presentation.header.primaryDisplay {
+        switch presentation.header.primaryDisplay {
+        case .noRecentProbability, .out:
             effectiveProbability = nil
-        } else {
+        default:
             effectiveProbability = selectedOutcome?.probability
         }
         return VerifiedTitleChartExpectation(
@@ -1838,7 +1839,7 @@ struct FuturesAtlasBodyCardView11666: View {
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
-                            if showRank {
+                            if showRank && row.displayValue != .out {
                                 Text("#\(row.rank)")
                                     .font(.caption.weight(.semibold).monospacedDigit())
                                     .foregroundStyle(isFirst ? DS.emerald : DS.textMuted)
@@ -1866,7 +1867,7 @@ struct FuturesAtlasBodyCardView11666: View {
                     }
                 } else {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        if showRank {
+                        if showRank && row.displayValue != .out {
                             Text("#\(row.rank)")
                                 .font(.caption.weight(.semibold).monospacedDigit())
                                 .foregroundStyle(isFirst ? DS.emerald : DS.textMuted)
@@ -2104,7 +2105,7 @@ struct FuturesAtlasFullFieldSheetView11666: View {
                             onSelectOutcome(row.id)
                         } label: {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                if showsRank {
+                                if showsRank && row.displayValue != .out {
                                     Text("#\(row.rank)")
                                         .font(.caption.weight(.semibold).monospacedDigit())
                                         .foregroundStyle(.secondary)
