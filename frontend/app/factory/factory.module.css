@@ -180,7 +180,7 @@
   padding-left: 1px;
 }
 .stationHeadings strong {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   display: block;
 }
@@ -393,33 +393,9 @@
   animation: pulse 2.6s ease-in-out infinite;
 }
 .floorKey {
-  padding: 2px var(--floor-inset) 6px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px 12px;
-  font-size: 10px;
+  padding: 3px var(--floor-inset) 6px;
+  font-size: 11px;
   color: var(--secondary);
-}
-.floorKey > span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.floorKey i {
-  width: 9px;
-  height: 9px;
-  border-radius: 2px;
-}
-.keyCrate {
-  background: #6d28d9;
-}
-.keyAmber {
-  background: var(--amber-light);
-  border: 1px solid var(--amber);
-}
-.floorKey b {
-  font-size: 10px;
-  color: var(--amber);
 }
 .detail {
   border: 1px solid var(--edge);
@@ -1274,15 +1250,14 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   width: 32px;
   height: 25px;
 }
-.bayWorker {
-  min-width: 0;
-  display: flex;
-  align-items: center;
+.bayWorkerName {
+  display: block;
+  padding-inline: 2px;
   color: #e6edf3;
   font-size: 9px;
   line-height: 1.18;
 }
-.bayWorker .worker {
+.machineTop > .worker {
   width: 34px;
   height: 27px;
   margin-left: -3px;
