@@ -4,6 +4,13 @@
     "issue": 13137,
     "added": "2026-11-19",
     "expires": "2026-11-26",
-    "reason": "Ruling 241: A — 50ms wall-clock SUBSCRIPTION_REFRESH_SECONDS race (assert 5 == 4) on master run 44651156056 (untouched iOS commit 3381251b1a), passed on subsequent master run 44653536284"
+    "reason": "Ruling 241: A \u2014 50ms wall-clock SUBSCRIPTION_REFRESH_SECONDS race (assert 5 == 4) on master run 44651156056 (untouched iOS commit 3381251b1a), passed on subsequent master run 44653536284"
+  },
+  {
+    "nodeid": "tests/test_feed_category_browse_q467.py::test_two_identical_discover_requests_still_share_one_concept_build",
+    "issue": 13207,
+    "added": "2026-11-20",
+    "expires": "2026-11-27",
+    "reason": "Ruling 241: A \u2014 unpinned wall-clock bucket boundary crossing ([None, None] != [None]) on master run 44713228544 attempt 1 (untouched commit 3a67896768), passed on attempt 2"
   }
 ]
