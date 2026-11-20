@@ -506,6 +506,7 @@ class SportSnapshot(_Snapshot):
 _SNAPSHOT_OUTCOME_SETTLEMENT_KEY = "_snapshot_outcome_settlement"
 _SNAPSHOT_METADATA_WAS_NONE_KEY = "_snapshot_metadata_was_none"
 _SNAPSHOT_OPENING_COMPLETE_KEY = "_snapshot_opening_field_complete"
+_SNAPSHOT_SETTLEMENT_COMPLETE_KEY = "_snapshot_settlement_complete"
 _MARKET_METADATA_COLUMN_INDEX = MARKET_COLUMNS.index("market_metadata")
 
 
@@ -552,6 +553,7 @@ class FuturesMarketSnapshot(_Snapshot):
         if isinstance(raw_meta, dict) and _SNAPSHOT_OUTCOME_SETTLEMENT_KEY in raw_meta:
             meta = dict(raw_meta)
             settlement_map = meta.pop(_SNAPSHOT_OUTCOME_SETTLEMENT_KEY, None)
+            settlement_complete = bool(meta.pop(_SNAPSHOT_SETTLEMENT_COMPLETE_KEY, False))
             was_none = bool(meta.pop(_SNAPSHOT_METADATA_WAS_NONE_KEY, False))
             self.__dict__["market_metadata"] = None if (was_none and not meta) else meta
             if isinstance(settlement_map, dict):
@@ -561,6 +563,8 @@ class FuturesMarketSnapshot(_Snapshot):
                     if isinstance(entry, (list, tuple)) and len(entry) == 2:
                         outcome.__dict__["is_winner"] = entry[0]
                         outcome.__dict__["resolution_source"] = entry[1]
+                    if settlement_complete:
+                        outcome.__dict__["_settlement_loaded"] = True
         self.__dict__["outcomes"] = outcomes
         self.__dict__["sport"] = sport
 
@@ -1967,8 +1971,11 @@ def to_plain(
         sport = state.get("sport")
         market_row = _row(market, MARKET_COLUMNS)
         settlement_by_outcome: dict[str, list[Any]] = {}
+        all_settlement_loaded = bool(outcomes)
         for o in outcomes:
             o_state = _instance_dict(o) or _NO_INSTANCE_DICT
+            if "is_winner" not in o_state or "resolution_source" not in o_state:
+                all_settlement_loaded = False
             oid = o_state.get("id")
             if oid is None:
                 continue
@@ -1986,6 +1993,8 @@ def to_plain(
             else:
                 folded_meta = {_SNAPSHOT_METADATA_WAS_NONE_KEY: True}
             folded_meta[_SNAPSHOT_OUTCOME_SETTLEMENT_KEY] = settlement_by_outcome
+            if all_settlement_loaded:
+                folded_meta[_SNAPSHOT_SETTLEMENT_COMPLETE_KEY] = True
             opening_stamps = [
                 (_instance_dict(o) or {}).get("opening_captured_at") for o in outcomes
             ]

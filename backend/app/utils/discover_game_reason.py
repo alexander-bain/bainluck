@@ -204,6 +204,46 @@ def _team_ids(data: dict) -> list[int]:
     return ids
 
 
+GAME_SIGNALS_TIMEOUT_MS = 1000
+
+
+def _is_postgres_async_session(db: Any) -> bool:
+    """True only for a real PostgreSQL AsyncSession that supports SAVEPOINTs."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    if not isinstance(db, AsyncSession):
+        return False
+    sync_session = getattr(db, "sync_session", None)
+    if sync_session is None:
+        return False
+    bind = getattr(sync_session, "bind", None)
+    dialect = getattr(bind, "dialect", None)
+    return getattr(dialect, "name", None) == "postgresql"
+
+
+async def _execute_signal_rows(db: Any, stmt: Any, *, timeout_ms: int = GAME_SIGNALS_TIMEOUT_MS) -> list:
+    """Run one read-only signal query, bounded by a SAVEPOINT timeout on Postgres.
+
+    Follows the `card_projected_pair.read_card_projected_pairs_bounded` pattern:
+    rolling back the savepoint resets `SET LOCAL statement_timeout` so it never
+    leaks into later stages on the same session, and a timed-out or failed read
+    degrades to empty signals (pregame/upset reasons stay intact) rather than
+    stalling Discover (#11931).
+    """
+    from sqlalchemy import text
+
+    try:
+        if _is_postgres_async_session(db):
+            async with db.begin_nested() as savepoint:
+                await db.execute(text(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'"))
+                rows = (await db.execute(stmt)).all()
+                await savepoint.rollback()
+            return list(rows)
+        return list((await db.execute(stmt)).all())
+    except Exception:
+        return []
+
+
 async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -> None:
     """Attach the two signals that need the database, with ONE read each:
     a live game's fastest recent move, and a finished game's teams' futures
@@ -238,14 +278,15 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
                 .group_by(WinProbSnapshot.event_id, WinProbSnapshot.source)
                 .subquery()
             )
-            raw_rows = (await db.execute(
+            stmt = (
                 select(WinProbSnapshot.event_id, WinProbSnapshot.source, WinProbSnapshot.home_win_probability)
                 .join(latest_before, and_(
                     WinProbSnapshot.event_id == latest_before.c.event_id,
                     WinProbSnapshot.source == latest_before.c.source,
                     WinProbSnapshot.captured_at == latest_before.c.at,
                 ))
-            )).all()
+            )
+            raw_rows = await _execute_signal_rows(db, stmt)
             return [
                 (int(event_id), str(source), float(then))
                 for event_id, source, then in raw_rows
@@ -299,7 +340,13 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
                 if _use_shared
                 else FuturesOutcome.team_id.in_(team_ids)
             )
-            raw_rows = (await db.execute(
+            # #11931: `FuturesMarket.max_movement_24h` is a provable superset of
+            # `abs(FuturesOutcome.probability_change_24h)` (see `movement_pool.py`),
+            # narrowing the join from ~35k open markets to only moved markets so
+            # Postgres probes `ix_fo_market_movement (market_id, probability_change_24h)`
+            # via its leading `market_id` column instead of scanning unindexed
+            # `team_id IS NOT NULL` rows under contention.
+            stmt = (
                 select(
                     FuturesOutcome.team_id,
                     FuturesOutcome.name,
@@ -312,6 +359,8 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
                 .where(
                     team_predicate,
                     FuturesMarket.status == open_status,
+                    FuturesMarket.max_movement_24h.isnot(None),
+                    FuturesMarket.max_movement_24h >= TEAM_MOVE_POINTS,
                     FuturesOutcome.probability_change_24h.isnot(None),
                     or_(
                         FuturesOutcome.probability_change_24h >= TEAM_MOVE_POINTS,
@@ -319,7 +368,8 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
                     ),
                     FuturesOutcome.price_changed_at >= now - timedelta(days=1),
                 )
-            )).all()
+            )
+            raw_rows = await _execute_signal_rows(db, stmt)
             return [
                 (
                     int(team_id),
@@ -336,7 +386,7 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
         if _use_shared:
             rows = await _pic.get_or_build(
                 "discover_game_team_moves",
-                ("v1", _pic.time_bucket(now, _pic.clock_bucket_s())),
+                ("v2", _pic.time_bucket(now, _pic.clock_bucket_s())),
                 _load_team_moves,
             )
         else:
