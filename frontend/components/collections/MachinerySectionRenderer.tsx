@@ -52,9 +52,28 @@ export interface MachineryCardContract {
   footer: string;
   scale_ordered?: boolean;
   section_count: number;
+  item_count?: number | null;
+  item_noun?: string | null;
   destination_href: string;
   rows: Record<string, unknown>[];
   mini_chart?: MachineryHistoryChartItem | null;
+}
+
+/**
+ * #13234: Reader-facing CTA for opening a grouping set from its Discover card.
+ * Avoids awkward "Open all 1 sections ›" when a set has a single section.
+ */
+export function machineryCardOpenLabel(
+  card: Pick<MachineryCardContract, "section_count" | "item_count" | "item_noun">,
+): string {
+  if (card.section_count > 1) {
+    return `Open all ${card.section_count} sections ›`;
+  }
+  const noun = typeof card.item_noun === "string" ? card.item_noun.trim() : "";
+  if (typeof card.item_count === "number" && card.item_count > 1 && noun) {
+    return `See all ${card.item_count} ${noun} ›`;
+  }
+  return "Open the full set ›";
 }
 
 const CHART_SERIES_FALLBACK_PALETTE = [
@@ -1032,7 +1051,7 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
       <div className="mt-3 flex flex-col gap-1 border-t border-surface-border pt-2.5 text-xs text-text-secondary">
         {card.footer ? <span>{card.footer}</span> : null}
         <span className="font-semibold text-accent-brand">
-          Open all {card.section_count} sections ›
+          {machineryCardOpenLabel(card)}
         </span>
       </div>
     </Link>

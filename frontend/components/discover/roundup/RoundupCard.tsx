@@ -7,6 +7,7 @@ import AwardCategoryPairedCard from "@/components/discover/forms/AwardCategoryPa
 import {
   MachineryDiscoverCard,
   isMachinerySlice1Enabled,
+  machineryCardOpenLabel,
 } from "@/components/collections/MachinerySectionRenderer";
 import { buildRoundupCardModel, compactStripDateLabel } from "@/lib/discover/roundupCard";
 import type { FeedItem, FeedRoundupContract, FeedThemeCollectionRef } from "@/lib/types";
@@ -82,7 +83,7 @@ export function RoundupCard({
           >
             <span className="min-w-0 text-text-secondary">{destination.name}</span>
             <span className="ml-auto shrink-0 whitespace-nowrap">
-              Open all {contract.machinery_card.section_count} sections ›
+              {machineryCardOpenLabel(contract.machinery_card)}
             </span>
           </Link>
         )}
