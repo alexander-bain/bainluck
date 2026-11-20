@@ -1480,3 +1480,177 @@ def test_standing_roundup_seats_unchanged_and_machinery_never_moves_later_on_dee
     finally:
         ROUNDUP_PRODUCERS.clear()
         ROUNDUP_PRODUCERS.update(saved_producers)
+
+
+@pytest.mark.asyncio
+async def test_machinery_stale_while_revalidate_prevents_feed_drop_and_proactive_prewarm_refreshes_before_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#12288 attended-flip catch:
+    1. Non-live machinery keeps a 1800s hard stale window (live: 120s) while soft TTL stays 300s/60s.
+    2. When a non-live machinery cache entry passes its 300s soft TTL (e.g. age=450s < 1800s),
+       Discover feed splicing (`allow_stale=True`) serves the last-known-good card immediately
+       instead of hitting the 0.5s producer timeout and dropping the grouping from Discover.
+    3. Direct page opens (`allow_stale=False`) still rebuild live when past soft TTL, and entries
+       past the 1800s hard window are never served stale.
+    4. `_absent_machinery_slugs` proactively queues a refresh at >= 70% of soft TTL (210s/300s)
+       so background prewarm refreshes before soft expiry instead of waiting for key deletion.
+    """
+    import time as _time
+
+    from app.tasks.precompute_category_pages import _absent_machinery_slugs
+    from app.utils.roundup_containers import (
+        ROUNDUP_MACHINERY_LIVE_STALE_TTL_S,
+        ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S,
+        _redis_cache_key,
+        _roundup_cache_stale_ttl_seconds,
+        evaluate_roundup_producer,
+    )
+
+    reset_roundup_cache_for_tests()
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+
+    non_live_cp = {
+        "sections": [{"members": [{"type": "market", "id": 1, "card": {"id": 1, "status": "open"}}]}]
+    }
+    live_cp = {
+        "sections": [{"members": [{"type": "event", "id": 2, "card": {"id": 2, "status": "live"}}]}]
+    }
+    assert (
+        _roundup_cache_stale_ttl_seconds("machinery-fed-and-macro", non_live_cp)
+        == ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+    )
+    assert (
+        _roundup_cache_stale_ttl_seconds("machinery-nba-night", live_cp)
+        == ROUNDUP_MACHINERY_LIVE_STALE_TTL_S
+    )
+    assert _roundup_cache_stale_ttl_seconds("roundup-cfp-picture", non_live_cp) == ROUNDUP_CACHE_TTL_S
+    assert _roundup_cache_stale_ttl_seconds("machinery-fed-and-macro", None) == ROUNDUP_CACHE_TTL_S
+
+    calls = 0
+
+    async def _slow_on_second_call(db, *, now=None):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            await asyncio.sleep(0.2)
+        return RoundupMembers(
+            members=[
+                {
+                    "type": "market",
+                    "id": 57574217,
+                    "destination": "/futures/57574217",
+                    "card": {"id": 57574217, "name": "Fed Decision in January?", "status": "open"},
+                }
+            ],
+            rows=[
+                {
+                    "market_id": 57574217,
+                    "outcome_id": 1,
+                    "label": "25 bps increase",
+                    "probability": 0.61,
+                    "rendered_percent": 61,
+                }
+            ],
+            title="Fed & U.S. Macro",
+            destination_href="/collections/machinery-fed-and-macro",
+        )
+
+    prod = RoundupProducer(
+        slug="machinery-fed-and-macro",
+        name="Fed & U.S. Macro",
+        kind="roundup",
+        category="economics",
+        section_title="Fed",
+        footer="",
+        produce=_slow_on_second_call,
+        membership="computed-produced",
+        relations=("same_subject",),
+        level="member",
+        rule={"producer": "container_machinery"},
+        enabled=lambda: True,
+    )
+
+    saved = dict(ROUNDUP_PRODUCERS)
+    fake_db = object()
+    t0 = 1_800_000_000.0
+    try:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS[prod.slug] = prod
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ensure_optional_roundup_candidates",
+            lambda: None,
+        )
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ROUNDUP_PRODUCER_TIMEOUT_SECONDS", 0.05
+        )
+
+        # Warm the cache at t0
+        fi0, cp0 = await evaluate_roundup_producer(prod, fake_db, now=t0)
+        assert fi0 is not None and cp0 is not None and calls == 1
+
+        # At t0 + 450s (past 300s soft TTL, inside 1800s stale window):
+        # Discover splice (`allow_stale=True`) serves last-known-good with ZERO DB timeout.
+        base_items = [
+            {"type": "futures", "id": f"f-{i}", "score": 80.0 - i, "data": {"id": 1000 + i, "status": "open"}}
+            for i in range(15)
+        ]
+        spliced = await add_roundup_feed_items(
+            fake_db,
+            base_items,
+            include_machinery=True,
+            machinery_only=True,
+            now=t0 + 450.0,
+            budget_seconds=1.0,
+            stage_budget_seconds=1.0,
+        )
+        assert calls == 1
+        assert any(
+            (it.get("data") or {}).get("collection_ref", {}).get("slug") == "machinery-fed-and-macro"
+            for it in spliced
+        )
+
+        # Past the 1800s hard stale window (t0 + 1900s), stale entry is NOT served
+        fi_expired, cp_expired = await evaluate_roundup_producer(
+            prod, fake_db, now=t0 + 1900.0, allow_stale=True
+        )
+        assert fi_expired is not None and cp_expired is not None and calls == 2
+
+        # Direct page open (`allow_stale=False`) past soft TTL (t0 + 1900 + 450) still rebuilds live
+        fi_fresh, cp_fresh = await evaluate_roundup_producer(
+            prod, fake_db, now=t0 + 2350.0, allow_stale=False
+        )
+        assert fi_fresh is not None and cp_fresh is not None and calls == 3
+
+        # Proactive prewarm check: >= 70% of 300s soft TTL (220s) is due; fresh (100s) is idle
+        now_wall = _time.time()
+        payloads = {
+            _redis_cache_key("machinery-fed-and-macro"): json.dumps(
+                {"built_at": now_wall - 220.0, "ttl_s": 300.0}
+            ),
+            _redis_cache_key("machinery-2028-presidential"): json.dumps(
+                {"built_at": now_wall - 100.0, "ttl_s": 300.0}
+            ),
+        }
+
+        class _FakeAgeRedis:
+            def exists(self, k: str) -> int:
+                return 1 if k in payloads else 0
+
+            def get(self, k: str):
+                return payloads.get(k)
+
+        due = _absent_machinery_slugs(
+            _FakeAgeRedis(),
+            registered_slugs=[
+                "machinery-fed-and-macro",
+                "machinery-2028-presidential",
+                "machinery-oscars-best-picture",
+            ],
+            exclude=set(),
+        )
+        assert due == ["machinery-fed-and-macro", "machinery-oscars-best-picture"]
+    finally:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS.update(saved)
+        reset_roundup_cache_for_tests()

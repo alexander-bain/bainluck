@@ -69,6 +69,7 @@ describe("#13103 — Shared set SSR landing and stranger-first header", () => {
     const html = renderToStaticMarkup(<CollectionHub slug={slug} initialHub={hub} />);
     expect(html).not.toContain("Loading collection");
     expect(html).not.toContain("Back to Discover");
+    expect(html).not.toContain("Refresh");
     expect(html).toContain("NFL Week 4 — Headline Slate");
     expect(html).toContain("Odds across every Week 4 game as of today.");
     expect(html).toContain("Explore Discover");

@@ -26,6 +26,28 @@ enum GameActivityDemo10864 {
     /// Built through the snapshot's own initializer, which applies every rule a
     /// real reading meets (a final carries no chance).
     static func snapshot(_ mode: String, now: Date = Date()) -> GameActivitySnapshot? {
+        if mode == "tennis250a" {
+            // #13000 (Decision 250-A) — live ATP Challenger tennis match with no score feed
+            // carrying it: Score column omitted completely, LIVE + Now + Chance time kept.
+            return GameActivitySnapshot(
+                eventID: eventID + 4,
+                homeTeam: "Tristan Boyer",
+                awayTeam: "Genaro Alberto Olivieri",
+                lifecycle: .live,
+                homeScore: nil,
+                awayScore: nil,
+                homeProbability: 0.624,
+                awayProbability: 0.376,
+                sport: "tennis_atp",
+                scoreObservedAt: nil,
+                probabilityObservedAt: now,
+                homeAbbreviation: "BOY",
+                awayAbbreviation: "OLI",
+                homeColorHex: "#1D4ED8",
+                awayColorHex: "#B45309",
+                periodLabel: nil,
+                scoreSourceUnavailable: true)
+        }
         if mode == "ncaab12999pushed" {
             // #12999 — decoded directly from the server APNs wire JSON shape
             // (seconds since 2001) to verify pushed updates draw the exact same headline.
@@ -125,7 +147,8 @@ enum GameActivityDemo10864 {
         let first = mode == "nfl199" || mode == "pair" ? "nfl199"
             : (mode == "nfl199pre" || mode == "nfl199final"
                || mode == "ncaab12999live" || mode == "ncaab12999ht"
-               || mode == "ncaab12999final" || mode == "ncaab12999pushed") ? mode : "live"
+               || mode == "ncaab12999final" || mode == "ncaab12999pushed"
+               || mode == "tennis250a") ? mode : "live"
         if mode == "pair", let other = snapshot("live") {
             _ = try? Activity<GameActivityAttributes>.request(
                 attributes: GameActivityAttributes(eventID: eventID),

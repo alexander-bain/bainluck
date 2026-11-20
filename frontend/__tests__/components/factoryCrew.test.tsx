@@ -167,10 +167,8 @@ it("keeps the same crate, hold, machine queue, build and caption information und
     expect(text).toContain("TestFlight build 5801 is posted.");
     expect(text).toContain("Written by a model from the counts on this page");
     expect(
-      container.querySelector(
-        '[aria-labelledby="parked-heading"] [data-crate="13000"]',
-      ),
-    ).not.toBeNull();
+      container.querySelector('[aria-label="Side shelves"]')?.textContent,
+    ).toContain("Parked 1");
     await act(async () => reduce());
     expect(floor.getAttribute("data-motion")).toBe("paused");
     expect(floor.textContent).toBe(text);
@@ -226,8 +224,9 @@ it("counts each delivery line and keeps held changes and quiet drafts off the fl
       expect(row.textContent).toContain("1 shipped");
       expect(row.querySelector(`[data-bay="Live"] [data-crate="${shipped.number}"]`)).not.toBeNull();
     }
-    expect(container.querySelector('[aria-labelledby="held-heading"] [data-crate="13070"]')).not.toBeNull();
-    expect(container.querySelector('[aria-labelledby="parked-heading"] [data-crate="12621"]')).not.toBeNull();
+    const shelf = container.querySelector('[aria-label="Side shelves"]')!;
+    expect(shelf.textContent).toContain("Held for 1.0.8 1");
+    expect(shelf.textContent).toContain("Parked 1");
     expect(container.querySelector('[data-factory-row] [data-crate="13070"]')).toBeNull();
     expect(container.querySelector('[data-factory-row] [data-crate="12621"]')).toBeNull();
     expect(beltFlowing({ ...snapshot, changes, transitions: [] }, "Server", 1, now)).toBe(false);

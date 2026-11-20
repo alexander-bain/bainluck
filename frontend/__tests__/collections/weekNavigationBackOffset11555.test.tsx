@@ -92,8 +92,7 @@ test("the offset is applied once: a later refresh of the week links never scroll
   await back();
   await answerNavigation(withLinks);
   const calls = (window.scrollTo as jest.Mock).mock.calls.length;
-  const refresh = Array.from(element.querySelectorAll("button")).find((button) => button.textContent === "Refresh")!;
-  await act(async () => refresh.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await act(async () => { window.dispatchEvent(new Event("focus")); });
   await answerNavigation(withLinks);
   expect((window.scrollTo as jest.Mock).mock.calls.length).toBe(calls);
 });
