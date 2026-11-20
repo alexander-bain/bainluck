@@ -20,6 +20,8 @@ Verifies the real production Discover seating path
 
 from __future__ import annotations
 
+import pytest
+
 from app.routes import feed as feed_route
 from app.utils import feed_market_quality as fmq
 
@@ -195,3 +197,156 @@ def test_boring_or_silent_fun_tagged_card_still_demotes_normally():
 
     seated, _ = fmq.enforce_first_page_quality_floor(items)
     assert _find_seat(seated, 4001) > 20
+
+
+def _ladder_rung_card(mid: int) -> dict:
+    """A threshold-ladder rung that `is_first_page_quality_offender` must evict."""
+    card = _card(
+        mid,
+        "Will Meta (META) finish week of May 12 above $600?",
+        score=75.0,
+        category="economics",
+        headline="Yes leads at 18%",
+        reason="Yes leads at 18%",
+        movement=None,
+    )
+    card["_quality_ladder_or_bucket"] = True
+    return card
+
+
+def _silent_offender_card(mid: int) -> dict:
+    """A wholly silent card that `is_wholly_silent_card` must evict from page 1."""
+    return _card(
+        mid,
+        "Silent page-one offender",
+        score=75.0,
+        category="tech",
+        headline="",
+        reason="",
+        movement=None,
+    )
+
+
+def _build_page_with_offender_at_seat(
+    *,
+    offender_seat: int,
+    offender_card: dict,
+    two_fun_cards: bool = False,
+) -> list[dict]:
+    """Build a 25-card list with TIME at seat 9 (and optionally a second clean
+    fun card at seat 8) and a page-1 offender at 1-indexed `offender_seat`."""
+    cats = ["tech", "economics", "geopolitics", "weather", "politics", "hockey", "mma", "other"]
+    window: list[dict] = []
+    for idx in range(20):
+        seat = idx + 1
+        if seat == 9:
+            window.append(
+                _card(
+                    27467306,
+                    "TIME Person of the Year 2026",
+                    score=88.0,
+                    category="entertainment",
+                    headline="James Talarico leads at 25%",
+                    reason="James Talarico leads at 25%",
+                    movement=None,
+                    fun_tags=["culture"],
+                )
+            )
+        elif two_fun_cards and seat == 8:
+            window.append(
+                _card(
+                    27467307,
+                    "Katy Perry and Justin Trudeau engaged by end of 2026?",
+                    score=87.0,
+                    category="entertainment",
+                    headline="Yes leads at 32%",
+                    reason="Yes leads at 32%",
+                    movement=None,
+                    fun_tags=["culture"],
+                )
+            )
+        elif seat == offender_seat:
+            window.append(offender_card)
+        else:
+            window.append(
+                _card(
+                    5000 + seat,
+                    f"Clean page card {seat}",
+                    score=85.0 - seat * 0.3,
+                    category=cats[idx % len(cats)],
+                    headline=f"New favorite: Option {seat} (60%)",
+                    reason=f"New favorite: Option {seat} (60%)",
+                    movement=0.06,
+                )
+            )
+    tail = [
+        _card(
+            6000 + i,
+            f"Clean tail replacement {i}",
+            score=70.0 - i * 0.5,
+            category=cats[i % len(cats)],
+            headline=f"New favorite: Tail {i} (65%)",
+            reason=f"New favorite: Tail {i} (65%)",
+            movement=0.07,
+        )
+        for i in range(6)
+    ]
+    return window + tail
+
+
+@pytest.mark.parametrize("rung_seat", [11, 13, 15, 19, 20])
+def test_stepping_time_never_leaves_a_ladder_rung_on_page_one(rung_seat: int):
+    """Fable review on #13156: TIME at seat 9 stepping to seat 11 must never
+    shift a waiting ladder rung at seat 11/13/15/19/20 past its offender index."""
+    rung = _ladder_rung_card(9001)
+    assert fmq.is_first_page_quality_offender(rung)
+    items = _build_page_with_offender_at_seat(offender_seat=rung_seat, offender_card=rung)
+
+    seated, _ = fmq.enforce_first_page_quality_floor(items)
+
+    assert len(seated) == len(items)
+    assert {it["data"]["id"] for it in seated} == {it["data"]["id"] for it in items}
+    assert _find_seat(seated, 9001) > 20, f"Ladder rung stayed on page 1 at seat {_find_seat(seated, 9001)}"
+    assert _find_seat(seated, 27467306) == 11
+    for card in seated[:20]:
+        assert not fmq.is_first_page_quality_offender(card)
+        assert not fmq.is_wholly_silent_card(card)
+
+
+def test_two_stepping_fun_cards_still_evict_ladder_rung_at_seat_15():
+    """Fable review on #13156: two clean fun cards stepping from seats 8 and 9
+    land at seats 11 and 12 while the ladder rung at seat 15 leaves page 1."""
+    rung = _ladder_rung_card(9002)
+    items = _build_page_with_offender_at_seat(
+        offender_seat=15, offender_card=rung, two_fun_cards=True
+    )
+
+    seated, _ = fmq.enforce_first_page_quality_floor(items)
+
+    assert len(seated) == len(items)
+    assert {it["data"]["id"] for it in seated} == {it["data"]["id"] for it in items}
+    assert _find_seat(seated, 9002) > 20
+    assert _find_seat(seated, 27467307) == 11
+    assert _find_seat(seated, 27467306) == 12
+    for card in seated[:20]:
+        assert not fmq.is_first_page_quality_offender(card)
+
+
+@pytest.mark.parametrize("silent_seat", [11, 13, 15, 19, 20])
+def test_stepping_time_never_leaves_a_silent_card_on_page_one(silent_seat: int):
+    """Fable review on #13156: a wholly silent card at seat 11/13/15/19/20 is
+    always evicted off page 1 even while TIME steps cleanly to seat 11."""
+    silent = _silent_offender_card(9003)
+    assert fmq.is_wholly_silent_card(silent)
+    items = _build_page_with_offender_at_seat(
+        offender_seat=silent_seat, offender_card=silent
+    )
+
+    seated, _ = fmq.enforce_first_page_quality_floor(items)
+
+    assert len(seated) == len(items)
+    assert {it["data"]["id"] for it in seated} == {it["data"]["id"] for it in items}
+    assert _find_seat(seated, 9003) > 20
+    assert _find_seat(seated, 27467306) == 11
+    for card in seated[:20]:
+        assert not fmq.is_wholly_silent_card(card)
