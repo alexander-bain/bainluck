@@ -901,8 +901,12 @@ def _redis_cache_key(slug: str) -> str:
     return f"container_read:v1:{slug}"
 
 
+_roundup_last_refusal_transient: dict[str, bool] = {}
+
+
 def reset_roundup_cache_for_tests() -> None:
     _roundup_local_cache.clear()
+    _roundup_last_refusal_transient.clear()
 
 
 _TRANSIENT_REFUSAL_TOKENS = (
@@ -1079,15 +1083,19 @@ def _encode_roundup_cache_entry(
     stale_ttl_s: float,
     feed_item: Optional[dict[str, Any]],
     container_payload: Optional[dict[str, Any]],
+    clean_empty: bool = False,
 ) -> str:
+    payload: dict[str, Any] = {
+        "built_at": ts,
+        "ttl_s": ttl_s,
+        "stale_ttl_s": stale_ttl_s,
+        "feed_item": feed_item,
+        "container_payload": container_payload,
+    }
+    if clean_empty:
+        payload["clean_empty"] = True
     return json.dumps(
-        {
-            "built_at": ts,
-            "ttl_s": ttl_s,
-            "stale_ttl_s": stale_ttl_s,
-            "feed_item": feed_item,
-            "container_payload": container_payload,
-        },
+        payload,
         separators=(",", ":"),
         default=_roundup_cache_json_default,
     )
@@ -1138,17 +1146,58 @@ def store_roundup_cache_sync(
         return False
 
 
+def store_roundup_clean_empty_sync(
+    rc: Any,
+    slug: str,
+    ts: float,
+    *,
+    ttl_s: float = ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S,
+    lifetime_s: float = ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S,
+) -> bool:
+    """Record a clean-empty marker in Redis when a grouping producer ran cleanly with nothing to show (#13183).
+
+    Used by Celery prewarm workers only (never on the web event loop — #969).
+    Lets `_publish_machinery_feed_from_prewarm_base` distinguish an intentionally
+    quiet/out-of-season grouping from a failed or expired one.
+    """
+    if rc is None or not hasattr(rc, "set"):
+        return False
+    try:
+        encoded = _encode_roundup_cache_entry(
+            ts=ts,
+            ttl_s=float(ttl_s),
+            stale_ttl_s=float(lifetime_s),
+            feed_item=None,
+            container_payload=None,
+            clean_empty=True,
+        )
+        rc.set(_redis_cache_key(slug), encoded, ex=int(lifetime_s))
+        if _is_machinery_producer_slug(slug) and hasattr(rc, "hdel"):
+            rc.hdel(MACHINERY_LIVE_SLUGS_KEY, slug)
+        return True
+    except Exception:  # noqa: BLE001 — cache write is best-effort
+        logger.warning(
+            "roundup_containers: sync Redis clean-empty write failed for %s",
+            slug,
+            exc_info=True,
+        )
+        return False
+
+
 def verify_roundup_cache_sync(
     rc: Any,
     slug: str,
+    *,
+    allow_clean_empty: bool = False,
 ) -> tuple[bool, Optional[int]]:
     """Read back a just-written roundup cache key via sync Redis and verify TTL + decode.
 
     Used by Celery prewarm workers only (never on the web event loop — #969, #12288).
     Returns ``(ok, ttl_seconds)`` where ``ok`` is True only when the key exists,
     decodes through the same JSON reader path as ``evaluate_roundup_producer``,
-    carries both ``feed_item`` and ``container_payload``, and (when ``rc.ttl`` is
-    available) has a positive TTL remaining.
+    carries both ``feed_item`` and ``container_payload`` (or a valid ``clean_empty``
+    marker when ``allow_clean_empty=True``), and (when ``rc.ttl`` is available)
+    has a positive TTL remaining.
     """
     if rc is None or not hasattr(rc, "get"):
         return False, None
@@ -1173,6 +1222,8 @@ def verify_roundup_cache_sync(
             return False, ttl_remaining
         if not isinstance(decoded.get("built_at"), (int, float)):
             return False, ttl_remaining
+        if allow_clean_empty and decoded.get("clean_empty") is True:
+            return True, ttl_remaining
         if decoded.get("feed_item") is None or decoded.get("container_payload") is None:
             return False, ttl_remaining
         return True, ttl_remaining
@@ -1437,14 +1488,17 @@ async def evaluate_roundup_producer(
     if inspect.isawaitable(outcome):
         outcome = await outcome
 
+    _roundup_last_refusal_transient.pop(producer.slug, None)
     if outcome is None or isinstance(outcome, RoundupRefusal):
         reasons = list(outcome.reasons) if isinstance(outcome, RoundupRefusal) else []
+        cacheable = _is_cacheable_refusal(reasons)
+        _roundup_last_refusal_transient[producer.slug] = not cacheable
         logger.warning(
             "flow_sentinel matching_defect: roundup %s refused reasons=%s",
             producer.slug,
             reasons,
         )
-        if use_cache and _is_cacheable_refusal(reasons):
+        if use_cache and cacheable:
             await _store_roundup_cache_entry(
                 cache_key, producer.slug, ts, None, None, db
             )
