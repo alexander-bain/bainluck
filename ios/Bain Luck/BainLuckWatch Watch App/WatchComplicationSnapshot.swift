@@ -110,8 +110,14 @@ nonisolated struct WatchCompactTeamIdentity: Codable, Sendable, Equatable {
     let abbreviation: String
     private enum CodingKeys: String, CodingKey { case teamID = "team_id", abbreviation }
     var isValid: Bool {
-        teamID > 0 && (1...4).contains(abbreviation.count)
-            && abbreviation.unicodeScalars.allSatisfy { (65...90).contains($0.value) || (48...57).contains($0.value) }
+        guard teamID > 0, (1...4).contains(abbreviation.count) else { return false }
+        let scalars = Array(abbreviation.unicodeScalars)
+        let isAlphaNum: (UnicodeScalar) -> Bool = { (65...90).contains($0.value) || (48...57).contains($0.value) }
+        guard let first = scalars.first, let last = scalars.last, isAlphaNum(first), isAlphaNum(last) else {
+            return false
+        }
+        // #13144: allow internal "&" (TA&M, W&M) and "-" (M-OH) in server-supplied short names.
+        return scalars.allSatisfy { isAlphaNum($0) || $0.value == 38 || $0.value == 45 }
     }
 }
 
@@ -328,8 +334,10 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
         }
         let fullMatchup = "\(awayName) at \(homeName)"
         let compactMatchup: String? = {
-            guard let away, let home, away.isValid, home.isValid else { return nil }
-            return "\(away.abbreviation) at \(home.abbreviation)"
+            let awayShort = away.flatMap { $0.isValid ? $0.abbreviation : nil }
+            let homeShort = home.flatMap { $0.isValid ? $0.abbreviation : nil }
+            guard awayShort != nil || homeShort != nil else { return nil }
+            return "\(awayShort ?? awayName) at \(homeShort ?? homeName)"
         }()
         let scoreSuffix: String = {
             guard kind == .liveForecast, let ascore = awayScore, let hs = homeScore else { return "" }
