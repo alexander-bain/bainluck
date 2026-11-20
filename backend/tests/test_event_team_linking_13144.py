@@ -562,3 +562,77 @@ class TestAllLeaguesDiscoverPassAndReadById:
             team_id=9999,
         )
         assert cross_league is None
+
+    @pytest.mark.parametrize("reverse_order", [False, True])
+    def test_name_lookup_runs_first_and_preserves_two_row_preference_for_ottawa(
+        self, reverse_order
+    ):
+        """Fable review of #13210: linked team_id must never bypass #7132 two-row preference."""
+        from app.routes.events import TeamSnapshot, _dedupe_team_name_lookup, _team_for_event
+
+        stale_full = TeamSnapshot(
+            id=56,
+            sport_id=7,
+            sport_key="icehockey_nhl",
+            name="Ottawa Senators",
+            slug="ottawa-senators",
+            abbreviation="OTT",
+            primary_color="#c8102e",
+            secondary_color="#000000",
+            logo_url_small="https://a.espncdn.com/i/teamlogos/nhl/500/ott.png",
+            logo_url_large="https://a.espncdn.com/i/teamlogos/nhl/500/ott.png",
+            current_record="44-27",
+            alternate_names=(),
+            standings_data={"points": 99, "division_rank": 3},
+            standings_updated_at=FIXED_NOW - timedelta(days=180),
+            season_stats=None,
+            espn_id="14",
+        )
+        fresh_short = TeamSnapshot(
+            id=13381,
+            sport_id=7,
+            sport_key="icehockey_nhl",
+            name="Senators",
+            slug="senators",
+            abbreviation="OTT",
+            primary_color="#c8102e",
+            secondary_color="#000000",
+            logo_url_small="https://a.espncdn.com/i/teamlogos/nhl/500/ott.png",
+            logo_url_large="https://a.espncdn.com/i/teamlogos/nhl/500/ott.png",
+            current_record="14-6",
+            alternate_names=("Ottawa Senators",),
+            standings_data={"points": 30, "division_rank": 2},
+            standings_updated_at=FIXED_NOW - timedelta(hours=1),
+            season_stats=None,
+            espn_id="14",
+        )
+        rows = [fresh_short, stale_full] if reverse_order else [stale_full, fresh_short]
+        full = _dedupe_team_name_lookup(rows)
+
+        # 1. Event named "Ottawa Senators" linked to stale row 56: name path runs
+        # first and picks fresh row 13381 (14-6, 30 pts), never row 56 (44-27, 99 pts).
+        sub_exact = full.subset({"Ottawa Senators"})
+        picked_exact = _team_for_event(
+            sub_exact,
+            "Ottawa Senators",
+            "icehockey_nhl",
+            team_id=56,
+        )
+        assert picked_exact is fresh_short
+        assert picked_exact.id == 13381
+        assert picked_exact.current_record == "14-6"
+
+        # 2. Event with an unindexed variant spelling linked to stale row 56:
+        # name path finds nothing, falls back to team_id=56, and STILL applies
+        # the two-row preference to pick fresh row 13381 even after `.subset()`.
+        sub_variant = full.subset({"Ottawa Senators NHL"})
+        assert _team_for_event(sub_variant, "Ottawa Senators NHL", "icehockey_nhl") is None
+        picked_fallback = _team_for_event(
+            sub_variant,
+            "Ottawa Senators NHL",
+            "icehockey_nhl",
+            team_id=56,
+        )
+        assert picked_fallback is fresh_short
+        assert picked_fallback.id == 13381
+        assert picked_fallback.current_record == "14-6"
