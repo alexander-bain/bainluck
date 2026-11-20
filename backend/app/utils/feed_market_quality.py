@@ -3690,7 +3690,7 @@ _DISCOVER_FIRST_PAGE_CATEGORY_CAPS = {
     "geopolitics": 3,
     "economics": 4,
     "tech": 3,
-    "entertainment": 4,
+    "entertainment": 3,
     "weather_health": 2,
     "sports_culture": 3,
     "other": 3,
@@ -3701,7 +3701,7 @@ _DISCOVER_FIRST_PAGE_ARCHETYPE_CAPS = {
     "breaking_news": 3,
     "political_power": 3,
     "macro_signal": 4,
-    "culture_moment": 4,
+    "culture_moment": 3,
     "health_weather_risk": 2,
     "sports_story": 3,
     "sports_drama": 2,
@@ -3797,16 +3797,6 @@ COLD_START_WINDOW_SERVED = "served"
 COLD_START_WINDOW_FIRST_CARDS = "first_cards"
 COLD_START_WINDOWS = frozenset({COLD_START_WINDOW_SERVED, COLD_START_WINDOW_FIRST_CARDS})
 _COLD_START_CARDS = 8
-_WEEKLY_STREAMING_CHART_RE = re.compile(
-    r"\btop\s+(?:global|us|u\.s\.)\s+netflix\s+(?:movie|show|film|series)\b",
-    re.IGNORECASE,
-)
-
-
-def _is_weekly_streaming_chart(item: dict) -> bool:
-    data = item.get("data") if isinstance(item.get("data"), dict) else {}
-    title = str(data.get("name") or data.get("title") or "")
-    return bool(_WEEKLY_STREAMING_CHART_RE.search(title))
 
 
 def diversify_discover_first_page(
@@ -3838,7 +3828,6 @@ def diversify_discover_first_page(
     category_counts: dict[str, int] = {}
     archetype_counts: dict[str, int] = {}
     story_counts: dict[str, int] = {}
-    weekly_chart_count = 0
 
     cold_start_cap = 2 if cold_start else None
     first_cards = cold_start_window == COLD_START_WINDOW_FIRST_CARDS
@@ -3859,9 +3848,6 @@ def diversify_discover_first_page(
             cap = min(cap, cold_start_cap)
         if category_counts.get(group, 0) >= cap:
             return "cold_start_category_cap" if cold else "category_cap"
-
-        if _is_weekly_streaming_chart(item) and weekly_chart_count >= 1:
-            return "weekly_chart_cap"
 
         if enforce_archetype:
             archetype = _discover_archetype_group(item)
@@ -3921,7 +3907,6 @@ def diversify_discover_first_page(
         return allowed
 
     def record(item: dict) -> None:
-        nonlocal weekly_chart_count
         group = _discover_category_group(item)
         archetype = _discover_archetype_group(item)
         story_key = item.get("_quality_story_key")
@@ -3929,8 +3914,6 @@ def diversify_discover_first_page(
         archetype_counts[archetype] = archetype_counts.get(archetype, 0) + 1
         if story_key:
             story_counts[story_key] = story_counts.get(story_key, 0) + 1
-        if _is_weekly_streaming_chart(item):
-            weekly_chart_count += 1
 
     selected: list[dict] = []
     selected_keys: set[tuple] = set()
@@ -4386,7 +4369,8 @@ def enforce_first_page_quality_floor(
         return items, meta
 
     new_window = list(window)
-    new_tail = list(tail)
+    new_tail: list[Optional[dict]] = list(tail)
+    pushed_to_tail_front: list[dict] = []
     used: set[int] = set()
     stepped_fun_slots: set[int] = set()
     demoted = 0
@@ -4486,7 +4470,11 @@ def enforce_first_page_quality_floor(
             for k in range(len(landing_slots) - 1, 0, -1):
                 new_window[landing_slots[k]] = new_window[landing_slots[k - 1]]
             new_window[landing_slots[0]] = offender
-            new_tail[pick] = displaced
+            # #13097: the card pushed off seat 20 lands right at seat 21
+            # (preserving rank order across multiple steps) rather than being
+            # dropped into `new_tail[pick]` dozens of seats down.
+            pushed_to_tail_front.insert(0, displaced)
+            new_tail[pick] = None
             stepped_fun_slots.add(landing_slots[0])
         else:
             new_tail[pick] = offender
@@ -4497,7 +4485,8 @@ def enforce_first_page_quality_floor(
     meta["demoted"] = demoted
     meta["unreplaced"] = len(offender_positions) - demoted
 
-    return new_window + new_tail, meta
+    final_tail = pushed_to_tail_front + [item for item in new_tail if item is not None]
+    return new_window + final_tail, meta
 
 
 _DISCOVER_TAIL_RECALL_RULES: tuple[tuple[str, re.Pattern[str], float], ...] = (
