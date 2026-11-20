@@ -365,7 +365,7 @@ describe("#5666 part 2 — the family is closed: no seventh surface can spell it
 
     const badge = fs.readFileSync(path.join(ROOT, "components/discover/shared.tsx"), "utf8");
     expect(badge).toContain("const pts = formatMovementPointsLikeSentence(m) as string;");
-    expect(badge).toContain("{pts} pts");
+    expect(badge).toContain('{pts} {unit === "points" ? (pts === "1" ? "point" : "points") : "pts"}');
   });
 
   test("MoversStrip's `delta` really is the points formatter, so its ' pts' is not a coincidence", () => {
