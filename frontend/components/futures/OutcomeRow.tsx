@@ -713,7 +713,7 @@ export default function OutcomeRow({
                     the family discover/044's class scan counted; routed here by
                     notice 41 because this file is ux's. */}
                 {(change as number) > 0 ? "+" : "-"}
-                {formatMovementPoints(change as number)} pts
+                {formatMovementPoints(change as number)} points
               </span>
             ) : (
               <span className="text-xs text-text-muted">-</span>

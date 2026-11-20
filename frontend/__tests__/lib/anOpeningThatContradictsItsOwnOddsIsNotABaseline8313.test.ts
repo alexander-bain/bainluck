@@ -87,7 +87,7 @@ describe("#8313 the specimen: No's opening is the other side's price", () => {
 
   test("withheld opening falls through to the existing 24h branch, unchanged", () => {
     const no = { ...leg(SPECIMEN, NO), probability_change_24h: 0.02 };
-    expect(movementExplanation(no)).toBe("No up 2.0 pts in the last 24h.");
+    expect(movementExplanation(no)).toBe("No up 2.0 points in the last 24h.");
     // and under 1 point the 24h branch still has nothing to say
     expect(movementExplanation({ ...no, probability_change_24h: 0.004 })).toBeNull();
   });
@@ -95,10 +95,10 @@ describe("#8313 the specimen: No's opening is the other side's price", () => {
   test("same leg with its odds removed keeps today's caption (the field is the only signal)", () => {
     const no = leg(SPECIMEN, NO);
     expect(movementExplanation({ ...no, opening_american_odds: null })).toBe(
-      "No up 57.5 pts from opening.",
+      "No up 57.5 points from opening.",
     );
     const { opening_american_odds: _dropped, ...withoutKey } = no;
-    expect(movementExplanation(withoutKey)).toBe("No up 57.5 pts from opening.");
+    expect(movementExplanation(withoutKey)).toBe("No up 57.5 points from opening.");
   });
 });
 
@@ -106,18 +106,18 @@ describe("#8313 controls: a coherent opening still speaks", () => {
   test("the Yes leg of the same payload (0.31 / +223) keeps its caption", () => {
     // Its own move, from its own consistent opening. The two legs' openings sum
     // to 0.62 — not read, and not a reason to withhold.
-    expect(movementExplanation(leg(SPECIMEN, YES))).toBe("Yes down 19.5 pts from opening.");
+    expect(movementExplanation(leg(SPECIMEN, YES))).toBe("Yes down 19.5 points from opening.");
   });
 
-  test("same-session control /futures/61318328 still reads 'Yes up 5.0 pts from opening.'", () => {
+  test("same-session control /futures/61318328 still reads 'Yes up 5.0 points from opening.'", () => {
     const subject = pickCaptionSubject(legs(CONTROL), new Set(legs(CONTROL).map((o) => o.id)));
     expect(subject?.opening_american_odds).toBe(-270);
-    expect(movementExplanation(subject, CONTROL.name)).toBe("Yes up 5.0 pts from opening.");
+    expect(movementExplanation(subject, CONTROL.name)).toBe("Yes up 5.0 points from opening.");
   });
 
   test("independent production boards (openings not summing to 1) are untouched", () => {
     const amazon = leg(BOARD_109441, 1597099);
-    expect(movementExplanation(amazon)).toBe("Amazon up 13.5 pts from opening.");
+    expect(movementExplanation(amazon)).toBe("Amazon up 13.5 points from opening.");
     // Every leg of both boards that has an opening keeps exactly the caption the
     // odds-blind version printed.
     for (const board of [BOARD_109441, BOARD_108559]) {
@@ -154,7 +154,7 @@ describe("#8313 rounding: integer odds are not a contradiction", () => {
     ).toBeNull();
     expect(
       movementExplanation({ ...leader, opening_probability: 0.594, opening_american_odds: 150 }),
-    ).toBe("Field up 20.6 pts from opening.");
+    ).toBe("Field up 20.6 points from opening.");
   });
 });
 
@@ -162,40 +162,40 @@ describe("#8313 stale odds beside an honest opening still speak (lane1b R1)", ()
   test("case A — an empty-book repair kept the discredited 0.50's odds", () => {
     expect(
       movementExplanation({ name: "Yes", probability: 0.4, opening_probability: 0.12, opening_american_odds: -100 }),
-    ).toBe("Yes up 28.0 pts from opening.");
+    ).toBe("Yes up 28.0 points from opening.");
   });
 
   test("case B — a backfilled opening, odds coalesced later from a 0.45 price", () => {
     expect(
       movementExplanation({ name: "Yes", probability: 0.47, opening_probability: 0.2, opening_american_odds: 122 }),
-    ).toBe("Yes up 27.0 pts from opening.");
+    ).toBe("Yes up 27.0 points from opening.");
   });
 
   test("a mismatch just past rounding that is not the complement speaks", () => {
     // +150 = 0.40; 0.406 is 0.6 pt off it and nowhere near 0.60.
     expect(
       movementExplanation({ name: "Field", probability: 0.6, opening_probability: 0.406, opening_american_odds: 150 }),
-    ).toBe("Field up 19.4 pts from opening.");
+    ).toBe("Field up 19.4 points from opening.");
   });
 
   test("within 1 pt of 50% the complement is not read (lane1b N1)", () => {
     // -101 = 0.5025: 0.55 pt off 0.497 and 0.05 pt off its complement 0.503.
     expect(
       movementExplanation({ name: "Yes", probability: 0.6, opening_probability: 0.497, opening_american_odds: -101 }),
-    ).toBe("Yes up 10.3 pts from opening.");
+    ).toBe("Yes up 10.3 points from opening.");
   });
 
   test("the specimen's No leg after the #137 flip (0.69 / -223) speaks", () => {
     // The regrade sets the opening to 1 − p and leaves the odds, which then agree.
     expect(
       movementExplanation({ ...leg(SPECIMEN, NO), opening_probability: 0.69 }),
-    ).toBe("No up 19.5 pts from opening.");
+    ).toBe("No up 19.5 points from opening.");
   });
 });
 
 describe("#8313 absent / invalid / zero fields keep today's behaviour", () => {
   const leader = { name: "No", probability: 0.885, opening_probability: 0.31 };
-  const today = "No up 57.5 pts from opening.";
+  const today = "No up 57.5 points from opening.";
 
   test.each([
     ["undefined", undefined],
@@ -212,16 +212,16 @@ describe("#8313 absent / invalid / zero fields keep today's behaviour", () => {
   test("an opening outside (0, 1) is not checked against odds (no writer derives odds there)", () => {
     expect(
       movementExplanation({ name: "No", probability: 0.885, opening_probability: 0, opening_american_odds: -223 }),
-    ).toBe("No up 88.5 pts from opening.");
+    ).toBe("No up 88.5 points from opening.");
     expect(
       movementExplanation({ name: "No", probability: 0.885, opening_probability: 1, opening_american_odds: -223 }),
-    ).toBe("No down 11.5 pts from opening.");
+    ).toBe("No down 11.5 points from opening.");
   });
 
   test("a current price of 0 against a coherent opening still reads as a move", () => {
     expect(
       movementExplanation({ name: "Yes", probability: 0, opening_probability: 0.31, opening_american_odds: 223 }),
-    ).toBe("Yes down 31.0 pts from opening.");
+    ).toBe("Yes down 31.0 points from opening.");
   });
 
   test("missing current price with a contradicted opening: 24h branch only, as before", () => {
@@ -236,6 +236,6 @@ describe("#8313 absent / invalid / zero fields keep today's behaviour", () => {
         opening_american_odds: -223,
         probability_change_24h: -0.03,
       }),
-    ).toBe("No down 3.0 pts in the last 24h.");
+    ).toBe("No down 3.0 points in the last 24h.");
   });
 });

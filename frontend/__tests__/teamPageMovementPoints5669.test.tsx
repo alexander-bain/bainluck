@@ -114,7 +114,7 @@ describe("#5669 part 2 — the team page badge says points, and still says somet
   });
 
   test("the headline badge prints ' pts today'", () => {
-    expect(src).toContain("{formatMovementPoints(headline.movement)} pts today");
+    expect(src).toContain("{formatMovementPoints(headline.movement)} points today");
   });
 
   test("NO movement site on the page puts a '%' against the points formatter", () => {
@@ -133,8 +133,8 @@ describe("#5669 part 2 — the team page badge says points, and still says somet
     expect(src.match(PCT_AGAINST_POINTS)).toBeNull();
   });
 
-  test("BOTH movement sites print ' pts' — the guard above cannot pass by deleting them", () => {
-    const printed = src.match(/\{formatMovementPoints\([^)]*\)\}\s*pts/g) ?? [];
+  test("BOTH movement sites print ' points' — the guard above cannot pass by deleting them", () => {
+    const printed = src.match(/\{formatMovementPoints\([^)]*\)\}\s*points/g) ?? [];
     expect(printed).toHaveLength(2);
   });
 

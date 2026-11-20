@@ -151,7 +151,7 @@ describe("#6488 a settled market's table prints no live movement", () => {
   it("the rendered row does not print the badge or its points suffix", () => {
     const html = render(draw(), true);
     expect(html).not.toContain("+0.5");
-    expect(html).not.toContain("pts");
+    expect(html).not.toContain("points");
     // The row still says who it is and what it last traded at — this ship
     // removes a badge, never a price.
     expect(html).toContain("Draw");
@@ -172,7 +172,7 @@ describe("#6488 a settled market's table prints no live movement", () => {
     // The gate is `isResolved`, not "ungraded" — #6082's arm rides on this.
     expect(outcomeRowPrintsMove(draw(), false)).toBe(true);
     expect(showLastMove(specimen(), false)).toBe(true);
-    expect(render(draw(), false)).toContain("pts");
+    expect(render(draw(), false)).toContain("points");
   });
 
   it("CONTROL: a graded row on a settled market was already silent", () => {

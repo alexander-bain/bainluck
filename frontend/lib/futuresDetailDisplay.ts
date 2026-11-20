@@ -1205,7 +1205,8 @@ export function movementExplanation(
     const delta = (cur - open) * 100;
     const mag = Math.abs(delta);
     if (mag >= 1) {
-      return `${label} ${delta > 0 ? "up" : "down"} ${mag.toFixed(1)} pts from opening.`;
+      const magStr = mag.toFixed(1);
+      return `${label} ${delta > 0 ? "up" : "down"} ${magStr} ${magStr === "1.0" ? "point" : "points"} from opening.`;
     }
     return `${label} roughly flat since opening.`;
   }
@@ -1213,7 +1214,8 @@ export function movementExplanation(
   const ch = leader.probability_change_24h;
   if (ch != null && Math.abs(ch * 100) >= 1) {
     const d = ch * 100;
-    return `${label} ${d > 0 ? "up" : "down"} ${Math.abs(d).toFixed(1)} pts in the last 24h.`;
+    const dStr = Math.abs(d).toFixed(1);
+    return `${label} ${d > 0 ? "up" : "down"} ${dStr} ${dStr === "1.0" ? "point" : "points"} in the last 24h.`;
   }
   return null;
 }

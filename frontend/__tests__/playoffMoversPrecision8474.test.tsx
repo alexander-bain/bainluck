@@ -63,14 +63,14 @@ const { AnalyticsProvider } = require("@/components/Analytics");
 
 /** The served movers, as 0–1 fractions, and what each chip must print. */
 const SPECIMEN: { name: string; school: string; change: number; chip: string }[] = [
-  { name: "Mississippi State Bulldogs", school: "Mississippi State", change: 0.0174, chip: "+1.7 pts" },
-  { name: "Indiana Hoosiers", school: "Indiana", change: 0.0151, chip: "+1.5 pts" },
-  { name: "Texas Longhorns", school: "Texas", change: 0.0114, chip: "+1.1 pts" },
-  { name: "Ole Miss", school: "Ole Miss", change: -0.01, chip: "-1 pts" },
-  { name: "Miami Hurricanes", school: "Miami", change: 0.0096, chip: "+1 pts" },
-  { name: "Notre Dame Fighting Irish", school: "Notre Dame", change: 0.0066, chip: "+0.7 pts" },
-  { name: "Georgia Bulldogs", school: "Georgia", change: 0.0059, chip: "+0.6 pts" },
-  { name: "Texas Tech Red Raiders", school: "Texas Tech", change: -0.0053, chip: "-0.5 pts" },
+  { name: "Mississippi State Bulldogs", school: "Mississippi State", change: 0.0174, chip: "+1.7 points" },
+  { name: "Indiana Hoosiers", school: "Indiana", change: 0.0151, chip: "+1.5 points" },
+  { name: "Texas Longhorns", school: "Texas", change: 0.0114, chip: "+1.1 points" },
+  { name: "Ole Miss", school: "Ole Miss", change: -0.01, chip: "-1 point" },
+  { name: "Miami Hurricanes", school: "Miami", change: 0.0096, chip: "+1 point" },
+  { name: "Notre Dame Fighting Irish", school: "Notre Dame", change: 0.0066, chip: "+0.7 points" },
+  { name: "Georgia Bulldogs", school: "Georgia", change: 0.0059, chip: "+0.6 points" },
+  { name: "Texas Tech Red Raiders", school: "Texas Tech", change: -0.0053, chip: "-0.5 points" },
 ];
 
 function renderPage(): string {
@@ -187,13 +187,13 @@ describe("grid 24h cell precision (#8474)", () => {
     expect(cellsByTeam(renderGrid())).toEqual(
       Object.fromEntries(
         SPECIMEN.map((s) => {
-          const mag = s.chip.slice(1).replace(/ pts$/, "");
+          const mag = s.chip.slice(1).replace(/ points?$/, "");
           return [
             s.name,
             {
               cell: `${s.change > 0 ? "▲" : "▼"}${mag}`,
               suffix: "points 24h",
-              title: `${s.chip.replace(/ pts$/, " points")} in 24h`,
+              title: `${s.chip.replace(/ points?$/, " points")} in 24h`,
             },
           ];
         }),

@@ -250,7 +250,7 @@ describe("#5666 part 2 — the family is closed: no seventh surface can spell it
     const repaired: Array<[string, string]> = [
       ["components/golf/MoversStrip.tsx", '{delta} {delta === "1" ? "point" : "points"}'],
       ["components/FeedCard.tsx", "{formatMovementPoints(leader.movement)} points"],
-      ["components/CombinedFeedCard.tsx", "{formatMovementPoints(outcome.bestMovement)} pts"],
+      ["components/CombinedFeedCard.tsx", "{formatMovementPoints(outcome.bestMovement)} points"],
     ];
     for (const [rel, expected] of repaired) {
       const src = fs.readFileSync(path.join(ROOT, rel), "utf8");
@@ -361,7 +361,7 @@ describe("#5666 part 2 — the family is closed: no seventh surface can spell it
 
     const card = fs.readFileSync(path.join(ROOT, "components/discover/FuturesCard.tsx"), "utf8");
     expect(card).toContain("const movementDisplay = formatMovementPointsLikeSentence(movementVal);");
-    expect(card).toContain('${movementDisplay} pts`');
+    expect(card).toContain('${movementDisplay} ${movementDisplay === "1" || movementDisplay === "1.0" ? "point" : "points"}`');
 
     const badge = fs.readFileSync(path.join(ROOT, "components/discover/shared.tsx"), "utf8");
     expect(badge).toContain("const pts = formatMovementPointsLikeSentence(m) as string;");

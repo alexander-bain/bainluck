@@ -107,7 +107,7 @@ function Step({
                 reads as a percentage by direct association with the number
                 beside it rather than merely by column. */}
             {entry.movement! > 0 ? "+" : "-"}
-            {formatMovementPoints(entry.movement)} pts
+            {formatMovementPoints(entry.movement)} points
           </span>
         )}
       </div>

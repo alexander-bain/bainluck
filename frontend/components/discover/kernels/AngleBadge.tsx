@@ -99,9 +99,10 @@ export function pickAngle(signals: AngleSignals): AngleValue | null {
 
   if (delta >= MOVER_THRESHOLD_POINTS) {
     const dir = (signals.deltaPoints ?? 0) >= 0 ? "up" : "down";
+    const mag = delta.toFixed(delta < 10 ? 1 : 0);
     return {
       kind: "mover",
-      label: labels.mover ?? `Moved ${delta.toFixed(delta < 10 ? 1 : 0)} pts ${dir === "up" ? "up" : "down"}`,
+      label: labels.mover ?? `Moved ${mag} ${mag === "1" || mag === "1.0" ? "point" : "points"} ${dir === "up" ? "up" : "down"}`,
     };
   }
   if (signals.resolvesSoon) {

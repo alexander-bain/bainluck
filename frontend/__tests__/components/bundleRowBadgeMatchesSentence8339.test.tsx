@@ -71,9 +71,9 @@ describe("#8339 — the bundle row's chip says what its sentence says", () => {
   });
 
   test("the Mykolaivka chip reads 28.5, not 29", () => {
-    expect(chipTexts(html)).toEqual(["28.5 pts"]);
+    expect(chipTexts(html)).toEqual(["28.5 points"]);
     expect(html).toContain('aria-label="Down 28.5 points in the last 24h"');
-    expect(html).not.toContain("29 pts");
+    expect(html).not.toContain("29 points");
   });
 });
 
@@ -89,9 +89,9 @@ describe("#8339 — the chip's number is the backend sentence's number", () => {
     expect(formatMovementPointsLikeSentence(movement)).toBe(expected);
   });
 
-  test("a whole-point move keeps its old width: '7 pts', never '7.0 pts'", () => {
+  test("a whole-point move keeps its old width: '7 points', never '7.0 points'", () => {
     const html = renderToStaticMarkup(<MovementBadge m={0.07} prob={0.4} />);
-    expect(html).toContain("</svg>7 pts</span>");
+    expect(html).toContain("</svg>7 points</span>");
     expect(html).toContain('aria-label="Up 7 points in the last 24h"');
   });
 
