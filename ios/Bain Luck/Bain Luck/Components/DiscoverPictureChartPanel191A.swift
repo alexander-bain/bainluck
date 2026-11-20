@@ -38,6 +38,8 @@ enum DiscoverPictureChart191A {
         let rightEndUsesTeamAccent: Bool
         let showsEndpointDot: Bool
         let showsPregameLabel: Bool
+        var chartHeaderTitle: String? = nil
+        var finishedSummaryLabel: String? = nil
 
         var markedPoints: [Point] {
             points.filter { point in
@@ -59,8 +61,55 @@ enum DiscoverPictureChart191A {
         }
 
         var accessibilityLabel: String {
-            "Win chance chart for \(plottedTeamShortName): \(leftEndLabel), \(rightEndLabel)"
+            if let summary = finishedSummaryLabel {
+                return "Win chance chart for \(plottedTeamShortName): \(summary), \(rightEndLabel)"
+            }
+            return "Win chance chart for \(plottedTeamShortName): \(leftEndLabel), \(rightEndLabel)"
         }
+    }
+
+    /// #13092 — When a finished two-way `/api/feed` event omits `prematch_odds`
+    /// and `opening_odds`, recover the opening/kickoff reading from `EventHistoryResponse`
+    /// so the `Pregame` column (`15%` / `85%`) still renders beside `Final`.
+    nonisolated static func fallbackPrematchReading(
+        event: FeedEventData,
+        history: EventHistoryResponse?
+    ) -> PrematchReading? {
+        guard EventState.isFinished(event.status),
+              !DrawPricedWinner.sportPricesADraw(event.sport),
+              let history else {
+            return nil
+        }
+        let blendPoints = OddsChartView.servedBlendPoints(from: history)
+        let consensusPoints: [ChartDataPoint] = history.history.compactMap { row in
+            guard let date = row.timestamp.asDate,
+                  let homeP = row.homeProbability,
+                  homeP.isFinite else {
+                return nil
+            }
+            return ChartDataPoint(date: date, probability: min(max(homeP, 0), 1), source: "consensus")
+        }
+        let baseSeries = (blendPoints.count >= 2 ? blendPoints : (consensusPoints.count >= 2 ? consensusPoints : (blendPoints.isEmpty ? consensusPoints : blendPoints)))
+            .sorted { $0.date < $1.date }
+        guard baseSeries.count >= 2 else { return nil }
+
+        let candidateHome: Double? = {
+            if let kickoff = event.commenceTime?.asDate,
+               let preStart = baseSeries.last(where: { $0.date <= kickoff }) {
+                return CompactGameCard12616.usableProbability(preStart.probability)
+            }
+            return CompactGameCard12616.usableProbability(baseSeries.first?.probability)
+        }()
+        guard let homeP = candidateHome else { return nil }
+        return PrematchReading.resolve(
+            prematch: nil,
+            opening: OpeningOdds(
+                homeProbability: homeP,
+                awayProbability: 1.0 - homeP,
+                favorite: nil,
+                overUnder: nil
+            )
+        )
     }
 
     /// Resolves which side the single win-chance trajectory line represents:
@@ -227,6 +276,48 @@ enum DiscoverPictureChart191A {
             return lastDate <= playStart
         }()
 
+        // #13091 + #13092: Name whose win chance the 2-way curve plots, and state
+        // the pregame-to-final story deterministically on finished games (upset vs
+        // in-game rally vs favorite win) with zero model-written text.
+        let chartHeaderTitle: String? = threeWayPoints.count >= 2
+            ? nil
+            : "\(plottedShortName) win chance"
+
+        let finishedSummaryLabel: String? = {
+            guard isFinished,
+                  threeWayPoints.count < 2,
+                  outcome == .away || outcome == .home else {
+                return nil
+            }
+            let openingProb = pregameSideProb
+                ?? extractedPoints.first(where: { !$0.isEndpoint }).flatMap { CompactGameCard12616.usableProbability($0.probability) }
+            let lowestInPlayProb = extractedPoints
+                .dropLast()
+                .compactMap { CompactGameCard12616.usableProbability($0.probability) }
+                .min()
+
+            if let openP = openingProb {
+                let openPct = Int((openP * 100.0).rounded())
+                if openPct <= 40 {
+                    return "Upset \u{00B7} Opened at \(openPct)%"
+                }
+                if let minP = lowestInPlayProb {
+                    let minPct = Int((minP * 100.0).rounded())
+                    if minPct <= 25 {
+                        return "Rallied from \(minPct)%"
+                    }
+                }
+                return "Opened at \(openPct)% \u{00B7} Won"
+            }
+            if let minP = lowestInPlayProb {
+                let minPct = Int((minP * 100.0).rounded())
+                if minPct <= 25 {
+                    return "Rallied from \(minPct)%"
+                }
+            }
+            return nil
+        }()
+
         return Model(
             perspective: perspective,
             plottedTeamShortName: plottedShortName,
@@ -240,7 +331,9 @@ enum DiscoverPictureChart191A {
             isFinished: isFinished,
             rightEndUsesTeamAccent: rightEndUsesTeamAccent,
             showsEndpointDot: showsEndpointDot,
-            showsPregameLabel: showsPregameLabel
+            showsPregameLabel: showsPregameLabel,
+            chartHeaderTitle: chartHeaderTitle,
+            finishedSummaryLabel: finishedSummaryLabel
         )
     }
 
@@ -448,6 +541,8 @@ struct DiscoverPictureChartPanel191AView: View {
     let awayColor: Color
     let homeColor: Color
     var preloadedHistory: EventHistoryResponse? = nil
+    var isLoadingOverrideForTesting: Bool? = nil
+    var onHistoryResolved: ((EventHistoryResponse) -> Void)? = nil
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var rawPlotHeight: CGFloat = 126
@@ -457,7 +552,10 @@ struct DiscoverPictureChartPanel191AView: View {
     @State private var didFinishLoad = false
 
     private var effectiveHistory: EventHistoryResponse? {
-        preloadedHistory
+        if isLoadingOverrideForTesting == true {
+            return nil
+        }
+        return preloadedHistory
             ?? loadedHistory
             ?? DiscoverEventChartHistoryCache191A.shared.latestAnyAge(eventId: event.id)
     }
@@ -470,6 +568,11 @@ struct DiscoverPictureChartPanel191AView: View {
         )
     }
 
+    private var isLoadingHistory: Bool {
+        let waiting = isLoadingOverrideForTesting ?? !didFinishLoad
+        return waiting && model.points.isEmpty && model.threeWayPoints.isEmpty
+    }
+
     private var lineColor: Color {
         model.perspective == .away ? awayColor : homeColor
     }
@@ -478,17 +581,113 @@ struct DiscoverPictureChartPanel191AView: View {
         min(max(rawPlotHeight, 122), 144)
     }
 
+    @ViewBuilder
+    private var chartHeaderRow: some View {
+        if let title = model.chartHeaderTitle {
+            let titleLead = HStack(spacing: 6) {
+                Circle()
+                    .fill(lineColor)
+                    .frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let summary = model.finishedSummaryLabel, !isLoadingHistory {
+                let badge = Text(summary)
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Color.primary.opacity(0.055), in: Capsule())
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 4) {
+                        titleLead
+                        badge
+                    }
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .center, spacing: 8) {
+                            titleLead
+                            Spacer(minLength: 6)
+                            badge
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            titleLead
+                            badge
+                        }
+                    }
+                }
+            } else {
+                titleLead
+            }
+        }
+    }
+
+    private var loadingPlotPlaceholder: some View {
+        let topDescendingTicks = [100, 50, 0]
+        return HStack(spacing: 6) {
+            if !dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .trailing, spacing: 0) {
+                    ForEach(Array(topDescendingTicks.enumerated()), id: \.offset) { idx, pct in
+                        if idx > 0 {
+                            Spacer(minLength: 0)
+                        }
+                        yTickLabel("\(pct)%", emphasized: pct == 50)
+                    }
+                }
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minWidth: 32, maxHeight: plotHeight, alignment: .trailing)
+                .accessibilityHidden(true)
+            }
+
+            ZStack {
+                GeometryReader { geo in
+                    Path { path in
+                        let midY = geo.size.height * 0.5
+                        path.move(to: CGPoint(x: 0, y: midY))
+                        path.addLine(to: CGPoint(x: geo.size.width, y: midY))
+                    }
+                    .stroke(
+                        Color.secondary.opacity(0.40),
+                        style: StrokeStyle(lineWidth: 1.0, dash: [4, 4])
+                    )
+                }
+
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading win chance")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.cardBackground.opacity(0.88), in: Capsule())
+            }
+        }
+    }
+
     var body: some View {
         Group {
-            if !model.points.isEmpty || !model.threeWayPoints.isEmpty {
+            if isLoadingHistory || !model.points.isEmpty || !model.threeWayPoints.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    if model.showsPregameLabel {
+                    chartHeaderRow
+                    if model.showsPregameLabel && !isLoadingHistory {
                         Text("Pregame")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(DS.textSecondaryReadable)
                             .accessibilityHidden(true)
                     }
-                    plotCanvas.frame(height: plotHeight)
+                    if isLoadingHistory {
+                        loadingPlotPlaceholder.frame(height: plotHeight)
+                    } else {
+                        plotCanvas.frame(height: plotHeight)
+                    }
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 9)
@@ -501,18 +700,25 @@ struct DiscoverPictureChartPanel191AView: View {
                         .stroke(Color.primary.opacity(0.07), lineWidth: 0.5)
                 )
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel(model.accessibilityLabel)
+                .accessibilityLabel(
+                    isLoadingHistory
+                        ? "Loading win chance chart for \(model.plottedTeamShortName)"
+                        : model.accessibilityLabel
+                )
                 .accessibilityIdentifier("discover-card-191a-chart-panel")
             }
         }
         .task(id: "\(event.id)-\(event.status ?? "")-\(event.currentOdds?.homeProbability ?? -1)") {
-            guard preloadedHistory == nil else {
+            guard isLoadingOverrideForTesting != true else { return }
+            if let preloadedHistory {
+                onHistoryResolved?(preloadedHistory)
                 didFinishLoad = true
                 return
             }
             let isLive = event.status == "live"
             if let hit = DiscoverEventChartHistoryCache191A.shared.cached(eventId: event.id, isLive: isLive) {
                 loadedHistory = hit
+                onHistoryResolved?(hit)
                 didFinishLoad = true
                 return
             }
@@ -522,6 +728,7 @@ struct DiscoverPictureChartPanel191AView: View {
             )
             if let fetched {
                 loadedHistory = fetched
+                onHistoryResolved?(fetched)
             }
             didFinishLoad = true
         }

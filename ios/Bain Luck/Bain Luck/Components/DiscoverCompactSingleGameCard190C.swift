@@ -32,9 +32,23 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     @ScaledMetric(relativeTo: .subheadline) private var pregameColWidth: CGFloat = 48
     @ScaledMetric(relativeTo: .title3) private var primaryColWidth: CGFloat = 82
     @State private var measuredContentWidth: CGFloat = 0
+    @State private var loadedPanelHistory: EventHistoryResponse? = nil
 
     private let scoreToPregameGutter: CGFloat = 12
     private let pregameToPrimaryGap: CGFloat = 14
+
+    private var effectiveHistoryForPrematchFallback: EventHistoryResponse? {
+        preloadedChartHistory
+            ?? loadedPanelHistory
+            ?? DiscoverEventChartHistoryCache191A.shared.latestAnyAge(eventId: event.id)
+    }
+
+    private var effectivePrematch: PrematchReading? {
+        prematch ?? DiscoverPictureChart191A.fallbackPrematchReading(
+            event: event,
+            history: effectiveHistoryForPrematchFallback
+        )
+    }
 
     private var shortNames: (away: String, home: String) {
         TeamShortName.shortPair(
@@ -55,7 +69,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     private var model: DiscoverSingleGameCard190C.Model {
         DiscoverSingleGameCard190C.build(
             event: event,
-            prematch: prematch,
+            prematch: effectivePrematch,
             showsInlinePregame: showsInlinePregame,
             usesPictureLayout: usesPictureLayout191A
         )
@@ -135,10 +149,15 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
             if usesPictureLayout191A {
                 DiscoverPictureChartPanel191AView(
                     event: event,
-                    prematch: prematch,
+                    prematch: effectivePrematch,
                     awayColor: awayColor,
                     homeColor: homeColor,
-                    preloadedHistory: preloadedChartHistory
+                    preloadedHistory: preloadedChartHistory,
+                    onHistoryResolved: { resolved in
+                        if loadedPanelHistory?.eventId != resolved.eventId {
+                            loadedPanelHistory = resolved
+                        }
+                    }
                 )
             }
 
@@ -219,7 +238,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
             event: event,
             canStillBeGraded: canGrade,
             currentAwayIsWithheld: currentAwayWithheld,
-            prematch: prematch,
+            prematch: effectivePrematch,
             prematchAwayIsWithheld: prematchAwayWithheld
         ),
         let button = SourceMarkButton(
