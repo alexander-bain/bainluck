@@ -129,9 +129,6 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     var sportName: String? = nil
     var completedAt: String? = nil
     var linescore: TennisLinescoreData? = nil
-    /// #13000 (Decision 250-A) — present-only `true` when a live match has no score
-    /// feed carrying it (e.g. ATP Challenger / ITF tennis). Absent or false means covered.
-    var scoreSourceUnavailable: Bool? = nil
 }
 
 /// Served tennis linescore object (`backend/app/utils/tennis_live_score.py` `attach_tennis_score`),
