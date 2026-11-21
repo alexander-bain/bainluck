@@ -293,6 +293,7 @@ async def read_live_three_way_books(
     *,
     sport_key_override: Optional[str] = None,
     latest_odds_query: Any = None,
+    absorbed_ids_by_event: Any = None,
 ) -> dict[int, tuple[float, float]]:
     """Read filtered latest per-book (home, away) consensus for live draw-priced events.
 
@@ -303,6 +304,10 @@ async def read_live_three_way_books(
     collapse a live soccer match's three-way consensus into two chances with no
     draw, and covers both stored ``live`` rows and ``scheduled`` rows promoted
     to ``live`` by ``served_event_status`` (#13131).
+
+    When ``absorbed_ids_by_event`` is supplied, also reads snapshots belonging
+    to each live event's suppressed twins (keeping the newest row per
+    bookmaker), matching ``get_event``'s twin-folded sportsbook read.
     """
     from collections import defaultdict
     from datetime import datetime
@@ -330,8 +335,18 @@ async def read_live_three_way_books(
     if not live_events:
         return {}
 
+    owner_by_id: dict[int, int] = {eid: eid for eid in live_events}
+    if absorbed_ids_by_event:
+        for cid in live_events:
+            for tid in absorbed_ids_by_event.get(cid) or ():
+                try:
+                    tid_int = int(tid)
+                except (TypeError, ValueError):
+                    continue
+                owner_by_id.setdefault(tid_int, cid)
+
     try:
-        ids = sorted(live_events)
+        ids = sorted(owner_by_id)
         stmt = (
             latest_odds_query(ids)
             if latest_odds_query is not None
@@ -355,9 +370,26 @@ async def read_live_three_way_books(
     except Exception:
         return {}
 
-    by_event: dict[int, list] = defaultdict(list)
+    by_event_book: dict[int, dict[str, Any]] = defaultdict(dict)
     for snap in snaps:
-        by_event[int(snap.event_id)].append(snap)
+        owner = owner_by_id.get(int(snap.event_id))
+        if owner is None:
+            continue
+        bk = getattr(snap, "bookmaker", None)
+        if not bk:
+            continue
+        incumbent = by_event_book[owner].get(bk)
+        if incumbent is None:
+            by_event_book[owner][bk] = snap
+        else:
+            snap_ts = getattr(snap, "captured_at", None)
+            inc_ts = getattr(incumbent, "captured_at", None)
+            if snap_ts is not None and (inc_ts is None or snap_ts > inc_ts):
+                by_event_book[owner][bk] = snap
+
+    by_event: dict[int, list] = {
+        eid: list(book_map.values()) for eid, book_map in by_event_book.items()
+    }
 
     out: dict[int, tuple[float, float]] = {}
     for eid, ev_snaps in by_event.items():

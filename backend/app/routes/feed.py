@@ -12878,6 +12878,7 @@ async def _score_events(
                 events,
                 now,
                 latest_odds_query=latest_odds_per_bookmaker_query,
+                absorbed_ids_by_event=_proven_absorbed_by_canonical,
             )
         )
 
@@ -13149,6 +13150,37 @@ async def _score_events(
                     list(highlight_result.reasons) + _staleness_reasons
                 )
 
+            # #13131: resolve three-way probabilities for draw-priced sports
+            # BEFORE composing the live claim / reason so the card's printed
+            # percentages and its headline/reason sentence always read the exact
+            # same numbers (and a card with no 3-way books emits no orphan chance).
+            _card_home_prob = current_home_prob
+            _card_away_prob = current_away_prob
+            _card_draw_prob: float | None = None
+            _sport_key_for_card = event.sport.key if event.sport else ""
+            if _sport_prices_a_draw(_sport_key_for_card) and event.status not in (
+                "completed",
+                "closed",
+            ):
+                if served_status == "live":
+                    _bh, _ba = live_three_way_books.get(event.id, (None, None))
+                elif served_status == "scheduled":
+                    _bh, _ba = opening_home_prob, opening_away_prob
+                else:
+                    _bh, _ba = None, None
+                _card_3 = _resolve_three_way_probs(
+                    current_home_prob,
+                    books_home=_bh,
+                    books_away=_ba,
+                    sport_key=_sport_key_for_card,
+                )
+                if _card_3 is not None:
+                    _card_home_prob, _card_away_prob, _card_draw_prob = _card_3
+                else:
+                    _card_home_prob = None
+                    _card_away_prob = None
+                    _card_draw_prob = None
+
             # T10-1 (#5439) — the one claim this live card is entitled to make,
             # composed once and used twice: as the `reason` sentence (inside
             # `generate_event_reason`, which calls the same composer) and as the
@@ -13160,14 +13192,26 @@ async def _score_events(
             # `current_odds.*_rendered_percent`; the sentence used to round its
             # own side alone, which is one point higher on a trailing side that
             # sits on a half-percent (0.335: card 33, sentence 34).
-            _live_percents = (
-                duel_percents_by_side(
-                    away_probability=current_away_prob,
-                    home_probability=current_home_prob,
+            if (
+                _card_home_prob is not None
+                and _card_away_prob is not None
+                and _card_draw_prob is not None
+            ):
+                from app.utils.draw_priced_winner import rendered_three_way_percents
+
+                _hp3, _dp3, _ap3 = rendered_three_way_percents(
+                    _card_home_prob, _card_draw_prob, _card_away_prob
                 )
-                if current_home_prob is not None
-                else None
-            )
+                _live_percents = {"home": _hp3, "away": _ap3}
+            else:
+                _live_percents = (
+                    duel_percents_by_side(
+                        away_probability=_card_away_prob,
+                        home_probability=_card_home_prob,
+                    )
+                    if _card_home_prob is not None
+                    else None
+                )
             _live_claim = compose_live_claim(
                 home_team=event.home_team_name,
                 away_team=event.away_team_name,
@@ -13176,8 +13220,8 @@ async def _score_events(
                 # already has. Its whole contract is "the one claim this LIVE
                 # card may make", and a match nobody has served in may make none.
                 status=served_status,
-                home_probability=current_home_prob,
-                away_probability=current_away_prob,
+                home_probability=_card_home_prob,
+                away_probability=_card_away_prob,
                 opening_home_prob=opening_home_prob,
                 home_score=event.home_score,
                 away_score=event.away_score,
@@ -13185,7 +13229,7 @@ async def _score_events(
                 # own away price, not `1 − home`, which on a draw-priced sport
                 # is "the home team does not win" (the served duel withholds
                 # exactly this number; the sentence was still saying it).
-                sport=event.sport.key if event.sport else "",
+                sport=_sport_key_for_card,
                 opening_away_prob=opening_away_prob,
                 # #10561 — "leading" is present tense: the event's own score
                 # observation, judged against this request's one clock.
@@ -13231,8 +13275,8 @@ async def _score_events(
                 # #5324 — the card's sentence. Same argument as the claim above.
                 status=served_status,
                 highlight_reasons=highlight_result.reasons,
-                home_probability=current_home_prob,
-                away_probability=current_away_prob,
+                home_probability=_card_home_prob,
+                away_probability=_card_away_prob,
                 opening_home_prob=opening_home_prob,
                 home_score=event.home_score,
                 away_score=event.away_score,
@@ -13284,33 +13328,10 @@ async def _score_events(
             card_hero = resolve_hero(
                 event, source_inputs=hero_inputs, source_method=hero_method,
             )
-            # #13131: on draw-priced sports (soccer), resolve (home, away, draw)
-            # when sportsbooks provide both sides summing < 0.99; otherwise
-            # suppress orphan single-leg chances on non-settled cards.
-            _card_home_prob = current_home_prob
-            _card_away_prob = current_away_prob
-            _card_draw_prob: float | None = None
-            if _sport_prices_a_draw(sport_key) and not (
-                card_hero is not None and card_hero.source == "settled"
-            ):
-                if served_status == "live":
-                    _bh, _ba = live_three_way_books.get(event.id, (None, None))
-                elif served_status == "scheduled":
-                    _bh, _ba = opening_home_prob, opening_away_prob
-                else:
-                    _bh, _ba = None, None
-                _card_3 = _resolve_three_way_probs(
-                    current_home_prob,
-                    books_home=_bh,
-                    books_away=_ba,
-                    sport_key=sport_key,
-                )
-                if _card_3 is not None:
-                    _card_home_prob, _card_away_prob, _card_draw_prob = _card_3
-                elif served_status == "scheduled":
-                    _card_home_prob = None
-                    _card_away_prob = None
-                    _card_draw_prob = None
+            if card_hero is not None and card_hero.source == "settled":
+                _card_home_prob = current_home_prob
+                _card_away_prob = current_away_prob
+                _card_draw_prob = None
 
             event_data = format_event_data(
                 event_id=event.id,
@@ -13385,10 +13406,20 @@ async def _score_events(
                     ) is not None
                 )
             )
+            _card_three_way = (
+                (_card_home_prob, _card_away_prob, _card_draw_prob)
+                if (
+                    _card_home_prob is not None
+                    and _card_away_prob is not None
+                    and _card_draw_prob is not None
+                )
+                else None
+            )
             event_data["source_mark"], event_data["away_source_mark"] = headline_source_marks(
                 event, _card_effective_hero, hero_inputs,
                 method=hero_method[0] if hero_method else None,
                 away_available=away_available,
+                three_way_probs=_card_three_way,
             )
             # #10582: score provenance belongs to the scoreboard, not the blend.
             # The same projection serves cached feed and fresh price-card reads.
