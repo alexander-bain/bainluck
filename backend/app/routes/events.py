@@ -18892,6 +18892,8 @@ async def list_events(
     limit: int = Query(200, ge=1, le=500, description="Max events to return"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     db: AsyncSession = Depends(get_db),
+    *,
+    league_page: Annotated[bool, Query(description="Read the league window in reader order")] = False,
 ):
     """
     List upcoming and live events.
@@ -18903,7 +18905,6 @@ async def list_events(
     query = (
         select(Event)
         .join(Sport, Event.sport_id == Sport.id)
-        .options(selectinload(Event.sport))
     )
 
     conditions = []
@@ -19031,10 +19032,33 @@ async def list_events(
     if conditions:
         query = query.where(and_(*conditions))
 
-    query = query.order_by(Event.commence_time).limit(limit).offset(offset)
+    if league_page:
+        # Keep the old 200-row window. Order its IDs before running any odds
+        # and chart enrichment so live and upcoming fixtures reach page one.
+        window = (
+            query.with_only_columns(Event.id)
+            .order_by(Event.commence_time, Event.id)
+            .limit(200)
+            .subquery()
+        )
+        priority = case(
+            (Event.status == "live", 0),
+            (and_(Event.status == "scheduled", Event.commence_time >= now), 1),
+            else_=2,
+        )
+        query = (
+            select(Event)
+            .join(window, Event.id == window.c.id)
+            .order_by(priority, Event.commence_time, Event.id)
+        )
+        limit = min(limit, 50)
+    else:
+        query = query.order_by(Event.commence_time)
+    query = query.options(selectinload(Event.sport)).limit(limit).offset(offset)
 
     result = await db.execute(query)
     events = result.scalars().all()
+    raw_page_count = len(events)
 
     # One game, one card — the list half of #4100. `/api/feed` folded twin rows
     # at `ac6eb2c1`; this route did not, so `?sport=baseball_mlb&limit=60`
@@ -19059,8 +19083,8 @@ async def list_events(
     # offset pagination and post-query filtering cannot both be right without a
     # cursor. Folding after the limit keeps `offset` in raw-row space, so no row
     # is ever skipped or repeated; only the page size varies. No caller pays
-    # for this today: `fetchEvents` sends neither `limit` nor `offset`, and
-    # `leagueHorizon.ts` records that the 200 default "is not reached here".
+    # for ordinary league reads. Smaller calls use the raw offset in
+    # `next_offset`, so a fold cannot make the app skip a game.
     # (A twin pair straddling a page boundary survives as one row on each page.
     # Invisible within a page, and it goes away with #2693, not with a cursor.)
     #
@@ -19446,10 +19470,14 @@ async def list_events(
     # behind us. Read off the SERVED rows, after the venue pass, and after the
     # `limit`, so the page holds the same rows it always did. Only the order
     # changes; `app/utils/event_list_order.py` says why not in SQL.
-    return {
+    payload: dict[str, object] = {
         "events": in_reader_order(formatted),
         "count": len(events),
     }
+    if league_page:
+        next_offset = offset + raw_page_count
+        payload["next_offset"] = next_offset if raw_page_count == limit and next_offset < 200 else None
+    return payload
 
 
 @router.get("/live")

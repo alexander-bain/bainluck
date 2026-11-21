@@ -395,6 +395,9 @@ export async function fetchEvents(params?: {
   status?: string;
   days?: number;
   past_days?: number;
+  limit?: number;
+  offset?: number;
+  league_page?: boolean;
 }): Promise<EventsResponse> {
   const searchParams = new URLSearchParams();
 
@@ -402,6 +405,9 @@ export async function fetchEvents(params?: {
   if (params?.status) searchParams.set("status", params.status);
   if (params?.days) searchParams.set("days", params.days.toString());
   if (params?.past_days !== undefined) searchParams.set("past_days", params.past_days.toString());
+  if (params?.limit !== undefined) searchParams.set("limit", params.limit.toString());
+  if (params?.offset) searchParams.set("offset", params.offset.toString());
+  if (params?.league_page) searchParams.set("league_page", "true");
 
   const query = searchParams.toString();
   return apiFetch<EventsResponse>(`/api/events${query ? `?${query}` : ""}`);
