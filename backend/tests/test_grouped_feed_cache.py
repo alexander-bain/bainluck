@@ -140,6 +140,13 @@ def test_the_fresh_ttl_outlives_the_warm_cadence():
 # --- The warmer must reach the key the route reads ----------------------------
 
 
+def test_web_grouped_cache_is_first_in_the_background_pass():
+    label, warm = pcp._prewarm_targets()[0]
+    assert label == "grouped_web"
+    assert warm.args[0]["sports_only"] is True
+    assert warm.args[0]["limit"] == 20
+
+
 def test_prewarm_passes_every_grouped_feed_parameter_explicitly():
     """An omitted param is a `Query` object, and it stringifies into the key.
 
