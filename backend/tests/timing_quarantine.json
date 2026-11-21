@@ -12,5 +12,12 @@
     "added": "2026-11-20",
     "expires": "2026-11-27",
     "reason": "Ruling 241: A \u2014 unpinned wall-clock bucket boundary crossing ([None, None] != [None]) on master run 44713228544 attempt 1 (untouched commit 3a67896768), passed on attempt 2"
+  },
+  {
+    "nodeid": "tests/test_kalshi_idle_wake_10090.py::test_ticks_on_a_cooled_cohort_attempt_nothing_and_keep_the_work_ceiling",
+    "issue": 13288,
+    "added": "2026-11-20",
+    "expires": "2026-11-27",
+    "reason": "Ruling 241: A \u2014 wall-clock timing flake (assert [] == [101]) on unaffected PR commit 530c3613fa in run 44862942644 (#12779#issuecomment-7057227911); Fable approved quarantine in #12779#issuecomment-7057392564"
   }
 ]
