@@ -628,3 +628,82 @@ async def test_three_culture_cards_keep_card_image_and_hide_all_row_pictures_eve
 
     assert not any("dropped row pictures" in rec.message for rec in caplog.records)
 
+
+def test_ambiguous_city_or_nickname_never_falls_back_to_other_sport_static_crest() -> None:
+    """When TeamNameLookup refuses an ambiguous city ('Miami', 'Carolina') or nickname,
+    static nfl_teams/espn_team_logo entries from another league must be refused too."""
+    teams = [
+        TeamSnapshot(
+            id=101,
+            sport_id=12,
+            sport_key="basketball_nba",
+            name="Miami Heat",
+            abbreviation="MIA",
+            primary_color="#98002E",
+            logo_url_small="https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/mia.png",
+            alternate_names=("Miami",),
+        ),
+        TeamSnapshot(
+            id=565,
+            sport_id=13,
+            sport_key="americanfootball_nfl",
+            name="Miami Dolphins",
+            abbreviation="MIA",
+            primary_color="#008E97",
+            logo_url_small="https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/mia.png",
+            alternate_names=("Miami",),
+        ),
+        TeamSnapshot(
+            id=10716,
+            sport_id=14,
+            sport_key="baseball_mlb",
+            name="Miami Marlins",
+            abbreviation="MIA",
+            primary_color="#00A3E0",
+            logo_url_small="https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/mia.png",
+            alternate_names=("Miami",),
+        ),
+        TeamSnapshot(
+            id=58,
+            sport_id=10,
+            sport_key="icehockey_nhl",
+            name="Carolina Hurricanes",
+            abbreviation="CAR",
+            primary_color="#CE1126",
+            logo_url_small="https://a.espncdn.com/i/teamlogos/nhl/500/scoreboard/car.png",
+            alternate_names=("Carolina",),
+        ),
+        TeamSnapshot(
+            id=548,
+            sport_id=13,
+            sport_key="americanfootball_nfl",
+            name="Carolina Panthers",
+            abbreviation="CAR",
+            primary_color="#0085CA",
+            logo_url_small="https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/car.png",
+            alternate_names=("Carolina",),
+        ),
+    ]
+    lookup = _dedupe_team_name_lookup(teams)
+    resolver = SubjectArtResolver(team_lookup=lookup)
+
+    for bad_sk in ("basketball_nba", "americanfootball_ncaaf", "baseball_mlb"):
+        art = resolver.resolve("Miami", sport_key=bad_sk, allow_team_lookup=True)
+        assert art["kind"] == "monogram", (bad_sk, art)
+        assert art["url"] is None, (bad_sk, art)
+
+    nfl_miami = resolver.resolve("Miami", sport_key="americanfootball_nfl", allow_team_lookup=True)
+    assert nfl_miami["url"] and "/nfl/" in nfl_miami["url"]
+
+    nhl_carolina = resolver.resolve("Carolina", sport_key="icehockey_nhl", allow_team_lookup=True)
+    assert nhl_carolina["kind"] == "monogram"
+    assert nhl_carolina["url"] is None
+
+    nhl_kings = resolver.resolve("Kings", sport_key="icehockey_nhl", allow_team_lookup=True)
+    assert nhl_kings["kind"] == "monogram"
+    assert nhl_kings["url"] is None
+
+    for mlb_name in ("Giants", "Cardinals"):
+        mlb_art = resolver.resolve(mlb_name, sport_key="baseball_mlb", allow_team_lookup=True)
+        assert mlb_art["kind"] == "monogram", (mlb_name, mlb_art)
+        assert mlb_art["url"] is None, (mlb_name, mlb_art)

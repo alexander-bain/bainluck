@@ -598,6 +598,38 @@ _PLACEHOLDER_CREST_SUFFIX = "/default.png"
 _TEAM_CLUB_PREFIX_RE = re.compile(r"^(?:fc|cf|sc|ac|afc|sv|fk)\s+", re.IGNORECASE)
 _TEAM_CLUB_SUFFIX_RE = re.compile(r"\s+(?:fc|cf|sc|ac|afc)$", re.IGNORECASE)
 _TEAM_STATIC_LOGO_KINDS: frozenset[str] = frozenset({"team_logo", "espn_team_logo"})
+_ESPN_TEAMLOGO_LEAGUE_RE = re.compile(r"/teamlogos/([a-z0-9_-]+)/", re.IGNORECASE)
+_ESPN_LEAGUE_SPORT_PREFIXES: dict[str, tuple[str, ...]] = {
+    "nfl": ("americanfootball_nfl",),
+    "nba": ("basketball_nba",),
+    "wnba": ("basketball_wnba",),
+    "nhl": ("icehockey_nhl",),
+    "mlb": ("baseball_mlb",),
+    "soccer": ("soccer_",),
+    "ncaa": ("americanfootball_ncaaf", "basketball_ncaab", "basketball_wncaab", "baseball_ncaa", "lacrosse_ncaa"),
+}
+
+
+def _static_team_logo_matches_sport(
+    url: Optional[str],
+    sport_key: Optional[str],
+) -> bool:
+    if not url or not sport_key:
+        return True
+    m = _ESPN_TEAMLOGO_LEAGUE_RE.search(url)
+    if not m:
+        return True
+    espn_league = m.group(1).lower()
+    allowed = _ESPN_LEAGUE_SPORT_PREFIXES.get(espn_league)
+    if allowed is None:
+        return True
+    sk = sport_key.strip().lower()
+    return any(
+        sk.startswith(prefix) if prefix.endswith("_") else (sk == prefix or sk.startswith(f"{prefix}_"))
+        for prefix in allowed
+    )
+
+
 _TEAM_LOOKUP_INDEX_CACHE: Optional[
     tuple[Any, dict[str, list[str]], dict[str, str]]
 ] = None
@@ -1055,8 +1087,11 @@ class SubjectArtResolver:
         nk = _norm_key(clean_subj) or _norm_key(subject)
         fk = _ascii_fold_key(clean_subj) or _ascii_fold_key(subject)
         hit = self._by_norm.get(nk) or (self._by_norm.get(fk) if fk else None)
-        if allow_team_lookup is False and hit and hit.get("kind") in _TEAM_STATIC_LOGO_KINDS:
-            hit = None
+        if hit and hit.get("kind") in _TEAM_STATIC_LOGO_KINDS:
+            if allow_team_lookup is False or not _static_team_logo_matches_sport(
+                hit.get("url"), sport_key
+            ):
+                hit = None
         url = explicit_url or (hit["url"] if hit else None)
         color = explicit_color or (hit.get("accent_color") if hit else None) or _fallback_color(clean_subj or subject)
         out: dict[str, Any] = {
