@@ -65,15 +65,26 @@ def _active_runs(
     )
 
 
+def _run_inventory(api, endpoint: str, now: datetime) -> dict:
+    def read():
+        return {
+            run["id"]: run
+            for status in ("queued", "in_progress")
+            for run in _active_runs(api, endpoint, status, now)
+        }
+
+    try:
+        return read()
+    except (OSError, ValueError):
+        # A run can finish between pages, or a list request can time out.
+        return read()
+
+
 def machine_queue(api, repo: str, now: datetime) -> dict | None:
     """Return run counts and the independent job counts used for dock attribution."""
     prefix = f"repos/{repo}/actions/runs"
     try:
-        runs = {
-            run["id"]: run
-            for status in ("queued", "in_progress")
-            for run in _active_runs(api, prefix, status, now)
-        }
+        runs = _run_inventory(api, prefix, now)
 
         def jobs(run):
             endpoint = f'{prefix}/{run["id"]}/jobs'

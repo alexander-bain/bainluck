@@ -152,3 +152,18 @@ class TestMachineQueue(unittest.TestCase):
 
         self.response = partial
         self.assertIsNone(self.measured())
+
+    def test_retries_an_inventory_that_shifted_during_the_read(self):
+        original = self.response
+        incomplete = True
+
+        def shifting(endpoint, **kwargs):
+            nonlocal incomplete
+            result = original(endpoint, **kwargs)
+            if incomplete and "status=queued" in endpoint:
+                incomplete = False
+                result["total_count"] += 1
+            return result
+
+        self.response = shifting
+        self.assertEqual(self.measured()["display"]["waiting"], 1)

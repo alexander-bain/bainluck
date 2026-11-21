@@ -27,7 +27,7 @@ export default function ChecksQueue({ queue }: { queue?: QueueReading }) {
           </dl>
         </>
       ) : <p>Queue details are missing from this read.</p>}
-      <p className={styles.queueHelp}>Every change has to pass checks on a borrowed machine, so when more changes arrive than there are machines, they wait here.</p>
+      <p className={styles.queueHelp}>Every change must pass checks on a borrowed machine, so it waits here when all the machines are busy.</p>
       {queue && queue.queued_without_jobs > 0 && (
         <small>GitHub lists {queue.queued_without_jobs} {queue.queued_without_jobs === 1 ? "queued run" : "queued runs"} with no job details.</small>
       )}
