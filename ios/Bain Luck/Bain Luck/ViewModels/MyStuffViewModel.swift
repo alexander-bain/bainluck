@@ -190,6 +190,11 @@ final class MyStuffViewModel: ObservableObject {
     /// prove refresh is armed right after the required publish, even while the
     /// optional futures request is still hung.
     private(set) var refreshArmed = false
+    private var hasPins = false
+
+    func setHasPins(_ value: Bool) {
+        hasPins = value
+    }
 
     // MARK: - Owned load rail
 
@@ -468,7 +473,8 @@ final class MyStuffViewModel: ObservableObject {
                 // is not visible from here; report it as unknown rather than guessing.
                 cacheOutcome: "unknown",
                 cacheAgeSeconds: -1,
-                outcomeClass: outcome
+                outcomeClass: outcome,
+                hasPins: hasPins
             )
         )
     }

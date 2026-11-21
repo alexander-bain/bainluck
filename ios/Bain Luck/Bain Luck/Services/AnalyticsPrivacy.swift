@@ -97,6 +97,8 @@ enum AnalyticsPrivacy {
         // Push (Queue 311 A4 / #1159) — the client half of the digest funnel.
         // The server emits `push_sent`; this is the open that joins to it.
         "push_opened",
+        // Set hubs & game-page interactions (#13261 rows 9 & 10)
+        "collection_hub_action", "game_page_action",
     ]
 
     /// Keys that must NEVER reach Firebase, even if some caller adds them. Raw
@@ -149,6 +151,8 @@ enum AnalyticsPrivacy {
         // contract on its merits, which is worth stating rather than assuming,
         // because "id" in a key name is normally the reason to refuse.
         "payload_id",
+        // Set hubs, game-page interactions & My Stuff pin presence (#13261 rows 9 & 10)
+        "slug", "action_kind", "section", "has_pins", "state",
     ]
 
     // MARK: - Value scrubbing
@@ -193,6 +197,20 @@ enum AnalyticsPrivacy {
         guard let campaignIdPattern else { return false }
         let range = NSRange(value.startIndex..., in: value)
         return campaignIdPattern.firstMatch(in: value, options: [], range: range) != nil
+    }
+
+    private static let slugPattern = try? NSRegularExpression(
+        pattern: "^[a-z0-9][a-z0-9_-]{0,63}$", options: []
+    )
+
+    /// Shape guard for collection slugs so multi-word hyphenated slugs longer than
+    /// `tokenPattern`'s 24-char limit (e.g. `academy-awards-best-picture`) pass intact
+    /// while unbroken 24+ char random tokens or strings with URLs/emails/spaces drop.
+    static func isSafeSlug(_ value: String) -> Bool {
+        guard let slugPattern else { return false }
+        let range = NSRange(value.startIndex..., in: value)
+        guard slugPattern.firstMatch(in: value, options: [], range: range) != nil else { return false }
+        return value.count < 24 || value.contains("-") || value.contains("_")
     }
     private static let tokenPattern = try? NSRegularExpression(
         pattern: "[A-Za-z0-9_\\-]{24,}", options: []
@@ -271,6 +289,12 @@ enum AnalyticsPrivacy {
                 // and `scrub` would rewrite its date to `[number]`. Anything
                 // not matching the campaign shape is dropped outright.
                 if let string = value as? String, isCampaignId(string) {
+                    out[key] = string
+                }
+                continue
+            }
+            if key == "slug" {
+                if let string = value as? String, isSafeSlug(string) {
                     out[key] = string
                 }
                 continue
