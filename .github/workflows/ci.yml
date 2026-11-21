@@ -261,7 +261,8 @@ jobs:
         run: echo "Full CI validates this candidate; no live-path gate is selected."
 
       - uses: actions/checkout@v6
-        if: needs.change-scope.outputs.live == 'true'
+      - name: Check call keywords across backend/app (#13281)
+        run: python3 .github/scripts/check_call_keywords.py backend/app
       - uses: actions/setup-python@v7
         if: needs.change-scope.outputs.live == 'true'
         with:
