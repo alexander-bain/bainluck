@@ -890,12 +890,11 @@ def main():
         add_events(result, snapshot, previous, cache)
         add_journeys(result, previous)
         add_signs(result, snapshot, previous)
-        if snapshot.get("master_ci_active") and any(
-            s["kind"] == "line-stalled" for s in result["stops"]
-        ):
-            attach_machine_reason(
-                result, machine_queue(api, REPO, datetime.now(timezone.utc))
-            )
+        queue = machine_queue(api, REPO, datetime.now(timezone.utc))
+        if queue is not None:
+            result["signals"]["checks_queue"] = queue["display"]
+            if snapshot.get("master_ci_active"):
+                attach_machine_reason(result, queue["master_jobs"])
 
         def save_meter(body):
             api.request(

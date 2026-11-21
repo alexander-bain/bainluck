@@ -133,3 +133,30 @@ it("shows an unavailable floor and the last good time without any historical cou
   expect(html).not.toContain("Shipped today");
   expect(html).not.toContain("Saved snapshot");
 });
+
+it("shows the full Checks queue and preserves the floor when its reading is invalid", async () => {
+  const queue = {
+    waiting: 131, running: 12, machines: 40,
+    longest_wait_minutes: 1, queued_without_jobs: 2,
+  };
+  const read = createFactoryReader(jest.fn()
+    .mockResolvedValueOnce({ ...response, json: async () => ({
+      ...snapshot, signals: { ...snapshot.signals, checks_queue: queue },
+    }) })
+    .mockResolvedValueOnce({ ...response, json: async () => ({
+      ...snapshot, signals: { ...snapshot.signals, checks_queue: { ...queue, waiting: -1 } },
+    }) }));
+  const html = renderToStaticMarkup(
+    <FactoryFloor {...await read()} renderedAt="2026-11-18T15:59:00Z" />,
+  );
+  expect(html).toContain('data-queue-waiting="131"');
+  expect(html).toContain("Runs running</dt><dd>12");
+  expect(html).toContain("Borrowed machines</dt><dd>40");
+  expect(html).toContain("Longest wait</dt><dd>1 minute");
+  expect(html).toContain("GitHub lists 2 queued runs with no job details.");
+  const invalid = renderToStaticMarkup(
+    <FactoryFloor {...await read()} renderedAt="2026-11-18T15:59:00Z" />,
+  );
+  expect(invalid).toContain("Queue details are missing from this read.");
+  expect(invalid).toContain('data-factory-row="Server"');
+});

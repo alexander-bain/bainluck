@@ -33,6 +33,7 @@ import styles from "./factory.module.css";
 import Worker, { type WorkerState } from "./Worker";
 import EventScene from "./EventScene";
 import CrateJourney from "./CrateJourney";
+import ChecksQueue from "./ChecksQueue";
 import FactoryMascot, { MascotMove, mascotAction } from "./FactoryMascot";
 import InjurySign from "./InjurySign";
 import { builderOfDay, clipboard, median } from "./signs";
@@ -684,6 +685,7 @@ export default function FactoryFloor({
             </div>
           </details>
         )}
+        <ChecksQueue queue={data.signals.checks_queue} />
         <div className={styles.scrollHint}>
           <ArrowRight size={14} /> Scroll across to follow the line
         </div>
