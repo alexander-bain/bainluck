@@ -4,6 +4,7 @@ All endpoints require the admin secret and cache responses in Redis
 to avoid hammering the GA4 API on repeated loads.
 """
 
+from datetime import date, datetime, timezone
 import json
 import logging
 from typing import Any
@@ -218,6 +219,151 @@ def _classify_page_section(path: str) -> str:
     return "other"
 
 
+def _clean_landing_path(raw: str | None) -> str:
+    """Strip query strings and fragments so no tokens or UTM noise leak into admin tables."""
+    p = str(raw or "").strip()
+    if not p or p == "(not set)":
+        return "(not set)"
+    p = p.split("#", 1)[0].split("?", 1)[0].strip()
+    if not p:
+        return "/"
+    if not p.startswith("/") and p != "(not set)":
+        p = "/" + p
+    return p
+
+
+def _split_source_medium(raw: str | None) -> tuple[str, str]:
+    """Split GA4 sessionSourceMedium ('google / organic') into (source, medium)."""
+    val = str(raw or "").strip()
+    if not val:
+        return ("(direct)", "(none)")
+    if " / " in val:
+        src, med = val.split(" / ", 1)
+        return (src.strip() or "(direct)", med.strip() or "(none)")
+    if "/" in val:
+        src, med = val.split("/", 1)
+        return (src.strip() or "(direct)", med.strip() or "(none)")
+    return (val, "(none)")
+
+
+def _parse_cohort_date(raw: str | None) -> date | None:
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_nth_day(raw: str | None) -> int | None:
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
+
+
+def _summarize_cohort_retention(
+    cohort_rows: list[dict[str, Any]],
+    *,
+    today: date | None = None,
+) -> dict[str, Any]:
+    """Aggregate GA4 CohortSpec rows into Day-2 (+1d) and Day-7 (+6d) cohort retention (#13261 Row 3).
+
+    Only cohorts old enough to have reached Day 2 (age >= 1 day) contribute to the
+    Day-2 denominator, and only cohorts old enough to have reached Day 7 (age >= 6 days)
+    contribute to the Day-7 denominator.
+    """
+    anchor = today or datetime.now(timezone.utc).date()
+    by_cohort: dict[str, dict[str, Any]] = {}
+
+    for row in cohort_rows:
+        cohort_name = str(row.get("cohort", "")).strip()
+        if not cohort_name:
+            continue
+        nth_day = _parse_nth_day(row.get("cohortNthDay"))
+        if nth_day is None:
+            continue
+        active = int(row.get("cohortActiveUsers", 0) or 0)
+        total = int(row.get("cohortTotalUsers", 0) or 0)
+
+        entry = by_cohort.setdefault(
+            cohort_name,
+            {
+                "cohortDate": cohort_name,
+                "cohortSize": 0,
+                "day2Users": 0,
+                "day7Users": 0,
+            },
+        )
+        if total > entry["cohortSize"]:
+            entry["cohortSize"] = total
+        if nth_day == 0 and active > entry["cohortSize"]:
+            entry["cohortSize"] = active
+        elif nth_day == 1:
+            entry["day2Users"] = active
+        elif nth_day == 6:
+            entry["day7Users"] = active
+
+    cohorts_out: list[dict[str, Any]] = []
+    day2_users_sum = 0
+    day2_base_sum = 0
+    day7_users_sum = 0
+    day7_base_sum = 0
+
+    for cohort_name in sorted(by_cohort.keys()):
+        entry = by_cohort[cohort_name]
+        c_date = _parse_cohort_date(cohort_name)
+        age_days = (anchor - c_date).days if c_date is not None else 7
+        size = int(entry["cohortSize"])
+        d2_eligible = age_days >= 1 and size > 0
+        d7_eligible = age_days >= 6 and size > 0
+
+        d2_users = int(entry["day2Users"]) if d2_eligible else 0
+        d7_users = int(entry["day7Users"]) if d7_eligible else 0
+        d2_rate = round(d2_users / size * 100, 1) if d2_eligible else None
+        d7_rate = round(d7_users / size * 100, 1) if d7_eligible else None
+
+        if d2_eligible:
+            day2_users_sum += d2_users
+            day2_base_sum += size
+        if d7_eligible:
+            day7_users_sum += d7_users
+            day7_base_sum += size
+
+        cohorts_out.append(
+            {
+                "cohortDate": cohort_name,
+                "cohortSize": size,
+                "day2Users": d2_users,
+                "day2Rate": d2_rate,
+                "day2Eligible": d2_eligible,
+                "day7Users": d7_users,
+                "day7Rate": d7_rate,
+                "day7Eligible": d7_eligible,
+            }
+        )
+
+    return {
+        "day2RetentionRate": round(day2_users_sum / day2_base_sum * 100, 1)
+        if day2_base_sum > 0
+        else None,
+        "day7RetentionRate": round(day7_users_sum / day7_base_sum * 100, 1)
+        if day7_base_sum > 0
+        else None,
+        "day2Users": day2_users_sum,
+        "day2CohortBase": day2_base_sum,
+        "day7Users": day7_users_sum,
+        "day7CohortBase": day7_base_sum,
+        "cohorts": cohorts_out,
+    }
+
+
 @router.get("/analytics/overview")
 async def analytics_overview(
     request: Request,
@@ -379,7 +525,7 @@ async def analytics_retention(
     secret: str = Query(None, description="Admin secret"),
     period: str = Query("30d", description="Period: 7d, 14d, 30d, or 90d"),
 ):
-    """Daily/weekly retention cohorts: new vs returning users."""
+    """Daily/weekly retention cohorts: new vs returning users + Day-2 / Day-7 cohorts (#13261 Row 3)."""
     _check_admin_secret(secret, request=request)
 
     period = _normalize_period(period, default="30d")
@@ -388,7 +534,7 @@ async def analytics_retention(
     if cached:
         return cached
 
-    from app.services.ga4_api import get_user_retention
+    from app.services.ga4_api import get_cohort_retention, get_user_retention, run_report
 
     start_date = _period_to_start_date(period, default="30daysAgo")
 
@@ -398,22 +544,51 @@ async def analytics_retention(
         logger.error("GA4 retention query failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"GA4 API error: {exc}")
 
+    # True Day-2 / Day-7 cohort retention from GA4 CohortSpec (graceful fallback if unavailable)
+    cohort_days = 7 if period == "7d" else 14
+    cohort_rows: list[dict[str, Any]] = []
+    try:
+        cohort_rows = get_cohort_retention(days=cohort_days, max_offset=7)
+    except Exception as exc:
+        logger.warning("GA4 cohort retention query unavailable: %s", exc)
+    cohort_summary = _summarize_cohort_retention(cohort_rows)
+
+    # Consented return_visit event totals (web + iOS)
+    return_visit_events = 0
+    return_visit_users = 0
+    try:
+        ev_rows = run_report(
+            dimensions=["eventName"],
+            metrics=["eventCount", "totalUsers"],
+            start_date=start_date,
+            end_date="today",
+            limit=100,
+            order_by_metric="eventCount",
+        )
+        for row in ev_rows:
+            if row.get("eventName") == "return_visit":
+                return_visit_events = int(row.get("eventCount", 0) or 0)
+                return_visit_users = int(row.get("totalUsers", 0) or 0)
+                break
+    except Exception as exc:
+        logger.warning("GA4 return_visit query unavailable: %s", exc)
+
     # Reshape into daily buckets with new/returning split
     daily: dict[str, dict[str, Any]] = {}
     for row in raw_data:
-        date = row.get("date", "")
+        day = row.get("date", "")
         segment = row.get("newVsReturning", "unknown")
         users = int(row.get("activeUsers", 0))
         sessions = int(row.get("sessions", 0))
 
-        if date not in daily:
-            daily[date] = {"date": date, "new": 0, "returning": 0, "newSessions": 0, "returningSessions": 0}
+        if day not in daily:
+            daily[day] = {"date": day, "new": 0, "returning": 0, "newSessions": 0, "returningSessions": 0}
         if segment == "new":
-            daily[date]["new"] = users
-            daily[date]["newSessions"] = sessions
+            daily[day]["new"] = users
+            daily[day]["newSessions"] = sessions
         elif segment == "returning":
-            daily[date]["returning"] = users
-            daily[date]["returningSessions"] = sessions
+            daily[day]["returning"] = users
+            daily[day]["returningSessions"] = sessions
 
     sorted_daily = sorted(daily.values(), key=lambda d: d["date"])
 
@@ -429,8 +604,202 @@ async def analytics_retention(
             "totalNewUsers": total_new,
             "totalReturningUsers": total_returning,
             "retentionRate": retention_rate,
+            "day2RetentionRate": cohort_summary["day2RetentionRate"],
+            "day7RetentionRate": cohort_summary["day7RetentionRate"],
+            "day2Users": cohort_summary["day2Users"],
+            "day2CohortBase": cohort_summary["day2CohortBase"],
+            "day7Users": cohort_summary["day7Users"],
+            "day7CohortBase": cohort_summary["day7CohortBase"],
+            "returnVisitEvents": return_visit_events,
+            "returnVisitUsers": return_visit_users,
         },
+        "cohorts": cohort_summary["cohorts"],
         "daily": sorted_daily,
+    }
+
+    await _cache_set(cache_key, result, CACHE_TTL_STANDARD)
+    return result
+
+
+@router.get("/analytics/acquisition")
+async def analytics_acquisition(
+    request: Request,
+    secret: str = Query(None, description="Admin secret"),
+    period: str = Query("14d", description="Period: 7d, 14d, 30d, or 90d"),
+):
+    """Acquisition sources (sessionSourceMedium + shared_link_open) and first-visit landing paths (#13261 Row 3).
+
+    Reads consented GA4 data only (181-C); query parameters are stripped from landing paths.
+    """
+    _check_admin_secret(secret, request=request)
+
+    period = _normalize_period(period, default="14d")
+    cache_key = f"acquisition:{period}"
+    cached = await _cache_get(cache_key)
+    if cached:
+        return cached
+
+    from app.services.ga4_api import run_report
+
+    start_date = _period_to_start_date(period, default="14daysAgo")
+
+    try:
+        source_rows = run_report(
+            dimensions=["sessionSourceMedium"],
+            metrics=["newUsers", "activeUsers", "sessions", "engagedSessions"],
+            start_date=start_date,
+            end_date="today",
+            limit=50,
+            order_by_metric="sessions",
+        )
+
+        shared_rows = run_report(
+            dimensions=["eventName", "sessionSourceMedium"],
+            metrics=["eventCount", "totalUsers"],
+            start_date=start_date,
+            end_date="today",
+            limit=100,
+            order_by_metric="eventCount",
+        )
+
+        landing_rows = run_report(
+            dimensions=["landingPagePlusQueryString", "newVsReturning"],
+            metrics=["sessions", "activeUsers", "engagedSessions"],
+            start_date=start_date,
+            end_date="today",
+            limit=150,
+            order_by_metric="sessions",
+        )
+
+        first_visit_rows = run_report(
+            dimensions=["pagePath", "eventName"],
+            metrics=["eventCount", "totalUsers"],
+            start_date=start_date,
+            end_date="today",
+            limit=150,
+            order_by_metric="eventCount",
+        )
+    except Exception as exc:
+        logger.error("GA4 acquisition query failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"GA4 API error: {exc}")
+
+    sources: list[dict[str, Any]] = []
+    total_new_users = 0
+    total_sessions = 0
+    for row in source_rows:
+        sm = str(row.get("sessionSourceMedium") or "(direct) / (none)").strip()
+        src, med = _split_source_medium(sm)
+        new_u = int(row.get("newUsers", 0) or 0)
+        act_u = int(row.get("activeUsers", 0) or 0)
+        sess = int(row.get("sessions", 0) or 0)
+        eng = int(row.get("engagedSessions", 0) or 0)
+        total_new_users += new_u
+        total_sessions += sess
+        sources.append(
+            {
+                "sourceMedium": sm,
+                "source": src,
+                "medium": med,
+                "newUsers": new_u,
+                "activeUsers": act_u,
+                "sessions": sess,
+                "engagedSessions": eng,
+            }
+        )
+
+    shared_by_source: list[dict[str, Any]] = []
+    shared_total_events = 0
+    shared_total_users = 0
+    for row in shared_rows:
+        if row.get("eventName") != "shared_link_open":
+            continue
+        sm = str(row.get("sessionSourceMedium") or "(direct) / (none)").strip()
+        src, med = _split_source_medium(sm)
+        cnt = int(row.get("eventCount", 0) or 0)
+        usr = int(row.get("totalUsers", 0) or 0)
+        shared_total_events += cnt
+        shared_total_users += usr
+        shared_by_source.append(
+            {
+                "sourceMedium": sm,
+                "source": src,
+                "medium": med,
+                "events": cnt,
+                "users": usr,
+            }
+        )
+
+    # First-visit landing paths (new users only, query strings stripped)
+    landing_by_path: dict[str, dict[str, Any]] = {}
+    section_totals: dict[str, dict[str, int]] = {}
+    for row in landing_rows:
+        if str(row.get("newVsReturning") or "").strip().lower() != "new":
+            continue
+        clean_path = _clean_landing_path(row.get("landingPagePlusQueryString"))
+        section = _classify_page_section(clean_path)
+        sess = int(row.get("sessions", 0) or 0)
+        usr = int(row.get("activeUsers", 0) or 0)
+        eng = int(row.get("engagedSessions", 0) or 0)
+
+        entry = landing_by_path.setdefault(
+            clean_path,
+            {
+                "path": clean_path,
+                "section": section,
+                "sessions": 0,
+                "users": 0,
+                "engagedSessions": 0,
+            },
+        )
+        entry["sessions"] += sess
+        entry["users"] += usr
+        entry["engagedSessions"] += eng
+
+        sec = section_totals.setdefault(
+            section, {"section": section, "sessions": 0, "users": 0, "engagedSessions": 0}
+        )
+        sec["sessions"] += sess
+        sec["users"] += usr
+        sec["engagedSessions"] += eng
+
+    first_visit_events: list[dict[str, Any]] = []
+    for row in first_visit_rows:
+        ev = str(row.get("eventName") or "").strip()
+        if ev not in {"first_visit", "session_open"}:
+            continue
+        clean_path = _clean_landing_path(row.get("pagePath"))
+        first_visit_events.append(
+            {
+                "eventName": ev,
+                "path": clean_path,
+                "section": _classify_page_section(clean_path),
+                "events": int(row.get("eventCount", 0) or 0),
+                "users": int(row.get("totalUsers", 0) or 0),
+            }
+        )
+
+    result = {
+        "period": period,
+        "summary": {
+            "totalNewUsers": total_new_users,
+            "totalSessions": total_sessions,
+            "sourceCount": len(sources),
+            "sharedLinkOpens": shared_total_events,
+            "sharedLinkUsers": shared_total_users,
+        },
+        "sources": sorted(sources, key=lambda r: (-r["newUsers"], -r["sessions"])),
+        "sharedLinks": {
+            "totalEvents": shared_total_events,
+            "totalUsers": shared_total_users,
+            "bySourceMedium": sorted(shared_by_source, key=lambda r: -r["events"]),
+        },
+        "firstVisitLandingPaths": sorted(
+            landing_by_path.values(), key=lambda r: (-r["sessions"], -r["users"])
+        )[:50],
+        "firstLandingBySection": sorted(
+            section_totals.values(), key=lambda r: (-r["sessions"], -r["users"])
+        ),
+        "firstVisitEvents": sorted(first_visit_events, key=lambda r: -r["events"])[:50],
     }
 
     await _cache_set(cache_key, result, CACHE_TTL_STANDARD)
