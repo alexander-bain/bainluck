@@ -18,6 +18,12 @@ export interface LaneSpeech {
   source: "model" | "facts";
 }
 
+export interface StationVisit {
+  station: Station;
+  first_seen_at: string;
+  last_seen_at?: string;
+}
+
 export interface Change {
   number: number;
   title: string;
@@ -46,6 +52,7 @@ export interface Change {
   check_progress?: { done: number; total: number };
   approvals?: { bot?: string; fable?: string };
   bench_seen_at?: string;
+  journey?: StationVisit[];
 }
 
 export const factoryEventKinds = [
