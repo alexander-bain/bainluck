@@ -2300,3 +2300,63 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   }
   .records:not(:has(> details[open])) .shelfGroup { grid-column: 1 / -1; }
 }
+
+.builderNamePanel {
+  margin: 6px var(--floor-inset) 12px;
+  max-width: 980px;
+  padding: 8px 12px;
+  color: var(--ink);
+  font-size: var(--screen-type, 14px);
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--floor);
+}
+.builderNamePanel summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.builderNamePanel p {
+  margin: 8px 0;
+  color: var(--secondary);
+}
+.builderNameInputs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.builderNameInputs label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.builderNameInputs input,
+.builderNamePanel button {
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  color: var(--ink);
+  background: var(--paper);
+  padding: 6px 8px;
+  font: inherit;
+}
+.builderNameInputs input {
+  width: 100%;
+  min-width: 0;
+  font-size: max(16px, var(--screen-type, 14px));
+}
+.builderNamePanel button {
+  margin-top: 10px;
+}
+.nameTag,
+.bayWorkerName,
+.inspectionDesk,
+.builderDay > div,
+.speechBubble > strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.nameTag { max-width: 100%; text-align: center; }
+.speechBubble > strong { white-space: normal; }
+
+@media (max-width: 720px) {
+  .builderNameInputs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

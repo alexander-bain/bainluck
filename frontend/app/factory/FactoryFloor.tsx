@@ -31,6 +31,11 @@ import type { Builder, Change, FactoryData, Jam, Line, Station, Stop } from "./t
 import styles from "./factory.module.css";
 import Worker, { type WorkerState } from "./Worker";
 import EventScene from "./EventScene";
+import BuilderNamePanel from "./BuilderNamePanel";
+import {
+  builders, holdAuthorName, useBuilderNames,
+  type FactoryNames, type NamedBuilder,
+} from "./builderNames";
 import CrateJourney from "./CrateJourney";
 import ChecksQueue from "./ChecksQueue";
 import FactoryMascot, { MascotMove, mascotAction } from "./FactoryMascot";
@@ -74,20 +79,6 @@ const pacificPostingTime = new Intl.DateTimeFormat("en-US", {
   hour: "numeric",
   minute: "2-digit",
 });
-type NamedBuilder = Exclude<Builder, "Other">;
-const builders: { key: NamedBuilder; name: string }[] = [
-  { key: "S", name: "Speed" },
-  { key: "B", name: "Builder B" },
-  { key: "C", name: "Builder C" },
-  { key: "D", name: "Atlas" },
-  { key: "E", name: "Builder E" },
-  { key: "F", name: "Apple" },
-  { key: "W", name: "Wee-Bey" },
-];
-const names = {
-  ...Object.fromEntries(builders.map(({ key, name }) => [key, name])),
-  Other: "Earlier work",
-} as Record<Builder, string>;
 const lineIcons = { Server, Website: Monitor, Apps: Smartphone };
 const stationIcons = {
   Write: Hammer,
@@ -138,7 +129,7 @@ function bayCrates(changes: Change[], line: Line, station: Station) {
     );
 }
 
-function HoldOrigin({ stop }: { stop: Stop }) {
+function HoldOrigin({ stop, names }: { stop: Stop; names: FactoryNames }) {
   if (!stop.source) return null;
   return (
     <small className={styles.stopOrigin}>
@@ -147,12 +138,12 @@ function HoldOrigin({ stop }: { stop: Stop }) {
       >
         NOW · stuck
       </a>
-      {` · ${time(stop.since)} PT · ${stop.source.author}`}
+      {` · ${time(stop.since)} PT · ${holdAuthorName(stop.source.author, names)}`}
     </small>
   );
 }
 
-function notice(stop: Stop, now: string) {
+function notice(stop: Stop, now: string, names: FactoryNames) {
   return (
     <p key={`${stop.kind}-${stop.line}`} data-level={stop.level}>
       <span aria-hidden="true">{stop.level === "red" ? "■" : "▲"}</span>{" "}
@@ -161,7 +152,7 @@ function notice(stop: Stop, now: string) {
       {stop.machines && (
         <small className={styles.stopOrigin}>{machineText(stop.machines)}</small>
       )}
-      {stop.kind === "hold" && <HoldOrigin stop={stop} />}
+      {stop.kind === "hold" && <HoldOrigin stop={stop} names={names} />}
     </p>
   );
 }
@@ -169,11 +160,13 @@ function notice(stop: Stop, now: string) {
 function StackLight({
   verdict,
   hold,
+  names,
   now,
   children,
 }: {
   verdict: FloorVerdict;
   hold?: Stop;
+  names: FactoryNames;
   now: string;
   children?: ReactNode;
 }) {
@@ -193,7 +186,7 @@ function StackLight({
       <div>
         <strong>{verdict.text}</strong>
         {waited && <small className={styles.stopOrigin}>{waited}</small>}
-        {hold && <HoldOrigin stop={hold} />}
+        {hold && <HoldOrigin stop={hold} names={names} />}
       </div>
       {children}
     </div>
@@ -236,6 +229,7 @@ export default function FactoryFloor(initial: {
   const [selectedGroup, selectGroup] = useState<CrateGroup | null>(null);
   const [followed, setFollowed] = useState<number[]>([]);
   const [speaker, setSpeaker] = useState<NamedBuilder>();
+  const { names, ...nameEditor } = useBuilderNames();
   const [knownGoodAt, setKnownGoodAt] = useState(readAt ?? lastGoodAt);
   const [lastShown, setLastShown] = useState({ data: snapshot, readAt });
   // Keep the open page intact if a refresh lands on a server with an empty cache.
@@ -265,9 +259,9 @@ export default function FactoryFloor(initial: {
   const journal = useReplayJournal(data, today);
   const replay = useDayReplay(motion);
   const speech = data?.speech;
-  const speakers = useMemo(() => builders.filter(({ key }) => speech?.[key]), [speech]);
-  const currentSpeaker = speakers.find(({ key }) => key === speaker) ?? speakers[0];
-  const currentSpeech = currentSpeaker && speech?.[currentSpeaker.key];
+  const speakers = useMemo(() => builders.filter(key => speech?.[key]), [speech]);
+  const currentSpeaker = speakers.find(key => key === speaker) ?? speakers[0];
+  const currentSpeech = currentSpeaker && speech?.[currentSpeaker];
   const firstTransferRead = useRef(data?.generated_at);
   firstTransferRead.current ??= data?.generated_at;
   const firstRead = firstTransferRead.current;
@@ -291,7 +285,7 @@ export default function FactoryFloor(initial: {
   useEffect(() => {
     if (!motion || !currentSpeaker || speakers.length < 2 || replay.session || selectedCrate || selectedGroup) return;
     const next = speakers[(speakers.indexOf(currentSpeaker) + 1) % speakers.length];
-    const timer = window.setTimeout(() => setSpeaker(next.key), SPEECH_INTERVAL_MS);
+    const timer = window.setTimeout(() => setSpeaker(next), SPEECH_INTERVAL_MS);
     return () => window.clearTimeout(timer);
   }, [motion, currentSpeaker, speakers, replay.session, selectedCrate, selectedGroup]);
 
@@ -370,7 +364,7 @@ export default function FactoryFloor(initial: {
             <h1>The Factory</h1>
           </div>
         </header>
-        <StackLight verdict={verdict} now={now}>
+        <StackLight verdict={verdict} names={names} now={now}>
           <FactoryMascot level={verdict.level} pose="asleep" />
         </StackLight>
         <section className={styles.unavailable}>
@@ -393,7 +387,7 @@ export default function FactoryFloor(initial: {
   const canRankDeliveries = !behind && pacificDay(data.generated_at) === today && data.coverage.length === 0;
   const dayLeader = canRankDeliveries ? builderOfDay(shipped) : null;
   const dayLeaders = dayLeader ? new Intl.ListFormat("en-US").format(
-    builders.filter(({ key }) => dayLeader.builders.includes(key)).map(({ name }) => name),
+    builders.filter(key => dayLeader.builders.includes(key)).map(key => names[key]),
   ) : null;
   const onFloor = data.changes.filter(onActiveFloor);
   const recordTime = behind ? data.generated_at : now;
@@ -514,7 +508,7 @@ export default function FactoryFloor(initial: {
         type="button"
         className={styles.voiceButton}
         aria-label={`Read ${names[id]}’s speech`}
-        aria-pressed={currentSpeaker?.key === id}
+        aria-pressed={currentSpeaker === id}
         aria-controls="factory-speech"
         onClick={() => setSpeaker(id)}
       >
@@ -595,7 +589,7 @@ export default function FactoryFloor(initial: {
       </header>
 
       <div className={styles.statusBand}>
-        <StackLight verdict={verdict} hold={holds[0]} now={now}>
+        <StackLight verdict={verdict} hold={holds[0]} names={names} now={now}>
           {!mascotMove && (
             <FactoryMascot
               level={verdict.level}
@@ -621,7 +615,7 @@ export default function FactoryFloor(initial: {
             <button type="button" onClick={replay.close}>Close replay</button>
             <strong>
               {replay.clock && `${time(replay.clock)} PT`}
-              {replay.finished ? " · Replay finished" : replay.playing ? ` · ${eventText(replay.playing.event)}` : ""}
+              {replay.finished ? " · Replay finished" : replay.playing ? ` · ${eventText(replay.playing.event, names.Fable)}` : ""}
             </strong>
             {replay.finished && (
               <button type="button" onClick={replay.restart}>
@@ -642,7 +636,7 @@ export default function FactoryFloor(initial: {
           </p>
           <ol>
             {replay.session.journal.events.map((event) => (
-              <li key={event.id}>{time(event.at)} PT · {event.line} · {eventText(event)}</li>
+              <li key={event.id}>{time(event.at)} PT · {event.line} · {eventText(event, names.Fable)}</li>
             ))}
           </ol>
         </details>
@@ -663,10 +657,10 @@ export default function FactoryFloor(initial: {
           <h2 id="floor-heading">The floor</h2>
           <ChecksQueue queue={data.signals.checks_queue} />
           {currentSpeaker && currentSpeech && (
-            <div className={styles.floorSpeech} id="factory-speech" data-floor-speech={currentSpeaker.key}>
-              <Worker identity={currentSpeaker.key} state={currentSpeech.mood} />
+            <div className={styles.floorSpeech} id="factory-speech" data-floor-speech={currentSpeaker}>
+              <Worker identity={currentSpeaker} state={currentSpeech.mood} />
               <p className={styles.speechBubble} data-source={currentSpeech.source}>
-                <strong>{currentSpeaker.name}</strong>{" "}{currentSpeech.text}
+                <strong>{names[currentSpeaker]}</strong>{" "}{currentSpeech.text}
               </p>
             </div>
           )}
@@ -693,7 +687,7 @@ export default function FactoryFloor(initial: {
         </div>
         {holds.length > 1 && (
           <div className={styles.stopNotices} role="status">
-            {holds.slice(1).map((stop) => notice(stop, now))}
+            {holds.slice(1).map((stop) => notice(stop, now, names))}
           </div>
         )}
         {floorAlertCount > 0 && (
@@ -703,7 +697,7 @@ export default function FactoryFloor(initial: {
               {floorAlertCount} floor {floorAlertCount === 1 ? "alert" : "alerts"}
             </summary>
             <div className={styles.stopNotices}>
-              {waits.map((stop) => notice(stop, now))}
+              {waits.map((stop) => notice(stop, now, names))}
               {otherAlerts.map((alert) => <p key={alert} data-level="amber">{alert}</p>)}
             </div>
           </details>
@@ -732,7 +726,7 @@ export default function FactoryFloor(initial: {
                     {station === "Review" && (
                       <div className={styles.inspectionDesk}>
                         <Worker identity="Fable" state="idle" />
-                        <span>Foreman</span>
+                        <span>{nameEditor.custom.Fable?.trim() ? names.Fable : "Foreman"}</span>
                       </div>
                     )}
                     {notes?.stations[stationNames[station]] && (
@@ -931,13 +925,13 @@ export default function FactoryFloor(initial: {
                               <span>#{check.number} · {check.check_progress.done} of {check.check_progress.total} checks</span>
                             )}
                             {inspection?.approvals?.bot && <span>Bot approved #{inspection.number}</span>}
-                            {inspection?.approvals?.fable && <span>Fable cleared #{inspection.number}</span>}
+                            {inspection?.approvals?.fable && <span>{names.Fable} cleared #{inspection.number}</span>}
                           </div>
                         </div>
                       );
                     })}
                     {reducedMotion === false && !behind && playing?.event.line === line && (
-                      <EventScene key={playing.event.id} {...playing} />
+                      <EventScene key={playing.event.id} {...playing} foreman={names.Fable} />
                     )}
                     {mascotMove && playing?.event.line === line && (
                       <MascotMove key={`mascot-${playing.event.id}`} {...playing} pose={mascotMove} />
@@ -1025,7 +1019,7 @@ export default function FactoryFloor(initial: {
                     {new Intl.ListFormat("en-US").format(selectedLines)} lines.
                   </p>
                 )}
-                {selected.sent_back && <p>Sent back by Fable.</p>}
+                {selected.sent_back && <p>Sent back by {names.Fable}.</p>}
                 {selected.testflight_build && (
                   <p>TestFlight build {selected.testflight_build} was posted.</p>
                 )}
@@ -1034,7 +1028,7 @@ export default function FactoryFloor(initial: {
                   <p>{selected.check_progress.done} of {selected.check_progress.total} checks finished.</p>
                 )}
                 {selected.approvals?.bot && <p>Bot approved.</p>}
-                {selected.approvals?.fable && <p>Fable cleared.</p>}
+                {selected.approvals?.fable && <p>{names.Fable} cleared.</p>}
                 {selected.unsure && <p>Unsure. {selected.reasons.join(" ")}</p>}
                 <CrateJourney changes={selectedCopies} through={data.generated_at} />
                 <a
@@ -1161,14 +1155,15 @@ export default function FactoryFloor(initial: {
               {clockedIn.size} clocked in
             </span>
           </summary>
+          <BuilderNamePanel {...nameEditor} />
           <div className={styles.builders}>
-            {builders.map((builder) => {
+            {builders.map((key) => {
               const crew = crewActivity(
                 data,
                 now,
-                visible.filter((c) => c.builder === builder.key),
+                visible.filter((c) => c.builder === key),
               );
-              const voice = data.speech?.[builder.key];
+              const voice = data.speech?.[key];
               const mood = voice?.mood ?? crew.pose;
               const pose = {
                 carrying: "Carrying",
@@ -1180,15 +1175,15 @@ export default function FactoryFloor(initial: {
               }[mood];
               return (
                 <div
-                  key={builder.key}
+                  key={key}
                   className={styles.builderCard}
-                  data-crew={builder.key}
+                  data-crew={key}
                   data-pose={mood}
                 >
-                  <Worker identity={builder.key} state={mood} />
-                  <strong className={styles.nameTag}>{builder.name}</strong>
-                  {builder.key === "W" && <small>Spare hand</small>}
-                  <span>{clockedIn.has(builder.key) ? "Clocked in" : "Quiet for 15 minutes"}</span>
+                  <Worker identity={key} state={mood} />
+                  <strong className={styles.nameTag}>{names[key]}</strong>
+                  {key === "W" && <small>Spare hand</small>}
+                  <span>{clockedIn.has(key) ? "Clocked in" : "Quiet for 15 minutes"}</span>
                   <span>{pose}{!voice && crew.change && ` #${crew.change.number}`}</span>
                   <p className={styles.crewSpeech} data-source={voice?.source}>
                     {voice?.text ?? "This lane’s speech is missing from this read."}
@@ -1270,13 +1265,13 @@ export default function FactoryFloor(initial: {
         <details className={styles.eventLog}>
           <summary className={styles.summary}>
             <ChevronRight size={13} aria-hidden="true" />
-            {livePlaying && !replay.session ? `${livePlaying.event.line} · ${eventText(livePlaying.event)}` : "Events from the last read"}
+            {livePlaying && !replay.session ? `${livePlaying.event.line} · ${eventText(livePlaying.event, names.Fable)}` : "Events from the last read"}
             {data.events && <span className={styles.sectionNote}>{data.events.length}</span>}
           </summary>
           {data.events?.length ? (
             <ol>
               {data.events.map((event) => (
-                <li key={event.id}>{time(event.at)} PT · {event.line} · {eventText(event)}</li>
+                <li key={event.id}>{time(event.at)} PT · {event.line} · {eventText(event, names.Fable)}</li>
               ))}
             </ol>
           ) : <p>{data.events ? "No new events in this read." : "Event details are missing from this read."}</p>}
