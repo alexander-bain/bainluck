@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import threading
 import time
 from typing import Any, Callable
@@ -145,6 +146,7 @@ def wait_for_health_commit(
     url = f"{base_url.rstrip('/')}/api/health"
     deadline = monotonic_fn() + max(0.0, health_wait_seconds)
     last_commit: str | None = None
+    last_error: str | None = None
     while True:
         try:
             status, body = http_get(url, min(timeout_seconds, 15.0))
@@ -156,9 +158,12 @@ def wait_for_health_commit(
                         last_commit = commit.strip()
                         if not expected_sha or _sha_matches(last_commit, expected_sha):
                             return last_commit
-        except (OSError, ValueError, TimeoutError):
-            pass
+        except (OSError, ValueError, TimeoutError) as exc:
+            # Dyno boot transiently drops or returns non-JSON while /api/health comes up; retry until deadline.
+            last_error = f"{type(exc).__name__}: {exc}"
         if monotonic_fn() >= deadline or poll_interval_seconds <= 0:
+            if last_commit is None and last_error is not None:
+                print(f"health poll finished without commit ({last_error})", file=sys.stderr)
             return last_commit
         sleep_fn(min(poll_interval_seconds, max(0.0, deadline - monotonic_fn())))
 
