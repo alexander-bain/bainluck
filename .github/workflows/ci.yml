@@ -5444,8 +5444,8 @@ jobs:
           SCOPE_HEAD: ${{ needs.change-scope.outputs.head }}
         run: python3 tools/release/verify_fast.py
 
-      - id: heroku_deploy
-        name: Deploy to Heroku (never-backwards guarded)
+      - name: Deploy to Heroku (never-backwards guarded)
+        id: heroku_deploy
         run: |
           # Never-backwards guard (L2-57, reference point repaired for #3171).
           #
@@ -5519,7 +5519,7 @@ jobs:
           check_source_veto
           if git push heroku "$GITHUB_SHA:refs/heads/master"; then
             echo "Deployed $GITHUB_SHA."
-            { echo "deployed=true"; echo "prev_live_sha=${LIVE:-}"; } >> "$GITHUB_OUTPUT"
+            [ -z "${GITHUB_OUTPUT:-}" ] || { echo "deployed=true"; echo "prev_live_sha=${LIVE:-}"; } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -5553,7 +5553,7 @@ jobs:
             check_source_veto
             git push heroku "$GITHUB_SHA:refs/heads/master"
             echo "Deployed $GITHUB_SHA."
-            { echo "deployed=true"; echo "prev_live_sha=${LIVE_NOW:-}"; } >> "$GITHUB_OUTPUT"
+            [ -z "${GITHUB_OUTPUT:-}" ] || { echo "deployed=true"; echo "prev_live_sha=${LIVE_NOW:-}"; } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -5573,7 +5573,7 @@ jobs:
             echo "no newer commit to rewind past. History diverged; forcing."
             check_source_veto
             git push heroku "$GITHUB_SHA:refs/heads/master" --force
-            { echo "deployed=true"; echo "prev_live_sha=${LIVE_NOW:-}"; } >> "$GITHUB_OUTPUT"
+            [ -z "${GITHUB_OUTPUT:-}" ] || { echo "deployed=true"; echo "prev_live_sha=${LIVE_NOW:-}"; } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
