@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "description": "Batch 4 curated preview set memberships, short labels, and plain-speech headline phrases (#12288). Covers entertainment (Game Awards), sports (2026-27 Championship Races), science (Unsolved Big Problems), and tech/business (AI & Big Tech Race). Zero politics.",
+  "sets": {
+    "batch4-game-awards-2026": {
+      "entries": [
+        {"id": 58399979, "short_label": "Best Game Direction", "headline_phrase": "{answer} for Best Game Direction", "headline_with_phrase": "{answer} for Best Game Direction"},
+        {"id": 58399941, "short_label": "Best Narrative", "headline_phrase": "{answer} for Best Narrative", "headline_with_phrase": "{answer} for Best Narrative"},
+        {"id": 58399980, "short_label": "Best Audio Design", "headline_phrase": "{answer} for Best Audio Design", "headline_with_phrase": "{answer} for Best Audio Design"},
+        {"id": 58399978, "short_label": "Best Multiplayer", "headline_phrase": "{answer} for Best Multiplayer", "headline_with_phrase": "{answer} for Best Multiplayer"},
+        {"id": 58399939, "short_label": "Best Mobile Game", "headline_phrase": "{answer} for Best Mobile Game", "headline_with_phrase": "{answer} for Best Mobile Game"},
+        {"id": 58399977, "short_label": "Best Independent Game", "headline_phrase": "{answer} for Best Independent Game", "headline_with_phrase": "{answer} for Best Independent Game"}
+      ]
+    },
+    "batch4-big-championships-2027": {
+      "entries": [
+        {"id": 57792807, "short_label": "Heisman Trophy", "headline_phrase": "{answer} for the Heisman Trophy", "headline_with_phrase": "{answer} for the Heisman Trophy"},
+        {"id": 66031970, "short_label": "NBA MVP", "headline_phrase": "{answer} for NBA MVP", "headline_with_phrase": "{answer} for NBA MVP"},
+        {"id": 70732924, "short_label": "UEFA Champions League", "headline_phrase": "{answer} to win the Champions League", "headline_with_phrase": "{answer} to win the Champions League"},
+        {"id": 20569230, "short_label": "NBA Champion", "headline_phrase": "{answer} to win the NBA Finals", "headline_with_phrase": "{answer} to win the NBA Finals"},
+        {"id": 86832, "short_label": "Super Bowl Winner", "headline_phrase": "{answer} to win the Super Bowl", "headline_with_phrase": "{answer} to win the Super Bowl"},
+        {"id": 52755659, "short_label": "Stanley Cup Winner", "headline_phrase": "{answer} to win the Stanley Cup", "headline_with_phrase": "{answer} to win the Stanley Cup"}
+      ]
+    },
+    "batch4-unsolved-big-problems": {
+      "entries": [
+        {"id": 53049401, "short_label": "Riemann hypothesis Millennium Prize", "headline_phrase": "The Riemann hypothesis winning a Millennium Prize {answer}", "headline_with_phrase": "the Riemann hypothesis winning a Millennium Prize {answer}"},
+        {"id": 112792, "short_label": "Next Millennium Prize awarded", "headline_phrase": "The next Millennium Prize awarded {answer}", "headline_with_phrase": "the next Millennium Prize awarded {answer}"},
+        {"id": 60626095, "short_label": "Math problem AI solves in 2026", "headline_phrase": "AI solving {answer} in 2026", "headline_with_phrase": "AI solving {answer} in 2026"},
+        {"id": 108232, "short_label": "Nuclear fusion achieved", "headline_phrase": "Nuclear fusion achieved {answer}", "headline_with_phrase": "nuclear fusion achieved {answer}"},
+        {"id": 112835, "short_label": "OpenAI achieves AGI", "headline_phrase": "OpenAI achieving AGI {answer}", "headline_with_phrase": "OpenAI achieving AGI {answer}"},
+        {"id": 112826, "short_label": "First useful quantum computer", "headline_phrase": "A useful quantum computer developed {answer}", "headline_with_phrase": "a useful quantum computer developed {answer}"}
+      ]
+    },
+    "batch4-ai-and-big-tech-race": {
+      "entries": [
+        {"id": 113318, "short_label": "Largest company at end of 2026", "headline_phrase": "{answer} as the largest company at the end of 2026", "headline_with_phrase": "{answer} as the largest company at the end of 2026"},
+        {"id": 68806125, "short_label": "Second largest company", "headline_phrase": "{answer} as the second largest company", "headline_with_phrase": "{answer} in second place"},
+        {"id": 23449601, "short_label": "Higher year-end valuation", "headline_phrase": "{answer} topping the year-end AI valuation duel", "headline_with_phrase": "{answer} ahead in the year-end AI valuation duel"},
+        {"id": 24586956, "short_label": "Lead bank in OpenAI's IPO", "headline_phrase": "{answer} leading OpenAI's IPO", "headline_with_phrase": "{answer} leading OpenAI's IPO"},
+        {"id": 68806126, "short_label": "Third largest company", "headline_phrase": "{answer} as the third largest company", "headline_with_phrase": "{answer} in third place"},
+        {"id": 66692564, "short_label": "Best Image-to-Video AI", "headline_phrase": "{answer} leading Image-to-Video AI", "headline_with_phrase": "{answer} leading Image-to-Video AI"},
+        {"id": 63617294, "short_label": "Best Text-to-Video AI", "headline_phrase": "{answer} leading Text-to-Video AI", "headline_with_phrase": "{answer} leading Text-to-Video AI"},
+        {"id": 113184, "short_label": "OpenAI IPO", "headline_phrase": "An OpenAI IPO {answer}", "headline_with_phrase": "an OpenAI IPO {answer}"}
+      ]
+    }
+  }
+}

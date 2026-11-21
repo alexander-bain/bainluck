@@ -1,0 +1,57 @@
+{
+  "slug": "machinery-unsolved-big-problems",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_subject",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "TECH · SCIENCE",
+  "name": "Unsolved Big Problems",
+  "category": "tech",
+  "tag": "TECH",
+  "section_title": "Science & AI Breakthroughs",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "geopolitics",
+      "culture",
+      "science",
+      "economics"
+    ],
+    "card_rows": 3,
+    "card_section_key": "unsolved_big_problems",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/13/NASA_Unveils_Celestial_Fireworks_as_Official_Hubble_25th_Anniversary_Image.jpg/960px-NASA_Unveils_Celestial_Fireworks_as_Official_Hubble_25th_Anniversary_Image.jpg",
+    "card_image_alt": "Star cluster Westerlund 2 glowing inside cosmic gas clouds photographed by the Hubble Space Telescope",
+    "card_image_credit": "NASA, ESA, and the Hubble Heritage Team (Public domain, Wikimedia Commons)",
+    "card_image_author": "NASA, ESA, and the Hubble Heritage Team",
+    "card_image_license": "Public domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:NASA_Unveils_Celestial_Fireworks_as_Official_Hubble_25th_Anniversary_Image.jpg",
+    "sections": [
+      {
+        "key": "unsolved_big_problems",
+        "title": "Science & AI Breakthroughs",
+        "item_noun": "breakthroughs",
+        "note": "Millennium Prize math, nuclear fusion, quantum computing, and AGI timelines priced by the markets.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch4-unsolved-big-problems",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 10,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

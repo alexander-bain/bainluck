@@ -1666,6 +1666,54 @@
       "author": "NASA Kennedy Space Center / Frank Michaux",
       "license": "Public domain",
       "source_page": "https://commons.wikimedia.org/wiki/File:NASA%27s_SpaceX_Europa_Clipper_Launch_(KSC-20241014-PH-FMX01_0001).jpg"
+    },
+    {
+      "entity_key": "batch4-game-awards-2026",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "The Game Awards 2026 — backlit mechanical gaming keyboard",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ec/Keyboard_%28Unsplash%29.jpg/960px-Keyboard_%28Unsplash%29.jpg",
+      "credit": "Anas Alshanti (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Anas Alshanti",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Keyboard_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch4-big-championships-2027",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "2026-27 Championship Races — Cape Town Stadium pitch and grandstands",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0d/Cape_Town_Stadium%2C_Cape_Town%2C_South_Africa_%28Unsplash%29.jpg/960px-Cape_Town_Stadium%2C_Cape_Town%2C_South_Africa_%28Unsplash%29.jpg",
+      "credit": "Deklerk Basson (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Deklerk Basson",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Cape_Town_Stadium,_Cape_Town,_South_Africa_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch4-unsolved-big-problems",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Unsolved Big Problems — Hubble Space Telescope Westerlund 2 star cluster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/13/NASA_Unveils_Celestial_Fireworks_as_Official_Hubble_25th_Anniversary_Image.jpg/960px-NASA_Unveils_Celestial_Fireworks_as_Official_Hubble_25th_Anniversary_Image.jpg",
+      "credit": "NASA, ESA, and the Hubble Heritage Team (Public domain, Wikimedia Commons)",
+      "author": "NASA, ESA, and the Hubble Heritage Team",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:NASA_Unveils_Celestial_Fireworks_as_Official_Hubble_25th_Anniversary_Image.jpg"
+    },
+    {
+      "entity_key": "batch4-ai-and-big-tech-race",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "The AI & Big Tech Race — monochrome glass skyscraper facade",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/07/Monochrome_calgary_tower_%28Unsplash%29.jpg/960px-Monochrome_calgary_tower_%28Unsplash%29.jpg",
+      "credit": "Redd Angelo (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Redd Angelo",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Monochrome_calgary_tower_(Unsplash).jpg"
     }
   ]
 }
