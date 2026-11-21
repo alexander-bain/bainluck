@@ -3,7 +3,9 @@
 import { useMemo } from "react";
 import Link from "next/link";
 import useSWR from "swr";
+import useSWRInfinite from "swr/infinite";
 import { fetchEvents, fetchSports } from "@/lib/api";
+import type { EventsResponse } from "@/lib/types";
 import EventCard from "@/components/EventCard";
 import { hostCuesForEvents } from "@/lib/sameFixtureHostCue";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -22,8 +24,41 @@ interface SportPageProps {
   params: { key: string };
 }
 
+function useOtherSoccerWindow(enabled: boolean, days: number, refreshInterval: number) {
+  const { data: pages, error, isLoading, isValidating, mutate, size, setSize } = useSWRInfinite(
+    (index: number, previous: EventsResponse | null) => {
+      const offset = index === 0 ? 0 : previous?.next_offset;
+      return enabled && offset != null ? ["other-soccer", days, offset] as const : null;
+    },
+    async ([, windowDays, offset]: readonly [string, number, number]) => {
+      const page = await fetchEvents({
+        sport: "soccer_other", days: windowDays, past_days: 1,
+        limit: 50, offset, league_page: true,
+      });
+      // The web can deploy before the API returns its raw-window cursor.
+      if ("next_offset" in page) return page;
+      const next = offset + 50;
+      return { ...page, next_offset: page.events.length > 0 && next < 200 ? next : null };
+    },
+    { refreshInterval, revalidateOnFocus: false },
+  );
+  const loadedPages = enabled && Array.isArray(pages) ? pages : undefined;
+  const data = useMemo(() => {
+    if (!loadedPages) return undefined;
+    const byId = new Map(loadedPages.flatMap((page) => page.events.map((event) => [event.id, event] as const)));
+    return { events: Array.from(byId.values()), count: byId.size };
+  }, [loadedPages]);
+  return {
+    data, error, isLoading, mutate,
+    hasMore: loadedPages?.at(-1)?.next_offset != null,
+    loadingMore: enabled && isValidating && size > (loadedPages?.length ?? 0),
+    loadMore: () => setSize(size + 1),
+  };
+}
+
 export default function SportPage({ params }: SportPageProps) {
   const sportKey = params.key;
+  const pagedLeague = sportKey === "soccer_other";
 
   // Analytics hooks must be called before conditional returns
   usePageTracking({
@@ -42,15 +77,20 @@ export default function SportPage({ params }: SportPageProps) {
 
   // Fetch events for this sport
   const {
-    data: eventsData,
-    error: eventsError,
-    isLoading: eventsLoading,
-    mutate: refreshEvents,
+    data: ordinaryData,
+    error: ordinaryError,
+    isLoading: ordinaryLoading,
+    mutate: refreshOrdinaryEvents,
   } = useSWR(
-    ["events", sportKey],
+    pagedLeague ? null : ["events", sportKey],
     () => fetchEvents({ sport: sportKey, days: LEAGUE_WINDOW_DAYS, past_days: leagueResultsDays(sportKey) }),
     { refreshInterval: 30000, keepPreviousData: true, revalidateOnFocus: false }
   );
+  const nearPage = useOtherSoccerWindow(pagedLeague, LEAGUE_WINDOW_DAYS, 30000);
+  const eventsData = pagedLeague ? nearPage.data : ordinaryData;
+  const eventsError = pagedLeague ? (nearPage.data ? undefined : nearPage.error) : ordinaryError;
+  const eventsLoading = pagedLeague ? nearPage.isLoading : ordinaryLoading;
+  const refreshEvents = pagedLeague ? nearPage.mutate : refreshOrdinaryEvents;
 
   // Memoised on the SWR payload, not re-derived: `?? []` mints a new array
   // identity on every render, which would make the `sections` memo below
@@ -68,16 +108,16 @@ export default function SportPage({ params }: SportPageProps) {
   // read as "no games in the near term" and fire a second request on every
   // in-season page load.
   const wantsWiderHorizon = useMemo(
-    () => Boolean(eventsData) && needsWiderHorizon(nearTermEvents),
-    [eventsData, nearTermEvents]
+    () => Boolean(eventsData) && !nearPage.hasMore && needsWiderHorizon(nearTermEvents),
+    [eventsData, nearPage.hasMore, nearTermEvents]
   );
 
   const {
-    data: widerData,
-    error: widerError,
-    isLoading: widerLoading,
+    data: ordinaryWiderData,
+    error: ordinaryWiderError,
+    isLoading: ordinaryWiderLoading,
   } = useSWR(
-    wantsWiderHorizon ? ["events", sportKey, LEAGUE_OFFSEASON_HORIZON_DAYS] : null,
+    !pagedLeague && wantsWiderHorizon ? ["events", sportKey, LEAGUE_OFFSEASON_HORIZON_DAYS] : null,
     () => fetchEvents({ sport: sportKey, days: LEAGUE_OFFSEASON_HORIZON_DAYS, past_days: leagueResultsDays(sportKey) }),
     {
       // A schedule three months out does not move every 30 seconds, and this
@@ -89,6 +129,13 @@ export default function SportPage({ params }: SportPageProps) {
       revalidateOnFocus: false,
     }
   );
+  const widerPage = useOtherSoccerWindow(
+    pagedLeague && wantsWiderHorizon, LEAGUE_OFFSEASON_HORIZON_DAYS, 300000,
+  );
+  const widerData = pagedLeague ? widerPage.data : ordinaryWiderData;
+  const widerError = pagedLeague ? widerPage.error : ordinaryWiderError;
+  const widerLoading = pagedLeague ? widerPage.isLoading : ordinaryWiderLoading;
+  const more = widerData ? widerPage : nearPage;
 
   // The widened payload is a superset of the near-term one (same endpoint,
   // longer window), so it REPLACES rather than merges. If it fails, the page
@@ -223,7 +270,7 @@ export default function SportPage({ params }: SportPageProps) {
       {/* Events Grid */}
       {!isLoading && !eventsError && (
         <>
-          {events.length === 0 ? (
+          {events.length === 0 && !more.hasMore ? (
             <div
               className="text-center py-12 text-text-secondary"
               data-empty-state-name="league-no-upcoming-events"
@@ -260,6 +307,17 @@ export default function SportPage({ params }: SportPageProps) {
                 </section>
               ))}
             </div>
+          )}
+
+          {pagedLeague && more.hasMore && (
+            <button
+              type="button"
+              disabled={more.loadingMore}
+              onClick={() => { void (more.error ? more.mutate() : more.loadMore()); }}
+              className="mt-4 w-full rounded-lg border border-surface-border px-4 py-2 text-sm text-text-primary disabled:opacity-60"
+            >
+              {more.loadingMore ? "Loading games…" : more.error ? "Retry loading more games" : "Show more games"}
+            </button>
           )}
 
           {/* Event count */}
