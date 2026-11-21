@@ -113,7 +113,7 @@ function withVerifiedJourney(change: Change, through: number): Change {
   return change;
 }
 
-function validateSnapshot(payload: FactoryData): FactoryData {
+export function validateSnapshot(payload: FactoryData): FactoryData {
   if (
     payload.schema_version !== 1 ||
     !Array.isArray(payload.changes) ||
