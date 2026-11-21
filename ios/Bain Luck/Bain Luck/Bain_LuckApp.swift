@@ -241,6 +241,10 @@ struct Bain_LuckApp: App {
             .environmentObject(pinManager)
             // #10875 — the saved items (and their account) the Home/Lock Screen widget may show.
             .savedItemWidgets10875(pins: pinManager)
+            #if os(iOS) && canImport(ActivityKit)
+            // #13052 / 254: A — push-to-start Live Activity token & pin sync (no account required).
+            .liveActivityPushStart254A(pins: pinManager)
+            #endif
             .overlay {
                 PinFeedbackToast()
                     .environmentObject(pinManager)

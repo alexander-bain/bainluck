@@ -30,10 +30,16 @@ final class AuthManager: ObservableObject {
         didSet {
             GroupingMachineryGate12288.setActiveUser(user)
             #if os(iOS) && canImport(ActivityKit)
+            let sessionBearer = KeychainHelper.load(key: keychainTokenKey)
+                .flatMap { String(data: $0, encoding: .utf8) }
             GameActivityRegistrationCoordinator.shared.setSession(
                 owner: user?.id,
-                bearer: KeychainHelper.load(key: keychainTokenKey)
-                    .flatMap { String(data: $0, encoding: .utf8) })
+                bearer: sessionBearer)
+            Task {
+                await LiveActivityPushStartCoordinator254A.shared.updateSession(
+                    bearer: user != nil ? sessionBearer : nil
+                )
+            }
             #endif
             let userId = user.map { String($0.id) }
             activeFeedUserId = userId
@@ -337,6 +343,7 @@ final class AuthManager: ObservableObject {
         #if os(iOS) && canImport(ActivityKit)
         // This also covers rejected cold restore, where user was never published.
         GameActivityRegistrationCoordinator.shared.invalidateSession()
+        Task { await LiveActivityPushStartCoordinator254A.shared.updateSession(bearer: nil) }
         #endif
         KeychainHelper.delete(key: keychainTokenKey)
         KeychainHelper.delete(key: keychainAppleUserIdKey)
