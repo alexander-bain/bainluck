@@ -199,7 +199,7 @@ class TestSportFilterEventResolution:
 class TestSportsModeFuturesSportFilter:
     @pytest.mark.asyncio
     async def test_canonical_sport_pill_uses_exact_category_equality(self):
-        db = _RecordingAsyncSession(replies=[[]])
+        db = _RecordingAsyncSession(replies=[[], []])
         items = await feed_mod._score_sports_mode_futures(
             db,
             FIXED_NOW,
@@ -208,14 +208,17 @@ class TestSportsModeFuturesSportFilter:
             share_inputs=False,
         )
         assert items == []
-        assert len(db.statements) == 1
-        sql = _compile_pg(db.statements[0])
-        assert "llm_sport_category = 'football'" in sql
-        assert "external_id ilike" not in sql
+        # Two-pass tier-bounded query (#11931): Pass 1 (tier 1-2) returned [],
+        # so Pass 2 (tier >= 3 / NULL) runs too; BOTH carry exact equality.
+        assert len(db.statements) == 2
+        for stmt in db.statements:
+            sql = _compile_pg(stmt)
+            assert "llm_sport_category = 'football'" in sql
+            assert "external_id ilike" not in sql
 
     @pytest.mark.asyncio
     async def test_league_key_sport_filter_keeps_external_id_ilike(self):
-        db = _RecordingAsyncSession(replies=[[]])
+        db = _RecordingAsyncSession(replies=[[], []])
         items = await feed_mod._score_sports_mode_futures(
             db,
             FIXED_NOW,
@@ -224,13 +227,14 @@ class TestSportsModeFuturesSportFilter:
             share_inputs=False,
         )
         assert items == []
-        assert len(db.statements) == 1
-        sql = _compile_pg(db.statements[0])
-        assert "external_id ilike '%%nfl%%'" in sql or "external_id ilike '%nfl%'" in sql
+        assert len(db.statements) == 2
+        for stmt in db.statements:
+            sql = _compile_pg(stmt)
+            assert "external_id ilike '%%nfl%%'" in sql or "external_id ilike '%nfl%'" in sql
 
     @pytest.mark.asyncio
     async def test_partial_substring_keeps_both_matched_categories_and_external_id(self):
-        db = _RecordingAsyncSession(replies=[[]])
+        db = _RecordingAsyncSession(replies=[[], []])
         items = await feed_mod._score_sports_mode_futures(
             db,
             FIXED_NOW,
@@ -239,13 +243,14 @@ class TestSportsModeFuturesSportFilter:
             share_inputs=False,
         )
         assert items == []
-        assert len(db.statements) == 1
-        sql = _compile_pg(db.statements[0])
-        assert "llm_sport_category in (" in sql
-        assert "'football'" in sql
-        assert "'basketball'" in sql
-        assert "'baseball'" in sql
-        assert "external_id ilike" in sql
+        assert len(db.statements) == 2
+        for stmt in db.statements:
+            sql = _compile_pg(stmt)
+            assert "llm_sport_category in (" in sql
+            assert "'football'" in sql
+            assert "'basketball'" in sql
+            assert "'baseball'" in sql
+            assert "external_id ilike" in sql
 
 
 class TestCategoryBrowsePoolPruning:
