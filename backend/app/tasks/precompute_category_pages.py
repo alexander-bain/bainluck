@@ -1089,19 +1089,27 @@ def _absent_prewarm_labels(rc, *, exclude: set[str] | None = None) -> set[str]:
 
     absent: set[str] = set()
     for label in candidates:
-        probe_keys: list[str] = []
-        for candidate_key in (known.get(label), known_pb.get(label), known_mach.get(label)):
-            if candidate_key and candidate_key not in probe_keys:
-                probe_keys.append(candidate_key)
-        if not probe_keys:
+        cache_key = known.get(label)
+        if not cache_key:
             # Unknown OR blank. Both mean "this shape has no key I can probe",
             # and both fail closed: a blank probed as a key would be
             # `EXISTS ":stale"` — 0 for every shape — which marks the whole pool
             # absent off one bad hash write.
             continue
-        for cache_key in probe_keys:
+        try:
+            if not rc.exists(f"{cache_key}:stale"):
+                absent.add(label)
+                continue
+        except Exception:
+            logger.debug("shape-absence probe failed for %s", label, exc_info=True)
+            continue
+        # #12529: `_opening_seating` web/app readers skip `feed_cache:*` and
+        # read `feed:pagebase:*:stale` or `feed:machinery_pagebase:*:stale`.
+        for extra_key in (known_pb.get(label), known_mach.get(label)):
+            if not extra_key or extra_key == cache_key:
+                continue
             try:
-                if not rc.exists(f"{cache_key}:stale"):
+                if not rc.exists(f"{extra_key}:stale"):
                     absent.add(label)
                     break
             except Exception:
