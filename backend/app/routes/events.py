@@ -37600,8 +37600,7 @@ def _dedupe_team_name_lookup(teams) -> dict:
     # borrows the school's crest, colours and short name (never record/standings).
     mens_cbb: dict = {}
     mens_cbb_ambiguous: set = set()
-    _mens_cbb_ceiling = league_ceilings.get(_NCAAB_IDENTITY)
-    for team in teams:
+    for team in sanitized_teams:
         if league_identity(getattr(team, "sport_key", None)) != _NCAAB_IDENTITY:
             continue
         if _crest_for_corroboration(team) is None:
@@ -37618,9 +37617,9 @@ def _dedupe_team_name_lookup(teams) -> dict:
                     mens_cbb[key] = team
                 elif _crest_is_shared(incumbent, team):
                     if _same_league_row_preference(
-                        team, league_ceiling=_mens_cbb_ceiling
+                        team, stale_only=id(team) in stale_only_ids
                     ) > _same_league_row_preference(
-                        incumbent, league_ceiling=_mens_cbb_ceiling
+                        incumbent, stale_only=id(incumbent) in stale_only_ids
                     ):
                         mens_cbb[key] = team
                 else:
