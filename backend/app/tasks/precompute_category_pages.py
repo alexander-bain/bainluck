@@ -1885,11 +1885,12 @@ async def _prewarm_grouped_feed_shape(
     started = _time.monotonic()
     request = _build_prewarm_request(GROUPED_FEED_PREWARM_SCOPE_KEY)
     try:
+        response = Response()
         async with get_task_session() as db:
             payload = await asyncio.wait_for(
                 grouped_feed(
                     request=request,
-                    response=Response(),
+                    response=response,
                     category=shape["category"],
                     sport=shape["sport"],
                     sports_only=shape["sports_only"],
@@ -1929,8 +1930,13 @@ async def _prewarm_grouped_feed_shape(
         )
         return {"outcome": "empty", "duration_s": duration_s}
 
+    timings = response.headers.get("Server-Timing") if label == "grouped_web" else None
     logger.info(
-        "Pre-warmed grouped-feed %s in %.1fs (%d items)", label, duration_s, len(items)
+        "Pre-warmed grouped-feed %s in %.1fs (%d items)%s",
+        label,
+        duration_s,
+        len(items),
+        f" — {timings}" if timings else "",
     )
     return {"outcome": "ok", "duration_s": duration_s, "items": len(items)}
 
