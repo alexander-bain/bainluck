@@ -160,14 +160,26 @@ def test_a_copy_without_a_live_game_serves_up_to_thirty_minutes():
 
 
 def test_a_live_game_anywhere_in_the_base_bounds_it_at_the_live_ceiling():
-    # The live card sits at position 25 — outside page 1 — and still bounds it.
+    # #11259: within 60s, the live card at position 25 is served intact.
+    # Past 60s (up to 6h), ONLY the live card is stripped so the remaining 25
+    # valid non-live cards keep Discover usable while never serving stale live
+    # scores. A live-only base still returns (None, None).
     items = [_item(i) for i in range(25)] + [_item(25, status="live")]
     ceiling = FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
-    assert base_from_last_good(_base(items, age_s=ceiling - 1), now=NOW)[0]
-    assert base_from_last_good(_base(items, age_s=ceiling + 1), now=NOW) == (
-        None,
-        None,
-    )
+    within, _ = base_from_last_good(_base(items, age_s=ceiling - 1), now=NOW)
+    assert within is not None
+    assert 25 in [it["data"]["id"] for it in within["items"]]
+
+    stripped, origin = base_from_last_good(_base(items, age_s=ceiling + 1), now=NOW)
+    assert stripped is not None and origin == NOW - (ceiling + 1)
+    ids = [it["data"]["id"] for it in stripped["items"]]
+    assert ids == list(range(25))
+    assert stripped["total"] == 25
+    assert 25 not in ids
+
+    assert base_from_last_good(
+        _base([_item(25, status="live")], age_s=ceiling + 1), now=NOW
+    ) == (None, None)
 
 
 def _iso(epoch: float) -> str:
@@ -192,11 +204,22 @@ def _starting(i, start, status="scheduled", kind="event"):
     ids=["after-build", "before-build", "at-read", "zulu", "naive"],
 )
 def test_a_scheduled_game_past_its_start_holds_the_copy_to_the_live_ceiling(start):
-    # Position 25: outside page 1, and it still bounds the whole copy.
+    # #11259: past 60s, the kicked-off game (id=25) is stripped rather than
+    # served as scheduled, while the other 25 non-live cards stay usable.
     items = [_item(i) for i in range(25)] + [_starting(25, start)]
     ceiling = FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
-    assert base_from_last_good(_base(items, age_s=ceiling - 1), now=NOW)[0]
-    assert base_from_last_good(_base(items, age_s=240), now=NOW) == (None, None)
+    within, _ = base_from_last_good(_base(items, age_s=ceiling - 1), now=NOW)
+    assert within is not None and 25 in [it["data"]["id"] for it in within["items"]]
+
+    stripped, _ = base_from_last_good(_base(items, age_s=240), now=NOW)
+    assert stripped is not None
+    ids = [it["data"]["id"] for it in stripped["items"]]
+    assert ids == list(range(25))
+    assert 25 not in ids
+    assert base_from_last_good(_base([_starting(25, start)], age_s=240), now=NOW) == (
+        None,
+        None,
+    )
 
 
 @pytest.mark.parametrize(
@@ -227,18 +250,27 @@ def test_a_naive_start_is_utc_whatever_the_process_timezone(monkeypatch):
     try:
         naive = _iso(NOW - 60).replace("+00:00", "")
         wire = _base([_item(1), _starting(2, naive)], age_s=240)
-        assert base_from_last_good(wire, now=NOW) == (None, None)
+        stripped, _ = base_from_last_good(wire, now=NOW)
+        assert stripped is not None
+        assert [it["data"]["id"] for it in stripped["items"]] == [1]
+        assert base_from_last_good(_base([_starting(2, naive)], age_s=240), now=NOW) == (
+            None,
+            None,
+        )
     finally:
         monkeypatch.undo()
         time.tzset()
 
 
 def test_the_kickoff_is_judged_at_the_readers_clock_not_the_builds():
-    """The same bytes: served before the game starts, refused after it."""
+    """The same bytes: both cards served before kickoff; kicked-off card stripped at kickoff."""
     start = NOW + 100
     wire = _base([_item(1), _starting(2, _iso(start))], age_s=240)
-    assert base_from_last_good(wire, now=start - 1)[0]
-    assert base_from_last_good(wire, now=start) == (None, None)
+    before, _ = base_from_last_good(wire, now=start - 1)
+    assert before is not None and [it["data"]["id"] for it in before["items"]] == [1, 2]
+    at_kickoff, _ = base_from_last_good(wire, now=start)
+    assert at_kickoff is not None
+    assert [it["data"]["id"] for it in at_kickoff["items"]] == [1]
 
 
 _w = encode_base_last_good
@@ -425,8 +457,10 @@ async def test_a_copy_whose_game_kicked_off_since_the_build_is_not_served(
 
     assert f"{SCORE}_cancelled" in db.log
     if kicked_off:
-        assert body["cache"]["status"] == "unavailable"
-        assert body["items"] == []
+        # #11259: kicked-off game (id=2) is stripped, while unstarted game (id=1)
+        # keeps the emergency page usable instead of serving an empty screen.
+        assert body["cache"]["status"] == "last_good"
+        assert _ids(body) == [1]
     else:
         assert body["cache"]["status"] == "last_good"
         assert _ids(body) == [1, 2]

@@ -265,6 +265,7 @@ from app.utils.feed_cache import (
     feed_page_base_enabled,
     feed_page_base_last_good_key,
     feed_page_base_last_good_max_age_s,
+    feed_page_base_last_good_ttl_s,
     feed_response_cache_key,
     feed_response_cache_ttl,
     feed_response_cache_ttls,
@@ -7400,12 +7401,11 @@ async def get_feed(
                         strict_artifact_age_s=_strict_age_s,
                     )
                     _page_base_json = dumps_feed_cache(_page_base_body)
-                    # #11259: the durable copy the incomplete-build terminals
-                    # fall back to. Kept no longer than it may be served at —
-                    # the bound is on content age, and the origin is never
-                    # younger than this publish.
-                    _base_last_good_ttl = feed_page_base_last_good_max_age_s(
-                        live=payload_contains_live_event(_page_base_body)
+                    # #11259: durable emergency copy kept up to 6h for mixed
+                    # decks (live/started games are stripped past 60s at read
+                    # time), or 60s when every item in the deck is live.
+                    _base_last_good_ttl = feed_page_base_last_good_ttl_s(
+                        _page_base_body
                     )
 
                     async def _publish_feed_page_base(
@@ -7476,6 +7476,9 @@ async def get_feed(
                         )
                         _mach_base_json = dumps_feed_cache(_mach_base_body)
                         _mach_base_key = feed_machinery_page_base_key(_page_base_key)
+                        _mach_last_good_ttl = feed_page_base_last_good_ttl_s(
+                            _mach_base_body
+                        )
 
                         async def _publish_machinery_feed_page_base(
                             _client=_shared_redis,
@@ -7483,12 +7486,21 @@ async def get_feed(
                             _key=_mach_base_key,
                             _fresh_ttl=_mach_fresh_ttl,
                             _stale_ttl=_mach_stale_ttl,
+                            _last_good_ttl=_mach_last_good_ttl,
                         ):
                             await _rc.bounded_redis_call(
                                 lambda: _client.setex(_key, _fresh_ttl, _json)
                             )
                             await _rc.bounded_redis_call(
                                 lambda: _client.setex(f"{_key}:stale", _stale_ttl, _json)
+                            )
+                            _mach_lg_wire = encode_base_last_good(_json)
+                            await _rc.bounded_redis_call(
+                                lambda: _client.setex(
+                                    feed_page_base_last_good_key(_key),
+                                    _last_good_ttl,
+                                    _mach_lg_wire,
+                                )
                             )
 
                         _rc.schedule_background(_publish_machinery_feed_page_base())
@@ -7541,8 +7553,8 @@ async def get_feed(
                     "page_base_body": _fb_page_base_body,
                     "page_base_fresh_ttl": _fb_fresh,
                     "page_base_stale_ttl": _fb_stale,
-                    "page_base_last_good_ttl": feed_page_base_last_good_max_age_s(
-                        live=payload_contains_live_event(_fb_page_base_body)
+                    "page_base_last_good_ttl": feed_page_base_last_good_ttl_s(
+                        _fb_page_base_body
                     ),
                     "cache_shape": dict(_cache_shape),
                     "limit": limit,

@@ -454,7 +454,12 @@ FEED_PAGE_BASE_BUILT_AT_FIELD = "_page_base_built_at"
 # zlib wire form: a web Discover deck is ~0.6 MB of JSON, held six times longer
 # than its stale mirror in a 100 MB allkeys-lru Redis.
 FEED_PAGE_BASE_LAST_GOOD_SUFFIX = ":last_good"
-FEED_PAGE_BASE_LAST_GOOD_MAX_AGE_SECONDS = 1800
+# #11259: durable emergency copy kept 6 hours in Redis (read ONLY by the
+# incomplete-build emergency terminal when a cold build runs out of time).
+# Stale live and already-started event cards are stripped past the 60s live
+# ceiling so overnight or mid-game budget misses never serve an empty page
+# and never serve a stale live score.
+FEED_PAGE_BASE_LAST_GOOD_MAX_AGE_SECONDS = 21600
 
 #: #5105. Folded into BOTH cache keys when a build opted into opening seating
 #: (``discover_opening_seating.seat_opening``). A seated deck and an unseated
@@ -744,28 +749,87 @@ def base_has_started_scheduled_game(base: Any, *, now: float) -> bool:
     return False
 
 
+def _item_is_stale_live_or_started(item: Any, *, now: float) -> bool:
+    """#11259: whether one feed card is live or a scheduled game past kickoff.
+
+    Past ``FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS`` (60s), these cards are
+    stripped from the durable emergency base instead of discarding the entire
+    Discover deck. Bundles carrying any live or started event sub-item are
+    stripped with the same rule so live matchup slates never serve stale scores.
+    """
+    if not isinstance(item, dict):
+        return False
+    data = item.get("data")
+    if not isinstance(data, dict):
+        return False
+    status = str(data.get("status") or "").strip().lower()
+    if status in {"live", "in_progress", "halftime"}:
+        return True
+    if item.get("type") == "event" and status == "scheduled":
+        start = _feed_start_epoch(data.get("commence_time"))
+        if start is not None and start <= now:
+            return True
+    if item.get("type") == "bundle":
+        sub_items = data.get("items")
+        if isinstance(sub_items, list) and any(
+            _item_is_stale_live_or_started(sub, now=now) for sub in sub_items
+        ):
+            return True
+    return False
+
+
+def base_has_non_live_items(base: Any) -> bool:
+    """#11259: whether a page base carries at least one non-live card.
+
+    Determines the Redis retention TTL for ``:last_good``: a mixed Discover
+    deck keeps its 6h emergency retention even while one game is live (because
+    ``base_from_last_good`` strips only the live/started games past 60s), while
+    a live-only deck keeps the 60s live ceiling.
+    """
+    if not isinstance(base, dict):
+        return False
+    items = base.get("items")
+    if not isinstance(items, list) or not items:
+        return False
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        data = item.get("data")
+        status = (
+            str(data.get("status") or "").strip().lower()
+            if isinstance(data, dict)
+            else ""
+        )
+        if status not in {"live", "in_progress", "halftime"}:
+            return True
+    return False
+
+
+def feed_page_base_last_good_ttl_s(base: Any) -> int:
+    """#11259: Redis ``setex`` TTL for a durable ``:last_good`` page base."""
+    if base_has_non_live_items(base):
+        return FEED_PAGE_BASE_LAST_GOOD_MAX_AGE_SECONDS
+    return feed_page_base_last_good_max_age_s(
+        live=payload_contains_live_event(base)
+    )
+
+
 def base_from_last_good(
     raw: Any, *, now: float
 ) -> tuple[Optional[dict], Optional[float]]:
     """#11259: ``(base, origin)`` from a durable copy, or ``(None, None)``.
 
-    Pure, so every refusal is testable without a cache. The caller renders the
-    base exactly as the page-base read tier does (sliced, or composed at its
-    own clock for a seated request). Fails closed on anything it cannot vouch
-    for:
+    Pure, so every refusal is testable without a cache. Fails closed on
+    corrupted, truncated, or undated bases, and on anything older than
+    ``FEED_PAGE_BASE_LAST_GOOD_MAX_AGE_SECONDS`` (6h).
 
-    * anything that is not ``encode_base_last_good``'s wire form (bounded
-      inflation, as ``wire_decode`` does for every shared artifact);
-    * an undecodable base, or one whose ``items`` is not a list or disagrees
-      with ``total`` (truncated, legacy or half-written — the slicer's rule);
-    * a base with no stored origin: its age cannot be bounded, so it cannot be
-      served under a bound;
-    * content older than ``feed_page_base_last_good_max_age_s``. Liveness is
-      read off the WHOLE base, the same conservative direction the publish
-      takes: a live game at position 60 bounds page 1 too. A game the copy
-      still calls ``scheduled`` whose start is at or before ``now`` counts as
-      live (``base_has_started_scheduled_game``): the copy cannot see the
-      kickoff, so it is held to the live ceiling rather than 30 minutes.
+    Within ``FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS`` (60s), the full base
+    (including live and just-started games) is served intact. Past 60s and up
+    to 6h, any live or already-started ``event`` cards (and bundles holding
+    them) are stripped while preserving the rest of the Discover deck — so a
+    single live game never causes an empty page while #2216's 60s live-score
+    truth bound stays unbroken. If stripping leaves zero items, returns
+    ``(None, None)``.
     """
     from app.utils.principal_independent_cache import wire_decode
 
@@ -785,12 +849,23 @@ def base_from_last_good(
     origin = feed_page_base_built_at(base)
     if origin is None:
         return None, None
-    max_age = feed_page_base_last_good_max_age_s(
-        live=payload_contains_live_event(base)
-        or base_has_started_scheduled_game(base, now=now)
-    )
-    if now - origin > max_age:
+    age_s = now - origin
+    if age_s > FEED_PAGE_BASE_LAST_GOOD_MAX_AGE_SECONDS:
         return None, None
+    if age_s <= FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS:
+        return base, origin
+    if payload_contains_live_event(base) or base_has_started_scheduled_game(
+        base, now=now
+    ):
+        kept = [
+            it
+            for it in items
+            if not _item_is_stale_live_or_started(it, now=now)
+        ]
+        if not kept:
+            return None, None
+        filtered = {**base, "items": kept, "total": len(kept)}
+        return filtered, origin
     return base, origin
 
 
