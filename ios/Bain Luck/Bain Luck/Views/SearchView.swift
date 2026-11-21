@@ -656,6 +656,9 @@ struct SearchView: View {
                     switch suggestion.type {
                     case "team":
                         if let slug = suggestion.teamSlug {
+                            let targetId = suggestion.teamId.map(String.init)
+                                ?? FirstWeekTelemetry13261.hashedResultId(slug)
+                            trackSearchTap(type: "team", resultId: targetId, position: 0)
                             path.append(Route.teamDetail(slug: slug))
                         } else {
                             viewModel.query = suggestion.text
@@ -663,6 +666,7 @@ struct SearchView: View {
                         }
                     case "event":
                         if let eventId = suggestion.eventId {
+                            trackSearchTap(type: "event", resultId: String(eventId), position: 0)
                             path.append(Route.eventDetail(id: eventId))
                         } else {
                             viewModel.query = suggestion.text
@@ -670,6 +674,7 @@ struct SearchView: View {
                         }
                     case "futures":
                         if let marketId = suggestion.marketId {
+                            trackSearchTap(type: "futures", resultId: String(marketId), position: 0)
                             path.append(Route.futuresDetail(id: marketId))
                         }
                     default:
@@ -849,6 +854,15 @@ struct SearchView: View {
 
     // MARK: - Search Results
 
+    private func trackSearchTap(type: String, resultId: String, position: Int) {
+        AnalyticsService.trackSearchResultClick(
+            query: viewModel.query,
+            resultType: type,
+            resultId: resultId,
+            position: position
+        )
+    }
+
     private func searchResults(_ results: SearchResponse) -> some View {
         List {
             // Tournament hubs the query names, above everything else.
@@ -861,10 +875,17 @@ struct SearchView: View {
             let hubs = featuredTournaments(matching: results.query)
             if !hubs.isEmpty {
                 Section {
-                    ForEach(hubs) { hub in
+                    ForEach(Array(hubs.enumerated()), id: \.element.id) { idx, hub in
                         NavigationLink(value: Route.tournamentHub(slug: hub.slug, name: hub.title)) {
                             searchTournamentRow(hub)
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            trackSearchTap(
+                                type: "tournament",
+                                resultId: FirstWeekTelemetry13261.hashedResultId(hub.slug),
+                                position: idx
+                            )
+                        })
                         .macKeyboardRow(.tournamentHub(slug: hub.slug, name: hub.title), in: keyboardSelection)
                     }
                 } header: {
@@ -880,10 +901,17 @@ struct SearchView: View {
             let collectionEntries = SearchCollectionRows.entries(in: results)
             if !collectionEntries.isEmpty {
                 Section {
-                    ForEach(collectionEntries) { entry in
+                    ForEach(Array(collectionEntries.enumerated()), id: \.element.id) { idx, entry in
                         NavigationLink(value: entry.route) {
                             SearchCollectionRow(entry: entry)
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            trackSearchTap(
+                                type: "collection",
+                                resultId: String(entry.collection.id),
+                                position: idx
+                            )
+                        })
                         .macKeyboardRow(entry.route, in: keyboardSelection)
                     }
                 } header: {
@@ -911,11 +939,14 @@ struct SearchView: View {
             // Teams
             if let teams = results.teams, !teams.isEmpty {
                 Section {
-                    ForEach(teams) { team in
+                    ForEach(Array(teams.enumerated()), id: \.element.id) { idx, team in
                         if let slug = team.slug {
                             NavigationLink(value: Route.teamDetail(slug: slug)) {
                                 searchTeamRow(team)
                             }
+                            .simultaneousGesture(TapGesture().onEnded {
+                                trackSearchTap(type: "team", resultId: String(team.id), position: idx)
+                            })
                             .macKeyboardRow(.teamDetail(slug: slug), in: keyboardSelection)
                         }
                     }
@@ -951,6 +982,8 @@ struct SearchView: View {
                         // masonry deal is what keeps it packed.
                         iPadCardGrid(results.results) { event in
                             Button {
+                                let pos = results.results.firstIndex(where: { $0.id == event.id }) ?? 0
+                                trackSearchTap(type: "event", resultId: String(event.id), position: pos)
                                 path.append(Route.eventDetail(id: event.id))
                             } label: {
                                 searchEventCard183A(event)
@@ -960,10 +993,13 @@ struct SearchView: View {
                         }
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     } else {
-                        ForEach(results.results) { event in
+                        ForEach(Array(results.results.enumerated()), id: \.element.id) { idx, event in
                             NavigationLink(value: Route.eventDetail(id: event.id)) {
                                 searchEventCard183A(event)
                             }
+                            .simultaneousGesture(TapGesture().onEnded {
+                                trackSearchTap(type: "event", resultId: String(event.id), position: idx)
+                            })
                             .macKeyboardRow(.eventDetail(id: event.id), in: keyboardSelection)
                             .macResultMenu(.eventDetail(id: event.id))
                         }
@@ -996,17 +1032,23 @@ struct SearchView: View {
             let families = results.futuresFamilies ?? []
             let flatFutures = SearchGrouping.flatFutures(results.futures, families: families)
 
-            ForEach(families) { family in
+            ForEach(Array(families.enumerated()), id: \.element.id) { famIdx, family in
                 Section {
                     NavigationLink(value: Route.futuresDetail(id: family.headline.id)) {
                         searchFamilyRow(family.headline, prominent: true)
                     }
+                    .simultaneousGesture(TapGesture().onEnded {
+                        trackSearchTap(type: "futures", resultId: String(family.headline.id), position: famIdx)
+                    })
                     .macKeyboardRow(.futuresDetail(id: family.headline.id), in: keyboardSelection)
                     .macResultMenu(.futuresDetail(id: family.headline.id))
-                    ForEach(family.members) { member in
+                    ForEach(Array(family.members.enumerated()), id: \.element.id) { memIdx, member in
                         NavigationLink(value: Route.futuresDetail(id: member.id)) {
                             searchFamilyRow(member, prominent: false)
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            trackSearchTap(type: "futures", resultId: String(member.id), position: memIdx + 1)
+                        })
                         .macKeyboardRow(.futuresDetail(id: member.id), in: keyboardSelection)
                         .macResultMenu(.futuresDetail(id: member.id))
                     }
@@ -1048,11 +1090,14 @@ struct SearchView: View {
             )
             if !concepts.isEmpty {
                 Section {
-                    ForEach(concepts) { concept in
+                    ForEach(Array(concepts.enumerated()), id: \.element.id) { idx, concept in
                         if let marketId = concept.marketId {
                             NavigationLink(value: Route.futuresDetail(id: marketId)) {
                                 searchConceptRow(concept)
                             }
+                            .simultaneousGesture(TapGesture().onEnded {
+                                trackSearchTap(type: "event_concept", resultId: String(marketId), position: idx)
+                            })
                             .macKeyboardRow(.futuresDetail(id: marketId), in: keyboardSelection)
                             .macResultMenu(.futuresDetail(id: marketId))
                         }
@@ -1074,6 +1119,8 @@ struct SearchView: View {
                         // below it.
                         iPadCardGrid(flatFutures) { market in
                             Button {
+                                let pos = flatFutures.firstIndex(where: { $0.id == market.id }) ?? 0
+                                trackSearchTap(type: "futures", resultId: String(market.id), position: pos)
                                 path.append(Route.futuresDetail(id: market.id))
                             } label: {
                                 searchFuturesRow(market)
@@ -1083,10 +1130,13 @@ struct SearchView: View {
                         }
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     } else {
-                        ForEach(flatFutures) { market in
+                        ForEach(Array(flatFutures.enumerated()), id: \.element.id) { idx, market in
                             NavigationLink(value: Route.futuresDetail(id: market.id)) {
                                 searchFuturesRow(market)
                             }
+                            .simultaneousGesture(TapGesture().onEnded {
+                                trackSearchTap(type: "futures", resultId: String(market.id), position: idx)
+                            })
                             .macKeyboardRow(.futuresDetail(id: market.id), in: keyboardSelection)
                             .macResultMenu(.futuresDetail(id: market.id))
                         }

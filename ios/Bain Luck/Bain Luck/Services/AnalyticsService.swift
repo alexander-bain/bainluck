@@ -4,6 +4,10 @@ import Foundation
 
 /// Thin wrapper around Firebase Analytics matching the web GA4 taxonomy.
 enum AnalyticsService {
+    /// Test-only hook invoked strictly AFTER both `TelemetryConsent` and
+    /// `AnalyticsPrivacy.sanitize` succeed.
+    nonisolated(unsafe) static var eventEmitterForTests: ((String, [String: Any]?) -> Void)?
+
     // MARK: - Emission Boundary
 
     /// The ONE place this app hands an EVENT to Firebase (L2-219 Item 2 /
@@ -33,10 +37,18 @@ enum AnalyticsService {
         }
         if let authorizationEpoch {
             TelemetryConsent.shared.withAnalyticsAuthorization(epoch: authorizationEpoch) {
-                Analytics.logEvent(name, parameters: sanitized.isEmpty ? nil : sanitized)
+                if let emitter = eventEmitterForTests {
+                    emitter(name, sanitized)
+                } else {
+                    Analytics.logEvent(name, parameters: sanitized.isEmpty ? nil : sanitized)
+                }
             }
         } else {
-            Analytics.logEvent(name, parameters: sanitized.isEmpty ? nil : sanitized)
+            if let emitter = eventEmitterForTests {
+                emitter(name, sanitized)
+            } else {
+                Analytics.logEvent(name, parameters: sanitized.isEmpty ? nil : sanitized)
+            }
         }
     }
 
@@ -543,6 +555,64 @@ enum AnalyticsService {
         log("return_visit", [
             "days_since_last": daysSinceLast,
             "session_number": sessionNumber,
+        ])
+    }
+
+    // MARK: - First-Week Measurement (#13261 Rows 6 & 7)
+
+    nonisolated static func trackPinItem(
+        action: String,
+        itemType: String,
+        itemId: Int,
+        surface: String = "iphone"
+    ) {
+        log("pin_item", [
+            "action": action,
+            "item_type": itemType,
+            "item_id": String(itemId),
+            "surface": surface,
+        ])
+    }
+
+    nonisolated static func trackFollowTeam(
+        action: String,
+        sport: String?,
+        relationType: String,
+        surface: String
+    ) {
+        log("follow_team", [
+            "action": action,
+            "sport": (sport?.isEmpty == false) ? sport! : "unknown",
+            "relation_type": FirstWeekTelemetry13261.normalizedRelationType(relationType),
+            "surface": surface,
+        ])
+    }
+
+    nonisolated static func trackSessionOpen(
+        isFirstSession: Bool,
+        sessionNumber: Int,
+        entryType: String,
+        firstScreen: String
+    ) {
+        log("session_open", [
+            "is_first_session": isFirstSession,
+            "session_number": sessionNumber,
+            "entry_type": entryType,
+            "first_screen": firstScreen,
+        ])
+    }
+
+    nonisolated static func trackSharedLinkOpen(
+        entryType: String,
+        destinationType: String,
+        source: String,
+        medium: String
+    ) {
+        log("shared_link_open", [
+            "entry_type": entryType,
+            "destination_type": destinationType,
+            "source": source,
+            "medium": medium,
         ])
     }
 
