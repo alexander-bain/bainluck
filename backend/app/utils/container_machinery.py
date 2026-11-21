@@ -3887,6 +3887,16 @@ async def produce_container_machinery(
             if _history_chart_moved(own_chart):
                 mini_chart = {k: v for k, v in own_chart.items() if k != "card"}
 
+    suppress_card_photo = bool(rule.get("suppress_card_photo"))
+    if suppress_card_photo:
+        for env in all_member_envelopes:
+            if isinstance(env, dict) and isinstance(env.get("card"), dict):
+                env["card"]["image_url"] = None
+        for sec in built_sections:
+            for env in sec.get("members") or ():
+                if isinstance(env, dict) and isinstance(env.get("card"), dict):
+                    env["card"]["image_url"] = None
+
     card_item_count, card_item_noun = _machinery_card_item_count_and_noun(vb)
     machinery_card: dict[str, Any] = {
         "slug": slug,
@@ -3904,6 +3914,8 @@ async def produce_container_machinery(
         "destination_href": dest_href,
         "rows": card_visual_rows,
     }
+    if suppress_card_photo:
+        machinery_card["suppress_card_photo"] = True
     if mini_chart is not None:
         machinery_card["mini_chart"] = mini_chart
 

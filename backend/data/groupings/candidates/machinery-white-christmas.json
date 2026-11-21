@@ -22,6 +22,7 @@
     "materialize": "read-time",
     "card_rows": 3,
     "card_section_key": "christmas_snow",
+    "suppress_card_photo": true,
     "headline_predicate": "is the likeliest white Christmas",
     "sections": [
       {
