@@ -440,14 +440,20 @@ async def test_a_copy_whose_game_kicked_off_since_the_build_is_not_served(
     """Four minutes old, inside the 30-minute bound, but one of its games has
     started since the build and the copy still calls it scheduled. The control
     is the same copy with the start still ahead: it is served."""
-    start = time.time() + (-60 if kicked_off else 3600)
+    t_build = time.time()
+    start = t_build + (30 if kicked_off else 3600)
     cards = [_upcoming(1), _upcoming(2)]
     cards[1]["data"] = {**cards[1]["data"], "commence_time": _iso(start)}
+    monkeypatch.setattr(time, "time", lambda: t_build)
     _, _, redis, key = await _durable_copy_after_a_complete_build(
         monkeypatch, cards, path=path
     )
-    assert "commence_time" in json.dumps(json.loads(wire_decode(redis.store[key])))
-    _age_copy(redis, key, 240)
+    stored = json.loads(wire_decode(redis.store[key]))
+    assert "commence_time" in json.dumps(stored)
+    assert [it["data"]["id"] for it in stored["items"]] == [1, 2]
+    # Advance the clock 4 minutes past the build (210 s past kick-off for the
+    # kicked-off case; still 56 min before kick-off for the control).
+    monkeypatch.setattr(time, "time", lambda: t_build + 240)
     _reset_spies(rig)
     monkeypatch.setattr(rc, "FEED_TOTAL_BUDGET_MS", _SHORT_BUDGET_MS)
     db = _StageSession(cards, stall=SCORE)
