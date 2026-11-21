@@ -28,9 +28,10 @@ export function placeCrew(data: FactoryData, now: string, visible: Change[]): Fl
     const status = crewPose(data, identity, now, changes);
     const change = status.change ?? changes.find(onActiveFloor) ??
       changes.find(crate => crate.live_at && recentlyActive(crate.live_at, now));
+    const post = data.crew_posts?.[identity];
     return change
       ? { identity, pose: status.pose, position: { line: change.line, station: change.station } }
-      : { identity, pose: "asleep" };
+      : { identity, pose: post && recentlyActive(post.at, now) ? status.pose : "asleep" };
   });
 }
 
@@ -77,6 +78,12 @@ export function crewPose(data: FactoryData, identity: NameableBuilder, now: stri
   if (latest?.kind === "check" && latest.outcome === "failed" &&
       active.some(change => change.number === latest.number && change.station === "Test")) {
     return { pose: "stuck" as const, change: active.find(change => change.number === latest.number) };
+  }
+  const post = data.crew_posts?.[identity];
+  if (post && recentlyActive(post.at, now)) {
+    return pose.pose === "asleep"
+      ? { pose: post.waiting_on ? "waiting" as const : "working" as const, change: null }
+      : pose;
   }
   if (identity === "C" && !data.changes.some(change =>
     change.builder === "C" && change.station === "Write" && onActiveFloor(change))) {

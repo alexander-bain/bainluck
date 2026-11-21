@@ -286,6 +286,7 @@ export default function FactoryFloor(initial: {
   const mascotMove = sceneVisible && playing ? mascotAction(playing.event) : undefined;
   const quiet = Boolean(data && !behind && !data.changes.some(change =>
     onActiveFloor(change) && (change.checks_running || recentlyActive(change.last_activity, now))) &&
+    !Object.values(data.crew_posts ?? {}).some(post => recentlyActive(post.at, now)) &&
     !data.events?.some(event => recentlyActive(event.observed_at, now)) &&
     !data.transitions?.some(move => recentlyActive(move.observed_at ?? move.at, now)));
   const autoReplayDay = useRef<string>();
@@ -422,6 +423,10 @@ export default function FactoryFloor(initial: {
         recentlyActive(c.last_activity, recordTime))
       .map((c) => c.builder),
   );
+  for (const lane of builders) {
+    const post = data.crew_posts?.[lane];
+    if (post && recentlyActive(post.at, recordTime)) clockedIn.add(lane);
+  }
   const foremanPose = crewPose(data, "Fable", recordTime, []);
   const engineeringRecords = clipboard(recordTime, shipped, onFloor);
   const mergesToday = new Set(
@@ -565,6 +570,7 @@ export default function FactoryFloor(initial: {
         pose={status.pose}
         clockedIn={id === "Fable" ? foremanPose.pose === "working" : clockedIn.has(id)}
         number={status.change?.number}
+        post={id === "Fable" ? undefined : data?.crew_posts?.[id]}
         voice={id === "Fable" ? undefined : data?.speech?.[id]}
         habits={data?.crew_week?.builders[id]}
         now={recordTime}

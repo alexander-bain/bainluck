@@ -8,6 +8,11 @@ export type Station =
   | "Live";
 export type Builder = "S" | "B" | "C" | "D" | "E" | "F" | "W" | "Other";
 
+export interface CrewPost {
+  at: string;
+  waiting_on?: number;
+}
+
 export const factoryMoods = [
   "working", "carrying", "waiting", "celebrating", "stuck", "asleep",
 ] as const;
@@ -168,6 +173,7 @@ export interface FactoryData {
   read_expires_at?: string;
   transitions?: Transfer[];
   speech?: Partial<Record<Exclude<Builder, "Other">, LaneSpeech>>;
+  crew_posts?: Partial<Record<Exclude<Builder, "Other">, CrewPost>>;
   model_usage?: { day: string; calls: number };
   events?: FloorEvent[];
   day_replay?: DayReplay;
