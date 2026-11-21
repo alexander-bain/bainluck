@@ -216,7 +216,7 @@ struct WatchPinnedHomeView12640: View {
 
             Button {
                 WatchTelemetry.shared.pullWatchPinsIfReachable()
-                store.triggerRefresh()
+                store.triggerRefresh(userInitiated: true)
             } label: {
                 Label(store.isRefreshing ? "Refreshing…" : "Refresh pins", systemImage: "arrow.clockwise")
                     .font(.footnote.weight(.semibold))
@@ -360,6 +360,8 @@ struct WatchPinnedHomeView12640: View {
                     caseWidth: watchCaseWidth
                 )
 
+                faceStatusNotice
+
                 selectedActionButtons(allowsOutcomeChoice: false, outcomeCount: 0)
             }
         }
@@ -417,8 +419,31 @@ struct WatchPinnedHomeView12640: View {
                     }
                 }
 
+                faceStatusNotice
+
                 selectedActionButtons(allowsOutcomeChoice: pricedCount > 1, outcomeCount: pricedCount)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var faceStatusNotice: some View {
+        if let notice = store.faceStatusMessage {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Image(systemName: "applewatch.slash")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                Text(notice)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("watch.pins.face-status")
         }
     }
 
@@ -439,7 +464,7 @@ struct WatchPinnedHomeView12640: View {
             }
 
             Button {
-                store.triggerRefresh()
+                store.triggerRefresh(userInitiated: true)
             } label: {
                 Label(store.isRefreshing ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise")
                     .font(.footnote.weight(.semibold))
