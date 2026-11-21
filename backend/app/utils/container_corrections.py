@@ -841,52 +841,70 @@ async def read_published(
     pub_field = PUBLICATION_COLUMN
     revision_field = REVISION_COLUMN
     child_pub_field = f"c.{PUBLICATION_COLUMN}"
-    revision_filter = ""
     if inline_schema:
         pub_field = f"to_jsonb(containers)->>'{PUBLICATION_COLUMN}'"
         revision_field = f"(to_jsonb(containers)->>'{REVISION_COLUMN}')::integer"
         child_pub_field = f"to_jsonb(c)->>'{PUBLICATION_COLUMN}'"
-        revision_filter = " AND hub.rev IS NOT NULL"
 
-    # Append one row with typed headers. Each membership row carries only a
-    # NULL in the extra column, even in collections with thousands of members.
-    headers_column = ", NULL::record[] AS header_rows" if include_headers else ""
-    headers_row = (
-        f"""
-        UNION ALL
-        SELECT hub.id, hub.pub, hub.rev, NULL, NULL, NULL, NULL, NULL, NULL,
-               (SELECT array_agg(ROW(c.id, c.kind, c.name, c.slug, c.category,
-                                     c.status, c.window_start, c.window_end,
-                                     c.parent_container_id, {child_pub_field})
-                                 ORDER BY (c.id = hub.id) DESC, c.name, c.id)
-                  FROM parts JOIN containers c ON c.id = parts.id)
-        FROM hub WHERE hub.pub = 'published'{revision_filter}
-        """
-        if include_headers else ""
+    scope = (
+        "WITH hub AS ("
+        f"  SELECT id, {pub_field} AS pub, {revision_field} AS rev "
+        "  FROM containers WHERE slug = :slug"
+        "), parts AS ("
+        "  SELECT id FROM hub "
+        "  UNION ALL "
+        "  SELECT c.id FROM containers c JOIN hub ON c.parent_container_id = hub.id "
+        f"  WHERE {child_pub_field} <> 'withdrawn'"
+        ") "
     )
-    rows = (
-        await session.execute(
-            text(
-                "WITH hub AS ("
-                f"  SELECT id, {pub_field} AS pub, {revision_field} AS rev "
-                "  FROM containers WHERE slug = :slug"
-                "), parts AS ("
-                "  SELECT id FROM hub "
-                "  UNION ALL "
-                "  SELECT c.id FROM containers c JOIN hub ON c.parent_container_id = hub.id "
-                f"  WHERE {child_pub_field} <> 'withdrawn'"
-                ") "
-                "SELECT hub.id, hub.pub, hub.rev, e.class, e.child_type, e.child_id, "
-                f"      e.parent_id, e.source, e.confidence{headers_column} "
-                "FROM hub LEFT JOIN event_edges e "
-                f"  ON hub.pub = 'published'{revision_filter} AND e.kind = 'contains' "
-                " AND e.parent_type = 'container' "
-                " AND e.parent_id IN (SELECT id FROM parts) "
-                f"{headers_row}"
-                "ORDER BY class, child_id"
-            ),
-            {"slug": slug},
+    headers = (
+        f"""(SELECT array_agg(ROW(c.id, c.kind, c.name, c.slug, c.category,
+                                  c.status, c.window_start, c.window_end,
+                                  c.parent_container_id, {child_pub_field})
+                              ORDER BY (c.id = hub.id) DESC, c.name, c.id)
+               FROM parts JOIN containers c ON c.id = parts.id)"""
+    )
+    if inline_schema:
+        # Compact weeks keep the full paging membership. Send typed arrays in
+        # one row so the wire does not repeat the hub and revision for each edge.
+        header_column = (
+            f", CASE WHEN hub.pub = 'published' AND hub.rev IS NOT NULL "
+            f"THEN {headers} END AS header_rows" if include_headers else ""
         )
+        query = scope + (
+            ", members AS ("
+            "  SELECT e.class, e.child_type, e.child_id, e.parent_id, e.source, e.confidence "
+            "  FROM event_edges e "
+            "  WHERE e.parent_type = 'container' AND e.kind = 'contains' "
+            "    AND e.parent_id IN (SELECT id FROM parts) "
+            "    AND EXISTS (SELECT 1 FROM hub WHERE pub = 'published' AND rev IS NOT NULL) "
+            "  ORDER BY e.class, e.child_id"
+            "), packed_members AS ("
+            "  SELECT array_agg(class), array_agg(child_type), array_agg(child_id), "
+            "         array_agg(parent_id), array_agg(source), array_agg(confidence) "
+            "  FROM members"
+            ") "
+            f"SELECT hub.id, hub.pub, hub.rev, packed_members.*{header_column} "
+            "FROM hub CROSS JOIN packed_members"
+        )
+    else:
+        headers_column = ", NULL::record[] AS header_rows" if include_headers else ""
+        headers_row = (
+            f" UNION ALL SELECT hub.id, hub.pub, hub.rev, NULL, NULL, NULL, NULL, NULL, NULL, "
+            f"{headers} FROM hub WHERE hub.pub = 'published'" if include_headers else ""
+        )
+        query = scope + (
+            "SELECT hub.id, hub.pub, hub.rev, e.class, e.child_type, e.child_id, "
+            f"       e.parent_id, e.source, e.confidence{headers_column} "
+            "FROM hub LEFT JOIN event_edges e "
+            "  ON hub.pub = 'published' AND e.kind = 'contains' "
+            " AND e.parent_type = 'container' "
+            " AND e.parent_id IN (SELECT id FROM parts) "
+            f"{headers_row}"
+            " ORDER BY class, child_id"
+        )
+    rows = (
+        await session.execute(text(query), {"slug": slug})
     ).fetchall()
     if not rows:
         return PublishedRead(state=READ_UNAVAILABLE, slug=slug)
@@ -894,17 +912,22 @@ async def read_published(
     head = rows[0]
     if inline_schema and (head[1] is None or head[2] is None):
         return PublishedRead(state=READ_UNPUBLISHED, slug=slug, reason="publication_schema_absent")
+    if inline_schema:
+        edges = zip(*(column or () for column in head[3:9]), strict=True)
+        header_rows = (head[9] or []) if include_headers else []
+    else:
+        edges = (row[3:9] for row in rows if row[4] is not None)
+        header_rows = next((row[9] for row in rows if row[9] is not None), []) if include_headers else []
     members = [
         {
-            "class": r[3],
-            "type": r[4],
-            "id": int(r[5]),
-            "container_id": int(r[6]),
-            "source": r[7],
-            "confidence": float(r[8]) if r[8] is not None else None,
+            "class": edge_class,
+            "type": child_type,
+            "id": int(child_id),
+            "container_id": int(parent_id),
+            "source": source,
+            "confidence": float(confidence) if confidence is not None else None,
         }
-        for r in rows
-        if r[4] is not None
+        for edge_class, child_type, child_id, parent_id, source, confidence in edges
     ]
     state = read_state(True, head[1], len(members))
     if state not in (READ_PUBLISHED, READ_EMPTY):
@@ -915,5 +938,5 @@ async def read_published(
         revision=int(head[2]),
         container_id=int(head[0]),
         members=members,
-        header_rows=next((r[9] for r in rows if r[9] is not None), []) if include_headers else [],
+        header_rows=header_rows,
     )
