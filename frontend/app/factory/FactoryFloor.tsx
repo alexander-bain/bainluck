@@ -38,6 +38,7 @@ import InjurySign from "./InjurySign";
 import { builderOfDay, clipboard, median } from "./signs";
 import { useDayReplay } from "./useDayReplay";
 import { useFactoryDisplay } from "./useFactoryDisplay";
+import type { FactoryDisplayReading } from "./displayReading";
 import { validateSnapshot } from "./data";
 import { useReplayJournal } from "./replayJournal";
 import { LIVE_TRANSITION_MS, remainingEvents, transfersSince } from "./liveTransfers";
@@ -214,14 +215,7 @@ function jamTitle(jam: Jam) {
   return `${jam.line} had an empty merge line with changes waiting`;
 }
 
-export default function FactoryFloor({
-  data: snapshot,
-  lastGoodAt,
-  readAt,
-  readFailed = false,
-  buildCommit = null,
-  renderedAt,
-}: {
+export default function FactoryFloor(initial: {
   data: FactoryData | null;
   lastGoodAt: string | null;
   readAt?: string;
@@ -232,6 +226,12 @@ export default function FactoryFloor({
   usePageTracking({ pageType: "home", pageTitle: "The Factory" });
   useScrollDepth({ pageType: "home" });
   useEngagementTime({ pageType: "home" });
+  const [refresh, setRefresh] = useState<{ initialAt: string; reading: FactoryDisplayReading }>();
+  const { data: snapshot, lastGoodAt, readAt, readFailed = false } =
+    refresh?.initialAt === initial.renderedAt ? refresh.reading : initial;
+  const receiveReading = useCallback((reading: FactoryDisplayReading) => {
+    setRefresh({ initialAt: initial.renderedAt, reading });
+  }, [initial.renderedAt]);
   const [selectedCrate, selectCrate] = useState<string | null>(null);
   const [selectedGroup, selectGroup] = useState<CrateGroup | null>(null);
   const [followed, setFollowed] = useState<number[]>([]);
@@ -255,7 +255,7 @@ export default function FactoryFloor({
     }
   }, [data, shownReadAt]);
   const { now, tabVisible, reducedMotion } = useFactoryDisplay(
-    renderedAt, buildCommit, Boolean(snapshot && !readFailed), rememberFloor,
+    initial.renderedAt, initial.buildCommit ?? null, rememberFloor, receiveReading,
   );
   const behind = data !== null && (readFailed || readerBehind(data, now));
   const motion = !behind && tabVisible && reducedMotion === false;
@@ -307,7 +307,13 @@ export default function FactoryFloor({
   }, []);
 
   useEffect(() => {
-    if (data) setLastShown({ data, readAt: shownReadAt });
+    if (data) {
+      setLastShown(previous =>
+        previous.data === data && previous.readAt === shownReadAt
+          ? previous
+          : { data, readAt: shownReadAt },
+      );
+    }
   }, [data, shownReadAt]);
 
   useEffect(() => {
