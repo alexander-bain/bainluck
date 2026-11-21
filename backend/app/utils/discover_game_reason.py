@@ -24,10 +24,18 @@ A game with no reason does not take a Discover seat; it stays in Sports (184).
 from __future__ import annotations
 
 import os
+from collections.abc import Set as AbstractSet
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional
 
 SWITCH_ENV = "DISCOVER_GAME_NEEDS_REASON"
+ALLOWED_REASONS_ENV = "DISCOVER_GAME_ALLOWED_REASONS"
+#: Stated-stake single-game reasons that can be re-enabled one at a time via
+#: ``DISCOVER_GAME_ALLOWED_REASONS`` after Fable's look (Ruling 301: A).
+#: Pure chance swings (`swing`, `fast_swing`, `upset`) are excluded here.
+STATED_STAKE_REASON_KINDS: frozenset[str] = frozenset({"stakes", "team_move"})
+#: Subset of stated-stake reasons that require the DB queries in ``annotate_game_signals``.
+DB_SIGNAL_REASON_KINDS: frozenset[str] = frozenset({"team_move"})
 #: The pregame-to-now move that makes a live game "moving wildly".
 SWING_POINTS = 0.15
 #: A move this large inside FAST_WINDOW also counts, whatever the total.
@@ -48,6 +56,21 @@ SIGNALS_KEY = "_game_signals"
 def game_reason_enabled(environ: Optional[dict] = None) -> bool:
     env = os.environ if environ is None else environ
     return str(env.get(SWITCH_ENV, "true")).strip().lower() not in {"0", "false", "off", "no"}
+
+
+def allowed_stated_reasons(environ: Optional[dict] = None) -> frozenset[str]:
+    """Return explicitly enabled stated-stake reason kinds (default empty; Ruling 301: A)."""
+    env = os.environ if environ is None else environ
+    raw = str(env.get(ALLOWED_REASONS_ENV, "") or "")
+    requested = {part.strip().lower() for part in raw.split(",") if part.strip()}
+    return frozenset(requested & STATED_STAKE_REASON_KINDS)
+
+
+def needs_game_signals(environ: Optional[dict] = None) -> bool:
+    """True only when ``annotate_game_signals`` DB reads could admit a game card."""
+    return game_reason_enabled(environ) and bool(
+        allowed_stated_reasons(environ) & DB_SIGNAL_REASON_KINDS
+    )
 
 
 def _num(value: Any) -> Optional[float]:
@@ -89,70 +112,47 @@ def _pct(p: float) -> str:
     return f"{round(p * 100)}%"
 
 
-def game_reason(item: dict) -> Optional[dict]:
-    """The reason this game earns a Discover seat, or ``None``.
+def game_reason(
+    item: dict,
+    *,
+    followed_team_ids: AbstractSet[int] = frozenset(),
+    allowed_reasons: Optional[AbstractSet[str]] = None,
+) -> Optional[dict]:
+    """The reason this single game earns a Discover seat, or ``None``.
 
-    Returns ``{"kind": ..., "line": ..., ...facts}``. ``kind`` is one of
-    ``stakes``, ``swing``, ``fast_swing``, ``upset``, ``team_move``.
+    Ruling 301: A (Nov 20, 2026, carrying out 190: C): single game cards leave
+    Discover unless one of their teams is followed by the reader, or a
+    stated-stake reason is explicitly switched on in ``DISCOVER_GAME_ALLOWED_REASONS``.
+    A win-probability swing alone (`swing`, `fast_swing`, `upset`) never qualifies.
     """
     if item.get("type") != "event":
         return None
     data = item.get("data") or {}
+
+    matched_teams = [
+        tid for tid in _team_ids(data, item=item) if tid in followed_team_ids
+    ]
+    if matched_teams:
+        return {"kind": "followed_team", "team_ids": matched_teams, "line": None}
+
+    enabled = (
+        allowed_stated_reasons()
+        if allowed_reasons is None
+        else frozenset(allowed_reasons) & STATED_STAKE_REASON_KINDS
+    )
+    if not enabled:
+        return None
+
     status = (data.get("status") or "").strip().lower()
     signals = item.get(SIGNALS_KEY) or {}
-    home, away = _team(data, "home"), _team(data, "away")
-    pregame = _pregame_home(data)
 
-    if status == "scheduled":
+    if "stakes" in enabled and status == "scheduled":
         importance = _importance(data)
         if importance in STAKES:
             label = "Championship game" if importance == "championship" else "Playoff game"
             return {"kind": "stakes", "importance": importance, "line": label}
-        return None
 
-    if status == "live":
-        now_home = _num(data.get("hero_probability"))
-        if pregame is not None and now_home is not None and abs(now_home - pregame) >= SWING_POINTS - _EPS:
-            gainer_home = now_home > pregame
-            team = home if gainer_home else away
-            before = pregame if gainer_home else 1 - pregame
-            after = now_home if gainer_home else 1 - now_home
-            return {
-                "kind": "swing",
-                "team": team,
-                "pregame": round(before, 4),
-                "now": round(after, 4),
-                "line": f"{team}: {_pregame_pct(data, gainer_home, before)} before the game, {_pct(after)} now",
-            }
-        fast = signals.get("fast_move")
-        if isinstance(fast, dict) and abs(_num(fast.get("delta")) or 0) >= FAST_POINTS - _EPS:
-            gainer_home = fast["delta"] > 0
-            team = home if gainer_home else away
-            before = fast["before"] if gainer_home else 1 - fast["before"]
-            after = fast["after"] if gainer_home else 1 - fast["after"]
-            return {
-                "kind": "fast_swing",
-                "team": team,
-                "before": round(before, 4),
-                "now": round(after, 4),
-                "minutes": int(FAST_WINDOW.total_seconds() // 60),
-                "line": f"{team}: {_pct(before)} to {_pct(after)} in the last {int(FAST_WINDOW.total_seconds() // 60)} minutes",
-            }
-        return None
-
-    if status in FINISHED:
-        hs, as_ = _num(data.get("home_score")), _num(data.get("away_score"))
-        if pregame is not None and hs is not None and as_ is not None and hs != as_:
-            home_won = hs > as_
-            winner = home if home_won else away
-            winner_pregame = pregame if home_won else 1 - pregame
-            if winner_pregame <= UPSET_MAX:
-                return {
-                    "kind": "upset",
-                    "team": winner,
-                    "pregame": round(winner_pregame, 4),
-                    "line": f"{winner} won as a {_pregame_pct(data, home_won, winner_pregame)} underdog",
-                }
+    if "team_move" in enabled and status in FINISHED:
         moves = signals.get("team_moves") or []
         if moves:
             m = max(moves, key=lambda x: abs(x["now"] - x["before"]))
@@ -165,42 +165,59 @@ def game_reason(item: dict) -> Optional[dict]:
                 "now": round(m["now"], 4),
                 "line": f"{m['market']} — {m['outcome']}: {_pct(m['before'])} a day ago, {_pct(m['now'])} now",
             }
-        return None
     return None
 
 
-def apply_game_reasons(items: list[dict]) -> list[dict]:
-    """Discover mode: keep a game only with a reason, and give it that line.
+def apply_game_reasons(
+    items: list[dict],
+    *,
+    followed_team_ids: AbstractSet[int] = frozenset(),
+    allowed_reasons: Optional[AbstractSet[str]] = None,
+) -> list[dict]:
+    """Discover mode: drop single game cards except followed teams or enabled stakes.
 
-    Futures and grouped cards pass untouched. A kept game carries
-    ``data["discover_reason"]`` (kind + facts, for the clients' reason line) and
-    its ``reason``/``headline`` become the factual line.
+    Futures and grouped cards (including tonight's slate bundles) pass untouched.
+    A kept game carries ``data["discover_reason"]``; followed-team games keep their
+    normal copy while stated-stake games carry their stated reason line.
     """
     out: list[dict] = []
     for item in items:
         if item.get("type") != "event":
             out.append(item)
             continue
-        reason = game_reason(item)
+        reason = game_reason(
+            item,
+            followed_team_ids=followed_team_ids,
+            allowed_reasons=allowed_reasons,
+        )
         item.pop(SIGNALS_KEY, None)
         if reason is None:
             continue
         data = item.get("data")
         if isinstance(data, dict):
             data["discover_reason"] = {k: v for k, v in reason.items() if k != "line"}
-        item["reason"] = reason["line"]
-        item["headline"] = reason["line"]
+        line = reason.get("line")
+        if line:
+            item["reason"] = line
+            item["headline"] = line
         out.append(item)
     return out
 
 
-def _team_ids(data: dict) -> list[int]:
-    ids = []
+def _team_ids(data: dict, *, item: Optional[dict] = None) -> list[int]:
+    ids: list[int] = []
     for side in ("home", "away"):
         team = data.get(f"{side}_team_data") or {}
-        tid = team.get("team_id") if isinstance(team, dict) else None
-        if isinstance(tid, int) and not isinstance(tid, bool):
-            ids.append(tid)
+        candidates = (
+            team.get("team_id") if isinstance(team, dict) else None,
+            data.get(f"{side}_team_id"),
+            item.get(f"_{side}_team_id") if isinstance(item, dict) else None,
+        )
+        for tid in candidates:
+            if isinstance(tid, int) and not isinstance(tid, bool):
+                if tid not in ids:
+                    ids.append(tid)
+                break
     return ids
 
 

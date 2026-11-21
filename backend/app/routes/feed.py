@@ -341,6 +341,7 @@ from app.utils.discover_game_reason import (
     annotate_game_signals,
     apply_game_reasons,
     game_reason_enabled,
+    needs_game_signals,
 )
 from app.utils.personalization import (
     PersonalizationContext,
@@ -349,6 +350,7 @@ from app.utils.personalization import (
     compute_futures_multiplier,
     compute_sport_affinity_multiplier,
     followed_sport_categories,
+    followed_team_ids_from_ctx,
     is_returning_reader,
     my_stuff_admits_followed_sport,
 )
@@ -2602,23 +2604,25 @@ def apply_discover_display_chain(
             now,
             lead_capacity=MAX_LEAD - sum(1 for it in items if it.get(MARQUEE_PIN_KEY)),
         )
-        # D118 — and handed to a THIRD consumer, the browser. Stamped before the
-        # noise filter runs so the flag rides the same dicts the filter keeps.
-        _stamp_marquee_finals(items, kept_final_ids)
+        # D118 — and handed to a THIRD consumer, the browser.
         if game_reason_enabled():
-            # Ruling 190 (#11937): a single game takes a Discover seat only with a
-            # reason we can state from values we hold (stakes before, a sharp
-            # move during, an upset or a team-futures move after). Being a
-            # marquee fixture is not a reason, so the marquee sets keep only the
-            # games that have one — the lead pass can never demand a removed game.
-            items = apply_game_reasons(items)
+            # Ruling 301: A (Nov 20, 2026, carrying out 190: C): single game
+            # cards leave Discover unless one of their teams is followed by
+            # the reader or an enabled stated-stake reason matches. Ends the
+            # Sep 10 guaranteed first-page seat for finished games.
+            items = apply_game_reasons(
+                items,
+                followed_team_ids=followed_team_ids_from_ctx(ctx),
+            )
             _surviving = {
                 (it.get("data") or {}).get("id") for it in items if it.get("type") == "event"
             }
-            kept_final_ids &= _surviving
+            kept_final_ids = set()
             kept_kickoff_ids &= _surviving
             required_marquee_ids &= _surviving
+            _stamp_marquee_finals(items, kept_final_ids)
         else:
+            _stamp_marquee_finals(items, kept_final_ids)
             _demote_non_exceptional_discover_events(items, kept_final_ids, kept_kickoff_ids)
             items = _filter_discover_event_noise(items, kept_final_ids, kept_kickoff_ids)
         # Re-sort after demotion so demoted events fall below high-scoring futures
@@ -6486,7 +6490,7 @@ async def get_feed(
             event_pct is not None
             and event_pct < 0.3
             and not my_teams_only
-            and game_reason_enabled()
+            and needs_game_signals()
         ):
             try:
                 await annotate_game_signals(db, feed_items, now)
