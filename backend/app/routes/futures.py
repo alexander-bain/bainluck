@@ -18,7 +18,7 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
-from app.utils import movement_pool, probability_to_american
+from app.utils import futures_price_screen, movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
 from app.utils.observed_span_steps import add_history_steps, add_timeline_steps
 from app.utils.settlement_display import (
@@ -51,7 +51,6 @@ from app.utils.futures_price_screen import (
     _empty_book_outcome_ids,
     _fleet_newest_observation,
     _leg_prices_an_empty_book,
-    _newest_capture_per_outcome as _newest_capture_per_outcome,
     _newest_kalshi_trades,
     _newest_venue_trade_rows,
     _refuted_midpoint_candidates,
@@ -60,7 +59,6 @@ from app.utils.futures_price_screen import (
     _unsupported_head_outcome_ids,
     _unsupported_price_candidates,
     _unsupported_price_verdicts,
-    withheld_price_outcome_ids_for_markets as withheld_price_outcome_ids_for_markets,
 )
 from app.utils.futures_verified_title import (
     CONTRIBUTOR_SOURCES as VERIFIED_TITLE_SOURCES,
@@ -131,6 +129,13 @@ from app.utils.tournament_stages import (
     tournament_names_match,
     is_game_level_market,
 )
+
+# Keep the route's existing entry points for the shared price screen.
+_newest_capture_per_outcome = futures_price_screen._newest_capture_per_outcome
+withheld_price_outcome_ids_for_markets = (
+    futures_price_screen.withheld_price_outcome_ids_for_markets
+)
+
 
 logger = logging.getLogger(__name__)
 
