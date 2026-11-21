@@ -633,6 +633,18 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
         (108300, "KXSP-BLUE", "Will Blue Origin land on the moon before SpaceX?", "tech", [("Yes", 0.68, 0.68)]),
         (108236, "KXSP-ROBOT", "Will a humanoid robot walk on Mars before a human does?", "tech", [("Yes", 0.514, 0.514)]),
         (108273, "KXSP-SPX", "Will SpaceX land anything successfully on Mars before 2030?", "tech", [("Yes", 0.24, 0.24)]),
+        # 10. #12288 Batch 3 preview groupings (2026 Summed Up, Cast/Delayed/Cancelled, Stage & Cover, Musk Side Quests)
+        (109517, "KXB3-SPOTART", "Top artist on Spotify in 2026?", "entertainment", [("Bad Bunny", 0.96, 0.96), ("Drake", 0.03, 0.03)]),
+        (109614, "KXB3-GOTY", "The Game Awards: Game of the Year", "entertainment", [("Grand Theft Auto VI", 0.92, 0.92), ("Resident Evil Requiem", 0.03, 0.03)]),
+        (109527, "KXB3-WRAPPED", "When will Spotify release 2026 Wrapped?", "entertainment", [("Before Dec 5, 2026", 0.88, 0.88), ("Before Dec 4, 2026", 0.87, 0.87)]),
+        (109214, "KXB3-AVENGERS", "Avengers: Doomsday: Cast", "entertainment", [("Hugh Jackman as Wolverine?", 0.97, 0.97), ("Ryan Reynolds as Deadpool?", 0.96, 0.96)]),
+        (59172754, "KXB3-DUNEAV", "Dune vs Avengers: Highest Rotten Tomatoes Score", "entertainment", [("Dune: Part Three", 0.84, 0.84), ("Avengers: Doomsday", 0.25, 0.25)]),
+        (108275, "KXB3-SIMPSONS", "Will there be an announcement that The Simpsons is ending?", "entertainment", [("Yes", 0.67, 0.67)]),
+        (108505, "KXB3-COACH", "Who will headline Coachella 2027?", "entertainment", [("Tame Impala", 0.99, 0.99), ("SZA", 0.98, 0.98)]),
+        (62368061, "KXB3-SNL", "Who will host Saturday Night Live Season 52?", "entertainment", [("Timothée Chalamet", 0.87, 0.87), ("Pedro Pascal", 0.41, 0.41)]),
+        (56775621, "KXB3-VOGUE", "Vogue (US) 2026: Cover Models", "entertainment", [("Taylor Swift", 0.60, 0.60), ("Alex Consani", 0.41, 0.41)]),
+        (109412, "KXB3-RYANAIR", "Will Elon purchase Ryanair?", "politics", [("Yes", 0.05, 0.05)]),
+        (109633, "KXB3-SUPERMAN", "Next Superman film: Will Elon Musk be cast?", "entertainment", [("Yes", 0.05, 0.05)]),
     ):
         await _add_market(
             market_id=mid,
