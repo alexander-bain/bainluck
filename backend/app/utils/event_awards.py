@@ -42,7 +42,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.utils.futures_market_snapshot import concept_price_observed_at_iso
-
 from app.utils.settledness import (
     market_assigned_settled,
     settled_under_assigned_state,
@@ -295,6 +294,16 @@ class AwardsEventAdapter:
 
     async def build_event(self, slug: str, db: AsyncSession) -> dict | None:
         from app.models import FuturesMarket
+        from app.utils.futures_price_screen import (
+            _board_has_a_verdict,
+            _fleet_newest_observation,
+            withheld_price_outcome_ids_for_markets,
+        )
+        from app.utils.market_staleness import (
+            board_touched_at,
+            stale_observation_keys,
+            unobserved_board_keys,
+        )
         from app.utils.outcome_display import (
             is_field_outcome,
             is_placeholder_outcome_name,
@@ -329,14 +338,17 @@ class AwardsEventAdapter:
         if not markets:
             return None
 
-        def _real_count(m) -> int:
-            return sum(
-                1
+        def _real_outcomes(m):
+            return [
+                o
                 for o in (m.outcomes or [])
                 if o.name
                 and not is_field_outcome(o.name)
                 and not is_placeholder_outcome_name(o.name)
-            )
+            ]
+
+        def _real_count(m) -> int:
+            return len(_real_outcomes(m))
 
         # Classify + tag each market with its edition year.
         tagged = []
@@ -380,6 +392,44 @@ class AwardsEventAdapter:
         nominations = [t[0] for t in tagged if t[1] == "nominations" and _in_edition(t)]
         novelties = [t[0] for t in tagged if t[1] == "novelty" and _in_edition(t)]
 
+        # Screen the chosen edition before selecting its hero or ranking a row.
+        # An unpriced edition must never pull a previous edition into view.
+        edition_markets = winner_cats + nominations + novelties
+        settled_by_id = {m.id: market_assigned_settled(m) for m in edition_markets}
+        open_markets = [m for m in edition_markets if not settled_by_id[m.id]]
+        priced_by_market = {}
+        if open_markets:
+            withheld_by_market = await withheld_price_outcome_ids_for_markets(
+                db, open_markets
+            )
+            fleet_stamp = await _fleet_newest_observation(db, *open_markets)
+            for m in open_markets:
+                withheld = withheld_by_market.get(m.id)
+                if withheld is None:
+                    continue
+                observations = [(o.id, o.last_updated) for o in m.outcomes]
+                withheld = withheld | stale_observation_keys(observations)
+                withheld = withheld | unobserved_board_keys(
+                    observations,
+                    board_touched_at=board_touched_at(m),
+                    fleet_newest_observation=fleet_stamp,
+                    board_has_a_verdict=_board_has_a_verdict(m.outcomes),
+                )
+                priced_by_market[m.id] = [
+                    o
+                    for o in _real_outcomes(m)
+                    if o.id not in withheld and o.current_probability is not None
+                ]
+
+        def _has_answer(m) -> bool:
+            return settled_by_id[m.id] or bool(priced_by_market.get(m.id))
+
+        winner_cats = [m for m in winner_cats if _has_answer(m)]
+        if not winner_cats:
+            return None
+        nominations = [m for m in nominations if _has_answer(m)]
+        novelties = [m for m in novelties if _has_answer(m)]
+
         # Marquee = the ceremony's headline category (Best Picture, …); else the
         # richest field. It becomes the head-to-head hero AND stays in the category
         # rail (parity with a card's main event).
@@ -390,19 +440,10 @@ class AwardsEventAdapter:
             marquee = max(winner_cats, key=_real_count)
 
         def _outcomes(m, limit=8):
-            outs = sorted(
-                (m.outcomes or []),
-                key=lambda o: float(o.current_probability or 0),
-                reverse=True,
-            )
-            real = [
-                o
-                for o in outs
-                if o.name
-                and not is_field_outcome(o.name)
-                and not is_placeholder_outcome_name(o.name)
-            ]
-            displayed = real[:limit]
+            real = _real_outcomes(m) if settled_by_id[m.id] else priced_by_market[m.id]
+            displayed = sorted(
+                real, key=lambda o: float(o.current_probability or 0), reverse=True
+            )[:limit]
             # #5349: price-ranked previews can omit the actual winner. Keep every
             # named authoritative grade from the FULL category, even when its
             # price is absent or it was outside the nominee/field preview.
@@ -428,7 +469,7 @@ class AwardsEventAdapter:
                     "name": o.name,
                     "probability": (
                         round(float(o.current_probability), 4)
-                        if o.current_probability is not None
+                        if not settled_by_id[marquee.id]
                         else None
                     ),
                     "won": bool(getattr(o, "is_winner", False)),
@@ -442,16 +483,13 @@ class AwardsEventAdapter:
         event_status = "unknown"
         marquee_res = getattr(marquee, "resolution_date", None)
 
-        normalize_display_probs(competitors)
+        normalize_display_probs(
+            competitors, field_complete=len(competitors) == _real_count(marquee)
+        )
         competitors.sort(key=lambda c: (c["probability"] or -1), reverse=True)
 
         def _child(m, *, kind=None, prop_type=None):
             outs = _outcomes(m)
-            lead_prob = (
-                round(float(outs[0].current_probability), 4)
-                if outs and outs[0].current_probability is not None
-                else None
-            )
             # #5349: own assigned state dominates; another category's grade and
             # this category's price cannot announce its result. Read all outcomes,
             # not the preview, so an actual winner beyond the slice still settles.
@@ -470,14 +508,18 @@ class AwardsEventAdapter:
                 "source": m.source,  # data-only (audit); not rendered
                 "settled": settled,
                 "graded_winner": winners[0] if len(winners) == 1 else None,
-                "probability": lead_prob,
+                "probability": (
+                    round(float(outs[0].current_probability), 4)
+                    if outs and not settled
+                    else None
+                ),
                 "outcomes": [
                     {
                         "name": o.name,
                         "won": bool(getattr(o, "is_winner", False)),
                         "probability": (
                             round(float(o.current_probability), 4)
-                            if o.current_probability is not None
+                            if not settled
                             else None
                         ),
                     }
@@ -546,8 +588,12 @@ class AwardsEventAdapter:
                 # (`marquee_outcomes`), never the market, and with this card's
                 # own leg count — an awards `co_equal_list` is a bout only when
                 # the category came down to two nominees.
-                "price_observed_at": concept_price_observed_at_iso(
-                    marquee_outcomes, "co_equal_list", len(competitors)
+                "price_observed_at": (
+                    concept_price_observed_at_iso(
+                        marquee_outcomes, "co_equal_list", len(competitors)
+                    )
+                    if not settled_by_id[marquee.id]
+                    else None
                 ),
             },
             "sections": sections,
