@@ -20,17 +20,19 @@ struct WatchPinnedHomeView12640: View {
     var body: some View {
         ScrollViewReader { scroll in
             ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 0) {
                     Color.clear.frame(height: 0).id("watch.pins.top").accessibilityHidden(true)
 
-                    if !store.hasAnyPhonePins {
-                        emptyPinsState
-                    } else if let target = store.selectedTarget {
-                        selectedDetailView(target)
-                        footerActions
-                    } else {
-                        pinsPickerContent(inSheet: false)
-                        footerActions
+                    VStack(alignment: .leading, spacing: 10) {
+                        if !store.hasAnyPhonePins {
+                            emptyPinsState
+                        } else if let target = store.selectedTarget {
+                            selectedDetailView(target)
+                            footerActions
+                        } else {
+                            pinsPickerContent(inSheet: false)
+                            footerActions
+                        }
                     }
                 }
                 .padding(.horizontal, 6)

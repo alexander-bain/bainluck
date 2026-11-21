@@ -400,17 +400,23 @@ struct WatchMatchupGamePageHeroView297A: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var isCompact41mm: Bool { caseWidth < 188 }
-    private var crestSize: CGFloat { isCompact41mm ? 28 : 32 }
+    private var isCompactFinal: Bool { model.stage == .after && !dynamicTypeSize.isAccessibilitySize }
+    private var crestSize: CGFloat {
+        if isCompactFinal {
+            return isCompact41mm ? 22 : 26
+        }
+        return isCompact41mm ? 28 : 32
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: isCompactFinal ? 6 : 8) {
             heroCard
             observationLines
         }
     }
 
     private var heroCard: some View {
-        VStack(spacing: isCompact41mm ? 7 : 9) {
+        VStack(spacing: isCompactFinal ? (isCompact41mm ? 3 : 4) : (isCompact41mm ? 7 : 9)) {
             topBadgeRow
 
             if dynamicTypeSize.isAccessibilitySize {
@@ -461,8 +467,8 @@ struct WatchMatchupGamePageHeroView297A: View {
                     .accessibilityIdentifier("watch.game.hero.bottom")
             }
         }
-        .padding(.horizontal, isCompact41mm ? 8 : 10)
-        .padding(.vertical, isCompact41mm ? 9 : 11)
+        .padding(.horizontal, isCompactFinal && isCompact41mm ? 7 : (isCompact41mm ? 8 : 10))
+        .padding(.vertical, isCompactFinal ? (isCompact41mm ? 5 : 7) : (isCompact41mm ? 9 : 11))
         .frame(maxWidth: .infinity)
         .background(diagonalSplitBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -523,14 +529,19 @@ struct WatchMatchupGamePageHeroView297A: View {
                     .font(.system(size: 8, weight: .bold))
             }
             Text(model.topBadgeText)
-                .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 13 : (isCompact41mm ? 10.5 : 11), weight: .bold))
+                .font(.system(
+                    size: dynamicTypeSize.isAccessibilitySize
+                        ? 13
+                        : (isCompactFinal ? (isCompact41mm ? 9.5 : 10.5) : (isCompact41mm ? 10.5 : 11)),
+                    weight: .bold
+                ))
                 .monospacedDigit()
                 .fixedSize(horizontal: false, vertical: true)
                 .multilineTextAlignment(.center)
         }
         .foregroundStyle(Color.white)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.horizontal, isCompactFinal ? 7 : 8)
+        .padding(.vertical, isCompactFinal ? 1.5 : 3)
         .background(
             Capsule().fill(
                 model.isLive
@@ -544,7 +555,7 @@ struct WatchMatchupGamePageHeroView297A: View {
     // MARK: - Matchup Row (Crests + Center Score/AT on top, Identities below across full half-width)
 
     private var standardMatchupRow: some View {
-        VStack(spacing: isCompact41mm ? 4 : 5) {
+        VStack(spacing: isCompactFinal ? (isCompact41mm ? 2 : 3) : (isCompact41mm ? 4 : 5)) {
             HStack(alignment: .center, spacing: 4) {
                 crestDisc(model.away, size: crestSize)
                 Spacer(minLength: 4)
@@ -552,7 +563,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                 Spacer(minLength: 4)
                 crestDisc(model.home, size: crestSize)
             }
-            HStack(alignment: .top, spacing: 6) {
+            HStack(alignment: .top, spacing: isCompactFinal ? 4 : 6) {
                 teamCodeAndName(model.away, alignment: .leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 teamCodeAndName(model.home, alignment: .trailing)
@@ -563,14 +574,14 @@ struct WatchMatchupGamePageHeroView297A: View {
 
     private func teamCodeAndName(_ side: WatchMatchupGameHeroModel297A.Side, alignment: HorizontalAlignment) -> some View {
         let textAlign: TextAlignment = alignment == .leading ? .leading : .trailing
-        return VStack(alignment: alignment, spacing: 0.5) {
+        return VStack(alignment: alignment, spacing: isCompactFinal ? 0 : 0.5) {
             Text(side.abbreviation)
-                .font(.system(size: isCompact41mm ? 12 : 13, weight: .heavy, design: .rounded))
+                .font(.system(size: isCompactFinal ? (isCompact41mm ? 11.5 : 12.5) : (isCompact41mm ? 12 : 13), weight: .heavy, design: .rounded))
                 .foregroundStyle(Color.white)
                 .fixedSize(horizontal: true, vertical: false)
             if side.shortName.caseInsensitiveCompare(side.abbreviation) != .orderedSame {
                 Text(side.shortName)
-                    .font(.system(size: isCompact41mm ? 10 : 10.5, weight: .medium))
+                    .font(.system(size: isCompactFinal ? (isCompact41mm ? 9.5 : 10) : (isCompact41mm ? 10 : 10.5), weight: .medium))
                     .foregroundStyle(Color.white.opacity(0.86))
                     .multilineTextAlignment(textAlign)
                     .fixedSize(horizontal: false, vertical: true)
@@ -582,10 +593,10 @@ struct WatchMatchupGamePageHeroView297A: View {
     private var centerConnector: some View {
         if let scoreText = model.centerScoreText {
             Text(scoreText)
-                .font(.system(size: isCompact41mm ? 12 : 13, weight: .heavy, design: .rounded).monospacedDigit())
+                .font(.system(size: isCompactFinal ? (isCompact41mm ? 11 : 12) : (isCompact41mm ? 12 : 13), weight: .heavy, design: .rounded).monospacedDigit())
                 .foregroundStyle(Color.white)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
+                .padding(.horizontal, isCompactFinal ? 6 : 7)
+                .padding(.vertical, isCompactFinal ? 2 : 3)
                 .background(Capsule().fill(Color.black.opacity(0.58)))
                 .fixedSize()
                 .accessibilityIdentifier("watch.game.hero.score-pill")
@@ -659,7 +670,7 @@ struct WatchMatchupGamePageHeroView297A: View {
     // MARK: - Final Scores & Pregame (Look 1C)
 
     private var finalNumbersRow: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: isCompact41mm ? 1 : 2) {
             if model.away.isWinner || model.away.isLoser || model.home.isWinner || model.home.isLoser || model.isTiedFinal {
                 HStack(alignment: .center, spacing: 6) {
                     finalOutcomeBadge(model.away)
@@ -673,7 +684,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                     Group {
                         if let awayScore = model.away.score {
                             Text("\(awayScore)")
-                                .font(.system(size: isCompact41mm ? 22 : 26, weight: .black, design: .rounded).monospacedDigit())
+                                .font(.system(size: isCompact41mm ? 19 : 22, weight: .black, design: .rounded).monospacedDigit())
                                 .foregroundStyle(model.away.isLoser ? Color.white.opacity(0.75) : Color.white)
                                 .lineLimit(1)
                         }
@@ -682,7 +693,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                     Group {
                         if let homeScore = model.home.score {
                             Text("\(homeScore)")
-                                .font(.system(size: isCompact41mm ? 22 : 26, weight: .black, design: .rounded).monospacedDigit())
+                                .font(.system(size: isCompact41mm ? 19 : 22, weight: .black, design: .rounded).monospacedDigit())
                                 .foregroundStyle(model.home.isLoser ? Color.white.opacity(0.75) : Color.white)
                                 .lineLimit(1)
                         }
@@ -691,11 +702,11 @@ struct WatchMatchupGamePageHeroView297A: View {
                 }
             }
             if model.away.pregameText != nil || model.home.pregameText != nil {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Group {
                         if let awayPre = model.away.pregameText {
                             Text(awayPre)
-                                .font(.system(size: isCompact41mm ? 10 : 11, weight: .semibold).monospacedDigit())
+                                .font(.system(size: isCompact41mm ? 9.5 : 10.5, weight: .semibold).monospacedDigit())
                                 .foregroundStyle(Color.white.opacity(0.86))
                                 .multilineTextAlignment(.leading)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -705,7 +716,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                     Group {
                         if let homePre = model.home.pregameText {
                             Text(homePre)
-                                .font(.system(size: isCompact41mm ? 10 : 11, weight: .semibold).monospacedDigit())
+                                .font(.system(size: isCompact41mm ? 9.5 : 10.5, weight: .semibold).monospacedDigit())
                                 .foregroundStyle(Color.white.opacity(0.86))
                                 .multilineTextAlignment(.trailing)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -716,10 +727,10 @@ struct WatchMatchupGamePageHeroView297A: View {
             }
             if let drawPre = model.drawPregameText, !model.away.isWinner && !model.home.isWinner {
                 Text(drawPre)
-                    .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 13 : 10.5, weight: .semibold).monospacedDigit())
+                    .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 13 : (isCompact41mm ? 9.5 : 10), weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.white.opacity(0.88))
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 2)
+                    .padding(.top, 1)
             }
         }
         .accessibilityIdentifier("watch.game.hero.final-row")
@@ -730,24 +741,24 @@ struct WatchMatchupGamePageHeroView297A: View {
         if side.isWinner {
             HStack(spacing: 3) {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 8.5, weight: .black))
+                    .font(.system(size: 8, weight: .black))
                 Text("WON")
-                    .font(.system(size: 9.5, weight: .black))
+                    .font(.system(size: 9, weight: .black))
             }
             .foregroundStyle(Color.black)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1.5)
             .background(Capsule().fill(Self.rgbColor("#34D399")))
         } else if side.isLoser {
             Text("LOST")
-                .font(.system(size: 9.5, weight: .bold))
+                .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(Color.white.opacity(0.68))
-                .padding(.vertical, 2)
+                .padding(.vertical, 1.5)
         } else if model.isTiedFinal {
             Text("DRAW")
-                .font(.system(size: 9.5, weight: .bold))
+                .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(Color.white.opacity(0.82))
-                .padding(.vertical, 2)
+                .padding(.vertical, 1.5)
         }
     }
 
