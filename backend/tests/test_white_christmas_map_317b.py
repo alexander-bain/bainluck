@@ -87,11 +87,11 @@ def test_all_11_white_christmas_cities_match_and_render_dynamic_shading() -> Non
     assert png_a != png_b
 
 
-def test_white_christmas_definition_stays_preview_and_points_to_map() -> None:
+def test_white_christmas_definition_is_public_and_points_to_map() -> None:
     defn = load_machinery_definition(
         "data/groupings/candidates/machinery-white-christmas.json"
     )
-    assert defn["stage"] == "preview"
+    assert defn["stage"] == "public"
     assert defn["rule"]["card_image_url"] == WHITE_CHRISTMAS_MAP_URL
     assert defn["rule"]["suppress_card_photo"] is True
 
@@ -101,6 +101,7 @@ async def test_container_map_png_route_serves_png_and_404s_unknown_slug(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from fastapi import HTTPException
+    from app.utils.roundup_containers import ROUNDUP_PRODUCERS
 
     monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "1")
     _MAP_PNG_CACHE.clear()
@@ -108,30 +109,33 @@ async def test_container_map_png_route_serves_png_and_404s_unknown_slug(
         await get_container_map_png(slug="machinery-fed-and-macro", db=AsyncMock())
     assert exc.value.status_code == 404
 
-    with patch(
-        "app.utils.roundup_containers._load_last_good_roundup_copy",
-        new=AsyncMock(
-            return_value=(
-                {},
-                {
-                    "sections": [
-                        {
-                            "members": [
-                                {
-                                    "card": {
-                                        "name": "Will it snow in Pittsburgh on Christmas?",
-                                        "top_outcomes": [
-                                            {"name": "Above 0 inches", "probability": 0.44}
-                                        ],
+    with (
+        patch.dict(ROUNDUP_PRODUCERS, dict(ROUNDUP_PRODUCERS), clear=True),
+        patch(
+            "app.utils.roundup_containers._load_last_good_roundup_copy",
+            new=AsyncMock(
+                return_value=(
+                    {},
+                    {
+                        "sections": [
+                            {
+                                "members": [
+                                    {
+                                        "card": {
+                                            "name": "Will it snow in Pittsburgh on Christmas?",
+                                            "top_outcomes": [
+                                                {"name": "Above 0 inches", "probability": 0.44}
+                                            ],
+                                        }
                                     }
-                                }
-                            ]
-                        }
-                    ]
-                },
-                5.0,
-                1800.0,
-            )
+                                ]
+                            }
+                        ]
+                    },
+                    5.0,
+                    1800.0,
+                )
+            ),
         ),
     ):
         resp = await get_container_map_png(
@@ -196,7 +200,7 @@ async def test_who_gets_engaged_ring_candidate_b_wired_with_source_and_licence()
     defn = load_machinery_definition(
         "data/groupings/candidates/machinery-who-gets-engaged.json"
     )
-    assert defn["stage"] == "preview"
+    assert defn["stage"] == "public"
     assert (
         defn["rule"]["card_image_url"]
         == "https://api.bainluck.com/api/containers/machinery-who-gets-engaged/card-art.jpg"
