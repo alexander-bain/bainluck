@@ -356,7 +356,14 @@ async def test_white_christmas_and_who_gets_engaged_suppress_unverified_card_pho
     assert eg_res.machinery_card["subtitle"] == "Chance each couple is engaged by Dec 31, 2026."
     assert "before the year ends" in eg_res.machinery_card["title"]
     eg_fi = sanitize_discover_feed_item(compose_roundup_feed_item(eg_prod, eg_res))
-    assert eg_fi["data"].get("image_url") is None
+    assert eg_fi["data"].get("image_url") == (
+        "https://api.bainluck.com/api/containers/machinery-who-gets-engaged/card-art.jpg"
+    )
+    assert eg_fi["data"].get("image_presentation") == "photo"
+    assert eg_fi["data"].get("image_license") == "CC0 1.0 Public Domain"
+    assert eg_fi["data"].get("image_source_page") == (
+        "https://www.rawpixel.com/image/5906428/ring-free-public-domain-cc0-photo"
+    )
     assert all((s.get("data") or {}).get("image_url") is None for s in eg_fi["data"].get("items") or ())
     eg_cp = compose_roundup_container(eg_prod, eg_res)
     for sec in eg_cp.get("sections") or ():

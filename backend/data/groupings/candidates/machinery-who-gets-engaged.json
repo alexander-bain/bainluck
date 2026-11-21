@@ -24,6 +24,12 @@
     "card_rows": 3,
     "card_section_key": "engaged_couples",
     "suppress_card_photo": true,
+    "card_image_url": "https://api.bainluck.com/api/containers/machinery-who-gets-engaged/card-art.jpg",
+    "card_image_alt": "Stacked engagement ring and wedding bands",
+    "card_image_credit": "Rawpixel (CC0 1.0 Public Domain, rawpixel.com #5906428)",
+    "card_image_author": "Rawpixel (CC0 public domain contributor)",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://www.rawpixel.com/image/5906428/ring-free-public-domain-cc0-photo",
     "headline_predicate": "are the likeliest to get engaged before the year ends",
     "sections": [
       {

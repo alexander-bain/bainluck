@@ -3998,10 +3998,22 @@ async def produce_container_machinery(
 
     card_image_url = str(rule.get("card_image_url") or "").strip() or None
     card_image_alt = str(rule.get("card_image_alt") or "").strip() or None
+    card_image_credit = str(rule.get("card_image_credit") or "").strip() or None
+    card_image_author = str(rule.get("card_image_author") or "").strip() or None
+    card_image_license = str(rule.get("card_image_license") or "").strip() or None
+    card_image_source_page = str(rule.get("card_image_source_page") or "").strip() or None
     if card_image_url and isinstance(vb, dict):
         vb["hero_image_url"] = card_image_url
         if card_image_alt:
             vb["hero_image_alt"] = card_image_alt
+        if card_image_credit:
+            vb["hero_image_credit"] = card_image_credit
+        if card_image_author:
+            vb["hero_image_author"] = card_image_author
+        if card_image_license:
+            vb["hero_image_license"] = card_image_license
+        if card_image_source_page:
+            vb["hero_image_source_page"] = card_image_source_page
 
     card_item_count, card_item_noun = _machinery_card_item_count_and_noun(vb)
     machinery_card: dict[str, Any] = {
@@ -4026,6 +4038,14 @@ async def produce_container_machinery(
         machinery_card["image_url"] = card_image_url
         if card_image_alt:
             machinery_card["image_alt"] = card_image_alt
+        if card_image_credit:
+            machinery_card["image_credit"] = card_image_credit
+        if card_image_author:
+            machinery_card["image_author"] = card_image_author
+        if card_image_license:
+            machinery_card["image_license"] = card_image_license
+        if card_image_source_page:
+            machinery_card["image_source_page"] = card_image_source_page
     if mini_chart is not None:
         machinery_card["mini_chart"] = mini_chart
 

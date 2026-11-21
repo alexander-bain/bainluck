@@ -206,7 +206,8 @@ def extract_white_christmas_city_probs(
                 try:
                     out[key] = max(0.0, min(1.0, float(raw_p)))
                 except (TypeError, ValueError):
-                    pass
+                    # Skip malformed probability entries.
+                    continue
     return out
 
 
@@ -331,39 +332,44 @@ def render_white_christmas_map_png(
             )
         draw.text((lx, ly), label, font=font_lbl, fill=(240, 248, 255, 255), anchor=anchor)
 
-    # 4. Compact bottom-left qualitative legend (zero numeric percentages)
-    leg_x = 110.0 * sx
-    leg_y = ch - 68.0 * sy
-    draw.text(
-        (leg_x, leg_y),
-        "Lower",
-        font=font_leg,
-        fill=(166, 194, 224, 240),
-        anchor="lm",
+    # 4. Compact bottom-left qualitative legend (zero numeric percentages).
+    # Omit the scale bar on fallback draws when no live city probabilities were loaded.
+    has_live_probs = any(
+        probs.get(key) is not None for key, *_ in WHITE_CHRISTMAS_CITIES
     )
-    bar_x0 = int(round(leg_x + 185.0 * sx))
-    bar_x1 = int(round(leg_x + 425.0 * sx))
-    bar_half_h = int(round(12.0 * sy))
-    for i in range(max(1, bar_x1 - bar_x0)):
-        t = i / max(1, bar_x1 - bar_x0 - 1)
-        c = _snow_chance_color(0.08 + 0.37 * t)
-        draw.line(
-            [(bar_x0 + i, leg_y - bar_half_h), (bar_x0 + i, leg_y + bar_half_h)],
-            fill=(*c, 255),
+    if has_live_probs:
+        leg_x = 110.0 * sx
+        leg_y = ch - 68.0 * sy
+        draw.text(
+            (leg_x, leg_y),
+            "Lower",
+            font=font_leg,
+            fill=(166, 194, 224, 240),
+            anchor="lm",
         )
-    draw.rounded_rectangle(
-        [bar_x0, leg_y - bar_half_h, bar_x1, leg_y + bar_half_h],
-        radius=max(3, int(round(8 * sx))),
-        outline=(140, 175, 215, 190),
-        width=max(1, int(round(3 * sx))),
-    )
-    draw.text(
-        (bar_x1 + 22.0 * sx, leg_y),
-        "Higher snow chance",
-        font=font_leg,
-        fill=(232, 244, 255, 245),
-        anchor="lm",
-    )
+        bar_x0 = int(round(leg_x + 185.0 * sx))
+        bar_x1 = int(round(leg_x + 425.0 * sx))
+        bar_half_h = int(round(12.0 * sy))
+        for i in range(max(1, bar_x1 - bar_x0)):
+            t = i / max(1, bar_x1 - bar_x0 - 1)
+            c = _snow_chance_color(0.08 + 0.37 * t)
+            draw.line(
+                [(bar_x0 + i, leg_y - bar_half_h), (bar_x0 + i, leg_y + bar_half_h)],
+                fill=(*c, 255),
+            )
+        draw.rounded_rectangle(
+            [bar_x0, leg_y - bar_half_h, bar_x1, leg_y + bar_half_h],
+            radius=max(3, int(round(8 * sx))),
+            outline=(140, 175, 215, 190),
+            width=max(1, int(round(3 * sx))),
+        )
+        draw.text(
+            (bar_x1 + 22.0 * sx, leg_y),
+            "Higher snow chance",
+            font=font_leg,
+            fill=(232, 244, 255, 245),
+            anchor="lm",
+        )
 
     final_img = img.resize((width, height), Image.Resampling.LANCZOS).convert("RGB")
     buf = io.BytesIO()
