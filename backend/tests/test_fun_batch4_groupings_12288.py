@@ -56,7 +56,7 @@ def _sample_batch4_markets() -> list[dict]:
         # Set 3: Unsolved Big Problems (6 rows)
         {"id": 53049401, "name": "When will the Riemann hypothesis win the Millennium Prize?", "status": "open", "source": "kalshi", "category": "tech", "outcomes": [{"id": 301, "name": "Before 2035", "probability": 0.91}]},
         {"id": 112792, "name": "When will the next Millennium Prize be awarded?", "status": "open", "source": "kalshi", "category": "tech", "outcomes": [{"id": 302, "name": "Before 2035", "probability": 0.86}]},
-        {"id": 60626095, "name": "Which math problems will AI solve in 2026?", "status": "open", "source": "polymarket", "category": "tech", "outcomes": [{"id": 303, "name": "Riemann Hypothesis", "probability": 0.76}]},
+        {"id": 60626095, "name": "Which math problems will AI solve in 2026?", "status": "open", "source": "polymarket", "category": "tech", "outcomes": [{"id": 303, "name": "Riemann Hypothesis", "probability": 0.73}]},
         {"id": 108232, "name": "When will nuclear fusion be achieved?", "status": "open", "source": "kalshi", "category": "geopolitics", "outcomes": [{"id": 304, "name": "Before 2040", "probability": 0.75}]},
         {"id": 112835, "name": "When will OpenAI achieve AGI?", "status": "open", "source": "kalshi", "category": "tech", "outcomes": [{"id": 305, "name": "Before 2030", "probability": 0.64}]},
         {"id": 112826, "name": "When will the first useful quantum computer be developed?", "status": "open", "source": "kalshi", "category": "tech", "outcomes": [{"id": 306, "name": "Before 2040", "probability": 0.62}]},
@@ -140,7 +140,7 @@ async def test_batch4_four_preview_sets_build_with_plain_speech_headlines_and_pa
         ),
         "machinery-unsolved-big-problems": (
             "The Riemann hypothesis winning a Millennium Prize before 2035 is at 91%, "
-            "with the next Millennium Prize awarded before 2035 at 86%"
+            "with nuclear fusion achieved before 2040 at 75%"
         ),
         "machinery-ai-and-big-tech-race": (
             "Apple as the largest company at the end of 2026 is at 94%, "
@@ -169,6 +169,33 @@ async def test_batch4_four_preview_sets_build_with_plain_speech_headlines_and_pa
                 "https://a.espncdn.com/i/headshots/college-football/players/full/5079720.png"
             )
             assert all(str((r.get("art") or {}).get("url") or "").strip() for r in card_rows)
+        if slug == "machinery-unsolved-big-problems":
+            card_rows = res.machinery_card["rows"]
+            assert [r["market_id"] for r in card_rows] == [53049401, 108232, 60626095]
+            page_ids = [
+                int(it["market_id"])
+                for it in cp["sections"][0]["visual_block"]["items"]
+            ]
+            assert 112792 in page_ids
+            assert set(page_ids) == {53049401, 112792, 108232, 60626095, 112835, 112826}
+
+
+@pytest.mark.asyncio
+async def test_championships_barcelona_row_3_keeps_all_three_row_pictures() -> None:
+    paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
+    defn = load_machinery_definition(paths_by_slug["machinery-big-championships-2027"])
+    markets = _sample_batch4_markets()
+    for m in markets:
+        if m["id"] == 70732924:
+            m["outcomes"] = [{"id": 203, "name": "Barcelona", "probability": 0.22}]
+    db = {"events": [], "markets": markets, "paired_sets": {}, "market_histories": {}}
+    res = await produce_container_machinery(db, defn, now=NOW)
+    card_rows = res.machinery_card["rows"]
+    assert [r["market_id"] for r in card_rows] == [57792807, 66031970, 70732924]
+    assert (card_rows[2].get("art") or {}).get("url") == (
+        "https://a.espncdn.com/i/teamlogos/soccer/500/83.png"
+    )
+    assert all(str((r.get("art") or {}).get("url") or "").strip() for r in card_rows)
 
 
 @pytest.mark.asyncio

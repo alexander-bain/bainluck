@@ -3105,6 +3105,26 @@ def _prose_market_phrase(title: str, *, capitalize_first: bool = False) -> str:
     return out
 
 
+def _filter_card_benchmark_items(
+    items: Sequence[Mapping[str, Any]],
+    rule: Optional[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    """Filter out markets configured as set-page-only on the Discover card."""
+    raw_omit = rule.get("card_omit_ids") if isinstance(rule, Mapping) else None
+    if not isinstance(raw_omit, Sequence) or isinstance(raw_omit, (str, bytes)):
+        return list(items)
+    omit_ids: set[int] = set()
+    for val in raw_omit:
+        try:
+            omit_ids.add(int(val))
+        except (TypeError, ValueError):
+            continue
+    if not omit_ids:
+        return list(items)
+    filtered = [it for it in items if int(it.get("market_id") or 0) not in omit_ids]
+    return filtered if len(filtered) >= 2 else list(items)
+
+
 def _build_dynamic_title_from_set(
     definition: Mapping[str, Any],
     built_sections: Sequence[Mapping[str, Any]],
@@ -3234,9 +3254,9 @@ def _build_dynamic_title_from_set(
 
     if benchmark_items:
         rule_dict = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
-        headline_pool = benchmark_items
+        headline_pool = _filter_card_benchmark_items(benchmark_items, rule_dict)
         if rule_dict.get("headline_exclude_date_rows"):
-            non_date = [it for it in benchmark_items if not it.get("is_date_timing_row")]
+            non_date = [it for it in headline_pool if not it.get("is_date_timing_row")]
             if non_date:
                 headline_pool = non_date
         lead_bm = headline_pool[0]
@@ -3988,7 +4008,8 @@ async def produce_container_machinery(
             )
             card_visual_rows.append(it)
     elif vb_form == "benchmark_strip" and len(vb.get("items") or ()) >= 2:
-        for bm in (vb.get("items") or ())[:card_rows_limit]:
+        card_bm_items = _filter_card_benchmark_items(vb.get("items") or (), rule)
+        for bm in card_bm_items[:card_rows_limit]:
             mid = int(bm.get("market_id") or 1)
             outs = list(bm.get("outcomes") or ())
             if not outs:

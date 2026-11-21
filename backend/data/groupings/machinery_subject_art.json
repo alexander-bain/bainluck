@@ -1166,6 +1166,106 @@
       "detail": "QB · Georgia",
       "accent_color": "#BA0C2F",
       "url": "https://a.espncdn.com/i/headshots/college-football/players/full/4685578.png"
+    },
+    {
+      "key": "ucl-barcelona",
+      "aliases": [
+        "Barcelona",
+        "FC Barcelona"
+      ],
+      "kind": "team_logo",
+      "detail": "BAR",
+      "accent_color": "#A50044",
+      "url": "https://a.espncdn.com/i/teamlogos/soccer/500/83.png"
+    },
+    {
+      "key": "ucl-psg",
+      "aliases": [
+        "Paris Saint-Germain",
+        "PSG"
+      ],
+      "kind": "team_logo",
+      "detail": "PSG",
+      "accent_color": "#011F68",
+      "url": "https://a.espncdn.com/i/teamlogos/soccer/500/160.png"
+    },
+    {
+      "key": "ucl-real-madrid",
+      "aliases": [
+        "Real Madrid",
+        "Real Madrid CF"
+      ],
+      "kind": "team_logo",
+      "detail": "RMA",
+      "accent_color": "#00529F",
+      "url": "https://a.espncdn.com/i/teamlogos/soccer/500/86.png"
+    },
+    {
+      "key": "ucl-arsenal",
+      "aliases": [
+        "Arsenal",
+        "Arsenal FC"
+      ],
+      "kind": "team_logo",
+      "detail": "ARS",
+      "accent_color": "#E20520",
+      "url": "https://a.espncdn.com/i/teamlogos/soccer/500/359.png"
+    },
+    {
+      "key": "ucl-bayern-munich",
+      "aliases": [
+        "Bayern Munich",
+        "FC Bayern Munich",
+        "Bayern"
+      ],
+      "kind": "team_logo",
+      "detail": "MUN",
+      "accent_color": "#DC052D",
+      "url": "https://a.espncdn.com/i/teamlogos/soccer/500/132.png"
+    },
+    {
+      "key": "ucl-manchester-city",
+      "aliases": [
+        "Manchester City",
+        "Man City"
+      ],
+      "kind": "team_logo",
+      "detail": "MNC",
+      "accent_color": "#6CABDD",
+      "url": "https://a.espncdn.com/i/teamlogos/soccer/500/382.png"
+    },
+    {
+      "key": "ucl-liverpool",
+      "aliases": [
+        "Liverpool",
+        "Liverpool FC"
+      ],
+      "kind": "team_logo",
+      "detail": "LIV",
+      "accent_color": "#D11317",
+      "url": "https://a.espncdn.com/i/teamlogos/soccer/500/364.png"
+    },
+    {
+      "key": "ucl-atletico-madrid",
+      "aliases": [
+        "Atlético Madrid",
+        "Atletico Madrid"
+      ],
+      "kind": "team_logo",
+      "detail": "ATM",
+      "accent_color": "#CA3624",
+      "url": "https://a.espncdn.com/i/teamlogos/soccer/500/1068.png"
+    },
+    {
+      "key": "ucl-inter-milan",
+      "aliases": [
+        "Inter Milan",
+        "Internazionale"
+      ],
+      "kind": "team_logo",
+      "detail": "INT",
+      "accent_color": "#00239C",
+      "url": "https://a.espncdn.com/i/teamlogos/soccer/500/110.png"
     }
   ],
   "nfl_teams": {
