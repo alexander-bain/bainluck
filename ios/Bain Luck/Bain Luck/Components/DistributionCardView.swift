@@ -254,6 +254,7 @@ struct DistributionCardView: View {
                     if let srcMark = SourceMarkButton(
                         outcome.sourceMark,
                         number: outcome.sourceMark?.state == .settled ? nil : outcome.probability,
+                        renderedPercent: outcome.sourceMark?.state == .settled ? nil : outcome.renderedPercent,
                         subject: outcome.label,
                         numberSize: 13,
                         compactRow: true

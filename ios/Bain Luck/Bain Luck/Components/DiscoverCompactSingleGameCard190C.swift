@@ -233,6 +233,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         let button = SourceMarkButton(
             resolved.mark,
             number: resolved.number,
+            renderedPercent: resolved.renderedPercent,
             subject: resolved.subject,
             isPregame: resolved.isPregame,
             numberSize: 15,
