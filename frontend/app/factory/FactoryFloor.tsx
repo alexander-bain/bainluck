@@ -580,15 +580,28 @@ export default function FactoryFloor({
         </div>
       </header>
 
-      <StackLight verdict={verdict} hold={holds[0]} now={now}>
-        {!mascotMove && (
-          <FactoryMascot
-            level={verdict.level}
-            pose={clockedIn.size ? "standing" : "asleep"}
-            moving={mascotCanMove && clockedIn.size > 0 && verdict.level !== "red"}
-          />
-        )}
-      </StackLight>
+      <div className={styles.statusBand}>
+        <StackLight verdict={verdict} hold={holds[0]} now={now}>
+          {!mascotMove && (
+            <FactoryMascot
+              level={verdict.level}
+              pose={clockedIn.size ? "standing" : "asleep"}
+              moving={mascotCanMove && clockedIn.size > 0 && verdict.level !== "red"}
+            />
+          )}
+        </StackLight>
+        <aside className={styles.foremanNote} aria-label="Foreman’s note">
+          <ClipboardCheck size={21} aria-hidden="true" />
+          <div>
+            <strong>Foreman’s note</strong>
+            <p>
+              <b>{verdict.text}</b>
+              {floorNote && ` ${floorNote}`}
+            </p>
+            {(floorNote || Object.keys(notes?.stations ?? {}).length > 0) && <small>{noteCredit}</small>}
+          </div>
+        </aside>
+      </div>
       {replay.session && (
         <div className={styles.replayBar}>
             <button type="button" onClick={replay.close}>Close replay</button>
@@ -630,18 +643,6 @@ export default function FactoryFloor({
           </p>
         </div>
       )}
-
-      <aside className={styles.foremanNote} aria-label="Foreman’s note">
-        <ClipboardCheck size={21} aria-hidden="true" />
-        <div>
-          <strong>Foreman’s note</strong>
-          <p>
-            <b>{verdict.text}</b>
-            {floorNote && ` ${floorNote}`}
-          </p>
-          {(floorNote || Object.keys(notes?.stations ?? {}).length > 0) && <small>{noteCredit}</small>}
-        </div>
-      </aside>
 
       <section className={styles.floorCard} aria-labelledby="floor-heading">
         <div className={styles.sectionHeading}>
@@ -858,6 +859,9 @@ export default function FactoryFloor({
                                 aria-hidden="true"
                               />
                             )}
+                            {workerId && !dockBuilders.length && (
+                              <span className={styles.bayWorkerName}>{names[workerId]}</span>
+                            )}
                             <span
                               className={styles.baySignals}
                               title={bayAlert?.text}
@@ -887,9 +891,6 @@ export default function FactoryFloor({
                               </span>
                             </span>
                           </div>
-                          {workerId && !dockBuilders.length && (
-                            <span className={styles.bayWorkerName}>{names[workerId]}</span>
-                          )}
                           <div className={styles.crates}>
                             {crates.map(crate)}
                             {!changes.length && (
@@ -1072,26 +1073,28 @@ export default function FactoryFloor({
             </button>
           </dialog>
         )}
-        <section className={styles.shelf} aria-label="Side shelves">
-          {shelfKeys.map((shelf) => (
-            <button
-              key={shelf}
-              type="button"
-              aria-haspopup="dialog"
-              onClick={() => selectGroup({ shelf })}
-            >
-              {shelves[shelf].title} <strong>{shelves[shelf].changes.length}</strong>
-            </button>
-          ))}
-        </section>
-        {followed.length > 0 && (
-          <button type="button" className={styles.followedCrates} aria-haspopup="dialog" onClick={() => selectGroup({ following: true })}>
-            <Flag size={14} aria-hidden="true" /> Followed crates <strong>{followed.length}</strong>
-          </button>
-        )}
       </section>
 
       <div className={styles.records}>
+        <div className={styles.shelfGroup}>
+          <section className={styles.shelf} aria-label="Side shelves">
+            {shelfKeys.map((shelf) => (
+              <button
+                key={shelf}
+                type="button"
+                aria-haspopup="dialog"
+                onClick={() => selectGroup({ shelf })}
+              >
+                {shelves[shelf].title} <strong>{shelves[shelf].changes.length}</strong>
+              </button>
+            ))}
+          </section>
+          {followed.length > 0 && (
+            <button type="button" className={styles.followedCrates} aria-haspopup="dialog" onClick={() => selectGroup({ following: true })}>
+              <Flag size={14} aria-hidden="true" /> Followed crates <strong>{followed.length}</strong>
+            </button>
+          )}
+        </div>
         <details className={styles.panel} aria-labelledby="jams-heading">
           <summary className={styles.summary}>
             <ChevronRight size={14} aria-hidden="true" />
