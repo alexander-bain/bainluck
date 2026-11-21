@@ -58,6 +58,7 @@ import {
 
 const lines: Line[] = ["Server", "Website", "Apps"];
 const PAGE_REFRESH_MS = 60_000;
+const SPEECH_INTERVAL_MS = 8_000;
 type NamedBuilder = Exclude<Builder, "Other">;
 const builders: { key: NamedBuilder; name: string }[] = [
   { key: "S", name: "Speed" },
@@ -215,7 +216,7 @@ export default function FactoryFloor({
   const [now, setNow] = useState(renderedAt);
   const [selectedCrate, selectCrate] = useState<string | null>(null);
   const [selectedGroup, selectGroup] = useState<CrateGroup | null>(null);
-  const [speaker, setSpeaker] = useState<string | null>();
+  const [speaker, setSpeaker] = useState<NamedBuilder>();
   const [knownGoodAt, setKnownGoodAt] = useState(lastGoodAt);
   const [lastShown, setLastShown] = useState(snapshot);
   // Keep the open page intact if a refresh lands on a server with an empty cache.
@@ -236,6 +237,10 @@ export default function FactoryFloor({
   const today = pacificDay(now);
   const journal = useReplayJournal(data, today);
   const replay = useDayReplay(motion);
+  const speech = data?.speech;
+  const speakers = useMemo(() => builders.filter(({ key }) => speech?.[key]), [speech]);
+  const currentSpeaker = speakers.find(({ key }) => key === speaker) ?? speakers[0];
+  const currentSpeech = currentSpeaker && speech?.[currentSpeaker.key];
   const firstTransferRead = useRef(data?.generated_at);
   firstTransferRead.current ??= data?.generated_at;
   const firstRead = firstTransferRead.current;
@@ -253,6 +258,13 @@ export default function FactoryFloor({
   useEffect(() => {
     document.title = tabTitle;
   }, [tabTitle]);
+
+  useEffect(() => {
+    if (!motion || !currentSpeaker || speakers.length < 2 || replay.session || selectedCrate || selectedGroup) return;
+    const next = speakers[(speakers.indexOf(currentSpeaker) + 1) % speakers.length];
+    const timer = window.setTimeout(() => setSpeaker(next.key), SPEECH_INTERVAL_MS);
+    return () => window.clearTimeout(timer);
+  }, [motion, currentSpeaker, speakers, replay.session, selectedCrate, selectedGroup]);
 
   useEffect(() => {
     if (data) setLastShown(data);
@@ -427,32 +439,21 @@ export default function FactoryFloor({
     selectGroup(null);
   }
 
-  function workerFigure(id: NamedBuilder, line: Line, station: Station, fallback: WorkerState) {
+  function workerFigure(id: NamedBuilder, station: Station, fallback: WorkerState) {
     const voice = data?.speech?.[id];
     const figure = <Worker identity={id} station={station} state={voice?.mood ?? fallback} />;
     if (!voice) return figure;
-    const identifier = `voice-${line}-${stations.indexOf(station)}-${id}`;
-    const shown = speaker === identifier || (
-      speaker === undefined && line === "Server" && station === "Test" && voice.text.length <= 76
-    );
     return (
-      <span className={styles.speechFigure}>
-        <button
-          type="button"
-          className={styles.voiceButton}
-          aria-label={`Read ${names[id]}’s speech`}
-          aria-expanded={shown}
-          aria-controls={shown ? identifier : undefined}
-          onClick={() => setSpeaker(shown ? null : identifier)}
-        >
-          {figure}
-        </button>
-        {shown && (
-          <span id={identifier} className={`${styles.speechBubble} ${styles.workerBubble}`} data-source={voice.source}>
-            {voice.text}
-          </span>
-        )}
-      </span>
+      <button
+        type="button"
+        className={styles.voiceButton}
+        aria-label={`Read ${names[id]}’s speech`}
+        aria-pressed={currentSpeaker?.key === id}
+        aria-controls="factory-speech"
+        onClick={() => setSpeaker(id)}
+      >
+        {figure}
+      </button>
     );
   }
 
@@ -587,6 +588,14 @@ export default function FactoryFloor({
       <section className={styles.floorCard} aria-labelledby="floor-heading">
         <div className={styles.sectionHeading}>
           <h2 id="floor-heading">The floor</h2>
+          {currentSpeaker && currentSpeech && (
+            <div className={styles.floorSpeech} id="factory-speech" data-floor-speech={currentSpeaker.key}>
+              <Worker identity={currentSpeaker.key} state={currentSpeech.mood} />
+              <p className={styles.speechBubble} data-source={currentSpeech.source}>
+                <strong>{currentSpeaker.name}</strong>{" "}{currentSpeech.text}
+              </p>
+            </div>
+          )}
           <div className={styles.floorActions}>
             <span className={styles.tapHint}>
               Tap a crate or worker <ArrowDown size={14} />
@@ -766,7 +775,7 @@ export default function FactoryFloor({
                               >
                                 {dockBuilders.slice(0, 3).map((builder) => (
                                   <li key={builder} title={names[builder]}>
-                                    {workerFigure(builder, line, station, "waiting")}
+                                    {workerFigure(builder, station, "waiting")}
                                   </li>
                                 ))}
                                 {dockBuilders.length > 3 && (
@@ -774,7 +783,7 @@ export default function FactoryFloor({
                                 )}
                               </ul>
                             ) : workerId ? (
-                              workerFigure(workerId, line, station, workerState)
+                              workerFigure(workerId, station, workerState)
                             ) : (
                               <Icon
                                 className={styles.stationObject}
@@ -1071,7 +1080,7 @@ export default function FactoryFloor({
                   {builder.key === "W" && <small>Spare hand</small>}
                   <span>{clockedIn.has(builder.key) ? "Clocked in" : "Quiet for 15 minutes"}</span>
                   <span>{pose}{!voice && crew.change && ` #${crew.change.number}`}</span>
-                  <p className={styles.speechBubble} data-source={voice?.source}>
+                  <p className={styles.crewSpeech} data-source={voice?.source}>
                     {voice?.text ?? "This lane’s speech is missing from this read."}
                   </p>
                 </div>
