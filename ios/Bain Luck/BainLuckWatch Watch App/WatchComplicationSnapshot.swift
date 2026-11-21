@@ -531,3 +531,101 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
         return Array(Set(dates)).sorted()
     }
 }
+
+/// #13339 — Plain-English reason why a chosen pin cannot appear as a live matchup/market card on the Watch face.
+/// Every copy string avoids "Your game", "Saved", "Stale", "Checked", and "question" so "no game chosen" and
+/// "cannot show your game" never look identical.
+nonisolated enum WatchFaceUnavailableReason13339: String, Codable, Sendable, Equatable, CaseIterable {
+    case finalEnded = "final_ended"
+    case noLiveOdds = "no_live_odds"
+    case statusUnsupported = "status_unsupported"
+    case waitingForUpdate = "waiting_for_update"
+    case sharedStorageUnavailable = "shared_storage_unavailable"
+
+    var complicationHeadline: String {
+        switch self {
+        case .finalEnded: return "Game ended"
+        case .noLiveOdds: return "Waiting for odds"
+        case .statusUnsupported: return "Cannot show game"
+        case .waitingForUpdate: return "Needs refresh"
+        case .sharedStorageUnavailable: return "Cannot show game"
+        }
+    }
+
+    var complicationDetail: String {
+        "Open Bain Luck"
+    }
+
+    var appNotice: String {
+        switch self {
+        case .finalEnded:
+            return "Final games stay on your watch face for 3 hours."
+        case .noLiveOdds:
+            return "Cannot show on watch face: live win odds are unavailable."
+        case .statusUnsupported:
+            return "Cannot show on watch face in this game state."
+        case .waitingForUpdate:
+            return "Cannot show on watch face yet. Tap Refresh."
+        case .sharedStorageUnavailable:
+            return "Cannot show on watch face: shared Watch storage is unavailable."
+        }
+    }
+
+    func accessibilityDescription(title: String) -> String {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleanTitle.isEmpty {
+            return "\(complicationHeadline). \(complicationDetail)."
+        }
+        return "\(cleanTitle). \(complicationHeadline). \(complicationDetail)."
+    }
+}
+
+/// #13339 — Explicit Watch face unavailable-status record written alongside selected-game.json
+/// when a reader has chosen a game or market that cannot currently be shown on the Watch face.
+nonisolated struct WatchFaceStatusPayload13339: Codable, Sendable, Equatable {
+    static let filename = "selected-face-status.json"
+    static let maximumBytes = 4 * 1024
+
+    let version: Int
+    let targetID: Int
+    let title: String
+    let reason: WatchFaceUnavailableReason13339
+    let updatedAt: Date
+
+    init(
+        version: Int = 1,
+        targetID: Int,
+        title: String,
+        reason: WatchFaceUnavailableReason13339,
+        updatedAt: Date
+    ) {
+        self.version = version
+        self.targetID = targetID
+        self.title = title
+        self.reason = reason
+        self.updatedAt = updatedAt
+    }
+
+    var isValid: Bool {
+        version == 1
+            && targetID > 0
+            && !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && updatedAt.timeIntervalSinceReferenceDate.isFinite
+    }
+
+    static func read(from directory: URL?) -> Self? {
+        guard let directory, directory.isFileURL else { return nil }
+        let file = directory.appendingPathComponent(filename, isDirectory: false)
+        do {
+            let handle = try FileHandle(forReadingFrom: file)
+            defer { try? handle.close() }
+            let data = try handle.read(upToCount: maximumBytes + 1) ?? Data()
+            guard !data.isEmpty, data.count <= maximumBytes,
+                  let value = try? JSONDecoder().decode(Self.self, from: data),
+                  value.isValid else { return nil }
+            return value
+        } catch {
+            return nil
+        }
+    }
+}

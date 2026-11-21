@@ -75,10 +75,12 @@ final class WatchPinsStore12640: ObservableObject {
     @Published private(set) var failedLoadLine: String?
     @Published private(set) var overflowFooterLine: String?
     @Published private(set) var lastRefreshedAt: Date?
+    @Published private(set) var faceStatusMessage: String?
 
     private let defaults: UserDefaults
     private let transport: any WatchPinsTransport12640
-    private let publishSnapshot: @Sendable (WatchComplicationSnapshot?) -> Void
+    private let emitFaceState: @Sendable (WatchFaceDisplayState13339, Bool) -> Void
+    private let hasSharedContainer: @Sendable () -> Bool
     private var refreshTask: Task<Void, Never>?
     private var failedItemKeys: Set<String> = []
 
@@ -91,12 +93,26 @@ final class WatchPinsStore12640: ObservableObject {
     init(
         defaults: UserDefaults = .standard,
         transport: any WatchPinsTransport12640 = WatchPinsLiveTransport12640(),
-        publishSnapshot: @escaping @Sendable (WatchComplicationSnapshot?) -> Void = { WatchComplicationPublisher.publishSnapshot($0) }
+        publishSnapshot: (@Sendable (WatchComplicationSnapshot?) -> Void)? = nil,
+        publishFaceState: (@Sendable (WatchFaceDisplayState13339, Bool) -> Void)? = nil,
+        containerAvailable: (@Sendable () -> Bool)? = nil
     ) {
         self.defaults = defaults
         self.transport = transport
-        self.publishSnapshot = publishSnapshot
+        if let publishFaceState {
+            self.emitFaceState = publishFaceState
+            self.hasSharedContainer = containerAvailable ?? { true }
+        } else if let publishSnapshot {
+            self.emitFaceState = { state, _ in publishSnapshot(state.snapshot) }
+            self.hasSharedContainer = containerAvailable ?? { true }
+        } else {
+            self.emitFaceState = { state, forceReload in
+                WatchComplicationPublisher.publishState(state, forceReload: forceReload)
+            }
+            self.hasSharedContainer = containerAvailable ?? { WatchComplicationPublisher.hasSharedContainer }
+        }
         restoreFromDefaults()
+        republishSelectedFaceSnapshot(forceReload: false)
         #if DEBUG
         applyDebugFixtureIfNeeded()
         #endif
@@ -197,7 +213,7 @@ final class WatchPinsStore12640: ObservableObject {
         guard eventsByID[id]?.pinSummary12640.isAdmittedToWatchPins == true else { return }
         selectedTarget = .event(id: id)
         saveSelectedTarget()
-        republishSelectedFaceSnapshot()
+        republishSelectedFaceSnapshot(forceReload: true)
     }
 
     func selectFuture(_ marketID: Int, outcomeID: Int? = nil) {
@@ -211,7 +227,7 @@ final class WatchPinsStore12640: ObservableObject {
         selectedTarget = .future(marketID: marketID, outcomeID: resolved.id)
         saveCachesToDefaults()
         saveSelectedTarget()
-        republishSelectedFaceSnapshot()
+        republishSelectedFaceSnapshot(forceReload: true)
     }
 
     func chooseFutureOutcome(marketID: Int, outcomeID: Int) {
@@ -223,24 +239,25 @@ final class WatchPinsStore12640: ObservableObject {
             saveSelectedTarget()
         }
         saveCachesToDefaults()
-        republishSelectedFaceSnapshot()
+        republishSelectedFaceSnapshot(forceReload: true)
     }
 
     func clearSelection() {
         selectedTarget = nil
         saveSelectedTarget()
-        publishSnapshot(nil)
+        faceStatusMessage = nil
+        emitFaceState(.noSelection, true)
     }
 
-    func triggerRefresh() {
+    func triggerRefresh(userInitiated: Bool = false) {
         refreshTask?.cancel()
-        refreshTask = Task { await refreshAll() }
+        refreshTask = Task { await refreshAll(forceReload: userInitiated) }
     }
 
-    func refreshAll() async {
+    func refreshAll(forceReload: Bool = false) async {
         #if DEBUG
         if ProcessInfo.processInfo.environment["BAINLUCK_WATCH_PINS_FIXTURE_12640"] != nil {
-            republishSelectedFaceSnapshot()
+            republishSelectedFaceSnapshot(forceReload: forceReload)
             return
         }
         #endif
@@ -334,38 +351,96 @@ final class WatchPinsStore12640: ObservableObject {
         lastRefreshError = reconciliation.fullFailureMessage
         saveCachesToDefaults()
         saveSelectedTarget()
-        republishSelectedFaceSnapshot()
+        republishSelectedFaceSnapshot(forceReload: forceReload)
     }
 
-    func currentComplicationSnapshot(savedAt: Date = Date()) -> WatchComplicationSnapshot? {
-        guard let target = selectedTarget else { return nil }
+    func currentFaceState(savedAt: Date = Date()) -> WatchFaceDisplayState13339 {
+        guard let target = selectedTarget else { return .noSelection }
+        let hasContainer = hasSharedContainer()
         switch target {
         case .event(let id):
-            guard let game = eventsByID[id], game.pinSummary12640.isAdmittedToWatchPins else { return nil }
-            return WatchComplicationProjection.snapshot(game: game, savedAt: savedAt)
+            let game = eventsByID[id]
+            return WatchComplicationProjection.evaluateEventFaceState(
+                game: game,
+                eventID: id,
+                isAdmitted: game?.pinSummary12640.isAdmittedToWatchPins == true,
+                savedAt: savedAt,
+                clockSkewTolerance: WatchComplicationProjection.defaultGameClockSkewTolerance,
+                containerAvailable: hasContainer
+            )
         case .future(let marketID, let explicitOutcomeID):
-            guard let market = futuresByID[marketID] else { return nil }
+            let market = futuresByID[marketID]
+            let title = market?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Chosen market"
+            guard hasContainer else {
+                return .unavailable(
+                    WatchFaceStatusPayload13339(
+                        targetID: marketID,
+                        title: title.isEmpty ? "Chosen market" : title,
+                        reason: .sharedStorageUnavailable,
+                        updatedAt: savedAt
+                    ),
+                    snapshot: nil
+                )
+            }
+            guard let market else {
+                return .unavailable(
+                    WatchFaceStatusPayload13339(
+                        targetID: marketID,
+                        title: title.isEmpty ? "Chosen market" : title,
+                        reason: .waitingForUpdate,
+                        updatedAt: savedAt
+                    ),
+                    snapshot: nil
+                )
+            }
             let wireOutcome = wireItems.first { $0.kind == .future && $0.id == marketID }?.outcomeId
             guard let outcome = market.resolvedOutcome(
                 chosenOutcomeID: explicitOutcomeID ?? chosenOutcomes[marketID],
                 wireOutcomeID: wireOutcome
             ),
-                  let prob = outcome.probability else { return nil }
+                  let prob = outcome.probability else {
+                return .unavailable(
+                    WatchFaceStatusPayload13339(
+                        targetID: marketID,
+                        title: title.isEmpty ? "Chosen market" : title,
+                        reason: .noLiveOdds,
+                        updatedAt: savedAt
+                    ),
+                    snapshot: nil
+                )
+            }
             let rawObs = outcome.effectiveObservedAt ?? market.updatedAt ?? savedAt
             let observed = min(rawObs, savedAt)
-            return WatchComplicationProjection.futureSnapshot(
+            if let snap = WatchComplicationProjection.futureSnapshot(
                 marketID: market.id,
                 marketTitle: market.name,
                 outcomeName: outcome.name,
                 probability: prob,
                 observedAt: observed,
                 savedAt: savedAt
+            ) {
+                return .ready(snap)
+            }
+            return .unavailable(
+                WatchFaceStatusPayload13339(
+                    targetID: marketID,
+                    title: title.isEmpty ? "Chosen market" : title,
+                    reason: .waitingForUpdate,
+                    updatedAt: savedAt
+                ),
+                snapshot: nil
             )
         }
     }
 
-    private func republishSelectedFaceSnapshot() {
-        publishSnapshot(currentComplicationSnapshot(savedAt: Date()))
+    func currentComplicationSnapshot(savedAt: Date = Date()) -> WatchComplicationSnapshot? {
+        currentFaceState(savedAt: savedAt).snapshot
+    }
+
+    private func republishSelectedFaceSnapshot(forceReload: Bool = false) {
+        let state = currentFaceState(savedAt: Date())
+        faceStatusMessage = state.appNotice
+        emitFaceState(state, forceReload)
     }
 
     private func restoreFromDefaults() {
